@@ -4172,25 +4172,39 @@ separates). A project-scoped grant is role-wide and API-authored only
    hashed in place — their contractors' URLs keep working. The tabs show an
    address once, at mint or re-issue; a lost one is re-issued (a new token
    on the same link — id, authorship, history and budget kept), never read
-   back. The hash is a bearer column for `DEC-45`.
+   back. The hash is a bearer column for `DEC-45`. **`20261141` is applied
+   only after the J11 build is live** — the hash-in-place is irreversible,
+   and code from before J11 reads the plain token; the file's first
+   statement refuses to run until the operator confirms it.
 2. **The contractor's bytes go straight to storage, and the door checks the
    stored bytes (`INTK-15`).** `?step=begin` (every pre-body check of
-   `DEC-56` item 4, the rate window counted) presigns a PUT for a fresh
-   staging key under the link's own prefix with its Content-Length signed;
-   `?step=finalize` re-checks the link, takes only that link's staged key,
-   sniffs a ranged read of the stored head BEFORE reading the rest, and then
-   runs the door exactly as a multipart POST does; the staged object is
-   deleted whatever the answer. One PUT, not S3 multipart: the 100 MB cap is
-   far under storage's single-PUT ceiling. The multipart POST stays as the
-   fallback (a door that cannot presign, a browser that cannot reach
-   storage).
+   `DEC-56` item 4, the rate window counted) reserves the declared size
+   against the link's budget (staged-but-unclaimed bytes count with filed
+   ones) and presigns a PUT for a fresh key under the link's own prefix of
+   ONE staging root (`intake-staging/`), its Content-Length signed;
+   `?step=finalize` has its own rate window, takes only that link's staged
+   key, CLAIMS its reservation (one delete — exactly one request ever owns a
+   staged object) and from then deletes the object whatever it answers;
+   it re-checks the link, sniffs a ranged read of the stored head BEFORE
+   reading the rest (both reads pinned to the HEAD's ETag), and then runs
+   the door exactly as a multipart POST does. An abandoned upload is swept
+   automatically — by the link's next begin and by the maintenance cron
+   (objects past `STAGING_TTL_MS`, then their reservations). One PUT, not S3
+   multipart: the 100 MB cap is far under storage's single-PUT ceiling. The
+   multipart POST stays as the fallback — a door that cannot presign, a
+   browser that cannot reach storage, a storage refusal of a file the
+   multipart door can take — and names its begin, so the attempt is counted
+   once.
 3. **An audit row about a project is the project's (`SEC-20`).** A
-   `project` / `cost` row in `audit_logs` is readable by someone who can see
-   the project (`project_visible_to_me`, through the cost row's project for
-   `cost`) or by an audit viewer (`admin.audit_view`) — one added clause on
-   the RESTRICTIVE `audit_logs_admin_trail`, re-created from its newest
-   definition (`20261063`). A deleted project's rows are the audit roles'
-   alone. admin-and-org P7 (audit-log integrity) builds on this definition.
+   `project` / `cost` row in `audit_logs`, and the quality sign-off's
+   `project_checklist` / `turnover_item` e-signature rows, are readable by
+   someone who can see the project (`project_visible_to_me`, through the
+   cost / checklist / turnover row's project) or by an audit viewer
+   (`admin.audit_view`) — one added clause on the RESTRICTIVE
+   `audit_logs_admin_trail`, re-created from its newest definition
+   (`20261063`), its type test inline so no other row pays for the check. A
+   deleted project's rows are the audit roles' alone. admin-and-org P7
+   (audit-log integrity) builds on this definition.
 
 **Rationale.** Each closes a door the earlier rounds left ajar on purpose
 (`DEC-56` deferred 1 and 2; `SEC-2` moved the tables, not their audit rows),
@@ -4199,18 +4213,26 @@ the visibility helper and the overlay are the existing ones, reused.
 
 **Acceptance.** No column of `project_intake_links` holds a usable token
 and both routes match by hash; a direct upload of an HTML file named `.pdf`
-is refused from the stored bytes and the staged object deleted; a member
+is refused from the stored bytes and the staged object deleted, as it is on
+every answer after a finalize's claim, and concurrent finalizes of one
+staged object file it once; a member
 who cannot see a private project reads none of its project / cost audit
 rows while an Admin reads every row (`prjRoundGJ11Migrations.test.ts`,
 `intakeUploadRoute.test.ts` "INTK-15 — the direct door",
 `projectsRls.test.ts` "SEC-20", and the scratch PostgreSQL 16 runs recorded
 on `SEC-19`, `SEC-20` and `INTK-16`).
 
-**Reversal.** 1: none planned (a plain token would be a regression). 2: if
-storage CORS cannot admit the portal's PUT, the multipart fallback is the
-door until it can. 3: a stated requirement that every member read every
-project's audit trail would drop the clause.
+**Reversal.** 1: none planned (a plain token would be a regression) — and
+none possible after `20261141`: the plain tokens are not kept, so a code
+rollback to a build before J11 breaks every contractor link until each is
+re-issued; the migration is applied only once the J11 build is live. 2: if
+storage CORS cannot admit the portal's PUT, or storage refuses it, the
+multipart fallback is the door until it can. 3: a stated requirement that
+every member read every project's audit trail would drop the clause.
 
-**Risk:** low — every change narrows or moves bytes off the request path;
-`20261141` and `20261142` are pending until pasted.
+**Risk:** low once applied in order — every change narrows or moves bytes
+off the request path; `20261141` and `20261142` are pending until pasted,
+and `20261141` pasted BEFORE the J11 deploy (or followed by a rollback)
+would break every contractor link, which its first statement guards
+against.
 
