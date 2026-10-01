@@ -22,9 +22,11 @@
  * SIGN_OUT messages below).
  *
  * v7 (public-surfaces PKG-1 SW-OFFLINE): a stated NEVER_CACHE list — the four
- * verify routes, share, storage, transmittal and intake, the public token
- * pages and the /d/ short link — is never written AND never read back, even
- * as a leftover (a cached CURRENT certified the past: OFF-1); no URL whose
+ * verify routes and their four scan-landing pages, share, storage,
+ * transmittal and intake, the public token pages and the /d/ short link — is
+ * never written AND never read back, even as a leftover (a cached CURRENT
+ * certified the past: OFF-1), and a QR scan that cannot reach the server is
+ * answered with that page's own "can't verify" screen; no URL whose
  * query carries code= or a token parameter, no request with an Authorization
  * header, no redirected response and no identity-varying response is stored
  * (OFF-6/8/10); RUNTIME_CACHE is bounded — 200 entries, 7 days, 2 MiB per entry, least
@@ -189,9 +191,6 @@ async function forgetSession() {
   await purgeRuntimeCache();
 }
 async function rememberSession(id) {
-  // A sign-out empties every cache on the device (RoleContext, OFF-8) — the
-  // offline shell included; the next sign-in puts back whatever is missing.
-  await precacheShell(true);
   let previous = null;
   let cache = null;
   try {
@@ -199,9 +198,15 @@ async function rememberSession(id) {
     const stored = await cache.match(SESSION_KEY);
     previous = stored ? await stored.text() : null;
   } catch { previous = null; }
-  if (previous !== null && previous === id) return;
-  await purgeRuntimeCache();
-  try { if (cache) await cache.put(SESSION_KEY, new Response(id)); } catch { /* best-effort */ }
+  if (previous === null || previous !== id) {
+    await purgeRuntimeCache();
+    try { if (cache) await cache.put(SESSION_KEY, new Response(id)); } catch { /* best-effort */ }
+  }
+  // A sign-out empties every cache on the device (RoleContext, OFF-8) — the
+  // offline shell included; the next sign-in puts back whatever is missing.
+  // LAST, after the identity check: a shell fetch has no timeout, and a
+  // changed identity's purge must never wait behind the network.
+  await precacheShell(true);
 }
 
 function isSameOrigin(url) {
@@ -237,6 +242,48 @@ function unavailableResponse() {
   });
 }
 
+/* ─── An offline QR scan gets the page's own fail-safe (OFF-1) ─────────────
+ * The four scan-landing pages are dynamic routes: Next renders them on demand
+ * and serves them `private, no-cache, no-store`, which isCacheableResponse
+ * refuses — so no cached page shell exists to reach the page's "can't verify"
+ * branch, and an offline scan used to land on the generic offline page with
+ * no word about the print or the tag in the worker's hand. The worker answers
+ * a verify navigation it cannot complete itself: the page's own heading and
+ * the page's own instruction, on the page's neutral background, never a
+ * coloured verdict. Keep `title` and `instruction` identical to each page's
+ * error branch — lib/__tests__/sw.test.ts reads the four pages and fails on
+ * drift. */
+const VERIFY_PAGES = [
+  { prefix: "/verify/", title: "Can't verify this code", instruction: "If this QR came from a printed drawing, contact Document Control before using the print." },
+  { prefix: "/verify-hold/", title: "Can't verify this tag", instruction: "Treat the hold as ACTIVE until Document Control confirms otherwise." },
+  { prefix: "/verify-package/", title: "Can't verify this code", instruction: "If this QR came from a printed pack, contact Document Control before working from it." },
+  { prefix: "/verify-ticket/", title: "Can't verify this code", instruction: "If this QR came from an issued deliverable, contact the requester before using the copy." },
+];
+
+function verifyPageFor(path) {
+  return VERIFY_PAGES.find((p) => path.startsWith(p.prefix));
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function verifyFailSafeResponse(page, url) {
+  return new Response(
+    '<!doctype html><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">' +
+      `<title>${escapeHtml(page.title)}</title>` +
+      '<body style="font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;background:#0f172a;color:#e2e8f0">' +
+      '<div style="text-align:center;padding:1.5rem;max-width:24rem">' +
+      `<h1 style="font-size:1.5rem;margin:0 0 .5rem">${escapeHtml(page.title)}</h1>` +
+      '<p style="margin:0;opacity:.8">You’re offline — this can only be checked against the live record. Reconnect and try again.</p>' +
+      `<p style="margin:1rem 0 0;font-size:.875rem;font-weight:700">${escapeHtml(page.instruction)}</p>` +
+      `<a href="${escapeHtml(url.pathname + url.search)}" style="display:inline-block;margin-top:1.5rem;padding:.5rem 1rem;border-radius:9999px;background:rgba(255,255,255,.15);color:#fff;font-size:.875rem;font-weight:700;text-decoration:none">Try again</a>` +
+      "</div></body>",
+    { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
+  );
+}
+
 /** A request the browser itself gave up on — the user navigated away, the
  *  router cancelled a prefetch, the tab was throttled. There is nothing to
  *  report: synthesizing a response for it invents a server error that never
@@ -253,6 +300,11 @@ function wasAborted(request, err) {
  *                    -ticket): a cached CURRENT replayed offline certified
  *                    the past, and made the page's fail-safe "can't verify"
  *                    branch unreachable (OFF-1)
+ *    /verify/, /verify-hold/, /verify-package/, /verify-ticket/
+ *                    the scan-landing pages: dynamic and no-store, so never
+ *                    stored anyway; offline the worker answers them with
+ *                    the page's own fail-safe screen (VERIFY_PAGES above),
+ *                    never with a leftover of the page (OFF-1)
  *    /api/share/, /share/            share links: revocation and expiry are
  *                    enforced only at the route, and every access is a
  *                    distribution record (OFF-5, OFF-7, SHR-9)
@@ -264,13 +316,13 @@ function wasAborted(request, err) {
  *
  *  Every /api/ path is refused below anyway; this list is stated on its own
  *  so it holds even if an API path is ever allow-listed (DEC-44 §3 Reversal),
- *  and because the public token pages are not /api/ paths. The /verify*
- *  PAGES are deliberately not on it: they carry no verdict (the verdict is
- *  the /api/verify* answer, fetched no-store on every load), and a cached
- *  page shell is what lets an offline scan reach the page's own fail-safe
- *  "can't verify — contact Document Control" screen. */
+ *  and because the public token and scan-landing pages are not /api/ paths. */
 const NEVER_CACHE_PREFIXES = [
   "/api/verify",
+  "/verify/",
+  "/verify-hold/",
+  "/verify-package/",
+  "/verify-ticket/",
   "/api/share/",
   "/share/",
   "/api/storage/",
@@ -455,7 +507,11 @@ async function cacheStats() {
  * no route out — the most common way a field device is offline. The worker
  * sees every same-origin request it handles, so it tells every window when
  * the network stops answering and when it answers again (one message per
- * change; an aborted request says nothing about the network). */
+ * change; an aborted request says nothing about the network). "Answers
+ * again" is taken only from navigations and data GETs, whose responses must
+ * come from the server: a static asset can be answered by the browser's HTTP
+ * cache while the device has no route out, so that branch reports failures
+ * only. */
 let networkOk = null;
 function reportNetwork(ok) {
   if (networkOk === ok) return;
@@ -524,6 +580,11 @@ self.addEventListener("fetch", (event) => {
           // invent an offline page for it (hard rule 2; OFF-10).
           if (wasAborted(request, err)) throw err;
           reportNetwork(false);
+          // A QR scan that cannot reach the server gets that page's own
+          // "can't verify" screen — not the generic offline page, never a
+          // stored copy of the page (OFF-1).
+          const verifyPage = verifyPageFor(url.pathname);
+          if (verifyPage) return verifyFailSafeResponse(verifyPage, url);
           // Each match is awaited so a missing entry (undefined) actually falls
           // through to the next option instead of short-circuiting on a Promise.
           return (
@@ -551,7 +612,8 @@ self.addEventListener("fetch", (event) => {
         if (cached) return cached;
         try {
           const res = await fetch(request);
-          reportNetwork(true);
+          // No reportNetwork(true) here: a hashed asset can resolve from the
+          // browser's HTTP cache with no network at all (OFF-3).
           keepAlive(event, cachePut(SHELL_CACHE, request, res));
           return res;
         } catch (err) {

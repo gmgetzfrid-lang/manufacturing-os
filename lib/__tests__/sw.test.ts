@@ -20,9 +20,11 @@
 // before the worker changed (OFF-14): the suite used to assert only that a
 // branch "never resolves to undefined" — its cache mock's `put` was never
 // inspected, so nothing about WHAT the worker stores was guarded. It now
-// asserts, per branch: the never-cache list (the four verify routes, share,
-// storage, transmittal, intake, the public token pages, the /d/ short link)
-// is never written and never read back (OFF-1/5/6/7, SHR-9); credential URLs,
+// asserts, per branch: the never-cache list (the four verify routes and their
+// scan-landing pages, share, storage, transmittal, intake, the public token
+// pages, the /d/ short link) is never written and never read back
+// (OFF-1/5/6/7, SHR-9), and an offline scan gets the verify page's own
+// fail-safe screen (OFF-1 done-when 4); credential URLs,
 // Authorization-bearing requests, redirected responses and identity-varying
 // responses are never stored (OFF-6/8/10); an aborted navigation rethrows
 // (OFF-10); RUNTIME_CACHE is bounded — 200 entries, 7 days, a per-entry size
@@ -323,7 +325,7 @@ describe("OFF-1 / OFF-5 / OFF-6 / OFF-7 / SHR-9 — the never-cache list: never 
     for (const s of [RUNTIME, SHELL]) expect(storeFor(s).match).not.toHaveBeenCalled();
   });
 
-  it("OFF-1 done-when 4: a phone that scanned online and then loses the network sees the failure, never the earlier verdict", async () => {
+  it("OFF-1 done-when 4 (the API half): a phone that scanned online and then loses the network gets the failure, never the earlier verdict", async () => {
     let online = true;
     const { handlers, puts } = loadServiceWorker({
       fetchImpl: async () => {
@@ -409,6 +411,106 @@ describe("OFF-1 / OFF-5 / OFF-6 / OFF-7 / SHR-9 — the never-cache list: never 
     await ev.settle();
     expect(puts()).toEqual([]);
     expect(caches.match).not.toHaveBeenCalled();
+  });
+});
+
+describe("OFF-1 done-when 4 — an offline QR scan lands on the page's own fail-safe screen, never a verdict and never the generic offline page", () => {
+  // In production the four scan-landing pages are dynamic routes (no
+  // generateStaticParams; absent from .next/prerender-manifest.json), served
+  // `private, no-cache, no-store` — never cacheable. So no cached page shell
+  // can carry an offline scan to the page's own error branch: the worker has
+  // to answer with that screen itself.
+  const PAGES = [
+    { url: `${ORIGIN}/verify/d1?v=v1`, file: "app/verify/[docId]/page.tsx", title: "Can't verify this code", instruction: "If this QR came from a printed drawing, contact Document Control before using the print." },
+    { url: `${ORIGIN}/verify-hold/h1`, file: "app/verify-hold/[holdId]/page.tsx", title: "Can't verify this tag", instruction: "Treat the hold as ACTIVE until Document Control confirms otherwise." },
+    { url: `${ORIGIN}/verify-package/p1?print=x1`, file: "app/verify-package/[packageId]/page.tsx", title: "Can't verify this code", instruction: "If this QR came from a printed pack, contact Document Control before working from it." },
+    { url: `${ORIGIN}/verify-ticket/t1`, file: "app/verify-ticket/[ticketId]/page.tsx", title: "Can't verify this code", instruction: "If this QR came from an issued deliverable, contact the requester before using the copy." },
+  ];
+  const VERDICTS = /RELEASED|\bCURRENT\b|DO NOT USE|HOLD ACTIVE|matches the current/;
+  const NEXT_DYNAMIC = { "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate" };
+
+  it.each(PAGES)("$url — offline, nothing cached for it: a 503 carrying the page's own heading and instruction, even with /offline precached", async ({ url, title, instruction }) => {
+    const { handlers, storeFor, posted } = loadServiceWorker({ fetchImpl: offline });
+    storeFor(SHELL).entries.set(keyOf("/offline"), html("<html>offline page</html>"));
+    storeFor(SHELL).entries.set(keyOf("/"), html("<html>home</html>"));
+    const nav = navEvent(url);
+    handlers.fetch!(nav.event);
+    const res = await nav.settle();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Content-Type")).toMatch(/^text\/html/);
+    const body = await res.text();
+    expect(body).toContain(`<h1 style="font-size:1.5rem;margin:0 0 .5rem">${title.replace("'", "&#39;")}</h1>`);
+    expect(body).toContain(instruction);
+    expect(body).toMatch(/offline/i);
+    expect(body).not.toContain("offline page");
+    expect(body).not.toMatch(VERDICTS);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posted).toEqual([{ type: "NETWORK", ok: false }]);
+  });
+
+  it("the review's scenario: a HOLD tag scanned online on Monday (the page served no-store, as Next serves it), scanned again offline on Thursday → \"Treat the hold as ACTIVE…\", with a leftover of the page in every cache ignored", async () => {
+    let online = true;
+    const { handlers, puts, caches, storeFor, clock } = loadServiceWorker({
+      fetchImpl: async () => {
+        if (!online) throw new TypeError("Failed to fetch");
+        return html("<html>HOLD RELEASED — this tag can come down</html>", NEXT_DYNAMIC);
+      },
+    });
+    const url = `${ORIGIN}/verify-hold/h1`;
+    const monday = navEvent(url);
+    handlers.fetch!(monday.event);
+    expect(await (await monday.settle()).text()).toContain("RELEASED");
+    expect(puts()).toEqual([]);
+    // even a leftover from some older worker or a header change is never served
+    for (const name of [RUNTIME, SHELL]) {
+      storeFor(name).entries.set(keyOf(url), new Response("<html>HOLD RELEASED</html>", { status: 200, headers: { [CACHED_AT]: String(clock.t) } }));
+    }
+    clock.t += 3 * DAY;
+    online = false;
+    const thursday = navEvent(url);
+    handlers.fetch!(thursday.event);
+    const res = await thursday.settle();
+    expect(res.status).toBe(503);
+    const body = await res.text();
+    expect(body).toContain("Treat the hold as ACTIVE until Document Control confirms otherwise.");
+    expect(body).not.toMatch(VERDICTS);
+    expect(caches.match).not.toHaveBeenCalled();
+  });
+
+  it.each(PAGES)("$url — online, served from the network and never written (on the never-cache list, whatever its headers)", async ({ url }) => {
+    const { handlers, puts } = loadServiceWorker({ fetchImpl: async () => html("<html>verdict page</html>") });
+    const nav = navEvent(url);
+    handlers.fetch!(nav.event);
+    expect((await nav.settle()).status).toBe(200);
+    expect(puts()).toEqual([]);
+  });
+
+  it.each(PAGES)("$file — the worker's heading and instruction are the page's own error-branch copy (drift fails here)", ({ file, title, instruction }) => {
+    const page = readFileSync(resolve(process.cwd(), file), "utf8");
+    expect(page).toContain(`>${title.replace("'", "&apos;")}</h1>`);
+    expect(page).toContain(instruction);
+    expect(SW_SOURCE).toContain(`title: "${title}", instruction: "${instruction}"`);
+  });
+
+  it("Try again goes back to the same scan, HTML-escaped; an aborted scan still rethrows", async () => {
+    const { handlers } = loadServiceWorker({ fetchImpl: offline });
+    const nav = navEvent(`${ORIGIN}/verify/d1?v=v1&src=qr'x`);
+    handlers.fetch!(nav.event);
+    const body = await (await nav.settle()).text();
+    expect(body).toContain(`<a href="/verify/d1?v=v1&amp;src=qr%27x"`);
+    const abort = new DOMException("The user aborted a request.", "AbortError");
+    const aborted = loadServiceWorker({ fetchImpl: async () => { throw abort; } });
+    const ev = navEvent(`${ORIGIN}/verify-hold/h1`);
+    aborted.handlers.fetch!(ev.event);
+    await expect(ev.response()).rejects.toBe(abort);
+  });
+
+  it("a path that only starts like a verify page is not one", async () => {
+    const { handlers, storeFor } = loadServiceWorker({ fetchImpl: offline });
+    storeFor(SHELL).entries.set(keyOf("/offline"), html("<html>offline page</html>"));
+    const nav = navEvent(`${ORIGIN}/verifications`);
+    handlers.fetch!(nav.event);
+    expect(await (await nav.settle()).text()).toBe("<html>offline page</html>");
   });
 });
 
@@ -547,12 +649,14 @@ describe("OFF-9 — RUNTIME_CACHE is bounded: 200 entries, 7 days, a per-entry s
     expect(keys).toContain(`${ORIGIN}/p/200`);
   });
 
-  it("an entry served offline counts as recently used — it outlives the next trim", async () => {
+  it("an entry served offline counts as recently used — it outlives the next trim — but keeps its original fetch time, so it still expires", async () => {
     let online = true;
-    const { handlers, storeFor } = loadServiceWorker({
+    const { handlers, storeFor, seedRuntime, clock } = loadServiceWorker({
       fetchImpl: async () => { if (!online) throw new TypeError("offline"); return html(); },
     });
-    for (let i = 0; i < 200; i++) {
+    const fetchedAt = clock.t - 6 * DAY;
+    seedRuntime(`${ORIGIN}/p/0`, "<html>p0</html>", fetchedAt); // the oldest entry, fetched six days ago
+    for (let i = 1; i < 200; i++) {
       const nav = navEvent(`${ORIGIN}/p/${i}`);
       handlers.fetch!(nav.event);
       await nav.settle();
@@ -560,16 +664,24 @@ describe("OFF-9 — RUNTIME_CACHE is bounded: 200 entries, 7 days, a per-entry s
     online = false;
     const read = navEvent(`${ORIGIN}/p/0`);
     handlers.fetch!(read.event);
-    expect((await read.settle()).status).toBe(200);
+    expect(await (await read.settle()).text()).toBe("<html>p0</html>");
     online = true;
     const more = navEvent(`${ORIGIN}/p/200`);
     handlers.fetch!(more.event);
     await more.settle();
     const keys = [...storeFor(RUNTIME).entries.keys()];
+    expect(keys).toHaveLength(200);
     expect(keys).toContain(`${ORIGIN}/p/0`);
     expect(keys).not.toContain(`${ORIGIN}/p/1`);
     // the touch keeps the original fetch time — age is measured from the network, not the last read
-    expect(storeFor(RUNTIME).entries.get(`${ORIGIN}/p/0`)!.headers.get(CACHED_AT)).not.toBeNull();
+    expect(storeFor(RUNTIME).entries.get(`${ORIGIN}/p/0`)!.headers.get(CACHED_AT)).toBe(String(fetchedAt));
+    // …so a sliding TTL cannot keep a regularly read entry alive: two days on it is eight days old
+    clock.t += 2 * DAY;
+    online = false;
+    const late = navEvent(`${ORIGIN}/p/0`);
+    handlers.fetch!(late.event);
+    expect((await late.settle()).status).toBe(503);
+    expect(storeFor(RUNTIME).entries.has(`${ORIGIN}/p/0`)).toBe(false);
   });
 
   it("an entry older than 7 days is never served and is deleted on the spot", async () => {
@@ -646,7 +758,8 @@ describe("OFF-12 / OFF-4 — install: the shell is precached per asset, and the 
 
 describe("OFF-11 — VERSION follows the build; the committed worker is never a stamped one", () => {
   it("VERSION is mfgos-v<schema>-<build>, and the committed build id is the unstamped default", () => {
-    expect(SCHEMA).toBe(7);
+    // a schema bump edits SW_SCHEMA and adds a fingerprint below — nothing here
+    expect(Number.isInteger(SCHEMA) && SCHEMA >= 7).toBe(true);
     expect(BUILD).toBe(UNSTAMPED);
     expect(SW_SOURCE).toMatch(/^const VERSION = `mfgos-v\$\{SW_SCHEMA\}-\$\{SW_BUILD\}`;$/m);
   });
@@ -663,9 +776,11 @@ describe("OFF-11 — VERSION follows the build; the committed worker is never a 
   // and the build stamp ignored — is fingerprinted per SW_SCHEMA. A change to
   // what the worker does fails here until SW_SCHEMA is bumped (which drops
   // every cache the previous behaviour filled) and the new fingerprint is
-  // recorded as a NEW entry. Never edit an existing entry.
+  // recorded as a NEW entry. Never edit an entry whose schema has merged:
+  // devices already run it. (Schema 7's entry was re-recorded once, by the
+  // public-surfaces PKG-1 fix pass, before schema 7 had merged anywhere.)
   const SCHEMA_FINGERPRINTS: Record<number, string> = {
-    7: "316e23dfc58c46e72c155bf50822b2c77fd82909a3e5796901bdb718b13ec58c",
+    7: "ee632785f10f9c199033bc61617ae8224473785ce576a1a1321730a98a1b44b6",
   };
   const fingerprint = (src: string) => {
     const code = ts.transpileModule(stampSource(src, UNSTAMPED), {
@@ -747,6 +862,34 @@ describe("OFF-3 — the worker reports what actually happened on the network", (
     expect(posted).toEqual([{ type: "NETWORK", ok: false }, { type: "NETWORK", ok: true }]);
   });
 
+  it("a static asset that resolves while the device is offline (the browser's HTTP cache answered it) does not clear the pill", async () => {
+    const { handlers, posted, message } = loadServiceWorker({
+      fetchImpl: async (req) => {
+        if ((req as { url: string }).url.includes("/_next/static/")) return new Response("chunk", { status: 200, headers: { "Content-Type": "text/javascript" } });
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    const run = async (ev: ReturnType<typeof fetchEvent>) => { handlers.fetch!(ev.event); await ev.settle(); await new Promise((r) => setTimeout(r, 0)); };
+    await run(navEvent(`${ORIGIN}/projects/abc`));
+    expect(posted).toEqual([{ type: "NETWORK", ok: false }]);
+    const chunk = dataEvent(`${ORIGIN}/_next/static/chunks/app-lazy.js`);
+    await run(chunk);
+    expect(await (await chunk.response()).text()).toBe("chunk");
+    expect(posted).toEqual([{ type: "NETWORK", ok: false }]); // no ok:true flap
+    const replies: unknown[] = [];
+    await message({ type: "NETWORK_STATUS" }, { source: { postMessage: (m: unknown) => replies.push(m) } });
+    expect(replies).toEqual([{ type: "NETWORK", ok: false }]);
+  });
+
+  it("a failing static asset is still reported as the network going down", async () => {
+    const { handlers, posted } = loadServiceWorker({ fetchImpl: offline });
+    const ev = dataEvent(`${ORIGIN}/_next/static/chunks/app-lazy.js`);
+    handlers.fetch!(ev.event);
+    expect((await ev.settle()).status).toBe(503);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posted).toEqual([{ type: "NETWORK", ok: false }]);
+  });
+
   it("an aborted request is not reported as the network going down", async () => {
     const { handlers, posted } = loadServiceWorker({ fetchImpl: async () => { throw new DOMException("x", "AbortError"); } });
     const ev = dataEvent(`${ORIGIN}/data.json`);
@@ -795,6 +938,27 @@ describe("XEDGE-6 — the cache does not outlive the session", () => {
     await message({ type: "SESSION", id: "uid-b" });     // another account on the tablet → purge
     expect(caches.delete).toHaveBeenCalledTimes(2);
     expect(await (await session.match("/__mfgos/session"))!.text()).toBe("uid-b");
+  });
+
+  it("a changed identity's purge never waits behind the shell re-warm — even a shell fetch that never answers (a hanging plant network)", async () => {
+    const { handlers, caches, storeFor } = loadServiceWorker({ fetchImpl: () => new Promise<Response>(() => { /* never answers */ }) });
+    storeFor(SESSION).entries.set(keyOf("/__mfgos/session"), new Response("uid-a"));
+    storeFor(RUNTIME).entries.set(keyOf(`${ORIGIN}/projects/a`), html("<html>A's page</html>"));
+    // the shell cache is empty, so the re-warm fetches every asset — and none answers
+    handlers.message!({ data: { type: "SESSION", id: "uid-b" }, waitUntil: () => undefined });
+    await vi.waitFor(() => expect(caches.delete).toHaveBeenCalledWith(RUNTIME));
+    await vi.waitFor(async () => expect(await (await storeFor(SESSION).match("/__mfgos/session"))!.text()).toBe("uid-b"));
+    expect(storeFor(SHELL).add).toHaveBeenCalled(); // the re-warm did start — after the purge
+  });
+
+  it("the same identity again still re-warms a missing shell asset", async () => {
+    const fetched: string[] = [];
+    const { message, storeFor, caches } = loadServiceWorker({ fetchImpl: async (req) => { fetched.push((req as { url: string }).url); return html(); } });
+    storeFor(SESSION).entries.set(keyOf("/__mfgos/session"), new Response("uid-a"));
+    for (const a of ["/", "/offline", "/icon.svg"]) storeFor(SHELL).entries.set(keyOf(a), html());
+    await message({ type: "SESSION", id: "uid-a" });
+    expect(caches.delete).not.toHaveBeenCalled();
+    expect(fetched).toEqual([`${ORIGIN}/manifest.webmanifest`]);
   });
 
   it("keeps the SKIP_WAITING string message and ignores junk", async () => {
