@@ -33,6 +33,8 @@ const reads = vi.hoisted(() => ({
   assignTurnoverContractor: vi.fn(),
 }));
 const snap = vi.hoisted(() => ({ gather: vi.fn(), invalidate: vi.fn() }));
+// The real module, for the one case that drives the real round sharing.
+const actualSnapshot = vi.hoisted(() => ({ mod: null as null | typeof import("@/lib/projectSnapshot") }));
 
 vi.mock("@/lib/supabase", () => {
   const chain: Record<string, unknown> = {};
@@ -89,6 +91,7 @@ vi.mock("@/lib/turnover", async (importOriginal) => {
 });
 vi.mock("@/lib/projectSnapshot", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/projectSnapshot")>();
+  actualSnapshot.mod = real;
   return { ...real, gatherProjectSnapshot: snap.gather, invalidateProjectSnapshot: snap.invalidate };
 });
 // The coach's engine is not under test: any snapshot renders a strip.
@@ -271,6 +274,67 @@ describe("PERF-3 — opening Costs or Quality under the coach gathers the snapsh
       expect(log).toEqual(["gather", "invalidate", "told", "gather"]);
     });
   }
+});
+
+// Review (final pass): page.tsx's refresh() is the one re-key left that no
+// write precedes. On the first load it calls setLoading(false) as soon as
+// the project row lands (PERF-8), so the coach mounts and starts its mount
+// round (key 0); the same refresh then awaits members and checkouts and
+// bumps the coach key while the coach is MOUNTED. The coach's first-re-key
+// share and SNAPSHOT_REUSE_MS are what make that bump free — this case runs
+// the real gatherProjectSnapshot (its memo, its window) under the real coach.
+const firstLoad = { release: () => undefined as void };
+function FirstLoadPage() {
+  const [loading, setLoading] = useState(true);
+  const [coachKey, setCoachKey] = useState(0);
+  useEffect(() => {
+    const membersAndCheckouts = new Promise<void>((resolve) => { firstLoad.release = resolve; });
+    void (async () => {
+      await Promise.resolve();          // getProjectForPage: the project row lands
+      setLoading(false);                // the header paints, the coach mounts (key 0)
+      await membersAndCheckouts;        // listMembers + listProjectCheckouts (+ their hydration)
+      setCoachKey((k) => k + 1);        // the bump at the end of refresh()
+    })();
+  }, []);
+  if (loading) return React.createElement("div", { "data-spinner": "" });
+  return React.createElement("div", null,
+    React.createElement("span", { "data-coach-key": coachKey }),
+    React.createElement(ProjectCoach, { orgId: "o1", projectId: "p1", refreshKey: coachKey }));
+}
+
+describe("PERF-3 — the page's first-load refresh() bumps the key of a MOUNTED coach: the first-re-key share absorbs it", () => {
+  it("the coach mounts (key 0) and its round settles; refresh() then bumps the key once, inside the reuse window: ONE round", async () => {
+    const real = actualSnapshot.mod!;
+    real.resetProjectSnapshotMemo();
+    snap.gather.mockImplementation(real.gatherProjectSnapshot);
+    // One cost-accounts read per round: the gather's own queries are counted.
+    reads.listAccounts.mockImplementation(async () => { order.log.push("round"); return []; });
+    // The clock is held so the bump lands a fixed 1 s after the round settled
+    // whatever the machine's load (the window is SNAPSHOT_REUSE_MS = 1.5 s).
+    const T0 = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockReturnValue(T0);
+    try {
+      await act(async () => { root.render(React.createElement(FirstLoadPage)); });
+      await settle();
+      expect(host.querySelector("[data-spinner]")).toBeNull();
+      expect(coachKey()).toBe(0);
+      expect(count("round")).toBe(1);
+      // the mount round has SETTLED (the strip is drawn) before the bump —
+      // so in-flight sharing alone would not cover it; the window does
+      expect(host.textContent).toContain("Project health");
+
+      now.mockReturnValue(T0 + 1000);
+      await act(async () => { firstLoad.release(); });
+      await settle();
+      expect(coachKey()).toBe(1);
+      expect(snap.gather).toHaveBeenCalledTimes(2);   // two coach runs (key 0, key 1) …
+      expect(snap.gather.mock.calls[1][2]).toMatchObject({ share: true });
+      expect(count("round")).toBe(1);                 // … one round of queries
+    } finally {
+      now.mockRestore();
+      real.resetProjectSnapshotMemo();
+    }
+  });
 });
 
 // Review (fix pass): the rendered tests above drive ONE Costs writer (the
