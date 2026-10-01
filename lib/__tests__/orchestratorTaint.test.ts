@@ -1,9 +1,11 @@
 // intelligence Round G, package I-19 — ORCH-9 criterion 3: a write the
-// assistant proposed after reading document text written like an
-// instruction is flagged on the stored proposal (orchestrator_proposals
-// .tainted, 20261158) and on its confirm card. The flag INFORMS; it never
-// blocks: DEC-72 item 1 (the stored proposal, confirmed once) stays the
-// write path.
+// assistant proposed in a run whose tool results, in the part the model was
+// shown, carried a role / instruction marker that neutralizeUntrusted
+// rewrote is flagged on the stored proposal (orchestrator_proposals
+// .tainted, 20261158) and on its confirm card. The signal is syntactic:
+// ordinary labels set it too, and a missing flag proves nothing. The flag
+// INFORMS; it never blocks: DEC-72 item 1 (the stored proposal, confirmed
+// once) stays the write path.
 //
 // REGRESSION FIRST: a run whose tool results carried no marker stores its
 // proposal exactly as before (the insert names no new column), and its card,

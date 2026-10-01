@@ -1,8 +1,10 @@
 -- 20261158_intel_roundG_orchestrator_taint.sql
 --
 -- intelligence Round G, package I-19 — ORCH-9 criterion 3. A write the
--- assistant proposed after reading document text written like an
--- instruction is stored as such.
+-- assistant proposed in a run whose tool results, in the part the model was
+-- shown, carried a role / instruction marker that neutralizeUntrusted
+-- rewrote is stored as such. The signal is syntactic: ordinary labels set it
+-- too, and a missing flag proves nothing.
 --
 -- WHY: a tool result carries text other people wrote (extracted PDF
 -- passages, mention snippets, document names). The loop fences and
