@@ -462,7 +462,8 @@ export default function ScheduleImportModal({
               {parseResult.needsDateConvention && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
                   <div className="font-bold">How should dates in this file be read?</div>
-                  <div>Every slash date (e.g. <span className="font-mono">{parseResult.dates?.sample}</span>) could be day/month or month/day. Nothing is imported until you choose; the choice applies to the whole file.</div>
+                  {/* GAP-403: the question names the column the dates are in. */}
+                  <div>Every slash date{parseResult.dateSource?.columns.length ? <> in {parseResult.dateSource.columns.map((c, i, all) => <React.Fragment key={c}>{i > 0 ? (i === all.length - 1 ? " and " : ", ") : ""}<b>&ldquo;{c}&rdquo;</b></React.Fragment>)}</> : null} (e.g. <span className="font-mono">{parseResult.dates?.sample}</span>{parseResult.dateSource?.sampleColumn ? <> in <b>&ldquo;{parseResult.dateSource.sampleColumn}&rdquo;</b></> : null}) could be day/month or month/day. Nothing is imported until you choose; the choice applies to the whole file.</div>
                   <div className="flex items-center gap-4">
                     {(["mdy", "dmy"] as DateConvention[]).map((c) => (
                       <label key={c} className="inline-flex items-center gap-1.5 cursor-pointer">

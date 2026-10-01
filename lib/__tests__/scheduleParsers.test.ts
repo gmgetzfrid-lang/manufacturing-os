@@ -493,7 +493,8 @@ describe("SCHED-9 · offset-less datetimes are read as wall-clock-as-UTC", () =>
     const csv = ["Task Name,Start,Finish", "Pour,6/13/2026 8:00 AM,6/13/2026 5:00 PM", "Cure,6/14/2026 8:00 AM EST PST,6/14/2026 5:00 PM", "Set,6/15/2026 25:99,6/15/2026 5:00 PM", "Tie,soon,6/16/2026 5:00 PM", "Clean,6/17/2026 8 AM,6/17/2026 5 PM"].join("\n");
     const res = parseScheduleFile("plan.csv", csv);
     expect(res.rows.map((r) => [r.name, r.plannedStartAt, r.startHasTime])).toEqual([["Pour", "2026-06-13T08:00:00Z", true], ["Clean", "2026-06-17T08:00:00Z", true]]);
-    expect(res.warnings).toContain("3 rows skipped (a start or finish date could not be read as month/day/year).");
+    // projects Round G J10b (GAP-403): the warning names the column the unreadable dates were in
+    expect(res.warnings).toContain('3 rows skipped (a start or finish date could not be read as month/day/year) — in "Start" (3 rows).');
     // Nothing unreadable is handed on as text: "" is the one answer.
     expect([coerceIso("soon"), coerceIso("June 1st, 2026"), coerceIso("6/1/2026 13:00 PM")]).toEqual(["", "", ""]);
     expect(coerceIso("June 1, 2026 8 AM EST")).toBe("2026-06-01T13:00:00.000Z"); // an hour without minutes is 8:00
