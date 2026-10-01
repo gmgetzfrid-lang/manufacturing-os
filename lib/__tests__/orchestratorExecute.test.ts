@@ -70,7 +70,7 @@ vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisi
 import { POST as runPOST } from "@/app/api/orchestrator/route";
 import { POST as executePOST } from "@/app/api/orchestrator/execute/route";
 import { REFUSAL, NOT_INSTALLED, PROPOSAL_TTL_MS } from "@/lib/orchestrator/proposals";
-import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
+import { toolByName, fingerprint, type ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 
 const ORG = "o1";
@@ -425,7 +425,8 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     db.tables.drawing_audit_logs.push(verdict({ status: "passed" }), verdict({ library_id: "KL-1", status: "passed", audit_details: { libraryId: "KL-1" } }));
     const ctx = await ctxOf("u-dc");
     const params = { sheet_number: "025-PID-0103", revision: "C", status: "flagged" };
-    const fp = `log_audit_completion(revision=C&sheet_number=025-PID-0103&status=flagged)`;
+    // d-1 is the one document numbered 025-PID-0103: the record names it (ORCH-11).
+    const fp = fingerprint("log_audit_completion", { ...params, document_id: "d-1" });
     const out = await toolByName("log_audit_completion")!.run(params, { ...ctx, approved: new Set([fp]) });
     expect(out.data).toMatchObject({ status: "logged" });
     const rows = rowsOf("drawing_audit_logs");
@@ -441,7 +442,7 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     const lower = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "passed" }, ctx);
     expect(lower.pending).toBeUndefined();
     expect(String((lower.data as { error?: string }).error)).toMatch(/already recorded as flagged/);
-    const fp = "log_audit_completion(revision=C&sheet_number=025-PID-0103&status=flagged)";
+    const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "C", status: "flagged", document_id: "d-1" });
     const atFloor = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "flagged" }, { ...ctx, approved: new Set([fp]) });
     expect(atFloor.data).toMatchObject({ status: "logged" });
     expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "flagged" });
@@ -454,7 +455,7 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "", status: "passed" }, ctx);
     // revision "" is treated as given here (the tool is called directly).
     expect(String((refused.data as { error?: string }).error)).toMatch(/already recorded/);
-    const fp = "log_audit_completion(revision=D&sheet_number=025-PID-0103&status=passed)";
+    const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "D", status: "passed", document_id: "d-1" });
     const ok = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "D", status: "passed" }, { ...ctx, approved: new Set([fp]) });
     expect(ok.data).toMatchObject({ status: "logged" });
     const writes = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
@@ -503,7 +504,7 @@ describe("DEC-68 handoff — check_audit_history never answers 'already audited'
 
 describe("ORCH-10 — one write path, audited: a run never executes a write", () => {
   it("a run sent `approved: [the exact fingerprint]` while the model emits that exact call still only PROPOSES — nothing written, nothing audited", async () => {
-    const fp = "log_audit_completion(revision=C&sheet_number=025-PID-0103&status=broken_connectors)";
+    const fp = fingerprint("log_audit_completion", { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors", document_id: "d-1" });
     net.script = [AUDIT_CALL, "Recorded? No — proposed."];
     const res = await runPOST(req("http://test/api/orchestrator", "dc", { orgId: ORG, question: "record it", approved: [fp] }));
     expect(res.status).toBe(200);
@@ -571,6 +572,39 @@ describe("ORCH-9 — a tool result is fenced, neutralised data; an obeyed inject
     expect(rowsOf("audit_logs")).toHaveLength(0);
     const [card] = pendingOf(body);
     expect(card).toMatchObject({ tool: "log_audit_completion", proposalId: expect.any(String) });
+  });
+});
+
+describe("ORCH-11 — the finding travels in the proposal: propose → execute stores what the model found, and the document", () => {
+  it("details and the resolved document are in the stored parameters, the card says what will be recorded, and the confirmed row keeps both", async () => {
+    const finding = "Connector B-4 on 0103 continues to 0114, which has no matching box";
+    net.script = [
+      JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "broken_connectors", details: finding } }),
+      "Proposed.",
+    ];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C broken")).body);
+    expect(card.parameters).toMatchObject({ details: finding, document_id: "d-1" });
+    expect((card as unknown as { summary: string }).summary).toContain(finding);
+    expect(rowsOf("orchestrator_proposals")[0].parameters).toMatchObject({ details: finding, document_id: "d-1" });
+
+    const res = await execute("dc", { proposalId: card.proposalId, fingerprint: card.fingerprint });
+    expect(res.status).toBe(200);
+    const [row] = rowsOf("drawing_audit_logs");
+    expect(row).toMatchObject({ document_id: "d-1", status: "broken_connectors" });
+    expect((row.audit_details as { note: string }).note).toBe(finding);
+    // The fingerprint was computed over the same object on both sides.
+    expect(card.fingerprint).toContain(`details=${finding}`);
+    expect(card.fingerprint).toContain("document_id=d-1");
+  });
+
+  it("a document_id outside the caller's org is refused; an ambiguous number records no document", async () => {
+    const dc = await ctxOf("u-dc");
+    db.tables.documents.push({ id: "d-elsewhere", org_id: "o2", library_id: "L-x", document_number: "X-1" });
+    const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "X-1", revision: "A", status: "passed", document_id: "d-elsewhere" }, dc);
+    expect(refused.data).toMatchObject({ error: "No such document in this org." });
+    db.tables.documents.push({ id: "d-dup", org_id: ORG, library_id: "L-ops", document_number: "025-PID-0103" });
+    const amb = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "D", status: "passed" }, dc);
+    expect(amb.pending?.parameters).not.toHaveProperty("document_id");
   });
 });
 

@@ -765,6 +765,7 @@ const logAuditCompletion: ToolDef = {
     { name: "revision", type: "string", required: true, description: "Revision code audited." },
     { name: "status", type: "string", required: true, description: "passed | broken_connectors | flagged | skipped" },
     { name: "details", type: "string", description: "What was found." },
+    { name: "document_id", type: "string", description: "The controlled document's UUID, when known (from find_documents)." },
   ],
   async run(args, ctx) {
     const status = String(args.status) as AuditStatus;
@@ -787,20 +788,47 @@ const logAuditCompletion: ToolDef = {
     const lowers = lowersStored(stored.row, status, stored.legacy);
     if (lowers) return { data: { error: lowers, kept: stored.row?.status ?? null } };
 
-    const params = { sheet_number: args.sheet_number, revision: args.revision, status };
+    // ORCH-11: what was found travels IN the proposal — the same object the
+    // fingerprint is computed over, stored, and executed — so the confirmed
+    // record keeps the finding instead of an empty note.
+    const details = typeof args.details === "string" ? args.details.slice(0, 2000) : "";
+    // …and the record names the controlled document it is about, as the
+    // drawing route's rows do (verdictRows): the one given, if the caller may
+    // read it; otherwise the single readable document numbered exactly as the
+    // sheet; otherwise none.
+    let documentId: string | null = null;
+    if (typeof args.document_id === "string" && args.document_id) {
+      const { data: doc } = await supabaseAdmin
+        .from("documents").select("id").eq("id", args.document_id).eq("org_id", ctx.orgId).maybeSingle();
+      if (!doc || !(await readableIds(ctx, [args.document_id])).has(args.document_id)) {
+        return { data: { error: "No such document in this org." } };
+      }
+      documentId = args.document_id;
+    } else {
+      const { data: docs } = await supabaseAdmin
+        .from("documents").select("id").eq("org_id", ctx.orgId).eq("document_number", sheet).limit(2);
+      const ids = ((docs ?? []) as Array<{ id: string }>).map((d) => d.id);
+      if (ids.length === 1 && (await readableIds(ctx, ids)).has(ids[0])) documentId = ids[0];
+    }
+    const params = {
+      sheet_number: args.sheet_number, revision: args.revision, status,
+      ...(details ? { details } : {}),
+      ...(documentId ? { document_id: documentId } : {}),
+    };
     const gate = proposal(
       "log_audit_completion",
-      `Record ${args.sheet_number} rev ${args.revision} as ${status}`, params, ctx,
+      `Record ${args.sheet_number} rev ${args.revision} as ${status}${details ? ` — “${details.length > 160 ? `${details.slice(0, 160)}…` : details}”` : ""}`,
+      params, ctx,
     );
     if (gate) return gate;
 
     // An ORG-WIDE row (library_id NULL) on 20261124's key; before 20261124,
     // the org-wide key that database has.
     const row = {
-      org_id: ctx.orgId, sheet_number: sheet,
+      org_id: ctx.orgId, document_id: documentId, sheet_number: sheet,
       revision_code: revision, status,
       audited_at: new Date().toISOString(),
-      audit_details: { note: args.details ?? "", by: ctx.userId, byName: ctx.actorName, source: "orchestrator" },
+      audit_details: { note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator" },
     };
     const { error } = stored.legacy
       ? await supabaseAdmin.from("drawing_audit_logs").upsert(row, { onConflict: "org_id,sheet_number,revision_code" })
