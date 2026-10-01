@@ -12,7 +12,8 @@
 // the page can show the counts BEFORE the admin applies. An apply answers the
 // same counts for what it did: inserted, existing (skipped — never
 // overwritten), heldElsewhere (not restored), uncounted, refused, cleared
-// (written with one nullable pointer cleared).
+// (written with one nullable pointer cleared) and advanced (a numbering
+// counter this workspace held, raised past the restored numbers — fix pass 5).
 //
 // The check reads deployment-wide (heldElsewhere says another workspace holds
 // a key), so EVERY check is recorded too: a RESTORE_PREVIEW audit row per
@@ -85,20 +86,21 @@ export async function POST(req: NextRequest) {
   // Remap, FORCE the org boundary, filter, bound every row by the parents it
   // names, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared } = result;
+  const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared, advanced } = result;
   const counts = {
     inserted,
     ...(existing ? { existing } : {}),
     ...(heldElsewhere ? { heldElsewhere } : {}),
     ...(uncounted ? { uncounted } : {}),
     ...(filtered ? { filtered } : {}),
+    ...(advanced ? { advanced } : {}),
     ...(refused.length ? { refused } : {}),
     ...(cleared.length ? { cleared } : {}),
   };
   // A chunk that failed before writing anything leaves nothing to record. A
   // statement accepted without a count may have written rows (uncounted), so
   // that chunk is recorded too (fix pass 4).
-  if (!result.ok && inserted === 0 && !uncounted && refused.length === 0 && cleared.length === 0) {
+  if (!result.ok && inserted === 0 && !uncounted && !advanced && refused.length === 0 && cleared.length === 0) {
     return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 
@@ -114,6 +116,8 @@ export async function POST(req: NextRequest) {
       ...(existing ? { existing } : {}),
       ...(heldElsewhere ? { heldElsewhere } : {}),
       ...(uncounted ? { uncounted } : {}),
+      ...(filtered ? { filtered } : {}),
+      ...(advanced ? { advanced } : {}),
       ...(refused.length ? { refused } : {}),
       ...(cleared.length ? { cleared } : {}),
       ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),

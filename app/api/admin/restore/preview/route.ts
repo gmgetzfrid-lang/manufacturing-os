@@ -46,8 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Could not read this workspace's ${readErr.what} (${readErr.e.message}) — no plan was made.` }, { status: 500 });
   }
   const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
-    .filter((m) => m.email)
-    .map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
+    .map((m) => ({ uid: m.uid, email: m.email, status: m.status })); // fix pass 5: a member with no address links by uid
 
   const plan = planRestore(envelope, { orgId, orgName, members });
   return NextResponse.json({ plan });

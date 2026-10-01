@@ -5,7 +5,10 @@
 // Re-plans server-side (never trusts the client). Steps:
 //   1. org-name choice (only if the admin picked the backup's name)
 //   2. create inactive "restored" placeholders for unknown emails (no auth, no
-//      seat) and build the full old→new uid map
+//      seat) and build the full old→new uid map — every backup uid of an
+//      address maps to its person (fix pass 5); a backup member with no email
+//      address and no member here under that uid is unmapped, and every row
+//      naming one is refused
 //   3. insert every importable table in FK order through the SAME shared
 //      function the chunked /apply-table uses (lib/dataRestore.ts
 //      applyRestoreChunk): uids remapped, org_id FORCED to this workspace,
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Could not read this workspace's ${readErr.what} (${readErr.e.message}) — nothing was written.` }, { status: 500 });
   }
   const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
-    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
+    .map((m) => ({ uid: m.uid, email: m.email, status: m.status })); // fix pass 5: a member with no address links by uid
   const plan = planRestore(envelope, { orgId, orgName, members });
 
   // ORG-1: no arbitrary table writes. Refused before ANY write (org name,
@@ -115,6 +118,8 @@ export async function POST(req: NextRequest) {
     // name this person until they accept an invitation.
     if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
     created[u.oldUid] = newUid;
+    // Fix pass 5: the backup's other rows for this address name the same person.
+    for (const alias of u.aliasUids ?? []) created[alias] = newUid;
     createdUsers++;
   }
   if (placeholderFailed) {
@@ -124,7 +129,7 @@ export async function POST(req: NextRequest) {
       user_id: actor.userId, user_email: actor.email,
       details: {
         schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile, orgNameApplied,
-        linkedUsers: plan.counts.matchedUsers, totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0,
+        linkedUsers: plan.counts.matchedUsers, unmappedMembers: plan.counts.unmappedUsers, totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0,
         backupOrgId: envelope.manifest.orgId ?? null, tables: [],
         failed: `placeholder for ${placeholderFailed.email}: ${placeholderFailed.message}`,
       },
@@ -145,16 +150,19 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; existing?: number; heldElsewhere?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[]; cleared?: RestoreRowRefusal[] }> = [];
+  const results: Array<{ name: string; inserted: number; existing?: number; heldElsewhere?: number; uncounted?: number; filtered?: number; advanced?: number; error?: string; refused?: RestoreRowRefusal[]; cleared?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
   let totalExisting = 0;
   let totalHeldElsewhere = 0;
+  let totalUncounted = 0;
+  let totalFiltered = 0;
+  let totalAdvanced = 0;
   for (const name of order) {
     const raw = envelope.tables[name];
     // A self-referencing table's rows go parents-first, so no chunk names a row a later one carries.
     const rows = restoreRowsInOrder(name, (Array.isArray(raw) ? raw : []) as Record<string, unknown>[]);
     if (!rows.length) continue;
-    let inserted = 0; let existing = 0; let heldElsewhere = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = []; const cleared: RestoreRowRefusal[] = [];
+    let inserted = 0; let existing = 0; let heldElsewhere = 0; let uncounted = 0; let filtered = 0; let advanced = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = []; const cleared: RestoreRowRefusal[] = [];
     for (let i = 0; i < rows.length; i += 500) {
       const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
       inserted += r.inserted;
@@ -162,16 +170,20 @@ export async function POST(req: NextRequest) {
       heldElsewhere += r.heldElsewhere;
       uncounted += r.uncounted;
       filtered += r.filtered;
+      advanced += r.advanced;
       refused.push(...r.refused);
       cleared.push(...r.cleared);
       if (!r.ok) { error = r.error ?? "restore write failed"; break; }
     }
     // Report what actually landed — earlier chunks committed even on failure.
     // BKP-5: and what did not — rows whose key already exists were skipped.
-    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(heldElsewhere ? { heldElsewhere } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}), ...(cleared.length ? { cleared } : {}) });
+    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(heldElsewhere ? { heldElsewhere } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), ...(advanced ? { advanced } : {}), error, ...(refused.length ? { refused } : {}), ...(cleared.length ? { cleared } : {}) });
     totalInserted += inserted;
     totalExisting += existing;
     totalHeldElsewhere += heldElsewhere;
+    totalUncounted += uncounted;
+    totalFiltered += filtered;
+    totalAdvanced += advanced;
     if (error) {
       // STOP. Tables are FK-ordered parents-before-children: continuing after
       // a parent failure inserts children referencing rows that never landed
@@ -187,20 +199,23 @@ export async function POST(req: NextRequest) {
 
   // 4) Audit — checked (ALOG-8): the DATA_RESTORE row is the only record of
   // what this restore wrote, so a failure to write it is surfaced, never
-  // swallowed.
+  // swallowed. Fix pass 5: with every count the chunked trail carries — rows
+  // accepted without a count (uncounted) are never recorded as 0 written,
+  // and rows the restore's filters dropped are counted.
   const { error: auditErr } = await sb.from("audit_logs").insert({
     action: "DATA_RESTORE", resource_id: orgId, resource_type: "org", org_id: orgId,
     user_id: actor.userId, user_email: actor.email,
     details: {
       schemaVersion: plan.schemaVersion, createdUsers, placeholdersWithoutProfile, orgNameApplied,
-      linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting, totalHeldElsewhere,
+      linkedUsers: plan.counts.matchedUsers, unmappedMembers: plan.counts.unmappedUsers, totalInserted, totalExisting, totalHeldElsewhere,
+      totalUncounted, totalFiltered, ...(totalAdvanced ? { totalAdvanced } : {}),
       backupOrgId: envelope.manifest.orgId ?? null,
-      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}), ...(r.cleared ? { cleared: r.cleared.length } : {}) })),
+      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), ...(r.uncounted ? { uncounted: r.uncounted } : {}), ...(r.filtered ? { filtered: r.filtered } : {}), ...(r.advanced ? { advanced: r.advanced } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}), ...(r.cleared ? { cleared: r.cleared.length } : {}) })),
     },
   });
   if (auditErr) {
     return NextResponse.json(
-      { error: `Records were written but the restore audit row failed: ${auditErr.message}`, totalInserted, tables: results },
+      { error: `Records were written but the restore audit row failed: ${auditErr.message}`, totalInserted, totalUncounted, tables: results },
       { status: 500 },
     );
   }
@@ -211,9 +226,13 @@ export async function POST(req: NextRequest) {
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
     placeholdersWithoutProfile,
+    unmappedMembers: plan.counts.unmappedUsers,
     totalInserted,
     totalExisting,
     totalHeldElsewhere,
+    totalUncounted,
+    totalFiltered,
+    totalAdvanced,
     tables: results,
     failedTables: failed.map((f) => f.name),
     note:
@@ -221,6 +240,18 @@ export async function POST(req: NextRequest) {
       "a restore never overwrites or repairs an existing row. " +
       (totalHeldElsewhere > 0
         ? `${totalHeldElsewhere} record(s) were NOT restored: their ids are in use by another workspace on this deployment. `
+        : "") +
+      (totalUncounted > 0
+        ? `${totalUncounted} record(s) were sent but the server did not report whether they were written — check them before relying on this restore. `
+        : "") +
+      (totalFiltered > 0
+        ? `${totalFiltered} comment(s) on tickets archived since the backup were left out. `
+        : "") +
+      (totalAdvanced > 0
+        ? `${totalAdvanced} numbering counter(s) were advanced past the restored numbers, so no number is issued twice. `
+        : "") +
+      (plan.counts.unmappedUsers > 0
+        ? `${plan.counts.unmappedUsers} backup member(s) with no email address could not be mapped to anyone here; every record naming one was refused. `
         : "") +
       "File binaries are not re-uploaded here — " +
       "any referenced file that isn't in storage will prompt for its archive when opened. " +

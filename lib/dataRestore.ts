@@ -36,8 +36,10 @@ export interface RestoreEnvelopeLike {
 }
 
 /** A member row of the target workspace. `status` is one of
- *  RESTORE_LINK_MEMBER_STATUSES (absent = active, for older callers). */
-export interface CurrentMember { uid: string; email: string; status?: string | null }
+ *  RESTORE_LINK_MEMBER_STATUSES (absent = active, for older callers). A row
+ *  with no address is passed too (fix pass 5): a backup member with no
+ *  address links to the member under the same uid. */
+export interface CurrentMember { uid: string; email: string | null; status?: string | null }
 export interface CurrentOrgContext {
   orgId: string;
   orgName: string;
@@ -73,6 +75,11 @@ export interface UserReconcileItem {
   /** Present when disposition === "linked": that member's status (an
    *  "inactive" one is usually a placeholder an earlier restore created). */
   linkedStatus?: string;
+  /** admin-and-org P1 (fix pass 5): the backup's OTHER membership rows for
+   *  this address, each under its own uid (the export carries every status,
+   *  and 20261018 allows an inactive historical row beside a re-added one).
+   *  Each is mapped to the same person as `oldUid`. */
+  aliasUids?: string[];
 }
 
 export interface TablePlanItem {
@@ -99,10 +106,17 @@ export interface RestorePlan {
     /** old uid → existing uid, for emails already in the workspace. New users
      *  get their uid at apply time (not known until the row is created). */
     uid: Record<string, string>;
+    /** admin-and-org P1 (fix pass 5): backup member uids no person here can
+     *  be found for (no email address, and no member under that uid). A row
+     *  naming one is refused (`person_not_mapped`) — it would otherwise land
+     *  naming the raw backup uid. Absent when there are none. */
+    unmappedUids?: string[];
   };
   counts: {
     matchedUsers: number;
     newUsers: number;
+    /** Backup members that could not be mapped (see idRemap.unmappedUids). */
+    unmappedUsers: number;
     totalRows: number;
     files: number;
     tables: TablePlanItem[];
@@ -471,7 +485,7 @@ export function restoredMemberHeadline(roles: readonly string[]): string {
   return primaryRole(roles as Role[]);
 }
 
-interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string; roles?: string[] | null }
+interface BackupMember { uid?: unknown; email?: unknown; display_name?: string; role?: string; roles?: string[] | null; status?: string | null }
 
 /** Build the reconciliation plan for restoring `env` into `current`. Pure. */
 export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext): RestorePlan {
@@ -496,40 +510,86 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
     return i === -1 ? RESTORE_LINK_MEMBER_STATUSES.length : i;
   };
   const existingByEmail = new Map<string, { uid: string; status: string }>(); // email -> member
+  const existingByUid = new Map<string, string>(); // uid -> status (fix pass 5)
   for (const m of current.members) {
+    if (m.uid && !existingByUid.has(m.uid)) existingByUid.set(m.uid, m.status ?? "active");
     if (!m.email) continue;
     const k = norm(m.email);
     const held = existingByEmail.get(k);
     if (!held || statusRank(m.status) < statusRank(held.status)) existingByEmail.set(k, { uid: m.uid, status: m.status ?? "active" });
   }
 
-  const members = (env.tables.org_members as BackupMember[] | undefined) ?? [];
-  const seenEmail = new Set<string>();
+  const members = ((env.tables.org_members as BackupMember[] | undefined) ?? []).filter((m): m is BackupMember => !!m && typeof m === "object");
+  const text = (v: unknown) => (typeof v === "string" ? v : "");
+  // admin-and-org P1 (fix pass 5): EVERY backup uid is mapped, or the rows
+  // naming it are refused — an uid left out of the map landed its rows
+  // naming the raw backup uid. One person per address: the export carries
+  // every membership row, and one address may hold several, each under its
+  // own uid (20261018 allows an inactive historical row beside a re-added
+  // one). The row with the earliest status in RESTORE_LINK_MEMBER_STATUSES
+  // (then the first given) speaks for the person; every other row's uid is
+  // an ALIAS mapped to the same person. A uid is given to one person only.
+  const ordered = members.map((m, i) => ({ m, i }))
+    .sort((a, b) => statusRank(a.m.status) - statusRank(b.m.status) || a.i - b.i)
+    .map((x) => x.m);
+  const byEmail = new Map<string, UserReconcileItem>();
+  const claimed = new Set<string>();
+  const noAddress: BackupMember[] = [];
   const users: UserReconcileItem[] = [];
-  for (const m of members) {
-    const email = norm(m.email);
-    if (!email || seenEmail.has(email)) continue; // dedupe by email
-    seenEmail.add(email);
+  for (const m of ordered) {
+    const uid = text(m.uid);
+    const email = norm(text(m.email));
+    if (!email) { if (uid) noAddress.push(m); continue; }
+    const own = uid && !claimed.has(uid) ? uid : "";
+    if (own) claimed.add(own);
+    const held = byEmail.get(email);
+    if (held) {
+      if (own && !held.oldUid) held.oldUid = own;
+      else if (own) (held.aliasUids ??= []).push(own);
+      continue;
+    }
     const existing = existingByEmail.get(email);
-    users.push({
-      oldUid: m.uid ?? "",
-      email: (m.email ?? "").trim(),
+    const item: UserReconcileItem = {
+      oldUid: own,
+      email: text(m.email).trim(),
       displayName: m.display_name,
       role: m.role,
       roles: Array.isArray(m.roles) ? m.roles.filter((r): r is string => typeof r === "string") : undefined,
       disposition: existing ? "linked" : "new",
       newUid: existing?.uid,
       ...(existing ? { linkedStatus: existing.status } : {}),
+    };
+    byEmail.set(email, item);
+    users.push(item);
+  }
+  // A backup member with NO address cannot be matched by address. When this
+  // workspace has a member under that very uid (a restore into the same
+  // workspace), it is that person and is linked to them; otherwise no person
+  // here can be found for it, and every row naming it is refused
+  // (person_not_mapped) — never written naming the raw backup uid.
+  const unmapped: Array<{ uid: string; displayName?: string }> = [];
+  for (const m of noAddress) {
+    const uid = text(m.uid);
+    if (claimed.has(uid)) continue;
+    claimed.add(uid);
+    const here = existingByUid.get(uid);
+    if (here === undefined) { unmapped.push({ uid, displayName: m.display_name }); continue; }
+    users.push({
+      oldUid: uid, email: "", displayName: m.display_name, role: m.role,
+      roles: Array.isArray(m.roles) ? m.roles.filter((r): r is string => typeof r === "string") : undefined,
+      disposition: "linked", newUid: uid, linkedStatus: here,
     });
   }
 
-  const idRemap = {
+  const idRemap: RestorePlan["idRemap"] = {
     orgId: { [backupOrgId]: targetOrgId } as Record<string, string>,
     uid: {} as Record<string, string>,
   };
   for (const u of users) {
-    if (u.disposition === "linked" && u.oldUid && u.newUid) idRemap.uid[u.oldUid] = u.newUid;
+    if (u.disposition !== "linked" || !u.newUid) continue;
+    for (const old of [u.oldUid, ...(u.aliasUids ?? [])]) if (old) idRemap.uid[old] = u.newUid;
   }
+  if (unmapped.length > 0) idRemap.unmappedUids = unmapped.map((x) => x.uid);
 
   // ── Per-table import plan ────────────────────────────────────────────────
   const tables: TablePlanItem[] = [];
@@ -556,11 +616,23 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   if (orgNameCollision) {
     warnings.push(`Org name differs: backup "${orgNameCollision.backupName}" vs current "${orgNameCollision.currentName}". Choose which to keep before applying.`);
   }
-  if (users.length === 0) {
+  if (members.length === 0) {
     warnings.push("No members found in the backup (org_members empty) — users cannot be reconciled.");
+  }
+  if (unmapped.length > 0) {
+    const names = unmapped.slice(0, 5).map((x) => x.displayName?.trim() || x.uid).join(", ");
+    warnings.push(
+      `${unmapped.length} backup member(s) have no email address and no membership here under the same id (${names}${unmapped.length > 5 ? ", …" : ""}). ` +
+      "A person is matched by address, so they cannot be mapped to anyone in this workspace: every record naming one is refused, reported row by row. " +
+      "Add their address to the backup's org_members and restore again to bring those records back.",
+    );
   }
 
   const matchedUsers = users.filter((u) => u.disposition === "linked").length;
+  // Exactly the placeholders /begin and /apply create (fix pass 5: the
+  // page's confirm states this count) — a person with no backup uid of their
+  // own names no row, so none is made for them.
+  const newUsers = users.filter((u) => u.disposition === "new" && u.oldUid).length;
 
   return {
     schemaVersion: env.manifest.schemaVersion,
@@ -570,7 +642,8 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
     idRemap,
     counts: {
       matchedUsers,
-      newUsers: users.length - matchedUsers,
+      newUsers,
+      unmappedUsers: unmapped.length,
       totalRows,
       files: env.files?.length ?? env.manifest.files?.count ?? 0,
       tables,
@@ -883,7 +956,10 @@ export function mergeNewUserUids(
   idRemap: RestorePlan["idRemap"],
   created: Record<string, string>,
 ): RestorePlan["idRemap"] {
-  return { orgId: { ...idRemap.orgId }, uid: { ...idRemap.uid, ...created } };
+  return {
+    orgId: { ...idRemap.orgId }, uid: { ...idRemap.uid, ...created },
+    ...(idRemap.unmappedUids?.length ? { unmappedUids: [...idRemap.unmappedUids] } : {}),
+  };
 }
 
 /** Give a restored placeholder its profile row, if the database lets it.
@@ -942,13 +1018,49 @@ export interface RestoreChunkResult {
    *  that is not a row of this workspace). Fix pass 3: emitted only once the
    *  statement carrying the row is accepted — a row the database refuses is
    *  in `refused` alone, and a statement that fails the chunk reports no
-   *  clear for its rows. */
+   *  clear for its rows. Fix pass 5: and only for a row that statement
+   *  WROTE — not for a copy ON CONFLICT DO NOTHING skipped because an
+   *  earlier row of the request carries its key, and not for a row of a
+   *  statement the server gave no count for (that row is `uncounted`). */
   cleared: RestoreRowRefusal[];
+  /** admin-and-org P1 (fix pass 5): numbering counters this workspace
+   *  already held that were ADVANCED to the backup's higher value
+   *  (RESTORE_COUNTER_COLUMNS) — never lowered, nothing else changed. */
+  advanced: number;
   /** Rows left after the restore's own filters (comments of a ticket archived
    *  since the backup are dropped). */
   rowsAfterFilters: number;
   /** Rows dropped by those filters — counted, never silently lost. */
   filtered: number;
+}
+
+/** admin-and-org P1 (fix pass 5): numbering counters, by table → the counter
+ *  column. A restored record keeps the number it was issued
+ *  (tickets.ticket_id, documents.document_number — neither is unique), so a
+ *  counter row this workspace already holds, which an additive restore keeps
+ *  as it is, would hand out numbers the restored records already carry. The
+ *  restore ADVANCES such a counter to the backup's value when that is higher
+ *  — a checked, guarded update (`counter < backup`) that can never lower it
+ *  or change anything else. Both counters are monotonic in the same sense in
+ *  the backup and here: next_ticket_number (20260724) stores the last number
+ *  issued for (org, year); issue_document_number (20260806) the next one to
+ *  issue for the library. */
+export const RESTORE_COUNTER_COLUMNS: Readonly<Record<string, string>> = {
+  ticket_number_counters: "next_seq",
+  library_numbering: "next_number",
+};
+
+/** The first uid of `uids` that `value` names (top level or deep inside JSONB), or null. */
+function namedUid(value: unknown, uids: ReadonlySet<string>): string | null {
+  if (typeof value === "string") return uids.has(value) ? value : null;
+  if (Array.isArray(value)) {
+    for (const v of value) { const hit = namedUid(v, uids); if (hit) return hit; }
+    return null;
+  }
+  if (value && typeof value === "object") {
+    for (const v of Object.values(value as Record<string, unknown>)) { const hit = namedUid(v, uids); if (hit) return hit; }
+  }
+  return null;
 }
 
 /** SQLSTATEs that are a fact about ONE row — class 23, integrity constraint
@@ -986,6 +1098,7 @@ export function restoreRefusalLabel(code: string): string {
     case "23502": return "a required value is missing";
     case "23P01": return "overlaps an existing row";
     case "person_not_restored": return "names a person with no sign-in account yet (a restored placeholder) — re-invite them";
+    case "person_not_mapped": return "names a backup member with no email address, whom the restore cannot map to a person of this workspace";
     case "storage_key_outside_workspace": return "carries a storage key under another workspace's prefix";
     default: return code;
   }
@@ -1107,8 +1220,9 @@ export async function applyRestoreChunk(
   let existing = 0;
   let heldElsewhere = 0;
   let uncounted = 0;
+  let advanced = 0;
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal, 0, params.rows.length);
@@ -1155,6 +1269,27 @@ export async function applyRestoreChunk(
         id: label(r), code: "storage_key_outside_workspace",
         message: `carries the storage key "${hit.value.length > 160 ? `${hit.value.slice(0, 160)}…` : hit.value}" under another workspace's prefix (orgs/${hit.org}/)`,
       });
+    }
+  }
+
+  // (a2) admin-and-org P1 (fix pass 5): a backup member the reconciliation
+  // could not map to any person here (no email address, no member under
+  // that uid — RestorePlan.idRemap.unmappedUids). The remap leaves such a uid
+  // as it is, so the row would land naming the raw backup uid, which may be a
+  // live person of another workspace on this deployment. Refused, top level
+  // or deep inside JSONB, like the remap itself.
+  const unmappedUids = new Set((Array.isArray(idRemap.unmappedUids) ? idRemap.unmappedUids : [])
+    .filter((v): v is string => typeof v === "string" && v.length > 0 && !has(idRemap.uid, v)));
+  const unmappedRefusal = new Map<Record<string, unknown>, RestoreRowRefusal>();
+  if (unmappedUids.size) {
+    for (const r of mapped) {
+      const hit = namedUid(r, unmappedUids);
+      if (hit) {
+        unmappedRefusal.set(r, {
+          id: label(r), code: "person_not_mapped",
+          message: `names ${hit}, a backup member with no email address and no membership here — the restore cannot map them to a person of this workspace`,
+        });
+      }
     }
   }
 
@@ -1242,7 +1377,7 @@ export async function applyRestoreChunk(
         message: `${rule.column} ${typeof v === "string" ? v : "(none)"} is not a ${rule.parent} row of this workspace`,
       };
     }
-    return personRefusal.get(r) ?? null;
+    return personRefusal.get(r) ?? unmappedRefusal.get(r) ?? null;
   };
   // To a fixed point: a refused row's id no longer counts as a parent here.
   const refusedRows: Array<{ row: Record<string, unknown>; why: RestoreRowRefusal }> = [];
@@ -1271,8 +1406,10 @@ export async function applyRestoreChunk(
   // the refusals stand (each is true of the row as it was sent).
   const flagged = [...refusedRows.map((x) => x.row), ...mapped.filter((r) => clears.has(r))];
   const settled = new Set<Record<string, unknown>>();
+  let clearsLocated = true;
   if (flagged.length) {
     const where = await locateRestoreKeys(sb, table, orgId, flagged);
+    clearsLocated = where.ok;
     if (where.ok) {
       for (const r of flagged) {
         const k = restoreKeyOf(table, r);
@@ -1306,15 +1443,32 @@ export async function applyRestoreChunk(
   let skipped = 0;
   let bisectLeft = RESTORE_BISECT_MAX_STATEMENTS;
   const skippedPool: Array<Record<string, unknown>> = [];
+  // Fix pass 5: keys of rows in statements the database accepted (written or
+  // skipped), in the order sent. A cleared row's key was held by no row when
+  // the keys were read above, so ON CONFLICT DO NOTHING can skip it only for
+  // a row sent before it in this request with the same key (when that read
+  // failed, a clear is reported only from a statement that wrote every row).
+  const acceptedKeys = new Set<string>();
   const write = async (rows: Array<Record<string, unknown>>): Promise<{ error: string; code: string } | null> => {
     const up = await sb.from(table).upsert(rows, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
     if (!up.error) {
-      for (const r of rows) { const notes = clearNotes.get(r); if (notes) cleared.push(...notes); }
       // count: "exact" reports the rows the statement WROTE; ON CONFLICT DO
-      // NOTHING skipped the rest. No count is recorded as unknown, never as written.
-      if (typeof up.count !== "number") { uncounted += rows.length; return null; }
-      inserted += up.count;
-      if (up.count < rows.length) { skipped += rows.length - up.count; skippedPool.push(...rows); }
+      // NOTHING skipped the rest. No count is recorded as unknown, never as
+      // written — and a clear is reported only for a row the database took
+      // (fix pass 5): every row of a statement that wrote them all; in a
+      // statement that skipped some, the rows whose key no earlier row of the
+      // request carried; none of a statement with no count (`uncounted`).
+      const counted = typeof up.count === "number";
+      const all = counted && up.count === rows.length;
+      for (const r of rows) {
+        const k = restoreKeyOf(table, r);
+        const notes = clearNotes.get(r);
+        if (notes && counted && (all || (clearsLocated && (k === null || !acceptedKeys.has(k))))) cleared.push(...notes);
+        if (k !== null) acceptedKeys.add(k);
+      }
+      if (!counted) { uncounted += rows.length; return null; }
+      inserted += up.count as number;
+      if ((up.count as number) < rows.length) { skipped += rows.length - (up.count as number); skippedPool.push(...rows); }
       return null;
     }
     const code = String(up.error.code ?? "");
@@ -1357,7 +1511,47 @@ export async function applyRestoreChunk(
     }
   }
   await settleSkipped();
-  return { ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
+
+  // Fix pass 5: a numbering counter this workspace already held is advanced
+  // to the backup's value when that is higher (RESTORE_COUNTER_COLUMNS) —
+  // otherwise the next number issued repeats one a restored record carries.
+  // Checked: a counter that cannot be read or advanced fails the chunk, so
+  // the run stops before the records numbered from it.
+  const counter = has(RESTORE_COUNTER_COLUMNS, table) ? RESTORE_COUNTER_COLUMNS[table] : null;
+  if (counter && mapped.length) {
+    const cols = conflictCols(table);
+    const want = new Map<string, { row: Record<string, unknown>; value: number }>();
+    for (const r of mapped) {
+      const k = restoreKeyOf(table, r);
+      const v = r[counter];
+      if (k === null || typeof v !== "number" || !Number.isFinite(v)) continue;
+      const held = want.get(k);
+      if (!held || v > held.value) want.set(k, { row: r, value: v });
+    }
+    const keyed = Array.from(want.values());
+    for (let i = 0; i < keyed.length; i += 100) {
+      const slice = keyed.slice(i, i + 100);
+      let q = sb.from(table).select(Array.from(new Set([...cols, counter])).join(",")).eq("org_id", orgId);
+      for (const c of cols) q = q.in(c, Array.from(new Set(slice.map((x) => x.row[c] as string | number))));
+      const { data, error } = await q;
+      if (error) return fail(500, `Could not read the ${table} numbering counters to advance them: ${error.message}`, inserted, rowsAfterFilters, error.code ?? null);
+      const live = new Map<string, number>();
+      for (const row of ((data ?? []) as unknown as Array<Record<string, unknown>>)) {
+        const k = restoreKeyOf(table, row);
+        if (k !== null && typeof row[counter] === "number") live.set(k, row[counter] as number);
+      }
+      for (const x of slice) {
+        const now = live.get(restoreKeyOf(table, x.row) as string);
+        if (now === undefined || now >= x.value) continue;
+        let u = sb.from(table).update({ [counter]: x.value }).eq("org_id", orgId);
+        for (const c of cols) u = u.eq(c, x.row[c] as string | number);
+        const { data: moved, error: moveErr } = await u.lt(counter, x.value).select(counter);
+        if (moveErr) return fail(500, `Could not advance the ${table} numbering counter past the restored numbers: ${moveErr.message}`, inserted, rowsAfterFilters, moveErr.code ?? null);
+        advanced += Array.isArray(moved) ? moved.length : 0;
+      }
+    }
+  }
+  return { ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters };
 }
 
 /** BKP-5: what a restore of these rows WOULD do, read-only — how many already
@@ -1445,6 +1639,8 @@ export interface RestoreTableOutcome {
   refused: RestoreRowRefusal[];
   /** Written with one nullable pointer cleared (see RestoreChunkResult.cleared). */
   cleared: RestoreRowRefusal[];
+  /** Numbering counters advanced past the restored numbers (see RestoreChunkResult.advanced). */
+  advanced: number;
   error?: string;
 }
 
@@ -1456,6 +1652,9 @@ export interface ChunkedRestoreResult {
   /** Placeholders /begin could give no profile row (no sign-in account yet):
    *  rows that must name a profile cannot name them (RESTORE_USER_REFERENCES). */
   placeholdersWithoutProfile: number;
+  /** Backup members /begin could map to no person here (no email address,
+   *  no member under that uid): rows naming one are refused (fix pass 5). */
+  unmappedMembers: number;
   totalInserted: number;
   totalExisting: number;
   totalHeldElsewhere: number;
@@ -1463,6 +1662,7 @@ export interface ChunkedRestoreResult {
   totalFiltered: number;
   totalRefused: number;
   totalCleared: number;
+  totalAdvanced: number;
   tables: RestoreTableOutcome[];
   /** BKP-5 Done-when 2: the table the restore STOPPED at (tables are
    *  FK-ordered, so nothing after it was attempted), and why. */
@@ -1554,13 +1754,14 @@ export async function runChunkedRestore(params: {
   const result: ChunkedRestoreResult = {
     idRemap, createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
     placeholdersWithoutProfile: num(begin.body?.placeholdersWithoutProfile),
-    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalCleared: 0,
+    unmappedMembers: num(begin.body?.unmappedMembers),
+    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalCleared: 0, totalAdvanced: 0,
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
   for (const [tablesDone, table] of order.entries()) {
     const rows = tableRows(envelope, table);
-    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [] };
+    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [], advanced: 0 };
     for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
       const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
@@ -1579,6 +1780,7 @@ export async function runChunkedRestore(params: {
       t.heldElsewhere += num(res.body?.heldElsewhere);
       t.uncounted += num(res.body?.uncounted);
       t.filtered += num(res.body?.filtered);
+      t.advanced += num(res.body?.advanced);
       if (Array.isArray(res.body?.refused)) t.refused.push(...(res.body.refused as RestoreRowRefusal[]));
       if (Array.isArray(res.body?.cleared)) t.cleared.push(...(res.body.cleared as RestoreRowRefusal[]));
       if (!res.ok) { t.error = String(res.body?.error ?? `HTTP ${res.status}`); break; }
@@ -1592,6 +1794,7 @@ export async function runChunkedRestore(params: {
     result.totalFiltered += t.filtered;
     result.totalRefused += t.refused.length;
     result.totalCleared += t.cleared.length;
+    result.totalAdvanced += t.advanced;
     if (t.error) {
       result.stoppedAt = { table, error: t.error };
       result.notAttempted = order.slice(order.indexOf(table) + 1);

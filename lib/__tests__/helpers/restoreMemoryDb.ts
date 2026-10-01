@@ -13,7 +13,9 @@
 // Fix pass 2: a write carrying any value for a GENERATED ALWAYS column is
 // refused 428C9 (as Postgres refuses it — not a row-level code), and, with
 // `authUsers` set, `users` behaves like users.id REFERENCES auth.users: a
-// profile for a uid that is no sign-in account is refused 23503.
+// profile for a uid that is no sign-in account is refused 23503. Fix pass 5:
+// `lt` filters (a guarded update), and `update(...).select()` answers the
+// rows it changed.
 
 export type Row = Record<string, unknown>;
 
@@ -113,6 +115,7 @@ export function from(table: string) {
     in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return b; },
     not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
+    lt: (c: string, v: unknown) => { filters.push((r) => typeof r[c] === "number" && typeof v === "number" && (r[c] as number) < v); return b; },
     order: () => b, limit: () => b,
     range: (from: number, to: number) => { range = [from, to]; return b; },
     maybeSingle: () => { single = true; return b; },

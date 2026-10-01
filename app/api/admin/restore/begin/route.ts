@@ -9,6 +9,10 @@
 //     status, so a placeholder an earlier run created is linked again,
 //   • creates inactive "restored" placeholders for unknown emails
 //     (idempotent — an email that already exists is linked, not duplicated),
+//     and maps EVERY backup uid of that address to it (fix pass 5: one
+//     address may hold several backup rows, each under its own uid),
+//   • lists backup members with no email address that no member here holds
+//     the uid of (idRemap.unmappedUids) — rows naming one are refused,
 //   • applies the org-name choice,
 // and returns the full old→new uid map + org map. The client then streams
 // tables through /api/admin/restore/apply-table in FK order.
@@ -66,7 +70,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Could not read this workspace's ${readErr.what} (${readErr.e.message}) — nothing was written.` }, { status: 500 });
   }
   const current: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
-    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
+    .map((m) => ({ uid: m.uid, email: m.email, status: m.status })); // fix pass 5: a member with no address links by uid
   const plan = planRestore(
     { manifest: { orgId: parsed.manifest.orgId, orgName: parsed.manifest.orgName }, tables: { org_members: members } },
     { orgId, orgName, members: current },
@@ -106,6 +110,8 @@ export async function POST(req: NextRequest) {
     // they accept an invitation — the restore clears or refuses them.
     if (!(await placeholderProfile(sb, newUid, u.email, u.displayName))) placeholdersWithoutProfile++;
     created[u.oldUid] = newUid;
+    // Fix pass 5: the backup's other rows for this address name the same person.
+    for (const alias of u.aliasUids ?? []) created[alias] = newUid;
     createdUsers++;
   }
   const idRemap = mergeNewUserUids(plan.idRemap, created);
@@ -127,6 +133,7 @@ export async function POST(req: NextRequest) {
       linkedUsers: plan.counts.matchedUsers,
       createdUsers,
       placeholdersWithoutProfile,
+      unmappedMembers: plan.counts.unmappedUsers,
       ...(placeholderFailed ? { failed: `placeholder for ${placeholderFailed.email}: ${placeholderFailed.message}` } : {}),
     },
   });
@@ -155,6 +162,7 @@ export async function POST(req: NextRequest) {
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
     placeholdersWithoutProfile,
+    unmappedMembers: plan.counts.unmappedUsers,
     warnings: [
       ...plan.warnings,
       ...(placeholdersWithoutProfile > 0

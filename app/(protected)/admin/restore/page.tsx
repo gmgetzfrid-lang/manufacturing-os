@@ -8,7 +8,9 @@
 //      is computed locally, zero writes.
 //   2. Review the plan — user reconciliation by email, org-name collision,
 //      exactly which tables import.
-//   3. Restore records — a read-only check first (how many backup rows
+//   3. Restore records — the plan is made again from this workspace's
+//      members as they are NOW (an earlier stopped run may have made some of
+//      its placeholders), then a read-only check (how many backup rows
 //      already exist here, how many are new), then chunked through
 //      /api/admin/restore/begin + /apply-table so any size of backup fits
 //      under request limits. A restore only ADDS (DEC-44 (A&O P1)): an
@@ -84,6 +86,7 @@ export default function RestorePage() {
   // The parsed backup. Held in refs — these can be tens of MB and never need
   // to drive a render on their own.
   const envelopeRef = useRef<RestoreEnvelopeLike | null>(null);
+  const archiveWarningsRef = useRef<string[]>([]);
   // BKP-7: every dropped part, and every binary across them.
   const zipsRef = useRef<ZipLike[]>([]);
   const archiveFilesRef = useRef<BackupArchiveRead["files"]>([]);
@@ -101,6 +104,25 @@ export default function RestorePage() {
     return data.session?.access_token ?? "";
   }, []);
 
+  // The plan against this workspace as it is NOW. Members of every status
+  // link by email, as /begin links them: a re-run finds the placeholders an
+  // earlier run created (never a second set under new ids). Checked (fix
+  // pass 4): a plan made against an unread member list would show every
+  // backup person as new — it throws instead. Read-only.
+  const readAndPlan = useCallback(async (envelope: RestoreEnvelopeLike, orgId: string): Promise<RestorePlan> => {
+    const [{ data: orgRow, error: orgReadErr }, { data: memberRows, error: memberReadErr }] = await Promise.all([
+      supabase.from("orgs").select("name").eq("id", orgId).maybeSingle(),
+      supabase.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]),
+    ]);
+    const readErr = memberReadErr ? { what: "members", e: memberReadErr } : orgReadErr ? { what: "name", e: orgReadErr } : null;
+    if (readErr) throw new Error(`Could not read this workspace's ${readErr.what} (${readErr.e.message}) — no plan was made and nothing was written.`);
+    // Fix pass 5: a member with no address is passed too (it links by uid).
+    const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null; status: string | null }>)
+      .map((m) => ({ uid: m.uid, email: m.email, status: m.status }));
+    const p = planRestore(envelope, { orgId, orgName: ((orgRow as { name?: string } | null)?.name ?? ""), members });
+    return { ...p, warnings: [...archiveWarningsRef.current, ...p.warnings] };
+  }, []);
+
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
   const handleFiles = useCallback(async (dropped: File[]) => {
     if (!activeOrgId || dropped.length === 0) return;
@@ -108,7 +130,7 @@ export default function RestorePage() {
     setFileName(dropped.length === 1 ? dropped[0].name : `${dropped.length} files: ${dropped.map((f) => f.name).join(", ")}`);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
-    envelopeRef.current = null; zipsRef.current = []; archiveFilesRef.current = []; setFileEntryCount(0);
+    envelopeRef.current = null; zipsRef.current = []; archiveFilesRef.current = []; archiveWarningsRef.current = []; setFileEntryCount(0);
     idRemapRef.current = null;
 
     const zips = dropped.filter((f) => /\.zip$/i.test(f.name));
@@ -140,39 +162,37 @@ export default function RestorePage() {
         throw new Error("Not a recognizable backup: missing manifest/tables.");
       }
 
-      // Current workspace context for the local plan. Members of every status
-      // link by email, as /begin links them: a re-run finds the placeholders
-      // an earlier run created (never a second set under new ids).
-      const [{ data: orgRow, error: orgReadErr }, { data: memberRows, error: memberReadErr }] = await Promise.all([
-        supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle(),
-        supabase.from("org_members").select("uid, email, status").eq("org_id", activeOrgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]),
-      ]);
-      // Checked (fix pass 4): a plan made against an unread member list would
-      // show every backup person as new — no plan is shown instead.
-      const readErr = memberReadErr ? { what: "members", e: memberReadErr } : orgReadErr ? { what: "name", e: orgReadErr } : null;
-      if (readErr) throw new Error(`Could not read this workspace's ${readErr.what} (${readErr.e.message}) — no plan was made and nothing was written.`);
-      const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null; status: string | null }>)
-        .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
-      const p = planRestore(envelope, {
-        orgId: activeOrgId,
-        orgName: ((orgRow as { name?: string } | null)?.name ?? ""),
-        members,
-      });
+      // Current workspace context for the local plan (checked; see readAndPlan).
+      archiveWarningsRef.current = archiveWarnings;
+      const p = await readAndPlan(envelope, activeOrgId);
       envelopeRef.current = envelope;
-      setPlan({ ...p, warnings: [...archiveWarnings, ...p.warnings] });
+      setPlan(p);
       setKeepName("current");
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [activeOrgId]);
+  }, [activeOrgId, readAndPlan]);
 
-  // ── 3. Check, confirm, then the chunked apply (begin → apply-table, FK order) ─
+  // ── 3. Re-plan, check, confirm, then the chunked apply (begin → apply-table, FK order) ─
   const applyRestore = async () => {
     const envelope = envelopeRef.current;
     if (!activeOrgId || !envelope || !plan) return;
     setError(null);
+    // Fix pass 5: plan again against the members as they are NOW — a run
+    // /begin stopped (a refused placeholder) kept the placeholders it made,
+    // and a re-run links them, so the plan made at drop time would overstate
+    // the placeholders this run creates. The confirm's count is this plan's.
+    let fresh: RestorePlan;
+    try {
+      fresh = await readAndPlan(envelope, activeOrgId);
+    } catch (e) {
+      setApplyProgress((p) => ({ ...p, phase: "error" }));
+      setError((e as Error).message);
+      return;
+    }
+    setPlan(fresh);
     const token = await authToken();
     const post: RestorePost = async (path, body) => {
       const res = await fetch(path, {
@@ -188,7 +208,7 @@ export default function RestorePage() {
       // BKP-5: before anything is written, how many backup rows already exist
       // here (kept as they are), how many ids another workspace holds (cannot
       // be restored here) and how many would be new. Read-only.
-      const check = await previewChunkedRestore({ orgId: activeOrgId, envelope, plan, post, onProgress });
+      const check = await previewChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, post, onProgress });
       setPreview(check);
       setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
       const ok = await appConfirm({
@@ -201,12 +221,16 @@ export default function RestorePage() {
           (check.heldElsewhere > 0
             ? `${fmtNum(check.heldElsewhere)} record(s) will NOT be restored: ${RESTORE_HELD_ELSEWHERE_NOTE} `
             : "") +
-          `${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). ${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.`,
+          `${fresh.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). ` +
+          (fresh.counts.unmappedUsers > 0
+            ? `${fresh.counts.unmappedUsers} backup member(s) with no email address cannot be mapped to anyone here — every record naming one will be refused. `
+            : "") +
+          `${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.`,
         tone: "danger",
         confirmLabel: "Apply restore",
       });
       if (!ok) return;
-      const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan, orgNameChoice: keepName, post, onProgress });
+      const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress });
       idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
@@ -391,10 +415,13 @@ export default function RestorePage() {
               <div className="px-4 py-2.5 border-b border-[var(--color-border)] text-xs font-black text-[var(--color-text)] uppercase tracking-widest flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> User reconciliation (by email)</div>
               <div className="divide-y divide-[var(--color-border)] max-h-72 overflow-y-auto">
                 {plan.users.map((u) => (
-                  <div key={u.email} className="px-4 py-2 flex items-center gap-3">
+                  <div key={`${u.email}|${u.oldUid}`} className="px-4 py-2 flex items-center gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-[var(--color-text)] truncate">{u.displayName || u.email}</div>
-                      <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
+                      <div className="text-xs font-bold text-[var(--color-text)] truncate">{u.displayName || u.email || u.oldUid}</div>
+                      <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">
+                        {u.email || "no email address — matched by id"}{u.role ? ` · ${u.role}` : ""}
+                        {u.aliasUids?.length ? ` · ${u.aliasUids.length + 1} membership rows in the backup` : ""}
+                      </div>
                     </div>
                     {u.disposition === "linked" ? (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
@@ -540,6 +567,7 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
           {result.totalHeldElsewhere > 0 && <> · <b>{fmtNum(result.totalHeldElsewhere)}</b> NOT restored (ids in use by another workspace)</>}
           {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
           {result.totalFiltered > 0 && <> · <b>{fmtNum(result.totalFiltered)}</b> comment(s) on tickets archived since the backup left out</>}
+          {result.totalAdvanced > 0 && <> · <b>{fmtNum(result.totalAdvanced)}</b> numbering counter(s) advanced past the restored numbers</>}
           {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
         </div>
         {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}
@@ -569,6 +597,11 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
             {Array.from(new Set(t.cleared.map((r) => restoreRefusalLabel(r.code)))).join("; ")}).
           </div>
         ))}
+        {result.unmappedMembers > 0 && (
+          <div>
+            <b>{fmtNum(result.unmappedMembers)}</b> backup member(s) have no email address and no membership here, so no person here could be found for them — every record naming one was refused (above). Add their address to the backup&apos;s org_members and restore again.
+          </div>
+        )}
         {result.placeholdersWithoutProfile > 0 && (
           <div>
             <b>{fmtNum(result.placeholdersWithoutProfile)}</b> restored placeholder(s) have no sign-in account yet, so a team membership naming one was not restored and a team creator / adder naming one was cleared — add them to their teams again once they accept the invitation.

@@ -79,6 +79,45 @@ describe("planRestore — additive users by email", () => {
       current({ members: [] }),
     );
     expect(plan.users).toHaveLength(1);
+    // admin-and-org P1 (fix pass 5): the second row's uid is not dropped — it names the same person.
+    expect(plan.users[0]).toMatchObject({ oldUid: "u1", aliasUids: ["u2"], disposition: "new" });
+  });
+
+  it("fix pass 5: every backup uid is mapped once — aliases of a linked person, a uid under two addresses given to the first, junk rows ignored", () => {
+    const plan = planRestore(
+      env({ tables: { org_members: [
+        null as unknown as Record<string, unknown>,
+        { uid: "u1", email: "dup@acme.com", status: "inactive" },
+        { uid: "u2", email: "DUP@acme.com", status: "active" },
+        { uid: "u2", email: "other@acme.com" },
+        { email: "nouid@acme.com" },
+        { uid: "u9", email: "" },
+        { uid: "u1", email: null },
+      ] } }),
+      current({ members: [{ uid: "live-dup", email: "dup@acme.com", status: "active" }, { uid: "u9", email: null, status: "inactive" }] }),
+    );
+    expect(plan.idRemap.uid).toEqual({ u2: "live-dup", u1: "live-dup", u9: "u9" });
+    expect(plan.users.map((u) => [u.email, u.oldUid, u.aliasUids ?? []])).toEqual([
+      ["DUP@acme.com", "u2", ["u1"]],
+      ["other@acme.com", "", []],
+      ["nouid@acme.com", "", []],
+      ["", "u9", []],
+    ]);
+    // a person with no uid of their own names no row: no placeholder is made or counted
+    expect(plan.counts).toMatchObject({ matchedUsers: 2, newUsers: 0, unmappedUsers: 0 });
+    expect(plan.idRemap.unmappedUids).toBeUndefined();
+    expect(plan.warnings.some((w) => w.includes("No members"))).toBe(false);
+  });
+
+  it("fix pass 5: a member with no address and no member here under that uid is unmapped — listed, warned, and carried through mergeNewUserUids", () => {
+    const plan = planRestore(env({ tables: { org_members: [{ uid: "u_ghost", email: null, display_name: "Ghost" }] } }), current());
+    expect(plan.users).toEqual([]);
+    expect(plan.counts).toMatchObject({ unmappedUsers: 1, matchedUsers: 0, newUsers: 0 });
+    expect(plan.idRemap.unmappedUids).toEqual(["u_ghost"]);
+    expect(plan.warnings.some((w) => w.includes("No members"))).toBe(false);
+    expect(plan.warnings.some((w) => w.includes("have no email address and no membership here under the same id (Ghost)"))).toBe(true);
+    expect(mergeNewUserUids(plan.idRemap, { x: "y" }).unmappedUids).toEqual(["u_ghost"]);
+    expect(mergeNewUserUids({ orgId: {}, uid: {} }, {})).toEqual({ orgId: {}, uid: {} });
   });
 
   it("warns when the backup has no members", () => {
