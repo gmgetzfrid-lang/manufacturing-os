@@ -32,7 +32,7 @@ The core document-control risk of caching: a superseded drawing served from disk
 ## OFF-1 · The QR verify verdict is cached and replayed offline — a superseded drawing can be answered "CURRENT" from a week-old cache, and the fail-safe error branch becomes unreachable
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:207-220`, `public/sw.js:116-120`, `app/verify/[docId]/page.tsx:44-49`, `app/api/verify/route.ts:96-108`, `app/verify-hold/[holdId]/page.tsx:33-38`, `app/api/verify-hold/route.ts:53-61`, `app/api/verify-package/route.ts:67-76`, `app/api/verify-ticket/route.ts:91-102`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Mechanism confirmed for all four verify routes (verify, verify-hold, verify-ticket, verify-package are all uncached GETs behind the same catch-all). Two small overstatements worth recording: the error branch is not unconditionally unreachable — a first-ever offline scan gets sw.js's 503 `unavailableResponse()` and does show 'Can't verify this code'; and the page prints a stale `Checked {new Date(result.checkedAt).toLocaleString()}` (page.tsx:140-141), though at 10px in white/60 under a full-screen green CURRENT.
@@ -74,6 +74,20 @@ public/sw.js:117 — `if (!response || !response.ok || response.type === "opaque
 
 *Cross-package note (2026-10-01, public-surfaces Round F, PS-VERIFY): done-when 3 landed via `VFY-13` — all four verify routes export `dynamic = "force-dynamic"` and answer only through `verifyJson` (`Cache-Control: no-store`, errors and 429 included), and the three verify pages fetch with `cache: "no-store"` (`lib/__tests__/verifyDoor.test.ts`). Done-when 1, 2 and 4 — the service worker — remain PKG-1 SW-OFFLINE's; OFF-1 stays OPEN.*
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d` with the new suite written first (`OFF-14`): the verify-replay mechanism itself had already been closed there by document-control `XEDGE-6` (P2 EGRESS, 2026-09-23) — the v6 worker refused every same-origin `/api/` write and never consulted the cache for an `/api/` request offline, and the new per-route verify cases pass against it. What was still open: done-when 2 — v6's only exclusion was the blanket `/api/` rule behind an allow-list, so a path added to that allow-list would have re-admitted a verdict (the precedence case below fails against v6) — and the per-route evidence for done-when 1 and 4.
+- `public/sw.js` (schema 7): `NEVER_CACHE_PREFIXES` (`:320`) — `/api/verify` (a prefix: `/api/verify`, `-hold`, `-package`, `-ticket`), the four scan-landing pages `/verify/`, `/verify-hold/`, `/verify-package/`, `/verify-ticket/`, `/api/share/`, `/share/`, `/api/storage/`, `/api/transmittal`, `/transmittal/`, `/api/intake/`, `/submit/`, `/d/` — is the first test in `isCacheableRequest` (`:353`), ahead of the `/api/` rule and `CACHEABLE_API_PREFIXES`. `cachePut` refuses those requests; `cachedFallback` (`:469`) returns before any `caches.match` for them, so not even a leftover is replayed; the cache-first static branch is never entered for them. Offline, a verify API fetch gets the worker's `503 offline: not cached`, and every verify page treats `!res.ok` as its error branch (`app/verify/[docId]/page.tsx:35`, `app/verify-hold/[holdId]/page.tsx:29`, `app/verify-package/[packageId]/page.tsx:37`, `app/verify-ticket/[ticketId]/page.tsx:78`).
+- The scan itself — the page NAVIGATION — is answered by the worker (fix pass, after review). The first cut of this package left the verify pages cacheable on the claim that "a cached page shell is what lets an offline scan reach the page's own fail-safe screen". That claim was false: the four pages are dynamic routes (no `generateStaticParams`; none of them is in `.next/prerender-manifest.json`'s `routes`, and `dynamicRoutes` is empty), so Next 16 renders them on demand with `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate`, which `isCacheableResponse` refuses — no verify page is ever cached, and an offline scan landed on the generic `/offline` page (or the inline notice), with no word about the print or the hold tag. Now the navigate branch's `catch` (`:581-587`), after the abort check and before any cache or `/offline` fallback, recognises a verify page (`VERIFY_PAGES` / `verifyPageFor`, `:256-265`) and answers with `verifyFailSafeResponse` (`:271`): a `503` `no-store` HTML screen on the pages' neutral slate background carrying that page's own heading and instruction — `/verify/` "Can't verify this code" + "If this QR came from a printed drawing, contact Document Control before using the print."; `/verify-hold/` "Can't verify this tag" + "Treat the hold as ACTIVE until Document Control confirms otherwise."; `/verify-package/` and `/verify-ticket/` their own lines — plus "You're offline — this can only be checked against the live record" and a "Try again" link back to the same scan (HTML-escaped). Never a coloured verdict. The four pages are on the never-cache list too, so no leftover of a page is ever served in its place.
+- Tests: `lib/__tests__/sw.test.ts` "OFF-1 / OFF-5 / OFF-6 / OFF-7 / SHR-9 — the never-cache list": for each of ten routes (the four verify routes among them) a 200 with no cache header is served and never written; offline with a leftover in the runtime cache, the shell cache and a v6 runtime cache, no cache is consulted and the answer is a 503 without the payload; "OFF-1 done-when 4 (the API half)" (scan online, lose the network, scan again → the failure, nothing stored); "the never-cache list wins even over an /api/ allow-list entry" (the worker loaded with `CACHEABLE_API_PREFIXES = ["/api/"]` still refuses `/api/verify` and `/api/share/resolve`, and stores `/api/codebook`). "OFF-1 done-when 4 — an offline QR scan lands on the page's own fail-safe screen…": for each of the four pages, an offline navigation with nothing cached for it (and `/offline` precached) is a 503 carrying the page's heading and instruction, no verdict word, not the offline page; the review's scenario — a HOLD tag scanned online with the page served `private, no-cache, no-store` as Next serves it, a leftover of the page planted in the runtime and shell caches, three days on scanned offline → "Treat the hold as ACTIVE until Document Control confirms otherwise.", no cache consulted; each page online is served and never written; the worker's heading and instruction are read back out of each page's error branch (`app/verify*/…/page.tsx`), so copy drift fails CI; "Try again" is the same scan, escaped, and an aborted scan still rethrows; `/verifications` is not a verify page. These cases fail against the first cut (`0916d17`).
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ No response for `/api/verify`, `/api/verify-hold`, `/api/verify-package` or `/api/verify-ticket` is written to any cache or served from one; offline the request fails (503) and the page's error branch runs.
+2. ✓ `NEVER_CACHE_PREFIXES` in `public/sw.js`, asserted per route by test, and asserted to win over the API allow-list.
+3. ✓ Landed earlier by PS-VERIFY (`VFY-13`, note above).
+4. ✓ In the worker harness, for the navigation as well as the API call: an offline scan of a printed QR or a hold tag on a device running this worker gets the worker's fail-safe screen with the page's own "Can't verify this code / this tag" heading and its instruction ("…contact Document Control before using the print", "Treat the hold as ACTIVE until Document Control confirms otherwise"), never a coloured verdict and never the generic offline page; and if the page itself is somehow up, its `/api/verify*` call fails and the page's own error branch runs. (The first cut claimed this on the API case alone; in production that path never ran — see the fix-pass bullet above.) Not observed on a physical device (no browser in this environment).
+
+**Scope / residual.** None in the worker. Outside it: a device that has never installed the worker (a first-ever scan, or a browser that refuses service workers) gets the browser's own "no connection" page — no verdict, but no instruction either; the pages cannot help there. A device still running a v5/v6 worker keeps that worker's behaviour until this one activates — it now waits for the update tap or for every tab to close (`OFF-4`) — and activate then drops every cache not named for the new VERSION (`OFF-11`).
+
 ---
 
 <a id="off-2"></a>
@@ -81,7 +95,7 @@ public/sw.js:117 — `if (!response || !response.ok || response.type === "opaque
 ## OFF-2 · A field device that has been offline shows "No workspace found — ask your admin to add you": the membership query's error is discarded and read as an answer
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/page.tsx:72-85`, `app/page.tsx:241-262`, `components/providers/RoleContext.tsx:125-128`, `components/providers/RoleContext.tsx:169-187`, `app/(protected)/layout.tsx:49-50`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The RoleContext locations cited are the contrast, not the bug: RoleContext.tsx:126-128 explicitly comments 'Every query THROWS on error so the retry loop below can tell "the lookup failed" apart from "this account truly has no membership"', retries 3× (169-178) and lands on `setMembershipState("error")` → `MembershipErrorScreen` at app/(protected)/layout.tsx:50. The login page never got that fix, and it is the PWA's start URL.
@@ -125,6 +139,16 @@ app/page.tsx:72-78 quoted above — the destructure is `const { data: membership
 - [ ] The offline/lookup-failure case renders a retry screen that does not accuse the account and does not offer Sign out as the primary action
 - [ ] Launching the installed PWA with the network disabled never shows "No workspace found"
 
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only close — resolved elsewhere by identity-and-session `ORGSEL-2` / `SESS-4` (commit `c111433`). Verified at `564720d`: `app/page.tsx` no longer queries `org_members` — `routeAuthedUser` (`:65-92`) routes to `/dashboard` unconditionally and the page's own "no-workspace" view is gone (`:242-245`); `RoleProvider` makes the one membership decision, every query throws on `error` (`components/providers/RoleContext.tsx:226`, `:236`, `:258`), three attempts with backoff, and an exhausted lookup lands on `membershipState = "error"` (`:286`), rendered by the protected layout's `MembershipErrorScreen` ("Couldn't load your workspace … a network hiccup, not a permissions change", Try again, no Sign out — `app/(protected)/layout.tsx:70`, `:220`). `"none"` (`RoleContext.tsx:344`, `NotAMemberScreen`) is reached only from a lookup that succeeded and found nothing.
+- No code changed in this package.
+
+**Done-when.**
+1. ✓ The login page no longer looks up membership; the provider tells "lookup failed" from "no membership" (`ORGSEL-2`).
+2. ✓ A lookup failure renders the retry screen — no accusation, no Sign out.
+3. ✓ By construction: "No workspace found" no longer exists in `app/page.tsx`, and the layout's not-a-member screen needs a successful empty lookup. Not observed with an installed PWA (no browser here).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="off-3"></a>
@@ -132,7 +156,7 @@ app/page.tsx:72-78 quoted above — the destructure is `const { data: membership
 ## OFF-3 · "Offline — showing cached data" and the offline page's "data you opened recently are still available" are both false: the worker deliberately caches none of the app's data
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/pwa/ServiceWorkerManager.tsx:74-79`, `components/pwa/ServiceWorkerManager.tsx:5-7`, `app/offline/page.tsx:14-18`, `public/sw.js:15-17`, `public/sw.js:125`, `app/(protected)/layout.tsx:1-26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Substance holds — the pill and the offline page both assert cached data that does not exist for any Supabase-backed panel, and the pill appears regardless. One correction to the wording: 'the worker deliberately caches none of the app's data' is too absolute — public/sw.js:203-220 does cache same-origin GET API responses (that is precisely the mechanism OFF-1/OFF-5/OFF-6 rely on); it is the cross-origin data, i.e. nearly all of it, that is uncached.
@@ -162,6 +186,21 @@ public/sw.js:15-17 and 125 — the exclusion is explicit and deliberate. compone
 - [ ] If the claim is to be made true instead, a deliberate offline data store exists with an explicit staleness timestamp per record, and the pill reports that timestamp
 - [ ] Offline state is derived from actual fetch failures, not `navigator.onLine` alone
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE; the plan's default — a copy fix, not a real offline store — taken. Reproduced at `564720d`: `components/pwa/ServiceWorkerManager.tsx:77` rendered "Offline — showing cached data" off `navigator.onLine` alone (`:24-28`), and `app/offline/page.tsx:15-17` said "Pages and data you opened recently are still available".
+- `components/pwa/ServiceWorkerManager.tsx`: the pill renders `OFFLINE_PILL_TEXT` (`:27`) — "Offline — can't reach the server; data may be missing or out of date"; the docblock no longer promises cached data. Offline is `browserOffline || unreachable` (`:80`): `unreachable` follows the worker's `{ type: "NETWORK", ok }` messages (`networkSignal`, `:39`); on mount the page asks the worker what it last saw (`NETWORK_STATUS`, `:99`); while offline it probes `/api/version` every 20 s and on the `online` event to clear itself.
+- `public/sw.js`: `reportNetwork` (`:516`) posts `NETWORK ok:false` to every window on a genuine (not aborted) fetch failure in any branch, and `ok:true` when a navigation or a data GET answers again — one message per change; `NETWORK_STATUS` is answered with the last observation, or not at all before there is one. The cache-first static branch reports failures only (fix pass, after review): a hashed `/_next/static` asset can resolve from the browser's HTTP cache with no route out, and reporting that as "the network answers" cleared the pill on an offline device and let it flap.
+- `app/offline/page.tsx`: "Documents, drawings and their status are read live and are not kept on this device, so nothing here can be checked until you reconnect — don't rely on a screen you opened earlier as current." The worker's inline last-resort page now says "This page isn't available offline" (was "isn't cached yet").
+- Tests: `sw.test.ts` "OFF-3 — the worker reports what actually happened on the network" (ok:false once per change, ok:true on recovery; a static asset that resolves while the device is offline posts no ok:true and `NETWORK_STATUS` still answers ok:false — fails against the first cut, `0916d17`; a failing static asset still reports ok:false; an aborted request reports nothing; `NETWORK_STATUS`) and "OFF-3 / OFF-4 — the page side" (the pill has no "cached" and says "missing"; the offline page has no "still available"; `networkSignal`; the manager derives offline from both sources).
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ The pill says the server can't be reached and data may be missing — not that cached data is shown.
+2. ✓ The offline page no longer claims recently opened data is available.
+3. — Not taken: the plan default (stated to the user 2026-09-17) is the copy fix; no offline data store exists, so nothing claims one.
+4. ✓ Offline is derived from the fetch failures the worker observes, not `navigator.onLine` alone.
+
+**Scope / residual.** The worker sees only same-origin requests: a cross-origin Supabase read failing while same-origin traffic still answers does not raise the pill (the screens' own error states cover that). The manager is mounted in the root layout, so the public pages show the honest pill too — intended.
+
 ---
 
 <a id="off-4"></a>
@@ -169,7 +208,7 @@ public/sw.js:15-17 and 125 — the exclusion is explicit and deliberate. compone
 ## OFF-4 · "Update available — tap to refresh" is an inert button: install-time skipWaiting means the worker is already activated when the toast appears, so applyUpdate waits forever for a statechange that already fired
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/pwa/ServiceWorkerManager.tsx:60-70`, `components/pwa/ServiceWorkerManager.tsx:36-46`, `public/sw.js:43-50`, `public/sw.js:52-65`, `public/sw.js:68-70`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: `reg.waiting` (line 45) is also normally null under install-time skipWaiting, so the statechange path is the only one that arms the toast, and it arms it with a worker that is about to activate on its own. The only way the tap works is the sub-millisecond race where the user taps while the worker is still in 'activating'.
@@ -217,6 +256,19 @@ public/sw.js:47-48 — `.then(() => self.skipWaiting())` is inside the `install`
 - [ ] applyUpdate reloads on `navigator.serviceWorker` `controllerchange`, and falls back to an unconditional `window.location.reload()` after a short timeout so the button can never do nothing
 - [ ] Tapping the pill on a device with a new worker installed reloads the page into the new build every time
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE; plan default (remove install-time `skipWaiting`) taken. Reproduced at `564720d`: `public/sw.js:59` chained `self.skipWaiting()` inside the install handler's `waitUntil`, and `ServiceWorkerManager.tsx:60-70` waited for a `statechange` to `activated` that had already happened.
+- `public/sw.js`: install only precaches the shell (`:128`) — a new worker installs and WAITS; the `SKIP_WAITING` message (kept) or every tab of the old build closing activates it; `activate` still `clients.claim()`s.
+- `components/pwa/ServiceWorkerManager.tsx`: `applyServiceWorkerUpdate` (`:55`) listens for `controllerchange`, posts `SKIP_WAITING` to the waiting worker, and arms an unconditional reload after `UPDATE_RELOAD_FALLBACK_MS` (3 s); it reloads exactly once, and at once when there is no waiting worker, no service-worker API, or the post throws.
+- Tests: `sw.test.ts` "install never calls skipWaiting — a new worker waits; only the SKIP_WAITING message activates it" (the install handler's source carries no `skipWaiting` either); the install case in "one failing shell asset…"; "tapping the toast tells the WAITING worker to take over and reloads on controllerchange — once"; "the button can never do nothing: no controllerchange → an unconditional reload after the timeout"; "no waiting worker, no service worker API, or a worker that refuses the message → reload at once".
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ `self.skipWaiting()` is gone from the install handler; the `SKIP_WAITING` handler is meaningful again.
+2. ✓ `applyUpdate` reloads on `controllerchange`, with a 3 s unconditional fallback.
+3. ✓ In the unit harness the tap always reloads — on `controllerchange` or, failing that, after 3 s. Not observed on a device.
+
+**Scope / residual.** With no install-time takeover, a deploy reaches an open tab through the toast, `UpdatePill`, or closing every tab — the docblock's "on their own schedule". **Double prompt (found in review; fixed at integration, 2026-10-01):** because `sw.js` now changes on every Vercel deploy and waits, a signed-in user sees both `UpdatePill` ("This tab is running an old version — tap to load the update", top) and this toast ("Update available — tap to refresh", bottom-left) after a deploy; tapping `UpdatePill` reloads under the old controller, the new build's `ServiceWorkerManager` finds `reg.waiting` and shows the toast again, so the user who just updated was asked to update a second time. The integrator fixed it before the merge: `UpdatePill`'s button now calls `loadLatestBuild` (`components/pwa/ServiceWorkerManager.tsx`). That asks the registration for its waiting worker and activates it exactly as the toast does: `SKIP_WAITING`, then a reload on `controllerchange`, with the same fallback. With no registration, no waiting worker or a failed lookup it reloads plainly, as before. Tests in `lib/__tests__/sw.test.ts` cover a waiting worker activated, the four reload-at-once cases, and the pill's wiring. Both prompts can still show together after a deploy; either one now leaves the tab on the new build and the new worker, and neither comes back. On self-hosted images without a build id the toast appears only when `SW_SCHEMA` changes (`OFF-11`).
+
 ---
 
 <a id="off-5"></a>
@@ -224,7 +276,7 @@ public/sw.js:47-48 — `.then(() => self.skipWaiting())` is inside the `install`
 ## OFF-5 · A revoked or expired share link still hands over the document offline, and the whole revocation check is bypassed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:207-220`, `app/api/share/file/route.ts:42-51`, `app/api/share/resolve/route.ts:32-41`, `app/share/[token]/page.tsx:42-58`, `app/share/[token]/page.tsx:67-74`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and stronger than stated: app/api/share/file/route.ts:149 sets `"Cache-Control": "no-store"`, but the Cache Storage API ignores it — sw.js's cachePut stores the response anyway. The revocation check is not merely bypassed, it is bypassed by the exact response the server marked as never-store.
@@ -257,6 +309,18 @@ public/sw.js:213-217 quoted above. app/api/share/file/route.ts:48-51 — `if (sh
 - [ ] With the network down and a warm cache, `/share/<revoked token>` shows a failure state, never the document card and download button
 - [ ] A test asserts the share routes are excluded from the worker's cache-fallback path
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d`: the two share API routes were already refused by v6's blanket `/api/` rule (`XEDGE-6`) — written never, replayed never; the open half was the share PAGE: a `/share/<token>` navigation went through the navigate branch, was written whenever the response was not `no-store`, and was replayed from cache offline (the "navigation /share/tok123" cases fail against v6). In production that page half was latent rather than live: `/share/[token]` is a dynamic route, which Next serves `private, no-cache, no-store`, and v6 already refused `no-store` — the harness case fails against v6 only because its response carries no `Cache-Control`. What this package adds is a rule that does not depend on the page's headers.
+- `public/sw.js`: `/api/share/` and `/share/` are on `NEVER_CACHE_PREFIXES` (`:320`). A never-cache navigation is served from the network and not stored; offline it falls through to the precached `/offline` page (or the inline notice), never its own leftover. The page's resolve call offline gets the worker's 503, which `app/share/[token]/page.tsx:52-59` renders as the `error` state.
+- Tests: `sw.test.ts` — `/api/share/file?token=…` and `/api/share/resolve?token=…` among the per-route never-written / never-read cases; "navigation …/share/tok123 — never written" and "— offline, its own leftover is never served (the offline page is)"; "a never-cache path that looks like a static asset is not routed cache-first".
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ `/api/share/file` and `/api/share/resolve` are never stored and never served from Cache Storage.
+2. ✓ With the network down and a warm cache, `/share/<token>` is the offline page, and the page's resolve answers 503 → the error state; never the document card or the download button. Shown in the worker harness; not observed on a device.
+3. ✓ Asserted per route, write and offline read.
+
+**Scope / residual.** None. The share routes themselves are document-control `P1 SHARE`'s.
+
 ---
 
 <a id="off-6"></a>
@@ -264,7 +328,7 @@ public/sw.js:213-217 quoted above. app/api/share/file/route.ts:48-51 — `if (sh
 ## OFF-6 · Authorization-header-gated GET responses are cached with no Vary, so a cached presigned R2 URL is matched for any later request to the same path regardless of who is signed in
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `public/sw.js:116-120`, `public/sw.js:214-215`, `app/api/storage/download-url/route.ts:10-20`, `app/api/storage/download-url/route.ts:91-111`, `app/api/storage/download-url/route.ts:151-153`, `app/api/storage/resolve/route.ts:22-25`, `lib/storage.ts:126-131`, `components/viewers/SecureDocViewer.tsx:105-110`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Not refuted — the missing Vary and the shared cache key are real, and the sign-out at RoleContext.tsx:270-280 does not clear Cache Storage. But the exploit requires the app origin to be unreachable while R2 is reachable, within 60 minutes of the first user's fetch; that narrow window puts this at LOW, not MEDIUM.
@@ -291,6 +355,18 @@ app/api/storage/download-url/route.ts:11-13 — `const authHeader = req.headers.
 - [ ] Any response the worker does cache either carries `Vary: Authorization` or is provably identity-independent
 - [ ] A test asserts a request bearing an `authorization` header is not stored by cachePut
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d`: the presigned-URL JSON was already refused by v6's `/api/` rule (`XEDGE-6`); what was open was the general rule — a request carrying an `Authorization` header, or a response that varies by identity, was still stored on any non-API path (both cases fail against v6).
+- `public/sw.js`: `/api/storage/` and `/api/transmittal` are on `NEVER_CACHE_PREFIXES`; `isCacheableRequest` (`:353`) refuses any request that carries an `Authorization` header (the Cache API keys on the URL alone); `isCacheableResponse` (`:377`) refuses `Vary: *`, `Vary: Authorization` and `Vary: Cookie`, alongside `no-store` / `no-cache` / `private`.
+- Tests: `sw.test.ts` "OFF-6: a request carrying an Authorization header is never stored", "OFF-6: a response that varies by identity (Vary: Authorization / Cookie / *) is never stored", and `/api/storage/download-url` / `/api/transmittal?token=…&file=…` among the per-route cases.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ The worker skips `/api/storage/*` and `/api/transmittal` outright, and stores no `Authorization`-bearing request anywhere.
+2. ✓ What it does still store is identity-independent by rule: a same-origin non-API GET with no `Authorization` header and no credential in its query, whose response the server marked neither `private` / `no-store` / `no-cache` nor varying by `Authorization` / `Cookie` — and the runtime cache is purged on a changed identity (`XEDGE-6`) and emptied on sign-out (`OFF-8`).
+3. ✓ Asserted by test.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="off-7"></a>
@@ -298,7 +374,7 @@ app/api/storage/download-url/route.ts:11-13 — `const authHeader = req.headers.
 ## OFF-7 · Every response served from cache silently skips the distribution and audit-trail write that the route performs — download_audits, bump_share_access and TRANSMITTAL_PORTAL_DOWNLOAD all under-record
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:214-215`, `app/api/share/file/route.ts:129-141`, `app/api/share/resolve/route.ts:59`, `app/api/transmittal/route.ts:76-83`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. True as far as it goes — nothing in sw.js reports a cache hit back to the server — but the branch is network-first, so a replay is only possible on a device that already performed an ONLINE fetch of the identical URL, which did write the audit row; the trail can under-count, never show zero. The transmittal leg is weaker still: /api/transmittal?file= returns only `{url}` from a 300-second presigned R2 link (:71-74), so a cached copy hands back a dead URL and no download actually occurs offline. Impact is a bounded undercount, not a missing record.
@@ -329,6 +405,18 @@ app/api/share/file/route.ts:129-140 — `await sb.from("download_audits").insert
 - [ ] The share landing page's "Access counted on the distribution record" line is only shown on a path that provably reached the server
 - [ ] A test asserts the worker does not answer `/api/share/*` or `/api/transmittal` from cache
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d`: the three audit-writing routes were already refused by v6's `/api/` rule (`XEDGE-6`), so a cache hit could not skip their record at that commit; the open half was a stated, tested exclusion for them that does not depend on the blanket rule (the allow-list precedence case fails against v6).
+- `public/sw.js`: `/api/share/`, `/api/transmittal` and `/api/intake/` (and the `/share/`, `/transmittal/`, `/submit/` pages) are on `NEVER_CACHE_PREFIXES`, consulted before the API allow-list; no response from them is written, and offline none is answered from cache — the request fails and the page says so.
+- Tests: `sw.test.ts` per-route never-written / never-read cases for `/api/share/file`, `/api/share/resolve`, `/api/transmittal`, `/api/intake/*`; "the never-cache list wins even over an /api/ allow-list entry".
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ No route that writes a distribution or audit row is ever served from Cache Storage.
+2. ✓ The share page's distribution line (now "Each download is recorded on the distribution record…", `app/share/[token]/page.tsx:171`, P1's copy) renders only with resolve data, and resolve data can now only come from the server — every rendering of it followed a request that reached `bump_share_access`.
+3. ✓ Asserted by test.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="off-8"></a>
@@ -337,6 +425,7 @@ app/api/share/file/route.ts:129-140 — `await sb.from("download_audits").insert
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** identity-and-session IS-P1 (done-when 3: the client-storage inventory in RoleContext) — by the integrator, 2026-10-01 (PKG-1 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:259-281`, `public/sw.js:52-65`, `app/page.tsx:97`, `lib/eSignatures.ts:82-86`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: RUNTIME_CACHE is device-wide, survives sign-out, and caches.match(request) keys on URL, so offline any later account is served the previous account's same-origin API bytes. The OAuth half is also real — app/page.tsx:92 `redirectTo: ${window.location.origin}/` makes the code-bearing `/?code=…` a navigate request cached at sw.js:161-162 — though a single-use, already-redeemed code is the least of it; the cross-account replay is what carries the MEDIUM.
@@ -379,6 +468,19 @@ components/providers/RoleContext.tsx:270-281 quoted above — the loop's scope i
 - [ ] No navigation whose URL carries `code=`, `access_token`, `token`, or a share/portal token is ever written to Cache Storage
 - [ ] The stated principle in RoleContext.tsx:269-270 is enforced for all client-side storage, not just two localStorage prefixes
 
+**Partial (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE, scoped by the plan to "caches cleared before redirect" (the `SIGNED_OUT` block of `components/providers/RoleContext.tsx` only; identity-and-session owns the rest of the file). Reproduced at `564720d`: the block cleared two `localStorage` prefixes and the device workspace and nothing else, and the v6 worker wrote `/?code=…` navigations to Cache Storage (`/` is prerendered and served cacheable). The `/share/<token>`, `/submit/<token>`, `/transmittal/<token>` cases also fail against v6, but only because the harness response carries no `Cache-Control`: in production those dynamic pages are served `no-store`, which v6 already refused — the list makes their exclusion independent of headers.
+- `components/providers/RoleContext.tsx` (`SIGNED_OUT` block, `:440-452`): before `window.location.replace("/")`, every Cache Storage cache is deleted (`caches.keys()` → `caches.delete` each), awaited but bounded by 1.5 s so a wedged CacheStorage cannot hold the sign-out; no Cache Storage (plain HTTP) is not an error. This covers the sign-outs the four buttons do not see — a token that cannot refresh, a sign-out in another tab — which is `XEDGE-6` done-when 2's handed-off half (it asked for `clearServiceWorkerSession()` there; deleting the caches directly is the stronger form: the worker's runtime cache AND its remembered identity go).
+- `public/sw.js`: `carriesCredential` (`:339`) — no URL whose query carries `code=` or any `*token*` parameter is stored or served from cache; the public token pages are on `NEVER_CACHE_PREFIXES`. Because the sign-out also empties the shell cache, `rememberSession` (`:193`) re-warms whatever shell asset is missing on the next `SESSION` announcement — last (`:209`), after its identity check and purge, so a slow or hanging shell fetch never delays a changed identity's purge (fix pass, after review).
+- Tests: `sw.test.ts` "OFF-8 — whichever way the session ends, Cache Storage is emptied before the redirect" (the block deletes every cache, awaited and bounded, before the redirect; the purge expression lifted from the block empties an in-memory CacheStorage including a cache the worker does not track); the `?code=`, `?token=`, `?access_token=`, `?token_hash=` and token-page navigation cases; "a SESSION announcement re-warms only the shell assets that are missing".
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ Sign-out deletes every Cache Storage cache for the origin before `window.location.replace("/")`. The "ideally unregisters and re-registers the worker" part is not done — the worker survives with empty caches, which is enough for this finding.
+2. ✓ No navigation whose URL carries `code=`, `access_token`, a `token` parameter, or a share / portal / intake token is written to Cache Storage.
+3. ✗ Not done. The principle now covers Cache Storage too, but "all client-side storage" is wider than this package: `localStorage` / `sessionStorage` hold some twenty other keys (recents, settings, memory, snapshots, UI preferences, the silent-SSO flag that must SURVIVE an expiry-driven `SIGNED_OUT`) and `lib/draftHandoff.ts` keeps an IndexedDB store. Deciding which of them are account data needs a per-key inventory in the file identity-and-session owns.
+
+**Scope / residual.** Open for done-when 3, handed to identity-and-session (it owns `RoleContext.tsx`; `IS-P1` edits it next): inventory the client-storage keys and clear the account-scoped ones on `SIGNED_OUT`. The "session evaporated" branch (`RoleContext.tsx`, the `else` after `SIGNED_IN`) still clears no cache; the next identity's `SESSION` purge bounds it (`XEDGE-6`). The Cache Storage half is closed.
+
 ---
 
 <a id="off-9"></a>
@@ -386,7 +488,7 @@ components/providers/RoleContext.tsx:270-281 quoted above — the loop's scope i
 ## OFF-9 · RUNTIME_CACHE is unbounded — no size cap, no TTL, no eviction — and it stores multi-megabyte PDFs, so origin quota eviction can take the Supabase session with it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `public/sw.js:116-120`, `public/sw.js:160-162`, `public/sw.js:209-210`, `app/api/share/file/route.ts:152-158`, `lib/supabase.ts:64-104`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is correct and repo-wide search confirms no eviction anywhere. The stated consequence is the speculative part: it needs the origin to reach hundreds of MB and the browser to run a whole-origin eviction, and the outcome is a forced re-login (lib/supabase.ts:76-77 puts the session in localStorage), not data loss or a wrong document. LOW.
@@ -416,6 +518,19 @@ public/sw.js:116-120 — `cachePut` has no size or count logic. public/sw.js:56-
 - [ ] Cached entries carry a stored timestamp and are dropped past a defined age
 - [ ] The worker's cache footprint is observable (a message channel or a debug page reporting entry count and total bytes)
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE; plan default budget (200 entries / 7 days) taken. Reproduced at `564720d`: `cachePut` had no size, count or age logic, and nothing trimmed `RUNTIME_CACHE` (every OFF-9 case fails against v6).
+- `public/sw.js`: `MAX_RUNTIME_ENTRIES = 200`, `MAX_RUNTIME_AGE_MS = 7 days`, `MAX_RUNTIME_ENTRY_BYTES = 2 MiB` (`:91-93`). `putRuntime` (`:405`) refuses a declared `Content-Length` over the cap before reading, reads the body and refuses an actual size over it, and stores the entry with `X-Mfgos-Cached-At` (fetch time) and `X-Mfgos-Bytes`; `trimRuntime` (`:424`) drops the least recently used past 200 on every write (Cache Storage keeps last-written order) and sweeps expired entries at most hourly; `matchRuntime` (`:441`) never serves an entry past 7 days (it deletes it) and re-writes a served entry at the end of the order (true LRU, keeping its fetch time). `{ type: "CACHE_STATS" }` (answered on a MessagePort or to the asking page) reports entries, bytes, the oldest fetch time, the three limits and any shell asset that is missing (`cacheStats`, `:475`).
+- Tests: `sw.test.ts` "OFF-9 — RUNTIME_CACHE is bounded…": stamping, the size cap (declared and actual), 200 entries LRU, a served entry outliving the next trim while keeping its exact original fetch time — seeded six days old, read offline, its `X-Mfgos-Cached-At` is still the six-days-ago value, and two days later the next offline read is refused (503) and the entry deleted, so a sliding TTL fails the case (tightened in the fix pass, after review; it previously asserted only that the stamp was present), the 7-day refusal (and an unstamped entry treated as expired), the hourly sweep on write, `CACHE_STATS`.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ Bounded entry count with LRU trimming on each write.
+2. ✓ Responses above 2 MiB are never cached.
+3. ✓ Every entry carries its fetch time; past 7 days it is refused and deleted.
+4. ✓ Observable through the `CACHE_STATS` message channel.
+
+**Scope / residual.** The bound is per entry and per count (worst case 200 × 2 MiB); there is no running byte budget — with `/api/` and the PDFs excluded, entries are page shells and same-origin assets. `SHELL_CACHE` has no bound of its own: the cache-first static branch adds each build's content-hashed `/_next/static` chunks to it and nothing trims it. On Vercel it is per build — `VERSION` carries the build id, so activate drops the previous build's shell cache (`OFF-11`). On a self-hosted, unstamped deployment (Docker, `next start` — `SW_BUILD` stays `"unstamped"`) `VERSION` and `SHELL_CACHE` (`mfgos-v7-unstamped-shell`) are the same across every release, so on a long-lived device that cache grows with every deploy until a `SW_SCHEMA` bump or a Dockerfile build-id argument (`OFF-11` residual) rolls it — the quota exposure this finding describes, moved to the shell cache on those deployments. (The first cut's residual said "the shell cache is per build", which was true on Vercel only.)
+
 ---
 
 <a id="off-10"></a>
@@ -423,7 +538,7 @@ public/sw.js:116-120 — `cachePut` has no size or count logic. public/sw.js:56-
 ## OFF-10 · The navigate branch breaks the worker's own hard rules: a bare `catch` with no abort check invents a 503 "You're offline" for a cancelled navigation, and the branch never rethrows despite the docblock claiming every branch does
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:19-30`, `public/sw.js:105-112`, `public/sw.js:157-177`, `public/sw.js:192-197`, `public/sw.js:213-218`, `app/d/[number]/route.ts:31` *(the redirect; the file was rewritten under `roles-and-permissions/EGRESS-2` but `/d/[number]` still ends in `NextResponse.redirect`, so this SW hazard is unchanged)*
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The inconsistency is real — two of three branches abort-check and the navigate branch does not. But the docblock half of the claim is a misreading: sw.js:22 says 'Every branch below ends in a real Response OR a rethrow', not that every branch rethrows, and hard rule 2 at :29-30 explicitly allows 'return a 503 that says what it is'. A navigation the browser itself cancelled is one it has already abandoned, so the 'fully-online user dropped onto the offline page' outcome is speculative; this is a code-hygiene defect, LOW.
@@ -472,6 +587,19 @@ public/sw.js:164 — `} catch {` with no binding, contrasted against sw.js:192 `
 - [ ] Responses with `redirected === true` are not written to the cache for navigation requests
 - [ ] lib/__tests__/sw.test.ts covers an aborted navigation and asserts the handler rejects rather than returning 503
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d`: the navigate branch's `} catch {` bound no error, so an aborted navigation got the offline fallback, and a redirected response was stored (both cases fail against v6).
+- `public/sw.js`: the navigate branch binds its error and rethrows when `wasAborted(request, err)` (`:581`), before reporting the network or touching any cache — matching the static (`:622`) and generic (`:645`) branches, where the abort check now also comes first. Hard rule 1 ("Every branch below ends in a real Response or a rethrow") is now true of every branch; the header text is unchanged. `isCacheableResponse` refuses any `redirected` response, and `/d/` is on `NEVER_CACHE_PREFIXES`.
+- Tests: `sw.test.ts` "OFF-10 — a navigation the browser abandoned is rethrown…": an `AbortError` rejects (and no cache is consulted); an aborted `request.signal` rejects for both a navigation and a sub-resource; a redirected response is served and never stored; `/d/2002-D-10001` never written and its leftover never served. The genuine-network-failure case keeps its 503 assertion, now named as such.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ The navigate branch binds the error and rethrows on `wasAborted`.
+2. ✓ Rule 1 is true of every branch.
+3. ✓ No redirected response is written (navigation or not).
+4. ✓ `sw.test.ts` covers an aborted navigation and asserts a rejection, not a 503.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="off-11"></a>
@@ -479,7 +607,7 @@ public/sw.js:164 — `} catch {` with no binding, contrasted against sw.js:192 `
 ## OFF-11 · VERSION is a hand-edited literal with no tie to the build, so a deploy neither invalidates the runtime cache nor triggers the update toast
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:33-39`, `public/sw.js:52-65`, `package.json:6-12`, `components/pwa/ServiceWorkerManager.tsx:36-46`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves of the title are literally true, but the stated consequence — 'no device shows an update prompt' — is false: components/system/UpdatePill.tsx:21-26 polls `/api/version` every 5 minutes and on tab focus and renders 'This tab is running an old version — tap to load the update' whenever the build id diverges, and it is mounted for every signed-in page at app/(protected)/layout.tsx:61. Combined with the runtime cache being network-first (stale bytes only ever served offline), this is LOW.
@@ -507,6 +635,20 @@ public/sw.js:33-37 — the comment "Bumping VERSION drops every old cache on act
 - [ ] A deploy demonstrably installs a new worker (updatefound fires) and its activate handler drops the previous build's runtime cache
 - [ ] CI fails if sw.js's caching behaviour changes without VERSION changing
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE; plan default (a prebuild stamping script) taken. Reproduced at `564720d`: `const VERSION = "mfgos-v6";` was a literal nothing in the build touched; `package.json`'s `prebuild` only copied the pdf.js worker.
+- `public/sw.js`: ``VERSION = `mfgos-v${SW_SCHEMA}-${SW_BUILD}` `` (`:77-79`). `SW_SCHEMA = 7` is the hand-bumped caching-behaviour generation; `SW_BUILD` is the build id. `activate` now drops every cache whose name does not start with `${VERSION}-` (the trailing dash so one build id cannot prefix another).
+- `scripts/stamp-sw-version.mjs` (new), run by `prebuild` only (`package.json`): writes `SW_BUILD` from `VERCEL_GIT_COMMIT_SHA ?? VERCEL_DEPLOYMENT_ID` — the id `/api/version` serves; an empty value counts as unset — keeping only `[A-Za-z0-9_-]`, at most 64. With neither variable (`next dev` — `predev` does not run it — a local `npm run build`, the Docker image, whose Dockerfile passes no Vercel variables) the id is the deterministic `"unstamped"`, which is exactly what the committed file carries, so the file is left byte-identical: no local build dirties the tree, and running it without an id restores a stamped file. A worker without exactly one `const SW_BUILD = "…";` line fails the build. Documented in the script header and in the worker.
+- CI guard: `sw.test.ts` fingerprints the worker's code (comments, whitespace and the build stamp stripped via the TypeScript transpiler) per `SW_SCHEMA`; a behaviour change without a bump fails with the fingerprint to record as a NEW entry. The guard is a speed bump, not a lock — an entry can be overwritten in place; the test's comment forbids that once a schema has merged. Schema 7's entry was re-recorded once, by this package's own fix pass, before schema 7 had merged anywhere (the verify fail-safe, the shell re-warm order and the static branch's reporting changed the code). The VERSION-shape case no longer pins `SW_SCHEMA` to 7, so a bump edits `SW_SCHEMA` and adds a fingerprint — one place.
+- Tests: `sw.test.ts` "OFF-11 — VERSION follows the build…": the VERSION shape and the committed `"unstamped"` (a stamped file can never be committed); activate drops other builds' and schemas' caches and keeps its own three; the fingerprint guard (comment-only edits and the stamp do not trip it, a code edit does); `resolveBuildId` precedence, empty-as-unset, sanitizing and the 64 cap; `stampSource` exactly-one / idempotent / restoring; the script end to end on a temp copy (untouched without an id, stamped with one, non-zero exit without a stamp line); `prebuild` runs it and `predev` / `dev` do not.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ VERSION carries the deployed build id, injected at build time, so sw.js changes on every Vercel deploy.
+2. ✓ By construction and test: a new build id changes the worker's bytes (the browser's install trigger), and activate drops every cache of another build. Not observed on a live deploy (no browser here). Self-hosted images without a build id keep `"unstamped"` and roll only on a `SW_SCHEMA` bump — the documented fallback.
+3. ✓ The fingerprint test fails CI when the worker's code changes without `SW_SCHEMA` changing.
+
+**Scope / residual.** Self-hosted deployments: the Dockerfile declares no build argument for a build id, so the image is always `"unstamped"`; giving it one (an `ARG`/`ENV` `VERCEL_GIT_COMMIT_SHA` before `npm run build`) is a Dockerfile change outside this package — until then those deployments rely on `UpdatePill` plus `SW_SCHEMA` bumps, as before, and their `SHELL_CACHE` is never rolled between releases, so it grows with every deploy's hashed chunks (`OFF-9` residual).
+
 ---
 
 <a id="off-12"></a>
@@ -514,7 +656,7 @@ public/sw.js:33-37 — the comment "Bumping VERSION drops every old cache on act
 ## OFF-12 · cache.addAll is atomic and its failure is swallowed — one bad shell asset silently leaves the device with no offline shell and no offline page at all
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:41`, `public/sw.js:43-50`, `public/sw.js:167-171`, `app/manifest.ts:9-33`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is right; the consequence in the title is wrong. sw.js:167-171 ends the offline navigation chain in `offlineHtmlResponse()`, a self-contained inline 503 page that needs no cache at all, so 'no offline page at all' is refuted by the very lines the finding cites; and the cache-first branch at :184-190 re-populates SHELL_CACHE with every JS/CSS/image asset on first online use, so the shell is not permanently lost either. What is actually lost is the styled /offline route and the pre-warm.
@@ -550,6 +692,18 @@ public/sw.js:43-50 quoted above — a single `.catch(() => undefined)` wrapping 
 - [ ] A failed shell precache is reported — at minimum a console warning naming the asset, ideally a signal the app can surface
 - [ ] A test asserts that when one SHELL_ASSETS entry fails, the others are still cached
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE. Reproduced at `564720d`: `cache.addAll(SHELL_ASSETS).catch(() => undefined)` — one failing asset discarded the whole shell silently (fails against v6).
+- `public/sw.js`: `precacheShell` (`:104`) opens the shell cache and runs `cache.add` per asset under `Promise.allSettled`; the failures are returned and named in one `console.warn`; it never rejects (a worker without a shell still serves the network and the inline notice). Install uses it (`:128`); `rememberSession` re-runs it for the missing assets only on every `SESSION` announcement — as its last step (`:209`), after the identity check and purge, because a shell fetch has no timeout and a changed identity's purge must not wait behind it (fix pass, after review) — so a failed precache (or a sign-out that emptied Cache Storage, `OFF-8`) heals on the next sign-in. `CACHE_STATS` lists `shellMissing` — the signal a page can surface.
+- Tests: `sw.test.ts` "one failing shell asset does not discard the others, and is named in a console warning"; "a SESSION announcement re-warms only the shell assets that are missing"; "the same identity again still re-warms a missing shell asset"; "a changed identity's purge never waits behind the shell re-warm — even a shell fetch that never answers" (fails against the first cut, `0916d17`); `CACHE_STATS` reports the missing ones.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ Shell assets are cached individually under `Promise.allSettled`.
+2. ✓ A failed precache is a console warning naming the asset, and is readable through `CACHE_STATS`.
+3. ✓ Asserted by test.
+
+**Scope / residual.** No page surfaces `shellMissing` yet; the channel exists.
+
 ---
 
 <a id="off-13"></a>
@@ -557,7 +711,7 @@ public/sw.js:43-50 quoted above — a single `.catch(() => undefined)` wrapping 
 ## OFF-13 · cachePut ignores Cache-Control entirely — every route that declares `no-store` is written to disk anyway, including the full stamped controlled PDF
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:116-120`, `app/api/share/file/route.ts:152-158`, `app/api/data-export/structured/route.ts:17`, `app/api/admin/shed/route.ts:204`, `app/api/admin/ticket-shed/route.ts:256`, `app/api/version/route.ts:20`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Survives on the facts, but two of the six cited locations are unreachable: app/api/admin/shed/route.ts:204 and app/api/admin/ticket-shed/route.ts:256 are inside POST handlers (:93 and :101), and sw.js:124 `if (request.method !== "GET") return;` means the worker never sees them. The headline harm is also mostly pre-existing — /api/share/file is served `Content-Disposition: attachment` (:148) and the page writes it to disk via an `<a download>`, so the contractor has the PDF on the tablet either way; the genuine residual is an invisible copy that outlives share revocation. LOW.
@@ -597,6 +751,18 @@ public/sw.js:116-120 quoted above — the function body is four lines and reads 
 - [ ] A vitest case in lib/__tests__/sw.test.ts feeds the fetch handler a 200 response carrying `Cache-Control: no-store` and asserts `cacheStore.put` was not called
 - [ ] `/api/share/file` responses are never present in Cache Storage after a download on a device with the worker installed
 
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE, completing `XEDGE-6`. Reproduced at `564720d`: the `no-store` / `private` refusal and the blanket `/api/` refusal had already landed with `XEDGE-6` (P2 EGRESS, 2026-09-23) — `/api/share/file`'s `no-store` was honoured and no `/api/` GET was stored; `no-cache` was still stored (fails against v6).
+- `public/sw.js`: `isCacheableResponse` (`:377`) refuses `no-store`, `no-cache` and `private` (an offline fallback can never revalidate, so `no-cache` is a refusal too); `/api/share/` is on `NEVER_CACHE_PREFIXES` besides.
+- Tests: `sw.test.ts` "never writes a Cache-Control: no-store response — navigation or sub-resource" (kept from XEDGE-6), "refuses Cache-Control: private and no-cache the same way", "a public, revalidating response (Vercel's static HTML) is still cached", and `/api/share/file?token=…` among the per-route cases.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ `no-store` and `private` (and `no-cache`) are refused.
+2. ✓ The vitest case feeds a 200 `no-store` response and asserts no `put`.
+3. ✓ `/api/share/file` is never stored — refused three ways (the never-cache list, the `/api/` rule, its own `no-store`).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="off-14"></a>
@@ -604,7 +770,7 @@ public/sw.js:116-120 quoted above — the function body is four lines and reads 
 ## OFF-14 · lib/__tests__/sw.test.ts calls itself a regression guard for the worker but asserts only "never resolves to undefined" — nothing tests what is cached, and one assertion locks in the wrong behaviour
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/__tests__/sw.test.ts:1-8`, `lib/__tests__/sw.test.ts:20-24`, `lib/__tests__/sw.test.ts:55-65`, `lib/__tests__/sw.test.ts:89-115`, `lib/__tests__/sw.test.ts:130-136`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substantive gap is real — the cache-write assertions the title asks for do not exist. But 'asserts only never resolves to undefined' overstates it: :74 and :86 assert the network status and the exact cached Response identity, and :113-114 `expect(responded).toBe(false); expect(caches.match).not.toHaveBeenCalled();` is a genuine assertion about cache behaviour for RSC payloads. Test-coverage gap with no runtime consequence: LOW.
@@ -631,5 +797,17 @@ lib/__tests__/sw.test.ts:20-24 — the cache mock's `put` is a bare `vi.fn` neve
 - [ ] A test asserts `cacheStore.put` is NOT called, and `caches.match` NOT consulted, for `/api/verify`, `/api/verify-hold`, `/api/verify-package`, `/api/verify-ticket`, `/api/share/file`, `/api/share/resolve`, `/api/storage/download-url` and `/api/transmittal`
 - [ ] A test supplies an aborted request/AbortError to the navigate branch and asserts the handler rejects rather than returning 503
 - [ ] The line-64 assertion is scoped to a genuine network failure, with a separate case covering abort
+
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE — written first, before the worker changed. Reproduced at `564720d`: `XEDGE-6` (P2 EGRESS) had already added `put` assertions — a `no-store` response, `private`, an `/api/` JSON, a non-API GET — so done-when 1 was met there; still missing were the per-route cases (one generic `/api/storage/download-url` offline case was the only "cache not consulted" assertion), any abort case (`wasAborted` untested), and a scoped name for the genuine-failure 503 case.
+- `lib/__tests__/sw.test.ts` (115 cases; the six v5 regression cases kept, the XEDGE-6 cases kept): the harness keeps per-cache stores in Cache Storage's last-written order, resolves relative keys like the real API, captures every `waitUntil` so a case can await the worker's own cache writes, injects a clock and a console, and records what the worker posts to windows. The first cut had 96 cases, of which the v6 worker failed 44; after the fix pass (the verify-page fail-safe, the shell re-warm order, the static branch's reporting, the LRU fetch-time pin) the v6 worker fails 62 of 115 and the first v7 cut (`0916d17`) fails 17 — a handful of the v6 failures (the session and VERSION cases) only because the v6 file has no `SW_SCHEMA` line to name its caches by; the current worker passes all 115. The LRU case was also checked against a deliberately sliding-TTL mutant of `matchRuntime`, which it fails.
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ A 200 `Cache-Control: no-store` response is never `put` — navigation and sub-resource.
+2. ✓ No `put` and no `caches.match` for `/api/verify`, `/api/verify-hold`, `/api/verify-package`, `/api/verify-ticket`, `/api/share/file`, `/api/share/resolve`, `/api/storage/download-url` and `/api/transmittal` (and `/api/intake/*`), each asserted online and offline with leftovers.
+3. ✓ An `AbortError` and an aborted `request.signal` reject from the navigate branch rather than returning 503.
+4. ✓ The old line-64 case is now "returns a real Response for a navigation that genuinely fails — network down, nothing cached", with the abort cases separate.
+
+**Scope / residual.** None.
 
 ---

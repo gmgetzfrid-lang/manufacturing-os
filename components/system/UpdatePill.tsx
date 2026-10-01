@@ -8,6 +8,7 @@
 
 import React, { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { loadLatestBuild } from "@/components/pwa/ServiceWorkerManager";
 
 const POLL_MS = 5 * 60_000;
 
@@ -40,7 +41,15 @@ export default function UpdatePill() {
   return (
     <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop">
       <button
-        onClick={() => window.location.reload()}
+        onClick={() => {
+          const sw = "serviceWorker" in navigator ? navigator.serviceWorker : null;
+          void loadLatestBuild({
+            serviceWorker: sw,
+            getRegistration: sw ? () => sw.getRegistration() : null,
+            reload: () => window.location.reload(),
+            setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+          });
+        }}
         className="inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors"
       >
         <RefreshCw className="w-3.5 h-3.5" />

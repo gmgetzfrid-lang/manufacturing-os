@@ -437,6 +437,19 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
           }
           doomed.forEach((k) => window.localStorage.removeItem(k));
         } catch { /* private mode */ }
+        // The same principle for Cache Storage (OFF-8): every cache the
+        // service worker filled on this device is deleted BEFORE the
+        // redirect, whichever way the session ended — a sign-out button
+        // (which has already posted SIGN_OUT), a token that could not be
+        // refreshed, or a sign-out in another tab. The next sign-in re-warms
+        // the offline shell. Bounded, so a wedged CacheStorage can never hold
+        // the sign-out; no Cache Storage (plain HTTP) means nothing cached.
+        try {
+          if (typeof caches !== "undefined") {
+            const purge = caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))));
+            await Promise.race([purge, new Promise((done) => window.setTimeout(done, 1500))]);
+          }
+        } catch { /* nothing to purge */ }
         window.location.replace("/");
         return;
       }

@@ -431,7 +431,7 @@ file/route.ts:109-117 — the StampOptions object contains no sourceBytes key. s
 ## SHR-9 · The Field Mode service worker persistently caches the stamped share PDF and the resolve response, defeating Cache-Control: no-store — a revoked link keeps serving from the recipient's device
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:196-213`, `public/sw.js:113-118`, `app/api/share/file/route.ts:152-158`, `app/layout.tsx:93`, `components/pwa/ServiceWorkerManager.tsx:30-33`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The caching is real, but the finding's framing overstates the consequence: the branch is NETWORK-FIRST, so an online recipient always gets the live 410 for a revoked link — the cache is served only when the fetch throws (offline). And the recipient already saved the stamped PDF to their filesystem via the anchor at page.tsx:75-81, so the SW copy adds essentially no exposure beyond the file they legitimately hold. LOW.
@@ -456,6 +456,19 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 - [ ] /api/share/**, /api/verify** and /share/** are explicitly excluded from service-worker caching (an early return alongside the cross-origin guard at sw.js:118)
 - [ ] VERSION is bumped so existing clients drop already-cached share payloads on activate
 - [ ] a test asserts a response with Cache-Control: no-store is not written to RUNTIME_CACHE
+
+**Resolution (2026-10-01, public-surfaces Round F).** PKG-1 SW-OFFLINE (with `OFF-5` / `OFF-13`). Reproduced at `564720d`: `XEDGE-6` (P2 EGRESS) had already stopped the worker storing `/api/share/*` and honoured `no-store` / `private`; still open were `no-cache`, an explicit early exclusion of `/share/**` (the share PAGE navigation was still written whenever not `no-store` — latent in production, where the dynamic `/share/[token]` page is served `private, no-cache, no-store` and v6 already refused it; the harness case fails against v6 because its response carries no `Cache-Control`) and a list that survives an API allow-list entry — all three fail against v6.
+- `public/sw.js`: `NEVER_CACHE_PREFIXES` (`:320`) — `/api/share/`, `/api/verify`, `/share/` among them — is the first test in `isCacheableRequest`, i.e. alongside the cross-origin guard and ahead of everything that could store or replay; `isCacheableResponse` refuses `no-store`, `no-cache` and `private`. Schema 7 (and a per-build VERSION, `OFF-11`) so every client drops what an older worker cached on activate.
+- Tests: `lib/__tests__/sw.test.ts` — the per-route never-written / never-read cases (`/api/share/file`, `/api/share/resolve`, `/api/verify*`), the `/share/<token>` navigation cases, "refuses Cache-Control: private and no-cache the same way", "never writes a Cache-Control: no-store response", "bumped VERSION so every cache an older worker filled is swept on activate".
+- Verified: `npx tsc --noEmit` 0; `npx eslint --max-warnings=0` 0 on every touched source file; full `npx vitest run` green (280 files / 5622 passed, 5 expected-fail; re-run after the fix pass). `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ `cachePut` refuses `no-store`, `no-cache` and `private`.
+2. ✓ `/api/share/**`, `/api/verify**` and `/share/**` are explicitly excluded, first.
+3. ✓ VERSION bumped (schema 7, plus the build id on Vercel); activate drops every older cache.
+4. ✓ Asserted by test.
+
+**Scope / residual.** None. See `OFF-5` for the offline share-page behaviour.
 
 ---
 

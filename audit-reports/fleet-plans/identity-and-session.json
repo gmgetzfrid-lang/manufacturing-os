@@ -7,7 +7,8 @@
    "findings": [
     "SESS-6",
     "document-control XEDGE-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the library page's two sites only \u2014 app/(protected)/documents/[libraryId]/page.tsx :755 and :3159 still build outbound /d/ links from window.location.origin; use the configured public origin (the IntakePanel / QuotesPanel \u2026)",
-    "public-surfaces PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the same two library-page sites as document-control XEDGE-5 (done-when 3's tree-wide clause))"
+    "public-surfaces PHYS-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the same two library-page sites as document-control XEDGE-5 (done-when 3's tree-wide clause))",
+    "public-surfaces OFF-8 (added at the PKG-1 merge 2026-10-01: done-when 3 \u2014 the per-key inventory of every localStorage / sessionStorage key and the IndexedDB store, cleared on sign-out unless a key must survive an expiry-driven SIGNED_OUT such as the silent-SSO flag, plus the 'session evaporated' branch; components/providers/RoleContext.tsx is this package's file. PKG-1 landed the Cache Storage purge in the SIGNED_OUT block)"
    ],
    "files": [
     "components/providers/RoleContext.tsx (type :67 \u2192 Role | null; seed :115 null; five setActiveRole('Viewer') sites :285 :311 :343 :416 :508)",
