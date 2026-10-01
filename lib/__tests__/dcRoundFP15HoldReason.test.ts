@@ -8,7 +8,13 @@
 //     description as the note;
 //   * migration 20261152 keys an open "Other" hold by its note in the
 //     open-reason unique index, so two different custom holds on one
-//     document stay placeable (as two free-text reasons were before).
+//     document stay placeable (as two free-text reasons were before);
+//   * second review fix: the index keys the note's md5 (a long note can
+//     never exceed the btree row limit), and the same migration holds the
+//     rules at the database — a signed-in INSERT writes a code ("Other" with
+//     its description, or a legacy reason the org already carries: a
+//     lifecycle carry), and an "Other" hold's description is fixed once
+//     placed (enforce_document_hold_reason_code).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -61,6 +67,7 @@ import {
   openHold, HOLD_REASON_CODES, PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON, isHoldReasonCode, holdReasonLabel,
   publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK, openHoldKey,
 } from "@/lib/holds";
+import { createHash } from "node:crypto";
 
 const root = process.cwd();
 const src = (p: string) => readFileSync(join(root, p), "utf8");
@@ -126,7 +133,13 @@ describe("VFY-6 — the hold reason is a code; free text lives in the note", () 
     expect(openHoldKey({ reason: "Client Review", notes: "a" })).toBe(openHoldKey({ reason: "Client Review", notes: "b" }));
     expect(openHoldKey({ reason: "Awaiting legal", notes: "a" })).toBe("Awaiting legal"); // a legacy free-text reason: by reason, as before
     // the index the key mirrors (keep the two in step)
-    expect(src("supabase/migrations/20261152_dc_roundF_hold_other_reason.sql")).toContain("(document_id, reason, (CASE WHEN reason = 'Other' THEN COALESCE(btrim(notes), '') ELSE '' END))");
+    expect(src("supabase/migrations/20261152_dc_roundF_hold_other_reason.sql")).toContain("(document_id, reason, (CASE WHEN reason = 'Other' THEN md5(COALESCE(btrim(notes), '')) ELSE '' END))");
+    // second review fix: the index keys the note's md5; equal hashes are equal notes, so the note itself is the same key
+    const md5 = (t: string | null) => createHash("md5").update((t ?? "").replace(/^ +| +$/g, "")).digest("hex");
+    const notes = ["Awaiting legal", "  Awaiting legal  ", "Pending survey", "", null, "x".repeat(20_000)];
+    for (const a of notes) for (const b of notes) {
+      expect(openHoldKey({ reason: "Other", notes: a }) === openHoldKey({ reason: "Other", notes: b })).toBe(md5(a) === md5(b));
+    }
   });
   it("the public surfaces still say only the category — an Other hold and a legacy free-text one alike", () => {
     expect(publicHoldReason("Other")).toBe(PUBLIC_HOLD_REASON_FALLBACK);
@@ -167,7 +180,7 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     const inventory = code.slice(tempAt, code.indexOf("BEGIN;"));
     // every inventory row is a COUNT — no customer row, no reason text leaves
     const rows = inventory.split(/\nUNION ALL\n/);
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     for (const r of rows) expect(r).toMatch(/COUNT\(\*\)::text/);
     expect(inventory).not.toMatch(/SELECT\s+(reason|notes|document_id)\s*,/);
   });
@@ -178,15 +191,48 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
       const codes = [...l.matchAll(/'([^']*)'/g)].map((m) => m[1]);
       expect(codes).toEqual([...HOLD_REASON_CODES]);
     }
-    expect(code).toContain(`CASE WHEN reason = '${OTHER_HOLD_REASON}' THEN COALESCE(btrim(notes), '') ELSE '' END`);
+    expect(code).toContain(`CASE WHEN reason = '${OTHER_HOLD_REASON}' THEN md5(COALESCE(btrim(notes), '')) ELSE '' END`);
+    // the rail's predefined list is PREDEFINED_HOLD_REASONS, its Other literal OTHER_HOLD_REASON
+    const rail = /IF NEW\.reason IN \(([^)]*)\) THEN/.exec(code);
+    expect(rail).not.toBeNull();
+    expect([...rail![1].matchAll(/'([^']*)'/g)].map((m) => m[1])).toEqual([...PREDEFINED_HOLD_REASONS]);
+    expect(code).toContain(`IF NEW.reason = '${OTHER_HOLD_REASON}' THEN`);
+    expect(code).toContain(`IF OLD.reason = '${OTHER_HOLD_REASON}' AND NEW.notes IS DISTINCT FROM OLD.notes THEN`);
+    // the rail's sentence names the same codes, in order
+    expect(code).toContain(`'A hold reason is one of: ${HOLD_REASON_CODES.join(", ")}. For anything else choose "${OTHER_HOLD_REASON}" and describe it in the hold note.'`);
   });
-  it("the DDL: the 20260612 index dropped and re-created, partial on open holds, inside BEGIN / COMMIT — nothing else", () => {
-    const ddl = code.slice(code.indexOf("BEGIN;"), code.indexOf("COMMIT;"));
+  it("the DDL: the 20260612 index dropped and re-created (the note keyed by its md5), partial on open holds, inside BEGIN / COMMIT", () => {
+    const ddl = code.slice(code.indexOf("BEGIN;"), code.indexOf("\nCOMMIT;"));
     expect(ddl).toContain("DROP INDEX IF EXISTS document_holds_open_reason_uniq;");
-    expect(ddl).toMatch(/CREATE UNIQUE INDEX document_holds_open_reason_uniq\s*\n\s*ON document_holds \(document_id, reason, \(CASE WHEN reason = 'Other' THEN COALESCE\(btrim\(notes\), ''\) ELSE '' END\)\)\s*\n\s*WHERE released_at IS NULL;/);
-    expect(ddl).not.toMatch(/CREATE (OR REPLACE )?(FUNCTION|POLICY|TRIGGER)|ALTER TABLE|UPDATE |DELETE FROM|INSERT INTO/i);
+    expect(ddl).toMatch(/CREATE UNIQUE INDEX document_holds_open_reason_uniq\s*\n\s*ON document_holds \(document_id, reason, \(CASE WHEN reason = 'Other' THEN md5\(COALESCE\(btrim\(notes\), ''\)\) ELSE '' END\)\)\s*\n\s*WHERE released_at IS NULL;/);
+    // besides the index: exactly one new trigger function and its trigger — no policy, no table change, no data write
+    expect((ddl.match(/CREATE (OR REPLACE )?FUNCTION/g) ?? []).length).toBe(1);
+    expect((ddl.match(/CREATE TRIGGER/g) ?? []).length).toBe(1);
+    expect(ddl).not.toMatch(/CREATE (OR REPLACE )?POLICY|ALTER TABLE|DELETE FROM|INSERT INTO/i);
+    expect(ddl.replace(/RAISE EXCEPTION '[^']*'/g, "")).not.toMatch(/\bUPDATE\s+\w+\s+SET\b/i);
     // the index it replaces is the 20260612 one, and no later migration re-creates it
     expect(src("supabase/migrations/20260612_phase5_holds.sql")).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS document_holds_open_reason_uniq\s*\n\s*ON document_holds\(document_id, reason\) WHERE released_at IS NULL;/);
+  });
+  it("second review fix — the rail and the freeze: one SECURITY INVOKER trigger function, search_path pinned, EXECUTE revoked from every client role (DRLS-16), fired BEFORE INSERT OR UPDATE", () => {
+    const ddl = code.slice(code.indexOf("BEGIN;"), code.indexOf("\nCOMMIT;"));
+    expect(ddl).toContain("CREATE OR REPLACE FUNCTION enforce_document_hold_reason_code()\nRETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$");
+    expect(ddl).not.toMatch(/SECURITY DEFINER/);
+    expect(ddl).toContain("REVOKE ALL ON FUNCTION enforce_document_hold_reason_code() FROM PUBLIC, anon, authenticated, service_role;");
+    expect(ddl).toMatch(/DROP TRIGGER IF EXISTS trg_document_hold_reason_code ON document_holds;\s*\nCREATE TRIGGER trg_document_hold_reason_code\s*\n\s*BEFORE INSERT OR UPDATE ON document_holds\s*\n\s*FOR EACH ROW EXECUTE FUNCTION enforce_document_hold_reason_code\(\);/);
+    const fn = ddl.slice(ddl.indexOf("CREATE OR REPLACE FUNCTION enforce_document_hold_reason_code()"), ddl.indexOf("REVOKE ALL ON FUNCTION enforce_document_hold_reason_code()"));
+    // INSERT: the service role passes first; then Other needs a non-blank note; then the codes; then a reason the org already carries; else refused
+    const at = (needle: string) => { const i = fn.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+    expect(at("IF TG_OP = 'INSERT' THEN")).toBeLessThan(at("IF auth.uid() IS NULL THEN"));
+    expect(at("IF auth.uid() IS NULL THEN")).toBeLessThan(at("IF NEW.reason = 'Other' THEN"));
+    expect(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN")).toBeLessThan(at("IF NEW.reason IN ("));
+    expect(at("IF NEW.reason IN (")).toBeLessThan(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN"));
+    expect(at("WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN")).toBeLessThan(at("RAISE EXCEPTION 'A hold reason is one of:"));
+    // UPDATE: the freeze binds everyone (no auth.uid() exemption after the INSERT branch)
+    const update = fn.slice(at("RAISE EXCEPTION 'A hold reason is one of:"));
+    expect(update).not.toContain("auth.uid()");
+    expect(update).toContain("RAISE EXCEPTION 'The description of an \"Other\" hold cannot be changed once it is placed; release the hold and place a new one.'");
+    // every refusal is a check_violation (the app's checked writes surface the sentence)
+    expect((fn.match(/RAISE EXCEPTION/g) ?? []).length).toBe((fn.match(/USING ERRCODE = 'check_violation';/g) ?? []).length);
   });
   it("one final SELECT with the (check, ok, n) shape: probes carry ok, inventory rows carry n", () => {
     const tail = code.slice(code.indexOf("COMMIT;") + "COMMIT;".length);
@@ -194,7 +240,20 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     expect(tail).toMatch(/^SELECT '[^']+' AS check,\s*\n[\s\S]*?AS ok,\s*\n\s*NULL::text AS n/m);
     expect(tail).toContain("SELECT inventory, NULL::boolean, n FROM dc_round_f_152_before;");
     // deparsed index text is matched with % across the CASE's own lines; no bare cast in a LIKE pattern
-    expect(tail).toContain("indexdef LIKE '%(document_id, reason, (%CASE%WHEN%Other%THEN%COALESCE(btrim(notes)%ELSE%END)) WHERE%'");
+    expect(tail).toContain("indexdef LIKE '%(document_id, reason, (%CASE%WHEN%Other%THEN%md5(COALESCE(btrim(notes)%ELSE%END)) WHERE%'");
+    // the trigger, the rail, the freeze and the privileges are probed
+    expect(tail).toContain("t.tgname = 'trg_document_hold_reason_code'");
+    expect(tail).toContain("AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16");
+    expect(tail).toContain("AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']");
+    expect(tail).toContain("AND NOT has_function_privilege('anon', 'enforce_document_hold_reason_code()', 'EXECUTE')");
+    expect(tail).toContain("AND NOT has_function_privilege('authenticated', 'enforce_document_hold_reason_code()', 'EXECUTE')");
+    // prosrc is verbatim: every probe pattern on it is a substring of the function as written (with % for its quoted literals)
+    const fnSrc = code.slice(code.indexOf("RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$") + "RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$".length, code.indexOf("$$;"));
+    for (const m of tail.matchAll(/p\.prosrc LIKE '((?:[^']|'')*)'/g)) {
+      const pattern = m[1].replace(/''/g, "'");
+      const re = new RegExp(`^${pattern.split("%").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s\\S]*")}$`);
+      expect(re.test(fnSrc), pattern).toBe(true);
+    }
     expect(tail).not.toMatch(/LIKE '[^']*::/);
     expect(tail.trim().endsWith(";")).toBe(true);
     expect((tail.match(/;/g) ?? []).length).toBe(1);

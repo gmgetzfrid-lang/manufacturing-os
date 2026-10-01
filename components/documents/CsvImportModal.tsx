@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { importStatusRefusal } from "@/lib/documentStatusOptions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import type { LibraryConfig } from "@/types/schema";
 
@@ -166,6 +167,14 @@ export default function CsvImportModal({
         }
         const rev = pick("rev")?.trim() || "0";
         const status = pick("status")?.trim() || "Draft";
+        // VFY-20 / DEC-44 (P15): a status no gate recognises ("IFC", a
+        // misspelling) is not imported — the row is refused and the report
+        // says why, as the editors no longer offer it.
+        const statusRefusal = importStatusRefusal(status);
+        if (statusRefusal) {
+          failed.push({ row: rIdx + 2, reason: statusRefusal });
+          continue;
+        }
         const metadata: Record<string, unknown> = {};
         for (const c of customColumns) {
           const v = pick(c.key);

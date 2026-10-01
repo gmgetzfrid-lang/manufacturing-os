@@ -57,7 +57,7 @@ vi.mock("@/components/documents/ProtectionRecord", () => ({ default: () => null 
 
 import {
   BULK_EDIT_STATUS_OPTIONS, METADATA_EDITOR_STATUS_OPTIONS, STAGING_STATUS_OPTIONS, RETIRED_STATUS_OPTIONS,
-  statusSelectOptions, notOfferedStatusNote, isUnguardedEntryIntoForce,
+  statusSelectOptions, notOfferedStatusNote, isUnguardedEntryIntoForce, IMPORT_STATUSES,
 } from "@/lib/documentStatusOptions";
 import { filterPackDocs } from "@/lib/docPack";
 import { IN_FORCE_STATUSES, isRecognisedStatus } from "@/lib/verifyVerdict";
@@ -87,6 +87,10 @@ const EDITORS: Record<string, readonly string[]> = {
   "CREATION_STATUSES (new document)": exportedList("lib/revisions.ts", "CREATION_STATUSES"),
   "UNARCHIVE_RESTORE_STATUSES (un-archive)": exportedList("lib/revisions.ts", "UNARCHIVE_RESTORE_STATUSES"),
   "LEGACY_RESTORE_STATUSES (reverse a lifecycle action)": exportedList("lib/documentLifecycle/reverse.ts", "LEGACY_RESTORE_STATUSES"),
+  // P15 second review fix: the spreadsheet import writes the status cell — a
+  // door, not a picker; what it may write is pinned here with the pickers
+  // (its refusal is driven in dcRoundFP15CsvImportStatus.test.ts)
+  "IMPORT_STATUSES (spreadsheet import)": IMPORT_STATUSES,
 };
 
 const printsInPack = (status: string): boolean =>
@@ -100,6 +104,15 @@ describe("VFY-20 / DEC-44 (P15) — every editor's statuses agree with the print
     expect(EDITORS["CREATION_STATUSES (new document)"]).toEqual(["Draft", "Issued"]);
     expect(EDITORS["UNARCHIVE_RESTORE_STATUSES (un-archive)"]).toEqual(["Issued", "Draft", "In Review"]);
     expect(EDITORS["LEGACY_RESTORE_STATUSES (reverse a lifecycle action)"]).toEqual(["Issued", "Draft", "In Review", "Void"]);
+    expect([...IMPORT_STATUSES]).toEqual(["Draft", "In Review", "Issued", "Locked", "Superseded", "Void", "Archived"]);
+  });
+  it("P15 second review fix: the spreadsheet import refuses a status no gate recognises before it inserts the row", () => {
+    const modal = src("components/documents/CsvImportModal.tsx");
+    expect(modal).toContain('import { importStatusRefusal } from "@/lib/documentStatusOptions";');
+    const refuse = modal.indexOf("const statusRefusal = importStatusRefusal(status);");
+    expect(refuse).toBeGreaterThan(-1);
+    expect(refuse).toBeLessThan(modal.indexOf('await supabase.from("documents").insert({'));
+    expect(modal).toMatch(/if \(statusRefusal\) \{\s*failed\.push\(\{ row: rIdx \+ 2, reason: statusRefusal \}\);\s*continue;\s*\}/);
   });
   it("THE pin: each offered status is in force at BOTH gates or refused by BOTH — and is a status the verify page recognises", () => {
     for (const [editor, list] of Object.entries(EDITORS)) {

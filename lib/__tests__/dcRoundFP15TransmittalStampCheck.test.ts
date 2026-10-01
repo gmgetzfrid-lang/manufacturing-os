@@ -4,6 +4,12 @@
 // ignoreEncryption, and the portal's stamp on the loaded (then discarded)
 // document — against the file the issue will pin; /api/transmittal/stamp-check
 // answers it for a draft, to a transmit authority, read-only.
+//
+// P15 review fix (the blocker): PDF or not is decided BEFORE the size bound,
+// as the portal decides it — a large CAD model, zip or image is `not_pdf`
+// (released unmarked, never a warning), never `oversize`; a file is told by
+// its name / recorded type first (nothing read), then by its first four
+// bytes from a RANGED read — a non-PDF is never downloaded whole.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -16,8 +22,13 @@ const st = vi.hoisted(() => ({
   docs: {} as Record<string, Row | null>,
   versions: {} as Record<string, Row | null>,
   readErrors: {} as Record<string, { message: string } | undefined>,
-  objects: {} as Record<string, { ContentLength?: number; bytes: Uint8Array }>,
+  objects: {} as Record<string, { ContentLength?: number; bytes: Uint8Array; ignoreRange?: boolean; stream?: boolean }>,
+  /** whole-body reads (no Range) */
   fetched: [] as string[],
+  /** ranged first-bytes reads (Range: bytes=0-3) */
+  heads: [] as string[],
+  ranges: [] as string[],
+  chunksRead: 0,
   destroyed: 0,
   writes: [] as Array<{ table: string; op: string }>,
   user: { id: "u-dc" } as { id: string } | null,
@@ -56,17 +67,37 @@ const admin = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: admin.client }));
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
-vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { constructor(public input: { Key: string }) {} } }));
+vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { constructor(public input: { Key: string; Range?: string }) {} } }));
+/** A streamed body (the Node SDK's): two bytes a chunk, counted as pulled. */
+function streamBody(bytes: Uint8Array) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (let i = 0; i < bytes.length; i += 2) { st.chunksRead++; yield bytes.subarray(i, i + 2); }
+    },
+    destroy: () => { st.destroyed++; },
+  };
+}
 vi.mock("@/lib/r2", () => ({
   R2_BUCKET: "bucket",
   r2: {
-    send: vi.fn(async (cmd: { input: { Key: string } }) => {
+    send: vi.fn(async (cmd: { input: { Key: string; Range?: string } }) => {
       const o = st.objects[cmd.input.Key];
-      st.fetched.push(cmd.input.Key);
+      if (cmd.input.Range) { st.heads.push(cmd.input.Key); st.ranges.push(cmd.input.Range); } else st.fetched.push(cmd.input.Key);
       if (!o) throw new Error("NoSuchKey");
+      const total = o.ContentLength ?? o.bytes.byteLength;
+      if (cmd.input.Range && !o.ignoreRange) {
+        // S3 / R2 refuse a range on an empty object
+        if (total === 0) throw Object.assign(new Error("The requested range is not satisfiable"), { name: "InvalidRange", $metadata: { httpStatusCode: 416 } });
+        const part = o.bytes.subarray(0, 4);
+        return {
+          ContentLength: part.byteLength,
+          ContentRange: `bytes 0-${part.byteLength - 1}/${total}`,
+          Body: { transformToByteArray: async () => part, destroy: () => { st.destroyed++; } },
+        };
+      }
       return {
-        ContentLength: o.ContentLength ?? o.bytes.byteLength,
-        Body: { transformToByteArray: async () => o.bytes, destroy: () => { st.destroyed++; } },
+        ContentLength: total,
+        Body: o.stream ? streamBody(o.bytes) : { transformToByteArray: async () => o.bytes, destroy: () => { st.destroyed++; } },
       };
     }),
   },
@@ -77,13 +108,16 @@ vi.mock("@/lib/transmittals", async (orig) => ({
 }));
 
 import { checkItemsStampable, STAMP_CHECK_TIME_BUDGET_MS } from "@/lib/transmittalStampCheck";
-import { PORTAL_STAMP_MAX_BYTES, type TransmittalItem } from "@/lib/transmittals";
+import { PORTAL_STAMP_MAX_BYTES, describeUnstampable, unstampableItems, type TransmittalItem } from "@/lib/transmittals";
 
 const ORG = "org-a";
 const KEY = (n: string) => `orgs/${ORG}/docs/${n}.pdf`;
 let GOOD: Uint8Array;
 let ENCRYPTED: Uint8Array;
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+/** The first bytes of an AutoCAD drawing ("AC1032") and of a zip ("PK\x03\x04"). */
+const DWG = new Uint8Array([0x41, 0x43, 0x31, 0x30, 0x33, 0x32, 0, 0, 0, 0]);
+const ZIP = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0, 0, 0, 0]);
 
 async function fixtures() {
   const d = await PDFDocument.create();
@@ -97,17 +131,22 @@ async function fixtures() {
   ENCRYPTED = new Uint8Array(Buffer.from(s, "latin1"));
 }
 
-function file(doc: string, opts: { bytes?: Uint8Array; size?: number | null; contentLength?: number; key?: string } = {}) {
+function file(doc: string, opts: { bytes?: Uint8Array; size?: number | null; contentLength?: number; key?: string; fileType?: string | null; ignoreRange?: boolean; stream?: boolean } = {}) {
   const key = opts.key ?? KEY(doc);
   st.docs[doc] = { id: doc, current_version_id: `${doc}-v` };
-  st.versions[`${doc}-v`] = { id: `${doc}-v`, file_url: key, size: opts.size === undefined ? (opts.bytes ?? GOOD).byteLength : opts.size };
-  st.objects[key] = { bytes: opts.bytes ?? GOOD, ...(opts.contentLength !== undefined ? { ContentLength: opts.contentLength } : {}) };
+  st.versions[`${doc}-v`] = { id: `${doc}-v`, file_url: key, file_type: opts.fileType ?? null, size: opts.size === undefined ? (opts.bytes ?? GOOD).byteLength : opts.size };
+  st.objects[key] = {
+    bytes: opts.bytes ?? GOOD,
+    ...(opts.contentLength !== undefined ? { ContentLength: opts.contentLength } : {}),
+    ...(opts.ignoreRange ? { ignoreRange: true } : {}),
+    ...(opts.stream ? { stream: true } : {}),
+  };
 }
 const item = (doc: string, number = doc.toUpperCase()): TransmittalItem => ({ documentId: doc, number });
 
 beforeEach(async () => {
   if (!GOOD) await fixtures();
-  st.docs = {}; st.versions = {}; st.readErrors = {}; st.objects = {}; st.fetched = []; st.destroyed = 0; st.writes = [];
+  st.docs = {}; st.versions = {}; st.readErrors = {}; st.objects = {}; st.fetched = []; st.heads = []; st.ranges = []; st.chunksRead = 0; st.destroyed = 0; st.writes = [];
   st.user = { id: "u-dc" };
   st.transmittal = null;
   st.authority = { allowed: true, member: { role: "DocCtrl", roles: ["DocCtrl"], email: "dc@a" } };
@@ -120,7 +159,9 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
   it("a PDF pdf-lib loads and stamps is stampable — REGRESSION: an ordinary issue is not warned", async () => {
     file("d1");
     expect(await run([item("d1", "P-101")])).toEqual([{ documentId: "d1", number: "P-101", verdict: "stampable" }]);
-    expect(st.fetched).toEqual([KEY("d1")]);
+    expect(st.heads).toEqual([KEY("d1")]); // its first bytes say PDF (a ranged read) …
+    expect(st.ranges).toEqual(["bytes=0-3"]);
+    expect(st.fetched).toEqual([KEY("d1")]); // … then it is read whole to load and stamp
     expect(st.writes).toEqual([]); // read-only
   });
   it("an ENCRYPTED (permission-restricted) PDF is unloadable — the portal's plain load refuses it", async () => {
@@ -128,23 +169,29 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
     file("d2", { bytes: ENCRYPTED });
     expect(await run([item("d2", "VDS-7")])).toEqual([{ documentId: "d2", number: "VDS-7", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" }]);
   });
-  it("a PDF over the portal's bound is oversize by its recorded size — never fetched", async () => {
+  it("a PDF over the portal's bound is oversize by its recorded size — only its first bytes are read (to know it is a PDF), never the body", async () => {
     file("d3", { size: PORTAL_STAMP_MAX_BYTES + 1 });
     expect(await run([item("d3")])).toEqual([{ documentId: "d3", number: "D3", verdict: "oversize" }]);
+    expect(st.heads).toEqual([KEY("d3")]);
     expect(st.fetched).toEqual([]);
   });
-  it("…or by the object's length when no size is recorded — the body is released unread", async () => {
+  it("…or by the object's length when no size is recorded (the ranged answer's total) — the body is never read", async () => {
     file("d4", { size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
     expect((await run([item("d4")]))[0].verdict).toBe("oversize");
-    expect(st.destroyed).toBe(1);
+    expect(st.heads).toEqual([KEY("d4")]);
+    expect(st.fetched).toEqual([]);
     // exactly AT the bound is still stamped (the portal's `>`)
     file("d5", { size: PORTAL_STAMP_MAX_BYTES });
     st.objects[KEY("d5")] = { bytes: GOOD };
     expect((await run([item("d5")]))[0].verdict).toBe("stampable");
   });
-  it("a file that is not a PDF is not_pdf (the portal releases it unmarked and its page says so) — not a warning", async () => {
+  it("a file that is not a PDF is not_pdf (the portal releases it unmarked and its page says so) — not a warning, and never downloaded whole", async () => {
     file("d6", { bytes: PNG });
-    expect((await run([item("d6")]))[0].verdict).toBe("not_pdf");
+    const out = await run([item("d6")]);
+    expect(out[0].verdict).toBe("not_pdf");
+    expect(st.heads).toEqual([KEY("d6")]);
+    expect(st.fetched).toEqual([]);
+    expect(unstampableItems(out)).toEqual([]);
   });
   it("what the check cannot decide is unchecked, with why — and a key outside the workspace is never fetched", async () => {
     st.docs.d7 = { id: "d7", current_version_id: null };
@@ -159,6 +206,7 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
       ["missing", "unchecked", "no published file to check"],
     ]);
     expect(st.fetched).not.toContain("orgs/org-b/docs/x.pdf");
+    expect(st.heads).not.toContain("orgs/org-b/docs/x.pdf");
     st.readErrors.documents = { message: "timeout" };
     expect((await run([item("d9")]))[0]).toMatchObject({ verdict: "unchecked", detail: "the document could not be read" });
   });
@@ -167,10 +215,14 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
     let t = 0;
     const out = await run([item("d1"), item("d1"), item("d2")], () => t);
     expect(out.map((c) => c.documentId)).toEqual(["d1", "d2"]);
-    st.fetched = [];
-    const clock = [0, 0, STAMP_CHECK_TIME_BUDGET_MS + 1];
+    st.fetched = []; st.heads = [];
+    // the deadline, then d1's two checks (before its first bytes, before its body) in time; d2's first check late
+    const clock = [0, 0, 0, STAMP_CHECK_TIME_BUDGET_MS + 1];
     const late = await run([item("d1"), item("d2")], () => (clock.length > 1 ? clock.shift()! : clock[0]));
+    expect(late[0].verdict).toBe("stampable");
     expect(late[1]).toMatchObject({ verdict: "unchecked", detail: "not checked — the check ran out of time" });
+    expect(st.heads).toEqual([KEY("d1")]);
+    expect(st.fetched).toEqual([KEY("d1")]);
     t = 0;
   });
   it("the bound is the portal route's own (a route module cannot export it — pinned equal)", () => {
@@ -183,6 +235,85 @@ describe("TRX-16 — checkItemsStampable runs the portal's stamp test on the fil
     expect(lib).toContain("pdfDoc = await PDFDocument.load(bytes);");
     expect(lib).not.toMatch(/ignoreEncryption\s*:/);
     expect(route).toContain("const pdfDoc = await PDFDocument.load(source);");
+  });
+});
+
+describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, as the portal decides it", () => {
+  const MODEL_KEY = (n: string, ext: string) => `orgs/${ORG}/docs/${n}.${ext}`;
+  it("a .dwg over the bound by its recorded size is not_pdf — nothing read, no warning (it was 'oversize: split it')", async () => {
+    file("m1", { key: MODEL_KEY("plant", "dwg"), bytes: DWG, size: PORTAL_STAMP_MAX_BYTES + 50 * 1024 * 1024 });
+    const out = await run([item("m1", "P-MODEL-1")]);
+    expect(out).toEqual([{ documentId: "m1", number: "P-MODEL-1", verdict: "not_pdf" }]);
+    expect(st.heads).toEqual([]);
+    expect(st.fetched).toEqual([]);
+    expect(unstampableItems(out)).toEqual([]); // so issueTransmittal raises no UnstampableItemsError
+    expect(describeUnstampable(out)).toBeNull();
+  });
+  it("a .png / .rvt over the bound by the object's length (no size recorded) is not_pdf — nothing read", async () => {
+    file("m2", { key: MODEL_KEY("site-photo", "png"), bytes: PNG, size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
+    file("m3", { key: MODEL_KEY("building", "rvt"), bytes: ZIP, size: null, contentLength: 120 * 1024 * 1024 });
+    const out = await run([item("m2"), item("m3")]);
+    expect(out.map((c) => c.verdict)).toEqual(["not_pdf", "not_pdf"]);
+    expect(st.heads).toEqual([]);
+    expect(st.fetched).toEqual([]);
+    expect(unstampableItems(out)).toEqual([]);
+  });
+  it("a recorded non-PDF type says so too (the portal page's isPdfFile) — nothing read", async () => {
+    file("m4", { key: `orgs/${ORG}/docs/upload-7f3a`, fileType: "image/tiff", bytes: PNG, size: PORTAL_STAMP_MAX_BYTES + 1 });
+    expect((await run([item("m4")]))[0].verdict).toBe("not_pdf");
+    expect(st.heads).toEqual([]);
+    expect(st.fetched).toEqual([]);
+  });
+  it("a file its name and type do not settle is told by its first four bytes (a ranged read): a zip over the bound by recorded size or by length is not_pdf, never downloaded", async () => {
+    file("m5", { key: `orgs/${ORG}/docs/upload-a1`, fileType: "application/octet-stream", bytes: ZIP, size: PORTAL_STAMP_MAX_BYTES + 1 });
+    file("m6", { key: `orgs/${ORG}/docs/upload-a2`, fileType: null, bytes: ZIP, size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
+    const out = await run([item("m5"), item("m6")]);
+    expect(out.map((c) => c.verdict)).toEqual(["not_pdf", "not_pdf"]);
+    expect(st.heads).toEqual([`orgs/${ORG}/docs/upload-a1`, `orgs/${ORG}/docs/upload-a2`]);
+    expect(st.ranges).toEqual(["bytes=0-3", "bytes=0-3"]);
+    expect(st.fetched).toEqual([]);
+    expect(unstampableItems(out)).toEqual([]);
+  });
+  it("…and one at or under the bound is not downloaded whole to read four bytes (the time budget is kept for the PDFs after it)", async () => {
+    file("m7", { key: `orgs/${ORG}/docs/upload-a3`, bytes: DWG, size: PORTAL_STAMP_MAX_BYTES });
+    file("d1");
+    const out = await run([item("m7"), item("d1")]);
+    expect(out.map((c) => c.verdict)).toEqual(["not_pdf", "stampable"]);
+    expect(st.fetched).toEqual([KEY("d1")]); // only the PDF is read whole
+  });
+  it("REGRESSION: a %PDF over the bound is still oversize — by recorded size and by length — and still warns", async () => {
+    file("p1", { size: PORTAL_STAMP_MAX_BYTES + 1 });
+    file("p2", { size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1 });
+    const out = await run([item("p1"), item("p2")]);
+    expect(out.map((c) => c.verdict)).toEqual(["oversize", "oversize"]);
+    expect(st.fetched).toEqual([]);
+    expect(unstampableItems(out)).toHaveLength(2);
+    expect(describeUnstampable(out)).toMatch(/larger than the portal can mark/);
+  });
+  it("a store that ignores the range answers the whole object: the head is read chunk by chunk and the body released after four bytes", async () => {
+    file("s1", { size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1, ignoreRange: true, stream: true });
+    file("s2", { key: `orgs/${ORG}/docs/upload-s2`, bytes: ZIP, size: null, contentLength: PORTAL_STAMP_MAX_BYTES + 1, ignoreRange: true, stream: true });
+    const out = await run([item("s1"), item("s2")]);
+    expect(out.map((c) => c.verdict)).toEqual(["oversize", "not_pdf"]);
+    expect(st.chunksRead).toBe(4); // two 2-byte chunks each, never the rest
+    expect(st.destroyed).toBe(2);
+    expect(st.fetched).toEqual([]);
+  });
+  it("an empty object (the store refuses a range on zero bytes) is not_pdf, as the portal reads it", async () => {
+    file("e1", { bytes: new Uint8Array(), size: 0 });
+    expect((await run([item("e1")]))[0].verdict).toBe("not_pdf");
+  });
+  it("the check selects the version's file_type with its key and size, and classifies with the portal page's isPdfFile", () => {
+    const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
+    expect(lib).toContain('.select("id, file_url, file_type, size")');
+    expect(lib).toContain('import { isPdfFile } from "@/lib/verifyVerdict";');
+    expect(lib).toContain('Range: "bytes=0-3"');
+    // PDF or not before the bound: the isPdfFile test and the ranged head read precede any oversize verdict
+    const body = lib.slice(lib.indexOf("async function checkOne"));
+    expect(body.indexOf("if (!isPdfFile(key, v?.file_type ?? null)) return notPdf;")).toBeLessThan(body.indexOf('verdict: "oversize"'));
+    expect(body.indexOf("if (!looksLikePdf(first)) return notPdf;")).toBeLessThan(body.indexOf('verdict: "oversize"'));
+    const route = readFileSync(join(process.cwd(), "app/api/transmittal/route.ts"), "utf8");
+    expect(route).toContain("if (!isPdfFile(f.file_url, f.file_type)) return \"not_pdf\";");
   });
 });
 

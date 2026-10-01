@@ -47,11 +47,11 @@ export const OTHER_HOLD_REASON: HoldReason = "Other";
  *  reasons and "Other". The column itself has no CHECK (holds placed before
  *  P15 may carry operator text, and a lifecycle copy carries a source's
  *  legacy reason across unchanged); openHold, the one app door that places a
- *  hold, writes nothing else, so the free-text path into `reason` is closed
- *  in the app. Not at the database: a direct PostgREST insert could still
- *  store text, and a member with UPDATE on an open hold can rewrite its note
- *  unaudited (20261073 pins only document, reason and placer) — VFY-6's
- *  recorded residual. */
+ *  hold, writes nothing else. Second review fix — the database holds the
+ *  same rules (20261152 enforce_document_hold_reason_code): a signed-in
+ *  INSERT writes a code, "Other" with a non-blank note, or a legacy reason
+ *  the org already carries (a carry); and an "Other" hold's note — its
+ *  description — cannot be changed once placed. */
 export const HOLD_REASON_CODES: readonly HoldReason[] = [...PREDEFINED_HOLD_REASONS, OTHER_HOLD_REASON];
 
 export function isHoldReasonCode(reason: string | null | undefined): boolean {
@@ -71,8 +71,11 @@ export function holdReasonLabel(h: { reason: string; notes?: string | null }): s
 /** VFY-6 (P15 review fix): an OPEN hold's identity as the open-reason unique
  *  index keys it (20261152 document_holds_open_reason_uniq: the document,
  *  the reason, and for an "Other" hold its note, btrim'd — spaces only, as
- *  Postgres trims). Every reason but "Other" is one open hold per document;
- *  two "Other" holds are one hold only when their notes match. The
+ *  Postgres trims. The index keys the md5 of that note so a long one never
+ *  exceeds the btree row limit; equal hashes are equal notes, so this key —
+ *  the note itself — answers the same). Every reason but "Other" is one open
+ *  hold per document; two "Other" holds are one hold only when their notes
+ *  match. The
  *  lifecycle carry (copyActiveHoldsToDoc) skips a hold already open on the
  *  target by THIS key — never by the reason alone, which would drop the
  *  second of two different custom holds now that both are "Other". */

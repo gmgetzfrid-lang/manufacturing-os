@@ -24,11 +24,18 @@
 // each offered status is either in force at both the print gate and the
 // verify allow-list, or refused by both.
 //
+// Second review fix: the spreadsheet import (components/documents/
+// CsvImportModal.tsx) writes each row's status cell, so it was a door the
+// editors' lists did not close — "IFC" (or any string) still landed. It now
+// imports only a status the gates recognise (importStatusRefusal).
+//
 // Pure: it imports only the shared status predicates (lib/issueStatus,
-// lib/verifyVerdict — both I/O-free); the client editors import it.
+// lib/verifyVerdict, lib/aiBoundary's status set — all I/O-free); the client
+// editors import it.
 
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { isControlledIssueStatus } from "@/lib/issueStatus";
-import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
+import { IN_FORCE_STATUSES, isRecognisedStatus } from "@/lib/verifyVerdict";
 
 /** Retired from the editors (DEC-44 (P15)): never offered for a new choice.
  *  The other option — adding it to DocumentStatus, filterPackDocs and
@@ -44,6 +51,30 @@ export const METADATA_EDITOR_STATUS_OPTIONS: readonly string[] = ["Draft", "Issu
 /** components/documents/MetadataStagingModal.tsx — a new upload's status
  *  (its `statusOptions` default). */
 export const STAGING_STATUS_OPTIONS: readonly string[] = ["Draft", "In Review", "Issued", "Superseded"];
+
+/** components/documents/CsvImportModal.tsx — the statuses a row may be
+ *  IMPORTED with (second review fix): exactly the statuses the verify page
+ *  recognises (isRecognisedStatus) — the work-in-progress pair, the in-force
+ *  pair and the shared not-current set. A blank cell imports as Draft. */
+export const IMPORT_STATUSES: readonly string[] = ["Draft", "In Review", ...IN_FORCE_STATUSES, ...NOT_CURRENT_STATUSES];
+
+/** Why one imported row's status is refused — null when it may be imported
+ *  (a recognised status, or blank, which imports as Draft). "IFC" (a status
+ *  no editor offers — DEC-44 (P15)) and any other value no gate recognises
+ *  would scan STATUS NOT RECOGNISED and never print into a pack, so the row
+ *  is not imported and the import's report says why; a case or spacing
+ *  variant of a recognised status is named. Compared as the gates compare
+ *  (exactly, after the import's own trim). */
+export function importStatusRefusal(status: string | null | undefined): string | null {
+  const s = (status ?? "").trim();
+  if (!s || isRecognisedStatus(s)) return null;
+  const use = `Use one of: ${IMPORT_STATUSES.join(", ")} (a blank status imports as Draft).`;
+  if (RETIRED_STATUS_OPTIONS.has(s)) {
+    return `Status "${s}" is not imported: it is not an issued status — the field pack does not print it and the verify page reads it as STATUS NOT RECOGNISED. ${use}`;
+  }
+  const near = IMPORT_STATUSES.find((x) => x.toLowerCase() === s.toLowerCase().replace(/\s+/g, " "));
+  return `Status "${s}" is not one the register recognises${near ? ` — did you mean "${near}"?` : ""}. ${use}`;
+}
 
 /** One option of a status <select>. `current` marks the record's own value
  *  when the editor does not offer it (an existing IFC row): shown as what it

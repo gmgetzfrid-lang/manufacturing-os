@@ -1,6 +1,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- document-control Round F wave 3 — P15 SURFACE REMAINDERS: an "Other" hold
--- is keyed by its note (public-surfaces VFY-6 done-when 2).
+-- is keyed by its note, a new hold's reason is a code, and an "Other" hold's
+-- description is fixed (public-surfaces VFY-6 done-when 2).
 --
 --   VFY-6  document_holds.reason was free text: the picker's "Other…" wrote
 --          whatever was typed into it, and reason is the field the public
@@ -9,44 +10,77 @@
 --          lib/holds.ts openHold writes only a reason CODE (the four
 --          predefined reasons or "Other"), and an "Other" hold carries what
 --          it is for in its NOTE (`notes`, which no public surface
---          publishes). The column itself keeps no CHECK: holds placed before
---          P15 keep their text, and a lifecycle copy (split / merge /
---          reversal) carries a source's legacy reason across unchanged —
---          skipping a hold already open on the target by THIS index's key
---          (lib/holds.ts openHoldKey), so two different "Other" holds are
---          both carried.
+--          publishes). Holds placed before P15 keep their text, and a
+--          lifecycle copy (split / merge / reversal) carries a source's
+--          legacy reason across unchanged — skipping a hold already open on
+--          the target by THIS index's key (lib/holds.ts openHoldKey), so two
+--          different "Other" holds are both carried.
 --
---          What this file does: the partial unique index
---          document_holds_open_reason_uniq (20260612: one OPEN hold per
---          document and reason) now keys an "Other" hold by its note too —
---          (document_id, reason, CASE WHEN reason = 'Other' THEN
---          COALESCE(btrim(notes), '') ELSE '' END) WHERE released_at IS NULL.
---          Without it, two different custom holds on one document — which
---          two different free-text reasons allowed before P15 — would collide
---          on the shared "Other" code. Every other reason keeps exactly one
---          open hold per document; two "Other" holds with the same note are
---          still one.
+--          What this file does (three parts, one paste):
+--   1. The partial unique index document_holds_open_reason_uniq (20260612:
+--      one OPEN hold per document and reason) keys an "Other" hold by its
+--      note too — (document_id, reason, CASE WHEN reason = 'Other' THEN
+--      md5(COALESCE(btrim(notes), '')) ELSE '' END) WHERE released_at IS
+--      NULL. Without it, two different custom holds on one document — which
+--      two different free-text reasons allowed before P15 — would collide on
+--      the shared "Other" code. Every other reason keeps exactly one open
+--      hold per document; two "Other" holds with the same note are still
+--      one. The note is keyed by its md5 (second review fix): equal hashes
+--      are equal notes, and the key stays 32 characters whatever the note's
+--      length — a long description, or a lifecycle carry's nested
+--      "Carried over from … Original notes: …", can never exceed the btree
+--      row-size limit (an INSERT, or this CREATE INDEX over a long legacy
+--      note, would fail on it).
+--   2. The reason rail (second review fix — the database limb of done-when
+--      2): a signed-in INSERT writes a reason CODE — the four predefined
+--      reasons, or "Other" with a non-blank note (its description). A reason
+--      outside the codes is admitted only when a hold of the same org
+--      already carries exactly that text: the legacy reason a lifecycle copy
+--      carries across. The column's free text can be copied, never added
+--      to. The service role (a restore replaying held history) keeps what it
+--      supplies, as 20261073 does. No CHECK: the rows placed before P15 keep
+--      their text.
+--   3. An "Other" hold's note is fixed once it is placed (second review
+--      fix): it is the hold's description — identity, as the free-text
+--      reason it replaces is under 20261073's guard (which leaves notes
+--      editable on an open hold). For everyone; release the hold and place
+--      a new one. Every other hold's note stays editable (20261073). No app
+--      door edits a hold's note.
+--      The rail and the freeze are one trigger function,
+--      enforce_document_hold_reason_code() — SECURITY INVOKER (it reads only
+--      the caller's own org's holds, which document_holds_select already
+--      shows any active member), search_path pinned, EXECUTE revoked from
+--      every client role (DRLS-16; a trigger function's privilege is checked
+--      when the trigger is created, never when it fires).
 --
 -- WIDENING (the index admits a row it refused: a second open "Other" hold
--- with a different note), security-neutral (uniqueness only — no policy,
--- function or trigger is touched). DEC-30 inventory (aggregate counts only,
--- captured BEFORE the transaction): holds whose reason is outside the code
--- vocabulary (custom text placed before P15 — kept, never rewritten; the
--- public verify surfaces already publish them only as "On hold"), how many
--- of those are open, documents with two or more open custom-reason holds,
--- and open "Other" holds.
--- HOW TO APPLY: BEFORE deploying the app carrying P15 — a hard prerequisite.
--- Without it a second open "Other" hold on one document is refused (two
--- different custom holds, placeable today as two free-text reasons, would
--- collide on the shared code), and a split / merge / reversal that carries
--- two "Other" holds onto one document is refused and rolled back (fails
--- closed — never a dropped hold). Safe under the app that runs today (it
--- writes free text, which this index keys exactly as before). Independent
--- of every other pending migration. Single paste: temp-table inventory ->
--- BEGIN / DDL / COMMIT -> one SELECT (check text, ok boolean, n text).
--- REVERSAL: re-create the 20260612 index (document_id, reason) WHERE
--- released_at IS NULL — possible only while no document has two open
--- "Other" holds (count them first).
+-- with a different note) AND NARROWING (the rail and the freeze refuse rows
+-- the database admitted: a signed-in hold with new free text in `reason`, an
+-- "Other" hold with no description, a change to an "Other" hold's note).
+-- DEC-30 inventory (aggregate counts only, captured BEFORE the
+-- transaction): holds whose reason is outside the code vocabulary (custom
+-- text placed before P15 — kept, never rewritten; the public verify
+-- surfaces already publish them only as "On hold"), how many of those are
+-- open, documents with two or more open custom-reason holds, open "Other"
+-- holds, and open "Other" holds with a blank note (kept; the description
+-- rule binds new rows).
+-- HOW TO APPLY: paste it IMMEDIATELY BEFORE deploying the app carrying P15 —
+-- a hard prerequisite, and keep the gap short. Without it the P15 app
+-- refuses a second open "Other" hold on one document (two different custom
+-- holds, placeable today as two free-text reasons, would collide on the
+-- shared code), and a split / merge / reversal that carries two "Other"
+-- holds onto one document is refused and rolled back (fails closed — never
+-- a dropped hold). Between this paste and that deploy, the app that runs
+-- today can no longer place a custom ("Other…") hold whose text is new to
+-- the org — the rail refuses it with the sentence above; a predefined
+-- reason still places, and its lifecycle carries are unaffected.
+-- Independent of every other pending migration. Single paste: temp-table
+-- inventory -> BEGIN / DDL / COMMIT -> one SELECT (check text, ok boolean,
+-- n text).
+-- REVERSAL: DROP TRIGGER trg_document_hold_reason_code ON document_holds and
+-- DROP FUNCTION enforce_document_hold_reason_code(); re-create the 20260612
+-- index (document_id, reason) WHERE released_at IS NULL — possible only
+-- while no document has two open "Other" holds (count them first).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -72,15 +106,70 @@ SELECT 'inventory (before apply): documents with two or more open custom-reason 
 UNION ALL
 SELECT 'inventory (before apply): open holds already under the Other code', COUNT(*)::text
   FROM document_holds
- WHERE released_at IS NULL AND reason = 'Other';
+ WHERE released_at IS NULL AND reason = 'Other'
+UNION ALL
+SELECT 'inventory (before apply): of those, with a blank note (kept; a NEW Other hold must carry its description)', COUNT(*)::text
+  FROM document_holds
+ WHERE released_at IS NULL AND reason = 'Other' AND NULLIF(btrim(notes), '') IS NULL;
 
 BEGIN;
 
--- ── The open-reason index: an "Other" hold is told apart by its note ───────
+-- ── 1. The open-reason index: an "Other" hold is told apart by its note ────
+--    (by the note's md5 — any length keys in 32 characters)
 DROP INDEX IF EXISTS document_holds_open_reason_uniq;
 CREATE UNIQUE INDEX document_holds_open_reason_uniq
-  ON document_holds (document_id, reason, (CASE WHEN reason = 'Other' THEN COALESCE(btrim(notes), '') ELSE '' END))
+  ON document_holds (document_id, reason, (CASE WHEN reason = 'Other' THEN md5(COALESCE(btrim(notes), '')) ELSE '' END))
   WHERE released_at IS NULL;
+
+-- ── 2 + 3. A new hold's reason is a code; an "Other" hold's note is fixed ───
+CREATE OR REPLACE FUNCTION enforce_document_hold_reason_code()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- The service role (a restore replaying held history) keeps what it
+    -- supplies, as the 20261073 guards do.
+    IF auth.uid() IS NULL THEN
+      RETURN NEW;
+    END IF;
+    IF NEW.reason = 'Other' THEN
+      IF NULLIF(btrim(NEW.notes), '') IS NULL THEN
+        RAISE EXCEPTION 'An "Other" hold needs a description: say in the hold note what the document is held for.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      RETURN NEW;
+    END IF;
+    IF NEW.reason IN ('Awaiting Engineering', 'Field Verification Needed', 'Missing Vendor Data', 'Client Review') THEN
+      RETURN NEW;
+    END IF;
+    -- A reason outside the codes is the text of a hold placed before P15,
+    -- carried across by a split / merge / reversal (copyActiveHoldsToDoc
+    -- copies a source hold's reason unchanged): admitted only when a hold of
+    -- this org already carries exactly that reason. Free text is copied,
+    -- never added.
+    IF EXISTS (SELECT 1 FROM document_holds h
+                WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason) THEN
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'A hold reason is one of: Awaiting Engineering, Field Verification Needed, Missing Vendor Data, Client Review, Other. For anything else choose "Other" and describe it in the hold note.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- UPDATE: an "Other" hold's note IS its description — what the work is
+  -- stopped for — so it is identity, as the free-text reason it replaces is
+  -- (20261073). Fixed once placed, for everyone.
+  IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN
+    RAISE EXCEPTION 'The description of an "Other" hold cannot be changed once it is placed; release the hold and place a new one.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION enforce_document_hold_reason_code() FROM PUBLIC, anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_document_hold_reason_code ON document_holds;
+CREATE TRIGGER trg_document_hold_reason_code
+  BEFORE INSERT OR UPDATE ON document_holds
+  FOR EACH ROW EXECUTE FUNCTION enforce_document_hold_reason_code();
 
 COMMIT;
 
@@ -99,18 +188,50 @@ SELECT 'it is partial on open holds (released_at IS NULL)',
                   AND indexdef LIKE '%WHERE (released_at IS NULL)%'),
        NULL::text
 UNION ALL
-SELECT 'it keys (document_id, reason) and an Other hold by its note',
+SELECT 'it keys (document_id, reason) and an Other hold by the md5 of its note',
        EXISTS (SELECT 1 FROM pg_indexes
                 WHERE schemaname = 'public' AND tablename = 'document_holds'
                   AND indexname = 'document_holds_open_reason_uniq'
                   -- deparsed: the CASE is printed on its own lines; % spans them
-                  AND indexdef LIKE '%(document_id, reason, (%CASE%WHEN%Other%THEN%COALESCE(btrim(notes)%ELSE%END)) WHERE%'),
+                  AND indexdef LIKE '%(document_id, reason, (%CASE%WHEN%Other%THEN%md5(COALESCE(btrim(notes)%ELSE%END)) WHERE%'),
        NULL::text
 UNION ALL
 SELECT 'document_holds carries exactly one unique index over (document_id, reason, ...) — the old two-column one is gone',
        (SELECT COUNT(*) = 1 FROM pg_indexes
          WHERE schemaname = 'public' AND tablename = 'document_holds'
            AND indexdef LIKE 'CREATE UNIQUE INDEX%(document_id, reason%'),
+       NULL::text
+UNION ALL
+SELECT 'trg_document_hold_reason_code fires enforce_document_hold_reason_code BEFORE INSERT OR UPDATE on every document_holds row',
+       EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE t.tgname = 'trg_document_hold_reason_code' AND NOT t.tgisinternal
+                  AND t.tgrelid = 'document_holds'::regclass AND p.proname = 'enforce_document_hold_reason_code'
+                  AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16),
+       NULL::text
+UNION ALL
+SELECT 'the rail: a signed-in INSERT writes a code (Other with its description), outside the codes only a reason the org already carries, and the service role passes',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
+                  AND p.prosrc LIKE '%IF auth.uid() IS NULL THEN%RETURN NEW%'
+                  AND p.prosrc LIKE '%IF NULLIF(btrim(NEW.notes), %) IS NULL THEN%needs a description%'
+                  AND p.prosrc LIKE '%Awaiting Engineering%Field Verification Needed%Missing Vendor Data%Client Review%'
+                  AND p.prosrc LIKE '%WHERE h.org_id = NEW.org_id AND h.reason = NEW.reason%'
+                  AND p.prosrc LIKE '%A hold reason is one of:%'),
+       NULL::text
+UNION ALL
+SELECT 'the freeze: an Other hold''s note cannot change once placed, for everyone',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
+                  AND p.prosrc LIKE '%IF OLD.reason = %Other% AND NEW.notes IS DISTINCT FROM OLD.notes THEN%'
+                  AND p.prosrc LIKE '%cannot be changed once it is placed%'),
+       NULL::text
+UNION ALL
+SELECT 'enforce_document_hold_reason_code is SECURITY INVOKER with search_path pinned, and no client role may execute it (DRLS-16)',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
+                  AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND NOT has_function_privilege('anon', 'enforce_document_hold_reason_code()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'enforce_document_hold_reason_code()', 'EXECUTE'),
        NULL::text
 UNION ALL
 SELECT 'after apply: documents with two or more open Other holds (allowed now when their notes differ)',
