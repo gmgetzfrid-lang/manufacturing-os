@@ -22,19 +22,48 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 // badge still read pending, and the day it flipped nobody was told.
 //
 // Every "is this date in force yet?" question now asks the same calendar:
-// the effective-date zone below. There is no facility time-zone setting in
-// the product yet, so it is UTC — the calendar the server paths already used
-// (the cron scan, /api/verify). When a facility zone lands it changes HERE
-// and every reader follows. Dates are compared as YYYY-MM-DD strings, never
-// by parsing a bare datetime (which JS reads in the local zone).
+// the FACILITY's, named by the deployment in NEXT_PUBLIC_FACILITY_TIME_ZONE
+// (an IANA zone such as "America/Chicago"). An effective date is a plant
+// calendar day — "the day after the training" — so neither the browser's
+// zone nor UTC is right on its own: UTC flips a date early for every site
+// west of it (a Houston publisher's 22 Aug is already "today" at 19:00 on
+// 21 Aug), the browser's zone differs between a remote reviewer and the
+// floor. Unset (or not a zone Intl knows), the calendar falls back to UTC,
+// the one the server paths already used — consistent, but early west of UTC,
+// which is why REV-9 stays open until every deployment names its zone (or an
+// org / library zone setting lands, which changes effectiveDateTimeZone()
+// and nothing else). Dates are compared as YYYY-MM-DD strings, never by
+// parsing a bare datetime (which JS reads in the local zone).
 
-/** The calendar every effective-date decision is made in (REV-9). */
-export const EFFECTIVE_DATE_TIME_ZONE = "UTC";
+/** The calendar used when the deployment names no (valid) facility zone. */
+export const EFFECTIVE_DATE_FALLBACK_TIME_ZONE = "UTC";
+
+let warnedZone: string | null = null;
+
+/** The calendar every effective-date decision is made in (REV-9): the
+ *  deployment's facility zone, read at call time — the literal
+ *  `process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE` reference is what Next
+ *  inlines into the browser bundle, and the cron scan reads the same name
+ *  on the server — else UTC. */
+export function effectiveDateTimeZone(): string {
+  const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim();
+  if (!raw) return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: raw });
+    return raw;
+  } catch {
+    if (warnedZone !== raw) {
+      warnedZone = raw;
+      console.error(`[effectiveDate] NEXT_PUBLIC_FACILITY_TIME_ZONE="${raw}" is not a time zone this runtime knows — effective dates are decided in ${EFFECTIVE_DATE_FALLBACK_TIME_ZONE}.`);
+    }
+    return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
+  }
+}
 
 /** Today's date (YYYY-MM-DD) in the effective-date calendar — the ONE
  *  "today" the badge, the suppression watermark, the daily scan and the
  *  public verify endpoint share. `now` is injectable for tests. */
-export function effectiveTodayISO(now: Date = new Date(), timeZone: string = EFFECTIVE_DATE_TIME_ZONE): string {
+export function effectiveTodayISO(now: Date = new Date(), timeZone: string = effectiveDateTimeZone()): string {
   // en-CA formats as YYYY-MM-DD; formatToParts keeps it locale-proof.
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
