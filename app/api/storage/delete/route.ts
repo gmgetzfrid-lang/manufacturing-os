@@ -16,7 +16,8 @@ import type { RetentionPolicy } from "@/types/schema";
 //   - the key is traversal-checked (assertSafeStorageKey), as the download
 //     route already does;
 //   - a key belonging to a document under legal hold, an unreleased hold, or
-//     inside its EFFECTIVE retention period is refused, FAIL CLOSED — the opposite of
+//     inside its EFFECTIVE retention period, or naming the revision the
+//     document holds as CURRENT, is refused, FAIL CLOSED — the opposite of
 //     the download route's fail-open, because destruction cannot be undone by
 //     a later correct read. "Belonging" means named by any document_versions
 //     row as its rendered file (file_url) OR its native source
@@ -37,6 +38,7 @@ interface OwnerDoc {
   created_at?: string | null;
   updated_at?: string | null;
   effective_date?: string | null;
+  current_version_id?: string | null;
 }
 const OWNER_DOC_COLUMNS =
   "legal_hold, retention_until, disposition_state, retention_policy, collection_id, library_id, created_at, updated_at, effective_date, current_version_id";
@@ -122,8 +124,11 @@ export async function DELETE(req: NextRequest) {
   let documentId: string | null = null;
   let versionId: string | null = null;
   try {
-    // document id → the first version naming the key (for the custody row)
-    const owners = new Map<string, string | null>();
+    // document id → EVERY version naming the key, in either column, in
+    // lookup order (the first is the custody row's version). All of them,
+    // not only the first: the current-revision refusal below asks whether
+    // the document's CURRENT revision is among them.
+    const owners = new Map<string, Array<string | null>>();
     for (const col of ["file_url", "source_file_key"] as const) {
       const { data: vers, error: verErr } = await supabaseAdmin
         .from("document_versions")
@@ -131,13 +136,16 @@ export async function DELETE(req: NextRequest) {
         .eq(col, path);
       if (verErr) throw verErr;
       for (const v of (vers ?? []) as Array<{ id?: string | null; record_id?: string | null }>) {
-        if (v.record_id && !owners.has(v.record_id)) owners.set(v.record_id, v.id ?? null);
+        if (!v.record_id) continue;
+        const ids = owners.get(v.record_id) ?? [];
+        if (!ids.includes(v.id ?? null)) ids.push(v.id ?? null);
+        owners.set(v.record_id, ids);
       }
     }
-    for (const [ownerId, ownerVersionId] of owners) {
+    for (const [ownerId, ownerVersionIds] of owners) {
       if (documentId === null) {
         documentId = ownerId;
-        versionId = ownerVersionId;
+        versionId = ownerVersionIds[0] ?? null;
       }
       const [{ data: doc, error: docErr }, { data: holds, error: holdErr }] = await Promise.all([
         supabaseAdmin.from("documents").select(OWNER_DOC_COLUMNS).eq("id", ownerId).maybeSingle(),
@@ -151,6 +159,21 @@ export async function DELETE(req: NextRequest) {
       }
       if ((holds ?? []).length > 0) {
         return NextResponse.json({ error: "This document has an active hold; release it before deleting files." }, { status: 423 });
+      }
+      // The CURRENT revision's bytes are what every viewer, share and print
+      // resolves through documents.current_version_id: destroying them leaves
+      // the register reporting the document at that revision with no file
+      // behind it (RET-2's failure scenario, minus the hold). Refused for
+      // everyone, whatever the hold or retention state, whether the key is
+      // the rendered file or the native source. A document row we could not
+      // read threw above (503); a document that no longer exists has no
+      // current revision to protect.
+      const currentId = row?.current_version_id ?? null;
+      if (currentId && ownerVersionIds.includes(currentId)) {
+        return NextResponse.json(
+          { error: "This file belongs to the document's current revision; it cannot be deleted while that revision is current." },
+          { status: 423 },
+        );
       }
       // Retention, judged TWO ways and refused if EITHER says it is in force:
       //   (1) the materialized retention_until / disposition_state, through
