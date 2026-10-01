@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   cascadeDependents, wouldCreateCycle, dependentsClosure, linkCyclePath, fsLagHours, reflowNodesFromMilestones,
   CascadeRefusedError, afterLagMs, fsReadyMs, WORK_DAY_HOURS, DAY_MS, type ReflowNode,
+  planCascade, computeTreeMove, isLocked,
 } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -328,5 +329,130 @@ describe("SCH-9 · the cycle check over the full set, in one walk, with the loop
     const filtered = nodes.filter((n) => n.id !== "b");
     expect(wouldCreateCycle(filtered, "a", "c")).toBe(false); // the defect: a filtered view hides the loop
     expect(wouldCreateCycle(nodes, "a", "c")).toBe(true);
+  });
+});
+
+// PT SCH-4 / SCH-9 (fifth review pass): a successor of a PHASE waits for all
+// the work inside it (the cascade's own rule since the fourth pass), but the
+// link checks walked task-level links only — so a loop through a phase could
+// be created, and a move that reached one fell into the relaxation branch,
+// which carried a sub-task its own link had already pushed by the whole delta
+// again (written a day later than any link required) and never refused the
+// loop. The link checks and the cascade now read one graph (phaseGraph).
+describe("SCH-4 / SCH-9 · a loop through a phase: refused when the link is made, and refused by the cascade", () => {
+  const N = (id: string, parentId: string | null, s: string, f: string, deps: string[] = []): ReflowNode =>
+    ({ id, parentId, plannedStartAt: d(`2026-${s}`), plannedAt: d(`2026-${f}`), dependsOn: deps, status: "planned" });
+  // The reviewer's plan: A1 (in phase A); phase Q waits for A; X (in Q) waits for A1.
+  const base = (): ReflowNode[] => [
+    N("A1", "A", "06-01", "06-05"), N("A", null, "06-01", "06-05"),
+    N("Q", null, "06-08", "06-09", ["A"]), N("X", "Q", "06-08", "06-09", ["A1"]),
+  ];
+  // The board's move: the tree move, then the cascade over the moved rows (ExecutionView withCascade).
+  const drag = (nodes: ReflowNode[], id: string, delta: number) => {
+    const primary = computeTreeMove(nodes, id, delta, "defer");
+    const by = new Map(primary.map((c) => [c.id, c]));
+    const updated = nodes.map((n) => (by.has(n.id) ? { ...n, plannedStartAt: by.get(n.id)!.plannedStartAt, plannedAt: by.get(n.id)!.plannedAt } : n));
+    return planCascade(updated, primary.map((c) => c.id));
+  };
+  const dates = (changes: Array<{ id: string; plannedStartAt: string; plannedAt: string }>) =>
+    Object.fromEntries(changes.map((c) => [c.id, `${day(c.plannedStartAt).slice(5)}→${day(c.plannedAt).slice(5)}`]));
+
+  it("without a loop: A1 +3 d pushes X and Q to Jun 9–10", () => {
+    expect(dates(drag(base(), "A1", 3).changes)).toEqual({ Q: "06-09→06-10", X: "06-09→06-10" });
+  });
+
+  it("the reviewer's probe: Y (in Q) waits for Z, Z waits for phase Q — the move is refused with the loop named, nothing written", () => {
+    const nodes = [...base(), N("Y", "Q", "06-08", "06-09", ["Z"]), N("Z", null, "06-20", "06-21", ["Q"])];
+    let err: unknown = null;
+    try { drag(nodes, "A1", 3); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(CascadeRefusedError); // was: X written Jun 10–11, Q Jun 9–11, no refusal
+    expect((err as CascadeRefusedError).kind).toBe("cycle");
+    expect((err as CascadeRefusedError).edges.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["Y>Q:within", "Q>Z:link", "Z>Y:link"]);
+  });
+
+  it("…and the link that closes it is refused when it is made (the picker and updateMilestone)", () => {
+    const nodes = [...base(), N("Y", "Q", "06-08", "06-09"), N("Z", null, "06-20", "06-21", ["Q"])];
+    expect(linkCyclePath(nodes, "Y", "Z")).toEqual(["Y", "Q", "Z", "Y"]); // Y is inside Q, Z waits for Q
+    expect(wouldCreateCycle(nodes, "Y", "Z")).toBe(true);
+    expect(dependentsClosure(nodes, "Y").has("Z")).toBe(true); // the picker no longer offers Z
+    // The same the other way round: Z → Y exists; "Z waits for Q" would close it.
+    const other = [...base(), N("Y", "Q", "06-08", "06-09", ["Z"]), N("Z", null, "06-20", "06-21")];
+    expect(linkCyclePath(other, "Z", "Q")).toEqual(["Z", "Y", "Q", "Z"]); // Y (inside Q) waits for Z
+    expect(dependentsClosure(other, "Z").has("Q")).toBe(true);
+  });
+
+  it("a phase may not wait for its own work, or for a task that waits for its work; a task may wait for its own phase", () => {
+    const nodes: ReflowNode[] = [
+      N("P", null, "06-01", "06-05"), N("c", "P", "06-01", "06-02"), N("d", "P", "06-03", "06-05"),
+      N("X", null, "06-08", "06-09", ["c"]),
+    ];
+    expect(linkCyclePath(nodes, "P", "c")).toEqual(["P", "c", "P"]);
+    expect(linkCyclePath(nodes, "P", "X")).toEqual(["P", "c", "X", "P"]); // P carries c, X waits for c
+    expect(linkCyclePath(nodes, "d", "P")).toBeNull(); // a link from a phase to its own task: its stored finish
+    expect(linkCyclePath(nodes, "X", "P")).toBeNull();
+    const closure = dependentsClosure(nodes, "P");
+    expect([...closure].sort()).toEqual(["P", "X", "c", "d"]);
+    expect([...dependentsClosure(nodes, "d")].sort()).toEqual(["d"]); // P is d's own phase: it may be d's predecessor
+  });
+
+  it("a loop of plain task links the move reaches but never pushes round is still left alone — and a sub-task its own link pushed is carried only by the rest", () => {
+    // W waits for X with weeks of slack; the old loop b ↔ c hangs off W (an old import).
+    const nodes = [
+      ...base(),
+      N("W", null, "07-01", "07-02", ["X"]), N("b", null, "07-10", "07-11", ["W", "c"]), N("c", null, "07-12", "07-13", ["b"]),
+    ];
+    // X is pushed +1 by its own link, then Q +1, which used to carry X +1 again (X Jun 10–11, Q Jun 9–11).
+    expect(dates(drag(nodes, "A1", 3).changes)).toEqual({ Q: "06-09→06-10", X: "06-09→06-10" });
+  });
+
+  // Every plan built only from links the check accepts is one the cascade
+  // can order (never refused as a loop), the picker's closure agrees with the
+  // check for every pair, and the relaxation branch (forced by an old loop
+  // hanging off the moved task, which no push reaches) writes exactly what
+  // the topological pass writes.
+  it("fuzz (1,500 seeded plans with phases, links to phases and completed rows)", () => {
+    const rng = (seed: number) => { let x = seed >>> 0; return () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 2 ** 32; }; };
+    const iso = (ms: number) => new Date(ms).toISOString();
+    let refused = 0, closureMismatch = 0, branchMismatch = 0, compared = 0;
+    for (let seed = 1; seed <= 1500; seed++) {
+      const r = rng(seed);
+      const n = 3 + Math.floor(r() * 8);
+      const nodes: ReflowNode[] = [];
+      for (let i = 0; i < n; i++) {
+        const s0 = Date.UTC(2026, 5, 1) + Math.floor(r() * 10) * DAY_MS;
+        nodes.push({ id: `n${i}`, parentId: i > 0 && r() < 0.45 ? `n${Math.floor(r() * i)}` : null, plannedStartAt: iso(s0), plannedAt: iso(s0 + Math.floor(r() * 3) * DAY_MS), dependsOn: [], status: r() < 0.12 ? "completed" : "planned" });
+      }
+      for (let k = 0; k < n * 2; k++) {
+        const a = nodes[Math.floor(r() * n)], b = nodes[Math.floor(r() * n)];
+        if (!a.dependsOn!.includes(b.id) && !linkCyclePath(nodes, a.id, b.id)) a.dependsOn = [...a.dependsOn!, b.id];
+      }
+      for (const a of nodes) {
+        const closure = dependentsClosure(nodes, a.id);
+        for (const b of nodes) if (closure.has(b.id) !== (linkCyclePath(nodes, a.id, b.id) !== null)) closureMismatch++;
+      }
+      const leaves = nodes.filter((x) => !nodes.some((k) => k.parentId === x.id) && !isLocked(x));
+      if (leaves.length === 0) continue;
+      const pick = leaves[Math.floor(r() * leaves.length)];
+      const primary = computeTreeMove(nodes, pick.id, 1 + Math.floor(r() * 4), "defer");
+      if (primary.length === 0) continue;
+      const by = new Map(primary.map((c) => [c.id, c]));
+      const updated = nodes.map((x) => (by.has(x.id) ? { ...x, plannedStartAt: by.get(x.id)!.plannedStartAt, plannedAt: by.get(x.id)!.plannedAt } : x));
+      let topo;
+      try { topo = planCascade(updated, primary.map((c) => c.id)); } catch (e) { if (e instanceof CascadeRefusedError) { refused++; continue; } throw e; }
+      const old: ReflowNode[] = [
+        { id: "W", plannedStartAt: d("2027-01-01"), plannedAt: d("2027-01-02"), dependsOn: [pick.id] },
+        { id: "b", plannedStartAt: d("2027-01-10"), plannedAt: d("2027-01-11"), dependsOn: ["W", "c"] },
+        { id: "c", plannedStartAt: d("2027-01-12"), plannedAt: d("2027-01-13"), dependsOn: ["b"] },
+      ];
+      const relaxed = planCascade([...updated, ...old], primary.map((c) => c.id));
+      compared++;
+      const key = (p: { changes: Array<{ id: string }>; held: Array<{ id: string }> }) => JSON.stringify({
+        changes: p.changes.filter((c) => !["W", "b", "c"].includes(c.id)).sort((x, y) => x.id.localeCompare(y.id)),
+        held: p.held.map((h) => h.id).filter((h) => !["W", "b", "c"].includes(h)).sort(),
+      });
+      if (key(topo) !== key(relaxed)) branchMismatch++;
+    }
+    expect(compared).toBeGreaterThan(1000);
+    expect({ refused, closureMismatch, branchMismatch }).toEqual({ refused: 0, closureMismatch: 0, branchMismatch: 0 });
   });
 });

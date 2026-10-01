@@ -142,10 +142,12 @@ export default function ExecutionView({
   const { toasts, announce, notify, dismiss, runUndo } = useUndoableActions();
 
   // ONE "now" for every figure on the board — the pulse, the summary strip,
-  // the overdue filter, the Report and the today line — advanced at each UTC
-  // midnight, so an open board never shows two different overdue counts (PT
-  // SCH-5).
-  const nowMs = useScheduleNow();
+  // the overdue filter, the Report and the today line — moved to a new UTC
+  // day at midnight, when the page is shown or focused again (a timer does
+  // not run while the device sleeps), and when a refresh lands on a later
+  // day, so an open board never shows two different overdue counts, nor
+  // yesterday's (PT SCH-5).
+  const nowMs = useScheduleNow(milestones);
 
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
@@ -538,10 +540,12 @@ export default function ExecutionView({
   const reflowNodes = useMemo<ReflowNode[]>(() => reflowNodesFromMilestones(items), [items]);
   const nodeById = useMemo(() => new Map(reflowNodes.map((n) => [n.id, n])), [reflowNodes]);
 
-  // A refused cascade, in names: "Weld → NDE → Weld".
+  // A refused cascade, in names: "Weld → NDE → Weld"; a sub-task carried
+  // with its phase reads "(contains)", and the phase a task sits in — whose
+  // successor waits for it — reads "(its phase)".
   const describeRefusal = useCallback((e: CascadeRefusedError): string => {
     const name = (id: string) => `“${truncate(byId.get(id)?.name ?? "a task", 40)}”`;
-    const path = [name(e.edges[0]?.from ?? ""), ...e.edges.map((x) => `${x.via === "contains" ? "(contains) " : ""}${name(x.to)}`)].join(" → ");
+    const path = [name(e.edges[0]?.from ?? ""), ...e.edges.map((x) => `${x.via === "contains" ? "(contains) " : x.via === "within" ? "(its phase) " : ""}${name(x.to)}`)].join(" → ");
     return e.kind === "cycle"
       ? `These links go round in a loop: ${path}. Nothing was moved — remove one of these links first.`
       : `This move would push tasks further than the whole schedule could ever need (${path}). Nothing was moved.`;

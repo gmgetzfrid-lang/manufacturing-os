@@ -461,97 +461,191 @@ export function reflowAllAncestors(nodes: ReflowNode[]): DateChange[] {
   return changesFrom(nodes, start, finish);
 }
 
-/**
- * Would adding `newPredId` as a predecessor of `taskId` create a cycle?
- * True if taskId is already (transitively) a predecessor of newPredId, or
- * they're the same task. Used to keep the dependency graph a DAG.
- */
-export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId: string): boolean {
-  if (taskId === newPredId) return true;
-  const byId = new Map<string, ReflowNode>();
-  for (const n of nodes) byId.set(n.id, n);
-  // Walk newPredId's predecessor closure; if we reach taskId, it's a cycle.
-  const stack = [newPredId];
-  const seen = new Set<string>();
-  while (stack.length) {
-    const cur = stack.pop()!;
-    if (cur === taskId) return true;
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-    for (const p of byId.get(cur)?.dependsOn ?? []) stack.push(p);
-  }
-  return false;
+/** One edge of the schedule as the cascade reads it (phaseGraph). */
+type PhaseEdge = { to: string; via: "link" | "contains" | "within"; phase?: string };
+
+/** The schedule as the cascade reads it (PT SCH-4, PC SCHED-5): from a task
+ *  to its finish-to-start successors ("link"); from a phase to its sub-tasks,
+ *  which a push of it carries ("contains"); and from a task to the successors
+ *  of every phase it sits in, which wait for all the work inside that phase
+ *  ("within", through `phase`) — except a successor inside that phase or one
+ *  that contains the task (a link from a phase to its own work). A loop in
+ *  THIS graph is a loop for the cascade, so the link checks and planCascade
+ *  share it and cannot disagree about one (fifth review pass: the link checks
+ *  walked task-level links only, so a loop through a phase could be created
+ *  and then sent the cascade into its relaxation branch). */
+interface PhaseGraph {
+  byId: Map<string, ReflowNode>;
+  childrenByParent: Map<string, ReflowNode[]>;
+  successors: Map<string, string[]>;
+  edgeCount: number;
+  ancestorsOf: (id: string) => string[];
+  isWithin: (id: string, anc: string) => boolean;
+  subtreeOf: (rootId: string) => string[];
+  viaPhases: (id: string) => Array<{ sid: string; phase: string }>;
+  edgesOut: (id: string) => PhaseEdge[];
 }
 
-/** Every task that (transitively) depends on `taskId`, plus `taskId` itself —
- *  exactly the tasks that may NOT become its predecessors. One O(n + e) walk,
- *  so a picker can test every candidate without a DFS per candidate
- *  (PT PERF-5). Run it over the FULL milestone set, never a filtered view
+function phaseGraph(nodes: ReflowNode[]): PhaseGraph {
+  const byId = new Map<string, ReflowNode>();
+  const childrenByParent = new Map<string, ReflowNode[]>();
+  for (const n of nodes) byId.set(n.id, n);
+  for (const n of nodes) {
+    const pid = n.parentId && n.parentId !== n.id && byId.has(n.parentId) ? n.parentId : null;
+    if (!pid) continue;
+    const arr = childrenByParent.get(pid) ?? [];
+    arr.push(n);
+    childrenByParent.set(pid, arr);
+  }
+  // predecessor id -> ids of tasks that depend on it.
+  const successors = new Map<string, string[]>();
+  let edgeCount = 0;
+  for (const n of nodes) {
+    for (const pred of n.dependsOn ?? []) {
+      if (!byId.has(pred)) continue;
+      const arr = successors.get(pred) ?? [];
+      arr.push(n.id);
+      successors.set(pred, arr);
+      edgeCount++;
+    }
+  }
+  // Each node's ancestors, nearest first (the tree does not change here).
+  const ancestorCache = new Map<string, string[]>();
+  const ancestorsOf = (id: string): string[] => {
+    const hit = ancestorCache.get(id);
+    if (hit) return hit;
+    const out: string[] = [];
+    const seen = new Set<string>([id]);
+    for (let c = byId.get(id)?.parentId ?? null; c && byId.has(c) && !seen.has(c); c = byId.get(c)!.parentId ?? null) {
+      seen.add(c);
+      out.push(c);
+    }
+    ancestorCache.set(id, out);
+    return out;
+  };
+  const isWithin = (id: string, anc: string) => ancestorsOf(id).includes(anc);
+  // A node and everything under it, each parent before its children.
+  const subtreeOf = (rootId: string): string[] => {
+    const out: string[] = [];
+    const stack = [rootId];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      out.push(cur);
+      for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
+    }
+    return out;
+  };
+  // The successors of the phases a node sits in: a move of the node can make
+  // each of them start before its phase is done.
+  const viaPhases = (id: string): Array<{ sid: string; phase: string }> => {
+    const out: Array<{ sid: string; phase: string }> = [];
+    for (const a of ancestorsOf(id)) {
+      for (const sid of successors.get(a) ?? []) if (!isWithin(sid, a) && !isWithin(id, sid)) out.push({ sid, phase: a });
+    }
+    return out;
+  };
+  const edgesOut = (id: string): PhaseEdge[] => [
+    ...(successors.get(id) ?? []).map((to) => ({ to, via: "link" as const })),
+    ...(childrenByParent.get(id) ?? []).map((k) => ({ to: k.id, via: "contains" as const })),
+    ...viaPhases(id).map((v) => ({ to: v.sid, via: "within" as const, phase: v.phase })),
+  ];
+  return { byId, childrenByParent, successors, edgeCount, ancestorsOf, isWithin, subtreeOf, viaPhases, edgesOut };
+}
+
+/** Every node reachable from `fromId` in the cascade's graph, each with the
+ *  edge that first reached it (breadth first). */
+function reachIn(g: PhaseGraph, fromId: string): Map<string, { prev: string; edge: PhaseEdge } | null> {
+  const seen = new Map<string, { prev: string; edge: PhaseEdge } | null>([[fromId, null]]);
+  const queue = [fromId];
+  for (let i = 0; i < queue.length; i++) {
+    for (const e of g.edgesOut(queue[i])) {
+      if (seen.has(e.to)) continue;
+      seen.set(e.to, { prev: queue[i], edge: e });
+      queue.push(e.to);
+    }
+  }
+  return seen;
+}
+
+/**
+ * Would adding `newPredId` as a predecessor of `taskId` create a loop — for
+ * the cascade, a phase's links included (see linkCyclePath)? True for the
+ * task itself. Used to keep the dependency graph a DAG.
+ */
+export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId: string): boolean {
+  return linkCyclePath(nodes, taskId, newPredId) !== null;
+}
+
+/** Every task that may NOT become a predecessor of `taskId`, `taskId`
+ *  itself included: each task the cascade reaches from it (its dependents,
+ *  the sub-tasks a push of it carries, the successors of the phases it sits
+ *  in — and on from those), and each phase holding one of those (a successor
+ *  of a phase waits for all the work inside it) unless `taskId` sits inside
+ *  that phase. One walk, so a picker can test every candidate without a
+ *  search per candidate (PT PERF-5); it agrees with linkCyclePath for every
+ *  candidate. Run it over the FULL milestone set, never a filtered view
  *  (PT SCH-9). */
 export function dependentsClosure(nodes: ReflowNode[], taskId: string): Set<string> {
-  const successors = new Map<string, string[]>();
-  for (const n of nodes) {
-    for (const p of n.dependsOn ?? []) {
-      const arr = successors.get(p) ?? [];
-      arr.push(n.id);
-      successors.set(p, arr);
-    }
-  }
-  const out = new Set<string>([taskId]);
-  const stack = [taskId];
-  while (stack.length) {
-    const cur = stack.pop()!;
-    for (const s of successors.get(cur) ?? []) {
-      if (!out.has(s)) { out.add(s); stack.push(s); }
-    }
-  }
+  const g = phaseGraph(nodes);
+  const out = new Set<string>(reachIn(g, taskId).keys());
+  for (const u of [...out]) for (const a of g.ancestorsOf(u)) if (!g.isWithin(taskId, a)) out.add(a);
   return out;
 }
 
 /** The loop that adding "`taskId` depends on `newPredId`" would close, as a
  *  list of ids from `taskId` round to itself (`[taskId, …, newPredId,
  *  taskId]`), or null when it closes none — so a refusal can NAME the links
- *  (PT SCH-4 / SCH-9). */
+ *  (PT SCH-4 / SCH-9). Phase semantics, as the cascade reads them: the new
+ *  link also makes `taskId` wait for every task inside `newPredId` (unless
+ *  `taskId` is one of them — a link from a phase to its own work), so it
+ *  closes a loop when `taskId` already reaches `newPredId`, or any task
+ *  inside it, through links, the sub-tasks a phase carries, or the
+ *  successors of a phase a task sits in. A phase stands in the list between
+ *  a task inside it and that phase's successor ("Y → Q → Z → Y": Y is inside
+ *  Q, Z waits for Q, Y waits for Z). */
 export function linkCyclePath(nodes: ReflowNode[], taskId: string, newPredId: string): string[] | null {
   if (taskId === newPredId) return [taskId, taskId];
-  const byId = new Map<string, ReflowNode>();
-  for (const n of nodes) byId.set(n.id, n);
-  // Search newPredId's predecessor closure for taskId, remembering the path.
-  const prev = new Map<string, string>();
-  const stack = [newPredId];
-  const seen = new Set<string>([newPredId]);
-  while (stack.length) {
-    const cur = stack.pop()!;
-    if (cur === taskId) {
-      // cur (taskId) is a predecessor of … of newPredId: walk back to newPredId.
-      const chain: string[] = [taskId];
-      let x = taskId;
-      while (x !== newPredId) { x = prev.get(x)!; chain.push(x); }
-      // chain = [taskId, …, newPredId]: each depends on the one before it.
-      return [...chain, taskId];
-    }
-    for (const p of byId.get(cur)?.dependsOn ?? []) {
-      if (seen.has(p)) continue;
-      seen.add(p);
-      prev.set(p, cur);
-      stack.push(p);
-    }
+  const g = phaseGraph(nodes);
+  const targets = new Set<string>([newPredId]);
+  if (g.byId.has(newPredId) && !g.isWithin(taskId, newPredId)) {
+    for (const t of g.subtreeOf(newPredId)) if (t !== newPredId && !g.isWithin(t, taskId)) targets.add(t);
   }
-  return null;
+  const reach = reachIn(g, taskId);
+  // The nearest target, in the order the walk reached them.
+  const hit = [...reach.keys()].find((id) => targets.has(id));
+  if (hit === undefined) return null;
+  const steps: Array<{ prev: string; edge: PhaseEdge }> = [];
+  for (let at = reach.get(hit); at; at = reach.get(at.prev)) steps.unshift(at);
+  const path = [taskId];
+  for (const { edge } of steps) {
+    if (edge.via === "within" && edge.phase) path.push(edge.phase);
+    path.push(edge.to);
+  }
+  if (hit !== newPredId) path.push(newPredId); // a task inside newPredId, which taskId would wait for
+  return [...path, taskId];
 }
 
+/** One step of a refused cascade's loop: `to` waits for `from` ("link"), is
+ *  carried with it ("contains": `from` is its phase), or is the phase `from`
+ *  sits in ("within": a successor of `to` waits for `from`). */
+export type CascadeEdge = { from: string; to: string; via: "link" | "contains" | "within" };
+
 /** A cascade that cannot be applied safely. `cycle`: the finish-to-start
- *  links (with a pushed task carrying its sub-tasks) form a loop, so every
- *  pass would push the same tasks out again — the move is refused instead of
- *  absorbed (PT SCH-4). `runaway`: a task would move further than any acyclic
- *  cascade over this schedule could push it (the span plus every task laid
- *  end to end, a day per link and every lag) — a backstop that only a loop
- *  can reach, so it never lets a cascade write dates years out. `edges` name
- *  the loop (or the chain that ran away) in order. */
+ *  links (with a pushed task carrying its sub-tasks, and a phase's successors
+ *  waiting for the work inside it) form a loop, so every pass would push the
+ *  same tasks out again — the move is refused instead of absorbed (PT
+ *  SCH-4). `runaway`: a task would move further than any acyclic cascade over
+ *  this schedule could push it (the span plus every task laid end to end, a
+ *  day per link and every lag) — a backstop that only a loop can reach, so it
+ *  never lets a cascade write dates years out. `edges` name the loop (or the
+ *  chain that ran away) in order. */
 export class CascadeRefusedError extends Error {
   readonly kind: "cycle" | "runaway";
-  readonly edges: Array<{ from: string; to: string; via: "link" | "contains" }>;
-  constructor(kind: "cycle" | "runaway", edges: Array<{ from: string; to: string; via: "link" | "contains" }>) {
+  readonly edges: CascadeEdge[];
+  constructor(kind: "cycle" | "runaway", edges: CascadeEdge[]) {
     super(kind === "cycle"
       ? `The dependency links form a loop (${edges.map((e) => `${e.from} → ${e.to}`).join(", ")}); nothing was moved.`
       : `The cascade would push tasks further than any cascade over this schedule can (${edges.map((e) => `${e.from} → ${e.to}`).join(", ")}); nothing was moved.`);
@@ -568,6 +662,81 @@ export interface CascadePlan {
    *  now start before their predecessor is ready. They were NOT moved; the
    *  caller says so rather than hiding the broken link. */
   held: Array<{ id: string; predecessorId: string }>;
+}
+
+/** A loop through a PHASE among `ids` (the nodes a cascade could not put in
+ *  topological order), as named edges starting nearest the moved tasks — or
+ *  null when every loop there is made of task-to-task links alone. An edge
+ *  that is not a plain link ("contains", "within") whose two ends sit in one
+ *  strongly connected component lies on a loop (Tarjan, iterative). */
+function phaseLoopIn(g: PhaseGraph, ids: string[], seeds: string[]): CascadeEdge[] | null {
+  const inSet = new Set(ids);
+  const outIn = (v: string) => g.edgesOut(v).filter((e) => inSet.has(e.to));
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const comp = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  let next = 0, comps = 0;
+  for (const root of ids) {
+    if (index.has(root)) continue;
+    const visit = (v: string) => { index.set(v, next); low.set(v, next); next++; stack.push(v); onStack.add(v); };
+    visit(root);
+    const work: Array<{ v: string; i: number; out: PhaseEdge[] }> = [{ v: root, i: 0, out: outIn(root) }];
+    while (work.length) {
+      const top = work[work.length - 1];
+      if (top.i < top.out.length) {
+        const w = top.out[top.i++].to;
+        if (!index.has(w)) { visit(w); work.push({ v: w, i: 0, out: outIn(w) }); }
+        else if (onStack.has(w)) low.set(top.v, Math.min(low.get(top.v)!, index.get(w)!));
+        continue;
+      }
+      work.pop();
+      if (work.length) { const up = work[work.length - 1].v; low.set(up, Math.min(low.get(up)!, low.get(top.v)!)); }
+      if (low.get(top.v) === index.get(top.v)) {
+        let w: string;
+        do { w = stack.pop()!; onStack.delete(w); comp.set(w, comps); } while (w !== top.v);
+        comps++;
+      }
+    }
+  }
+  for (const u of ids) {
+    for (const e of outIn(u)) {
+      if (e.via === "link" || comp.get(e.to) !== comp.get(u)) continue;
+      // The loop: this edge, then the shortest way back from e.to to u
+      // inside the component.
+      const prev = new Map<string, { from: string; edge: PhaseEdge }>();
+      const queue = [e.to];
+      const seen = new Set([e.to]);
+      for (let i = 0; i < queue.length && !seen.has(u); i++) {
+        for (const f of outIn(queue[i])) {
+          if (comp.get(f.to) !== comp.get(u) || seen.has(f.to)) continue;
+          seen.add(f.to); prev.set(f.to, { from: queue[i], edge: f }); queue.push(f.to);
+        }
+      }
+      const ring: Array<{ from: string; edge: PhaseEdge }> = [{ from: u, edge: e }];
+      const back: Array<{ from: string; edge: PhaseEdge }> = [];
+      for (let at = u; at !== e.to;) { const p = prev.get(at)!; back.unshift(p); at = p.from; }
+      ring.push(...back);
+      // Start the loop where the move comes in: the member nearest a seed.
+      const dist = new Map<string, number>();
+      const bfs = seeds.filter((sd) => g.byId.has(sd));
+      for (const sd of bfs) dist.set(sd, 0);
+      for (let i = 0; i < bfs.length; i++) {
+        for (const f of g.edgesOut(bfs[i])) if (!dist.has(f.to)) { dist.set(f.to, dist.get(bfs[i])! + 1); bfs.push(f.to); }
+      }
+      let first = 0;
+      ring.forEach((r, i) => { if ((dist.get(r.from) ?? Infinity) < (dist.get(ring[first].from) ?? Infinity)) first = i; });
+      const out: CascadeEdge[] = [];
+      for (const { from, edge } of [...ring.slice(first), ...ring.slice(0, first)]) {
+        if (edge.via === "within" && edge.phase) {
+          out.push({ from, to: edge.phase, via: "within" }, { from: edge.phase, to: edge.to, via: "link" });
+        } else out.push({ from, to: edge.to, via: edge.via });
+      }
+      return out;
+    }
+  }
+  return null;
 }
 
 /**
@@ -588,9 +757,11 @@ export interface CascadePlan {
  * moves inside a phase makes the phase's successors look again — a locked
  * phase (an actual, an imported or pinned summary) keeps its stored dates and
  * is never written, but its links are still honoured, and a locked successor
- * they now break is reported in `held` (PC SCHED-5). A loop in the links is
- * REFUSED with its edges named (CascadeRefusedError), and so is a push
- * further than any acyclic cascade over the schedule could go. Pure.
+ * they now break is reported in `held` (PC SCHED-5). A loop is REFUSED with
+ * its edges named (CascadeRefusedError): one that runs through a phase
+ * whenever the move reaches it, one of task-to-task links alone when a push
+ * goes round it; so is a push further than any acyclic cascade over the
+ * schedule could go. Pure.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   return planCascade(nodes, changedIds).changes;
@@ -598,29 +769,8 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
 
 /** cascadeDependents, plus the locked successors it held (see CascadePlan). */
 export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadePlan {
-  const byId = new Map<string, ReflowNode>();
-  const childrenByParent = new Map<string, ReflowNode[]>();
-  for (const n of nodes) byId.set(n.id, n);
-  for (const n of nodes) {
-    const pid = n.parentId && byId.has(n.parentId) ? n.parentId : null;
-    if (!pid) continue;
-    const arr = childrenByParent.get(pid) ?? [];
-    arr.push(n);
-    childrenByParent.set(pid, arr);
-  }
-
-  // predecessor id -> ids of tasks that depend on it.
-  const successors = new Map<string, string[]>();
-  let edgeCount = 0;
-  for (const n of nodes) {
-    for (const pred of n.dependsOn ?? []) {
-      if (!byId.has(pred)) continue;
-      const arr = successors.get(pred) ?? [];
-      arr.push(n.id);
-      successors.set(pred, arr);
-      edgeCount++;
-    }
-  }
+  const g = phaseGraph(nodes);
+  const { byId, childrenByParent, successors, edgeCount, ancestorsOf, isWithin, subtreeOf, viaPhases } = g;
   if (successors.size === 0) return { changes: [], held: [] };
 
   const start = new Map<string, number>();
@@ -643,36 +793,6 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   // than the schedule's span plus every task laid end to end, a day per link
   // and every lag — so a push past that is refused, never written.
   const bound = (Number.isFinite(lo) && Number.isFinite(hi) ? hi - lo : 0) + work + (edgeCount + 1) * DAY_MS + lagSpan;
-
-  const subtreeOf = (rootId: string): string[] => {
-    const out: string[] = [];
-    const stack = [rootId];
-    const seen = new Set<string>();
-    while (stack.length) {
-      const cur = stack.pop()!;
-      if (seen.has(cur)) continue;
-      seen.add(cur);
-      out.push(cur);
-      for (const k of childrenByParent.get(cur) ?? []) stack.push(k.id);
-    }
-    return out;
-  };
-
-  // Each node's ancestors, nearest first (the tree does not change here).
-  const ancestorCache = new Map<string, string[]>();
-  const ancestorsOf = (id: string): string[] => {
-    const hit = ancestorCache.get(id);
-    if (hit) return hit;
-    const out: string[] = [];
-    const seen = new Set<string>([id]);
-    for (let c = byId.get(id)?.parentId ?? null; c && byId.has(c) && !seen.has(c); c = byId.get(c)!.parentId ?? null) {
-      seen.add(c);
-      out.push(c);
-    }
-    ancestorCache.set(id, out);
-    return out;
-  };
-  const isWithin = (id: string, anc: string) => ancestorsOf(id).includes(anc);
 
   // A PHASE's finish-to-start links wait for all the work inside it: it is
   // read at the latest current finish in its subtree (its own stored finish
@@ -710,18 +830,6 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
     return { req, from };
   };
 
-  // The successors of the phases a node sits in: a move of the node can make
-  // each of them start before its phase is done. A successor inside that
-  // phase, or one that contains the node, is a link from a phase to its own
-  // work and is left out.
-  const viaPhases = (id: string): Array<{ sid: string; phase: string }> => {
-    const out: Array<{ sid: string; phase: string }> = [];
-    for (const a of ancestorsOf(id)) {
-      for (const sid of successors.get(a) ?? []) if (!isWithin(sid, a) && !isWithin(id, sid)) out.push({ sid, phase: a });
-    }
-    return out;
-  };
-
   // Who last moved each node: its predecessor (a link) or the ancestor it
   // was carried with (contains). A push whose own cause chain already
   // contains the task being pushed is a loop, however long.
@@ -755,12 +863,8 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
 
   // The part of the network this move can reach: through a link to a
   // successor, from a task to the sub-tasks a push of it would carry, or
-  // from a task to the successors of the phases it sits in.
-  const outOf = (id: string): string[] => [
-    ...(successors.get(id) ?? []),
-    ...(childrenByParent.get(id) ?? []).map((k) => k.id),
-    ...viaPhases(id).map((v) => v.sid),
-  ];
+  // from a task to the successors of the phases it sits in (phaseGraph).
+  const outOf = (id: string): string[] => g.edgesOut(id).map((e) => e.to);
   const affected = new Set<string>();
   {
     const stack = [...seeds];
@@ -821,11 +925,20 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       markMoved(t);
     }
   } else {
-    // A loop in the links (with a pushed task carrying its sub-tasks) is
-    // somewhere the move reaches. Relax push by push and refuse the moment a
-    // push goes round the loop (its cause chain holds the task being pushed);
-    // a loop no push goes round is left alone. The displacement bound ends
-    // any relaxation; the step count is the Bellman-Ford limit behind it.
+    // A loop somewhere the move reaches. One that runs through a PHASE — a
+    // phase and its own work, or a phase's successor that work inside the
+    // phase waits for — exists only through the phase rules the task-level
+    // link check did not know; it is refused whole, named, whether or not a
+    // push would go round it (fifth review pass: it sent the move into the
+    // relaxation below and was never refused).
+    const settled = new Set(order);
+    const loop = phaseLoopIn(g, [...affected].filter((id) => !settled.has(id)), seeds);
+    if (loop) throw new CascadeRefusedError("cycle", loop);
+    // A loop of task-to-task links (an old import's) is left: relax push by
+    // push and refuse the moment a push goes round the loop (its cause chain
+    // holds the task being pushed); a loop no push goes round is left alone.
+    // The displacement bound ends any relaxation; the step count is the
+    // Bellman-Ford limit behind it.
     const queue = [...seeds];
     const queued = new Set(queue);
     const guard = nodes.length * (nodes.length + edgeCount) + 32;
@@ -852,11 +965,23 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
         const at = chain.findIndex((e) => e.from === sid);
         if (at >= 0) throw new CascadeRefusedError("cycle", [...chain.slice(at), { from: pid, to: sid, via: "link" }]);
         const delta = wholeDaysToClear(curStart, req);
+        // The pushed task moves by delta, and each task inside it is carried
+        // to at least its parent's displacement — never by more: a sub-task
+        // its own link already pushed keeps what it has and moves only by the
+        // rest (fifth review pass: it was carried the whole delta again, and
+        // written later than any link required). As in the topological pass.
+        const carryTo = new Map<string, number>();
         for (const t of subtreeOf(sid)) {
+          const cur = moved.get(t) ?? 0;
+          const parentTo = t === sid ? cur + delta : (carryTo.get(byId.get(t)?.parentId ?? "") ?? cur + delta);
           // Actuals inside the pushed subtree stay where they happened (PC
-          // SCHED-5) — the parent re-envelopes around them below.
-          if (t !== sid && isLocked(byId.get(t))) continue;
-          shift(t, delta, t === sid ? { from: pid, via: "link" } : { from: byId.get(t)?.parentId ?? sid, via: "contains" });
+          // SCHED-5) — the parent re-envelopes around them below; the work
+          // inside one is still carried.
+          if (t !== sid && isLocked(byId.get(t))) { carryTo.set(t, parentTo); continue; }
+          const to = Math.max(cur, parentTo);
+          carryTo.set(t, to);
+          if (to === cur) continue;
+          shift(t, to - cur, t === sid ? { from: pid, via: "link" } : { from: byId.get(t)?.parentId ?? sid, via: "contains" });
           // Its own dependents — and its sub-tasks' dependents — may need to move too.
           if (!queued.has(t)) { queued.add(t); queue.push(t); }
         }
@@ -866,6 +991,7 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
 
   // Re-envelope ancestors bottom-up (a locked parent keeps its dates).
   reenvelopeParents(byId, childrenByParent, start, finish);
+  readyCache.clear(); // the phases' finishes just changed
   const changes = changesFrom(nodes, start, finish);
   // A held successor that a later push satisfied after all is not held.
   const heldOut = [...held.values()].filter((h) => start.get(h.id)! < requirement(byId.get(h.id)!).req);

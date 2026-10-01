@@ -76,8 +76,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
   // ONE "now" for the progress card, every row's overdue flag and the
-  // overdue filter, advanced at each UTC midnight (PT SCH-5).
-  const nowMs = useScheduleNow();
+  // overdue filter, moved to a new UTC day at midnight, when the page is
+  // shown or focused again, and when a reload lands on a later day (PT SCH-5).
+  const nowMs = useScheduleNow(milestones);
   // What the last ACTION said (a refused move, a failed delete …). A reload
   // never clears it — every handler follows its message with a reload, and a
   // realtime event reloads at any moment (PT SCH-7 / SCH-17 review): only the

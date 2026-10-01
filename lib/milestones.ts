@@ -328,17 +328,19 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
       ?? null;
     if (projectId) {
       // Every row, paged past PostgREST's 1,000-row default — a truncated
-      // read would miss the loop on a large schedule.
-      const rows: Array<{ id: string; name: string; depends_on: string[] | null }> = [];
+      // read would miss the loop on a large schedule. The outline comes too:
+      // a successor of a phase waits for all the work inside it, so a loop
+      // can run through a phase (linkCyclePath).
+      const rows: Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }> = [];
       for (let from = 0; ; from += 1000) {
-        const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on")
+        const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on, parent_id")
           .eq("project_id", projectId).order("id").range(from, from + 999);
         if (allErr) throw new Error(`Could not check the new link for loops (${allErr.message}) — nothing was saved.`);
-        const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null }>;
+        const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }>;
         rows.push(...got);
         if (got.length < 1000) break;
       }
-      const nodes: ReflowNode[] = rows.map((r) => ({ id: r.id, plannedAt: "", dependsOn: r.id === input.id ? [] : (r.depends_on ?? []) }));
+      const nodes: ReflowNode[] = rows.map((r) => ({ id: r.id, parentId: r.parent_id ?? null, plannedAt: "", dependsOn: r.id === input.id ? [] : (r.depends_on ?? []) }));
       const nameOf = new Map(rows.map((r) => [r.id, r.name]));
       // Only a link the edit ADDS can close a new loop. A link already stored
       // is not re-judged, so a task inside a loop an old import left behind

@@ -340,6 +340,17 @@ describe("SCH-9 · a new link is checked for loops over the WHOLE project, from 
     ];
     await expect(updateMilestone({ id: "za", patch: { dependsOn: ["zc"] }, updatedBy: USER })).rejects.toThrow(/Start → Middle → End → Start/);
   });
+  it("a loop through a PHASE is refused too: a task inside a phase may not wait for the phase's own successor (fifth review pass)", async () => {
+    db.tables.milestones = [
+      row({ id: "Q", name: "Spool 12", is_summary: true, parent_id: null, planned_at: "2026-06-09T00:00:00Z" }),
+      row({ id: "Y", name: "Weld", parent_id: "Q", planned_at: "2026-06-09T00:00:00Z" }),
+      row({ id: "Z", name: "Hydrotest", parent_id: null, planned_at: "2026-06-21T00:00:00Z", depends_on: ["Q"] }),
+    ];
+    const err = await updateMilestone({ id: "Y", patch: { dependsOn: ["Z"] }, updatedBy: USER }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(DependencyCycleError); // was saved: the check walked task-level links only
+    expect((err as Error).message).toMatch(/That link would make a loop: Weld → Spool 12 → Hydrotest → Weld/);
+    expect(db.writes.filter((w) => w.method === "update")).toEqual([]);
+  });
 });
 
 describe("SCH-18 / SCH-7 · a move reports each row's new updated_at (its Undo's lock)", () => {

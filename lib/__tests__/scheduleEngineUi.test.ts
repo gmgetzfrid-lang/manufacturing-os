@@ -168,26 +168,55 @@ describe("SCHED-12 (limb c) · the timeline's critical-path control says what it
 // it after a UTC midnight and a refresh. One instant (useScheduleNow) now
 // feeds the pulse, the strip, the overdue filter and the Report, and it
 // advances at each UTC midnight.
+//
+// Fifth review pass: it advanced ONLY through the midnight timer, which does
+// not run while a laptop sleeps or a tab is frozen — reopened the next
+// afternoon, every surface agreed on yesterday. The page now re-reads the
+// clock when it is shown or focused again, and when a refresh lands on a
+// later UTC day.
 describe("SCH-5 · one 'now' per screen: the pulse and the summary strip cannot disagree across a UTC midnight", () => {
   afterEach(() => { vi.useRealTimers(); });
   const counts = () => {
     const t = (host.textContent ?? "").replace(/\s+/g, " ");
     return { pulse: Number(t.match(/(\d+) overdue task/)?.[1] ?? 0), strip: Number(t.match(/Overdue(\d+)/)?.[1] ?? NaN) };
   };
-  it("a refresh after midnight (before the midnight tick) moves neither count; the tick moves both together", async () => {
+  const due = [
+    mk({ id: "a", name: "Due today", plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-10T00:00:00Z" }),
+    mk({ id: "b", name: "Later", plannedStartAt: "2026-03-20T00:00:00Z", plannedAt: "2026-03-21T00:00:00Z" }),
+  ];
+  it("the midnight tick moves both counts together", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     vi.setSystemTime(new Date("2026-03-10T23:59:00Z"));
-    const due = [
-      mk({ id: "a", name: "Due today", plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-10T00:00:00Z" }),
-      mk({ id: "b", name: "Later", plannedStartAt: "2026-03-20T00:00:00Z", plannedAt: "2026-03-21T00:00:00Z" }),
-    ];
     await render(board(due));
     expect(counts()).toEqual({ pulse: 0, strip: 0 }); // due today is not overdue
-    vi.setSystemTime(new Date("2026-03-11T00:00:30Z")); // past UTC midnight; timers have not run
-    await render(board(due.map((m) => ({ ...m })))); // a realtime / own-edit refresh
-    expect(counts()).toEqual({ pulse: 0, strip: 0 }); // was { pulse: 1, strip: 0 }
     await act(async () => { vi.advanceTimersByTime(61_000); });
     expect(counts()).toEqual({ pulse: 1, strip: 1 });
+  });
+  it("a refresh that lands after midnight (before the tick) moves both counts together", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(new Date("2026-03-10T23:59:00Z"));
+    await render(board(due));
+    expect(counts()).toEqual({ pulse: 0, strip: 0 });
+    vi.setSystemTime(new Date("2026-03-11T00:00:30Z")); // past UTC midnight; timers have not run
+    await render(board(due.map((m) => ({ ...m })))); // a realtime / own-edit refresh
+    expect(counts()).toEqual({ pulse: 1, strip: 1 }); // third pass: { pulse: 1, strip: 0 }
+  });
+  it("a laptop that slept past midnight (its timer never fired) catches up when the page is shown or focused again — both counts together", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(new Date("2026-03-10T17:00:00Z")); // a 7-hour timer is armed
+    await render(board(due));
+    expect(counts()).toEqual({ pulse: 0, strip: 0 });
+    vi.setSystemTime(new Date("2026-03-11T16:00:00Z")); // reopened the next afternoon; no timer ran
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(counts()).toEqual({ pulse: 1, strip: 1 }); // was 0 / 0 until the stale timer fired, ~6 h later
+    // Focus does the same after a further day.
+    vi.setSystemTime(new Date("2026-03-22T09:00:00Z"));
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(counts()).toEqual({ pulse: 2, strip: 2 }); // "Later" (due 03-21) is now overdue too
+    // A show on the same UTC day keeps the instant (and the counts).
+    vi.setSystemTime(new Date("2026-03-22T21:00:00Z"));
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(counts()).toEqual({ pulse: 2, strip: 2 });
   });
   it("msUntilNextUtcDay: just past the next UTC midnight, wherever the day is", () => {
     expect(msUntilNextUtcDay(Date.parse("2026-03-10T23:59:00Z"))).toBe(61_000);
@@ -196,7 +225,7 @@ describe("SCH-5 · one 'now' per screen: the pulse and the summary strip cannot 
   });
   it("every surface is handed the screen's one instant (source pin)", () => {
     const view = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
-    expect(view).toMatch(/const nowMs = useScheduleNow\(\);/);
+    expect(view).toMatch(/const nowMs = useScheduleNow\(milestones\);/);
     expect(view).toMatch(/filterMilestones\(items, filter, \{ now: nowMs \}\)/);
     expect(view).toMatch(/<SchedulePulse\s+milestones=\{items\}\s+nowMs=\{nowMs\}/);
     expect(view).toMatch(/const today = useMemo\(\(\) => startOfDayUTC\(new Date\(nowMs\)\), \[nowMs\]\);/);
@@ -204,7 +233,7 @@ describe("SCH-5 · one 'now' per screen: the pulse and the summary strip cannot 
     const pulse = readFileSync(join(process.cwd(), "components/projects/SchedulePulse.tsx"), "utf8");
     expect(pulse).toMatch(/computeExecutionReport\(milestones, nowMs != null \? \{ now: new Date\(nowMs\) \} : undefined\)/);
     const tab = readFileSync(join(process.cwd(), "components/projects/ScheduleTab.tsx"), "utf8");
-    expect(tab).toMatch(/const nowMs = useScheduleNow\(\);/);
+    expect(tab).toMatch(/const nowMs = useScheduleNow\(milestones\);/);
     expect(tab).toMatch(/<ScheduleProgress milestones=\{milestones\} metrics=\{metrics\} nowMs=\{nowMs\} \/>/);
     expect(tab).toMatch(/computeScheduleMetrics\(milestones, \{ now: new Date\(nowMs\) \}\)/); // the card's plan % on the same instant
     expect(tab).toMatch(/filterMilestones\(ghostFiltered, planFilter, \{ now: nowMs \}\)/);
@@ -268,6 +297,11 @@ describe("SCH-4 · the move sheet counts what will be written, and shows a refus
     expect(src).toMatch(/<MovePreviewSheet[\s\S]{0,300}planFor=\{planFor\}/);
     expect(src).toMatch(/const plan = changesFor\(pm, mode\);/);          // the commit writes the same computation
     expect(src).toMatch(/const p = changesFor\(pendingMove, mode\);/);   // …the sheet previews
+  });
+  it("a refused loop through a phase names the phase step (fifth review pass, source pin)", () => {
+    const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
+    // "“Weld” → (its phase) “Spool 12” → “Hydrotest” → “Weld”"
+    expect(src).toMatch(/x\.via === "contains" \? "\(contains\) " : x\.via === "within" \? "\(its phase\) " : ""/);
   });
   it("a loop: the refusal is shown, Confirm is disabled", async () => {
     await render(React.createElement(MovePreviewSheet, {
