@@ -33,6 +33,8 @@
 //      unless the function does not exist yet (20261105 not applied).
 //      Folded intake publishes / replacements no notice announced get one
 //      digest per project (INTK-10 / SEC-8 — flushFoldedIntakeNotices).
+//   4d. The public verify endpoints' scan record (verify_scans) is pruned to
+//      90 days (VFY-12; prune_verify_scans(), 20261134).
 //
 // Auth: server-to-server. If CRON_SECRET is set, require it as a Bearer
 // token. Degrades gracefully if optional env vars are missing.
@@ -104,6 +106,7 @@ async function handler(req: NextRequest) {
     pendingOnRetiredVersions?: number;
     intakeFoldedDigests?: number;
     reviewHealthNudges?: number;
+    verifyScansPruned?: number;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -266,6 +269,19 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     intakeLine(`intake-door: ${(e as Error).message}`);
+  }
+
+  // 4d. PUBLIC VERIFY scan record (VFY-12) — keep 90 days. One step, on this
+  //     cron (no third vercel.json entry); no-op until 20261134 is applied.
+  try {
+    const { data: scansPruned, error: scanPruneErr } = await sb.rpc("prune_verify_scans");
+    if (scanPruneErr) {
+      if (!isMissingFunction(scanPruneErr)) intakeLine(`verify-scans: ${scanPruneErr.message}`);
+    } else {
+      result.verifyScansPruned = Number(scansPruned ?? 0);
+    }
+  } catch (e) {
+    intakeLine(`verify-scans: ${(e as Error).message}`);
   }
 
   // 5. Stale-checkout escalation. Sessions active for 14+ days notify the

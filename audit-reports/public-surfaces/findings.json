@@ -8,17 +8,18 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 55,
+    "findings": 62,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
-      "MEDIUM": 20,
-      "LOW": 18
+      "MEDIUM": 21,
+      "LOW": 24
     },
     "by_status": {
-      "OPEN": 43,
-      "RESOLVED": 12
+      "OPEN": 34,
+      "RESOLVED": 27,
+      "WONTFIX": 1
     }
   },
   "status_vocabulary": [
@@ -121,7 +122,7 @@
       "id": "VFY-1",
       "title": "A VOIDED drawing scans GREEN \"CURRENT\" — the public verify endpoints use a two-value retired set while four other places in the repo use the three-value one that includes Void",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -206,7 +207,7 @@
       "id": "PHYS-3",
       "title": "\"Print doc pack\" reports \"all current, all stamped\" while packing Superseded, Void and Draft documents and every document under an active hold — the hold state is displayed on the same page and never reaches the paper",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -235,7 +236,7 @@
       "id": "PHYS-4",
       "title": "/d/[number] resolves any document number against ALL orgs with the service-role client and redirects with the document UUID — destroying the \"unguessable UUID\" premise that /api/verify's unauthenticated exposure rests on",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "WONTFIX",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -289,7 +290,7 @@
       "id": "PHYS-6",
       "title": "Downloading an older revision from Version History stamps the footer and names the file with the document's CURRENT rev — the paper asserts a revision it does not contain",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -372,7 +373,7 @@
       "id": "SHR-2",
       "title": "/d/[number] is an unauthenticated cross-org document lookup that redirects to a substring match — it leaks foreign document UUIDs and can put the wrong drawing in a field worker's hands",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -475,7 +476,7 @@
       "id": "VFY-2",
       "title": "\"Refresh pins\" silently flips every already-printed work pack from red STALE to green PACK IS CURRENT — the tripwire is disarmed by a click, with the paper unchanged in the field",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -609,7 +610,7 @@
       "id": "PHYS-7",
       "title": "Equipment QR labels point at /assets/[tag], a route inside the (protected) group — the sticker on the pump advertises \"SCAN: drawings · holds · report a problem\" and lands an account-less scan on the signed-in app shell with nothing in it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -638,7 +639,7 @@
       "id": "PHYS-10",
       "title": "A hold card scans GREEN \"RELEASED — this tag can come down\" when its own hold is released, even while other holds are still active on the same document — the multi-hold design is explicit and the verify page has no knowledge of siblings",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -743,6 +744,30 @@
       ],
       "refuted": false,
       "summary": "Document Control is testing on a Vercel preview deploy and generates a share link for an outside inspector, showing him the QR on screen or printing the modal. The encoded host is the preview deployment, which Vercel gates behind its own login. The inspector scans and lands on a Vercel auth screen — the share token is valid, the document is fine, and the bridge is dead. The same holds for the phon",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
+      "id": "PHYS-14",
+      "title": "The sign-in page ignores `?next=` — an equipment-label scan sent to sign-in \"carrying the tag\" lands on /dashboard after signing in, the tag lost",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/page.tsx",
+        "app/(protected)/assets/[tag]/page.tsx",
+        "lib/assetSignIn.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A contractor with an account scans the sticker on pump P-101, is sent to sign-in, signs in — and lands on the dashboard, not on the pump's drawings and holds. To get back he must find the asset by hand, at the pump, on a phone.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },
@@ -881,7 +906,7 @@
       "id": "VFY-3",
       "title": "/verify/<docId> with no ?v= returns isCurrent:true unconditionally — and lib/downloads.ts stamps exactly that URL onto prints of documents with no current version",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -907,7 +932,7 @@
       "id": "VFY-5",
       "title": "/api/verify and /api/verify-package are blind to active holds — a document under a HOLD scans green while the hold card twenty feet away says the work is stopped",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -983,7 +1008,7 @@
       "id": "VFY-9",
       "title": "A never-issued DRAFT scans GREEN \"CURRENT\" — /api/verify has no concept of \"issued\", only of \"not superseded\"",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1008,7 +1033,7 @@
       "id": "VFY-12",
       "title": "None of the four public endpoints is rate limited or leaves any record that a scan happened — while /api/auth/signup, the one other unauthenticated route, has both",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1383,7 +1408,7 @@
       "id": "VFY-8",
       "title": "A CLOSED work package still scans green \"PACK IS CURRENT\" — the verdict ignores packageStatus and closed_at entirely",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1408,7 +1433,7 @@
       "id": "VFY-10",
       "title": "A released HOLD card scans green \"this tag can come down\" while other holds on the same document are still active — the endpoint has document_id in hand and never asks",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1457,7 +1482,7 @@
       "id": "VFY-13",
       "title": "The public verify pages are indexable and carry no robots directive, and the four verdict endpoints send no cache directive of their own",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -1483,7 +1508,7 @@
       "id": "VFY-14",
       "title": "The verify routes over-select the exact fields they promise not to disclose, one careless spread away from publishing them",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -1501,6 +1526,153 @@
       ],
       "refuted": false,
       "summary": "Someone adds a field to the hold response — 'the field asked for the expected release date' — and writes return NextResponse.json({ ...h, active: !h.releasedat, ... }) because h is already a Record<string, unknown> and the select already contains everything. openedbyname, releasedbyname, releasedreason and the operator's notes ship to the open internet in one line, past a code review that sees a o",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-15",
+      "title": "Effective dates are decided in ONE deployment-wide facility zone — a deployment whose orgs run plants in different zones has no per-org calendar, so \"NOT YET IN EFFECT\" can lift early for one org's field scans",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/effectiveDate.ts",
+        "app/api/verify/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "One deployment hosts a Houston org and a Perth org and is configured America/Chicago. A Perth procedure is made effective 2 March for a training on 1 March. The Perth crew scans the print at 09:00 on 2 March local (19:00 on 1 March in Chicago): the verify page still says \"NOT YET IN EFFECT\" — late, the safe side. The mirror case is the unsafe one: a deployment configured for Perth serving a Housto",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-16",
+      "title": "The public verify endpoints answer for a private or hidden document with its number and title — no verify route reads `documents.visibility` (intelligence `DACL-8` / `DACL-3` criterion 3, handed over)",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/verify/route.ts",
+        "app/api/verify-package/route.ts",
+        "app/api/verify-hold/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A hidden document (an incident investigation drawing) appears in a work pack that leaves site on a contractor's traveler. The cover's print QR lists the sheet's number and title to anyone who scans it.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-17",
+      "title": "The pack print gate admits a legacy EMPTY-status document that the verify allow-list refuses — a just-printed pack can never scan green",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/docPack.ts",
+        "lib/verifyVerdict.ts",
+        "app/api/verify-package/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A package holds one legacy sheet whose status was never set. The pack prints cleanly — the sheet is admitted, the cover lists it — and the crew scans the cover a minute later: red \"PACK HAS UNISSUED SHEETS — 1 of N sheets is not an issued, controlled revision\" (the wording the review fix pass gave it; before that it read \"changed or withdrawn since this pack was printed\"). Fail-safe, but the pack ",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-18",
+      "title": "A print whose snapshot insert fails still ships, with a bare-package cover QR that can never read green — and the packages page reports success",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/workPackages.ts",
+        "app/(protected)/packages/page.tsx",
+        "app/api/verify-package/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A transient insert error (or a workpackageprints RLS refusal) during \"Print pack\". The PDF downloads, the toast says success, the crew gets the folder. Every scan of its cover is grey; the crew calls Document Control, who see nothing wrong with the package.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-19",
+      "title": "The print snapshot does not record which package sheets the print gate LEFT OUT, so the pack verdict cannot tell \"left out at print\" from \"added since printing\"",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/packages/page.tsx",
+        "lib/workPackages.ts",
+        "lib/docPack.ts",
+        "app/api/verify-package/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A sheet is Issued and in the package when the pack is printed, but its file fetch fails; the toast lists it as left out and the crew gets the folder without it. On the scan the route can say only \"in the package but not in this pack\" — it cannot add \"it was left out of this printing because its file could not be fetched\", which is what the printer saw and what Document Control needs to act on. Con",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
+    },
+    {
+      "id": "VFY-20",
+      "title": "The document editors offer status \"IFC\", which `DocumentStatus`, the pack print gate and the verify allow-list all reject — IFC paper scans red and IFC sheets never print into a pack",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/documents/BulkEditModal.tsx:32",
+        "components/documents/MetadataStagingModal.tsx:68",
+        "types/schema.ts:658",
+        "lib/docPack.ts",
+        "lib/verifyVerdict.ts",
+        "components/documents/LifecycleBoard.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A document controller bulk-sets a construction set to \"IFC\". The crew's sheets, printed with a ?v= QR, scanned green last week; after the PS-VERIFY deploy every scan is red \"STATUS NOT RECOGNISED\". The packages page will not print any of them into a field pack (\"ifc — not an in-force controlled revision\"). The fail-safe direction, but the plant is told its construction set is not usable while the ",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/01-verify-endpoints.md"
     }

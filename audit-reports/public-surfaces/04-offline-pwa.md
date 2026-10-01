@@ -72,6 +72,8 @@ public/sw.js:117 — `if (!response || !response.ok || response.type === "opaque
 - [ ] All four verify routes declare `export const dynamic = "force-dynamic"` and send `Cache-Control: no-store`, so the intent is stated at the route as well as enforced in the worker
 - [ ] A field device with the network removed and a prior successful scan in its cache shows the "Can't verify this code / treat the hold as ACTIVE" screen, not a coloured verdict
 
+*Cross-package note (2026-10-01, public-surfaces Round F, PS-VERIFY): done-when 3 landed via `VFY-13` — all four verify routes export `dynamic = "force-dynamic"` and answer only through `verifyJson` (`Cache-Control: no-store`, errors and 429 included), and the three verify pages fetch with `cache: "no-store"` (`lib/__tests__/verifyDoor.test.ts`). Done-when 1, 2 and 4 — the service worker — remain PKG-1 SW-OFFLINE's; OFF-1 stays OPEN.*
+
 ---
 
 <a id="off-2"></a>

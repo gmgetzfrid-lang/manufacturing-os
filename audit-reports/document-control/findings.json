@@ -24,8 +24,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 123,
-      "OPEN": 32
+      "RESOLVED": 126,
+      "OPEN": 29
     }
   },
   "status_vocabulary": [
@@ -1061,7 +1061,7 @@
       "id": "HLD-3",
       "title": "The field-verification QR surfaces are hold-blind: /api/verify flashes green \"CURRENT\" and /api/verify-package flashes \"all fresh\" for a document under an active stop-work hold",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1250,7 +1250,7 @@
       "id": "PKG-8",
       "title": "Both public verify surfaces treat only Superseded and Archived as retired — a VOID or never-issued DRAFT drawing scans full-screen GREEN 'CURRENT' / 'PACK IS CURRENT'",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2781,7 +2781,7 @@
       "id": "HLD-13",
       "title": "The printed equipment QR label promises \"SCAN: drawings · holds · report a problem\" but targets the login-walled /assets/[tag] route — the one printed artifact that advertises hold visibility in the field is the one that cannot be scanned by field staff",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

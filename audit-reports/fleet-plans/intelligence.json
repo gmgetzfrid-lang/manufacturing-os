@@ -700,7 +700,8 @@
         "KACL-11",
         "IEDGE-12",
         "KACL-12 (opened 2026-09-30 by I-01A: loadDcLandscape / loadPrincipal swallow container and team read errors and fail OPEN)",
-        "IEDGE-2 (re-opened 2026-09-30 by I-01A on the same seam limb as KACL-12)"
+        "IEDGE-2 (re-opened 2026-09-30 by I-01A on the same seam limb as KACL-12)",
+        "public-surfaces VFY-16 (added at the PS-VERIFY merge 2026-10-01: the verify page's title for a private / hidden document — the DACL-8 visibility limb)"
       ],
       "severityMix": "0 CRITICAL / 2 HIGH / 5 MEDIUM / 1 LOW",
       "files": [

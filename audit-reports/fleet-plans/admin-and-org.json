@@ -290,7 +290,8 @@
     "ORG-7 residual",
     "ORG-13",
     "ORG-11",
-    "ORG-4 residual"
+    "ORG-4 residual",
+    "public-surfaces VFY-15 (added at the PS-VERIFY merge 2026-10-01: a per-org effective-date time zone beyond the deployment's facility zone \u2014 the org settings page)"
    ],
    "files": [
     "app/(protected)/admin/libraries/page.tsx:183-198",

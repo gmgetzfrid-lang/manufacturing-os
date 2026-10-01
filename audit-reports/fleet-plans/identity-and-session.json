@@ -53,6 +53,21 @@
     "Surviving uid per person if duplicates exist"
    ],
    "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "IS-P3 \u00b7 PHYS-14 \u2014 the sign-in page honours ?next= (a scanned equipment label returns to its tag after sign-in)",
+   "findings": [
+    "public-surfaces PHYS-14 (opened at PS-VERIFY 2026-10-01)"
+   ],
+   "files": [
+    "app/page.tsx (the sign-in page: after sign-in, go to a same-origin relative `next` path, never an absolute or protocol-relative URL)",
+    "a test pinning the open-redirect refusal"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "PS-VERIFY merged (the protected asset page sends a no-session scan to sign-in carrying ?next=)"
+   ],
+   "sequencingNotes": "Added by the integrator at the PS-VERIFY merge 2026-10-01. Small; independent of SESS-6."
   }
  ],
  "crossAreaFileOverlaps": [

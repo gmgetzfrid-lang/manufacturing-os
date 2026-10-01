@@ -32,9 +32,20 @@
 // (non-terminal) status counts: a ticket closed again without a new issue
 // stays unknown. A cycle count alone is NOT evidence: a reject before any
 // issue bumps revision_count too, and such a ticket never issued anything.
+//
+// The door (public-surfaces PS-VERIFY; the verdict above is drafting-flow's):
+// every answered scan leaves a verify_scans row and counts toward a generous
+// per-IP cap (VFY-12), every answer is Cache-Control: no-store (VFY-13), and
+// the select names only the columns the verdict or the response reads
+// (VFY-14 — revision_count is not one of them: the verdict never reads it).
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
+import { recordVerifyScan } from "@/lib/verifyScanLog";
+
+// A revision verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
+export const dynamic = "force-dynamic";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -60,26 +71,44 @@ function lastIssuedFromHistory(history: unknown): string | null {
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
-    return NextResponse.json({ error: "Verification unavailable" }, { status: 503 });
+    return verifyJson({ error: "Verification unavailable" }, 503);
   }
   const ticketId = req.nextUrl.searchParams.get("t") ?? "";
   const printedRev = (req.nextUrl.searchParams.get("r") ?? "").toUpperCase().trim();
+  const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  const ip = clientIp(req);
+  const userAgent = req.headers.get("user-agent");
+  const scan = (verdict: string) =>
+    recordVerifyScan(sb, { endpoint: "verify-ticket", targetId: ticketId, verdict, ip, userAgent });
+
+  const rate = await checkVerifyRate(sb, { ip });
+  if (rate.limited) return verifyRateLimitedResponse(rate);
+
   if (!UUID_RE.test(ticketId) || (printedRev && !REV_RE.test(printedRev))) {
-    return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+    await scan("invalid");
+    return verifyJson({ error: "Invalid code" }, 400);
   }
 
-  const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-
-  const { data: row } = await sb
+  const { data: row, error: rowErr } = await sb
     .from("tickets")
-    .select("id, ticket_id, title, unit, status, deliverable_rev, revision_count, last_modified, history")
+    .select("id, ticket_id, title, unit, status, deliverable_rev, last_modified, history")
     .eq("id", ticketId)
     .maybeSingle();
-  if (!row) return NextResponse.json({ error: "Unknown ticket" }, { status: 404 });
+  if (rowErr) {
+    // An unreadable ticket is an outage, not an unknown code: the scan row
+    // says 'error' (never 'unknown' — VFY-12's evidence must not read an
+    // outage as enumeration) and the field page says "try again".
+    await scan("error");
+    return verifyJson({ error: "Verification unavailable — try again" }, 503);
+  }
+  if (!row) {
+    await scan("unknown");
+    return verifyJson({ error: "Unknown ticket" }, 404);
+  }
 
   const t = row as {
     id: string; ticket_id: string | null; title: string | null; unit: string | null;
-    status: string | null; deliverable_rev: string | null; revision_count: number | null;
+    status: string | null; deliverable_rev: string | null;
     last_modified: string | null; history: unknown;
   };
 
@@ -118,7 +147,9 @@ export async function GET(req: NextRequest) {
     verdict = "unknown";
   }
 
-  return NextResponse.json({
+  await scan(verdict);
+
+  return verifyJson({
     ticketNumber: t.ticket_id ?? null,
     title: t.title ?? null,
     unit: t.unit ?? null,

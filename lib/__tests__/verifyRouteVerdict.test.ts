@@ -1,41 +1,73 @@
-// /api/verify verdict per document status (DIST-2).
+// /api/verify verdict per document status (DIST-2), extended by
+// public-surfaces Round F PS-VERIFY (VFY-1 / VFY-3 / VFY-4 / VFY-5 / VFY-9 /
+// VFY-12 / VFY-13 / VFY-14).
 //
 // The QR verify endpoint is the only recall channel that reaches paper. Its
 // verdict must be honest for EVERY DocumentStatus and for an active hold — a
 // new status must never default to green. These pin one verdict per status.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NextRequest } from "next/server";
 
 const V = "11111111-1111-1111-1111-111111111111"; // current version id
+const V_OLD = "33333333-3333-3333-3333-333333333333"; // an older version of the same document
 const DOC = "22222222-2222-2222-2222-222222222222";
 
 const state = vi.hoisted(() => ({
   doc: null as Record<string, unknown> | null,
+  docError: false as boolean,
   holdRows: [] as unknown[],
   holdError: false as boolean,
+  effectiveDate: null as string | null,
+  /** The error the current-version (effective-date) read returns, if any. */
+  curError: null as { code?: string; message: string } | null,
+  /** The error the column-less retry returns, if any. */
+  retryError: null as { code?: string; message: string } | null,
+  scanCount: 0 as number,
+  scanCountError: false as boolean,
+  inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  selects: [] as Array<{ table: string; cols: string }>,
 }));
 
 function chain(table: string) {
   const filters: Record<string, unknown> = {};
+  let head = false;
+  let cols = "";
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, p: string) {
       if (p === "then") {
         return (resolve: (v: unknown) => void) => {
-          if (table === "document_holds") {
+          if (table === "verify_scans" && head) {
+            resolve(state.scanCountError ? { data: null, error: { message: "relation does not exist" }, count: null } : { data: null, error: null, count: state.scanCount });
+          } else if (table === "document_holds") {
             resolve(state.holdError ? { data: null, error: { message: "x" } } : { data: state.holdRows, error: null });
           } else resolve({ data: [], error: null });
         };
       }
       return (...args: unknown[]) => {
+        if (p === "select") {
+          state.selects.push({ table, cols: String(args[0]) });
+          cols = String(args[0]);
+          if ((args[1] as { head?: boolean } | undefined)?.head) head = true;
+        }
+        if (p === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (p === "eq") filters[args[0] as string] = args[1];
         if (p === "maybeSingle") {
-          if (table === "documents") return Promise.resolve({ data: state.doc, error: null });
+          if (table === "documents") return Promise.resolve(state.docError ? { data: null, error: { message: "boom" } } : { data: state.doc, error: null });
           if (table === "document_versions") {
+            // the current-version read (with effective_date) and its column-less retry
+            if (cols === "created_at, effective_date" && state.curError) return Promise.resolve({ data: null, error: state.curError });
+            if (cols === "created_at") {
+              if (state.retryError) return Promise.resolve({ data: null, error: state.retryError });
+              return Promise.resolve({ data: filters.id === V ? { created_at: "2026-01-01" } : null, error: null });
+            }
             // current version lookup + printed version lookup both resolve here
-            if (filters.id === V) return Promise.resolve({ data: { revision_label: "5", created_at: "2026-01-01", record_id: DOC, effective_date: null }, error: null });
-            return Promise.resolve({ data: { revision_label: "5", created_at: "2026-01-01", record_id: DOC, superseded_at: null }, error: null });
+            if (filters.id === V) return Promise.resolve({ data: { revision_label: "5", created_at: "2026-01-01", record_id: DOC, effective_date: state.effectiveDate }, error: null });
+            if (filters.id === V_OLD) return Promise.resolve({ data: { revision_label: "4", created_at: "2025-06-01", record_id: DOC }, error: null });
+            return Promise.resolve({ data: null, error: null });
           }
           return Promise.resolve({ data: null, error: null });
         }
@@ -53,22 +85,38 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
   state.doc = null;
+  state.docError = false;
   state.holdRows = [];
   state.holdError = false;
+  state.effectiveDate = null;
+  state.curError = null;
+  state.retryError = null;
+  state.scanCount = 0;
+  state.scanCountError = false;
+  state.inserts = [];
+  state.selects = [];
+});
+afterEach(() => {
+  vi.useRealTimers();
+  if (OLD_ENV.NEXT_PUBLIC_FACILITY_TIME_ZONE === undefined) delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+  else process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = OLD_ENV.NEXT_PUBLIC_FACILITY_TIME_ZONE;
 });
 
-async function verify(): Promise<Record<string, unknown>> {
+async function call(opts: { v?: string | null; headers?: Record<string, string> } = {}) {
   const { GET } = await import("@/app/api/verify/route");
   const u = new URL("https://app/api/verify");
   u.searchParams.set("doc", DOC);
-  u.searchParams.set("v", V); // print carries the CURRENT version id
-  const res = await GET(new NextRequest(u));
-  return (await res.json()) as Record<string, unknown>;
+  const v = opts.v === undefined ? V : opts.v; // by default the print carries the CURRENT version id
+  if (v) u.searchParams.set("v", v);
+  return GET(new NextRequest(u, { headers: opts.headers }));
+}
+async function verify(opts: { v?: string | null } = {}): Promise<Record<string, unknown>> {
+  return (await (await call(opts)).json()) as Record<string, unknown>;
 }
 
-const docWith = (status: string, extra: Record<string, unknown> = {}) => ({
+const docWith = (status: string | null, extra: Record<string, unknown> = {}) => ({
   id: DOC, document_number: "P-101", title: "P&ID", name: "P-101",
-  rev: "5", status, current_version_id: V, superseded_at: null, legal_hold: false, ...extra,
+  rev: "5", status, current_version_id: V, legal_hold: false, ...extra,
 });
 
 describe("/api/verify verdict per status (DIST-2)", () => {
@@ -128,6 +176,227 @@ describe("/api/verify verdict per status (DIST-2)", () => {
     const r = await verify();
     expect(r.verdict).toBe("held");
     expect(r.isCurrent).toBe(false);
+    expect(r.activeHolds).toBeNull();
+  });
+});
+
+describe("VFY-1 / VFY-9 — green is an ALLOW-list (Issued, Locked); everything else is not in force", () => {
+  it("Locked current version → current", async () => {
+    state.doc = docWith("Locked");
+    expect((await verify()).verdict).toBe("current");
+  });
+  it.each([[null], [""], ["In Review"], ["Pending"], ["SomeFutureStatus"]])("status %j → not_issued, never green", async (status) => {
+    state.doc = docWith(status as string | null);
+    const r = await verify();
+    expect(r.verdict).toBe("not_issued");
+    expect(r.isCurrent).toBe(false);
+    expect(r.docStatus).toBe(status);
+  });
+  it("Void with the printed version === current_version_id → isCurrent false (VFY-1 done-when 3)", async () => {
+    state.doc = docWith("Void");
+    const r = await verify();
+    expect(r.isCurrent).toBe(false);
+    expect(r.verdict).toBe("void");
+  });
+  it("an older printed version of an Issued document → superseded_version", async () => {
+    state.doc = docWith("Issued");
+    const r = await verify({ v: V_OLD });
+    expect(r.verdict).toBe("superseded_version");
+    expect(r.printedRev).toBe("4");
+  });
+  it("the route reads retirement from the shared set through lib/verifyVerdict — no inline status list", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
+    expect(src).toContain('import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";');
+    expect(src).not.toMatch(/=== "Superseded" \|\||status === "Archived"/);
+  });
+});
+
+describe("VFY-3 — a code with no ?v= never reads green", () => {
+  it("Issued document, doc-only QR → unverifiable, isCurrent false", async () => {
+    state.doc = docWith("Issued");
+    const r = await verify({ v: null });
+    expect(r.verdict).toBe("unverifiable");
+    expect(r.isCurrent).toBe(false);
+    expect(r.printedRev).toBeNull();
+  });
+  it("a retired or held document still says so without ?v= (those are true of every print)", async () => {
+    state.doc = docWith("Void");
+    expect((await verify({ v: null })).verdict).toBe("void");
+    state.doc = docWith("Issued");
+    state.holdRows = [{ reason: "Client Review" }];
+    expect((await verify({ v: null })).verdict).toBe("held");
+  });
+  it("a document with no current revision cannot be confirmed either — in its own verdict when the code DID name the printed version", async () => {
+    state.doc = docWith("Issued", { current_version_id: null });
+    const r = await verify();
+    expect(r.verdict).toBe("no_current_revision");
+    expect(r.isCurrent).toBe(false);
+    expect(r.printedRev).toBe("5"); // the code named it, and the page shows it
+    // a doc-only QR on the same document is still "the code does not say"
+    expect((await verify({ v: null })).verdict).toBe("unverifiable");
+    expect(state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row.verdict)).toEqual(["no_current_revision", "unverifiable"]);
+  });
+});
+
+describe("VFY-5 — the hold's public categories are named; operator text never is", () => {
+  it("two holds → activeHolds 2 and the categories (custom text becomes 'On hold')", async () => {
+    state.doc = docWith("Issued");
+    state.holdRows = [{ reason: "Client Review" }, { reason: "waiting on legal re: the Fuller incident" }];
+    const res = await call();
+    const r = (await res.json()) as Record<string, unknown>;
+    expect(r.verdict).toBe("held");
+    expect(r.activeHolds).toBe(2);
+    expect(r.holdReasons).toEqual(["Client Review", "On hold"]);
+    expect(JSON.stringify(r)).not.toContain("Fuller");
+  });
+  it("done-when 3 (review fix): the LEGAL hold counts in activeHolds, as /api/verify-hold counts it — and is never named", async () => {
+    // legal hold + one document_holds row → 2, the categories list only the row's
+    state.doc = docWith("Issued", { legal_hold: true });
+    state.holdRows = [{ reason: "Client Review" }];
+    let r = await verify();
+    expect(r.verdict).toBe("held");
+    expect(r.activeHolds).toBe(2);
+    expect(r.holdReasons).toEqual(["Client Review"]);
+    expect(JSON.stringify(r)).not.toMatch(/legal/i);
+    // a legal hold alone is one active hold, never "0"
+    state.holdRows = [];
+    r = await verify();
+    expect(r.onHold).toBe(true);
+    expect(r.activeHolds).toBe(1);
+    expect(r.holdReasons).toEqual([]);
+    // an unreadable hold read stays null (unknown), legal hold or not
+    state.holdError = true;
+    r = await verify();
+    expect(r.activeHolds).toBeNull();
+  });
+  it("the same document shows the same count on the sheet QR and the hold card: legal hold + X (released) + Y (active)", async () => {
+    // /api/verify-hold for X counts Y + the legal hold as 2 other holds (verifyHold.test.ts);
+    // /api/verify for the document must say 2 active holds, not 1
+    state.doc = docWith("Issued", { legal_hold: true });
+    state.holdRows = [{ reason: "Client Review" }]; // only Y is unreleased
+    const r = await verify();
+    expect(r.activeHolds).toBe(2);
+    const { presentDocVerdict } = await import("@/lib/verifyPresent");
+    expect(presentDocVerdict(r as unknown as Parameters<typeof presentDocVerdict>[0]).blurb).toContain("under 2 active holds (Client Review)");
+  });
+});
+
+describe("VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's calendar, never the server's UTC date", () => {
+  it("19:30 local (America/Chicago) on the day before the effective date → not_yet_effective; just after local midnight → current", async () => {
+    process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "America/Chicago";
+    state.doc = docWith("Issued");
+    state.effectiveDate = "2026-03-02";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-02T01:30:00Z")); // 19:30 CST, 1 March — UTC is already 2 March
+    let r = await verify();
+    expect(r.verdict).toBe("not_yet_effective");
+    expect(r.notYetEffective).toBe(true);
+    expect(r.isCurrent).toBe(false);
+    vi.setSystemTime(new Date("2026-03-02T06:30:00Z")); // 00:30 CST, 2 March
+    r = await verify();
+    expect(r.verdict).toBe("current");
+  });
+  it("with NO facility zone configured the answer is late (UTC-12), never early", async () => {
+    delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+    state.doc = docWith("Issued");
+    state.effectiveDate = "2026-03-02";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-02T01:30:00Z"));
+    expect((await verify()).verdict).toBe("not_yet_effective");
+  });
+  it("an effective-date read that ERRORS (anything but a missing column) is 503 — never a green that the unseen date might forbid", async () => {
+    state.doc = docWith("Issued");
+    state.effectiveDate = "2999-01-01"; // pending — but the read fails, so the route cannot see it
+    state.curError = { message: "upstream timeout" };
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(state.inserts.map((i) => i.row.verdict)).toEqual(["error"]);
+    // and it did NOT retry without the column (that path is for 42703 only)
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols === "created_at")).toEqual([]);
+  });
+  it("a missing effective_date COLUMN (42703) retries without it — that database has no dates — and the retry is checked", async () => {
+    state.doc = docWith("Issued");
+    state.curError = { code: "42703", message: "column document_versions.effective_date does not exist" };
+    let r = await verify();
+    expect(r.verdict).toBe("current");
+    expect(r.effectiveDate).toBeNull();
+    expect(r.currentIssuedAt).toBe("2026-01-01");
+    state.retryError = { message: "upstream timeout" };
+    const res = await call();
+    expect(res.status).toBe(503);
+    r = (await res.json()) as Record<string, unknown>;
+    expect(r.verdict).toBeUndefined();
+  });
+  it("the route no longer spells its own UTC 'today' — it asks lib/effectiveDate", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
+    expect(src).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
+    expect(src).toContain('import { effectiveStatusFor } from "@/lib/effectiveDate";');
+    expect(src).toContain('effectiveStatusFor(effectiveDate) === "pending"');
+  });
+});
+
+describe("VFY-12 / VFY-13 — every scan is recorded, capped per IP, and answered no-store", () => {
+  it("an answered scan writes one verify_scans row (endpoint, target, verdict, ip, user agent) and the answer is no-store", async () => {
+    state.doc = docWith("Issued");
+    const res = await call({ headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1", "user-agent": "FieldPhone/1.0" } });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const rows = state.inserts.filter((i) => i.table === "verify_scans").map((i) => i.row);
+    expect(rows).toEqual([{ endpoint: "verify", target_id: DOC, printed_ref: V, verdict: "current", ip: "203.0.113.7", user_agent: "FieldPhone/1.0" }]);
+  });
+  it("the row names WHICH revision's paper was scanned (?v=): two prints of one document stay distinguishable; a doc-only QR names none", async () => {
+    state.doc = docWith("Issued");
+    await call({ v: V_OLD });
+    await call({ v: null });
+    expect(state.inserts.map((i) => [i.row.verdict, i.row.printed_ref])).toEqual([
+      ["superseded_version", V_OLD],
+      ["unverifiable", null],
+    ]);
+  });
+  it("an invalid code and an unknown document are recorded too (enumeration is visible)", async () => {
+    const { GET } = await import("@/app/api/verify/route");
+    const res = await GET(new NextRequest(new URL("https://app/api/verify?doc=nope")));
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    state.doc = null;
+    const res2 = await call();
+    expect(res2.status).toBe(404);
+    expect(state.inserts.map((i) => i.row.verdict)).toEqual(["invalid", "unknown"]);
+    expect(state.inserts[0].row.target_id).toBeNull();
+  });
+  it("over the per-IP cap → 429 no-store with Retry-After, and NO row is written", async () => {
+    state.doc = docWith("Issued");
+    state.scanCount = 1200;
+    const res = await call({ headers: { "x-forwarded-for": "198.51.100.9" } });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("retry-after")).toBe("300");
+    expect(state.inserts).toEqual([]);
+  });
+  it("the limiter fails OPEN: a window read that errors (20261134 unapplied) still answers the scan", async () => {
+    state.doc = docWith("Issued");
+    state.scanCountError = true;
+    state.scanCount = 99999;
+    const res = await call({ headers: { "x-forwarded-for": "198.51.100.9" } });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).verdict).toBe("current");
+  });
+  it("a document read that errors is 503 (never 'unknown', never green)", async () => {
+    state.docError = true;
+    const res = await call();
+    expect(res.status).toBe(503);
+    expect(state.inserts.map((i) => i.row.verdict)).toEqual(["error"]);
+  });
+});
+
+describe("VFY-14 — the route selects only what it uses", () => {
+  it("superseded_at is no longer selected from documents or the printed version", async () => {
+    state.doc = docWith("Issued");
+    await verify();
+    const docSel = state.selects.find((s) => s.table === "documents")!.cols;
+    expect(docSel).toBe("id, document_number, title, name, rev, status, current_version_id, legal_hold");
+    for (const s of state.selects) expect(s.cols).not.toContain("superseded_at");
+    expect(state.selects.find((s) => s.table === "document_holds")!.cols).toBe("reason");
   });
 });
 

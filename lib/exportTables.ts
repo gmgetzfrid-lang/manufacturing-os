@@ -184,6 +184,8 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
   intake_attempts:
     "the contractor intake door's rate-limit window (hashed token, client IP; 20261105) — a two-day rolling anti-abuse log, service-role only, no customer data; nothing to restore",
+  verify_scans:
+    "the public verify endpoints' per-scan record and rate window (endpoint, target UUID, verdict shown, client IP / user agent; 20261134) — a 90-day rolling log keyed on IP, not org-scoped, service-role only; nothing to restore",
   push_subscriptions:
     "per-device Web Push credentials (endpoint, p256dh, auth) — secrets never leave the database, and a push registration is machine-specific and never restored; each device re-subscribes",
   document_share_accesses:

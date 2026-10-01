@@ -5,10 +5,19 @@
 // its registry entry (type/location/description), every controlled document
 // tagged to it, open holds on those docs, and its photos. Scan a QR on the
 // equipment → land here. A view no shared-drive competitor can offer.
+//
+// PHYS-7 / HLD-13 (option (b), 2026-09-17): this stays a STAFF page — the
+// label keeps the /assets/<tag> path every sticker in the plant already
+// carries, and its caption now says "staff sign-in". A scan with no session
+// used to sit on an empty app shell (refresh() returns early without an org,
+// so the spinner never ended); it is now sent to sign-in with the tag in
+// `next` — but only once getSession itself says there is NO session
+// (lib/assetSignIn.ts): RoleContext's `booted` also flips on its boot
+// watchdog while a slow network is still refreshing a signed-in token.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Tag as TagIcon, MapPin, FileText, AlertOctagon, Lock, RefreshCw, ImageIcon, Printer, Loader2, QrCode } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +25,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
@@ -28,7 +38,24 @@ interface HubDoc {
 export default function AssetHubPage() {
   const params = useParams();
   const tag = decodeURIComponent(String(params?.tag ?? ""));
-  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  const { activeOrgId, hasAnyRole, uid, userEmail, booted, loading: roleLoading } = useRole();
+  const router = useRouter();
+  // Where a no-session scan goes: sign-in, carrying this tag (`next`).
+  const signInHref = assetSignInHref(tag);
+  // RoleContext settled with no user — which its boot watchdog also reports
+  // while getSession is still pending. Confirm with getSession first: only a
+  // definitive "no session" redirects; an errored read shows the sign-in
+  // link without navigating away; until an answer comes the spinner stays.
+  const maybeSignedOut = booted && !roleLoading && !uid;
+  const [sessionAnswer, setSessionAnswer] = useState<NoSessionAnswer | null>(null);
+  useEffect(() => {
+    if (!maybeSignedOut) return;
+    return watchForNoSession(() => supabase.auth.getSession(), (answer) => {
+      setSessionAnswer(answer);
+      if (answer === "none") router.replace(signInHref);
+    });
+  }, [maybeSignedOut, router, signInHref]);
+  const signedOut = maybeSignedOut && sessionAnswer !== null;
   const [packing, setPacking] = useState(false);
   const [packProgress, setPackProgress] = useState<[number, number] | null>(null);
   const [packNote, setPackNote] = useState<string | null>(null);
@@ -92,6 +119,16 @@ export default function AssetHubPage() {
 
   const docCount = docs.length;
   const heldCount = useMemo(() => Array.from(holdsByDoc.values()).reduce((a, b) => a + (b > 0 ? 1 : 0), 0), [holdsByDoc]);
+
+  if (signedOut) {
+    return (
+      <div className="min-h-full flex flex-col items-center justify-center gap-2 p-6 text-center">
+        <div className="text-sm font-bold text-[var(--color-text)]">Equipment <span className="font-mono">{tag}</span></div>
+        <div className="text-xs text-[var(--color-text-muted)]">Drawings, holds and problem reports for this equipment are for signed-in staff.</div>
+        <Link href={signInHref} className="text-xs font-bold text-blue-600 underline">Sign in to continue</Link>
+      </div>
+    );
+  }
 
   if (loading && docs.length === 0 && !asset) {
     return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;

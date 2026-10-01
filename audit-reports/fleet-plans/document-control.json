@@ -299,7 +299,10 @@
     "HLD-1 (download/footer limb)",
     "REV-9 (consumer of P3's helper)",
     "HLD-4 (record-only)",
-    "TRX-15 (added by the integrator 2026-10-01: a stamping consumer \u2014 the transmittal portal's >64 MiB unstamped path and its in-memory download; P7 TRANSMITTALS opened it)"
+    "TRX-15 (added by the integrator 2026-10-01: a stamping consumer \u2014 the transmittal portal's >64 MiB unstamped path and its in-memory download; P7 TRANSMITTALS opened it)",
+    "public-surfaces VFY-19 (added at the PS-VERIFY merge 2026-10-01: a sheet dropped at print by a fetch failure or an unparseable PDF is recorded on the print, so /verify-package can classify it)",
+    "public-surfaces VFY-17 (added at the PS-VERIFY merge 2026-10-01: the pack print gate refuses a legacy empty-status document the verify allow-list refuses, so a just-printed pack can scan green \u2014 lib/docPack.ts filterPackDocs)",
+    "public-surfaces VFY-18 (added at the PS-VERIFY merge 2026-10-01: a print whose snapshot insert fails is refused or reported, never shipped with a bare-package cover QR \u2014 lib/workPackages.ts recordPackagePrint, packages page)"
    ],
    "files": [
     "lib/docPack.ts",
@@ -431,7 +434,8 @@
     "DRLS-9 (revision_branches close-out: UPDATE gains a WITH CHECK that only a publisher of the document resolves a branch, with a non-empty resolution note)",
     "DIST-15 (an org-wide share-link inventory with per-row and bulk revoke through revokeShareLink, controller tier)",
     "public-surfaces SHR-14 (the share INSERT rail refuses a creator denied download on the document \u2014 20261080's rail re-created from its newest body)",
-    "public-surfaces SHR-11 done-when 2 off Vercel (added at the PS-STAMP merge 2026-10-01): with no configured origin the share download falls back to the request's own origin, refusing a *.vercel.app or loopback host as recipientOrigin() does, or refuses loudly \u2014 app/api/share/file/route.ts"
+    "public-surfaces SHR-11 done-when 2 off Vercel (added at the PS-STAMP merge 2026-10-01): with no configured origin the share download falls back to the request's own origin, refusing a *.vercel.app or loopback host as recipientOrigin() does, or refuses loudly \u2014 app/api/share/file/route.ts",
+    "public-surfaces VFY-20 (added at the PS-VERIFY merge 2026-10-01: the bulk editor's free-text status \u2014 BulkEditModal.tsx is in P12's files)"
    ],
    "files": [
     "app/(protected)/documents/[libraryId]/page.tsx \u2014 saveMetadata, confirmDeleteDoc, uploadOne ONLY (P6 CHECKOUT's file, merged; identity IS-P1 and intelligence I-12 edit it after this package)",

@@ -399,6 +399,18 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 
 **Scope / residual.** Stays OPEN. **To close:** **P8 FIELD** swaps `/api/verify`'s inline date for `effectiveTodayISO()`, AND every deployment sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` (an operator step before the wave-2 app ships, recorded in `99-fix-sequencing.md`) — or an org / library time-zone setting replaces the variable. Until the zone is set a deployment is safe (never early) but late by the facility's offset plus 12 hours (up to 26 for UTC+14), and logs it once per runtime. Nothing enforces the variable at build time, and `facilityTimeZoneHealth()` is not yet shown on an admin page: `/api/admin/schema-health` (and its page) are not this package's files — wiring it there, or failing a production build without the variable, is an integrator follow-up (review fix 3).
 
+**Partial (2026-10-01, public-surfaces Round F).** PS-VERIFY — the `/api/verify` consumer swap that the 2026-09-30 block left to "P8" (the verify route is PS-VERIFY's file this round). `app/api/verify/route.ts` no longer spells its own `new Date().toISOString().slice(0, 10)`: "not yet in effect" is `effectiveStatusFor(effectiveDate) === "pending"`, whose "today" is `effectiveTodayISO()` — the facility's zone named in `NEXT_PUBLIC_FACILITY_TIME_ZONE`, else UTC-12. No parallel helper was created (the plan's `lib/effectiveDateCore.ts` is superseded by this module). Public-surfaces `VFY-4` records the same change.
+- Tests: public-surfaces `lib/__tests__/verifyRouteVerdict.test.ts` "VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's calendar …" — with `America/Chicago`, 19:30 local on 1 March and an effective date of 2 March → `not_yet_effective`; 00:30 local on 2 March → `current`; with no zone configured, 19:30 is still `not_yet_effective` (late, never early); the route source carries no UTC "today".
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+- Review fix pass (2026-10-01): an effective date that cannot be READ is no longer taken for "no date" — `/api/verify` retries without the column only on undefined_column (`42703`) and checks the retry; `/api/verify-package` likewise; any other read error is `503`, never a verdict that could be green early (public-surfaces `VFY-4`).
+
+**Done-when (this pass).**
+1. ◐ The code half is complete: the badge, the suppression watermark, the daily scan AND `/api/verify` share one definition of "today". Not done: every deployment naming its zone (`NEXT_PUBLIC_FACILITY_TIME_ZONE`) — an operator step (`99-fix-sequencing.md`, rule 2), unobservable from the repo — or an org / library zone setting replacing it (public-surfaces `VFY-15`).
+2. ✓ unchanged (P3).
+3. ✓ unchanged (P3).
+
+**Scope / residual.** Stays OPEN for the deployment-zone limb only — the operator sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` in every deployment (or an org / library zone lands, `VFY-15`). Not flipped on the code half alone. Public-surfaces `VFY-4` (done-when 2) stays OPEN on the same limb since PS-VERIFY's second review fix pass (2026-10-01), so the two records agree; one operator step closes both.
+
 ---
 
 <a id="rev-10"></a>
