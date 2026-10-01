@@ -897,4 +897,14 @@ Tests:
 - `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): a failed second round and a network failure each keep the first round's six documents in the toast and refresh the page; a failed first round with nothing queued is only the error.
 
 Each behavioural case fails against the first fix pass.
+
+**Review fix pass 3 (2026-10-01, intelligence Round G, I-07).** Two gaps remain on the library page, and its files are I-02's (`app/(protected)/knowledge/[id]/page.tsx`, `lib/knowledge.ts`).
+- **The reset documents disappear until a poll.** A cursorless press that resets documents and then answers 409 (`partial: true`) has already deleted their chunks. The page throws on the 409 and calls `refresh()` only on success. Its auto-indexer is keyed on its `docs` state, so it does not see the queued documents. They stay listed as ready with no chunks until the app-shell indicator's two-minute poll or a reload, and Ask over them returns nothing meanwhile.
+  - **Handed to I-02:** every caller of `rebuildDrawingIndex` must `refresh()` whenever the response carries `partial` (or `docs > 0`), on the error path too. The single-press cursor loop, owed since the first fix pass, would close this as well.
+- **A resumed press said nothing.** A press that continued from the kept place answered 200 with only this press's count ("2 document(s) queued"). It did not say that it continued, or that the documents earlier presses queued were not reset again, so a Library AI setting saved between presses never reached them a second time.
+  - `rebuild()` now adds a `notice` to such a press: "Continued from where the last press stopped: N document(s) queued by this press; the documents earlier presses queued were not reset again." When nothing was left, it says "earlier presses had already queued every document". A press that starts from the first document carries no notice.
+  - A Library AI save through `LibraryAiModal` erases the mark (above), so the next press after such a save starts again from the first document.
+  - **Handed to I-02:** the page shows `notice` in its toast.
+
+Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "ING-12 — the library page's Re-index all continues where it stopped". The resumed press carries the notice; a press from the top carries none. It fails against fix pass 2 (`4e549d0`).
 ---

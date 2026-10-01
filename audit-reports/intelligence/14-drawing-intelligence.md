@@ -99,7 +99,7 @@ Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-1 (criteria 
 - ✓ `recordAudit` reads the revision from `knowledge_documents.source_rev` and refuses to record when it disagrees with the controlled document's.
 - ✓ A sheet whose `source_version_id` differs from the controlled document's `current_version_id` is reported `skipped` with a reason, never `passed`, and nothing is written for it.
 
-**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13); a sheet whose revision is unknown (`""`) always is. Recording no longer waits for `20261124` (corrected in the second review fix pass): without it the route records on the org-wide key that database has, never lowering a stored verdict (see DWG-6).
+**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13); a sheet whose revision is unknown (`""`) always is. Recording no longer waits for `20261124` (corrected in the second review fix pass): without it the route records on the org-wide key that database has, never lowering a verdict another library recorded (see DWG-6; review fix pass 3 corrected "never lowering a stored verdict", since the library's own unknown-revision row takes its latest verdict, as on the scoped key).
 
 **Review fix pass (2026-10-01, intelligence Round G).** "The lens never trusts a half-read sheet" did not hold for an ACCEPTED partial index: a controller's accepted document is `ready`, so it counted as indexed and could be recorded `passed` with pages AI vision never read. Now `recordAudit` files a finding for every sheet whose `vision_failed_pages` is not empty ("Page(s) 5, 6 were never read by AI vision (partial index accepted) — nothing on them was audited"), through the new `unreadPages` input of `verdictsForSheets` (`lib/drawingAuditLog.ts`). Such a sheet is `flagged`, never `passed` and never `broken_connectors`. Tests: `lib/__tests__/drawingAuditLog.test.ts` "unread pages keep a sheet from passing (an accepted partial index)", `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "an accepted partial index is never recorded passed: the unread pages are a finding (fix pass)". Both fail against the round's first commit.
 
@@ -335,7 +335,7 @@ Tests: `lib/__tests__/drawingText.test.ts`, the DWG-4 block: "a destination in a
 - **A sheet-only connector.** "CONT ON SHEET 4" within one drawing was transcribed `OPC 14: DWG NONE SH 4`, as the first prompt told the model, and filed "names no destination drawing". `parseOpcLine` now reads a connector that names only a sheet as `sameDrawing`. That covers the new `SAME` token (`OPC_SAME_DRAWING`), and also `NONE` or an empty field followed by `SH n`. `auditOpcBoxes` pairs it against `<declared base>-SH<n>` of the source's own title block (`declaredSheetIdentity`), so it is never `noRef`. If the source declared no number, the connector is `unpaired`. `none` and `empty` now mean "no drawing number AND no sheet". `SAME` with no sheet is `unknown`.
 - **The prompt.** `VISION_SYSTEM` (`lib/knowledgeVision.ts`) asks for `DWG SAME SH <n>` when the connector shows only a sheet, and for `NONE` only when it shows neither. It also says what to do with a pennant that shows no box number: write no OPC line, never make a number up, and transcribe it as `CONT ON DWG <number> SH <n>`. The reference audit reads that line (one-way, missing within a held series), so box pairing never sees an invented box.
 
-Broken is now exactly: a connector that shows neither a drawing number nor a sheet, or a box whose continuation sheet's boxes were read and do not include it.
+Broken is now exactly: a connector that shows neither a drawing number nor a sheet, or a box whose continuation sheet's boxes were read and do not include it. (Corrected in review fix pass 3: this did not yet hold. A contract line was also paired against drawing numbers in its service tail; see below.)
 
 Tests:
 - `lib/__tests__/drawingText.test.ts`:
@@ -351,6 +351,20 @@ Tests:
 Each fails against the first fix pass (`2f2a3a7`).
 
 Residual. A same-drawing connector to a sheet the library does not hold yields no `ref` row, so it is not reported as a missing sheet. Its box is not paired either, because nothing is there to pair it with.
+
+**Review fix pass 3 (2026-10-01, intelligence Round G).** Fix pass 2's sentence above ("broken is now exactly …") overstated it. For a line in the contract's shape, `auditOpcBoxes` paired on the positional destination AND on every number `extractDrawingRefs` read anywhere on the line, including the `— <TO|FROM> <service>` tail. Example: `OPC 14: DWG 025-PID-0105 — FROM 025-PID-0101 HEADER` was paired against 0101 as well. If 0101's boxes were read and did not include 14, the line was `unreturned` against a sheet it never named, and the record filed `broken_connectors`, the top severity, never lowered at that revision. Before this package no OPC lines were produced, so turning the contract on made this reachable for the first time. Now:
+- **Paired by position only.** In `lib/drawingText.ts`, a line `parseOpcLine` reads in the contract's shape is paired only on `opcDestinationForms` (plus `<declared base>-SH<n>` for a same-drawing connector). The grammar reads a line outside the contract whole, as before.
+- **A tail with no dash.** `OPC_SEPARATOR_RE` also ends the destination field at a spaced `TO` / `FROM` word. A tail written without its dash (`OPC 14: DWG 025-PID-0105 FROM 025-PID-0101 HEADER`) no longer puts the service's number into the field.
+- **`NONE` with a number in the tail.** `OPC 15: DWG NONE — CONT ON DWG 025-PID-0107` is `unknown`, never broken, and never paired against 0107. The first fix pass kept it out of `noRef` by pairing it there.
+- **What a verdict depends on.** `auditOpcBoxes` returns `targetsByDoc`: the documents each source's boxes were paired against. DWG-13 uses it, below.
+
+Broken is now exactly what fix pass 2 said: a connector that shows neither a drawing number nor a sheet (and no drawing number anywhere on its line), or a box missing from the sheet its destination field names, where that sheet's box numbers were read.
+
+Tests (`lib/__tests__/drawingText.test.ts`):
+- "a drawing number in the service tail is never the destination: no false unreturned against it". This is the reviewer's probe (A's box 14 to 0105, service FROM 0101, 0105 has box 14, 0101 only box 3), with the dash, without it, and with `--`. There is no unreturned, unpaired or broken entry; `targetsByDoc` names 0105 only; and a box missing on 0105 is still caught.
+- "broken means what the contract says" now asserts `NONE` with a tail number is unknown and paired nowhere.
+
+Both fail against fix pass 2 (`4e549d0`).
 ---
 
 <a id="dwg-5"></a>
@@ -482,7 +496,7 @@ Tests:
 
 **Done-when.**
 - ✓ The unique key includes the scope the verdict was computed in (`library_id`), so two libraries cannot overwrite each other.
-- ✓ The upsert refuses to lower severity: the RANK comparison runs against the existing row, and a stored `broken_connectors` or `flagged` is never replaced by `skipped`. One qualification (review fix pass, with DWG-13): under an UNKNOWN revision (`""`) the latest non-`skipped` verdict replaces the row (`mayReplaceStored`), because nothing can tell that row's drawing from the one that replaced it; `skipped` still never replaces a verdict.
+- ✓ The upsert refuses to lower severity: the RANK comparison runs against the existing row, and a stored `broken_connectors` or `flagged` is never replaced by `skipped`. One qualification (review fix pass, with DWG-13): under an UNKNOWN revision (`""`) the latest non-`skipped` verdict replaces the row (`mayReplaceStored`), because nothing can tell that row's drawing from the one that replaced it; `skipped` still never replaces a verdict. That exception covers only the library's OWN row. Before review fix pass 3 it also let another library's computation replace a `""` row on the pre-`20261124` org-wide key.
 - ✓ `audit_details` records the library and the sheet list the verdict was computed against, and the series it did not judge.
 - ✓ In the form the review fix pass settled: no verdict ABOUT a series — a gap — is ever recorded from a library that does not hold that series (the finding's failure scenario: Tank Farm now files no "isn't in the set" against 025-PID). The sheet itself is recorded for what is its own. The criterion's literal "not recorded at all" also dropped a lone sheet's own defects (a connector naming no drawing) and every verdict of a single-sheet or one-sheet-per-series library, which the base recorded; that was the over-reach the review found. (The first fix pass ticked this while a library holding ONE multi-sheet drawing of 025-PID — per-sheet PDFs, or one combined PDF of its sheets — still counted 025-PID as held and filed the gap. That overstated it. It holds since review fix pass 2, below.)
 
@@ -499,7 +513,7 @@ Tests: `lib/__tests__/drawingAuditLog.test.ts` "a combined PDF declaring several
 
 **Review fix pass 2 (2026-10-01, intelligence Round G).** Three corrections.
 - **One drawing never holds its parent series.** `seriesHeldBySet` added every series of a document that was not alone. Per-sheet documents of one drawing share its number (`025-PID-0104`), so they were "not alone". A library holding one multi-sheet drawing therefore counted the whole `025-PID` series as held and filed "References 025-PID-0107, which isn't in the set". Now a series is held only when two or more DIFFERENT numbers of it exist in the library, counted across all documents (`seriesHeldBySet(identities)` in `lib/drawingAuditLog.ts`). A combined PDF declaring `025-PID-0101/0102/0103` holds `025-PID`. Two sheets of `025-PID-0104`, as per-sheet PDFs or one combined PDF, hold that drawing's sheets and never `025-PID`. A missing sheet of a drawing whose parent series is held is in scope (`025-PID-0105-SH2` in a Crude Unit set). `seriesNotJudged` names the root series of every number outside a held series. `sheetsAloneInTheirSeries` is deleted; nothing else called it.
-- **Recording before `20261124`.** The route answered 424 until the migration was applied, and the migration waits on I-04. That closed a write path the base had for that whole window. Now, when `drawing_audit_logs.library_id` does not exist, `recordAudit` reads prior verdicts org-wide and upserts on the old key (`org_id,sheet_number,revision_code`), with `library_id` left out of the rows and kept in `audit_details`. It applies the same `mayReplaceStored` guard, so a stored verdict on the shared key is never lowered (the base overwrote it). The response carries `legacyKey: true` and a notice naming the migration. With `20261124` applied, the scoped key is used as before.
+- **Recording before `20261124`.** The route answered 424 until the migration was applied, and the migration waits on I-04. That closed a write path the base had for that whole window. Now, when `drawing_audit_logs.library_id` does not exist, `recordAudit` reads prior verdicts org-wide and upserts on the old key (`org_id,sheet_number,revision_code`), with `library_id` left out of the rows and kept in `audit_details`. It applies the same `mayReplaceStored` guard, so a stored verdict on the shared key is never lowered (the base overwrote it). (Corrected in review fix pass 3: that held only at a known revision. A `""` row from another library was replaced; it no longer is, see below.) The response carries `legacyKey: true` and a notice naming the migration. With `20261124` applied, the scoped key is used as before.
 - **The set list is stored once per run.** `verdictRows` copied up to 500 sheet numbers into every row, so a 600-sheet library sent one upsert of about 5 MB. Now every row carries `set.count` and `set.digest` (a digest of the sorted list). The first row of the run alone carries `set.sheets`. A reader finds the list on the row with the same `audited_at` and digest.
 
 Tests:
@@ -514,6 +528,18 @@ Tests:
 - `lib/__tests__/intelRoundGDrawingMigration.test.ts`: the route names the old key exactly once, in the `legacyKey` branch that drops `library_id`.
 
 Each fails against the first fix pass (`2f2a3a7`).
+
+**Review fix pass 3 (2026-10-01, intelligence Round G).** Two corrections.
+- **On the org-wide key, another library's verdict is never lowered.** `mayReplaceStored` lets any non-`skipped` verdict replace a row under an unknown revision (`""`). On the scoped key that row is the library's own. On the pre-`20261124` org-wide key it may be another library's. Library B's computation therefore replaced library A's `broken_connectors` with `passed`, while the notice said "never lowered". Now, in `legacyKey` mode, `recordAudit` (`app/api/knowledge/drawing/route.ts`) treats a row whose `audit_details.libraryId` is not this library as foreign. That includes a row that names no library, such as the base's or the orchestrator's. A foreign row is never lowered, whatever its revision (`wouldLowerSeverity`), and is reported under `keptStored`. The library's own `""` row still takes its latest verdict, as on the scoped key. The notice now says "a verdict another library recorded is never lowered by this one".
+- **The lens judges gaps by the record's rule.** The GET pushed `audit.missingInSeries` unfiltered ("…from a series you DID load are referenced but absent … gaps in the set"), while the record judges a gap only inside a held series. The GET now computes the held series from the same identities (`seriesHeldBySet`). It filters `audit.missingInSeries` through `missingWithinHeldSeries` before the suggestion and in the response, and returns `seriesNotJudged`. `components/knowledge/DrawingIntelPanel.tsx` names those series on the lens: "Gaps are not judged in 025-PID — this library holds no more than one drawing number of that series". The record's copy, which said "holds only one sheet of", uses the same words. Under the held-by-distinct-numbers rule, a library can hold many sheets of one drawing and still not hold the series.
+
+Tests:
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+  - "library B's computation never replaces library A's row on the org-wide key; A's own row still takes its latest verdict";
+  - "a reference into a series the library does not hold is no gap on screen either; the series is named" (Crude Unit shows 0107 as a gap; Tank Farm shows none, names `025-PID`, and matches its record).
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): "the lens names the series whose gaps it does not judge", and the record's copy.
+
+Each fails against fix pass 2 (`4e549d0`).
 ---
 
 <a id="dwg-7"></a>
@@ -592,6 +618,18 @@ Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
 - "a drawing sheet whose text layer gave references (a legend, an index) is never told to vision-read the library".
 
 The second fails against the first fix pass.
+
+**Review fix pass 3 (2026-10-01, intelligence Round G).** Fix pass 2's SHX criterion did not hold for the sheet it was written for. `shxLike` required `!refsByDoc.has(d.id)`. On a sparse text-layer page, ingest runs `extractDrawingRefs` over every text item, so a TrueType title block's own number (`025-PID-0104`) is always written as a `ref` row beside its `self` row. The canonical SHX sheet was therefore never `shxLike` and got no advice. The route test passed only because its fixture left out that `ref` row. Separately, the advice sent users straight to the library-wide every-page switch. A thin page with no tags is already routed to per-page vision (`pageNeedsVision`) on any rebuild with a key saved, which is the cheaper remedy, and the advice never mentioned it. Now:
+- **Only other drawings count.** `shxLike` counts only references whose base is not one of the sheet's own declared numbers (`otherRefs`, ignoring `-SHn`).
+- **The keyed rebuild first.** The advice says "Hit 'Rebuild index' with your AI key saved: a page like that is read by AI vision during indexing, page by page, and each page read bills to your key."
+- **The every-page switch, only after that.** It is offered, with its billing said plainly, only when some document in the library was read by AI vision (a key has evidently been used here) and these sheets are still unread: "if a rebuild with your key saved still leaves these sheets unread …". That is a proxy. Nothing stored says whether the sheet's own last rebuild had a key.
+- **The panel's footnote** says the same, in that order.
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+- "text with no tags says drawing … or prose — and the advice differs" now seeds the `ref` row ingest writes. It asserts `shxLike`, and the keyed-rebuild advice without the every-page switch.
+- "the library-wide every-page switch is offered only once a keyed rebuild has evidently left SHX sheets unread".
+
+Both fail against fix pass 2 (`4e549d0`).
 ---
 
 <a id="dwg-8"></a>
@@ -979,7 +1017,7 @@ Tests:
 - `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate round says what was actually observed".
 
 **Done-when.**
-- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established: a known revision, and a stored row that covered this sheet from the index it holds now (review fix pass 2). A sheet under an unknown revision is audited every time.
+- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established: a known revision, and a stored row that covered this sheet from the index it holds now (review fix pass 2). Since review fix pass 3 the row must also have been computed from the indexes the sheets it points at hold now, against the same set. A sheet under an unknown revision is audited every time.
 - ✓ The response distinguishes "recorded" from "already recorded at this revision".
 - ✓ The refine loop calls `buildRelocateUser` when the close-up returns no sighting, instead of silently keeping a point it just failed to confirm.
 - ✓ No function stays unwired: `sheetsNeedingAudit` and `buildRelocateUser` both have production callers now.
@@ -1014,4 +1052,29 @@ Tests:
   - "a rebuild that changed a sheet's index re-audits it at the same revision: the new NONE box is recorded broken".
 
 Each fails against the first fix pass. Residual: a stored verdict that a recomputation would lower stays, reported under `keptStored`, and its row is recomputed on each record until a recomputation is at least as severe.
+
+**Review fix pass 3 (2026-10-01, intelligence Round G).** Fix pass 2's coverage fingerprinted only each sheet's OWN index. A verdict also depends on other sheets:
+- whether the sheet a box continues on had its box numbers read, and includes this box;
+- whether a referenced sheet references back;
+- whether a referenced sheet is loaded, and whether the library holds its series.
+
+So when only a neighbour changed, the verdict stayed frozen, and "already recorded" stood. For example, 0104 was recorded `flagged` because 0105's box numbers were never read. 0105 was then rev-upped and vision-read with boxes {7, 9}. The lens listed box 14 as unreturned, but the record still said `flagged`. The same happened when 0104 was `passed` against an older 0105 that still carried box 14. Now:
+- **The basis.** Each coverage entry is `verdictBasis(own, neighbours, set)` (`lib/drawingAuditLog.ts`). It holds the document's `indexFingerprint`; the fingerprint of every document its connectors pair against (`auditOpcBoxes(...).targetsByDoc`) and its references resolve to (`drawingRefTargets`, which shares the reference audit's resolver in `lib/drawingText.ts`); and a digest of every number the library's sheets answer to. It is written as `<own>+<neighbourhood digest>`.
+- **What re-audits.** `sheetsNeedingAudit` compares the whole basis. A change in a sheet a verdict depends on re-audits it at the same revision, and so does a change in the set (a sheet added that makes a series held, or that fills a gap). Each is still never lowered (`mayReplaceStored`).
+- **While anything is being indexed.** A half-built neighbour must never re-decide a verdict: it would file "unpaired" or a gap that is not there, and the raised verdict could not be lowered again. So when any sheet of the library is being indexed (not ready, not in error, not parked), only each sheet's own index is compared (`basisIndexPart`, the `indexOnly` option). The response lists those sheets (`indexingNow`), and the panel says to record again once indexing finishes.
+- **Old rows.** A row written before this (a bare fingerprint) is audited once more, never lowered.
+
+Tests:
+- `lib/__tests__/drawingAuditLog.test.ts`, block "verdictBasis — a verdict stands only while its neighbours and its set are what it was computed from" (the basis, and `sheetsNeedingAudit` with and without `indexOnly`).
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-13 — a verdict that depends on a neighbour is re-judged when the neighbour changes":
+  - the reviewer's two scenarios: flagged → `broken_connectors` after 0105's rev-up and re-read; passed → `broken_connectors` after 0105 dropped box 14 at the same revision;
+  - a sheet added that makes 025-PID held re-judges Tank Farm's 0104 as `flagged`;
+  - while 0105 is being indexed nothing is re-decided by it, and it is re-judged once 0105 is ready.
+- "a rebuild that changed a sheet's index re-audits it" now expects 0104 and 0106, which point at 0105, to be re-judged too.
+
+Each fails against fix pass 2 (`4e549d0`).
+
+Residual:
+- A sheet parked waiting on AI vision counts as settled: its index is whole apart from the pages it waits on, and it does not change until the retry runs.
+- The neighbours are the sheets a verdict resolved to. A number that names a whole multi-sheet set links to no single sheet, so its sheets' contents are not part of the basis. Their membership is, through the set digest.
 ---
