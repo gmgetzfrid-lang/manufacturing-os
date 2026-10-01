@@ -75,6 +75,13 @@ export const ADMIN_SURFACES: readonly AdminSurface[] = [
   // a role list, so there is no `writes` set to pin to the page's source.
   { key: "holds", path: "/admin/holds", label: "Holds", entry: "*",
     denied: "You must be an active member to view holds." },
+  // DIST-15: the org-wide share-link inventory. Listing and revoking are the
+  // controller tier (isControllerRole over the held collection), decided by
+  // /api/share/inventory and the share UPDATE policy — no role list on the
+  // page (DEC-35), so there is no `writes` set to pin; anyone else who opens
+  // it sees the server's refusal.
+  { key: "shares", path: "/admin/shares", label: "Share links", entry: "*",
+    denied: "You must be an active member to open the share-link inventory." },
   { key: "assets", path: "/admin/assets", label: "Operating areas", entry: "*", writes: ["Admin", "DocCtrl", "Manager", "Supervisor"],
     denied: "You must be an active member to browse the equipment registry." },
   { key: "storage", path: "/admin/storage", label: "Storage & Backup", entry: ["Admin", "Manager", "DocCtrl"], writes: CONTROLLERS,
