@@ -148,7 +148,7 @@ describe("ORCH-4 — the legitimate flow keeps working: propose → confirm → 
     expect(Date.parse(card.expiresAt!) - Date.now()).toBeGreaterThan(PROPOSAL_TTL_MS - 60_000);
     const stored = rowsOf("orchestrator_proposals");
     expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({ org_id: ORG, user_id: "u-dc", tool: "log_audit_completion", fingerprint: card.fingerprint });
+    expect(stored[0]).toMatchObject({ org_id: ORG, user_id: "u-dc", tool: "log_audit_completion", fingerprint: card.fingerprint, run_id: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(stored[0].executed_at ?? null).toBeNull();
     // Proposing wrote nothing.
     expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
@@ -317,7 +317,7 @@ describe("20261147 — orchestrator_proposals: one paste, service role only, pro
 
   it("the table is RLS-on with no policies and no anon / authenticated grants; no function, policy or trigger is created", () => {
     expect(ddl).toMatch(/CREATE TABLE IF NOT EXISTS orchestrator_proposals \(/);
-    for (const col of ["org_id       UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE", "user_id      UUID NOT NULL", "fingerprint  TEXT NOT NULL",
+    for (const col of ["run_id       UUID NOT NULL", "org_id       UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE", "user_id      UUID NOT NULL", "fingerprint  TEXT NOT NULL",
       "tool         TEXT NOT NULL", "parameters   JSONB NOT NULL", "expires_at   TIMESTAMPTZ NOT NULL", "executed_at  TIMESTAMPTZ", "dismissed_at TIMESTAMPTZ"]) {
       expect(ddl).toContain(col);
     }

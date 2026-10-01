@@ -15,6 +15,7 @@
 // before the tool acts. There is no in-run approval: an `approved` field in
 // the body is ignored, and the tools run with an empty approval set.
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
   // /api/orchestrator/execute runs only the stored row, once. A proposal
   // that could not be stored comes back marked unavailable — never
   // confirmable from what the browser holds.
-  const pending = await storeProposals(orgId, user.id, run.pending);
+  const pending = await storeProposals(orgId, user.id, randomUUID(), run.pending);
 
   // Show-me chips: every document the answer NAMES becomes a click — the
   // same designation squash-match the knowledge ask route uses. Checked

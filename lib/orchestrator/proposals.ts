@@ -42,6 +42,7 @@ export interface StoredPendingAction extends PendingAction {
 
 export interface StoredProposal {
   id: string;
+  run_id: string;
   org_id: string;
   user_id: string;
   fingerprint: string;
@@ -90,7 +91,7 @@ export type ProposalRefusal = {
  * `unavailable` — never confirmable without a stored row (fail closed).
  */
 export async function storeProposals(
-  orgId: string, userId: string, pending: readonly PendingAction[], now: number = Date.now(),
+  orgId: string, userId: string, runId: string, pending: readonly PendingAction[], now: number = Date.now(),
 ): Promise<StoredPendingAction[]> {
   const executable = pending.filter((p) => !p.href);
   if (executable.length === 0) return pending.map((p) => ({ ...p }));
@@ -98,7 +99,7 @@ export async function storeProposals(
   const { data, error } = await supabaseAdmin
     .from("orchestrator_proposals")
     .insert(executable.map((p) => ({
-      org_id: orgId, user_id: userId,
+      run_id: runId, org_id: orgId, user_id: userId,
       fingerprint: p.fingerprint, tool: p.tool,
       parameters: p.parameters, summary: p.summary,
       expires_at: expiresAt,
@@ -128,7 +129,7 @@ async function readForCaller(
 ): Promise<{ ok: true; proposal: StoredProposal } | ProposalRefusal> {
   const { data, error } = await supabaseAdmin
     .from("orchestrator_proposals")
-    .select("id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at")
+    .select("id, run_id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at")
     .eq("id", proposalId)
     .maybeSingle();
   if (error) {

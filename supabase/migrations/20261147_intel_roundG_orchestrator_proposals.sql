@@ -12,7 +12,8 @@
 -- WHAT:
 --   orchestrator_proposals — one row per write the assistant proposed that
 --   executes server-side (a handoff action with an href is never stored —
---   the real flow does that write): the org, the person it was proposed to,
+--   the real flow does that write): the run that proposed it (run_id — the
+--   proposals of one run share it), the org, the person it was proposed to,
 --   the tool, the exact parameters, the fingerprint the tool computed over
 --   them, the card's sentence, when it was proposed, when it expires (the
 --   app writes created + 15 minutes), when it was run (executed_at — the
@@ -65,6 +66,7 @@ BEGIN;
 -- ── the proposal record ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS orchestrator_proposals (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id       UUID NOT NULL,
   org_id       UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
   user_id      UUID NOT NULL,
   fingerprint  TEXT NOT NULL,
@@ -98,11 +100,11 @@ UNION ALL SELECT 'orchestrator_proposals: anon and authenticated hold no SELECT 
        AND NOT has_table_privilege('authenticated', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE'), NULL
 UNION ALL SELECT 'orchestrator_proposals: the service role may read and write it',
        has_table_privilege('service_role', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE'), NULL
-UNION ALL SELECT 'orchestrator_proposals carries id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at',
+UNION ALL SELECT 'orchestrator_proposals carries id, run_id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at',
        (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'orchestrator_proposals'
-           AND column_name IN ('id', 'org_id', 'user_id', 'fingerprint', 'tool', 'parameters', 'summary',
-                               'created_at', 'expires_at', 'executed_at', 'dismissed_at')) = 11, NULL
+           AND column_name IN ('id', 'run_id', 'org_id', 'user_id', 'fingerprint', 'tool', 'parameters', 'summary',
+                               'created_at', 'expires_at', 'executed_at', 'dismissed_at')) = 12, NULL
 UNION ALL SELECT 'orchestrator_proposals: a row is never both run and dismissed (CHECK present)',
        EXISTS (SELECT 1 FROM pg_constraint
                 WHERE conrelid = to_regclass('public.orchestrator_proposals')
