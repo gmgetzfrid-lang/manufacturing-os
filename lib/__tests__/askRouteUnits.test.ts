@@ -11,7 +11,7 @@ import { callAiModel, AiCallError } from "@/lib/ai/providerCall";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  readAll, columnsMissing, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
+  readAll, readAllByKey, columnsMissing, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow, type PgErr,
 } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
@@ -99,6 +99,32 @@ describe("KACL-4 — readAll pages past max-rows and never takes a short page fo
       ? Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } })
       : capped(from, to));
     expect(out.error?.code).toBe("57014");
+  });
+
+  it("reproduction → fix (fix pass 6): readAllByKey pages by key — a row deleted between pages never shifts another out of the read, as it does an offset page", async () => {
+    const table = () => Array.from({ length: 7 }, (_, i) => ({ id: `r${i}` }));
+    /** max-rows 3; row r0 is deleted once the first page has been read. */
+    const run = () => {
+      let live = table();
+      let pages = 0;
+      const deleteAfterFirst = () => { if (++pages === 2) live = live.filter((r) => r.id !== "r0"); };
+      return {
+        byOffset: (from: number, to: number) => { deleteAfterFirst(); return Promise.resolve({ data: live.slice(from, Math.min(to + 1, from + 3)), error: null }); },
+        byKey: (after: string | null) => { deleteAfterFirst(); return Promise.resolve({ data: live.filter((r) => after === null || r.id > after).slice(0, 3), error: null }); },
+      };
+    };
+    // An offset page skips r3 (it moved into the first page's range).
+    expect((await readAll<{ id: string }>(run().byOffset)).rows.map((r) => r.id)).toEqual(["r0", "r1", "r2", "r4", "r5", "r6"]);
+    // By key, every row still there is read.
+    const out = await readAllByKey<{ id: string }>(run().byKey);
+    expect(out.rows.map((r) => r.id)).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
+    expect(out).toMatchObject({ error: null, capped: false });
+    // An error is returned with what was read — never taken as the end.
+    let n = 0;
+    const failed = await readAllByKey<{ id: string }>((after) => ++n === 2
+      ? Promise.resolve({ data: null, error: { code: "57014", message: "timeout" } })
+      : run().byKey(after));
+    expect(failed.error?.code).toBe("57014");
   });
 
   it("columnsMissing knows a database that has not applied the migration adding THOSE columns — and nothing else (fix pass 4)", () => {

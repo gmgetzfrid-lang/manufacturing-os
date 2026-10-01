@@ -78,6 +78,28 @@ export async function readAll<T>(
   return { rows, error: null, capped: true };
 }
 
+/** KACL-4 (I-03 fix pass 6): every row a query matches, paged by KEY — each
+ *  page asks for the rows after the last id the page before it returned
+ *  (`.gt("id", after).order("id")`), so a row deleted while the read runs
+ *  never shifts a later row out of the pages, as it does an offset page
+ *  (readAll). Like readAll, a short page is not taken as the last one: the
+ *  read ends on an empty page. Used by the ask route's mirror list only. */
+export async function readAllByKey<T extends { id: string }>(
+  page: (after: string | null) => PromiseLike<{ data: unknown; error: PgErr | null }>,
+): Promise<{ rows: T[]; error: PgErr | null; capped: boolean }> {
+  const rows: T[] = [];
+  let after: string | null = null;
+  for (let n = 0; n < 10_000; n++) {
+    const { data, error } = await page(after);
+    if (error) return { rows, error, capped: false };
+    const batch = (data ?? []) as T[];
+    if (batch.length === 0) return { rows, error: null, capped: false };
+    rows.push(...batch);
+    after = batch[batch.length - 1].id;
+  }
+  return { rows, error: null, capped: true };
+}
+
 // ── ASK-4 / PR-5: document text is data ─────────────────────────────────────
 //
 // Everything a document (or a document-derived name) contributes to the

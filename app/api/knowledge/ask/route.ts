@@ -73,7 +73,7 @@ import { loadPrincipal, readableControlledDocIds, type KnowledgePrincipal } from
 import { aiReadability } from "@/lib/aiBoundary";
 import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
-  readAll, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
+  readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
   DATA_BOUNDARY_RULE, answerHasComputation, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
@@ -251,8 +251,11 @@ export async function POST(req: NextRequest) {
   // undefined column, or PostgREST's schema-cache miss naming
   // source_document_id — never any error that merely mentions a column) has
   // no mirrors; the list is paged past PostgREST's max-rows, so a library of
-  // more mirrors than one response holds never leaves the tail unfiltered;
-  // and if the readable set cannot be computed, every mirror is excluded.
+  // more mirrors than one response holds never leaves the tail unfiltered —
+  // by key, not offset (readAllByKey, fix pass 6), so a mirror a sync removes
+  // while the list is read never shifts another one out of it; and if the
+  // readable set cannot be computed, every mirror is excluded. A mirror the
+  // list still did not account for is excluded at the roster (below).
   /** The controlled documents among `dcIds` the AI may read (KACL-10): an
    *  error makes none of them readable. */
   const aiReadableControlled = async (dcIds: string[]): Promise<Set<string>> => {
@@ -297,13 +300,15 @@ export async function POST(req: NextRequest) {
   let noSourceColumn = false;
   {
     const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
-    const mirrorsRead = await readAll<{ id: string; source_document_id: string }>((from, to) => supabaseAdmin
-      .from("knowledge_documents")
-      .select("id, source_document_id")
-      .in("library_id", allLibIds)
-      .not("source_document_id", "is", null)
-      .order("id", { ascending: true })
-      .range(from, to));
+    const mirrorsRead = await readAllByKey<{ id: string; source_document_id: string }>((after) => {
+      let q = supabaseAdmin
+        .from("knowledge_documents")
+        .select("id, source_document_id")
+        .in("library_id", allLibIds)
+        .not("source_document_id", "is", null);
+      if (after !== null) q = q.gt("id", after);
+      return q.order("id", { ascending: true }).limit(READ_PAGE);
+    });
     if (mirrorsRead.error && !sourceColumnMissing(mirrorsRead.error)) {
       return bad(
         "Couldn't check which documents you may read, so nothing was searched — try again in a moment.",
@@ -986,32 +991,6 @@ export async function POST(req: NextRequest) {
       return [...governing, ...reference];
     };
 
-    // ── Retrieval round 1 ────────────────────────────────────────────────
-    // Both halves run concurrently — the embedding call is one small round
-    // trip and must not add its latency on top of the keyword searches.
-    const [batches, semantic] = await Promise.all([
-      runSearches(queries) as Promise<TieredChunk[][]>,
-      runSemantic(),
-    ]);
-    const keywordMerged = mergeTiered(batches);
-    let chunks = [
-      ...fuseTier(
-        keywordMerged.filter((c) => c.tier !== "reference"),
-        semantic.filter((c) => c.tier !== "reference"),
-        14,
-      ),
-      ...fuseTier(
-        keywordMerged.filter((c) => c.tier === "reference"),
-        semantic.filter((c) => c.tier === "reference"),
-        8,
-      ),
-    ];
-    // The passages RANKING placed (governing then reference, each by rank) —
-    // as opposed to the reserved ones attached after it (proven ground,
-    // pull-by-name, missing-document probes, graph hops), which bypass
-    // ranking. The prompt-size budget gives up ranked passages first (ASK-7).
-    let rankedIds = new Set(chunks.map((c) => c.id));
-
     // One roster of every reachable document — reused by proven-ground,
     // pull-by-name, whole-document mode, and the graph hop, so designation
     // resolution is one fetch instead of four.
@@ -1048,6 +1027,16 @@ export async function POST(req: NextRequest) {
       } else if (read.error) {
         rosterUnread = true;
       }
+      // KACL-4 (fix pass 6): a document whose roster row names a controlled
+      // document but which the mirror list does not hold — a sync added it
+      // after the list was read, or the list missed it — was never checked
+      // against this asker's access or the AI boundary, so it is never
+      // searched: excluded like a mirror they may not read. Read before
+      // round 1, so no search, legend or roster use ever admits it. (A
+      // roster read without the source columns cannot tell; the list stands.)
+      for (const d of read.rows) {
+        if (d.source_document_id != null && !mirrorDocIds.has(d.id)) excludedDocIds.add(d.id);
+      }
       reachableDocs = read.rows.filter((d) => !excludedDocIds.has(d.id));
     }
     const rosterById = new Map(reachableDocs.map((d) => [d.id, d]));
@@ -1063,6 +1052,32 @@ export async function POST(req: NextRequest) {
     const wasUpload = (id: string): boolean => legendUploads.has(id) || (
       rosterById.has(id) && !mirrorDocIds.has(id)
       && (noSourceColumn || rosterById.get(id)?.source_document_id === null));
+
+    // ── Retrieval round 1 ────────────────────────────────────────────────
+    // Both halves run concurrently — the embedding call is one small round
+    // trip and must not add its latency on top of the keyword searches.
+    const [batches, semantic] = await Promise.all([
+      runSearches(queries) as Promise<TieredChunk[][]>,
+      runSemantic(),
+    ]);
+    const keywordMerged = mergeTiered(batches);
+    let chunks = [
+      ...fuseTier(
+        keywordMerged.filter((c) => c.tier !== "reference"),
+        semantic.filter((c) => c.tier !== "reference"),
+        14,
+      ),
+      ...fuseTier(
+        keywordMerged.filter((c) => c.tier === "reference"),
+        semantic.filter((c) => c.tier === "reference"),
+        8,
+      ),
+    ];
+    // The passages RANKING placed (governing then reference, each by rank) —
+    // as opposed to the reserved ones attached after it (proven ground,
+    // pull-by-name, missing-document probes, graph hops), which bypass
+    // ranking. The prompt-size budget gives up ranked passages first (ASK-7).
+    let rankedIds = new Set(chunks.map((c) => c.id));
 
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the

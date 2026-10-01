@@ -117,6 +117,31 @@ function openAndRestricted(dcOver: Row = {}) {
   });
 }
 
+/** Is this statement the route's mirror list (the knowledge_documents read
+ *  that asks for mirrors only)? */
+const isMirrorList = (op: { table: string }, filters: Array<{ col: string; op: string }>) =>
+  op.table === "knowledge_documents" && filters.some((f) => f.col === "source_document_id" && f.op === "notis");
+
+/** The mirror list does not see document `id`: its row is hidden while the
+ *  list is read and back for every statement after it — a mirror a sync
+ *  added just after the list was read (fix pass 6). */
+function mirrorListOmits(id: string) {
+  let hidden: Row | null = null;
+  let done = false;
+  db.asyncHooks.push(async (op, filters) => {
+    if (done) return;
+    if (isMirrorList(op, filters)) {
+      if (!hidden) {
+        const rows = rowsOf("knowledge_documents");
+        hidden = rows.splice(rows.findIndex((d) => d.id === id), 1)[0];
+      }
+    } else if (hidden) {
+      rowsOf("knowledge_documents").push(hidden);
+      done = true;
+    }
+  });
+}
+
 beforeEach(() => {
   resetHarness();
 });
@@ -197,6 +222,62 @@ describe("KACL-4 — the per-asker exclusion set fails CLOSED and is never cut a
     const body = await res.json();
     expect(allPrompts()).not.toContain("312 psig");
     expect(JSON.stringify(body.citations)).not.toContain("312 psig");
+  });
+
+  it("reproduction → fix (fix pass 6): a mirror the mirror list did not account for — its roster row names a controlled document — is never searched, for the Viewer denied it or for anyone; the upload beside it answers as before", async () => {
+    for (const token of ["viewer", "good"]) {
+      resetHarness();
+      openAndRestricted();
+      mirrorListOmits(K_MIRROR);
+      h.script = [QUERY_GEN, REFINE_NONE, answer()];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, token);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      // Fix pass 5: neither in the mirror list nor excluded, it was searched
+      // and its passage reached the prompt of a Viewer denied its source.
+      expect(allPrompts()).not.toContain("312 psig");
+      expect(allPrompts()).not.toContain("INC-0042");
+      // The upload is unaffected: retrieved, cited, recorded as an upload.
+      expect(answerCall().user).toContain(OPEN_TEXT);
+      expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+      const ctx = rowsOf("knowledge_questions")[0].context as { documents: string[]; uploads: string[] };
+      expect(ctx.documents).toEqual([K_OPEN]);
+      expect(ctx.uploads).toEqual([K_OPEN]);
+    }
+  });
+
+  it("reproduction → fix (fix pass 6): a mirror a sync removes WHILE the mirror list is read never shifts another out of it (paged by key) — the controller still gets the mirror they may read; the Viewer denied it never does", async () => {
+    for (const token of ["good", "viewer"]) {
+      resetHarness();
+      const docs: Row[] = [];
+      const kdocs: Row[] = [kdoc(K_OPEN, { name: "Relief standard.pdf" })];
+      const chunks: Row[] = [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open" })];
+      for (let i = 0; i < 60; i++) {
+        const n = String(i).padStart(3, "0");
+        // k-m050 is the first row of the second page (max-rows 50) — the one
+        // an offset page skips once a row of the first page is deleted.
+        const target = i === 50;
+        docs.push(dcDoc(`dc-${n}`, target ? { acl: DENY_VIEWER_ACL } : {}));
+        kdocs.push(kdoc(`k-m${n}`, { name: target ? "INC-0042" : `Filler ${n}`, source_document_id: `dc-${n}`, source_rev: "A" }));
+        chunks.push(kchunk(`k-m${n}`, target ? RESTRICTED : `Unrelated filler passage number ${i}.`, target ? { id: "c-restricted" } : {}));
+      }
+      seed({ documents: docs, knowledge_documents: kdocs, knowledge_chunks: chunks });
+      h.maxRows = 50;
+      // A sync removes k-m000 between the mirror list's first and second page.
+      let pages = 0;
+      db.asyncHooks.push(async (op, filters) => {
+        if (!isMirrorList(op, filters) || ++pages !== 2) return;
+        db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== "k-m000");
+        db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== "k-m000");
+      });
+      h.script = [QUERY_GEN, REFINE_NONE, answer()];
+      expect((await ask({ question: "What is the relief valve set pressure?" }, token)).status).toBe(200);
+      expect(pages).toBeGreaterThan(1);
+      // Paged by offset, k-m050 was skipped: neither listed nor excluded.
+      if (token === "good") expect(allPrompts()).toContain("312 psig");
+      else expect(allPrompts()).not.toContain("312 psig");
+      expect(answerCall().user).toContain(OPEN_TEXT);
+    }
   });
 });
 
