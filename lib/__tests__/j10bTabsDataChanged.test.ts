@@ -273,6 +273,59 @@ describe("PERF-3 — opening Costs or Quality under the coach gathers the snapsh
   }
 });
 
+// Review (fix pass): the rendered tests above drive ONE Costs writer (the
+// quotes panel stands in for all of them). This census pins the rest at the
+// source: every writer prop the tab hands down is afterWrite (the re-read,
+// the invalidation, the tell), and the only bare re-read left is the "Try
+// again" read retry — so reverting, say, onMoneyMoved to a plain refresh
+// fails here, not silently in the coach.
+/** Every opening tag of a JSX element `<Name …>`, braces balanced. */
+function jsxTags(s: string, name: string): string[] {
+  const tags: string[] = [];
+  const opener = new RegExp(`<${name}[\\s>]`, "g");
+  for (let m = opener.exec(s); m; m = opener.exec(s)) {
+    let depth = 0, i = m.index;
+    for (; i < s.length; i++) {
+      if (s[i] === "{") depth++;
+      else if (s[i] === "}") depth--;
+      else if (s[i] === ">" && depth === 0) break;
+    }
+    tags.push(s.slice(m.index, i + 1).replace(/\s+/g, " "));
+  }
+  return tags;
+}
+
+describe("PERF-4 — source: every Costs-tab writer is handed afterWrite; the only bare re-read is the read retry", () => {
+  const s = src("components/projects/CostsTab.tsx");
+  const WIRING: Array<[string, string[]]> = [
+    ["QuotesPanel", ["onChanged={afterWrite}"]],
+    ["ChangeOrdersPanel", ["onMoneyMoved={afterWrite}"]],
+    ["LedgerHealth", ["onChanged={afterWrite}", "onCoRepaired={() => { setCoReload((n) => n + 1); afterWrite(); }}"]],
+    ["AccountForm", ["onDone={() => { setShowNewAccount(false); afterWrite(); }}"]],
+    ["AccountDetail", ["onChanged={afterWrite}"]],
+    ["PartiesPanel", ["onChanged={afterWrite}"]],
+    // inside AccountDetail: the entry form's write reaches AccountDetail's onChanged (= afterWrite above)
+    ["EntryForm", ["onDone={onChanged}"]],
+  ];
+  for (const [name, props] of WIRING) {
+    it(`<${name}> is rendered once and its writer prop${props.length > 1 ? "s reach" : " reaches"} afterWrite`, () => {
+      const tags = jsxTags(s, name);
+      expect(tags, name).toHaveLength(1);
+      for (const p of props) expect(tags[0], `${name} ${p}`).toContain(` ${p}`);
+    });
+  }
+
+  it("refresh() is called in exactly three places: the mount load, inside afterWrite, and the 'Try again' read retry", () => {
+    const calls = [...s.matchAll(/\brefresh\(\)/g)].map((m) => s.slice(s.lastIndexOf("\n", m.index) + 1, s.indexOf("\n", m.index)).trim());
+    expect(calls).toHaveLength(3);
+    expect(calls[0]).toBe("useEffect(() => { void refresh(); }, [refresh]);");
+    expect(calls[1]).toBe("void refresh().then(() => {");
+    expect(calls[2]).toMatch(/^<button type="button" onClick=\{\(\) => void refresh\(\)\} [^>]*>Try again<\/button>$/);
+    // and afterWrite is what every writer above names — no writer re-reads on its own
+    expect((s.match(/afterWrite/g) ?? []).length).toBe(1 + 7);   // the declaration + the seven writer props
+  });
+});
+
 describe("PERF-4 — source: no suppression left over either tab's load", () => {
   for (const f of ["components/projects/CostsTab.tsx", "components/projects/QualityTab.tsx"]) {
     it(`${f}: no react-hooks eslint-disable, onDataChanged only inside afterWrite`, () => {

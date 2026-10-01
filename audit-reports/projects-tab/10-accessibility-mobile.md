@@ -713,15 +713,17 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 
 **Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS lifted the Quality tab's floor into one shared constant: `components/projects/decisionTarget.ts` `DECISION_TARGET` (`min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3`). `QualityTab.tsx` imports it, and its local copy is removed. The constant is set on the control itself, never through a bare element rule, on every button whose click starts a write in these files:
 - `components/projects/IntakePanel.tsx`: approve, reject, copy link, reissue, revoke, assign documents, unassign, assign pick and create link.
-- `components/projects/cost/QuotesPanel.tsx`: type or correct a total, Award, Decline, post invoice, void, create, submit, RFQ, quote-link copy, reissue and revoke.
+- `components/projects/cost/QuotesPanel.tsx`: type or correct a total, Award, Decline (in the bid table and, since the `MON-10` fix pass, in the "not read yet" strip), post invoice, void, create, submit, RFQ, quote-link copy, reissue and revoke.
 - `components/projects/cost/ChangeOrdersPanel.tsx`: approve, reject, reverse and propose.
 - `components/projects/CostsTab.tsx`: ledger repair, CO repair, void entry, post, create, link and add.
 - The new closeout Retry (`components/projects/CloseoutGatesPending.tsx`, `QUAL-8`).
 
 Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
-- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (6).
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (8).
   - One shared constant: the Quality tab and the four surfaces import it, none keeps a local copy, and `app/globals.css` has no bare `button` rule.
-  - Per file, a census of every button whose click starts a write. Each must carry `${DECISION_TARGET}`. The census is counted against a floor and names writers by their handler, so a new writer added without the floor fails.
+  - Per file, an inverted census. Every `<button>` in the file must carry `${DECISION_TARGET}` unless its whole `onClick` is on an explicit, anchored list of read-only handlers: the disclosure toggles (`setShowLinks`, `setOpen`, `setShowForm`, `setShowNewAccount`, `setShowParties`, `setOpenAccount`), the entry type picker (`setType`), the banner dismiss (`setErr(null)`), the read retry (`refresh`), a form's `onCancel`, the company and party pickers' open and cancel (`setEditing`, `setLinking`), and the bid row's PDF opener. A button with no `onClick` counts as a decision. The deciders are counted against a floor, and named controls must be among them. A new write button under any handler name, added without the floor, therefore fails. So does a write appended to a read-only handler. *Review fix:* the first pass matched writers against a list of known handler names, so a writer named anything else (`archive`, say) went uncounted. The record's earlier sentence, "names writers by their handler, so a new writer added without the floor fails", overstated that census.
+  - The read-only list carries no dead entry: each entry matches a button in the four files.
+  - A synthetic `archive` button with no floor is caught, a write appended to a read-only toggle leaves the list, and a submit button with no `onClick` is a decision.
   - The clusters' spacing.
 
   `lib/__tests__/a11yProjects.test.ts`' DECISION_TARGET pin now reads the shared module.

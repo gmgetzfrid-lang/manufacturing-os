@@ -277,6 +277,7 @@ the loop the suppression prevents.
   - Costs: "a read retry … tells the page nothing".
   - The Quality twins, with a turnover Assign as the write.
   - A source pin: "no react-hooks eslint-disable, onDataChanged only inside afterWrite".
+  - A Costs-tab writer census. *Review fix:* the rendered tests drive one Costs writer, because the quotes panel stands in for all of them. The census pins the rest at the source. Each of `<QuotesPanel>` `onChanged`, `<ChangeOrdersPanel>` `onMoneyMoved`, `<LedgerHealth>` `onChanged` and `onCoRepaired`, `<AccountForm>` `onDone`, `<AccountDetail>` `onChanged` and `<PartiesPanel>` `onChanged` is rendered once and handed `afterWrite`. `<EntryForm>`'s `onDone` is `AccountDetail`'s `onChanged`. `refresh()` is called in exactly three places: the mount load, inside `afterWrite`, and the "Try again" read retry. Reverting any writer to a bare `refresh` fails the test. This was checked by reverting `onMoneyMoved` and running it. The Quality tab's equivalent is `qualitySignoff.test.ts`'s `onChanged={afterWrite}` count.
   - These fail on the base code: the code was stashed and the tests run. `lib/__tests__/qualitySignoff.test.ts`'s loader pins were moved to the new shape.
 
 **Done-when.**
