@@ -205,3 +205,33 @@ future migration that re-opens the shape.
 DONE — public-surfaces PS-VERIFY (2026-10-01, `REV-9`'s Partial block,
 public-surfaces `VFY-4`); P8 does not redo it. Public-surfaces `VFY-4`
 stays OPEN on the same operator limb.
+
+⚠ **Deploy order — the field pack (Round F wave 2, P8 FIELD; DEC-44 (P8
+FIELD), provisional label).** Three things precede the P8 app deploy, in
+this order (added at P8's third review fix pass):
+
+1. **Paste `20261143`** (`work_packages` close / delete narrowed to the
+   owner or a controller — `DRLS-10`) and **read its MEASURE rows**: the
+   packages and asset tags the field-pack budget reaches (over 150 printable
+   sheets; over 150 MB of recorded file size together), the single files
+   over 150 MB, the files with no recorded size, and the live transmittal
+   PDFs over 64 MiB (`TRX-15`). Applied first, the narrowing is already in
+   force for the old page (a non-owner's Close matches no row until the app
+   deploys — the file's header says so).
+2. **The user ratifies DEC-44 (P8 FIELD) §2 against those counts** — the
+   150-sheet / 1000-page / 150 MB budget is a stated default, not a measured
+   one, and it removes a capability that worked before (one pack of a large
+   work package, on a desktop too) with no override. Ratify it, change the
+   three constants (`lib/docPack.ts`), or ask for the device-aware variant
+   (refuse only where `navigator.deviceMemory` is low, warn elsewhere). The
+   counted owners are told before the refusal tells them.
+3. **PS-VERIFY's owner signs off the two amber verdict rules** P8 added to
+   `app/api/verify-package/route.ts` (public-surfaces `VFY-19`): a
+   still-current sheet the print left out as `unreadable_pdf` reads amber
+   `not_pdf`, one left out as `too_large` reads amber `too_large`. Without
+   the sign-off, delete the two `sameRevision` lines before merge (both
+   return to red; see `VFY-19` for what that costs `too_large`).
+
+`TRX-15`'s stricter portal rule (a PDF goes out stamped or not at all) is not
+in this deploy: it is armed per item only by `TRX-16`'s issue-time mark, and
+lands with the user's ratification of the `DEC-61` §5 amendment.
