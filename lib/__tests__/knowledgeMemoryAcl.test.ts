@@ -499,6 +499,15 @@ describe("lib/knowledge.ts — every read of the team's record goes through the 
     expect(JSON.parse(init.body)).toEqual({ orgId: ORG, libraryId: LIB, action: "search", query: "what are the relief valve set points", limit: 3 });
     expect(browser.state.calls.filter((c) => c.table === "knowledge_questions")).toEqual([]);
   });
+  it("reproduction → fix: the memory card shows the caller's limit, though the route reads at least its default of 5", async () => {
+    const row = (id: string) => ({ id, libraryId: LIB, threadId: null, question: "q" + id, answer: "a" + id, citations: [], userName: "u", mode: "library", createdAt: "t", mine: false });
+    fetchMock.mockResolvedValueOnce(reply({ rows: ["1", "2", "3", "4", "5"].map(row) }));
+    const out = await searchAskHistory(ORG, LIB, "what are the relief valve set points", 3);
+    expect(out.map((p) => p.id)).toEqual(["1", "2", "3"]);
+    // the default limit is the route's floor — nothing is trimmed
+    fetchMock.mockResolvedValueOnce(reply({ rows: ["1", "2", "3", "4", "5"].map(row) }));
+    expect((await searchAskHistory(ORG, LIB, "what are the relief valve set points")).map((p) => p.id)).toEqual(["1", "2", "3", "4", "5"]);
+  });
   it("listKnowledgeQuestions carries the withheld count and reports a failure instead of an empty record", async () => {
     fetchMock.mockResolvedValueOnce(reply({ rows: [], withheld: 3 }));
     expect(await listKnowledgeQuestions(ORG, LIB)).toEqual({ questions: [], withheld: 3 });

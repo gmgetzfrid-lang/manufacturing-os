@@ -665,10 +665,13 @@ export async function searchAskHistory(
     const out = await apiPost<{ rows: HistoryRowWire[] }>("/api/knowledge/history", {
       orgId, libraryId, action: "search", query: q, limit,
     });
+    // The route reads at least its default for a search (its answer must not
+    // depend on the caller's window), and a smaller limit's answer is a prefix
+    // of that one — so the caller's own limit is applied here.
     return (out.rows ?? []).filter((r) => typeof r.answer === "string").map((r) => ({
       id: r.id, library_id: r.libraryId, question: r.question, answer: r.answer as string,
       user_name: r.userName ?? null, created_at: r.createdAt, citations: r.citations,
-    }));
+    })).slice(0, Math.max(0, limit));
   } catch {
     return [];
   }

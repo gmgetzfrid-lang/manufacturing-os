@@ -154,6 +154,57 @@ describe("ASK-6 — the assistant's words are the assistant's, and never a trap"
       expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: false, reason: credential });
     }
   });
+  it("reproduction → fix: a pin is judged by the credential bound to it, not by the punctuation or capitals after it", () => {
+    // refused by the position rule ("your pin" + punctuation / and / to / for; capital PIN + punctuation or a tail word)
+    const engineering = [
+      "the clearance between your pin and the bore (mm)",
+      "the diametral clearance of your pin to the lug hole",
+      "the double-shear load on your pin.",
+      "the diameter of your pins, in mm",
+      "the material grade of the SHEAR PIN, which the BOM leaves blank",
+      "the grade of the DOWEL PIN, 6 X 20, on the BOM",
+      "the size of the cotter PIN for the castle nut",
+      "the PIN and bushing material",
+      "Need: DOWEL PIN",
+      "Need: the PIN-to-hole clearance",
+      // passed before only because of the word after PIN, or an uppercase S
+      "ENTER CLEVIS PIN DIAMETER (IN)",
+      "HOW MANY ANCHOR PINS?",
+      "HOW MANY ANCHOR PINS",
+      "ENTER CONNECTOR PIN NUMBER FOR SIGNAL A",
+      // a cue that merely shares the sentence is not bound to the pin
+      "Provide the double-shear load on your pin.",
+      "Provide the pin diameter to verify the double-shear capacity.",
+      "the pin load, taking into account the eccentricity",
+      "the pin count of the card-edge connector",
+      "the pin for the card guide",
+      "the base pin of the portal frame",
+      "the pin for verification testing of the hinge",
+      "Enter the 6-digit code stamped on the nameplate.",
+      "What's the pin diameter?",
+    ];
+    for (const t of engineering) {
+      expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: true });
+      expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: true });
+    }
+    // passed by the position rule, or newly reached: a PIN or code bound to a card, a bank, a digit count, what it unlocks or how it came
+    const credential = "it asks for a credential, account or identity detail";
+    for (const t of ["enter your banking pin", "your debit card pin", "the 4-digit pin for your card", "enter the pin to unlock",
+      "the 6-digit code we texted you", "Enter your ATM pin.", "the PIN for your bank account", "your card's PIN",
+      "the pin you use to sign in", "Enter your PIN for verification.", "the PIN that was texted to you",
+      "the code from your authenticator app", "the code in the SMS", "Enter the verification code.",
+      "Enter the security code on the back of your card.", "Provide the PIN number for the vendor portal.",
+      // …or the PIN / code is the whole of what is asked
+      "Enter your PIN, please.", "Enter your PIN number.", "What's the PIN?", "Enter the 6-digit code.", "PIN?", "your PIN"]) {
+      expect(screenAssistantRequest(t, "need"), t).toEqual({ ok: false, reason: credential });
+    }
+    for (const t of ["enter your banking pin", "enter the pin to unlock", "Enter the 6-digit code we texted you.",
+      "Type the 4-digit pin for your card.", "Provide the PIN number for the vendor portal.", "What's the PIN?"]) {
+      expect(screenAssistantRequest(t, "clarify"), t).toEqual({ ok: false, reason: credential });
+    }
+    // the clarify question is refused only when it ASKS — naming a card PIN above buttons is not a request
+    expect(screenAssistantRequest("Which aspect: debit card pin rules or password rotation?", "clarify")).toEqual({ ok: true });
+  });
   it("NeedCard: the app's first-person chrome is gone; the prompt is quoted inside the assistant frame; the secrets line is at the input", () => {
     const need = page.slice(page.indexOf("function NeedCard("), page.indexOf("function CopyButton("));
     expect(need).not.toContain("I need a value from you to run this calculation");
