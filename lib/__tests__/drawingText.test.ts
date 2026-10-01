@@ -490,3 +490,247 @@ describe("SHX drawings whose only text is the title block", () => {
     expect(pageNeedsVision(TITLE_BLOCK_ONLY, MIN_TAGS_THIN_PAGE)).toBe(false);
   });
 });
+
+// ── intelligence Round G (I-07) ────────────────────────────────────────────
+
+import {
+  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities,
+  OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
+  SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
+} from "../drawingText";
+import { truncateSafe } from "../knowledgeText";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+describe("DWG-2 — a pipe line number is never equipment", () => {
+  it("every executed line-number case yields no tag (the finding's list)", () => {
+    for (const s of ['6"-P-1024-A1A', '2"-CWS-101-B2', '10"-HC-15003-A1A-HC', 'FROM 8"-P-2201-C1', 'LINE 12"-S-4410-D1']) {
+      expect(extractEquipmentTags(s), s).toEqual([]);
+    }
+  });
+
+  it("every size form drawings use: fractions, whole-and-fraction, doubled quote, typographic marks, IN", () => {
+    for (const s of ['3/4"-P-101-A1A', '1-1/2"-CWS-12-B2', '1 1/2"-P-7-A', "6''-P-1024-A1A", '6”-P-1024', '6″-P-1024', '6 IN-P-1024-A1A', '6IN-P-1024', '6INCH-P-1024', '.75"-IA-12', '6" P-1024-A1A']) {
+      expect(extractEquipmentTags(s), s).toEqual([]);
+    }
+  });
+
+  it("a LINE-labelled token is a line (the vision prompt's label)", () => {
+    expect(extractEquipmentTags("LINE P-1024-A1A")).toEqual([]);
+    expect(extractEquipmentTags("LINE NO. P-1024")).toEqual([]);
+  });
+
+  it("real tags still extract — alone, next to a line number, and after a dimension that is not a line size", () => {
+    expect(extractEquipmentTags("V-3 P-101A PSV-2001").map((t) => t.tag)).toEqual(["V-3", "P-101A", "PSV-2001"]);
+    expect(extractEquipmentTags('6"-P-1024-A1A TO V-3').map((t) => t.tag)).toEqual(["V-3"]);
+    expect(extractEquipmentTags('V-1402 6" DRAIN TO P-205A').map((t) => t.tag)).toEqual(["V-1402", "P-205A"]);
+    expect(extractEquipmentTags("TRAIN 2 P-101A").map((t) => t.tag)).toEqual(["P-101A"]);
+  });
+
+  it("extractLineNumbers keeps the whole number, normalised, by the SAME size grammar", () => {
+    expect(extractLineNumbers('6"-P-1024-A1A TO V-3')).toEqual(['6"-P-1024-A1A']);
+    expect(extractLineNumbers("FROM 10''-HC-15003-A1A-HC")).toEqual(['10"-HC-15003-A1A-HC']);
+    expect(extractLineNumbers('1-1/2"-CWS-12-B2 AND 3/4"-IA-7')).toEqual(['1-1/2"-CWS-12-B2', '3/4"-IA-7']);
+    expect(extractLineNumbers("6 IN-P-1024")).toEqual(['6"-P-1024']);
+    expect(extractLineNumbers("V-3 P-101A")).toEqual([]);
+    // Whatever extractLineNumbers calls a line, extractEquipmentTags never counts.
+    const page = '6"-P-1024-A1A 2"-CWS-101-B2 10"-HC-15003-A1A-HC V-3 E-204';
+    expect(extractLineNumbers(page)).toHaveLength(3);
+    expect(extractEquipmentTags(page).map((t) => t.tag)).toEqual(["V-3", "E-204"]);
+  });
+});
+
+describe("DWG-4 — the connector line contract between the vision prompt and the parser", () => {
+  it("the prompt's own example parses: box number, and the destination drawing with its sheet", () => {
+    expect(parseOpcBoxes(OPC_LINE_EXAMPLE)).toEqual(["14"]);
+    expect(extractDrawingRefs(OPC_LINE_EXAMPLE)).toEqual(["2002-D-2001-SH4"]);
+    expect(OPC_LINE_FORMAT.startsWith("OPC <box number>: <destination drawing number>")).toBe(true);
+  });
+
+  it("a prompt-shaped transcript round-trips through parseOpcBoxes + auditOpcBoxes with a non-empty boxCount", () => {
+    const sheetA = [
+      "=== TITLE BLOCK ===", "DRAWING NO: 2002-D-2001", "SHEET: 3 OF 12", "REV: 4", "=== END TITLE BLOCK ===",
+      "OPC 14: 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD",
+      `OPC 15: ${OPC_NO_DRAWING} — FROM DESALTER`,
+      "OPC 16: 2002-D-2001 SH 5 — TO E-201 FEED",
+    ];
+    const sheetB = ["OPC 14: 2002-D-2001 SH 3 — FROM V-1401"];
+    const rows = [
+      ...sheetA.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "a", page: 3, tag: box, raw: l }))),
+      ...sheetB.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "b", page: 4, tag: box, raw: l }))),
+    ];
+    const self = new Map([
+      ["a", ["2002-D-2001", "2002-D-2001-SH3"]], ["b", ["2002-D-2001", "2002-D-2001-SH4"]], ["c", ["2002-D-2001", "2002-D-2001-SH5"]],
+    ]);
+    const names = new Map([["a", "SH3.pdf"], ["b", "SH4.pdf"], ["c", "SH5.pdf"]]);
+    const audit = auditOpcBoxes(rows, self, names);
+    expect(audit.boxCount).toBe(4);
+    // Box 14 comes back on SH4; box 16 names SH5, which carries no box 16.
+    expect(audit.unreturned).toEqual([expect.objectContaining({ box: "16", from: "SH3.pdf", to: "SH5.pdf" })]);
+    // NONE in place of a drawing number is the one broken-by-definition case.
+    expect(audit.noRef).toEqual([expect.objectContaining({ box: "15", sheet: "SH3.pdf" })]);
+    expect(audit.unknown).toEqual([]);
+  });
+
+  it("the text layer's connectors are its references: CONT ON / pennant numbers extract as refs and pair one-way", () => {
+    expect(extractDrawingRefs("CONT ON DWG 025-PID-0107")).toEqual(["025-PID-0107"]);
+    expect(extractDrawingRefs("025-PID-0108 SH 2")).toEqual(["025-PID-0108-SH2"]);
+    const docs = [{ id: "a", name: "025-PID-0106.pdf" }, { id: "b", name: "025-PID-0107.pdf" }];
+    const audit = auditDrawingRefs(docs, new Map([["a", ["025-PID-0107"]]]));
+    expect(audit.oneWay).toEqual([{ from: "025-PID-0106.pdf", to: "025-PID-0107.pdf", count: 1 }]);
+  });
+
+  it("the vision prompt is built from the parser's constants (they cannot drift apart)", () => {
+    const vision = readFileSync(join(__dirname, "..", "knowledgeVision.ts"), "utf8");
+    expect(vision).toMatch(/import \{[\s\S]*OPC_LINE_FORMAT, OPC_LINE_EXAMPLE, OPC_NO_DRAWING, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,[\s\S]*\} from "@\/lib\/drawingText"/);
+    expect(vision).toContain("${OPC_LINE_FORMAT}");
+    expect(vision).toContain("${TITLE_BLOCK_OPEN}");
+    expect(vision).not.toMatch(/instrument bubble \(V-3, P-101A, PSV-2001, "\s*\+?\s*"6\\"-P-1024-A1A\)/);
+  });
+});
+
+describe("PR-11 — a connector never becomes the sheet's identity", () => {
+  it("labelled continuation phrasing is a connector, not a title block", () => {
+    expect(extractTitleBlock("CONT ON DWG NO. 040-B-2002 SH 1").drawingNumber).toBeNull();
+    expect(extractTitleBlock("CONTINUED ON DRAWING NO 021-PID-0107").drawingNumber).toBeNull();
+    expect(extractTitleBlock("SEE DWG NO. 12-A-3003").drawingNumber).toBeNull();
+    expect(extractTitleBlock("FROM DWG # 040-B-2001").drawingNumber).toBeNull();
+    expect(extractTitleBlock("REF DWG NO. 025-PID-0001").drawingNumber).toBeNull();
+  });
+
+  it("a text layer with the connector FIRST still declares its own border number", () => {
+    const tb = extractTitleBlock("CONT ON DWG NO. 040-B-2002 SH 1\nTO V-3\nDRAWING NO: 025-PID-0104  SHEET 2 OF 4  REV C");
+    expect(tb).toEqual({ drawingNumber: "025-PID-0104", sheetNumber: "2", rev: "C" });
+  });
+
+  it("a fenced transcript is read ONLY inside the fence — whatever precedes it", () => {
+    const transcript = [
+      "OPC 14: 040-B-2002 SH 1 — TO V-1402",
+      "CONT ON DWG NO. 040-B-2002 SHEET 1",
+      TITLE_BLOCK_OPEN, "DRAWING NO: 025-PID-0104", "SHEET: 3 OF 4", "REV: D", TITLE_BLOCK_CLOSE,
+      "NOTES: 1. SEE DWG NO. 999-X-1.",
+    ].join("\n");
+    expect(extractTitleBlock(transcript)).toEqual({ drawingNumber: "025-PID-0104", sheetNumber: "3", rev: "D" });
+  });
+
+  it("an unclosed fence still bounds the read to the border's fields", () => {
+    const t = `${TITLE_BLOCK_OPEN}\nDRAWING NO: 025-PID-0104\nSHEET: 1 OF 1\nREV: 2\nTITLE: X\nLINE 6"-P-1\nNOTE 4\nDWG NO. 777-Z-0001`;
+    expect(extractTitleBlock(t).drawingNumber).toBe("025-PID-0104");
+  });
+});
+
+describe("DWG-7 / BR-12 — a dense text-layer P&ID is a drawing; prose is not", () => {
+  // A TrueType P&ID: every tag, line number, note and revision row in the
+  // text layer, several thousand characters (the case no fixture had).
+  const densePid = [
+    "DRAWING NO: 025-PID-0104  SHEET 1 OF 3  REV 2",
+    ...Array.from({ length: 50 }, (_, i) =>
+      `V-${101 + i} SUCTION DRUM  6"-P-${1000 + i}-A1A  TO E-${201 + i} VIA FV-${301 + i}`),
+    "NOTES: 1. ALL DIMENSIONS IN MM. 2. ALL LINES INSULATED UNLESS NOTED. 3. SEE DWG 025-PID-0105 FOR CONTINUATION.",
+  ].join("\n");
+
+  it("the fixture is past the sparse ceiling, and is read as a drawing by its signals", () => {
+    expect(densePid.length).toBeGreaterThan(SPARSE_PAGE_MAX_CHARS);
+    const s = drawingSignals(densePid);
+    expect(s.tagsPerKchar).toBeGreaterThanOrEqual(DENSE_DRAWING_MIN_TAGS_PER_KCHAR);
+    expect(s.lowercaseRatio).toBeLessThanOrEqual(DRAWING_MAX_LOWERCASE_RATIO);
+    expect(isDrawingLikePage(densePid)).toBe(true);
+    // …and yields equipment tags and a title-block identity — never line numbers.
+    const tags = extractEquipmentTags(densePid).map((t) => t.tag);
+    expect(tags).toContain("V-101");
+    expect(tags).toContain("FV-301");
+    expect(tags.some((t) => t.startsWith("P-10"))).toBe(false);
+    expect(extractTitleBlock(densePid).drawingNumber).toBe("025-PID-0104");
+  });
+
+  it("dense prose stays prose — even prose that names equipment", () => {
+    const procedure = Array.from({ length: 40 }, (_, i) =>
+      `Before starting pump P-${100 + i}A, the operator shall confirm that the suction valve is open and the casing is vented.`).join(" ");
+    expect(procedure.length).toBeGreaterThan(SPARSE_PAGE_MAX_CHARS);
+    expect(isDrawingLikePage(procedure)).toBe(false);
+    expect(drawingSignals(procedure).lowercaseRatio).toBeGreaterThan(DRAWING_MAX_LOWERCASE_RATIO);
+  });
+
+  it("dense capitals with no tags (a legal notice) are not a tag list — unless the sheet's border declares it a drawing", () => {
+    const notes = "ALL WORK SHALL CONFORM TO THE LATEST EDITION OF THE APPLICABLE CODES AND STANDARDS. ".repeat(40);
+    expect(isDrawingLikePage(notes)).toBe(false);
+    // A general-notes SHEET: same capitals, plus its own title block.
+    expect(isDrawingLikePage(`${notes}\nDRAWING NO: 025-GN-0001  SHEET 1 OF 1  REV 0`)).toBe(true);
+    // Prose citing a drawing number in mixed case is still prose.
+    const spec = "Refer to drawing no. 123-A-4567 for the general arrangement of the unit. ".repeat(40);
+    expect(isDrawingLikePage(spec)).toBe(false);
+  });
+
+  it("sparse pages keep the fast path exactly as before", () => {
+    expect(isDrawingLikePage("V-101  P-205A  TO 025-PID-002")).toBe(true);
+    expect(isDrawingLikePage("a short prose line.")).toBe(true);
+  });
+});
+
+describe("DWG-8 — a cut evidence line is unknown, never broken", () => {
+  const long = "OPC 14: TO CRUDE COLUMN OVERHEAD ACCUMULATOR V-1402, THEN 12\"-P-14022-A1A AND THE OVERHEAD RECEIVER BYPASS, " +
+    "SERVICE: SOUR WATER RETURN, CONTINUED ON DRAWING 2002-D-2001 SHEET 4 OF 12";
+  it("a >160-character connector line, cut the way ingest cuts it, does not report noRef", () => {
+    expect(long.length).toBeGreaterThan(OPC_RAW_STORED_MAX);
+    const raw = truncateSafe(long, OPC_RAW_STORED_MAX);           // ingest's own cut
+    expect(extractDrawingRefs(raw)).toEqual([]);                   // the drawing number is gone…
+    const audit = auditOpcBoxes([{ document_id: "a", page: 2, tag: "14", raw }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(audit.noRef).toEqual([]);                               // …so it is NOT broken
+    expect(audit.unknown).toEqual([expect.objectContaining({ box: "14", sheet: "A.pdf", page: 2, line: raw })]);
+  });
+
+  it("a complete short line with no drawing number is still broken by definition", () => {
+    const audit = auditOpcBoxes([{ document_id: "a", page: 1, tag: "7", raw: "OPC 7: NONE — FROM DESALTER" }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(audit.noRef).toHaveLength(1);
+    expect(audit.unknown).toEqual([]);
+  });
+
+  it("the stored cut is the one ingest makes (OPC_RAW_STORED_MAX pinned to lib/knowledgeIngest.ts)", () => {
+    const ingest = readFileSync(join(__dirname, "..", "knowledgeIngest.ts"), "utf8");
+    expect(ingest).toMatch(new RegExp(`kind: "opc", tag: box, raw: truncateSafe\\(line, ${OPC_RAW_STORED_MAX}\\)`));
+  });
+});
+
+describe("DWG-10 — one deterministic sheet identity for the lens and the record", () => {
+  it("shortest declared number without -SHn, independent of row order", () => {
+    const tags = ["025-PID-0101-SH3", "025-PID-0101", "025-PID-0101-SH2"];
+    for (const order of [tags, [...tags].reverse(), [tags[2], tags[0], tags[1]]]) {
+      expect(declaredSheetIdentity(order)).toEqual({ base: "025-PID-0101", sheetsDeclared: 2 });
+    }
+  });
+  it("ties break in code-unit order; only sheet forms → their shared number; nothing → null", () => {
+    expect(declaredSheetIdentity(["B-100", "A-100"]).base).toBe("A-100");
+    expect(declaredSheetIdentity(["A-100", "B-100"]).base).toBe("A-100");
+    expect(declaredSheetIdentity(["21-D-1105-SH3"])).toEqual({ base: "21-D-1105", sheetsDeclared: 1 });
+    expect(declaredSheetIdentity([])).toEqual({ base: null, sheetsDeclared: 0 });
+  });
+});
+
+describe("DWG-11 — the roll-up the census is computed from", () => {
+  const rows = [
+    { document_id: "d2", page: 3, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 2, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "equipment", tag: "V-1" },
+    { document_id: "d1", page: 1, kind: "ref", tag: "025-PID-0102" },
+  ];
+  it("one row per sheet, kind and tag: occurrences, first page, distinct pages — ordered", () => {
+    expect(rollUpEntities(rows)).toEqual([
+      { document_id: "d1", kind: "equipment", tag: "V-1", occurrences: 3, first_page: 1, pages: [1, 2] },
+      { document_id: "d1", kind: "ref", tag: "025-PID-0102", occurrences: 1, first_page: 1, pages: [1] },
+      { document_id: "d2", kind: "equipment", tag: "V-1", occurrences: 1, first_page: 3, pages: [3] },
+    ]);
+  });
+  it("a census from counted rows equals the census from every occurrence", () => {
+    const eq = rows.filter((r) => r.kind === "equipment");
+    const counted = rollUpEntities(eq).map((r) => ({ tag: r.tag, count: r.occurrences }));
+    expect(buildEquipmentCensus(counted)).toEqual(buildEquipmentCensus(eq));
+  });
+  it("the CSV register from counted rows names the first page per sheet, whatever the row order", () => {
+    const csv = equipmentRegisterCsv([
+      { tag: "V-1", documentName: "PID-1", page: 4, count: 2 },
+      { tag: "V-1", documentName: "PID-1", page: 2, count: 1 },
+    ]);
+    expect(csv.split("\r\n")[1]).toBe("V-1,Vessels / Drums,3,PID-1,2");
+  });
+});

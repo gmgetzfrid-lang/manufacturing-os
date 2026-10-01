@@ -9,7 +9,9 @@
 // a third of the way down" and bad at pixel precision, so the UI draws a
 // generous ring and says "approximate" rather than pretending to a box.
 // Pointing an engineer at the right corner of an E-size sheet is the whole
-// win; the last inch is theirs.
+// win; the last inch is theirs. A cached vision point stays an ESTIMATE
+// (pos_source 'vision'): the viewer marks it approximate, a rev-up or a
+// rebuild clears it, and a viewer can reject it (PR-10).
 //
 // The parsing lives here, apart from the network call, so the fragile part
 // (models wrap JSON in prose, use 0-100 or 0-1000 scales, echo tags with
@@ -96,20 +98,114 @@ export function parseLocateResponse(text: string, requested: string[]): TagPosit
   return out;
 }
 
-/** Feedback for a second locate attempt after the first position turned out
- *  to have no pipe line-work anywhere near it — the classic symptom of
- *  pointing at the equipment summary row instead of the drawn vessel. */
+/** Feedback for a second locate attempt after a close-up of the first
+ *  position did NOT show the tag — the classic symptom of pointing at the
+ *  equipment summary row, a table or a note instead of the drawn vessel.
+ *  The locate route runs this round when a close-up refutes a coarse point
+ *  (DWG-13 / PR-10), and never caches a point no round confirmed. */
 export function buildRelocateUser(
   tags: string[], documentName: string, page: number,
   wrong: Record<string, [number, number]>,
 ): string {
   const wrongList = Object.entries(wrong)
-    .map(([t, [x, y]]) => `${t} at [${x.toFixed(2)}, ${y.toFixed(2)}]`).join("; ")
+    .map(([t, [x, y]]) => `${t} at [${x.toFixed(2)}, ${y.toFixed(2)}]`).join("; ");
   return (
     `Sheet: ${documentName}, page ${page}. Locate: ${tags.join(", ")}.\n` +
-    `A previous attempt placed ${wrongList} — but there is NO pipe line-work near ` +
-    "there, so that was almost certainly the equipment summary row, a table, or a note. " +
+    `A previous attempt placed ${wrongList} — but a close-up of that spot does NOT show ` +
+    "the tag, so that was almost certainly the equipment summary row, a table, or a note. " +
     "Find where each item is actually DRAWN in the diagram — the vessel/exchanger symbol " +
-    "with pipes connecting to it — and give THAT position."
+    "with pipes connecting to it — and give THAT position. If you cannot see it, omit it."
   );
+}
+
+// ── Text-layer marks on rotated / offset pages (DWG-3) ─────────────────────
+//
+// Ingest stores a text-layer tag's position (pos_source 'text') as
+//   nx = x / W',  ny = 1 − y / H'
+// where (x, y) is the text item's point in UNROTATED PDF user space and
+// W'×H' is the page's ROTATED viewport at scale 1 (pdf.js applies /Rotate,
+// and /UserUnit, to the viewport — not to text coordinates), then clamps both
+// to 0..1. That is right only on an unrotated page whose CropBox starts at
+// the origin with /UserUnit 1. On a /Rotate 180 sheet every mark lands in the
+// opposite corner; on 90/270 the axes are swapped as well.
+//
+// The viewer recovers (x, y) from the stored values and maps it through the
+// SAME transform pdf.js uses to draw the page (PageViewport at scale 1 —
+// mirrored here so it is testable against pdf.js itself). Two limits, both
+// handled by refusing rather than guessing:
+//   * a value ingest pinned to an edge (0 or 1) on a page that is not plain
+//     was out of range before the clamp — its real position is lost, so the
+//     mark is not drawn (null);
+//   * a mapped position outside the page is not drawn either.
+// A plain page (rotation 0, origin 0, unit 1) maps to itself exactly, so
+// every mark that was right stays right.
+//
+// Contract: this applies to pos_source 'text' ONLY — the encoding above. If
+// ingest is ever changed to store viewport fractions directly
+// (convertToViewportPoint), it must write a different pos_source, or this
+// would rotate an already-rotated point.
+
+export interface PageGeometry {
+  /** /Rotate, degrees (multiples of 90). */
+  rotate: number;
+  /** The page's view box (CropBox) in user space: [x0, y0, x1, y1]. */
+  view: readonly [number, number, number, number] | readonly number[];
+  /** /UserUnit (pdf.js scales the viewport by it). */
+  userUnit?: number;
+}
+
+/** pdf.js PageViewport's transform at scale 1 (pdf.mjs, class PageViewport). */
+function viewportTransform(g: PageGeometry): { t: [number, number, number, number, number, number]; width: number; height: number } {
+  const [x0, y0, x1, y1] = g.view as number[];
+  const scale = g.userUnit && g.userUnit > 0 ? g.userUnit : 1;
+  const centerX = (x1 + x0) / 2;
+  const centerY = (y1 + y0) / 2;
+  let rotation = g.rotate % 360;
+  if (rotation < 0) rotation += 360;
+  const [A, B, C, D] =
+    rotation === 180 ? [-1, 0, 0, 1]
+    : rotation === 90 ? [0, 1, 1, 0]
+    : rotation === 270 ? [0, -1, -1, 0]
+    : [1, 0, 0, -1];
+  let offX: number, offY: number, width: number, height: number;
+  if (A === 0) {
+    offX = Math.abs(centerY - y0) * scale;
+    offY = Math.abs(centerX - x0) * scale;
+    width = (y1 - y0) * scale;
+    height = (x1 - x0) * scale;
+  } else {
+    offX = Math.abs(centerX - x0) * scale;
+    offY = Math.abs(centerY - y0) * scale;
+    width = (x1 - x0) * scale;
+    height = (y1 - y0) * scale;
+  }
+  return {
+    t: [A * scale, B * scale, C * scale, D * scale,
+      offX - A * scale * centerX - C * scale * centerY,
+      offY - B * scale * centerX - D * scale * centerY],
+    width, height,
+  };
+}
+
+/** Where a stored text-layer mark belongs on the page as drawn, as 0..1
+ *  from the left and from the TOP — or null when that cannot be known. */
+export function textMarkPosition(nx: number, ny: number, g: PageGeometry): { nx: number; ny: number } | null {
+  if (!Number.isFinite(nx) || !Number.isFinite(ny)) return null;
+  const [x0, y0] = g.view as number[];
+  const unit = g.userUnit && g.userUnit > 0 ? g.userUnit : 1;
+  const rotation = ((g.rotate % 360) + 360) % 360;
+  const plain = rotation === 0 && x0 === 0 && y0 === 0 && unit === 1;
+  if (plain) return { nx, ny };
+  // Pinned to an edge by ingest's clamp: the true value is gone.
+  if (nx <= 0 || nx >= 1 || ny <= 0 || ny >= 1) return null;
+  const { t, width, height } = viewportTransform(g);
+  if (!(width > 0 && height > 0)) return null;
+  // The user-space point ingest saw (its divisor WAS this viewport's size).
+  const x = nx * width;
+  const y = (1 - ny) * height;
+  const px = t[0] * x + t[2] * y + t[4];
+  const py = t[1] * x + t[3] * y + t[5];
+  const fx = px / width;
+  const fy = py / height;
+  return fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1 ? { nx: fx, ny: fy } : null;
 }

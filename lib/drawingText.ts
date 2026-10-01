@@ -7,8 +7,9 @@
 // and entities into answers:
 //
 //   - extractEquipmentTags / extractDrawingRefs: conservative regexes.
-//     Extraction runs only on SPARSE pages (drawings), so prose false-
-//     positives are already rare; patterns still prefer precision.
+//     Extraction runs only on DRAWING-LIKE pages (isDrawingLikePage), so
+//     prose false-positives are already rare; patterns still prefer
+//     precision.
 //   - buildEquipmentCensus: distinct tags grouped by prefix with friendly
 //     category names; unknown prefixes surface as "teach me your decoder"
 //     suggestions instead of silent misbuckets.
@@ -16,12 +17,75 @@
 //     which referenced numbers exist NOWHERE in the library — the
 //     broken/missing-reference audit, computed deterministically.
 
+/** At or under this many characters a page is too short to be a page of
+ *  prose (a standard's page runs 2,500-4,000), so it is treated as a
+ *  drawing without further evidence — the behaviour every sparse sheet
+ *  has always had. It is a FAST PATH, not a ceiling: a page over it is
+ *  still a drawing when its text says so (below). */
 export const SPARSE_PAGE_MAX_CHARS = 2000;
 
-/** Drawing pages are text-sparse; prose pages are dense. This single
- *  threshold decides whether entity extraction runs on a page. */
+/** A dense page is a drawing when its text is a TAG LIST, not sentences
+ *  (DWG-7 / BR-12). A TrueType P&ID — the best input there is, needing no
+ *  AI — carries every tag, line number, note and revision row in its text
+ *  layer, and runs to several thousand characters; under the old
+ *  2,000-character ceiling it was read as prose and nothing was extracted.
+ *  Signals, measured rather than guessed:
+ *
+ *    - TAG DENSITY: equipment tags + drawing references per 1,000
+ *      characters. A prose page that mentions equipment (a procedure
+ *      naming P-101A) carries one or two; a drawing's text layer carries a
+ *      dozen or more. 4 per 1,000 sits well clear of both.
+ *    - A TITLE BLOCK: a labelled drawing number in the sheet's own border
+ *      (extractTitleBlock). A notes-heavy sheet whose tags are line-work
+ *      still declares who it is.
+ *    - LETTER CASE, required with either: engineering drawings are lettered
+ *      in capitals (ASME Y14.2, and every CAD standard in practice); prose
+ *      is mostly lower case. A page whose letters are more than 35 % lower
+ *      case is prose, however many tags it names — that keeps an equipment
+ *      list written in sentences, a procedure, or a spec citing "drawing
+ *      no. 123-A-456" out.
+ *
+ *  Sentence enders are deliberately NOT a signal here: a drawing's
+ *  numbered notes ("1. ALL DIMENSIONS IN MM.") end in full stops. */
+export const DENSE_DRAWING_MIN_TAGS_PER_KCHAR = 4;
+export const DRAWING_MAX_LOWERCASE_RATIO = 0.35;
+
+export interface DrawingSignals {
+  chars: number;
+  /** Equipment tags + drawing references found in the text. */
+  tags: number;
+  /** tags per 1,000 characters. */
+  tagsPerKchar: number;
+  /** Share of letters that are lower case (0 for a page with no letters). */
+  lowercaseRatio: number;
+}
+
+/** The measurements isDrawingLikePage decides on — exported so the drawing
+ *  lens can say WHY a sheet with text was or was not read as a drawing. */
+export function drawingSignals(pageText: string): DrawingSignals {
+  const text = pageText.trim();
+  const chars = text.length;
+  const tags = chars === 0 ? 0 : extractEquipmentTags(text).length + extractDrawingRefs(text).length;
+  const lower = (text.match(/[a-z]/g) ?? []).length;
+  const upper = (text.match(/[A-Z]/g) ?? []).length;
+  return {
+    chars,
+    tags,
+    tagsPerKchar: chars === 0 ? 0 : (tags * 1000) / chars,
+    lowercaseRatio: lower + upper === 0 ? 0 : lower / (lower + upper),
+  };
+}
+
+/** Does entity extraction run on this page? Sparse pages always (the fast
+ *  path); dense pages when their text is shaped like a drawing's — a tag
+ *  list in capitals — and never when it reads as prose. */
 export function isDrawingLikePage(pageText: string): boolean {
-  return pageText.trim().length > 0 && pageText.length <= SPARSE_PAGE_MAX_CHARS;
+  if (pageText.trim().length === 0) return false;
+  if (pageText.length <= SPARSE_PAGE_MAX_CHARS) return true;
+  const s = drawingSignals(pageText);
+  if (s.lowercaseRatio > DRAWING_MAX_LOWERCASE_RATIO) return false;
+  return s.tagsPerKchar >= DENSE_DRAWING_MIN_TAGS_PER_KCHAR
+    || extractTitleBlock(pageText).drawingNumber !== null;
 }
 
 /** Friendly names for common ISA/refinery tag prefixes. Unknown prefixes
@@ -67,6 +131,29 @@ const EQUIPMENT_STOP_PREFIXES = new Set([
   "NO", "DWG", "REV", "PID", "DRW", "SHT", "SH", "PG", "ISO", "API", "ANSI", "NPS",
 ]);
 
+// A pipe LINE NUMBER is <size>"-<service>-<number>-<spec>: 6"-P-1024-A1A,
+// 1-1/2"-CWS-101-B2, 10"-HC-15003-A1A-HC. After its size it is shaped
+// exactly like a tag — P-1024 reads as a pump — so every line on a P&ID
+// minted a phantom piece of equipment (DWG-2). The SIZE is what gives it
+// away: a number (whole, fraction, or whole-and-fraction) followed by an
+// inch mark (", '', ”, ″) or IN/INCH, then the dash. A metric size
+// (150-P-1024, DN150-P-1024) ends in a digit-dash and is already caught by
+// the drawing-number guard below.
+/** The size of a line: 6", 1-1/2", 3/4", .75", 6'', 6 IN, 6INCH. */
+const LINE_SIZE_SRC =
+  String.raw`(?:\d+\s*[-\s]\s*\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+)\s*(?:"|''|”|″|IN(?:CH(?:ES)?)?\.?)`;
+/** Text ending in a line size (and the dash after it) — what sits right
+ *  before a line number's service letters. */
+const LINE_SIZE_BEFORE_RE = new RegExp(String.raw`${LINE_SIZE_SRC}\s*[-–]?\s*$`);
+/** "LINE 6\"-P-1024-A1A" / "LINE NO. P-1024": the vision prompt labels
+ *  line numbers LINE, and a label-led token is a line, never equipment. */
+const LINE_LABEL_BEFORE_RE = /\bLINE\s*(?:NO\.?|#)?\s*$/;
+/** A whole line number: size, service, number, then spec segments. */
+const LINE_NUMBER_RE = new RegExp(
+  String.raw`(?<![A-Z0-9./-])(${LINE_SIZE_SRC})\s*[-–]?\s*([A-Z]{1,4})[-–](\d{1,6})((?:[-–][A-Z0-9]{1,6})*)`,
+  "g",
+);
+
 export function extractEquipmentTags(text: string): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
   const upper = text.toUpperCase();
@@ -79,10 +166,33 @@ export function extractEquipmentTags(text: string): EquipmentTagHit[] {
     // of a larger number, not a tag.
     const at = m.index ?? 0;
     if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) continue;
+    // A pipe line number (6"-P-1024-A1A) — the size in front of it says so.
+    const before = upper.slice(Math.max(0, at - 16), at);
+    if (LINE_SIZE_BEFORE_RE.test(before) || LINE_LABEL_BEFORE_RE.test(before)) continue;
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
     out.push({ tag, prefix });
   }
   return out;
+}
+
+/** Pipe line numbers on a page, normalised (6"-P-1024-A1A) — the same size
+ *  grammar extractEquipmentTags uses to keep them OUT of the equipment
+ *  count, so the two can never disagree about what a line number is.
+ *
+ *  Not yet written to the index: storing them as their own entity kind
+ *  ('line' — "which line feeds V-3") is a call in lib/knowledgeIngest.ts,
+ *  the ingest owner's file, handed over with DWG-2. Until then a line
+ *  number is simply never equipment. */
+export function extractLineNumbers(text: string): string[] {
+  const out = new Set<string>();
+  const upper = text.toUpperCase();
+  LINE_NUMBER_RE.lastIndex = 0;
+  for (const m of upper.matchAll(LINE_NUMBER_RE)) {
+    const size = m[1].replace(/\s+/g, "").replace(/(?:''|”|″|IN(?:CH(?:ES)?)?\.?)$/, '"');
+    const spec = (m[4] ?? "").replace(/–/g, "-");
+    out.add(`${size}-${m[2]}-${m[3]}${spec}`);
+  }
+  return [...out];
 }
 
 /** Normalize a drawing-number-ish string for matching: uppercase, spaces
@@ -179,7 +289,21 @@ export function extractDrawingRefs(text: string): string[] {
 // The sheet's REAL identity is printed in its own border: drawing number,
 // sheet number, revision. Filenames are whatever someone exported; the
 // title block is authoritative. Works on both text-layer pages and vision
-// transcripts (the vision prompt asks for labeled title-block lines).
+// transcripts.
+//
+// THE CONTRACT WITH THE VISION PROMPT (PR-11). A transcript is one flat
+// stream holding the title block AND every off-page connector — and a
+// connector is routinely written WITH the label ("CONT ON DWG NO.
+// 040-B-2002 SH 1"). Reading the first labelled number anywhere on the page
+// made such a sheet declare itself to be the sheet it points AT. So the
+// prompt fences the border's fields between TITLE_BLOCK_OPEN and
+// TITLE_BLOCK_CLOSE, and when the fence is present only the fenced lines
+// are read. A text layer has no fence; there a candidate introduced by
+// continuation phrasing (CONT ON / CONTINUED ON / SEE / TO / FROM / REF)
+// is a connector, never the sheet's identity.
+
+export const TITLE_BLOCK_OPEN = "=== TITLE BLOCK ===";
+export const TITLE_BLOCK_CLOSE = "=== END TITLE BLOCK ===";
 
 export interface TitleBlockInfo {
   drawingNumber: string | null;   // normalized, e.g. "025-PID-0101"
@@ -191,17 +315,45 @@ export interface TitleBlockInfo {
 // the off-page-connector phrasing, and mistaking a connector for the
 // sheet's own identity would corrupt the whole audit.
 const TB_DWG_RE = /(?:DRAWING|DWG|DRG)[.\s]*(?:NO|NUMBER|#)[.:\s]*([A-Z0-9][A-Z0-9\-._]{3,24})/g;
-const TB_SHEET_OF_RE = /\bSH(?:EET|T)?[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\s*OF\s*\d{1,4}\b/;
-const TB_SHEET_RE = /\bSHEET[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\b/;
+const TB_SHEET_OF_RE = /\bSH(?:EET|T)?[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\s*OF\s*\d{1,4}\b/g;
+const TB_SHEET_RE = /\bSHEET[.\s]*(?:NO\.?)?[.:\s]*(\d{1,4})\b/g;
 const TB_REV_RE = /\bREV(?:ISION)?[.\s]*(?:NO\.?)?[.:\s]*([A-Z0-9]{1,3})\b/g;
 const TB_STOP_VALUES = new Set(["NO", "NUMBER", "REV", "SHEET", "SH", "DATE", "OF", "BY", "DWG"]);
+/** Continuation phrasing RIGHT before the label, on the same line, makes a
+ *  labelled number a connector's destination: "CONT ON DWG NO. X",
+ *  "CONTINUED ON DRAWING NO X", "SEE DWG NO X", "TO DRAWING NO. X",
+ *  "FROM DWG # X", "REF DWG NO. X". Nothing may stand between — "TO V-3"
+ *  on the line above a border strip is a destination, not a connector. */
+const TB_CONTINUATION_BEFORE_RE =
+  /\b(?:CONT(?:INUED|INUATION|'D|D)?|SEE|TO|FROM|REF(?:ERENCE)?|REFER[ \t]+TO)\b[ \t.:,]*(?:(?:ON|IN|AT)[ \t.:,]*)?$/;
+
+/** The fenced title block of a vision transcript, or null when the text
+ *  carries no fence (a text layer, or an older transcript). */
+function fencedTitleBlock(upper: string): string | null {
+  const open = upper.indexOf(TITLE_BLOCK_OPEN);
+  if (open < 0) return null;
+  const from = open + TITLE_BLOCK_OPEN.length;
+  const close = upper.indexOf(TITLE_BLOCK_CLOSE, from);
+  // An unclosed fence still bounds the read: the border's four fields.
+  return close >= 0 ? upper.slice(from, close) : upper.slice(from).split("\n").slice(0, 6).join("\n");
+}
+
+/** True when the words just before `at` introduce a connector. */
+function introducedAsConnector(text: string, at: number): boolean {
+  return TB_CONTINUATION_BEFORE_RE.test(text.slice(Math.max(0, at - 28), at));
+}
 
 export function extractTitleBlock(pageText: string): TitleBlockInfo {
-  const upper = pageText.toUpperCase();
+  const fenced = fencedTitleBlock(pageText.toUpperCase());
+  const upper = fenced ?? pageText.toUpperCase();
+  // Inside the fence everything is the border's own; outside it, a match
+  // introduced by continuation phrasing belongs to a connector.
+  const isConnector = (at: number) => fenced === null && introducedAsConnector(upper, at);
 
   let drawingNumber: string | null = null;
   TB_DWG_RE.lastIndex = 0;
   for (const m of upper.matchAll(TB_DWG_RE)) {
+    if (isConnector(m.index ?? 0)) continue;
     const candidate = normalizeRef(m[1].replace(/[-._]+$/, ""));
     if (!/\d/.test(candidate)) continue;                    // "INDEX", "SIZE"…
     if (TB_STOP_VALUES.has(candidate)) continue;
@@ -210,7 +362,12 @@ export function extractTitleBlock(pageText: string): TitleBlockInfo {
     break;
   }
 
-  const sheetMatch = upper.match(TB_SHEET_OF_RE) ?? upper.match(TB_SHEET_RE);
+  const firstSheet = (re: RegExp): RegExpMatchArray | null => {
+    re.lastIndex = 0;
+    for (const m of upper.matchAll(re)) if (!isConnector(m.index ?? 0)) return m;
+    return null;
+  };
+  const sheetMatch = firstSheet(TB_SHEET_OF_RE) ?? firstSheet(TB_SHEET_RE);
   const sheetNumber = sheetMatch ? String(Number(sheetMatch[1])) : null;
 
   let rev: string | null = null;
@@ -285,8 +442,30 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // ── Off-page connector boxes ───────────────────────────────────────────────
 // The small numbered box at the page edge IS the connector's identity: the
 // continuation sheet carries the SAME number, and the stream name plus
-// destination equipment verify the match. The vision prompt asks for
-// "OPC <n>: …" lines, so transcripts carry them machine-readably.
+// destination equipment verify the match.
+//
+// THE CONTRACT WITH THE VISION PROMPT (DWG-4). Drawings do not print the
+// letters O-P-C — they draw a pennant — so the only way box numbers reach
+// the index is a transcript line the prompt asks for in exactly this form.
+// lib/knowledgeVision.ts builds its instruction FROM these constants, so the
+// prompt and the parser cannot drift apart again (the prompt once asked for
+// no OPC line at all, and the whole connector layer — including the audit's
+// top-severity verdict — had no input). The destination drawing comes
+// FIRST, right after the box: an evidence line is stored cut to
+// OPC_RAW_STORED_MAX characters, and a long service description must never
+// push the drawing number off the end of it (DWG-8).
+
+/** What a transcript line for one connector looks like. */
+export const OPC_LINE_FORMAT = "OPC <box number>: <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>";
+/** A worked example — parsed by parseOpcBoxes / extractDrawingRefs in the tests. */
+export const OPC_LINE_EXAMPLE = "OPC 14: 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD";
+/** Written in place of the drawing number when the connector shows none. */
+export const OPC_NO_DRAWING = "NONE";
+/** Ingest stores a connector's evidence line cut to this many characters
+ *  (lib/knowledgeIngest.ts, truncateSafe(line, 160) — pinned by a test). A
+ *  stored line this long may have been cut: its missing drawing number is
+ *  UNKNOWN, never evidence of a broken connector. */
+export const OPC_RAW_STORED_MAX = 160;
 
 const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;
 
@@ -320,7 +499,9 @@ export interface EquipmentCensus {
 }
 
 export function buildEquipmentCensus(
-  entities: Array<{ tag: string }>,
+  /** One entry per occurrence, or — from a database roll-up (DWG-11) — one
+   *  per tag and sheet with its occurrence `count`. */
+  entities: Array<{ tag: string; count?: number }>,
   /** Owner-taught prefix meanings (parsePrefixMap) — they beat the built-in
    *  guesses: the site knows what X- means, the defaults don't. */
   labels?: Record<string, string>,
@@ -329,7 +510,7 @@ export function buildEquipmentCensus(
   for (const e of entities) {
     const prefix = e.tag.split("-")[0] ?? e.tag;
     const tags = byPrefix.get(prefix) ?? new Map<string, number>();
-    tags.set(e.tag, (tags.get(e.tag) ?? 0) + 1);
+    tags.set(e.tag, (tags.get(e.tag) ?? 0) + (e.count ?? 1));
     byPrefix.set(prefix, tags);
   }
   const categories: CensusCategory[] = [...byPrefix.entries()].map(([prefix, tags]) => {
@@ -372,6 +553,29 @@ export function refSeries(ref: string): string {
   return segs.length <= 1 ? segs[0] ?? "" : segs.slice(0, -1).join("-");
 }
 
+/** Code-unit order: the same on every server, whatever its locale. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The number a sheet IS, from what its title block declared (kind 'self'
+ *  tags: the drawing number, plus number-SHn per sheet read). ONE function
+ *  behind both the number the drawing lens shows and the key the audit
+ *  record is filed under (DWG-10) — and deterministic: the shortest declared
+ *  number without a -SHn suffix, ties broken in code-unit order, so the
+ *  order the rows came back in can never change it. */
+export function declaredSheetIdentity(selfTags: readonly string[]): {
+  base: string | null;
+  /** How many distinct sheet-addressed forms (-SHn) were declared. */
+  sheetsDeclared: number;
+} {
+  const unique = [...new Set(selfTags.filter(Boolean))];
+  const shortest = (xs: string[]) => [...xs].sort((a, b) => a.length - b.length || byCodeUnit(a, b))[0] ?? null;
+  const sheetForms = unique.filter((t) => /-SH\d+$/.test(t));
+  const base = shortest(unique.filter((t) => !/-SH\d+$/.test(t)))
+    // Only sheet-addressed forms were declared: the number they share.
+    ?? shortest(sheetForms.map((t) => t.replace(/-SH\d+$/, "")));
+  return { base, sheetsDeclared: sheetForms.length };
+}
+
 /** The sheet number as a NUMBER, so 0107 and 107 (and SH3) all compare. */
 function refSheetNumber(ref: string): number | null {
   const last = normalizeRef(ref).split("-").pop() ?? "";
@@ -383,7 +587,7 @@ function refSheetNumber(ref: string): number | null {
 /** Series are written loosely on real drawings — a sheet titled
  *  "025-PID-0107" gets referenced as plain "PID-0107" all over the set. One
  *  series being a suffix of the other means the same series. */
-function seriesMatch(a: string, b: string): boolean {
+export function seriesMatch(a: string, b: string): boolean {
   return a === b || a.endsWith(`-${b}`) || b.endsWith(`-${a}`);
 }
 
@@ -411,6 +615,17 @@ export interface RefAudit {
   oneWay: Array<{ from: string; to: string; count: number }>;
 }
 
+/** Every number a sheet answers to: what its title block declared (kind
+ *  'self'), else every drawing-number-shaped token in its filename, else the
+ *  filename itself. The audit resolves references against these, and the
+ *  audit record's scope rule (lib/drawingAuditLog.ts) reads the same. */
+export function sheetIdentities(name: string, declaredTags: readonly string[]): string[] {
+  const declared = declaredTags.map(normalizeRef).filter(Boolean);
+  if (declared.length > 0) return declared;
+  const fromName = extractDrawingRefs(name);
+  return fromName.length > 0 ? fromName : [normalizeRef(name)];
+}
+
 /** docs: every sheet in the library with its display name (drawing numbers
  *  are extracted from the names); refsByDoc: the refs each sheet makes.
  *
@@ -436,10 +651,7 @@ export function auditDrawingRefs(
   const identityByDoc = new Map<string, string[]>();
   const identity: Array<{ ref: string; docId: string }> = [];
   for (const d of docs) {
-    const declared = (selfTagsByDoc?.get(d.id) ?? []).map(normalizeRef).filter(Boolean);
-    const fromName = extractDrawingRefs(d.name);
-    const own = declared.length > 0 ? declared
-      : fromName.length > 0 ? fromName : [normalizeRef(d.name)];
+    const own = sheetIdentities(d.name, selfTagsByDoc?.get(d.id) ?? []);
     identityByDoc.set(d.id, own);
     for (const ref of own) identity.push({ ref, docId: d.id });
   }
@@ -549,6 +761,44 @@ export function auditDrawingRefs(
   };
 }
 
+// ── Entity roll-up (DWG-11) ────────────────────────────────────────────────
+// The census, the audit and the per-sheet readout need, per sheet, each
+// distinct tag of each kind with how often and on which pages it occurs —
+// not every occurrence. 20261124's drawing_entity_rollup() computes exactly
+// this in the database; this is the same roll-up over raw rows, for a
+// database that has not applied it (the route reads the rows to exhaustion
+// first). The two must agree: lib/__tests__ pins this against the SQL.
+
+export interface EntityRollupRow {
+  document_id: string;
+  kind: string;
+  tag: string;
+  occurrences: number;
+  first_page: number;
+  /** Distinct pages, ascending. */
+  pages: number[];
+}
+
+export function rollUpEntities(
+  rows: ReadonlyArray<{ document_id: string; page: number; kind: string; tag: string }>,
+): EntityRollupRow[] {
+  const byKey = new Map<string, EntityRollupRow>();
+  for (const r of rows) {
+    const key = `${r.document_id}\u0000${r.kind}\u0000${r.tag}`;
+    const hit = byKey.get(key);
+    if (!hit) {
+      byKey.set(key, { document_id: r.document_id, kind: r.kind, tag: r.tag, occurrences: 1, first_page: r.page, pages: [r.page] });
+      continue;
+    }
+    hit.occurrences++;
+    if (r.page < hit.first_page) hit.first_page = r.page;
+    if (!hit.pages.includes(r.page)) hit.pages.push(r.page);
+  }
+  const out = [...byKey.values()];
+  for (const r of out) r.pages.sort((a, b) => a - b);
+  return out.sort((a, b) => byCodeUnit(a.document_id, b.document_id) || byCodeUnit(a.kind, b.kind) || byCodeUnit(a.tag, b.tag));
+}
+
 // ── CSV register ───────────────────────────────────────────────────────────
 
 const csvCell = (s: string): string =>
@@ -557,14 +807,18 @@ const csvCell = (s: string): string =>
 /** The equipment register as CSV (opens straight into Excel): one row per
  *  distinct tag with category, occurrence count, and the sheets it's on. */
 export function equipmentRegisterCsv(
-  entities: Array<{ tag: string; documentName: string; page: number }>,
+  /** One entry per occurrence, or one per tag and sheet with its `count`
+   *  (the database roll-up, DWG-11) — `page` is then the first page. */
+  entities: Array<{ tag: string; documentName: string; page: number; count?: number }>,
   labels?: Record<string, string>,
 ): string {
   const byTag = new Map<string, { count: number; sheets: Map<string, number> }>();
   for (const e of entities) {
     const entry = byTag.get(e.tag) ?? { count: 0, sheets: new Map<string, number>() };
-    entry.count++;
-    if (!entry.sheets.has(e.documentName)) entry.sheets.set(e.documentName, e.page);
+    entry.count += e.count ?? 1;
+    // The FIRST page the tag is on, whatever order the rows arrived in.
+    const seen = entry.sheets.get(e.documentName);
+    if (seen === undefined || e.page < seen) entry.sheets.set(e.documentName, e.page);
     byTag.set(e.tag, entry);
   }
   const rows = [["Tag", "Category", "Occurrences", "Sheets", "First page"]];
@@ -690,8 +944,13 @@ export interface OpcAudit {
   /** Box leaves a sheet naming a loaded destination that has no matching box. */
   unreturned: Array<{ box: string; from: string; to: string; line: string }>;
   /** Box names no drawing at all — broken by definition, since nothing on the
-   *  sheet tells the reader where to continue. */
+   *  sheet tells the reader where to continue. Only a COMPLETE evidence line
+   *  can say that. */
   noRef: Array<{ box: string; sheet: string; page: number; line: string }>;
+  /** Box whose stored line may have been cut before a drawing number could
+   *  be read (DWG-8): absence of evidence, recorded as unknown — worth a
+   *  look on the sheet, never "broken". */
+  unknown: Array<{ box: string; sheet: string; page: number; line: string }>;
 }
 
 export function auditOpcBoxes(
@@ -730,20 +989,26 @@ export function auditOpcBoxes(
           box: o.tag,
           from: nameById.get(o.document_id) ?? "Sheet",
           to: nameById.get(target) ?? "Sheet",
-          line: o.raw.slice(0, 120),
+          line: o.raw,
         });
       }
     }
   }
 
-  const noRef = opcRows
-    .filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0)
-    .map((o) => ({
-      box: o.tag,
-      sheet: nameById.get(o.document_id) ?? "Sheet",
-      page: o.page,
-      line: (o.raw ?? "").slice(0, 120),
-    }));
+  const noDestination = opcRows.filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0);
+  const shape = (o: OpcEntity) => ({
+    box: o.tag,
+    sheet: nameById.get(o.document_id) ?? "Sheet",
+    page: o.page,
+    // The reviewer sees the whole stored line — the evidence the verdict
+    // was decided on, not a shorter slice of it.
+    line: o.raw ?? "",
+  });
+  // A stored line at the storage cut may have lost its tail — and with it
+  // the drawing number. That is not evidence the connector names nothing.
+  const mayBeCut = (o: OpcEntity) => (o.raw ?? "").length >= OPC_RAW_STORED_MAX - 1;
+  const noRef = noDestination.filter((o) => !mayBeCut(o)).map(shape);
+  const unknown = noDestination.filter(mayBeCut).map(shape);
 
-  return { boxCount: opcRows.length, unreturned, noRef };
+  return { boxCount: opcRows.length, unreturned, noRef, unknown };
 }
