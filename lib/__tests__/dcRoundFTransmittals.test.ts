@@ -279,7 +279,8 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     expect(out.portal).toBe("missing");
     expect(out.email.sent).toBe(false);
     expect(out.email.reason).toMatch(/predates 20260910/);
-    expect(f).not.toHaveBeenCalled();
+    // no email attempted (the only call is TRX-16's issue-time stamp check, P15)
+    expect(f.mock.calls.filter(([u]) => String(u) !== "/api/transmittal/stamp-check")).toEqual([]);
   });
 
   it("the composer prints the cover sheet from the outcome's row, not a synthesized object", () => {

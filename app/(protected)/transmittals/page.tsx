@@ -44,7 +44,7 @@ import {
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
   transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
-  legalHoldNotice, PORTAL_LINK_DAYS,
+  legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError,
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome,
 } from "@/lib/transmittals";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -674,7 +674,20 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     }
     try {
       // TRX-10: the outcome carries the row the database wrote.
-      const outcome = await issueTransmittal(draft.id, actor);
+      let outcome: IssueOutcome;
+      try {
+        outcome = await issueTransmittal(draft.id, actor);
+      } catch (e) {
+        if (!(e instanceof UnstampableItemsError)) throw e;
+        // TRX-16: warned at issue, before anything was sent — the issuer
+        // fixes the file(s) or issues anyway (DEC-61 §5: released unmarked,
+        // recorded so; the acceptance goes on the TRANSMITTAL_ISSUED row).
+        if (!(await appConfirm({ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">{e.message}</span>, confirmLabel: "Issue anyway" }))) {
+          await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });
+          return;
+        }
+        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items });
+      }
       await onSaved({ kind: "issued", outcome });
     } catch (e) {
       await onSaved({ kind: "issue-failed", draft, error: (e as Error).message });
