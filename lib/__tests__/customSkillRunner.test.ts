@@ -10,9 +10,16 @@
 //     manual of fast pages trips nothing; a terminated worker is replaced
 //     on the next skill;
 //   * under budget, the worker's matches make exactly the drafts the
-//     in-thread path makes.
+//     in-thread path makes;
+//   * fix pass 3 — a stall of the REQUEST thread is not a hang: the
+//     watchdog decides on the worker's own progress after draining the
+//     results it already sent, so a 1.5 s block of this thread mid-run
+//     terminates nothing and every page is found; a real hang is still
+//     stopped (one extra ceiling after a host stall).
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { workerSkillMatcher, SKILL_DOC_HARD_MS } from "@/lib/customSkillRunner";
 import {
   patternSafetyIssue, compileSkillPatterns, proposeCustomReferences, customSkillDrafts, runCustomSkill,
@@ -131,6 +138,65 @@ describe("LNK-6 — the subset is a filter; the worker's deadline is the guarant
       await m.close();
     }
   }, 30_000);
+
+  /** Holds THIS thread synchronously, as another request, a large JSON
+   *  parse or a GC pause does. */
+  const blockThisThread = (ms: number) => { const until = Date.now() + ms; while (Date.now() < until) { /* busy */ } };
+
+  // Held from the check phase (setImmediate), the loop runs its expired
+  // timers BEFORE it next polls for the worker's queued results — the order
+  // that made the old watchdog read a finished worker as a hang. Held from
+  // a timer, the results are polled first; both must hold.
+  for (const phase of ["setImmediate", "setTimeout"] as const) it(`fix pass 3: a 1.5 s stall of the request thread mid-run (${phase}) is not a hang — nothing is terminated and every page is found`, async () => {
+    // 2,400 pages, two trivial identifier patterns: the worker finishes
+    // them in milliseconds, while this thread is held past the 1 s ceiling.
+    const texts = Array.from({ length: 2_400 }, (_, i) => `Work order WO-${10_000 + i} closed; see AB-${1000 + i}.`);
+    const m = workerSkillMatcher()(texts, texts.map((_, i) => `d${i % 40}`));
+    try {
+      await m.match(["\\bWO-\\d{5}\\b"], limits()); // the worker is up: the next run starts at once
+      const run = m.match(["\\bWO-\\d{5}\\b", "\\b[A-Z]{2,4}-\\d{4,6}\\b"], limits());
+      // The run is posted (microtasks first) and the watchdog armed for 1 s;
+      // this thread is then held while the worker still has the pages.
+      await new Promise<void>((r) => (phase === "setImmediate" ? setImmediate : (f: () => void) => setTimeout(f, 0))(() => { blockThisThread(1_500); r(); }));
+      const res = await run;
+      expect(res.terminated).toBeNull();
+      expect(res.error).toBeNull();
+      expect(res.budgetSpent).toBe(false);
+      expect(res.skipped).toEqual([]);
+      expect(res.found.filter(Array.isArray)).toHaveLength(2_400);
+      // (the second pattern matches the work order too)
+      expect(res.found[0]).toEqual(["WO-10000", "WO-10000", "AB-1000"]);
+      expect(res.found[2_399]).toEqual(["WO-12399", "WO-12399", "AB-3399"]);
+    } finally {
+      await m.close();
+    }
+  }, 30_000);
+
+  it("fix pass 3: a real hang during a host stall is still stopped — after one more ceiling, at the text it hangs on", async () => {
+    const m = workerSkillMatcher({ hardDocMs: 300 })(["see WO-10001", PATHOLOGICAL], ["d1", "d2"]);
+    try {
+      const t0 = Date.now();
+      const run = m.match([SLOW], limits());
+      // Held for well over a ceiling: the watchdog fires late, so the worker
+      // is given one more ceiling before it is judged.
+      await new Promise<void>((r) => setTimeout(() => { blockThisThread(900); r(); }, 50));
+      const res = await run;
+      expect(res.terminated).toMatchObject({ index: 1 });
+      expect(res.terminated!.ms).toBeGreaterThanOrEqual(300);
+      expect(res.found[0]).toEqual([]);
+      expect(Date.now() - t0).toBeLessThan(5_000);
+    } finally {
+      await m.close();
+    }
+  }, 20_000);
+
+  it("fix pass 3: the stuck decision reads the worker's own progress and drains the results port first", () => {
+    const src = readFileSync(join(process.cwd(), "lib/customSkillRunner.ts"), "utf8");
+    expect(src).toContain("Atomics.store(progress, 1, process.hrtime.bigint());");
+    expect(src).toContain("for (let r = receiveMessageOnPort(results); r && !settled; r = receiveMessageOnPort(results)) {");
+    expect(src).toContain("const ranMs = Number(hrNow() - Atomics.load(at, 1)) / 1e6;");
+    expect(src).not.toMatch(/\bbeat\b/);
+  });
 
   it("the default per-text ceiling is a second", () => {
     expect(SKILL_DOC_HARD_MS).toBe(1_000);

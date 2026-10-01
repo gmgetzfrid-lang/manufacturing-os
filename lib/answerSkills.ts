@@ -10,6 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
+import { skillShelfFilter } from "@/lib/skillAuthority";
 
 export type AnswerSkillVisibility = "org" | "private";
 
@@ -50,15 +51,22 @@ const missingColumn = (e: { code?: string; message?: string } | null) =>
 
 const SHARE_NEEDS_MIGRATION = "Share requests arrive with the skills-authority migration (20261125), which this database does not have yet.";
 
-/** Skills visible to this member. Returns null when the table is missing
- *  (the migration hasn't run) — an empty library is [] (IRLS-12 limb). */
-export async function listAnswerSkills(orgId: string): Promise<AnswerSkill[] | null> {
-  const { data, error } = await supabase
+/** The skills this viewer's shelf lists: org-wide, their own, and the
+ *  share requests (skillShelfFilter — filtered by the database, as
+ *  lib/linkRules does). Returns null when the table is missing (the
+ *  migration hasn't run) — an empty library is [] (IRLS-12 limb). */
+export async function listAnswerSkills(orgId: string, uid: string | null): Promise<AnswerSkill[] | null> {
+  const read = (withRequests: boolean) => supabase
     .from("answer_skills").select("*")
     .eq("org_id", orgId)
+    .or(skillShelfFilter(uid, withRequests))
     .order("builtin_key", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true })
     .limit(200);
+  let { data, error } = await read(true);
+  // Before 20261125 there is no share_requested column: read without that
+  // term. Checked first — its message says "does not exist".
+  if (error && missingColumn(error)) ({ data, error } = await read(false));
   if (error) {
     if (missing(error)) return null;
     throw new Error(error.message);

@@ -45,6 +45,8 @@ const READ_CAP = {
   equipmentLinks: 200_000,
   aliases: 50_000,
   systemLinks: 50_000,
+  /** Built-in plus org-wide custom connection skills (the rows that run). */
+  rules: 5_000,
 } as const;
 /** LNK-10: how many 'inferred' proposals the review queue holds at once. A
  *  sweep adds guesses only while there is room, so no single run buries the
@@ -121,24 +123,47 @@ const isMissingTable = (e: PgError | null | undefined) =>
  *  unknown, so NO built-in detector runs and no custom skill runs (fail
  *  closed), and the failure is an error on the run (IRLS-12: the two cases
  *  say different things). Built-ins are seeded with no author: they belong
- *  to the org and only controllers manage them (HUB-2 / LNK-7). */
+ *  to the org and only controllers manage them (HUB-2 / LNK-7).
+ *
+ *  LNK-2 (fix pass 3): only the rows the engine uses are read — every
+ *  built-in and every ORG-WIDE custom skill — in a stable order, to
+ *  completion or a stated ceiling. Members' private drafts never run, so
+ *  they are counted, not read: they can no longer crowd a built-in out of
+ *  the read (a built-in a controller switched off then ran by default). A
+ *  built-in still absent after a failed seed is unknown — it does not run,
+ *  and the run says so as an error. */
 async function loadRules(
   admin: SupabaseClient, orgId: string, notes: string[], errors: string[],
-): Promise<RuleRow[] | "missing" | "unreadable"> {
-  const res = await admin
-    .from("link_rules")
-    .select("id, builtin_key, name, kind, config, enabled, visibility")
-    .eq("org_id", orgId)
-    .limit(200);
-  if (res.error) {
-    if (isMissingTable(res.error)) {
+  onCeiling: (cap: number) => void,
+): Promise<{ rows: RuleRow[]; privateDrafts: number } | "missing" | "unreadable"> {
+  const COLS = "id, builtin_key, name, kind, config, enabled, visibility";
+  const readBuiltins = () => readPaged<RuleRow>((from, to) => admin
+    .from("link_rules").select(COLS)
+    .eq("org_id", orgId).not("builtin_key", "is", null)
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.rules);
+  const builtins = await readBuiltins();
+  const custom = builtins.error ? null : await readPaged<RuleRow>((from, to) => admin
+    .from("link_rules").select(COLS)
+    .eq("org_id", orgId).is("builtin_key", null).eq("visibility", "org")
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.rules);
+  const readErr = builtins.error ?? custom?.error ?? null;
+  if (readErr) {
+    if (isMissingTable(readErr)) {
       notes.push("Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
       return "missing";
     }
-    errors.push(`Connection Skills could not be read (${res.error.message}) — no detector ran this pass, so none a controller switched off ran by default.`);
+    errors.push(`Connection Skills could not be read (${readErr.message}) — no detector ran this pass, so none a controller switched off ran by default.`);
     return "unreadable";
   }
-  const rows = (res.data as RuleRow[]) ?? [];
+  if (builtins.saturated || custom?.saturated) onCeiling(READ_CAP.rules);
+  const rows = [...builtins.rows, ...(custom?.rows ?? [])];
+  // The private reference drafts, counted for the run's note (they never run).
+  const { count: privateDrafts } = await admin
+    .from("link_rules").select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).is("builtin_key", null).neq("visibility", "org")
+    .eq("kind", "reference").eq("enabled", true);
   const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
   const toSeed = BUILTIN_SKILLS.filter((b) => !have.has(b.builtin_key));
   if (toSeed.length > 0) {
@@ -165,9 +190,21 @@ async function loadRules(
           kind: b.kind, config: b.config, enabled: true, visibility: "org",
         });
       }
+    } else {
+      // A concurrent seeder (23505) wrote them first, or the seed was
+      // refused: read the built-ins again. One still absent is unknown — a
+      // controller may have switched it off — so it does not run.
+      const again = await readBuiltins();
+      for (const r of again.error ? [] : again.rows) {
+        if (!have.has(r.builtin_key)) { have.add(r.builtin_key); rows.push(r); }
+      }
+      const unknown = toSeed.filter((b) => !have.has(b.builtin_key));
+      if (unknown.length > 0) {
+        errors.push(`Built-in connection skills could not be set up (${error.message}) — ${unknown.map((b) => `“${b.name}”`).join(", ")} did not run this pass: whether a controller switched ${unknown.length === 1 ? "it" : "them"} off is unknown.`);
+      }
     }
   }
-  return rows;
+  return { rows, privateDrafts: privateDrafts ?? 0 };
 }
 
 /** Page a large `in` filter without blowing the URL length. */
@@ -227,21 +264,23 @@ export async function runLinkProposers(
   // ── The org's rulebook. Built-ins seed themselves; a disabled skill is
   // simply skipped. Pre-migration orgs run the classic defaults; a rulebook
   // that cannot be read runs nothing (its switches are unknown).
-  const loaded = await loadRules(admin, orgId, notes, errors);
-  const rules = Array.isArray(loaded) ? loaded : null;
+  const loaded = await loadRules(admin, orgId, notes, errors,
+    (cap) => ceiling("rules", cap, "built-in and org-wide connection skills"));
+  const rules = typeof loaded === "object" ? loaded.rows : null;
+  // A built-in that is not in the rulebook after the seed is unknown: it
+  // does not run (loadRules recorded the error).
   const builtinEnabled = (key: string): boolean =>
     loaded === "missing" ? true
       : loaded === "unreadable" ? false
-      : (loaded.find((r) => r.builtin_key === key)?.enabled ?? true);
+      : (loaded.rows.find((r) => r.builtin_key === key)?.enabled ?? false);
   // LNK-5 (DEC-55): only ORG-WIDE custom skills run. A private skill is its
   // author's draft — proven in the Studio's live tester — until a controller
   // shares it; it never runs over the org's corpus and its name never lands
-  // in org-readable evidence.
-  const referenceRules = (rules ?? []).filter((r) =>
-    !r.builtin_key && r.kind === "reference" && r.enabled &&
+  // in org-readable evidence (it is not even read here — only counted).
+  const customRules = (rules ?? []).filter((r) =>
+    !r.builtin_key && r.kind === "reference" && r.enabled && r.visibility === "org" &&
     (r.config?.patterns?.length ?? 0) > 0);
-  const customRules = referenceRules.filter((r) => r.visibility === "org");
-  const privateSkipped = referenceRules.length - customRules.length;
+  const privateSkipped = typeof loaded === "object" ? loaded.privateDrafts : 0;
   if (privateSkipped > 0) {
     notes.push(`${privateSkipped} private connection skill${privateSkipped === 1 ? " was" : "s were"} not run — a private skill is a draft until a controller shares it org-wide.`);
   }
@@ -376,11 +415,15 @@ export async function runLinkProposers(
   const assetIds = [...new Set(links.map((l) => l.asset_id))];
   const assetTag = new Map<string, string>();
   if (assetIds.length > 0) {
+    let tagErr: string | null = null;
     const rows = await inChunks<{ id: string; tag: string }>(assetIds, async (slice) => {
-      const { data } = await admin.from("assets").select("id, tag").in("id", slice);
+      const { data, error } = await admin.from("assets").select("id, tag").in("id", slice);
+      if (error) tagErr ??= error.message;
       return (data as Array<{ id: string; tag: string }>) ?? [];
     });
     for (const a of rows) assetTag.set(a.id, normalizeTag(a.tag));
+    // LNK-2: a failed read is said, not silently a smaller registry.
+    if (tagErr) notes.push(`Some equipment tags could not be read (${tagErr}) — Shared equipment is partial this pass.`);
   }
   const aliasByAsset = new Map<string, string[]>();
   const aliasRead = await readPaged<{ asset_id: string; alias: string }>((from, to) => admin
@@ -526,13 +569,15 @@ export async function runLinkProposers(
   if (builtinEnabled("co_citation")) {
     const coRule = (rules ?? []).find((r) => r.builtin_key === "co_citation");
     const minCo = coRule?.config?.minCoCitations ?? 2;
-    const { data: qs } = await admin
+    const { data: qs, error: qErr } = await admin
       .from("knowledge_questions")
       .select("question, citations")
       .eq("org_id", orgId)
       .not("citations", "is", null)
       .order("created_at", { ascending: false })
       .limit(QUESTION_WINDOW);
+    // LNK-2: a failed read is said, not silently "no questions".
+    if (qErr) notes.push(`Answered questions could not be read (${qErr.message}) — Answered-together skipped this pass.`);
     const questions = (qs as Array<{ question: string | null; citations: unknown }>) ?? [];
     if (questions.length >= QUESTION_WINDOW) {
       saturated.push("citedQuestions");
@@ -641,7 +686,8 @@ export async function runLinkProposers(
   if (countErr) {
     notes.push(`The queue's inferred proposals could not be counted (${countErr.message}) — no new inferred proposals were added this pass.`);
   }
-  const plan = planBatch(fresh, { batch: BATCH, inferredRoom });
+  // LNK-1: refreshing an inferred row already pending takes no new room.
+  const plan = planBatch(fresh, { batch: BATCH, inferredRoom, pending: known.pending });
   if (plan.heldInferred > 0) {
     notes.push(`${plan.heldInferred} inferred proposal${plan.heldInferred === 1 ? " is" : "s are"} waiting for room — the queue holds ${MAX_PENDING_INFERRED} inferred at a time; decide some and run again.`);
   }

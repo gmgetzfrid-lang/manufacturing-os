@@ -40,22 +40,26 @@ import { join } from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { newFakeDb, makeFakeSupabase, type FakeDb } from "./helpers/fakeSupabase";
 
-const db = vi.hoisted(() => ({ ref: null as unknown as FakeDb }));
+const db = vi.hoisted(() => ({
+  ref: null as unknown as FakeDb,
+  /** A test's stand-in for supabase.from (a database missing a column). */
+  from: null as null | ((table: string) => unknown),
+}));
 vi.mock("@/lib/supabase", async () => {
   const { makeFakeSupabase, newFakeDb: fresh } = await import("./helpers/fakeSupabase");
   db.ref = fresh();
-  const proxy = new Proxy({}, { get: (_t, p: string) => (makeFakeSupabase(db.ref) as Record<string, unknown>)[p] });
+  const proxy = new Proxy({}, { get: (_t, p: string) => (p === "from" && db.from ? db.from : (makeFakeSupabase(db.ref) as Record<string, unknown>)[p]) });
   return { supabase: proxy };
 });
 
-import { skillControls, isSkillController, studioSharingChoices, sharingColumns, type SkillRowLike } from "@/lib/skillAuthority";
+import { skillControls, isSkillController, studioSharingChoices, sharingColumns, skillShelfFilter, type SkillRowLike } from "@/lib/skillAuthority";
 import {
   createAnswerSkill, seedBuiltinAnswerSkills, setAnswerSkillEnabled, deleteAnswerSkill, answerSkillIssue,
-  setAnswerSkillVisibility,
+  setAnswerSkillVisibility, listAnswerSkills,
 } from "@/lib/answerSkills";
 import {
   createLinkRule, seedBuiltinRules, setLinkRuleEnabled, deleteLinkRule, setLinkRuleVisibility, setLinkRuleShareRequest,
-  refusedSkillPatterns,
+  refusedSkillPatterns, listLinkRules,
 } from "@/lib/linkRules";
 import { buildAnswerSkillsBlock, loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
@@ -69,30 +73,37 @@ const M25 = "20261125_intel_roundG_skills_authority.sql";
 const sql25 = mig(M25);
 const ORG = "o1";
 
-beforeEach(() => { Object.assign(db.ref, newFakeDb()); });
+beforeEach(() => { Object.assign(db.ref, newFakeDb()); db.from = null; });
 const t = (name: string) => (db.ref.tables[name] ??= []);
 
 // ── 20261125's policies, transcribed (pinned to the SQL text below) ───────
-type SkillRow = SkillRowLike & { org_id: string };
-type Viewer = { uid: string; active: boolean; controller: boolean };
+type SkillRow = SkillRowLike & { org_id: string; created_by_name?: string | null };
+/** `active` / `controller` describe the viewer's membership of `org` (ORG
+ *  unless said otherwise) — the membership EXISTS and is_org_controller are
+ *  both asked about the ROW's org_id. */
+type Viewer = { uid: string; active: boolean; controller: boolean; org?: string };
+const inOrg = (r: SkillRow, v: Viewer) => r.org_id === (v.org ?? ORG);
+const member = (r: SkillRow, v: Viewer) => v.active && inOrg(r, v);
+const governs = (r: SkillRow, v: Viewer) => v.controller && inOrg(r, v);
 const policy = {
-  select: (r: SkillRow, v: Viewer) => v.active && (r.visibility === "org" || r.created_by === v.uid || v.controller),
-  insert: (r: SkillRow, v: Viewer) => v.active && (
-    (r.builtin_key === null && r.created_by === v.uid && (r.visibility === "private" || v.controller))
-    || (r.builtin_key !== null && r.created_by === null && v.controller)),
-  updateUsing: (r: SkillRow, v: Viewer) => v.controller || (r.builtin_key === null && r.created_by === v.uid && v.active),
+  select: (r: SkillRow, v: Viewer) => member(r, v) && (r.visibility === "org" || r.created_by === v.uid || governs(r, v)),
+  insert: (r: SkillRow, v: Viewer) => member(r, v) && (
+    (r.builtin_key === null && r.created_by === v.uid && (r.visibility === "private" || governs(r, v)))
+    || (r.builtin_key !== null && r.created_by === null && governs(r, v))),
+  updateUsing: (r: SkillRow, v: Viewer) => governs(r, v) || (r.builtin_key === null && r.created_by === v.uid && member(r, v)),
   updateCheck: (r: SkillRow, v: Viewer) =>
-    (v.controller && (r.builtin_key === null || r.created_by === null))
-    || (r.builtin_key === null && r.created_by === v.uid && r.visibility === "private"),
-  delete: (r: SkillRow, v: Viewer) => r.builtin_key === null && ((v.controller && r.visibility === "org") || (r.created_by === v.uid && v.active)),
+    (governs(r, v) && (r.builtin_key === null || r.created_by === null))
+    || (r.builtin_key === null && r.created_by === v.uid && r.visibility === "private" && member(r, v)),
+  delete: (r: SkillRow, v: Viewer) => r.builtin_key === null && ((governs(r, v) && r.visibility === "org") || (r.created_by === v.uid && member(r, v))),
 };
 /** Both guards' person rules (20261125 link_rules_guard / answer_skills_guard,
- *  BEFORE UPDATE, pinned to the SQL below): a skill's author and built-in
- *  key are fixed; a private custom row changes, for anyone but its author,
- *  only in visibility / share_requested (the database stamps shared_by,
- *  shared_at and updated_at). */
+ *  BEFORE UPDATE, pinned to the SQL below): a skill's org, author and
+ *  built-in key are fixed; a private custom row changes, for anyone but its
+ *  author, only in visibility / share_requested (the database stamps
+ *  shared_by, shared_at and updated_at). */
 const SHARE_DECISION_COLUMNS = ["visibility", "share_requested", "shared_by", "shared_at", "updated_at"];
 const guardAdmits = (old: SkillRow, next: SkillRow, v: Viewer) => {
+  if (next.org_id !== old.org_id) return false;
   if (next.builtin_key !== old.builtin_key) return false;
   if (next.builtin_key === null && next.created_by !== old.created_by) return false;
   if (old.builtin_key === null && old.created_by !== v.uid && (old.visibility !== "org" || next.visibility !== "org")) {
@@ -101,11 +112,17 @@ const guardAdmits = (old: SkillRow, next: SkillRow, v: Viewer) => {
   }
   return true;
 };
+/** Both guards' byline rule for a person's write (fix pass 3, pinned to the
+ *  SQL below): a new custom row is signed with the writer's own member
+ *  address, a built-in with nobody's; an update keeps the byline it had. */
+const stampByline = (op: "INSERT" | "UPDATE", next: SkillRow, old: SkillRow | null, writerEmail: string | null) =>
+  op === "INSERT" ? (next.builtin_key === null ? writerEmail : null) : (old!.created_by_name ?? null);
 /** An UPDATE through PostgREST: USING on the old row, the guard, WITH CHECK
  *  on the new one, and the SELECT policy on both (the updated row is
- *  returned). */
+ *  returned). The guard re-signs the row before the private-row rule. */
 const updateAdmitted = (old: SkillRow, patch: Partial<SkillRow>, v: Viewer) => {
   const next = { ...old, ...patch };
+  if ("created_by_name" in old || "created_by_name" in patch) next.created_by_name = stampByline("UPDATE", next, old, null);
   return policy.updateUsing(old, v) && policy.select(old, v) && guardAdmits(old, next, v)
     && policy.updateCheck(next, v) && policy.select(next, v);
 };
@@ -126,7 +143,7 @@ describe("20261125 — the transcription above IS the policy text", () => {
       expect(policyText(sql25, `${table}_insert`, table)).toBe(norm(
         `CREATE POLICY ${table}_insert ON ${table} FOR INSERT WITH CHECK ( ${member} AND ( (builtin_key IS NULL AND created_by = auth.uid() AND (visibility = 'private' OR is_org_controller(org_id))) OR (builtin_key IS NOT NULL AND created_by IS NULL AND is_org_controller(org_id)) ) )`));
       expect(policyText(sql25, `${table}_update`, table)).toBe(norm(
-        `CREATE POLICY ${table}_update ON ${table} FOR UPDATE USING ( is_org_controller(org_id) OR (builtin_key IS NULL AND created_by = auth.uid() AND ${member}) ) WITH CHECK ( (is_org_controller(org_id) AND (builtin_key IS NULL OR created_by IS NULL)) OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private') )`));
+        `CREATE POLICY ${table}_update ON ${table} FOR UPDATE USING ( is_org_controller(org_id) OR (builtin_key IS NULL AND created_by = auth.uid() AND ${member}) ) WITH CHECK ( (is_org_controller(org_id) AND (builtin_key IS NULL OR created_by IS NULL)) OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private' AND ${member}) )`));
       expect(policyText(sql25, `${table}_delete`, table)).toBe(norm(
         `CREATE POLICY ${table}_delete ON ${table} FOR DELETE USING ( builtin_key IS NULL AND ((is_org_controller(org_id) AND visibility = 'org') OR (created_by = auth.uid() AND ${member})) )`));
     });
@@ -330,9 +347,12 @@ describe("server seeders and the prompt block", () => {
   });
   it("IRLS-12 limb: a missing table stays silent; any other read failure is logged", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const failing = (code: string) => ({
-      from: () => ({ select: () => ({ eq: () => ({ limit: async () => ({ data: null, error: { code, message: code === "42P01" ? "relation does not exist" : "permission denied" } }) }) }) }),
-    }) as unknown as SupabaseClient;
+    const failing = (code: string) => {
+      const chain: unknown = new Proxy({}, { get: (_x, q: string) => (q === "then"
+        ? (res: (x: unknown) => void) => res({ data: null, error: { code, message: code === "42P01" ? "relation does not exist" : "permission denied" } })
+        : () => chain) });
+      return { from: () => chain } as unknown as SupabaseClient;
+    };
     expect(await loadAnswerSkillsBlock(failing("42P01"), ORG, "me")).toBe("");
     expect(err).not.toHaveBeenCalled();
     expect(await loadAnswerSkillsBlock(failing("42501"), ORG, "me")).toBe("");
@@ -401,7 +421,7 @@ describe("20261125 — paste contract, guards, audit", () => {
 });
 
 // ── skills_audit's details, transcribed (every line pinned to the SQL) ─────
-type AuditRow = { org_id: string; visibility: string; name: string; description?: string | null; instructions?: string; config?: { patterns?: string[] }; enabled?: boolean; share_requested?: boolean; builtin_key?: string | null; created_by?: string | null };
+type AuditRow = { org_id: string; visibility: string; name: string; description?: string | null; instructions?: string; config?: { patterns?: string[] }; enabled?: boolean; share_requested?: boolean; builtin_key?: string | null; created_by?: string | null; created_by_name?: string | null };
 const md5 = (x: string) => `md5:${x.length}:${x.slice(0, 3)}`; // a stand-in: only its presence matters here
 function auditDetails(op: "INSERT" | "UPDATE" | "DELETE", oldRow: AuditRow | null, newRow: AuditRow | null): Record<string, unknown> | null {
   const vRow = (newRow ?? oldRow)!;
@@ -410,7 +430,7 @@ function auditDetails(op: "INSERT" | "UPDATE" | "DELETE", oldRow: AuditRow | nul
   const changed: string[] = [];
   let prev: Record<string, unknown> | undefined;
   if (op === "UPDATE") {
-    for (const k of ["name", "description", "instructions", "config", "enabled", "visibility", "share_requested", "builtin_key", "created_by"] as const) {
+    for (const k of ["name", "description", "instructions", "config", "enabled", "visibility", "share_requested", "builtin_key", "created_by", "org_id", "created_by_name"] as const) {
       if (JSON.stringify(newRow![k]) !== JSON.stringify(oldRow![k])) changed.push(k);
     }
     if (changed.length === 0) return null;
@@ -455,6 +475,7 @@ describe("fix pass (blocker) — a private skill's words never reach audit_logs"
       "v_details := v_details || jsonb_build_object('instructions', v_row->'instructions', 'patterns', v_row->'config'->'patterns');",
       "'instructions_length', length(v_row->>'instructions'), 'instructions_md5', md5(v_row->>'instructions'),",
       "v_row->>'id', v_org, auth.uid(), v_email, v_role, jsonb_strip_nulls(v_details));",
+      "FOREACH v_key IN ARRAY ARRAY['name', 'description', 'instructions', 'config', 'enabled', 'visibility', 'share_requested', 'builtin_key', 'created_by', 'org_id', 'created_by_name'] LOOP",
     ]) expect(f, line).toContain(line);
     // the only paths from a row's words into details are the gated ones above
     expect(f.match(/v_row->'instructions'/g)).toHaveLength(1);
@@ -682,9 +703,10 @@ describe("fix pass 2 — the guards' person rules ARE the transcription above (b
     it(fn, () => {
       const f = fnOf(fn);
       for (const line of [
-        "IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key",
+        "IF TG_OP = 'UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id",
+        "OR NEW.builtin_key IS DISTINCT FROM OLD.builtin_key",
         "OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN",
-        `RAISE EXCEPTION '${table}_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';`,
+        `RAISE EXCEPTION '${table}_author: the org, author and built-in key of a skill are fixed' USING ERRCODE = '42501';`,
         "IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()",
         "AND (OLD.visibility IS DISTINCT FROM 'org' OR NEW.visibility IS DISTINCT FROM 'org')",
         `AND (to_jsonb(NEW) - ARRAY[${SHARE_DECISION_COLUMNS.map((c) => `'${c}'`).join(", ")}])`,
@@ -778,5 +800,166 @@ describe("fix pass 2 — before 20261125 is applied, the skill writes still work
       expect(src, f).not.toMatch(/share_requested: false/);
       expect(src.match(/share_requested = true|share_requested: requested/g)?.length, f).toBe(2);
     }
+  });
+});
+
+// ── fix pass 3 ────────────────────────────────────────────────────────────
+describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so members' drafts never crowd a controller's", () => {
+  const stamp = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 1_000).toISOString();
+  /** Built-ins, then 220 members' unrequested private drafts, then the rows
+   *  a controller's shelf must show: an org-wide skill, a share request and
+   *  the controller's own draft — all newer than the drafts. */
+  const seedShelf = (table: "link_rules" | "answer_skills") => {
+    let n = 0;
+    const base = table === "link_rules"
+      ? { kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } }
+      : { instructions: "APPLIES WHEN asked. Otherwise ignore this skill." };
+    const builtins = table === "link_rules" ? BUILTIN_SKILLS : BUILTIN_ANSWER_SKILLS;
+    for (const b of builtins) t(table).push({ ...base, org_id: ORG, builtin_key: b.builtin_key, name: b.name, enabled: true, visibility: "org", created_by: null, share_requested: false, created_at: stamp(n++) });
+    for (let i = 0; i < 220; i++) t(table).push({ ...base, id: `${table}-draft-${i}`, org_id: ORG, builtin_key: null, name: `Draft ${i}`, enabled: true, visibility: "private", created_by: `m${i % 5}`, share_requested: false, created_at: stamp(n++) });
+    t(table).push(
+      { ...base, org_id: ORG, builtin_key: null, name: "Org-wide pack", enabled: true, visibility: "org", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
+      { ...base, org_id: ORG, builtin_key: null, name: "Asked to share", enabled: true, visibility: "private", created_by: "m1", share_requested: true, created_at: stamp(n++) },
+      { ...base, org_id: ORG, builtin_key: null, name: "Controller's draft", enabled: true, visibility: "private", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
+    );
+    return builtins.length;
+  };
+  it("the shelf filter: org-wide, the viewer's own, and (after 20261125) the share requests", () => {
+    expect(skillShelfFilter("ctl", true)).toBe("visibility.eq.org,created_by.eq.ctl,share_requested.eq.true");
+    expect(skillShelfFilter("ctl", false)).toBe("visibility.eq.org,created_by.eq.ctl");
+    expect(skillShelfFilter(null, true)).toBe("visibility.eq.org,share_requested.eq.true");
+  });
+  it("with 220 members' private drafts, a controller's Connection shelf still lists every built-in, the org-wide skill and the share request", async () => {
+    const builtins = seedShelf("link_rules");
+    const rows = (await listLinkRules(ORG, "ctl"))!;
+    const names = rows.map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["Org-wide pack", "Asked to share", "Controller's draft", ...BUILTIN_SKILLS.map((b) => b.name)]));
+    expect(rows).toHaveLength(builtins + 3);
+    expect(names.some((x) => x.startsWith("Draft "))).toBe(false);
+    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "or" && c.args[0] === "visibility.eq.org,created_by.eq.ctl,share_requested.eq.true")).toBe(true);
+  });
+  it("…and the Reasoning shelf the same", async () => {
+    const builtins = seedShelf("answer_skills");
+    const rows = (await listAnswerSkills(ORG, "ctl"))!;
+    expect(rows.map((r) => r.name)).toEqual(expect.arrayContaining(["Org-wide pack", "Asked to share", "Controller's draft"]));
+    expect(rows).toHaveLength(builtins + 3);
+  });
+  it("before 20261125 (no share_requested column) the shelf reads without the request term — never as a missing table", async () => {
+    seedShelf("link_rules");
+    seedShelf("answer_skills");
+    const fake = makeFakeSupabase(db.ref);
+    const refused: string[] = [];
+    db.from = (table: string) => {
+      const b = fake.from(table) as unknown as Record<string, (...a: unknown[]) => unknown>;
+      // Every chained call comes back through the wrapper, so the filter on
+      // the missing column is seen wherever it sits in the chain.
+      const wrapped: unknown = new Proxy(b, {
+        get: (target, q: string) => {
+          if (q === "then") return target.then;
+          if (q !== "or") return (...a: unknown[]) => { target[q](...a); return wrapped; };
+          return (expr: string) => {
+            if (!expr.includes("share_requested")) { target.or(expr); return wrapped; }
+            refused.push(table);
+            const err: unknown = new Proxy({}, { get: (_x, k: string) => (k === "then"
+              ? (res: (x: unknown) => void) => res({ data: null, error: { code: "42703", message: `column ${table}.share_requested does not exist` } })
+              : () => err) });
+            return err;
+          };
+        },
+      });
+      return wrapped;
+    };
+    const rules = await listLinkRules(ORG, "ctl");
+    const packs = await listAnswerSkills(ORG, "ctl");
+    expect(refused).toEqual(["link_rules", "answer_skills"]);
+    for (const rows of [rules, packs]) {
+      expect(rows).not.toBeNull();
+      expect(rows!.map((r) => r.name)).toEqual(expect.arrayContaining(["Org-wide pack", "Controller's draft"]));
+      expect(rows!.some((r) => r.name === "Asked to share")).toBe(false);
+    }
+  });
+  it("the shelves pass the viewer's uid to the read", () => {
+    expect(repo("components/intelligence/ConnectionSkillsPanel.tsx")).toContain("const next = await listLinkRules(activeOrgId, uid ?? null);");
+    expect(repo("app/(protected)/intelligence/skills/page.tsx")).toContain("setRskills(await listAnswerSkills(activeOrgId, uid ?? null));");
+  });
+  it("LNK-2: the answer block reads the org-wide packs and the asker's own — 250 colleagues' drafts crowd out neither, and no built-in is re-seeded", async () => {
+    db.ref.unique.answer_skills = [{ cols: ["org_id", "builtin_key"], name: "answer_skills_org_builtin_key" }];
+    for (let i = 0; i < 250; i++) t("answer_skills").push({ id: `as-${i}`, org_id: ORG, builtin_key: null, name: `Colleague draft ${i}`, instructions: "APPLIES WHEN mine. Private notes.", enabled: true, visibility: "private", created_by: `m${i % 7}` });
+    for (const b of BUILTIN_ANSWER_SKILLS) t("answer_skills").push({ id: `as-b-${b.builtin_key}`, org_id: ORG, builtin_key: b.builtin_key, name: b.name, instructions: b.instructions, enabled: true, visibility: "org", created_by: null });
+    t("answer_skills").push({ id: "as-mine", org_id: ORG, builtin_key: null, name: "My torque pack", instructions: "APPLIES WHEN torque is asked. Quote the table.", enabled: true, visibility: "private", created_by: "me" });
+    const before = t("answer_skills").length;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const block = await loadAnswerSkillsBlock(makeFakeSupabase(db.ref) as unknown as SupabaseClient, ORG, "me");
+    expect(block).toContain("My torque pack");
+    expect(block).toContain(BUILTIN_ANSWER_SKILLS[0].name);
+    expect(block).not.toContain("Colleague draft");
+    expect(t("answer_skills")).toHaveLength(before); // nothing re-seeded
+    expect(db.ref.calls.some((c) => c.table === "answer_skills" && c.method === "insert")).toBe(false);
+    expect(db.ref.calls.some((c) => c.table === "answer_skills" && c.method === "or" && c.args[0] === "visibility.eq.org,created_by.eq.me")).toBe(true);
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+
+describe("fix pass 3 — GOV-2 / IEDGE-3: a skill stays in its org, and its byline is the database's", () => {
+  const body = sql25.replace(/--[^\n]*/g, "");
+  const fnOf = (fn: string) => {
+    const start = body.indexOf(`CREATE OR REPLACE FUNCTION ${fn}()`);
+    return body.slice(start, body.indexOf("$$;", start));
+  };
+  it("an author cannot move their own private skill into another org — the guard refuses it, and WITH CHECK alone would too", () => {
+    const m = viewer({ uid: "m" });
+    const mine = row({ created_by: "m" });
+    expect(updateAdmitted(mine, { org_id: "orgB" }, m)).toBe(false);
+    expect(guardAdmits(mine, { ...mine, org_id: "orgB" }, m)).toBe(false);
+    // the policy term on its own: the new row's org has no active membership for the author
+    expect(policy.updateCheck({ ...mine, org_id: "orgB" }, m)).toBe(false);
+    expect(policy.updateCheck(mine, m)).toBe(true);
+    // a controller of both orgs moves nothing either
+    expect(updateAdmitted(row({ visibility: "org" }), { org_id: "orgB" }, viewer({ uid: "c", controller: true }))).toBe(false);
+  });
+  it("the byline: a member's insert is signed with their member address, whatever the client sent; nobody re-signs it", () => {
+    const sent = row({ created_by: "m", created_by_name: "Dana (Doc Control)" });
+    expect(stampByline("INSERT", sent, null, "m@a.test")).toBe("m@a.test");
+    expect(stampByline("INSERT", row({ builtin_key: "b", created_by: null, created_by_name: "x" }), null, "c@a.test")).toBeNull();
+    const signed = row({ created_by: "m", created_by_name: "m@a.test" });
+    expect(stampByline("UPDATE", { ...signed, created_by_name: "Dana" }, signed, null)).toBe("m@a.test");
+    // a controller's share decision carrying a new byline is not a refusal — the byline simply holds
+    const asked = row({ created_by: "m", created_by_name: "m@a.test", share_requested: true });
+    expect(updateAdmitted(asked, { visibility: "org", share_requested: false, created_by_name: "Someone else" }, viewer({ uid: "c", controller: true }))).toBe(true);
+  });
+  for (const [fn, table] of [["link_rules_guard", "link_rules"], ["answer_skills_guard", "answer_skills"]] as const) {
+    it(`${fn}: the byline rule IS the transcription above, after the service role's early return and before the private-row rule`, () => {
+      const f = fnOf(fn);
+      for (const line of [
+        "IF TG_OP = 'INSERT' THEN",
+        "NEW.created_by_name := CASE WHEN NEW.builtin_key IS NULL THEN",
+        "(SELECT m.email FROM org_members m",
+        "WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active' LIMIT 1) END;",
+        "ELSE",
+        "NEW.created_by_name := OLD.created_by_name;",
+      ]) expect(f, line).toContain(line);
+      expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf("NEW.created_by_name := OLD.created_by_name;"));
+      expect(f.indexOf("NEW.created_by_name := OLD.created_by_name;")).toBeLessThan(f.indexOf(`${table}_private`));
+    });
+  }
+  it("existing custom rows are re-signed from their author's member row, counted before apply and probed after", () => {
+    for (const [table, a] of [["answer_skills", "s"], ["link_rules", "r"]] as const) {
+      expect(body).toContain(`UPDATE ${table} ${a} SET created_by_name = m.email\n  FROM org_members m\n WHERE m.org_id = ${a}.org_id AND m.uid = ${a}.created_by\n   AND ${a}.builtin_key IS NULL AND m.email IS NOT NULL AND ${a}.created_by_name IS DISTINCT FROM m.email;`);
+    }
+    const inventory = body.slice(0, body.indexOf("BEGIN;"));
+    expect(inventory).toMatch(/'answer_skills custom packs whose byline is not their author''s member address \(re-signed from org_members\)', COUNT\(\*\)/);
+    expect(inventory).toMatch(/'link_rules custom skills whose byline is not their author''s member address \(re-signed from org_members\)', COUNT\(\*\)/);
+    const tail = body.slice(body.indexOf("COMMIT;"));
+    expect(tail).toContain("'every custom skill''s byline is its author''s member address (where the author has one)'");
+    expect(tail).toContain("AND with_check LIKE '%org_members%'),");
+    expect(tail).toContain("AND prosrc LIKE '%NEW.org_id IS DISTINCT FROM OLD.org_id%'");
+    expect(tail).toContain("AND prosrc LIKE '%NEW.created_by_name := OLD.created_by_name;%'");
+    expect(tail).toContain("AND prosrc LIKE '%''builtin_key'', ''created_by'', ''org_id'', ''created_by_name''] LOOP%'");
+  });
+  it("the audit records a change of org or byline (were the guards ever bypassed by a person's write)", () => {
+    const old: AuditRow = { org_id: ORG, visibility: "org", name: "Pack", created_by_name: "m@a.test" };
+    expect(auditDetails("UPDATE", old, { ...old, org_id: "orgB" })!.changed).toEqual(["org_id"]);
+    expect(auditDetails("UPDATE", old, { ...old, created_by_name: "Dana" })).toMatchObject({ changed: ["created_by_name"], previous: { created_by_name: "m@a.test" } });
   });
 });

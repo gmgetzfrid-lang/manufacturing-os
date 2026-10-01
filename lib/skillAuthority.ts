@@ -98,6 +98,20 @@ export function skillControls(
   };
 }
 
+/** The rows a skill shelf lists, as a PostgREST `or` filter the database
+ *  applies (HUB-8 fix pass 3): org-wide skills, the viewer's own, and the
+ *  share requests waiting on a controller. Since 20261125 a controller READS
+ *  every private skill of the org; filtering only in the browser let
+ *  members' unrequested drafts fill the read window and push org-wide skills
+ *  and new requests off a controller's shelf. `withRequests` is false before
+ *  20261125, when there is no share_requested column (and no request). */
+export function skillShelfFilter(uid: string | null, withRequests: boolean): string {
+  const terms = ["visibility.eq.org"];
+  if (uid) terms.push(`created_by.eq.${uid}`);
+  if (withRequests) terms.push("share_requested.eq.true");
+  return terms.join(",");
+}
+
 /** The sharing choices the Studio offers the author of a NEW skill. */
 export type StudioSharing = "private" | "request" | "org";
 export function studioSharingChoices(isController: boolean): StudioSharing[] {

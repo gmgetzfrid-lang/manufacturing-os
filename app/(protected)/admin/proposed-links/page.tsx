@@ -35,6 +35,7 @@ import {
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import ConnectionSkillsPanel from "@/components/intelligence/ConnectionSkillsPanel";
+import { isSkillController } from "@/lib/skillAuthority";
 
 const TIER_STYLE: Record<ProposalTier, string> = {
   provable: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
@@ -71,6 +72,7 @@ const CEILING_COPY: Record<string, string> = {
   chunksScanned: "Custom skills read their ceiling of indexed pages this pass — later pages were not scanned.",
   citedQuestions: "Answered-together reads the latest answered questions only.",
   systemLinks: "The evidence audit read its ceiling of system links.",
+  rules: "The run read its ceiling of built-in and org-wide connection skills — skills past it did not run.",
 };
 
 /** Zero findings must explain themselves: each empty input maps to the
@@ -105,10 +107,15 @@ function diagnose(inputs: RunInputs): string[] {
 }
 
 export default function ProposedLinksPage() {
-  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
+  const { activeOrgId, hasAnyRole, roles, uid, userEmail } = useRole();
   // ADD-1: authority by the role COLLECTION, never the headline alone.
+  // Deciding is the proposed-links surface's writer tier: SURF-9 keeps each
+  // admin page spelling its ADMIN_SURFACES set and pins the two together
+  // (roundE_D_rolesAdmin.test.ts — a registry change fails until this
+  // follows). Running the engine is the controller tier, as
+  // /api/links/propose decides it (DEC-35: no role list).
   const canDecide = hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"]);
-  const canRun = hasAnyRole(["Admin", "DocCtrl"]);
+  const canRun = isSkillController(roles);
 
   const [rows, setRows] = useState<LinkProposal[] | null>(null);
   const [view, setView] = useState<"pending" | "dismissed">("pending");

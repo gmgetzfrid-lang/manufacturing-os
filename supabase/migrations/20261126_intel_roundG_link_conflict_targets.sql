@@ -46,6 +46,15 @@
 --      the role collection (20261046, caller_holds_any_role) — verified
 --      below, not re-created. entity_mentions_read belongs to another
 --      package (I-02) and is not touched.
+--   5. LNK-5 — a private connection skill is its author's draft and never
+--      runs (DEC-55, 20261125). Proposals such a skill queued before this
+--      round — some while a non-controller had published it, which
+--      20261125 took back to private — still sat in the review queue with
+--      the skill's name in their evidence. They are retired to 'stale' (not
+--      dismissed: if a controller shares the skill, the next run re-derives
+--      them). The inventory counts them; the retired rows keep their
+--      evidence text, readable as before only by members who can read both
+--      documents (4).
 --
 -- NARROWS (members lose proposals whose documents they cannot read); nobody
 -- gains. Pre-apply inventory (DEC-30) is captured into a TEMP TABLE before
@@ -93,6 +102,10 @@ SELECT 'entity_mentions rows with no knowledge document sharing (asset, document
 UNION ALL
 SELECT 'proposed_links rows in status ''stale'' (re-enter the queue when the next run re-derives them — DEC-55)', COUNT(*)
   FROM proposed_links WHERE status = 'stale'
+UNION ALL
+SELECT 'proposed_links pending rows from a connection skill that is private (retired to ''stale'' — LNK-5)', COUNT(*)
+  FROM proposed_links p JOIN link_rules r ON r.org_id = p.org_id AND p.proposer = 'rule:' || r.id::text
+ WHERE p.status = 'pending' AND r.visibility <> 'org'
 UNION ALL
 SELECT 'proposed_links rows waiting for review (now readable only by members who can read both documents)', COUNT(*)
   FROM proposed_links WHERE status = 'pending';
@@ -167,6 +180,12 @@ CREATE POLICY proposed_links_read_endpoints ON proposed_links
     AND EXISTS (SELECT 1 FROM documents d WHERE d.id = proposed_links.target_document_id)
   );
 
+-- ── 5. LNK-5: a private skill's opinions leave the review queue ────────────
+UPDATE proposed_links p SET status = 'stale'
+  FROM link_rules r
+ WHERE p.status = 'pending' AND p.org_id = r.org_id
+   AND p.proposer = 'rule:' || r.id::text AND r.visibility <> 'org';
+
 COMMIT;
 
 -- ── Verification (read-only) + inventory — ONE result set ───────────────────
@@ -230,6 +249,11 @@ SELECT 'proposed_links_read (membership) still present; proposed_links_write / e
                AND qual LIKE '%caller_holds_any_role(org_id%' AND with_check LIKE '%caller_holds_any_role(org_id%'
                -- a role literal deparses as "role = ANY (ARRAY[...])", never as "IN"
                AND qual NOT LIKE '%role = ANY%' AND with_check NOT LIKE '%role = ANY%'),
+       NULL
+UNION ALL
+SELECT 'LNK-5: no pending proposal comes from a private connection skill',
+       NOT EXISTS (SELECT 1 FROM proposed_links p JOIN link_rules r ON r.org_id = p.org_id AND p.proposer = 'rule:' || r.id::text
+                    WHERE p.status = 'pending' AND r.visibility <> 'org'),
        NULL
 UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g26_before

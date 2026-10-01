@@ -25,7 +25,8 @@
 --      share_requested) and changes nothing else while it is private — the
 --      guards refuse any other change by someone who is not its author —
 --      and deletes only org-wide custom rows. Nobody changes a skill's
---      author or built-in key.
+--      org, author or built-in key, and an author keeps a row only in an
+--      org they are an active member of.
 --   2. Built-ins belong to nobody: created_by NULL, managed by controllers,
 --      never deleted by a person (every seeder restores a missing one — turn
 --      it off instead). Built-ins already carrying a member's uid are
@@ -38,7 +39,12 @@
 --   4. New custom rows default to 'private' (GOV-2).
 --   5. Guards (BEFORE INSERT OR UPDATE). Sharing is stamped by the database,
 --      not claimed by the client; updated_at is stamped on every update;
---      re-enabling a connection skill clears the engine's note. A
+--      re-enabling a connection skill clears the engine's note. The byline
+--      (created_by_name, what every card shows as the author — GOV-2) is
+--      the database's too: a person's new custom skill is signed with their
+--      own member address, a built-in with nobody's, and no person re-signs
+--      a skill afterwards; existing custom rows are re-signed from their
+--      author's member row (the inventory counts them). A
 --      service-role INSERT of an org-wide custom row nobody approved (the
 --      org restore of a pre-20261125 backup) whose author is not an active
 --      controller arrives private with a share request — the data step's
@@ -68,7 +74,7 @@
 --      is readable by every active member of the org, so a PRIVATE skill's
 --      words never go there: its name, description, text and patterns are
 --      recorded as withheld, with the pack's length and md5 and the pattern
---      count.
+--      count. The org and the byline are among the recorded changes.
 --
 -- NARROWS (members lose org-wide publishing and built-in management;
 -- controllers lose built-in DELETE) and WIDENS ONE READ AND ONE DECISION:
@@ -134,6 +140,14 @@ SELECT 'active members who are not controllers (lose org-wide skill publishing; 
  WHERE status = 'active'
    AND NOT (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])
 UNION ALL
+SELECT 'answer_skills custom packs whose byline is not their author''s member address (re-signed from org_members)', COUNT(*)
+  FROM answer_skills s JOIN org_members m ON m.org_id = s.org_id AND m.uid = s.created_by
+ WHERE s.builtin_key IS NULL AND m.email IS NOT NULL AND s.created_by_name IS DISTINCT FROM m.email
+UNION ALL
+SELECT 'link_rules custom skills whose byline is not their author''s member address (re-signed from org_members)', COUNT(*)
+  FROM link_rules r JOIN org_members m ON m.org_id = r.org_id AND m.uid = r.created_by
+ WHERE r.builtin_key IS NULL AND m.email IS NOT NULL AND r.created_by_name IS DISTINCT FROM m.email
+UNION ALL
 SELECT 'answer_skills private custom packs newly readable by controllers (WIDENING: controllers read every skill of the org)', COUNT(*)
   FROM answer_skills WHERE builtin_key IS NULL AND visibility = 'private'
 UNION ALL
@@ -186,6 +200,17 @@ UPDATE link_rules r SET visibility = 'private', share_requested = true, updated_
  WHERE r.builtin_key IS NULL AND r.visibility = 'org' AND r.shared_by IS NULL
    AND NOT is_org_controller_for(r.org_id, r.created_by);
 
+-- GOV-2: the byline a client wrote is replaced by the author's member
+-- address — a share request already waiting is decided on who wrote it.
+UPDATE answer_skills s SET created_by_name = m.email
+  FROM org_members m
+ WHERE m.org_id = s.org_id AND m.uid = s.created_by
+   AND s.builtin_key IS NULL AND m.email IS NOT NULL AND s.created_by_name IS DISTINCT FROM m.email;
+UPDATE link_rules r SET created_by_name = m.email
+  FROM org_members m
+ WHERE m.org_id = r.org_id AND m.uid = r.created_by
+   AND r.builtin_key IS NULL AND m.email IS NOT NULL AND r.created_by_name IS DISTINCT FROM m.email;
+
 -- ── 2. authority (IEDGE-3 / GOV-2 / IRLS-3 / ORCH-2 / PR-3 / HUB-2 / LNK-7) ─
 -- Members see org skills and their own; controllers see every skill of the
 -- org — they govern what rides the org's prompts, the share requests are
@@ -212,7 +237,8 @@ CREATE POLICY answer_skills_insert ON answer_skills FOR INSERT WITH CHECK (
 );
 
 -- Controllers manage every row (a built-in stays owned by nobody); an author
--- manages their own custom row and can only ever leave it private.
+-- manages their own custom row, can only ever leave it private, and keeps
+-- it in an org they are an active member of.
 DROP POLICY IF EXISTS answer_skills_update ON answer_skills;
 CREATE POLICY answer_skills_update ON answer_skills FOR UPDATE USING (
   is_org_controller(org_id)
@@ -221,7 +247,9 @@ CREATE POLICY answer_skills_update ON answer_skills FOR UPDATE USING (
                   AND m.uid = auth.uid() AND m.status = 'active'))
 ) WITH CHECK (
   (is_org_controller(org_id) AND (builtin_key IS NULL OR created_by IS NULL))
-  OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private')
+  OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private'
+      AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = answer_skills.org_id
+                  AND m.uid = auth.uid() AND m.status = 'active'))
 );
 
 -- A built-in is never deleted by a person (turn it off); an org-wide
@@ -262,7 +290,9 @@ CREATE POLICY link_rules_update ON link_rules FOR UPDATE USING (
                   AND m.uid = auth.uid() AND m.status = 'active'))
 ) WITH CHECK (
   (is_org_controller(org_id) AND (builtin_key IS NULL OR created_by IS NULL))
-  OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private')
+  OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private'
+      AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = link_rules.org_id
+                  AND m.uid = auth.uid() AND m.status = 'active'))
 );
 
 DROP POLICY IF EXISTS link_rules_delete ON link_rules;
@@ -368,11 +398,23 @@ BEGIN
   END IF;
   -- The service role (built-in seeding, the org restore) is not a person.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
-  -- A person never changes a skill's author or built-in key (a controller
-  -- could otherwise retarget a private skill onto one member).
-  IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
+  -- A person never changes a skill's org, author or built-in key (a
+  -- controller could otherwise retarget a private skill onto one member; an
+  -- author could move their skill into another org's queue).
+  IF TG_OP = 'UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
        OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN
-    RAISE EXCEPTION 'link_rules_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'link_rules_author: the org, author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+  END IF;
+  -- GOV-2: the byline is the database's. A person's new custom skill is
+  -- signed with their own member address, a built-in with nobody's; no
+  -- person re-signs a skill afterwards.
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_by_name := CASE WHEN NEW.builtin_key IS NULL THEN
+      (SELECT m.email FROM org_members m
+        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active' LIMIT 1) END;
+  ELSE
+    NEW.created_by_name := OLD.created_by_name;
   END IF;
   -- A member's PRIVATE skill is theirs: anyone else (RLS admits only a
   -- controller) approves or declines its share request and changes nothing
@@ -450,11 +492,23 @@ BEGIN
     IF auth.uid() IS NOT NULL THEN NEW.shared_by := auth.uid(); NEW.shared_at := now(); END IF;
   END IF;
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
-  -- A person never changes a skill's author or built-in key (a controller
-  -- could otherwise retarget a private pack onto one member's prompts).
-  IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
+  -- A person never changes a skill's org, author or built-in key (a
+  -- controller could otherwise retarget a private pack onto one member's
+  -- prompts; an author could move their pack into another org's queue).
+  IF TG_OP = 'UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id
+       OR NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
        OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN
-    RAISE EXCEPTION 'answer_skills_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'answer_skills_author: the org, author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+  END IF;
+  -- GOV-2: the byline is the database's. A person's new custom pack is
+  -- signed with their own member address, a built-in with nobody's; no
+  -- person re-signs a pack afterwards.
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_by_name := CASE WHEN NEW.builtin_key IS NULL THEN
+      (SELECT m.email FROM org_members m
+        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active' LIMIT 1) END;
+  ELSE
+    NEW.created_by_name := OLD.created_by_name;
   END IF;
   -- A member's PRIVATE pack is theirs (it rides only their prompts): anyone
   -- else (RLS admits only a controller) approves or declines its share
@@ -520,7 +574,7 @@ BEGIN
   v_shown := COALESCE(v_row->>'visibility' = 'org', false);
   v_was := COALESCE(v_old->>'visibility' = 'org', false);
   IF TG_OP = 'UPDATE' THEN
-    FOREACH v_key IN ARRAY ARRAY['name', 'description', 'instructions', 'config', 'enabled', 'visibility', 'share_requested', 'builtin_key', 'created_by'] LOOP
+    FOREACH v_key IN ARRAY ARRAY['name', 'description', 'instructions', 'config', 'enabled', 'visibility', 'share_requested', 'builtin_key', 'created_by', 'org_id', 'created_by_name'] LOOP
       IF (v_new->v_key) IS DISTINCT FROM (v_old->v_key) THEN v_changed := v_changed || v_key; END IF;
     END LOOP;
     IF array_length(v_changed, 1) IS NULL THEN RETURN NULL; END IF;
@@ -596,11 +650,12 @@ SELECT 'INSERT: a custom skill by its author, org-wide only by a controller; a b
            AND with_check LIKE '%created_by IS NULL%'),
        NULL
 UNION ALL
-SELECT 'UPDATE: controllers manage (built-ins stay unowned); an author keeps their own custom row private',
+SELECT 'UPDATE: controllers manage (built-ins stay unowned); an author keeps their own custom row private, in an org they are an active member of',
        (SELECT COUNT(*) = 2 FROM pg_policies
          WHERE tablename IN ('answer_skills', 'link_rules') AND policyname = tablename || '_update'
            AND qual LIKE '%is_org_controller(org_id)%' AND qual LIKE '%builtin_key IS NULL%'
-           AND with_check LIKE '%''private''%' AND with_check LIKE '%created_by IS NULL%'),
+           AND with_check LIKE '%''private''%' AND with_check LIKE '%created_by IS NULL%'
+           AND with_check LIKE '%org_members%'),
        NULL
 UNION ALL
 SELECT 'DELETE: never a built-in; an org-wide custom row by a controller; any custom row by its author',
@@ -699,12 +754,15 @@ SELECT 'answer_skills_guard requires APPLIES WHEN and 40-4000 characters on a ne
           FROM pg_proc WHERE proname = 'answer_skills_guard'),
        NULL
 UNION ALL
-SELECT 'both guards: a member''s private skill is approved or declined by a controller and changed no further; nobody changes a skill''s author or built-in key; publishing a connection skill re-checks its patterns',
+SELECT 'both guards: a member''s private skill is approved or declined by a controller and changed no further; nobody changes a skill''s org, author, byline or built-in key; publishing a connection skill re-checks its patterns',
        (SELECT COUNT(*) = 2 FROM pg_proc
          WHERE proname IN ('link_rules_guard', 'answer_skills_guard')
            AND prosrc LIKE '%OLD.created_by IS DISTINCT FROM auth.uid()%'
            AND prosrc LIKE '%- ARRAY[''visibility'', ''share_requested'', ''shared_by'', ''shared_at'', ''updated_at'']%'
            AND prosrc LIKE '%NEW.created_by IS DISTINCT FROM OLD.created_by%'
+           AND prosrc LIKE '%NEW.org_id IS DISTINCT FROM OLD.org_id%'
+           AND prosrc LIKE '%NEW.created_by_name := OLD.created_by_name;%'
+           AND prosrc LIKE '%WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = ''active'' LIMIT 1) END;%'
            AND prosrc LIKE '%USING ERRCODE = ''42501''%')
        AND (SELECT prosrc LIKE '%IF TG_OP = ''INSERT'' OR NEW.config IS DISTINCT FROM OLD.config%'
                    AND prosrc LIKE '%OR (NEW.visibility = ''org'' AND OLD.visibility IS DISTINCT FROM ''org'') THEN%'
@@ -719,7 +777,15 @@ SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SK
                AND prosrc LIKE '%''instructions_md5'', md5(v_row->>''instructions'')%'
                AND prosrc LIKE '%WHEN v_was OR k NOT IN (''name'', ''description'', ''instructions'', ''config'') THEN v_old->k%'
                AND prosrc LIKE '%''name'', CASE WHEN v_shown THEN v_row->''name'' WHEN v_was THEN v_old->''name'' END%'
+               AND prosrc LIKE '%''builtin_key'', ''created_by'', ''org_id'', ''created_by_name''] LOOP%'
           FROM pg_proc WHERE proname = 'skills_audit'),
+       NULL
+UNION ALL
+SELECT 'every custom skill''s byline is its author''s member address (where the author has one)',
+       NOT EXISTS (SELECT 1 FROM answer_skills s JOIN org_members m ON m.org_id = s.org_id AND m.uid = s.created_by
+                    WHERE s.builtin_key IS NULL AND m.email IS NOT NULL AND s.created_by_name IS DISTINCT FROM m.email)
+       AND NOT EXISTS (SELECT 1 FROM link_rules r JOIN org_members m ON m.org_id = r.org_id AND m.uid = r.created_by
+                        WHERE r.builtin_key IS NULL AND m.email IS NOT NULL AND r.created_by_name IS DISTINCT FROM m.email),
        NULL
 UNION ALL
 SELECT 'no built-in skill is owned by a member',

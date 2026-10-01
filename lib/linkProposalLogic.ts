@@ -694,19 +694,28 @@ export function rankDrafts(drafts: ProposalDraft[]): ProposalDraft[] {
 }
 
 /** The slice one pass writes: the strongest `batch` drafts, of which at
- *  most `inferredRoom` are 'inferred' (LNK-10 — the queue holds a bounded
- *  number of guesses at a time; the rest wait for room and are counted, not
- *  lost). `more` is true only when drafts that fit remain for a next pass. */
-export function planBatch(ranked: ProposalDraft[], opts: { batch: number; inferredRoom: number }): {
+ *  most `inferredRoom` are NEW 'inferred' rows (LNK-10 — the queue holds a
+ *  bounded number of guesses at a time; the rest wait for room and are
+ *  counted, not lost). A draft that refreshes an 'inferred' row already
+ *  pending for its (pair, skill) — `pending`, the rows dropAlreadyQueued
+ *  kept as changed — adds nothing to the queue, so it never waits for room
+ *  (LNK-1: a full queue must not leave an old reading pending); it still
+ *  counts against `batch`. `more` is true only when drafts that fit remain
+ *  for a next pass. */
+export function planBatch(ranked: ProposalDraft[], opts: {
+  batch: number; inferredRoom: number; pending?: KnownPairs["pending"];
+}): {
   take: ProposalDraft[]; heldInferred: number; more: boolean;
 } {
   const take: ProposalDraft[] = [];
   let inferred = 0, heldInferred = 0, more = false;
   for (const d of ranked) {
-    if (d.tier === "inferred" && inferred >= opts.inferredRoom) { heldInferred += 1; continue; }
+    const refresh = d.tier === "inferred"
+      && opts.pending?.get(`${d.documentId}|${d.targetDocumentId}|${d.proposer}`)?.tier === "inferred";
+    if (d.tier === "inferred" && !refresh && inferred >= opts.inferredRoom) { heldInferred += 1; continue; }
     if (take.length >= opts.batch) { more = true; continue; }
     take.push(d);
-    if (d.tier === "inferred") inferred += 1;
+    if (d.tier === "inferred" && !refresh) inferred += 1;
   }
   return { take, heldInferred, more };
 }

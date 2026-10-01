@@ -75,24 +75,47 @@ type PgError = { code?: string; message: string };
 const isMissingTable = (e: PgError | null | undefined) =>
   !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
 
+/** One PostgREST window, and the most packs one block reads (far past what
+ *  the block budget can carry). */
+const PAGE_ROWS = 1000;
+const READ_CAP = 5_000;
+
 /** Load (seeding built-ins if absent) and assemble the block for one asker. */
 export async function loadAnswerSkillsBlock(
   admin: SupabaseClient,
   orgId: string,
   askerId: string | null,
 ): Promise<string> {
-  const res = await admin
-    .from("answer_skills")
-    .select("builtin_key, name, instructions, enabled, visibility, created_by")
-    .eq("org_id", orgId)
-    .limit(200);
-  if (res.error) {
-    // IRLS-12 limb: a missing table is a setup state; any other failure is
-    // an error worth a log line. Either way the question still answers.
-    if (!isMissingTable(res.error)) console.error("[answerSkills] could not read reasoning skills", res.error.message);
-    return "";
+  // Only the packs that can ride this asker's prompt: org-wide ones (the
+  // built-ins among them) and the asker's own — never every member's
+  // private drafts, which used to fill an unordered 200-row window and push
+  // built-ins and the asker's own packs out (then a failed re-seed). Read in
+  // a stable order, built-ins first, to completion (LNK-2 fix pass 3).
+  const rows: SkillRow[] = [];
+  for (let from = 0; ; ) {
+    const res = await admin
+      .from("answer_skills")
+      .select("builtin_key, name, instructions, enabled, visibility, created_by")
+      .eq("org_id", orgId)
+      .or(askerId ? `visibility.eq.org,created_by.eq.${askerId}` : "visibility.eq.org")
+      .order("builtin_key", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_ROWS - 1);
+    if (res.error) {
+      // IRLS-12 limb: a missing table is a setup state; any other failure is
+      // an error worth a log line. Either way the question still answers.
+      if (!isMissingTable(res.error)) console.error("[answerSkills] could not read reasoning skills", res.error.message);
+      return "";
+    }
+    const got = (res.data as SkillRow[] | null) ?? [];
+    if (got.length === 0) break;
+    rows.push(...got);
+    if (rows.length >= READ_CAP) {
+      console.warn(`[answerSkills] read the first ${READ_CAP} reasoning skills; the rest were not considered`);
+      break;
+    }
+    from += got.length;
   }
-  const rows = (res.data as SkillRow[]) ?? [];
 
   const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
   const toSeed = BUILTIN_ANSWER_SKILLS.filter((b) => !have.has(b.builtin_key));

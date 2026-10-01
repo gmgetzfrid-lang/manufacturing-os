@@ -42,7 +42,9 @@ const KIND_META: Record<string, { label: string; icon: typeof FileSearch; hue: s
 /** Which rows a viewer's list shows: org skills, their own, and — for a
  *  controller — the share requests waiting on them. A controller READS
  *  every skill (they govern the org's prompts), but a member's private
- *  draft is not listed on their shelf unless it was offered. */
+ *  draft is not listed on their shelf unless it was offered. The database
+ *  applies the same filter to the read (skillShelfFilter); this keeps the
+ *  shelf honest about anything else it is handed. */
 export function listedSkills<T extends SkillRowLike>(rows: T[], uid: string | null): T[] {
   return rows.filter((r) => r.visibility === "org" || (uid !== null && r.created_by === uid) || !!r.share_requested);
 }
@@ -196,7 +198,7 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try {
-      const next = await listLinkRules(activeOrgId);
+      const next = await listLinkRules(activeOrgId, uid ?? null);
       loadedRef.current = true;
       setRules(next); onRulesChange?.(next); setError(null);
     } catch (e) {
@@ -209,7 +211,7 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
         setRules([]); onRulesChange?.([]);
       }
     }
-  }, [activeOrgId, onRulesChange]);
+  }, [activeOrgId, uid, onRulesChange]);
 
   // HUB-2 / HUB-8: the one client seeding entry for Connection Skills, and
   // only for a controller — a built-in carries no author, so no member's

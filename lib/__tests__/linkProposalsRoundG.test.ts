@@ -90,7 +90,7 @@ vi.mock("@/lib/serverAuth", async () => {
 
 import {
   patternSafetyIssue, compileSkillPatterns, runCustomSkill, carrierOrder, filterDrafts,
-  mergeDrafts, dropAlreadyQueued, rankDrafts, planBatch, MAX_SKILL_PATTERNS, TIER_RANK,
+  mergeDrafts, dropAlreadyQueued, rankDrafts, planBatch, MAX_SKILL_PATTERNS, TIER_RANK, BUILTIN_SKILLS,
   type ProposalDraft,
 } from "@/lib/linkProposalLogic";
 import { runLinkProposers, invalidateProposalsForRevision, MAX_PENDING_INFERRED } from "@/lib/linkProposerServer";
@@ -102,6 +102,7 @@ import {
 import { listRelatedResources, originBadge, removeRelatedResource, LINK_ORIGINS } from "@/lib/relatedResources";
 import { indexDocumentMentions } from "@/lib/mentionIndexer";
 import { POST as invalidateRoute } from "@/app/api/links/invalidate/route";
+import { POST as proposeRoute } from "@/app/api/links/propose/route";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const mig = (f: string) => repo(join("supabase", "migrations", f));
@@ -1014,5 +1015,167 @@ describe("fix pass 2 — LNK-6: the drafting prompt states the bounded subset", 
     expect(src).toMatch(/at most 2 unbounded repeats/);
     for (const p of ["\\d{4,6}", "[A-Z]{2,4}", "\\d{1,6}-\\d{1,6}"]) expect(patternSafetyIssue(p), p).toBeNull();
     expect(patternSafetyIssue("\\d+-?\\d+")).not.toBeNull();
+  });
+});
+
+// ── fix pass 3 ────────────────────────────────────────────────────────────
+describe("fix pass 3 — LNK-2 / LNK-7: the engine reads the rules it runs, to completion; a built-in it cannot account for does not run", () => {
+  const builtinRow = (key: string, enabled: boolean): Row => {
+    const b = BUILTIN_SKILLS.find((x) => x.builtin_key === key)!;
+    return { id: `b-${key}`, org_id: ORG, builtin_key: key, name: b.name, kind: b.kind, config: b.config, enabled, visibility: "org", created_by: null };
+  };
+  const twoDocsSharingTags = () => {
+    t("documents").push(docRow("a", null), docRow("b", null));
+    shareTags(["a", "b"], ["E-1", "E-2", "E-3"]);
+  };
+  it("250 members' private drafts stored ahead of a switched-off built-in: Shared equipment stays off, the drafts are counted, nothing is re-seeded", async () => {
+    twoDocsSharingTags();
+    db.ref.unique.link_rules = [{ cols: ["org_id", "builtin_key"], name: "link_rules_org_builtin_key" }];
+    for (let i = 0; i < 250; i++) {
+      t("link_rules").push({ id: `d${String(i).padStart(3, "0")}`, org_id: ORG, builtin_key: null, name: `Draft ${i}`, kind: "reference",
+        config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: true, visibility: "private", created_by: `m${i % 5}` });
+    }
+    t("link_rules").push(builtinRow("opc_continuity", true), builtinRow("shared_equipment", false), builtinRow("co_citation", true));
+    const run = await runLinkProposers(admin(), ORG);
+    expect(pending()).toHaveLength(0); // the controller's switch held
+    expect(run.errors).toEqual([]);
+    expect(run.notes.join(" ")).toMatch(/250 private connection skills were not run/);
+    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "insert")).toBe(false);
+    expect(run.inputs.saturated).not.toContain("rules");
+  });
+  it("a built-in the seed could not write is unknown: it does not run, and the run says so as an error", async () => {
+    twoDocsSharingTags();
+    db.ref.refuseWrites.add("link_rules"); // the seed insert answers 42501
+    const run = await runLinkProposers(admin(), ORG);
+    expect(pending()).toHaveLength(0);
+    expect(run.errors.join(" ")).toMatch(/Built-in connection skills could not be set up \(new row violates row-level security policy\) — “Drawing cross-reference continuity”, “Shared equipment”, “Answered together” did not run this pass: whether a controller switched them off is unknown\./);
+    expect(run.more).toBe(false);
+  });
+  it("a concurrent seeder that wrote the built-ins first (23505) is read back, and they run as stored", async () => {
+    twoDocsSharingTags();
+    let raced = false;
+    db.ref.beforeInsert!.link_rules = (r, table) => {
+      if (!raced) {
+        raced = true;
+        table.push(builtinRow("opc_continuity", true), builtinRow("shared_equipment", true), builtinRow("co_citation", true));
+        throw { code: "23505", message: "duplicate key value violates unique constraint" };
+      }
+      return r;
+    };
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.errors).toEqual([]);
+    expect(pending().map((r) => r.proposer)).toEqual(["tag"]);
+  });
+  it("LNK-2: a failed equipment-tag or answered-questions read is a note, not a silently smaller input", async () => {
+    t("documents").push(docRow("a", null), docRow("b", null));
+    shareTags(["a", "b"], ["E-1", "E-2"]);
+    const orig = makeFakeSupabase(db.ref);
+    const failing = (msg: string): unknown => {
+      const f: unknown = new Proxy({}, { get: (_x, q: string) => (q === "then"
+        ? (res: (x: unknown) => void) => res({ data: null, error: { code: "XX000", message: msg }, count: null })
+        : () => f) });
+      return f;
+    };
+    const client = { ...orig, from: (tbl: string) => (tbl === "assets" ? failing("assets boom")
+      : tbl === "knowledge_questions" ? failing("questions boom") : orig.from(tbl)) } as unknown as SupabaseClient;
+    const run = await runLinkProposers(client, ORG);
+    expect(run.notes.join(" ")).toMatch(/Some equipment tags could not be read \(assets boom\) — Shared equipment is partial this pass\./);
+    expect(run.notes.join(" ")).toMatch(/Answered questions could not be read \(questions boom\) — Answered-together skipped this pass\./);
+  });
+  it("the engine's rulebook read is the built-ins and the org-wide skills, ordered and paged — the private drafts are a head count", () => {
+    const src = repo("lib/linkProposerServer.ts");
+    expect(src).toContain('.eq("org_id", orgId).not("builtin_key", "is", null)');
+    expect(src).toContain('.eq("org_id", orgId).is("builtin_key", null).eq("visibility", "org")');
+    expect(src).toContain('.eq("org_id", orgId).is("builtin_key", null).neq("visibility", "org")');
+    expect(src).not.toMatch(/from\("link_rules"\)[\s\S]{0,200}\.limit\(200\)/);
+    expect(src).toContain("(loaded.rows.find((r) => r.builtin_key === key)?.enabled ?? false)");
+  });
+});
+
+describe("fix pass 3 — LNK-1 / LNK-10: refreshing an inferred row already pending takes no room in a full queue", () => {
+  const d = (over: Partial<ProposalDraft>): ProposalDraft => ({
+    documentId: "a", targetDocumentId: "b", proposer: "tag", tier: "inferred", confidence: 0.5, autoApply: false,
+    evidence: { summary: "E-1, E-2 on both" }, sourceRev: "2", ...over,
+  } as ProposalDraft);
+  it("planBatch: a refresh of a pending inferred (pair, skill) is written with no room; a new guess still waits; both count against the batch", () => {
+    const pendingMap = new Map([["a|b|tag", { tier: "inferred" as const, confidence: 0.5, sourceRev: "1", evidence: { summary: "old" } }]]);
+    const plan = planBatch([d({}), d({ documentId: "c" })], { batch: 5, inferredRoom: 0, pending: pendingMap });
+    expect(plan.take.map((x) => x.documentId)).toEqual(["a"]);
+    expect(plan.heldInferred).toBe(1);
+    // a pending STRONG row turning inferred does add a guess: it waits for room
+    const strongBefore = new Map([["a|b|tag", { tier: "strong" as const, confidence: 0.8 }]]);
+    expect(planBatch([d({})], { batch: 5, inferredRoom: 0, pending: strongBefore }).heldInferred).toBe(1);
+    // the batch still bounds refreshes
+    expect(planBatch([d({}), d({ targetDocumentId: "z" })], { batch: 1, inferredRoom: 0,
+      pending: new Map([["a|b|tag", pendingMap.get("a|b|tag")!], ["a|z|tag", pendingMap.get("a|b|tag")!]]) })).toMatchObject({ heldInferred: 0, more: true });
+  });
+  it("end to end: with 150 inferred proposals queued, a pending inferred row whose sheet was re-issued is refreshed — not held", async () => {
+    for (let i = 0; i < MAX_PENDING_INFERRED; i++) {
+      t("proposed_links").push({ id: `q${i}`, org_id: ORG, document_id: `x${i}`, target_document_id: `y${i}`, proposer: "tag", tier: "inferred", confidence: 0.5, status: "pending" });
+    }
+    t("proposed_links").push({ id: "p-ab", org_id: ORG, document_id: "a", target_document_id: "b", proposer: "tag", tier: "inferred",
+      confidence: 0.5, status: "pending", source_rev: "1", evidence: { summary: "an old reading" } });
+    t("documents").push(docRow("a", null, "2"), docRow("b", null, "2"));
+    shareTags(["a", "b"], ["E-1", "E-2"]);
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.heldInferred).toBe(0);
+    expect(run.proposed).toBe(1);
+    expect(run.notes.join(" ")).not.toMatch(/waiting for room/);
+    const row = t("proposed_links").find((r) => r.id === "p-ab")!;
+    expect((row.evidence as { summary?: string }).summary).not.toBe("an old reading");
+    expect(pending()).toHaveLength(MAX_PENDING_INFERRED + 1); // refreshed in place, nothing added
+  });
+});
+
+describe("fix pass 3 — DEC-35: the propose route carries no role list; the review page's run control is the controller tier", () => {
+  const post = (token: string) => proposeRoute(new NextRequest("http://t/api/links/propose", {
+    method: "POST", body: JSON.stringify({ orgId: ORG }), headers: { authorization: `Bearer ${token}` },
+  }));
+  it("running the engine is the controller tier, by the held collection", async () => {
+    t("org_members").push(
+      { org_id: ORG, uid: "u-mgr", role: "Manager", roles: ["Manager", "Supervisor"], status: "active" },
+      { org_id: ORG, uid: "u-ctl", role: "Viewer", roles: ["Viewer", "DocCtrl"], status: "active" },
+      { org_id: ORG, uid: "u-gone", role: "Admin", roles: ["Admin"], status: "suspended" },
+    );
+    expect((await post("tok-mgr")).status).toBe(403);
+    expect((await post("tok-gone")).status).toBe(403);
+    expect((await post("tok-ctl")).status).toBe(200); // an additive DocCtrl is a controller
+  });
+  it("no role literal in the propose route; the page's run control is the controller tier and its decide set is the surface's writers", async () => {
+    const route = repo("app/api/links/propose/route.ts");
+    const page = repo("app/(protected)/admin/proposed-links/page.tsx");
+    expect(route).not.toMatch(/"Admin"|'Admin'|"DocCtrl"|'DocCtrl'|"Manager"|'Manager'|"Supervisor"|'Supervisor'/);
+    expect(route).toContain("const CONTROLLER_ROLES = ALL_ROLES.filter((r) => isControllerRole(r));");
+    expect(route).toContain("!memberHoldsAny(role, CONTROLLER_ROLES)");
+    const { ALL_ROLES } = await import("@/types/schema");
+    const { isControllerRole } = await import("@/lib/permissions");
+    expect(ALL_ROLES.filter((r) => isControllerRole(r)).sort()).toEqual(["Admin", "DocCtrl"]);
+    expect(page).toContain("const canRun = isSkillController(roles);");
+    // the decide set stays spelled on the page — SURF-9's census pins it to ADMIN_SURFACES
+    // (roundE_D_rolesAdmin.test.ts); here it is pinned to the surface's writers too
+    const { adminSurface } = await import("@/lib/adminSurfaces");
+    const decide = /const canDecide = hasAnyRole\((\[[^\]]*\])\);/.exec(page);
+    expect(decide).not.toBeNull();
+    expect((JSON.parse(decide![1]) as string[]).sort()).toEqual([...(adminSurface("proposed-links")?.writes ?? [])].sort());
+    expect(page).not.toMatch(/const canRun = hasAnyRole\(/);
+    // a ceiling the engine can now report has words on the page
+    expect(page).toMatch(/rules: "The run read its ceiling of built-in and org-wide connection skills/);
+  });
+});
+
+describe("fix pass 3 — LNK-5: proposals a private skill queued before this round leave the review queue (20261126)", () => {
+  const body = mig("20261126_intel_roundG_link_conflict_targets.sql").replace(/--[^\n]*/g, "");
+  it("counted before apply, retired to 'stale' inside the transaction, probed after", () => {
+    const begin = body.indexOf("BEGIN;"), commit = body.indexOf("COMMIT;");
+    const inventory = body.slice(0, begin);
+    expect(inventory).toMatch(/'proposed_links pending rows from a connection skill that is private \(retired to ''stale'' — LNK-5\)', COUNT\(\*\)\s+FROM proposed_links p JOIN link_rules r ON r\.org_id = p\.org_id AND p\.proposer = 'rule:' \|\| r\.id::text\s+WHERE p\.status = 'pending' AND r\.visibility <> 'org'/);
+    const ddl = body.slice(begin, commit);
+    expect(ddl).toMatch(/UPDATE proposed_links p SET status = 'stale'\s+FROM link_rules r\s+WHERE p\.status = 'pending' AND p\.org_id = r\.org_id\s+AND p\.proposer = 'rule:' \|\| r\.id::text AND r\.visibility <> 'org';/);
+    // stale, not dismissed: a skill a controller later shares re-derives them
+    expect(ddl).not.toMatch(/status = 'dismissed'/);
+    expect(body.slice(commit)).toContain("'LNK-5: no pending proposal comes from a private connection skill'");
+  });
+  it("the proposer key the migration joins on is the one the engine writes", () => {
+    expect(repo("lib/linkProposalLogic.ts")).toMatch(/proposer: `rule:\$\{rule\.id\}`/);
   });
 });
