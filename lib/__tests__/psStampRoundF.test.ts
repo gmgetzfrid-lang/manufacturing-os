@@ -11,8 +11,10 @@
 //     verify URL logs a warning, and a page with no QR never carries an
 //     instruction to scan one. .env.example documents the variable as
 //     required.
-//   * TRX-14 / XEDGE-5 — the transmittal portal link is built only on the
-//     CONFIGURED origin, in a browser as on the server.
+//   * TRX-14 / XEDGE-5 — the transmittal portal link is built on an origin
+//     the recipient can open: the configured origin, else (browser) the
+//     page's own address unless it is a Vercel deployment host or loopback.
+//     The self-host Docker build can receive NEXT_PUBLIC_SITE_URL.
 //   * PHYS-9 substrate — StampOptions.controlState drives the footer's main
 //     line (and the default watermark); neither the main line nor the
 //     watermark can say CONTROLLED COPY, whatever watermarkText a caller
@@ -25,9 +27,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { PDFDocument, PDFPage } from "pdf-lib";
-import { publicOrigin, configuredPublicOrigin } from "@/lib/publicOrigin";
+import { publicOrigin, configuredPublicOrigin, recipientOrigin, isUnreachableRecipientHost } from "@/lib/publicOrigin";
 import { applyStampToPdfDoc, stampMainLine, stampWatermark, claimsControlledCopy, withoutScanInstruction } from "@/lib/stamping";
-import { transmittalPortalUrl, portalOriginConfigured } from "@/lib/transmittals";
+import { transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable } from "@/lib/transmittals";
 
 const src = (p: string) => readFileSync(p, "utf8");
 
@@ -150,10 +152,12 @@ describe("PHYS-11 — publicOrigin(): configured, else production, else (browser
     }
   });
 
-  it("no host refusal in the helper: the page origin is the browser's last answer", () => {
+  it("publicOrigin() itself refuses no host: the page origin is the browser's last answer (the recipient-host check is recipientOrigin's alone)", () => {
     const s = src("lib/publicOrigin.ts");
     expect(s).not.toMatch(/isVercelDeploymentHost/);
-    expect(s).toContain('if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;');
+    const body = s.slice(s.indexOf("export function publicOrigin(): string {"), s.indexOf("export function isUnreachableRecipientHost"));
+    expect(body).toContain('if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;');
+    expect(body).not.toMatch(/isUnreachableRecipientHost|vercel\\\.app/);
   });
 
   it("browser on a preview host with the production domain exposed: the production origin", () => {
@@ -183,20 +187,45 @@ describe("PHYS-11 — publicOrigin(): configured, else production, else (browser
 });
 
 // ─── TRX-14 / XEDGE-5: the transmittal link, browser half ──────────────────
-describe("TRX-14 / XEDGE-5 — the portal link needs a configured origin in a browser too", () => {
+describe("TRX-14 / XEDGE-5 — the portal link is built on an origin the recipient can open", () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-  it("a browser with nothing configured builds NO link (null) — on a preview host and off Vercel alike — though publicOrigin() there is the page", () => {
+  it("a Vercel deployment host or a loopback address is one an outside recipient cannot open", () => {
+    for (const h of ["mfgos-git-feature-team.vercel.app", "manufacturing-os-nu.vercel.app", "VERCEL.APP", "localhost", "app.localhost", "127.0.0.1", "127.1.2.3", "[::1]", "::1", "0.0.0.0", ""]) {
+      expect(isUnreachableRecipientHost(h), h).toBe(true);
+    }
+    for (const h of ["mfgos.plant.example", "mfg-server", "10.0.0.12", "app.vercel.app.example.com", "notvercel.app"]) {
+      expect(isUnreachableRecipientHost(h), h).toBe(false);
+    }
+  });
+
+  it("nothing configured, a browser on a Vercel deployment host or loopback builds NO link (null) — though publicOrigin() there is the page", () => {
     env({});
-    browserAt("https://mfgos-git-feature-team.vercel.app");
-    expect(transmittalPortalUrl("tok")).toBeNull();
-    expect(publicOrigin()).toBe("https://mfgos-git-feature-team.vercel.app");
-    browserAt("https://mfgos.plant.example");
-    expect(transmittalPortalUrl("tok")).toBeNull();
+    for (const o of ["https://mfgos-git-feature-team.vercel.app", "https://manufacturing-os-nu.vercel.app", "http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"]) {
+      browserAt(o);
+      expect(transmittalPortalUrl("tok"), o).toBeNull();
+      expect(recipientOrigin(), o).toBe("");
+      expect(portalLinkAvailable(), o).toBe(false);
+      expect(publicOrigin(), o).toBe(o);
+    }
     expect(portalOriginConfigured()).toBe(false);
   });
 
-  it("exposure off: the server can build the production link while this browser builds none (the toast says only what the browser cannot do)", () => {
+  it("nothing configured, OFF Vercel (self-hosted): the browser builds the link on its own address, as on the base — the server builds none and the email route refuses", () => {
+    env({});
+    browserAt("https://mfgos.plant.example");
+    expect(transmittalPortalUrl("tok")).toBe("https://mfgos.plant.example/transmittal/tok");
+    expect(portalLinkAvailable()).toBe(true);
+    expect(portalOriginConfigured()).toBe(false); // so the toasts warn that the link uses this browser's address
+    browserAt("http://mfg-server:3000");
+    expect(transmittalPortalUrl("tok")).toBe("http://mfg-server:3000/transmittal/tok");
+    vi.unstubAllGlobals();
+    expect(typeof window).toBe("undefined");
+    expect(transmittalPortalUrl("tok")).toBeNull();
+    expect(portalLinkAvailable()).toBe(false);
+  });
+
+  it("exposure off: the server can build the production link while a browser on a preview host builds none", () => {
     env({ VERCEL_PROJECT_PRODUCTION_URL: "app.example.com" });
     expect(typeof window).toBe("undefined");
     expect(transmittalPortalUrl("tok")).toBe("https://app.example.com/transmittal/tok");
@@ -204,6 +233,7 @@ describe("TRX-14 / XEDGE-5 — the portal link needs a configured origin in a br
     browserAt("https://mfgos-git-feature-team.vercel.app");
     expect(transmittalPortalUrl("tok")).toBeNull();
     expect(portalOriginConfigured()).toBe(false);
+    expect(portalLinkAvailable()).toBe(false);
   });
 
   it("on a preview deploy the link is the PRODUCTION link, the same one the server emails", () => {
@@ -217,17 +247,52 @@ describe("TRX-14 / XEDGE-5 — the portal link needs a configured origin in a br
     expect(portalOriginConfigured()).toBe(true);
   });
 
-  it("lib/transmittals builds the link on configuredPublicOrigin; the toasts speak for this browser and promise no browser-address link", () => {
+  it("NEXT_PUBLIC_SITE_URL set: every runtime and every host builds the configured link", () => {
+    env({ NEXT_PUBLIC_SITE_URL: "https://mfg.yourplant.com/" });
+    expect(transmittalPortalUrl("tok")).toBe("https://mfg.yourplant.com/transmittal/tok");
+    for (const o of ["http://localhost:3000", "https://mfgos-git-feature-team.vercel.app", "https://mfgos.plant.example"]) {
+      browserAt(o);
+      expect(transmittalPortalUrl("tok"), o).toBe("https://mfg.yourplant.com/transmittal/tok");
+    }
+  });
+
+  it("lib/transmittals builds the link on recipientOrigin; the toasts never advise copying a link this browser cannot build, and the button is disabled with the variable named", () => {
     const t = src("lib/transmittals.ts");
-    expect(t).toContain('import { configuredPublicOrigin } from "@/lib/publicOrigin";');
-    expect(t).toContain("try { origin = configuredPublicOrigin(); } catch { origin = \"\"; }");
+    expect(t).toContain('import { configuredPublicOrigin, recipientOrigin } from "@/lib/publicOrigin";');
+    expect(t).toContain("try { origin = recipientOrigin(); } catch { origin = \"\"; }");
     expect(t).toContain("return !!configuredPublicOrigin();");
     const page = src("app/(protected)/transmittals/page.tsx");
-    expect(page).toContain("this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none");
+    // The copy advice depends on whether THIS browser can build the link.
+    expect(page).toContain("const linkHere = portalLinkAvailable();");
+    expect(page).toContain('const NO_PORTAL_LINK_ADVICE = "set NEXT_PUBLIC_SITE_URL to the public site address and rebuild, then copy the portal link from this register";');
+    expect(page).toContain('— ${linkHere ? "copy the portal link instead" : NO_PORTAL_LINK_ADVICE}`');
+    expect(page).toContain('`no recipient email — ${linkHere ? "copy the portal link to send it" : NO_PORTAL_LINK_ADVICE}`');
+    expect(page).not.toContain('notes.push("no recipient email — copy the portal link to send it");');
+    expect(page).not.toContain("— copy the portal link instead`);");
+    expect(page).toMatch(/if \(outcome\.portal === "ready" && !linkHere\) \{\s*\n\s*notes\.push\("this browser cannot build the portal link \(NEXT_PUBLIC_SITE_URL unset\) — the cover sheet carries none"\);/);
+    // A link built on this browser's address (self-hosted, nothing configured) says so.
+    expect(page).toContain('} else if (outcome.portal === "ready" && !portalOriginConfigured()) {');
+    expect(page).toContain("NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address — check it opens from outside before sending");
+    expect(page).not.toContain("if this is a preview deploy the recipient cannot open it");
+    // The Portal link button is not offered as an action that always fails.
+    expect(page).toContain("disabled={!portalLinkAvailable()}");
+    expect(page).toContain('"No portal link: this browser cannot build one (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild"');
     expect(page).toContain('message: "This browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset)."');
-    expect(page).not.toContain("so no portal link can be built");
     expect(page).not.toContain("This deployment has no public site URL configured.");
-    expect(page).not.toMatch(/this browser's address/);
+  });
+
+  it("the self-host Docker build can receive NEXT_PUBLIC_SITE_URL (.env is excluded from the image, so a build arg is the only route)", () => {
+    const dockerfile = src("Dockerfile");
+    const build = dockerfile.slice(0, dockerfile.indexOf("RUN npm run build"));
+    expect(build).toMatch(/\nARG NEXT_PUBLIC_SITE_URL\n/);
+    expect(build).toContain("    NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \\\n");
+    const compose = src("docker-compose.yml");
+    const args = compose.slice(compose.indexOf("      args:"), compose.indexOf("    image:"));
+    expect(args).toContain("        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}");
+    expect(src(".dockerignore")).toMatch(/\n\.env\n/);
+    const doc = src("docs/SELF_HOST_DOCKER.md");
+    expect(doc).toMatch(/\| `NEXT_PUBLIC_SITE_URL` \| \*\*build\*\* \(and runtime\) — \*\*required\*\*/);
+    expect(doc).toContain("  --build-arg NEXT_PUBLIC_SITE_URL=https://mfg.yourplant.com \\\n");
   });
 });
 
@@ -347,6 +412,18 @@ describe("PHYS-9 substrate — StampOptions.controlState drives the footer's mai
     expect(all).not.toMatch(/(^|[^N])CONTROLLED COPY/);
     expect(warn.mock.calls.some((c) => /claims a controlled copy/.test(String(c[0])))).toBe(true);
     // The stamper is the backstop whether or not the drafting caller (DF-P10's file) still passes the literal.
+  });
+  it("the drafting download's audit row records the watermark actually printed, not the literal the caller passed", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const literal = 'file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY"';
+    // the same expression the stamp is given …
+    expect(page).toContain(`watermarkText: ${literal},`);
+    // … is passed through the stamper's own rule before it is recorded
+    expect(page).toContain(`? stampWatermark(${literal}, undefined)`);
+    expect(page).not.toContain(`? (${literal})`);
+    expect(page).toContain("import { downloadStampedPdf, stampWatermark } from '@/lib/stamping';");
+    expect(stampWatermark("CONTROLLED COPY", undefined)).toBe("UNCONTROLLED COPY");
+    expect(stampWatermark("REVIEW ONLY - DO NOT DISTRIBUTE", undefined)).toBe("REVIEW ONLY - DO NOT DISTRIBUTE");
   });
   it("controlState with no watermarkText drives the watermark too, so the two marks agree", async () => {
     const texts: Array<{ t: string; o: Record<string, unknown> }> = [];

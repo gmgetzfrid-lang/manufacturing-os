@@ -20,9 +20,10 @@
 //
 // The raster analysis is best-effort: no DOM (every server route), worker
 // failure, or a page that won't render falls back to the BLIND placement —
-// title-block-aware (SHR-8): QR top-left, footer from the left edge, nothing
-// on the right-hand side of either band, where a drawing's title block and
-// revision block live (lib/stampLayout.ts fallbackInk / titleBlockReserve).
+// title-block-aware (SHR-8): QR top-left, footer along the top beside it in
+// every orientation, nothing on the bottom band (the title block's) or on the
+// right-hand side of the top band (the revision block's)
+// (lib/stampLayout.ts fallbackInk / titleBlockReserve).
 // The pure math lives in lib/stampLayout.ts (unit-tested).
 //
 // Rotated sheets (PHYS-12 / PKG-13): pdf.js measures a page AS DISPLAYED
@@ -293,7 +294,7 @@ function drawFooter(input: {
   opts: StampOptions;
   edge: "top" | "bottom";
   qrCorner: Corner | null;
-  /** Blind placement only: the band's right-hand share left to the title /
+  /** Blind placement only: the top band's right-hand share, left to the
    *  revision block (SHR-8). 0 when the page was measured. */
   reserveRight: number;
 }): void {

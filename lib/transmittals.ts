@@ -32,7 +32,7 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { openPrintWindow } from "@/lib/evidencePack";
-import { configuredPublicOrigin } from "@/lib/publicOrigin";
+import { configuredPublicOrigin, recipientOrigin } from "@/lib/publicOrigin";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { assertNotOnHold, type HoldGateClient } from "@/lib/holdGate";
 import { isSafeStorageKey } from "@/lib/storageKey";
@@ -677,26 +677,39 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
   return top + 1;
 }
 
-/** TRX-14 / XEDGE-5: the external portal link, built on the deployment's
- *  CONFIGURED public origin (lib/publicOrigin.ts configuredPublicOrigin —
- *  NEXT_PUBLIC_SITE_URL, else Vercel's production domain; never the page's
- *  own host). Returns null when there is no configured origin — in a browser
- *  as on the server — so a caller refuses to email or print a hostless or
- *  preview-host link. The two runtimes build the same link only when
- *  NEXT_PUBLIC_SITE_URL is set or Vercel exposes the production domain to
- *  the browser; with exposure off the server can email a link this browser
- *  cannot build. */
+/** TRX-14 / XEDGE-5: the external portal link, built on an origin the
+ *  recipient can open (lib/publicOrigin.ts recipientOrigin): the CONFIGURED
+ *  public origin (NEXT_PUBLIC_SITE_URL, else Vercel's production domain);
+ *  else, in a browser, the page's own origin — unless that is a Vercel
+ *  deployment host (a preview behind Vercel's login) or loopback. Returns
+ *  null when there is none, so a caller refuses to email or print a
+ *  hostless, preview-host or localhost link. A server uses only the
+ *  configured origin, so the runtimes can differ: off Vercel with nothing
+ *  configured the email route refuses while a browser on the self-hosted
+ *  address still builds the link; with Vercel's exposure off the server can
+ *  email a link a browser on a preview host cannot build. */
 export function transmittalPortalUrl(token: string): string | null {
   let origin = "";
-  try { origin = configuredPublicOrigin(); } catch { origin = ""; }
+  try { origin = recipientOrigin(); } catch { origin = ""; }
   return origin ? `${origin}/transmittal/${token}` : null;
 }
 
-/** TRX-14 dw3: true when THIS runtime can name the public origin
- *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain). Without it this
- *  runtime builds no portal link, so the issue flow says so. */
+/** TRX-14 dw3: true when the deployment NAMES its public origin
+ *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain) in this runtime.
+ *  Without it a browser link uses the page's own address, so the issue flow
+ *  says so. */
 export function portalOriginConfigured(): boolean {
   return !!configuredPublicOrigin();
+}
+
+/** TRX-14 dw3: true when THIS runtime can build a portal link at all
+ *  (transmittalPortalUrl would return a URL). False in a browser on a Vercel
+ *  deployment host or loopback with nothing configured: the issue flow then
+ *  says what to set instead of offering a copy that cannot work. */
+export function portalLinkAvailable(): boolean {
+  let origin = "";
+  try { origin = recipientOrigin(); } catch { origin = ""; }
+  return !!origin;
 }
 
 /** Every transmittal that carries a given document — the "who did we send

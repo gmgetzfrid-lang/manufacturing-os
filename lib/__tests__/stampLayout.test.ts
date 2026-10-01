@@ -120,15 +120,16 @@ describe("fallbackInk — the blind placement is title-block-aware", () => {
       expect(pickQrCorner(fallbackInk(w, h).corners)).toBe("tl");
     }
   });
-  it("a landscape sheet's footer runs along the top (a small sheet's title block can span the bottom)", () => {
-    const ink = fallbackInk(1224, 792);
-    expect(pickFooterEdge(ink.topBand, ink.bottomBand)).toBe("top");
+  it("the footer runs along the top in EVERY orientation — the bottom is the title block's, landscape and portrait alike", () => {
+    // A portrait sheet's title block takes most of the bottom width (ASME A:
+    // 450 of 540 pt inside the border; ISO A4: 510 of 547), so a bottom
+    // footer narrowed to clear it would only wrap taller over it.
+    for (const [w, h] of [[1224, 792], [842, 595], [612, 792], [595, 842], [1584, 2448]]) {
+      const ink = fallbackInk(w, h);
+      expect(pickFooterEdge(ink.topBand, ink.bottomBand), `${w}×${h}`).toBe("top");
+    }
   });
-  it("a portrait page's footer stays in the bottom margin", () => {
-    const ink = fallbackInk(612, 792);
-    expect(pickFooterEdge(ink.topBand, ink.bottomBand)).toBe("bottom");
-  });
-  it("the footer leaves the right-hand title / revision block share: ASME ≈ 450 pt, ISO ≤ 510 pt, never more than half the sheet", () => {
+  it("the footer leaves the right-hand (revision block) share: as wide as the widest title block (ASME ≈ 450 pt, ISO ≤ 510 pt), never more than half the sheet", () => {
     expect(titleBlockReserve(2448)).toBe(520);
     expect(titleBlockReserve(1224)).toBe(520);
     expect(titleBlockReserve(842)).toBe(421);

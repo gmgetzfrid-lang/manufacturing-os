@@ -355,21 +355,50 @@ describe("SHR-8 — the blind stamp keeps the QR and the footer off the title bl
       w: 842, h: 1191, rotate: 270,
       blocks: (DW) => [{ x0: DW - 28 - 510, y0: 28, x1: DW - 28, y1: 28 + 156 }],
     },
+    // Portrait sheets DISPLAYED portrait — the most common small-drawing
+    // format. Their title block takes most of the bottom width, so no bottom
+    // footer can clear it; the blind footer runs along the top instead.
+    {
+      name: "ASME A portrait (8½×11), 450 pt title block bottom-right + a 4 in revision block top-right",
+      w: 612, h: 792, rotate: 0,
+      blocks: (DW, DH) => [
+        { x0: DW - 36 - 450, y0: 36, x1: DW - 36, y1: 36 + 180 },
+        // The top-right reserve on a portrait sheet is half its width, so on
+        // Letter a revision block up to 4 in (288 pt) inside the border clears
+        // the footer by construction (see titleBlockReserve).
+        { x0: DW - 36 - 288, y0: DH - 36 - 100, x1: DW - 36, y1: DH - 36 },
+      ],
+    },
+    {
+      name: "ISO A4 portrait, a 180 mm title block spanning nearly the whole bottom",
+      w: 595, h: 842, rotate: 0,
+      blocks: (DW) => [{ x0: DW - 28 - 510, y0: 28, x1: DW - 28, y1: 28 + 156 }],
+    },
+    {
+      name: "ASME A stored landscape with /Rotate 90 (displayed portrait)",
+      w: 792, h: 612, rotate: 90,
+      blocks: (DW) => [{ x0: DW - 36 - 450, y0: 36, x1: DW - 36, y1: 36 + 180 }],
+    },
   ];
   const hits = (b: Box, r: Rect) => b.minX < r.x1 && b.maxX > r.x0 && b.minY < r.y1 && b.maxY > r.y0;
 
+  // The two server routes' footers: the share download's and the transmittal
+  // portal's (app/api/share/file/route.ts, app/api/transmittal/route.ts).
+  const SERVER_STAMPS = [
+    { userLabel: "shared-link", watermarkText: "UNCONTROLLED — SHARED COPY", footerNotice: "2002-D-10001 Rev 4 (Issued) at time of download — a share always serves the current revision. Scan the QR to confirm it is still current." },
+    { userLabel: "transmittal TR-0042", watermarkText: "UNCONTROLLED — TRANSMITTAL COPY", footerNotice: "2002-D-10001 Rev 4 as issued on transmittal TR-0042 (2026-10-01). Scan the QR to confirm it is still current." },
+  ];
+
   for (const sh of sheets) {
-    it(sh.name, async () => {
+    for (const stamp of SERVER_STAMPS) it(`${sh.name} — ${stamp.userLabel}`, async () => {
       // no stubCanvas(): `document` is undefined, exactly as in a route handler
       const { DW, DH } = displayDims(sh.w, sh.h, sh.rotate);
       const blocks = sh.blocks(DW, DH);
       const bytes = await makePdf([{ w: sh.w, h: sh.h, rotate: sh.rotate }]);
       const pdfDoc = await PDFDocument.load(bytes);
       await applyStampToPdfDoc(pdfDoc, {
-        userLabel: "shared-link",
+        ...stamp,
         timestamp: new Date("2026-10-01T10:00:00Z"),
-        watermarkText: "UNCONTROLLED — SHARED COPY",
-        footerNotice: "2002-D-10001 Rev 4 (Issued) at time of download — a share always serves the current revision. Scan the QR to confirm it is still current.",
         verifyUrl: "https://app.example.com/verify/doc?v=ver",
       });
       const marks: Array<{ what: string; box: Box }> = [];
@@ -389,9 +418,12 @@ describe("SHR-8 — the blind stamp keeps the QR and the footer off the title bl
         expect(onPage(m.box, DW, DH), m.what).toBe(true);
         for (const r of blocks) expect(hits(m.box, r), `${m.what} over a title/revision block`).toBe(false);
       }
-      // and specifically: the QR is top-left, never on the bottom-right title block
+      // and specifically: the QR is top-left, never on the bottom-right title
+      // block, and blind nothing is drawn in the bottom half — the title
+      // block's — on a landscape or a portrait sheet
       const qr = marks.find((m) => m.what === "image")!;
       expect(inQuadrant(qr.box, "tl", DW, DH)).toBe(true);
+      for (const m of marks) expect(m.box.minY, `${m.what} in the bottom half`).toBeGreaterThan(DH / 2);
     });
   }
 

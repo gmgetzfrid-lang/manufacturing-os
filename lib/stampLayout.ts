@@ -152,27 +152,33 @@ export function pickFooterEdge(topBand: number, bottomBand: number, margin = 0.0
  * and the bottom band were blank — on an engineering drawing that is the
  * title block (ISO 7200 and ASME Y14.1 both put it at the bottom-right), and
  * the top-right usually carries the revision block. Blind, nothing is drawn
- * on the right-hand side of either band:
+ * on the bottom band or on the right-hand side of the top band:
  *   * the QR goes top-left — the one corner neither standard gives a block;
- *   * the footer runs from the left edge: along the TOP of a landscape sheet
- *     (a small sheet's title block can span most of its bottom), along the
- *     BOTTOM of a portrait page (a text page's footer margin), and
- *     titleBlockReserve() keeps it clear of the right-hand blocks.
+ *   * the footer runs along the TOP from just right of the QR, in EVERY
+ *     orientation, and titleBlockReserve() keeps it clear of the right-hand
+ *     (revision) block. The bottom is never used blind: a title block sits
+ *     there on landscape and portrait sheets alike, and on a portrait sheet
+ *     it takes most of the width (ASME A: 450 of 540 pt inside the border;
+ *     ISO A4: 510 of 547), so no bottom footer clears it.
  * The values are pseudo-densities that steer pickQrCorner / pickFooterEdge.
+ * The page size is accepted for the callers' symmetry with the measured
+ * path; blind, every orientation places the same way.
  */
-export function fallbackInk(pageW: number, pageH: number): PageInk {
-  const landscape = pageW > pageH;
+export function fallbackInk(_pageW: number, _pageH: number): PageInk {
   return {
     corners: { br: 1, bl: 1, tr: 1, tl: 0 },
-    topBand: landscape ? 0 : 1,
-    bottomBand: landscape ? 1 : 0,
+    topBand: 0,
+    bottomBand: 1,
   };
 }
 
-/** Blind placement: how much of a band's right-hand side the footer leaves to
- *  the title block (bottom) or revision block (top). ASME Y14.1's title block
- *  is ≈ 6¼ in (450 pt) wide and ISO 7200's at most 180 mm (≈ 510 pt); capped
- *  at half the sheet so a small page keeps room for the footer. */
+/** Blind placement: how much of the top band's right-hand side the footer
+ *  leaves to the revision block (ASME Y14.35 puts it top-right; ≈ 7 in /
+ *  504 pt on a large sheet). Sized like the widest title block — ASME Y14.1
+ *  ≈ 6¼ in (450 pt), ISO 7200 at most 180 mm (≈ 510 pt) — capped at 520 pt
+ *  and at half the sheet so a small page keeps room for the footer. On a
+ *  portrait sheet the half is the bound (306 pt on Letter): a revision block
+ *  wider than that can still meet the footer's longest line. */
 export function titleBlockReserve(pageW: number): number {
   return Math.min(pageW * 0.5, 520);
 }
