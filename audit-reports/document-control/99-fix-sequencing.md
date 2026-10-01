@@ -373,6 +373,31 @@ owner-must-approve POLICY — a roster opened without the owner's row
 (directly through PostgREST) completes without it; that half is `RG-14`
 (open).
 
+⚠ **Paste order — P17 GUARD & EDITOR FOLLOW-UPS (2026-10-01).** One
+one-paste migration:
+- `20261159_dc_roundF_guard_owner_and_held_pointer.sql` (`REV-22` limb 1,
+  `RG-14`) — **after `20261151` (required)**, so after `20261144` and
+  `20261130` too, and after `20261070`; its first statement refuses to run,
+  changing nothing, without `20261151`'s guard and the seven-argument
+  `finalize_reviewed_promote`. It re-creates `enforce_document_publish_guard`
+  from `20261151`'s body (every REV-20 and REV-18 rule kept). **Never
+  re-paste `20261151`, `20261144`, `20261139`, `20261105` or any earlier
+  guard migration after it** — each drops the REV-22 and RG-14 rules (and an
+  earlier one the REV-20 rules). Independent of `20261131`, `20261143`,
+  `20261149`, `20261150` and `20261152`. No app change is needed for the
+  paste: the app carrying P14 already offers a controller the review
+  promote's recorded force when the hold refuses it, and `openReviewRoster`
+  already writes the owner's slot. After the paste a controller moves the
+  pointer of a held, already-issued document only through a recorded force
+  (`publish_revision`'s, or the inspector's review-promote force); the
+  intake approve's controller releases the hold first (no force there — the
+  integrator's J10b follow-up). A roster opened under an owner-must-approve
+  policy completes only with the owner's own signature (`DEC-44 (P17)`);
+  rosters open at the paste are never retrofitted. The legacy reversal's
+  bare un-supersede of an unstamped Superseded source stays open to a
+  controller over a carried hold — `REV-22` limb 2, open. **P16 (`REV-21`)
+  re-creates this guard next, from `20261159`'s body.**
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
