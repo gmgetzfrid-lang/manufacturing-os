@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
-import { presentPackVerdict, type PackVerifyResult } from "@/lib/verifyPresent";
+import { presentPackVerdict, notPrintableText, type PackVerifyResult } from "@/lib/verifyPresent";
 import { isPdfFile } from "@/lib/verifyVerdict";
 
 const PKG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -817,13 +817,30 @@ describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing 
     expect(r.verdict).toBe("stale");
   });
 
-  it("a sheet left out as too_large (over a field pack's budget on its own) stays RED 'not in this pack' — the verify route adds no new amber rule for it", async () => {
+  it("a sheet left out as too_large (over a field pack's budget on its own), still the current revision, is AMBER 'too large for a field pack — get it separately' — never a red 'ask for a re-printed pack' that no re-print can satisfy (fix pass 3)", async () => {
     member(DOC2, "P-102");
     state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
     state.print = printAt([printed, leftOut(DOC2, "too_large", "w1")]);
-    const r = await verify(true);
-    expect(r.notPrintable).toEqual([]);
+    let r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "too_large", leftOutAtPrint: "too_large" }]);
+    expect(r.notInPack).toEqual([]);
+    expect(r.verdict).toBe("incomplete");
+    const v = view(r);
+    expect(v.headline).toBe("PACK INCOMPLETE");
+    expect(v.blurb).toContain("(too large for a field pack — get it separately)");
+    expect(`${v.headline} ${v.blurb} ${v.advice ?? ""}`).not.toMatch(/re-printed pack —|ask .* for a re-printed pack/i);
+    expect(notPrintableText("too_large")).toBe("too large for a field pack — get it separately");
+    // a NEW revision since: its file may fit a pack — a re-print may carry it (red)
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w9" } : d));
+    state.versions = [{ id: "w9", file_url: "org/lib/P-102-r2.pdf", file_type: "application/pdf" }];
+    r = await verify(true);
     expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "too_large" }]);
+    expect(r.verdict).toBe("stale");
+    // a snapshot with no revision on the entry is never matched to the current one (red)
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w1" } : d));
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, "too_large", null)]);
+    r = await verify(true);
     expect(r.verdict).toBe("stale");
   });
 

@@ -17,7 +17,11 @@
 // refusal renders in that frame as plain text, which the page reads back and
 // explains. A browser that drops an attachment arriving in a hidden frame
 // (one not yet checked on iOS Safari / Firefox) is covered by a visible
-// link to the SAME address, opened as a top-level navigation.
+// link to the SAME address, opened as a top-level navigation. The frame
+// cannot read the response's X-Transmittal-Stamped header, so after a
+// download the page re-reads the snapshot (`&recheck=1`): a copy the record
+// shows left WITHOUT the UNCONTROLLED marking — a PDF the stamper refused
+// included — is said under that file, as the header-reading page said it.
 // TRX-3 / TRX-8: each document shows its status and effective date AS SENT
 // and the fingerprint (SHA-256) and size of the file issued. TRX-4: a revoked
 // or expired link says so, distinctly from a voided transmittal.
@@ -33,10 +37,11 @@ interface PortalItem {
   /** REV-9: decided by the route in the facility's calendar. */
   notYetInForce?: boolean;
   /** TRX-15: the file is released as issued WITHOUT the UNCONTROLLED
-   *  marking (null = unknown) — `unmarkedReason` says why: not a PDF, or a
-   *  PDF over the size the portal can mark. */
+   *  marking, or a copy of it already left so (null = unknown) —
+   *  `unmarkedReason` says why when known: not a PDF, a PDF over the size the
+   *  portal can mark, or a PDF the stamper refused (`stamp_failed`). */
   releasedUnmarked?: boolean | null;
-  unmarkedReason?: "not_pdf" | "oversize" | null;
+  unmarkedReason?: "not_pdf" | "oversize" | "stamp_failed" | null;
 }
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
@@ -104,6 +109,23 @@ function fileHref(token: string, docId: string): string {
 }
 /** A download frame is kept this long — past the route's 300 s budget. */
 const DOWNLOAD_FRAME_TTL_MS = 10 * 60 * 1000;
+/** TRX-15: a second, later re-read of the snapshot after a download — a
+ *  large PDF is stamped (or refused by the stamper) before its record is
+ *  written, which can outlast the settle note. */
+const DOWNLOAD_RECHECK_MS = 45 * 1000;
+
+/** TRX-15: the per-file line for a file released WITHOUT the marking. */
+function unmarkedLine(i: Pick<PortalItem, "releasedUnmarked" | "unmarkedReason">): string | null {
+  if (i.releasedUnmarked !== true) return null;
+  const check = "Confirm with the issuer that this revision is still current before you use it.";
+  if (i.unmarkedReason === "not_pdf") return `Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking. ${check}`;
+  if (i.unmarkedReason === "oversize") return `Too large for the portal to mark — released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told). ${check}`;
+  if (i.unmarkedReason === "stamp_failed") {
+    return "Could not be marked UNCONTROLLED (most often a PDF saved with security or permission restrictions) — the copy downloaded " +
+      `from this link was released as issued, WITHOUT the marking, the as-issued footer or the verify QR (the issuer is told). ${check}`;
+  }
+  return `A copy downloaded from this link was released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told). ${check}`;
+}
 
 export default function TransmittalPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
@@ -120,20 +142,28 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const frames = useRef<HTMLIFrameElement[]>([]);
   useEffect(() => () => { for (const f of frames.current) f.remove(); frames.current = []; }, []);
 
-  const refresh = useCallback(async () => {
+  // `recheck` (TRX-15): the quiet re-read after a download — not an open on
+  // the usage trail, and a failure leaves the page as it is.
+  const refresh = useCallback(async (opts?: { recheck?: boolean }): Promise<PortalData | null> => {
     try {
-      const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}`);
+      const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`);
       if (!res.ok) {
+        if (opts?.recheck) return null;
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         setState(body?.error === "voided" ? "voided"
           : body?.error === "revoked" ? "revoked"
           : body?.error === "expired" ? "expired"
           : res.status === 404 ? "notfound" : "error");
-        return;
+        return null;
       }
-      setData((await res.json()) as PortalData);
+      const next = (await res.json()) as PortalData;
+      setData(next);
       setState("ok");
-    } catch { setState("error"); }
+      return next;
+    } catch {
+      if (!opts?.recheck) setState("error");
+      return null;
+    }
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -167,8 +197,19 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       setDownloading((cur) => (cur === docId ? null : cur));
       // Never "saved": a browser may drop an attachment that arrives in a
       // hidden frame, and the page cannot see whether it did.
-      setMsg({ tone: "ok", text: `${number}: the download should have started — check your browser's downloads. If nothing arrived, use "Download didn't start? Open the file directly" under ${number}.` });
+      const startedNote = `${number}: the download should have started — check your browser's downloads. If nothing arrived, use "Download didn't start? Open the file directly" under ${number}.`;
+      setMsg({ tone: "ok", text: startedNote });
+      // TRX-15: whether the copy left WITHOUT the marking is on the record,
+      // not on a header this frame can read — re-read the snapshot and say it
+      // (the line under the file shows it too).
+      void refresh({ recheck: true }).then((fresh) => {
+        const item = fresh?.items.find((x) => x.documentId === docId);
+        if (item?.releasedUnmarked === true) {
+          setMsg({ tone: "err", text: `${startedNote} This copy was released WITHOUT the UNCONTROLLED marking — see the note under ${number}.` });
+        }
+      });
     }, DOWNLOAD_SETTLE_MS);
+    window.setTimeout(() => { void refresh({ recheck: true }); }, DOWNLOAD_RECHECK_MS);
     // The frame outlives the transfer (removing it earlier would cancel a
     // download still being stamped); it is dropped well after the route's
     // own time budget, or when the page goes.
@@ -269,12 +310,8 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                       Effective {i.effectiveDate.slice(0, 10)}{i.notYetInForce ? " — not yet in force" : ""}
                     </div>
                   )}
-                  {i.releasedUnmarked === true && (
-                    <div className="text-[10px] font-bold text-amber-700">
-                      {i.unmarkedReason === "oversize"
-                        ? "Too large for the portal to mark — released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told). Confirm with the issuer that this revision is still current before you use it."
-                        : "Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking. Confirm with the issuer that this revision is still current before you use it."}
-                    </div>
+                  {unmarkedLine(i) && (
+                    <div className="text-[10px] font-bold text-amber-700">{unmarkedLine(i)}</div>
                   )}
                   {started.has(i.documentId) && (
                     // TRX-15: the hidden frame's download is not yet checked on

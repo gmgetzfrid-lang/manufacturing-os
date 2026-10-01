@@ -243,6 +243,73 @@ async function bumpUse(id: string, kind: "open" | "download"): Promise<void> {
   }
 }
 
+/** TRX-15: every row a filtered read returns, paged past PostgREST's
+ *  max-rows (each next window starts where the rows returned end, until an
+ *  empty page), at most `maxPages` windows. A page that errors ends the read
+ *  with the rows already in hand: every row is a fact, and a missing one is
+ *  never read as a claim (the caller treats "not seen" as unknown). */
+async function readPaged<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+  maxPages = 10,
+): Promise<T[]> {
+  const out: T[] = [];
+  const size = 1000;
+  try {
+    for (let from = 0, n = 0; n < maxPages; n++) {
+      const { data, error } = await page(from, from + size - 1);
+      if (error) break;
+      const rows = (data as T[] | null) ?? [];
+      if (rows.length === 0) break;
+      out.push(...rows);
+      from += rows.length;
+    }
+  } catch { /* the rows in hand stand */ }
+  return out;
+}
+
+/** TRX-15: the documents of this transmittal a copy of which LEFT the portal
+ *  without the UNCONTROLLED marking, with why when the trail says so. The
+ *  page saves through a hidden frame and cannot read the response's
+ *  X-Transmittal-Stamped header, so what only the download learns — a PDF
+ *  the stamper refused (`stamp_failed`: a permission-restricted or damaged
+ *  file), or one over the bound whose size was never recorded — is read back
+ *  here once it has happened:
+ *    · the distribution record (`download_audits.source =
+ *      'transmittal_portal_unstamped'`, a CHECKED write made before the bytes
+ *      leave) says THAT a copy left unmarked;
+ *    · the issuer's trail (`TRANSMITTAL_PORTAL_DOWNLOAD`, `details.stamped`
+ *      false) says WHY (`unstampedReason`) — and stands in for the record on a
+ *      database without the 20261068 columns.
+ *  Any copy counts, not only the latest pull: a later stamped pull does not
+ *  recall an unmarked copy already in the recipient's hands. A read that
+ *  fails leaves its documents unflagged (unknown — the page's standing note
+ *  covers them), never "marked". */
+async function unmarkedCopiesOut(transmittalId: string): Promise<Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>> {
+  const out = new Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>();
+  const pulls = await readPaged<{ document_id?: string | null }>((from, to) => supabaseAdmin
+    .from("download_audits").select("document_id")
+    .eq("transmittal_id", transmittalId)
+    .eq("source", "transmittal_portal_unstamped")
+    .order("id", { ascending: true })
+    .range(from, to));
+  for (const p of pulls) if (p.document_id) out.set(String(p.document_id), null);
+  const trail = await readPaged<{ details?: Record<string, unknown> | null }>((from, to) => supabaseAdmin
+    .from("audit_logs").select("details")
+    .eq("action", "TRANSMITTAL_PORTAL_DOWNLOAD")
+    .eq("resource_type", "transmittal").eq("resource_id", transmittalId)
+    .eq("details->>stamped", "false")
+    .order("id", { ascending: true })
+    .range(from, to));
+  for (const row of trail) {
+    const d = row.details ?? {};
+    if (d.stamped !== false || typeof d.documentId !== "string") continue;
+    const why = d.unstampedReason;
+    const reason = why === "not_pdf" || why === "oversize" || why === "stamp_failed" ? why : null;
+    out.set(d.documentId, reason ?? out.get(d.documentId) ?? null);
+  }
+  return out;
+}
+
 /** TRX-15: the bell kind of an unstampable-PDF notice (refused or released
  *  unmarked) — and what the once-per-(transmittal, document) dedupe reads. */
 const UNSTAMPABLE_NOTICE_KIND = "transmittal_unstampable";
@@ -558,30 +625,49 @@ export async function GET(req: NextRequest) {
 
   // The snapshot the portal renders — nothing beyond this transmittal.
   const { data: org } = await supabaseAdmin.from("orgs").select("name").eq("id", orgId).maybeSingle();
-  await bumpUse(String(t.id), "open");
+  // TRX-15: the page re-reads the snapshot after a download (`&recheck=1`)
+  // to learn whether the copy left unmarked — that re-read is not an open.
+  if (req.nextUrl.searchParams.get("recheck") !== "1") await bumpUse(String(t.id), "open");
   // TRX-15: the page saves a file without reading the response, so it can no
   // longer see the X-Transmittal-Stamped header — it says up front which
   // pinned files leave without the UNCONTROLLED marking: a file that is not a
   // PDF, and a PDF over the stamping bound on an item not armed for refusal
-  // (one read; null = unknown, and the page's standing note covers it — a PDF
-  // the stamper refuses is known only at download).
+  // (one read per 150 pins; null = unknown, and the page's standing note
+  // covers it). The read is scoped to the transmittal's org exactly as the
+  // download's own resolver is (`fileKeyForItem`): a version row outside it —
+  // a legacy row with no org_id among them — is never served, so there is
+  // nothing to flag. What only a download learns (a PDF the stamper refuses,
+  // an oversize file with no recorded size) is read back from the record
+  // once a copy has left (`unmarkedCopiesOut`).
   const pinnedIds = [...new Set(items.map((i) => i.versionId ?? i.version_id ?? null).filter((v): v is string => !!v))];
   const fileByVersion = new Map<string, { file_url: string | null; file_type: string | null; size: number | null }>();
-  if (pinnedIds.length) {
+  for (let i = 0; i < pinnedIds.length; i += 150) {
     const { data: fileRows, error: fileErr } = await supabaseAdmin
-      .from("document_versions").select("id, file_url, file_type, size").in("id", pinnedIds).eq("org_id", orgId);
-    if (!fileErr) {
-      for (const v of (fileRows as Array<{ id: string; file_url: string | null; file_type?: string | null; size?: number | null }> | null) ?? []) {
-        fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null, size: typeof v.size === "number" ? v.size : null });
-      }
+      .from("document_versions").select("id, file_url, file_type, size").in("id", pinnedIds.slice(i, i + 150)).eq("org_id", orgId);
+    if (fileErr) continue; // this chunk's items stay unknown
+    for (const v of (fileRows as Array<{ id: string; file_url: string | null; file_type?: string | null; size?: number | null }> | null) ?? []) {
+      fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null, size: typeof v.size === "number" ? v.size : null });
     }
   }
-  const unmarkedReason = (i: Item): "not_pdf" | "oversize" | null | undefined => {
+  const copiesOut = await unmarkedCopiesOut(String(t.id));
+  const fromFile = (i: Item): "not_pdf" | "oversize" | null | undefined => {
     const f = fileByVersion.get(String(i.versionId ?? i.version_id ?? ""));
     if (!f?.file_url) return undefined; // unknown
     if (!isPdfFile(f.file_url, f.file_type)) return "not_pdf";
     const size = typeof i.fileSize === "number" ? i.fileSize : f.size;
     return !refusesUnstampable(i) && typeof size === "number" && size > PORTAL_STAMP_MAX_BYTES ? "oversize" : null;
+  };
+  // `releasedUnmarked`: true — it leaves (or a copy already left) WITHOUT the
+  // marking; false — nothing says so; null — unknown. `unmarkedReason`: why,
+  // when known (null with `true` = a copy left unmarked, cause not on the trail).
+  const unmarked = (i: Item): { releasedUnmarked: boolean | null; unmarkedReason: "not_pdf" | "oversize" | "stamp_failed" | null } => {
+    const known = fromFile(i);
+    if (i.documentId && copiesOut.has(i.documentId)) {
+      const why = copiesOut.get(i.documentId) ?? null;
+      return { releasedUnmarked: true, unmarkedReason: why ?? (known === "not_pdf" || known === "oversize" ? known : null) };
+    }
+    if (known === undefined) return { releasedUnmarked: null, unmarkedReason: null };
+    return { releasedUnmarked: known !== null, unmarkedReason: known };
   };
   return NextResponse.json({
     number: t.number,
@@ -598,7 +684,7 @@ export async function GET(req: NextRequest) {
     recipientCompany: t.recipient_company,
     portalExpiresAt: (t.portal_expires_at as string | null) ?? null,
     items: items.map((i) => {
-      const unmarked = unmarkedReason(i);
+      const flag = unmarked(i);
       return {
         documentId: i.documentId, number: i.number, title: i.title ?? null, rev: i.rev ?? null,
         // TRX-3 / TRX-8: what was sent, as the database recorded it at issue.
@@ -606,10 +692,11 @@ export async function GET(req: NextRequest) {
         // REV-9: "not yet in force" decided in the facility's calendar (the one
         // shared "today"), not in the recipient's browser or in UTC.
         notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",
-        // TRX-15: not a PDF, or a PDF over the stamping bound (DEC-61 §5) →
-        // released as issued, without the marking (null = unknown).
-        releasedUnmarked: unmarked === undefined ? null : unmarked !== null,
-        unmarkedReason: unmarked ?? null,
+        // TRX-15: not a PDF, a PDF over the stamping bound, or a copy the
+        // record shows already left unmarked (a stamper refusal included —
+        // DEC-61 §5) → released as issued, without the marking (null = unknown).
+        releasedUnmarked: flag.releasedUnmarked,
+        unmarkedReason: flag.unmarkedReason,
         fileSize: typeof i.fileSize === "number" ? i.fileSize : null,
       };
     }),

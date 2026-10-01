@@ -56,6 +56,17 @@ const state = vi.hoisted(() => ({
   user: { id: "u1", email: "u1@example.com" } as { id: string; email: string } | null,
   /** Every `.in()` filter, per table (the chunking pins). */
   inCalls: [] as Array<{ table: string; column: string; n: number }>,
+  /** PostgREST's max-rows: a read returns at most this many rows, with no
+   *  error (lib/assets.ts AREA-9). */
+  maxRows: Infinity,
+  /** Every `.range()` window, per table (the paging pins). */
+  rangeCalls: [] as Array<{ table: string; from: number; to: number }>,
+  /** A read error on the Nth `.range()` page of a table (0-based). */
+  pageErrorAt: {} as Record<string, number | undefined>,
+  /** A response's declared Content-Length, per URL (fix pass 3). */
+  declaredLengthByUrl: {} as Record<string, number>,
+  /** Every URL whose body was read whole (arrayBuffer). */
+  bodyReads: [] as string[],
 }));
 
 function chain(table: string) {
@@ -64,6 +75,8 @@ function chain(table: string) {
   let op: "select" | "insert" | "update" = "select";
   let payload: unknown = null;
   let single = false;
+  let range: [number, number] | null = null;
+  let withCount = false;
   const resolveIt = () => {
     if (op === "insert") {
       state.inserts.push({ table, row: payload });
@@ -83,7 +96,14 @@ function chain(table: string) {
       Object.entries(ins).every(([k, v]) => v.includes(r[k])) &&
       Object.entries(filters).every(([k, v]) => !(k in r) || r[k] === v));
     if (single) return { data: rows[0] ?? null, error: null };
-    return { data: rows, error: null };
+    if (range) {
+      const page = state.rangeCalls.filter((c) => c.table === table).length;
+      state.rangeCalls.push({ table, from: range[0], to: range[1] });
+      if (state.pageErrorAt[table] === page) return { data: null, error: { message: "page read failed" } };
+    }
+    const window = range ? rows.slice(range[0], range[1] + 1) : rows;
+    const capped = window.slice(0, Number.isFinite(state.maxRows) ? state.maxRows : undefined);
+    return { data: capped, error: null, count: withCount ? rows.length : null };
   };
   const c: Row = {};
   const h: ProxyHandler<Row> = {
@@ -98,6 +118,8 @@ function chain(table: string) {
         if (p === "is") filters[String(args[0])] = args[1];
         if (p === "in") { ins[String(args[0])] = args[1] as unknown[]; state.inCalls.push({ table, column: String(args[0]), n: (args[1] as unknown[]).length }); }
         if (p === "single" || p === "maybeSingle") single = true;
+        if (p === "range") range = [Number(args[0]), Number(args[1])];
+        if (p === "select" && (args[1] as { count?: string } | undefined)?.count === "exact") withCount = true;
         return new Proxy(c, h);
       };
     },
@@ -160,10 +182,12 @@ vi.mock("pdf-lib", () => {
 import {
   buildAndDownloadDocPack, assessPackDocs, PackTooLargeError, PACK_MAX_SHEETS, PACK_MAX_PAGES, PACK_MAX_BYTES, packPartsFor, splitPackIds,
   packSheetBudgetRefusal, accountForRequested, packSheetOverBudget, packContentBudgetRefusal, packBuildFailureCode, isOutOfMemoryError,
+  packSplitPlan,
 } from "@/lib/docPack";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint, setWorkPackageStatus,
   printSnapshotSheets, coverEntryLabels, mergeLeftOut, memberFreshness, PackagePrintNotRecordedError, resetPackageSchemaFlag,
+  readPackageMemberIds,
 } from "@/lib/workPackages";
 import {
   downloadDocumentPdf, printDocumentPdf, buildFooterNotice, copyControlState, copyWatermark, holdFooterLine,
@@ -207,6 +231,11 @@ beforeEach(() => {
   state.byteLengthByUrl = {};
   state.user = { id: "u1", email: "u1@example.com" };
   state.inCalls = [];
+  state.maxRows = Infinity;
+  state.rangeCalls = [];
+  state.pageErrorAt = {};
+  state.declaredLengthByUrl = {};
+  state.bodyReads = [];
   resetPackageSchemaFlag();
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
@@ -214,9 +243,14 @@ beforeEach(() => {
     return {
       ok: true,
       status: 200,
-      arrayBuffer: async () => (state.byteLengthByUrl[u]
-        ? ({ byteLength: state.byteLengthByUrl[u] } as unknown as ArrayBuffer)
-        : new ArrayBuffer(state.pagesByUrl[u] ?? 1)),
+      headers: { get: (k: string) => (k.toLowerCase() === "content-length" && state.declaredLengthByUrl[u] !== undefined ? String(state.declaredLengthByUrl[u]) : null) },
+      body: { cancel: async () => { state.events.push(`cancel:${u}`); } },
+      arrayBuffer: async () => {
+        state.bodyReads.push(u);
+        return state.byteLengthByUrl[u]
+          ? ({ byteLength: state.byteLengthByUrl[u] } as unknown as ArrayBuffer)
+          : new ArrayBuffer(state.pagesByUrl[u] ?? 1);
+      },
       blob: async () => new Blob(["raw"]),
     };
   }));
@@ -319,6 +353,50 @@ describe("PKG-7 — a member the reader cannot open is never silently erased", (
     expect(pkgs.every((p) => p.docs.length === 2 && p.unknownCount === 0 && !p.membersUnread)).toBe(true);
     expect(state.inCalls.filter((c) => c.table === "work_package_documents").map((c) => c.n)).toEqual([150, 10]);
     expect(state.inCalls.filter((c) => c.table === "documents").map((c) => c.n)).toEqual([150, 150, 20]);
+  });
+
+  it("listWorkPackages PAGES each member read past PostgREST's max-rows — 50 open packages of 25 sheets (1250 rows) never lose their newest members to a silent 1000-row cap (fix pass 3)", async () => {
+    state.maxRows = 1000;
+    state.tables.work_packages = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, org_id: "org1", name: `P${i}`, status: "open", owner_user_id: "owner", created_at: "2026-09-01" }));
+    // in added_at order: the LAST 250 rows are the members a 1000-row cap used to drop
+    state.tables.work_package_documents = Array.from({ length: 1250 }, (_, i) => ({
+      id: `m${String(i).padStart(4, "0")}`, package_id: `p${i % 50}`, document_id: `d${i}`, pinned_version_id: `v-d${i}`, pinned_rev_label: "1",
+    }));
+    state.tables.documents = Array.from({ length: 1250 }, (_, i) => docRow(`d${i}`));
+    const pkgs = await listWorkPackages("org1");
+    expect(pkgs).toHaveLength(50);
+    expect(pkgs.every((p) => p.docs.length === 25 && !p.membersUnread && p.unknownCount === 0)).toBe(true);
+    // the newest member of the last package is there
+    expect(pkgs.find((p) => p.id === "p49")!.docs.map((d) => d.documentId)).toContain("d1249");
+    // two windows, the second starting where the first's rows ended
+    expect(state.rangeCalls.filter((c) => c.table === "work_package_documents")).toEqual([
+      { table: "work_package_documents", from: 0, to: 999 },
+      { table: "work_package_documents", from: 1000, to: 1999 },
+    ]);
+  });
+
+  it("a member page that FAILS mid-read marks that chunk's packages unread — never a 'Fresh' package missing the members the failed page held", async () => {
+    state.maxRows = 1000;
+    state.pageErrorAt.work_package_documents = 1;
+    state.tables.work_packages = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, org_id: "org1", name: `P${i}`, status: "open", owner_user_id: "owner", created_at: "2026-09-01" }));
+    state.tables.work_package_documents = Array.from({ length: 1250 }, (_, i) => ({ id: `m${i}`, package_id: `p${i % 50}`, document_id: `d${i}`, pinned_version_id: `v-d${i}`, pinned_rev_label: "1" }));
+    state.tables.documents = Array.from({ length: 1250 }, (_, i) => docRow(`d${i}`));
+    const pkgs = await listWorkPackages("org1");
+    expect(pkgs.every((p) => p.membersUnread)).toBe(true);
+  });
+
+  it("readPackageMemberIds reads ONE package's members fresh by package id, paged and in order; a failed page throws (nothing printed)", async () => {
+    state.maxRows = 1000;
+    state.tables.work_package_documents = Array.from({ length: 1100 }, (_, i) => ({ id: `m${i}`, package_id: "p1", document_id: `d${i}` }))
+      .concat([{ id: "x", package_id: "p2", document_id: "other" }]);
+    const ids = await readPackageMemberIds("p1");
+    expect(ids).toHaveLength(1100);
+    expect(ids[1099]).toBe("d1099");
+    expect(ids).not.toContain("other");
+    state.rangeCalls = [];
+    state.pageErrorAt.work_package_documents = 1;
+    await expect(readPackageMemberIds("p1")).rejects.toThrow(/Couldn't read the package's sheets \(page read failed\) — nothing was printed\./);
+    expect(src("lib/workPackages.ts")).toMatch(/export async function readPackageMemberIds[\s\S]{0,400}?\.eq\("package_id", packageId\)\s*\n\s*\.order\("added_at", \{ ascending: true \}\)\s*\n\s*\.order\("id", \{ ascending: true \}\)\s*\n\s*\.range\(from, to\)\);/);
   });
 
   it("refreshWorkPackage NEVER writes a pin for a document the reader cannot open — the others move, then the refresh fails naming them", async () => {
@@ -508,6 +586,77 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
     expect(packSheetOverBudget({ pages: PACK_MAX_PAGES })).toBeNull();
   });
 
+  it("a file whose RECORDED size (document_versions.size) is over the byte budget is left out before it is fetched at all — the tablet never allocates it (fix pass 3)", async () => {
+    state.tables.documents = [docRow("a"), docRow("big")];
+    state.tables.document_versions = [versionFor("a", 2), { ...versionFor("big", 4), size: 600 * 1024 * 1024 }];
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
+    expect(r.included).toBe(1);
+    expect(r.skipped).toEqual([expect.objectContaining({
+      documentId: "big", code: "too_large", versionId: "v-big",
+      reason: "600 MB on its own — over a field pack's 150 MB budget, so it was left out; download it on its own",
+    })]);
+    expect(vi.mocked(fetch).mock.calls.map((c) => String(c[0]))).toEqual(["https://files/a.pdf"]);
+    expect(state.bodyReads).toEqual(["https://files/a.pdf"]);
+  });
+
+  it("a file with no recorded size whose response DECLARES over the byte budget (Content-Length) is left out before its body is read", async () => {
+    state.tables.documents = [docRow("a"), docRow("big")];
+    state.tables.document_versions = [versionFor("a", 2), versionFor("big", 4)];
+    state.declaredLengthByUrl["https://files/big.pdf"] = 600 * 1024 * 1024;
+    const r = await buildAndDownloadDocPack(packInput(["a", "big"]) as never);
+    expect(r.skipped).toEqual([expect.objectContaining({ documentId: "big", code: "too_large" })]);
+    expect(state.bodyReads).toEqual(["https://files/a.pdf"]);      // never read whole
+    expect(state.events).toContain("cancel:https://files/big.pdf"); // the body is released
+    expect(state.loads).toBe(1);
+    // a database without document_versions.size (42703) still builds from the path alone
+    expect(src("lib/docPack.ts")).toMatch(/if \(versionErr && isUndefinedColumnError\(versionErr\)\) \{\s*\n\s*const retry = await supabase\.from\("document_versions"\)\.select\("id, file_url"\)/);
+  });
+
+  it("ONE large early sheet no longer collapses the split to one sheet per pack: the running-total refusal's parts are filled from the sizes (fix pass 3)", async () => {
+    // a: 600 pages, b: 600 pages — the overflow is at b with ONE sheet merged; c..f are small
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    state.tables.documents = ids.map((id) => docRow(id));
+    state.tables.document_versions = [
+      { ...versionFor("a", 600), size: 600 }, { ...versionFor("b", 600), size: 600 },
+      ...["c", "d", "e", "f"].map((id) => ({ ...versionFor(id, 10), size: 10 })),
+    ];
+    const err = await buildAndDownloadDocPack(packInput(ids) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackTooLargeError);
+    // before: perPack 1 → 6 one-sheet packs; now: [a] then [b, c, d, e, f]
+    expect(err.split).toEqual([["a"], ["b", "c", "d", "e", "f"]]);
+    expect(err.parts).toBe(2);
+    expect(err.perPack).toBe(5);
+    expect(String(err.message)).toMatch(/Split it into 2 packs of at most 5 sheets each/);
+    expect(state.events).not.toContain("download");
+  });
+
+  it("the sheet-count refusal fills its parts from the RECORDED sizes: 300 sheets, the first 140 MB and the second 20 MB, split into 3 packs, not 300 (fix pass 3)", async () => {
+    const MBy = 1024 * 1024;
+    const ids = Array.from({ length: 300 }, (_, i) => `s${i}`);
+    state.tables.documents = ids.map((id) => docRow(id));
+    state.tables.document_versions = ids.map((id, i) => ({ ...versionFor(id, 1), size: i === 0 ? 140 * MBy : i === 1 ? 20 * MBy : 100 * 1024 }));
+    const err = await buildAndDownloadDocPack(packInput(ids) as never).catch((e) => e);
+    expect(err).toBeInstanceOf(PackTooLargeError);
+    expect((err.split as string[][]).map((p) => p.length)).toEqual([1, 150, 149]);
+    expect(err.parts).toBe(3);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    // the gate's refusals ride weightless with their part, so each part's print names its own
+    expect(packSplitPlan([
+      { id: "x", bytes: null, pages: null, weightless: true },
+      { id: "a", bytes: 100 * MBy, pages: null },
+      { id: "held", bytes: null, pages: null, weightless: true },
+      { id: "b", bytes: 100 * MBy, pages: null },
+      { id: "c", bytes: null, pages: null }, // unknown: the mean of the known (100 MB)
+    ])).toEqual([["x", "a", "held"], ["b"], ["c"]]);
+    // an unknown page count follows the measured pages-per-byte (1 here):
+    // m 400 + n ~500 = 900 pages fit; o's ~200 more would pass 1000
+    expect(packSplitPlan([
+      { id: "m", bytes: 400, pages: 400 },
+      { id: "n", bytes: 500, pages: null },
+      { id: "o", bytes: 200, pages: null },
+    ])).toEqual([["m", "n"], ["o"]]);
+  });
+
   it("the RUNNING total is the only refusal, and its split always helps: packs of at most the sheets that fitted (one, when the first sheet alone nearly fills a pack)", async () => {
     state.tables.documents = [docRow("a"), docRow("b")];
     state.tables.document_versions = [versionFor("a", 900), versionFor("b", 200)];
@@ -544,7 +693,10 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
   it("the asset hub turns a refused pack into the parts it names — 'Print part 1 of N' (fix pass: splitPackIds is no longer unused)", () => {
     const hub = src("app/(protected)/assets/[tag]/page.tsx");
     expect(hub).toContain('const { buildAndDownloadDocPack, PackTooLargeError, splitPackIds } = await import("@/lib/docPack");');
-    expect(hub).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack >= 1\) \{[\s\S]{0,200}?setPackParts\(splitPackIds\(all, e\.perPack\)\);/);
+    // fix pass 3: the builder's size-filled split when it has one, uniform parts otherwise;
+    // a refused PART is replaced by its own finer split
+    expect(hub).toMatch(/if \(e instanceof PackTooLargeError && e\.perPack >= 1\) \{\s*\n\s*const split = e\.split && e\.split\.length > 1 \? e\.split : splitPackIds\(ids, e\.perPack\);/);
+    expect(hub).toContain("? [...prev.slice(0, part.n - 1), ...split, ...prev.slice(part.n)]");
     expect(hub).toContain("onClick={() => void runPack(ids, { n: i + 1, of: packParts.length })}>");
     expect(hub).toContain("Print part {i + 1} of {packParts.length} ({ids.length})");
     // the split the refusal names is the split the page offers
@@ -555,7 +707,7 @@ describe("PKG-12 — a pack has a budget, keeps its order, and the cover gives e
   });
 
   it("the work-package member query orders deterministically; the page builds the cover with page numbers", () => {
-    expect(src("lib/workPackages.ts")).toMatch(/\.in\("package_id", ids\)\s*\n\s*\.order\("added_at", \{ ascending: true \}\)\s*\n\s*\.order\("id", \{ ascending: true \}\);/);
+    expect(src("lib/workPackages.ts")).toMatch(/\.in\("package_id", ids\)\s*\n\s*\.order\("added_at", \{ ascending: true \}\)\s*\n\s*\.order\("id", \{ ascending: true \}\)\s*\n\s*\.range\(from, to\)\);/);
     const page = src("app/(protected)/packages/page.tsx");
     expect(page).toContain("const labels = coverEntryLabels(includedSheets, coverContentsChunks(includedSheets.length).length);");
     expect(page).toContain("label: labels[i],");
@@ -967,6 +1119,9 @@ describe("VFY-19 — the snapshot records the sheets the print left out, with a 
     const page = src("app/(protected)/packages/page.tsx");
     expect(page).toContain("buildCoverAfter: async (includedSheets, builderSkipped) => {");
     expect(page).toContain("leftOut: mergeLeftOut(assessment.skipped, builderSkipped).flatMap((s) =>");
-    expect(page).toContain("const assessment = await assessPackDocs(pkg.docs.map((d) => d.documentId), { userId: uid });");
+    // the members are read FRESH by package id right before the gate (PKG-7 /
+    // VFY-19 — never the list loaded earlier, which may be stale or short)
+    expect(page).toMatch(/const memberIds = await readPackageMemberIds\(pkg\.id\);[\s\S]{0,400}?const assessment = await assessPackDocs\(memberIds, \{ userId: uid \}\);/);
+    expect(page).not.toContain("assessPackDocs(pkg.docs.map(");
   });
 });

@@ -624,9 +624,11 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
     expect(portal).toContain("{sizeLabel(i.fileSize) ?? \"\"}");
     // a file released without the UNCONTROLLED marking is said to be so —
     // since TRX-15 (document-control P8) the page saves a download without
-    // reading it (no response headers), so the route flags a non-PDF item
-    // up front and the page says so beside the item
-    expect(portal).toContain("{i.releasedUnmarked === true && (");
+    // reading it (no response headers), so the route flags the item (up
+    // front for a non-PDF; from the record once a copy left unmarked) and
+    // the page says so beside the item
+    expect(portal).toContain("{unmarkedLine(i) && (");
+    expect(portal).toContain("if (i.releasedUnmarked !== true) return null;");
     expect(portal).toMatch(/Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking/);
     expect(portal).toMatch(/state === "revoked" \?/);
     expect(portal).toMatch(/state === "expired" \?/);

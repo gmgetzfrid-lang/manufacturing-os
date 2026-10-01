@@ -162,7 +162,10 @@ export interface PackSheetRow {
  *  `notInPack`. Present tense on purpose: the route knows what is true of the
  *  sheet now, not what the print gate saw — a re-print would leave it out too. */
 export type NotPrintableReason =
-  | "not_issued" | "status_unrecognised" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf";
+  | "not_issued" | "status_unrecognised" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf"
+  /** Over a field pack's page / byte budget on its own (document-control
+   *  PKG-12): every print leaves it out, so it is supplied separately. */
+  | "too_large";
 
 const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   not_issued: "not issued",
@@ -173,6 +176,7 @@ const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   unavailable: "no longer available",
   no_file: "no current file",
   not_pdf: "not a printable PDF",
+  too_large: "too large for a field pack — get it separately",
 };
 
 /** The words for one not-printable reason (an unknown one reads "cannot be printed"). */
@@ -233,9 +237,12 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
         blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
     case "stale": {
       // A sheet of the package that is not in this pack but could be printed
-      // now. The print snapshot does not record what the print gate left out
-      // (VFY-19), so nothing here says it was "added since printing" — only
-      // that the package holds it and this pack does not.
+      // now. The verdict words here say only that the package holds it and
+      // this pack does not; WHEN it went missing is per sheet, and only from
+      // a snapshot that records its left-out sheets (VFY-19): the route sets
+      // `leftOutAtPrint` or `addedSincePrint`, and the pack page appends
+      // "left out of this printing — …" / "added since this pack was
+      // printed" to the sheet's line (lib/packLeftOut.ts missingSheetWhen).
       const missing = r.notInPack?.length ?? 0;
       // A sheet that is not an issued revision (a draft, or a legacy row with
       // no status) is not evidence that anything CHANGED since printing — it

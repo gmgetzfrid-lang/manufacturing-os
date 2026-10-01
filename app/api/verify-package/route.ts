@@ -31,11 +31,15 @@
 // the package sheets it LEFT OUT (`printed: false`, a lib/packLeftOut.ts
 // code). From such a snapshot each missing sheet also says WHEN: "left out of
 // this printing — <code>" or "added to the package since this printing"; and
-// a file the print could not read as a PDF, still the current revision, is
-// one a re-print cannot carry either (amber `not_pdf`, not red). An older
+// a sheet a re-print cannot carry either, while the revision it tried is
+// still the current one, is amber, not red: a file the print could not read
+// as a PDF (`unreadable_pdf` → `not_pdf`), and a sheet over a field pack's
+// budget on its own (`too_large` → `too_large`, document-control PKG-12 —
+// it is left out of every re-print and supplied separately). An older
 // snapshot (no marker) keeps the present-tense split alone and never claims
 // "added since printing". Only the CODE is published — never the printer's
-// free-text reason.
+// free-text reason. Both amber rules are P8's verdict changes in this
+// route, for the PS-VERIFY owner's sign-off (VFY-19's record).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -288,8 +292,9 @@ export async function GET(req: NextRequest) {
   // hold — DEC-65 §1). A refused sheet would be left out of a
   // re-print too: listed with why, never "stale". What stays in notInPack is
   // an in-force sheet with no document_holds row and a PDF on file. (A fetch
-  // that failed at print, or a PDF pdf-lib could not parse, is visible only
-  // from a snapshot that records its left-out sheets — VFY-19.)
+  // that failed at print, a PDF pdf-lib could not parse, or a sheet over a
+  // field pack's budget on its own is visible only from a snapshot that
+  // records its left-out sheets — VFY-19.)
   type WhenMissing = { leftOutAtPrint?: string; addedSincePrint?: true };
   const notPrintable: Array<{ label: string; reason: NotPrintableReason } & WhenMissing> = [];
   const notInPack: Array<{ label: string } & WhenMissing> = [];
@@ -333,9 +338,13 @@ export async function GET(req: NextRequest) {
       else if (!isPdfFile(f.file_url, f.file_type ?? null)) reason = "not_pdf";
     }
     const atPrint = leftOutAtPrint.get(o.id);
-    // VFY-19: the print could not read this revision's file as a PDF, and it
-    // is still the current revision — a re-print would leave it out again.
-    if (!reason && atPrint?.code === "unreadable_pdf" && !!atPrint.versionId && atPrint.versionId === o.curId) reason = "not_pdf";
+    // VFY-19: the print left this revision out for a reason that is the
+    // FILE's own, and it is still the current revision — a re-print would
+    // leave it out again: pdf-lib could not read it as a PDF, or it is over
+    // a field pack's budget on its own (PKG-12 — it is supplied separately).
+    const sameRevision = !!atPrint?.versionId && atPrint.versionId === o.curId;
+    if (!reason && sameRevision && atPrint?.code === "unreadable_pdf") reason = "not_pdf";
+    if (!reason && sameRevision && atPrint?.code === "too_large") reason = "too_large";
     const when: WhenMissing = !recordsLeftOut ? {} : atPrint ? { leftOutAtPrint: atPrint.code } : { addedSincePrint: true };
     const label = labelOf(o.id, null);
     if (reason) notPrintable.push({ label, reason, ...when });

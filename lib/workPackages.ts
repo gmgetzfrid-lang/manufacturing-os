@@ -83,6 +83,54 @@ function chunked<T>(xs: T[]): T[][] {
   return out;
 }
 
+/** PKG-7: PostgREST caps every response at the project's max-rows (1,000
+ *  by default — lib/assets.ts AREA-9) and returns the truncated page WITHOUT
+ *  an error. A member read is therefore paged: a stable order, an exact
+ *  count on the first window, each next window starting where the rows
+ *  returned end, until the count (or an empty page) says it has them all —
+ *  so a dropped member never reads "Fresh", prints as missing, or scans
+ *  "added since this pack was printed". */
+const MEMBER_PAGE = 1000;
+/** Refuse rather than silently truncate past this many member rows. */
+const MAX_MEMBER_ROWS = 100_000;
+type PageRead = PromiseLike<{ data: unknown; error: { message: string; code?: string } | null; count?: number | null }>;
+async function readAllMemberRows(
+  page: (from: number, to: number, withCount: boolean) => PageRead,
+): Promise<{ rows: Array<Record<string, unknown>>; error: { message: string; code?: string } | null }> {
+  const rows: Array<Record<string, unknown>> = [];
+  let total: number | null = null;
+  for (let from = 0; ; ) {
+    const res = await page(from, from + MEMBER_PAGE - 1, total === null);
+    if (res.error) return { rows, error: res.error };
+    if (total === null) total = typeof res.count === "number" ? res.count : Number.POSITIVE_INFINITY;
+    const got = (res.data as Array<Record<string, unknown>> | null) ?? [];
+    rows.push(...got);
+    if (got.length === 0 || rows.length >= total) return { rows, error: null };
+    from += got.length;
+    if (rows.length >= MAX_MEMBER_ROWS) {
+      return { rows, error: { message: `more than ${MAX_MEMBER_ROWS} package members — not read whole` } };
+    }
+  }
+}
+
+/** PKG-7 / VFY-19: one package's member document ids, read FRESH by
+ *  package_id (paged, in the package's own order — joined first, then id).
+ *  The print reads this right before its gate, so the pack and its snapshot
+ *  are built from the package as it is NOW, never from a list loaded earlier
+ *  (which may be stale, or was read alongside every other open package). A
+ *  read that fails THROWS — nothing is printed. */
+export async function readPackageMemberIds(packageId: string): Promise<string[]> {
+  const { rows, error } = await readAllMemberRows((from, to, withCount) => supabase
+    .from("work_package_documents")
+    .select("document_id", withCount ? { count: "exact" } : undefined)
+    .eq("package_id", packageId)
+    .order("added_at", { ascending: true })
+    .order("id", { ascending: true })
+    .range(from, to));
+  if (error) throw new Error(`Couldn't read the package's sheets (${error.message}) — nothing was printed.`);
+  return rows.map((m) => String(m.document_id));
+}
+
 /** PKG-7: one member's freshness. Pure. */
 export function memberFreshness(
   pinnedVersionId: string | null,
@@ -130,18 +178,21 @@ export async function listWorkPackages(
     // order the package lists, prints and covers its sheets in. Chunked by
     // package, so each package's members come from one read, in order.
     // PKG-7: a member read that FAILS marks its packages' sheets unknown —
-    // never "0 docs, Fresh".
+    // never "0 docs, Fresh". Each chunk is PAGED past PostgREST's max-rows
+    // (readAllMemberRows): 50 open packages of ~20 sheets is 1000+ rows, and
+    // a truncated page used to drop the newest members silently.
     const members: Array<Record<string, unknown>> = [];
     const membersUnread = new Set<string>();
     for (const ids of chunked(pkgRows.map((p) => String(p.id)))) {
-      const { data: memberRows, error: memberErr } = await supabase
+      const { rows: memberRows, error: memberErr } = await readAllMemberRows((from, to, withCount) => supabase
         .from("work_package_documents")
-        .select("*")
+        .select("*", withCount ? { count: "exact" } : undefined)
         .in("package_id", ids)
         .order("added_at", { ascending: true })
-        .order("id", { ascending: true });
+        .order("id", { ascending: true })
+        .range(from, to));
       if (memberErr) { ids.forEach((id) => membersUnread.add(id)); continue; }
-      members.push(...((memberRows as Array<Record<string, unknown>>) ?? []));
+      members.push(...memberRows);
     }
 
     const docIds = [...new Set(members.map((m) => String(m.document_id)))];
@@ -422,12 +473,15 @@ export async function refreshWorkPackage(
     reason?: "refresh" | "print";
   },
 ): Promise<void> {
-  const { data: members, error: memberErr } = await supabase
+  // Paged past PostgREST's max-rows, like every member read (PKG-7).
+  const { rows: members, error: memberErr } = await readAllMemberRows((from, to, withCount) => supabase
     .from("work_package_documents")
-    .select("id, document_id, org_id, pinned_version_id, pinned_rev_label")
-    .eq("package_id", packageId);
+    .select("id, document_id, org_id, pinned_version_id, pinned_rev_label", withCount ? { count: "exact" } : undefined)
+    .eq("package_id", packageId)
+    .order("id", { ascending: true })
+    .range(from, to));
   if (memberErr) throw new Error(`Couldn't read the package's pins (${memberErr.message}) — nothing moved.`);
-  let rows = (members as Array<{
+  let rows = (members as unknown as Array<{
     id: string; document_id: string; org_id?: string | null;
     pinned_version_id?: string | null; pinned_rev_label?: string | null;
   }>) ?? [];

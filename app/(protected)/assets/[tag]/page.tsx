@@ -108,12 +108,20 @@ export default function AssetHubPage() {
         );
       } catch (e) {
         // PKG-12: over the budget → the split the refusal names, as parts
-        // this page prints. (A sheet over the budget ON ITS OWN never refuses
-        // the pack: the builder leaves it out as too large, names it in the
-        // note above, and builds the rest — it is downloaded on its own.)
+        // this page prints: the builder's own split, filled from the sheets'
+        // sizes (`e.split` — one large sheet costs its own part, not a
+        // one-sheet split of the tag), else uniform parts of `perPack`. A
+        // refused PART is replaced by its own finer split. (A sheet over the
+        // budget ON ITS OWN never refuses the pack: the builder leaves it out
+        // as too large, names it in the note above, and builds the rest — it
+        // is downloaded on its own.)
         if (e instanceof PackTooLargeError && e.perPack >= 1) {
-          const all = docs.map((d) => d.id);
-          if (all.length > e.perPack) setPackParts(splitPackIds(all, e.perPack));
+          const split = e.split && e.split.length > 1 ? e.split : splitPackIds(ids, e.perPack);
+          if (split.length > 1) {
+            setPackParts((prev) => (part && prev && prev.length === part.of
+              ? [...prev.slice(0, part.n - 1), ...split, ...prev.slice(part.n)]
+              : split));
+          }
         }
         throw e;
       }
@@ -261,7 +269,7 @@ export default function AssetHubPage() {
         )}
         {packParts && packParts.length > 1 && uid && activeOrgId && (
           <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs flex flex-wrap items-center gap-2">
-            <span className="text-[var(--color-text-muted)]">Too many sheets for one field pack — print it in {packParts.length} parts:</span>
+            <span className="text-[var(--color-text-muted)]">Too large for one field pack — print it in {packParts.length} parts:</span>
             {packParts.map((ids, i) => (
               <Button key={i} size="sm" variant="secondary" disabled={packing}
                 onClick={() => void runPack(ids, { n: i + 1, of: packParts.length })}>

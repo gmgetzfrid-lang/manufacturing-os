@@ -71,6 +71,11 @@ const state = vi.hoisted(() => ({
   // a refused bell / email insert (supabase-js resolves { error }, never rejects)
   notificationInsertError: null as { message: string } | null,
   emailInsertError: null as { message: string } | null,
+  // TRX-15 fix pass 3: every `.in()` size on document_versions, and the
+  // windows of the snapshot's record / trail reads
+  versionInSizes: [] as number[],
+  ranges: [] as Array<{ table: string; from: number; to: number }>,
+  downloadReadError: null as { message: string; code?: string } | null,
 }));
 
 function chain(table: string) {
@@ -78,7 +83,19 @@ function chain(table: string) {
   let op: "select" | "update" | "insert" = "select";
   let payload: Record<string, unknown> | null = null;
   const c: Record<string, unknown> = {};
+  let range: [number, number] | null = null;
+  const windowed = <T,>(rows: T[]): T[] => {
+    if (!range) return rows;
+    state.ranges.push({ table, from: range[0], to: range[1] });
+    return rows.slice(range[0], range[1] + 1);
+  };
   const resolveList = () => {
+    if (table === "download_audits" && op === "select") {
+      // the snapshot's read of the copies that left unmarked
+      if (state.downloadReadError) return { data: null, error: state.downloadReadError };
+      const rows = state.downloads.filter((d) => d.transmittal_id === filters.transmittal_id && d.source === filters.source);
+      return { data: windowed(rows.map((d) => ({ document_id: d.document_id }))), error: null };
+    }
     if (table === "document_versions") {
       state.fallbackFilters.push({ ...filters });
       const rows = state.versionRows.filter((r) => filters.org_id === (r.org_id ?? null));
@@ -96,11 +113,15 @@ function chain(table: string) {
       return { data: rows.map((_, i) => ({ id: `n${i}` })), error: null };
     }
     if (table === "audit_logs" && op === "select") {
-      // the dedupe read: the trail rows of this action, transmittal and document
-      const rows = state.audits.filter((a) =>
-        a.action === filters.action && a.resource_id === filters.resource_id &&
-        (a.details as Record<string, unknown> | undefined)?.documentId === filters["details->>documentId"]);
-      return { data: rows.map((_, i) => ({ id: `a${i}` })), error: null };
+      // the trail rows of this action and transmittal — by document (a dedupe
+      // read), or the unstamped ones (the snapshot's read of why)
+      const rows = state.audits.filter((a) => {
+        const d = (a.details as Record<string, unknown> | undefined) ?? {};
+        return a.action === filters.action && a.resource_id === filters.resource_id &&
+          (filters["details->>documentId"] === undefined || d.documentId === filters["details->>documentId"]) &&
+          (filters["details->>stamped"] === undefined || String(d.stamped) === filters["details->>stamped"]);
+      });
+      return { data: windowed(rows.map((a, i) => ({ id: `a${i}`, details: a.details }))), error: null };
     }
     return { data: [], error: null };
   };
@@ -111,6 +132,8 @@ function chain(table: string) {
         if (prop === "eq" || prop === "lte") filters[`${prop}:${String(args[0])}`] = args[1];
         if (prop === "eq") filters[args[0] as string] = args[1];
         if (prop === "update") { op = "update"; payload = args[0] as Record<string, unknown>; }
+        if (prop === "range") range = [Number(args[0]), Number(args[1])];
+        if (prop === "in" && table === "document_versions") state.versionInSizes.push((args[1] as unknown[]).length);
         if (prop === "insert") {
           op = "insert";
           const row = args[0] as Record<string, unknown>;
@@ -191,10 +214,11 @@ const DOC = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const VER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
-function get(file?: string): Promise<Response> {
+function get(file?: string, extra?: Record<string, string>): Promise<Response> {
   const u = new URL("https://app/api/transmittal");
   u.searchParams.set("token", TOKEN);
   if (file) u.searchParams.set("file", file);
+  for (const [k, v] of Object.entries(extra ?? {})) u.searchParams.set(k, v);
   return GET(new NextRequest(u));
 }
 function post(body: Record<string, unknown>): Promise<Response> {
@@ -238,6 +262,9 @@ beforeEach(async () => {
   state.issuerEmail = null;
   state.notificationInsertError = null;
   state.emailInsertError = null;
+  state.versionInSizes = [];
+  state.ranges = [];
+  state.downloadReadError = null;
 });
 
 describe("GET /api/transmittal file resolver (EGR-1)", () => {
@@ -871,5 +898,70 @@ describe("TRX-15 — the snapshot flags a pinned file that leaves unmarked (the 
     (state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable = true;
     body = await (await get()).json() as { items: Array<Record<string, unknown>> };
     expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
+  });
+
+  it("a PDF the STAMPER refused (stamp_failed — known only at download) is flagged once a copy has left: the record says THAT it left unmarked, the trail says WHY (fix pass 3)", async () => {
+    // a small, ordinary-looking PDF pin: nothing up front says it will leave unmarked
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", size: 10, org_id: "orgA" }];
+    let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
+    // the recipient pulls it; the stamper refuses (a permission-restricted vendor PDF) → released unmarked (DEC-61 §5)
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+    vi.mocked(applyStampToPdfDoc).mockImplementationOnce(async () => { throw new Error("Input document to `PDFDocument.load` is encrypted."); });
+    expect((await get(DOC)).status).toBe(200);
+    expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+    // the page's re-read now says so — with the reason
+    body = await (await get(undefined, { recheck: "1" })).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "stamp_failed" });
+    // a later STAMPED pull does not recall the unmarked copy already out
+    expect((await get(DOC)).status).toBe(200);
+    expect(state.downloads[1].source).toBe("transmittal_portal");
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: "stamp_failed" });
+    // the reads are paged (max-rows never truncates them silently)
+    expect(state.ranges.some((r) => r.table === "download_audits" && r.from === 0 && r.to === 999)).toBe(true);
+    expect(state.ranges.some((r) => r.table === "audit_logs" && r.from === 0 && r.to === 999)).toBe(true);
+  });
+
+  it("the record without a trail reason still flags the copy (reason unknown); a record read that fails flags nothing — never 'marked' (fix pass 3)", async () => {
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", size: 10, org_id: "orgA" }];
+    state.downloads = [{ document_id: DOC, transmittal_id: "t1", source: "transmittal_portal_unstamped" }];
+    let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: true, unmarkedReason: null });
+    // another transmittal's unmarked copy is not this one's
+    state.downloads = [{ document_id: DOC, transmittal_id: "t2", source: "transmittal_portal_unstamped" }];
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: false });
+    // a database without the 20261068 columns: the read errors → the item keeps what the file says
+    state.downloadReadError = { code: "42703", message: "column download_audits.transmittal_id does not exist" };
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0]).toMatchObject({ releasedUnmarked: false, unmarkedReason: null });
+  });
+
+  it("the page's re-read after a download (`&recheck=1`) is not an open on the usage trail (fix pass 3)", async () => {
+    await get(undefined, { recheck: "1" });
+    expect(state.rpcs).toEqual([]);
+    await get();
+    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } }]);
+  });
+
+  it("the snapshot's pinned-version read is chunked at 150 ids (fix pass 3)", async () => {
+    state.transmittal!.items = Array.from({ length: 320 }, (_, i) => ({
+      documentId: `doc-${i}`, number: `P-${i}`, rev: "1", versionId: `ver-${i}`,
+    }));
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(state.versionInSizes).toEqual([150, 150, 20]);
+  });
+
+  it("the page re-reads the snapshot after a download and says a copy left unmarked — a stamper refusal included (fix pass 3)", () => {
+    const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
+    expect(page).toContain('fetch(`/api/transmittal?token=${encodeURIComponent(token)}${opts?.recheck ? "&recheck=1" : ""}`)');
+    expect(page).toMatch(/void refresh\(\{ recheck: true \}\)\.then\(\(fresh\) => \{[\s\S]{0,200}?item\?\.releasedUnmarked === true/);
+    expect(page).toContain("window.setTimeout(() => { void refresh({ recheck: true }); }, DOWNLOAD_RECHECK_MS);");
+    expect(page).toContain('if (i.unmarkedReason === "stamp_failed") {');
+    expect(page).toMatch(/the copy downloaded " \+\s*\n\s*`from this link was released as issued, WITHOUT the marking, the as-issued footer or the verify QR \(the issuer is told\)/);
+    // a copy flagged with no reason on the trail still gets a line
+    expect(page).toContain("A copy downloaded from this link was released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told).");
   });
 });

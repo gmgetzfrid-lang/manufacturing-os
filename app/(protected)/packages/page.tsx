@@ -25,7 +25,7 @@ import { supabase } from "@/lib/supabase";
 import { isControllerPrincipal } from "@/lib/permissions";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
-  setWorkPackageStatus, coverEntryLabels, mergeLeftOut, type WorkPackage,
+  setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
 } from "@/lib/workPackages";
 
 interface DocPick { id: string; label: string; rev: string | null }
@@ -166,10 +166,15 @@ export default function PackagesPage() {
     try {
       const { buildPackageCover, coverContentsChunks } = await import("@/lib/physicalBridge");
       const { buildAndDownloadDocPack, assessPackDocs } = await import("@/lib/docPack");
+      // The package's members, read FRESH by package id right before the
+      // gate (PKG-7 / VFY-19): never the list this page loaded earlier, which
+      // may be stale or have been cut short — the pack, its snapshot and every
+      // later "added since this pack was printed" are judged against this read.
+      const memberIds = await readPackageMemberIds(pkg.id);
       // Gate first: which sheets CAN be printed? Nothing is recorded or
       // refreshed for a pack that would produce no paper. The printer's
       // read-&-understood gate is part of it (PKG-9).
-      const assessment = await assessPackDocs(pkg.docs.map((d) => d.documentId), { userId: uid });
+      const assessment = await assessPackDocs(memberIds, { userId: uid });
       if (assessment.packable.length === 0) {
         const first = assessment.skipped[0];
         showToast({
