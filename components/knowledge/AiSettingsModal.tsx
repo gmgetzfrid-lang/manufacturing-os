@@ -76,6 +76,9 @@ type UsageView = Omit<AiUsageSummary, "team"> & {
   unpricedCalls?: number;
   /** GOV-10: the viewer's own cap follows the workspace default. */
   selfFollowsDefault?: boolean;
+  /** GOV-10: nobody else active holds ai.manage_caps — the viewer's own
+   *  raise has no second signature to wait for, so it goes through. */
+  soleCapsHolder?: boolean;
   team?: Array<NonNullable<AiUsageSummary["team"]>[number] & { calls?: number; locked?: boolean; byOp?: Record<string, OpLine> }>;
 };
 
@@ -578,13 +581,17 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     try {
       await setAiCap(orgId, cap);
       // GOV-10: raising the default you follow does not raise your own cap —
-      // the server holds you at your current figure.
-      const heldSelf = usage.selfFollowsDefault === true && cap > (usage.orgCapUsd ?? usage.capUsd);
+      // the server holds you at your current figure — unless nobody else
+      // manages AI caps, when yours follows it (recorded as such).
+      const raisesOwn = usage.selfFollowsDefault === true && cap > (usage.orgCapUsd ?? usage.capUsd);
+      const sole = usage.soleCapsHolder === true;
       showToast({ type: "success", title: cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
-        : heldSelf
+        : raisesOwn && !sole
           ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(usage.orgCapUsd ?? usage.capUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
-          : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
+          : raisesOwn
+            ? `Default monthly cap set to ${fmtUsd(cap)} per person, yours included — you're the only person who manages AI caps here, so there is nobody else to raise it. The change is recorded in the audit log.`
+            : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -743,7 +750,9 @@ export function UsagePanel({ orgId }: { orgId: string }) {
             Each person meters against their own cap{canManageCaps ? " — the dropdown sets it (highlighted = personal override, “def” = the workspace default)" : ""}.
             Every AI call counts (hover a row for where it went). Estimated from exact provider token counts ×
             published rates; AI calls lock server-side at 100% — at once for a $0 cap — and reset on the 1st (UTC).
-            {canManageCaps
+            {canManageCaps && usage.soleCapsHolder
+              ? " You're the only person who manages AI caps here, so you can raise your own; every change is recorded in the audit log. Grant “Manage AI spend caps” to someone else (Permissions) and raising your own cap takes them."
+              : canManageCaps
               ? " Nobody can raise their own cap, and every change notifies the others who manage caps."
               : " Caps are set by people with the “Manage AI spend caps” permission (Admin by default)."}
           </p>

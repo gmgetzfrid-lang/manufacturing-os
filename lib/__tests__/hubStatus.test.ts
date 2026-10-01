@@ -9,10 +9,13 @@
 //           when nothing is indexed, and its row ignores the viewer's key
 //   HUB-10  the snapshot is keyed by user + org and discarded on a uid mismatch;
 //           a uid or org change while the page is mounted never carries the
-//           last identity's status over (nor saves it under the new key)
+//           last identity's status over (nor saves it under the new key) —
+//           including an Admin's cached database check, which patches before
+//           any other source lands
 //   HUB-5   fix CTAs land on the control, or say who can fix it
-//   HUB-3   the first Facility setup step is pointed at from the front door;
-//           the two "Setup" surfaces have different names
+//   HUB-3   the first Facility setup step is pointed at from the front door,
+//           from counts that were read (a failed count is never "not
+//           started"); the two "Setup" surfaces have different names
 //   HUB-4   the sidebar hint names every tab (derived); no stale tab count
 //   HUB-6   AI instructions (playbooks) in the feature atlas and the sidebar
 //   HUB-12  copy quotes controls by their on-screen names
@@ -25,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   MEANING_INDEX_OK_PCT, hubSnapshotKey, hubGapsKey, legacyHubKeys, readHubSnapshot, writeHubSnapshot,
-  meaningIndexCard, knowledgeFix, meaningIndexFix, recentQuestionsCopy, firstSetupStep,
+  meaningIndexCard, knowledgeFix, meaningIndexFix, recentQuestionsCopy, firstSetupStep, setupCountsPatch,
 } from "@/lib/hubStatus";
 import { searchAtlas, FEATURE_ATLAS } from "@/lib/featureAtlas";
 import { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
@@ -41,6 +44,8 @@ const env = vi.hoisted(() => ({
   conns: { personal: { keyLast4: "abcd", embeddingKeyLast4: null } } as unknown,
   connsFail: null as Error | null,
   gaps: { ok: true, body: { missingTables: [], missingColumns: [] } },
+  /** every network source pends forever (the key check's cold start, a slow database) */
+  hang: false,
 }));
 vi.mock("@/components/providers/RoleContext", () => ({
   useRole: () => ({ ...env.role, hasAnyRole: (rs: string[]) => rs.some((r) => env.role.roles.includes(r)) }),
@@ -49,20 +54,25 @@ vi.mock("@/lib/supabase", () => {
   const builder = (table: string) => {
     const b: Record<string, unknown> = {};
     for (const m of ["select", "eq", "order", "limit", "is", "not"]) b[m] = () => b;
-    b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
-      Promise.resolve({ data: null, count: 0, error: null, ...(env.results[table] ?? {}) }).then(res, rej);
+    b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => env.hang
+      ? new Promise(() => undefined)
+      : Promise.resolve({ data: null, count: 0, error: null, ...(env.results[table] ?? {}) }).then(res, rej);
     return b;
   };
   return {
     supabase: {
       from: (t: string) => builder(t),
-      rpc: () => Promise.resolve(env.rpc),
+      rpc: () => (env.hang ? new Promise(() => undefined) : Promise.resolve(env.rpc)),
       auth: { getSession: async () => ({ data: { session: { access_token: "t" } } }) },
     },
   };
 });
 vi.mock("@/lib/knowledge", () => ({
-  getAiConnections: vi.fn(async () => { if (env.connsFail) throw env.connsFail; return env.conns; }),
+  getAiConnections: vi.fn(async () => {
+    if (env.hang) await new Promise(() => undefined);
+    if (env.connsFail) throw env.connsFail;
+    return env.conns;
+  }),
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/intelligence" }));
 
@@ -91,6 +101,7 @@ beforeEach(() => {
   env.conns = { personal: { keyLast4: "abcd", embeddingKeyLast4: "wxyz" } };
   env.connsFail = null;
   env.gaps = { ok: true, body: { missingTables: [], missingColumns: [] } };
+  env.hang = false;
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: env.gaps.ok, status: env.gaps.ok ? 200 : 500, json: async () => env.gaps.body })));
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -198,6 +209,57 @@ describe("HUB-10 — the snapshot belongs to one user", () => {
     expect(window.localStorage.getItem(hubSnapshotKey("u1", "o1"))).toMatch(/4f2a/);
   });
 
+  it("an Admin whose database check is cached (patched before anything else lands) starts from THEIR snapshot on a uid change — the last person's key, counts and library are neither painted nor saved under the new key", async () => {
+    env.conns = { personal: { keyLast4: "aaaa", embeddingKeyLast4: null } };
+    env.results.knowledge_documents = { count: 77 };
+    env.results.knowledge_libraries = { data: [{ id: "lib-o1" }], count: 1 };
+    await renderPage();
+    expect(card("Chat key")!.textContent).toMatch(/aaaa/);
+
+    // u-admin opened the hub within the hour on this device: their gaps
+    // check is cached, so it patches synchronously. Every other source is
+    // still pending (the key check's cold start).
+    window.localStorage.setItem(hubGapsKey("u-admin", "o1"), JSON.stringify({ uid: "u-admin", gaps: 0, at: Date.now() }));
+    env.hang = true;
+    env.role = { activeOrgId: "o1", uid: "u-admin", activeRole: "Admin", roles: ["Admin"] };
+    await renderPage();
+    expect(host.textContent).not.toMatch(/aaaa/);
+    expect(host.textContent).not.toMatch(/77 documents/);
+    expect(card("Database")!.textContent).toMatch(/All expected tables present/);
+    const saved = readHubSnapshot<Record<string, unknown>>(window.localStorage.getItem(hubSnapshotKey("u-admin", "o1")), "u-admin");
+    expect(saved).not.toBeNull();
+    expect(JSON.stringify(saved)).not.toMatch(/aaaa|lib-o1/);
+    expect(saved).toMatchObject({ schemaGaps: 0, docs: 0, chatKey: null, firstLibraryId: null });
+    for (const k of ["keysKnown", "librariesKnown", "docsKnown", "asksKnown", "coverageKnown", "setupKnown"]) expect(saved?.[k], k).not.toBe(true);
+    // user 1's own snapshot is untouched
+    expect(window.localStorage.getItem(hubSnapshotKey("u1", "o1"))).toMatch(/aaaa/);
+  });
+
+  it("an Admin's workspace switch with the new workspace's gaps cached never paints, links to or saves the old workspace's figures", async () => {
+    env.role = { activeOrgId: "o1", uid: "u-admin", activeRole: "Admin", roles: ["Admin"] };
+    env.conns = { personal: { keyLast4: "aaaa", embeddingKeyLast4: null } };
+    env.results.knowledge_documents = { count: 77 };
+    env.results.knowledge_libraries = { data: [{ id: "lib-o1" }], count: 1 };
+    env.results.knowledge_questions = { data: [{ id: "q1", question: "Where is the o1 relief valve?", user_name: "Ada", library_id: "lib-o1", created_at: "2026-10-01" }] };
+    env.rpc = { data: [{ total: 400, embedded: 4 }], error: null };
+    await renderPage();
+    expect(host.textContent).toMatch(/77 documents/);
+    expect(host.querySelector('a[href="/knowledge/lib-o1"]')).not.toBeNull(); // "Build index" lands in o1's library
+
+    window.localStorage.setItem(hubGapsKey("u-admin", "o2"), JSON.stringify({ uid: "u-admin", gaps: 3, at: Date.now() }));
+    env.hang = true;
+    env.role = { ...env.role, activeOrgId: "o2" };
+    await renderPage();
+    expect(host.textContent).not.toMatch(/77 documents|aaaa|o1 relief valve/);
+    expect(host.querySelector('a[href="/knowledge/lib-o1"]')).toBeNull();
+    expect(card("Database")!.textContent).toMatch(/3 schema gaps/);
+    const saved = readHubSnapshot<Record<string, unknown>>(window.localStorage.getItem(hubSnapshotKey("u-admin", "o2")), "u-admin");
+    expect(JSON.stringify(saved)).not.toMatch(/aaaa|lib-o1|o1 relief valve/);
+    expect(saved).toMatchObject({ schemaGaps: 3, docs: 0, firstLibraryId: null, recentAsks: [] });
+    // o1's own snapshot is untouched
+    expect(window.localStorage.getItem(hubSnapshotKey("u-admin", "o1"))).toMatch(/lib-o1/);
+  });
+
   it("a Retry for the SAME person keeps what is on screen while it re-asks", async () => {
     await renderPage();
     expect(host.textContent).toMatch(/abcd/);
@@ -246,6 +308,43 @@ describe("HUB-3 — the first step from the front door; two Setups with two name
     expect(firstSetupStep({ codebookEntries: 3, assets: 0, libraries: 1 })?.stage).toBe("Equipment registry");
     expect(firstSetupStep({ codebookEntries: 3, assets: 2, libraries: 1 })).toBeNull();
   });
+  it("a count that FAILED is never 'not started': a codebook timeout in a configured workspace shows no card and saves no false zero", async () => {
+    env.results.codebook_entries = { count: null, error: { message: "canceling statement due to statement timeout" } };
+    await renderPage();
+    expect(host.textContent).not.toMatch(/Start here — Facility setup/);
+    const saved = readHubSnapshot<Record<string, unknown>>(window.localStorage.getItem(hubSnapshotKey("u1", "o1")), "u1");
+    expect(saved?.setupKnown).not.toBe(true); // the zero in the snapshot is the empty default, never "known"
+    expect(saved?.assets).toBe(40); // the registry count that WAS read is kept
+    expect(JSON.stringify(saved)).not.toMatch(/setupFailed|statement timeout/); // a failure is not "last known"
+    // the next visit paints from that snapshot while its reads pend: still no false card
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    env.hang = true;
+    await renderPage();
+    expect(host.textContent).not.toMatch(/Start here — Facility setup/);
+  });
+
+  it("a last-known snapshot of a configured workspace is not turned into a false card by a failed re-read", async () => {
+    window.localStorage.setItem(hubSnapshotKey("u1", "o1"), writeHubSnapshot("u1", { codebookEntries: 5, assets: 40, setupKnown: true }));
+    env.results.assets = { count: null, error: { message: "connection reset" } };
+    env.results.codebook_entries = { count: null, error: { message: "connection reset" } };
+    await renderPage();
+    expect(host.textContent).not.toMatch(/Start here — Facility setup/);
+    const saved = readHubSnapshot<Record<string, unknown>>(window.localStorage.getItem(hubSnapshotKey("u1", "o1")), "u1");
+    expect(saved).toMatchObject({ codebookEntries: 5, assets: 40, setupKnown: true });
+  });
+
+  it("setupCountsPatch: a missing table is 0 (not started); any other error is setupFailed with setupKnown left alone", () => {
+    expect(setupCountsPatch({ count: 5 }, { count: 40 })).toEqual({ codebookEntries: 5, assets: 40, setupKnown: true });
+    expect(setupCountsPatch({ count: null, error: { code: "42P01", message: 'relation "codebook_entries" does not exist' } }, { count: 2 }))
+      .toEqual({ codebookEntries: 0, assets: 2, setupKnown: true });
+    expect(setupCountsPatch({ count: null, error: { code: "PGRST205", message: "Could not find the table in the schema cache" } }, { count: 2 }).codebookEntries).toBe(0);
+    const timeout = setupCountsPatch({ count: null, error: { code: "57014", message: "statement timeout" } }, { count: 40 });
+    expect(timeout).toEqual({ assets: 40, setupFailed: "codebook: statement timeout" });
+    expect(timeout.setupKnown).toBeUndefined();
+    expect(writeHubSnapshot("u1", timeout)).not.toMatch(/setupFailed/);
+  });
+
   it("the AI keys page is 'AI setup' everywhere; Facility setup keeps its name and is linked from it", () => {
     expect(INTELLIGENCE_VIEWS.find((v) => v.href === "/intelligence/setup")?.label).toBe("AI setup");
     expect(FEATURE_ATLAS.find((e) => e.href === "/intelligence/setup")?.label).toBe("AI setup");

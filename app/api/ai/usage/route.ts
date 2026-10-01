@@ -16,12 +16,16 @@
 // "$0.00" (GOV-4). A $0 cap is LOCKED (GOV-3): `locked: true`, 100%.
 // Who may set caps is the `ai.manage_caps` capability (GOV-10, default
 // Admin) read from the org's capability policy — never a role list — and
-// nobody raises their OWN cap: not by an override, not by clearing one onto
-// a higher default, and not by raising the workspace default they follow
-// (their own cap is then held where it was, as a personal override, in the
-// same request). Every change is audited and notifies the other holders and
-// the person whose cap moved. A cap table that cannot be read refuses (503)
-// — the team view and the "previous figure" never fall back to $10.
+// nobody raises their OWN cap while someone else holds the capability: not
+// by an override, not by clearing one onto a higher default, and not by
+// raising the workspace default they follow (their own cap is then held
+// where it was, as a personal override, in the same request). A SOLE holder
+// — nobody else active holds ai.manage_caps, as in a one-person workspace —
+// has no second signature to ask for, so their own raise goes through,
+// audited `soleHolder: true` and said in the response (DEC-44 item 5).
+// Every change is audited and notifies the other holders and the person
+// whose cap moved. A cap table that cannot be read refuses (503) — the team
+// view and the "previous figure" never fall back to $10.
 //
 // Reads are service-role only: ai_usage_events and ai_usage_limits have RLS
 // with zero client policies, so this route is the only window into them.
@@ -74,6 +78,25 @@ async function capsAuthority(orgId: string, auth: Auth): Promise<{ ok: true; all
   const loaded = await loadCapabilityPolicyStrict(orgId, supabaseAdmin);
   if (!loaded.ok) return { ok: false, error: loaded.error };
   return { ok: true, policy: loaded.policy, allowed: policyAllows(loaded.policy, AI_MANAGE_CAPS, auth.role, auth.roles, auth.userId) };
+}
+
+/** GOV-10: the OTHER active members who hold ai.manage_caps — who a cap
+ *  notice goes to, and the second signature a self-raise needs. An error
+ *  when the roster cannot be read (never "nobody else"). */
+async function otherCapsHolders(orgId: string, auth: Auth, policy: CapabilityPolicy):
+  Promise<{ ok: true; uids: string[] } | { ok: false; error: string }> {
+  const { data, error } = await supabaseAdmin
+    .from("org_members").select("uid, role, roles")
+    .eq("org_id", orgId).eq("status", "active");
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, uids: holdersAmong(data, policy).filter((uid) => uid !== auth.userId) };
+}
+
+/** The members of `rows` the policy lets set caps. */
+function holdersAmong(rows: unknown, policy: CapabilityPolicy): string[] {
+  return ((rows ?? []) as Array<{ uid: string; role: string | null; roles: string[] | null }>)
+    .filter((m) => policyAllows(policy, AI_MANAGE_CAPS, m.role, m.roles ?? [], m.uid))
+    .map((m) => m.uid);
 }
 
 const limitsTableMissing = (e: { code?: string; message: string }) =>
@@ -138,7 +161,7 @@ export async function GET(req: NextRequest) {
     }
     const [membersRes, limitsRes] = await Promise.all([
       supabaseAdmin.from("org_members")
-        .select("uid, display_name, email")
+        .select("uid, display_name, email, role, roles")
         .eq("org_id", orgId).eq("status", "active"),
       supabaseAdmin.from("ai_usage_limits")
         .select("user_id, monthly_cap_usd")
@@ -158,8 +181,12 @@ export async function GET(req: NextRequest) {
     );
     payload.orgCapUsd = orgCapUsd;
     // Whether the viewer's own cap follows the default — a holder who raises
-    // the default is then held at their current cap (GOV-10).
+    // the default is then held at their current cap (GOV-10) — unless they
+    // are the SOLE holder, who has nobody else to raise it.
     payload.selfFollowsDefault = !overrideByUser.has(auth.userId);
+    if (caps.ok && caps.allowed && !membersRes.error) {
+      payload.soleCapsHolder = holdersAmong(membersRes.data, caps.policy).every((uid) => uid === auth.userId);
+    }
     payload.team = members
       .map((m) => {
         const u = byUser.get(m.uid);
@@ -191,13 +218,8 @@ export async function GET(req: NextRequest) {
 async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPolicy, change: {
   targetUserId: string | null; capUsd: number | null; previousCapUsd: number | null;
 }) {
-  const { data: members } = await supabaseAdmin
-    .from("org_members").select("uid, role, roles")
-    .eq("org_id", orgId).eq("status", "active");
-  const holders = ((members ?? []) as Array<{ uid: string; role: string | null; roles: string[] | null }>)
-    .filter((m) => policyAllows(policy, AI_MANAGE_CAPS, m.role, m.roles ?? [], m.uid))
-    .map((m) => m.uid);
-  const recipients = new Set(holders);
+  const others = await otherCapsHolders(orgId, auth, policy);
+  const recipients = new Set(others.ok ? others.uids : []);
   if (change.targetUserId) recipients.add(change.targetUserId);
   recipients.delete(auth.userId);
   if (recipients.size === 0) return;
@@ -263,6 +285,19 @@ export async function POST(req: NextRequest) {
   const selfRaise = (next: number) =>
     targetUserId === auth.userId && previousCapUsd !== null && next > previousCapUsd;
   const SELF_RAISE = "You can't raise your own monthly AI cap — another person with the “Manage AI spend caps” permission has to.";
+  /** GOV-10: the second signature a self-raise needs exists only when
+   *  someone else holds ai.manage_caps. A SOLE holder (a one-person
+   *  workspace; the only Admin, with nobody else granted it) has nobody to
+   *  ask, so the raise goes through — audited `soleHolder: true`. A roster
+   *  that cannot be read refuses: never "nobody else". */
+  const soleHolderVerdict = async (): Promise<{ ok: true; sole: boolean } | { ok: false; res: NextResponse }> => {
+    const others = await otherCapsHolders(orgId, auth, caps.policy);
+    if (!others.ok) {
+      return { ok: false, res: bad(`Couldn't check who else manages AI caps, so nothing was changed: ${others.error}`, 503) };
+    }
+    return { ok: true, sole: others.uids.length === 0 };
+  };
+  let soleHolder = false;
 
   // Clearing a per-user override — the person falls back to the org default.
   if (targetUserId && body.capUsd === null) {
@@ -270,7 +305,12 @@ export async function POST(req: NextRequest) {
     const def = await readOrgDefault(orgId);
     if (!def.ok) return bad(`Couldn't read the default cap, so the override was not cleared: ${def.error}`, 503);
     const fallback = def.capUsd;
-    if (selfRaise(fallback)) return bad(SELF_RAISE, 403);
+    if (selfRaise(fallback)) {
+      const v = await soleHolderVerdict();
+      if (!v.ok) return v.res;
+      if (!v.sole) return bad(SELF_RAISE, 403);
+      soleHolder = true;
+    }
     const { error } = await supabaseAdmin
       .from("ai_usage_limits").delete()
       .eq("org_id", orgId).eq("user_id", targetUserId);
@@ -279,23 +319,29 @@ export async function POST(req: NextRequest) {
       action: "AI_CAP_CHANGED",
       resource_type: "ai_usage_limit", resource_id: orgId,
       org_id: orgId, user_id: auth.userId,
-      details: { targetUserId, cleared: true, previousCapUsd },
+      details: { targetUserId, cleared: true, previousCapUsd, ...(soleHolder ? { soleHolder: true } : {}) },
     }).then(() => undefined, () => undefined);
     await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd: null, previousCapUsd });
-    return NextResponse.json({ ok: true, cleared: true });
+    return NextResponse.json({ ok: true, cleared: true, ...(soleHolder ? { soleHolder: true } : {}) });
   }
 
   const capUsd = Number(body.capUsd);
   if (body.capUsd === null || body.capUsd === undefined || !Number.isFinite(capUsd) || capUsd < 0 || capUsd > 10000) {
     return bad("capUsd must be a number between 0 and 10000 (0 locks AI for that person until it is raised).");
   }
-  if (selfRaise(capUsd)) return bad(SELF_RAISE, 403);
+  if (selfRaise(capUsd)) {
+    const v = await soleHolderVerdict();
+    if (!v.ok) return v.res;
+    if (!v.sole) return bad(SELF_RAISE, 403);
+    soleHolder = true;
+  }
 
   // GOV-10: raising the WORKSPACE default must not raise the setter's own
   // cap. A setter whose cap follows the default (no override of their own)
   // is held where they are — an override at the previous default, written
   // and audited BEFORE the default moves, so a failure changes nothing.
-  // Raising it later takes another holder, like any other self-raise.
+  // Raising it later takes another holder, like any other self-raise. A
+  // sole holder is not held: they follow the default like everyone else.
   let pinnedSelfAtUsd: number | null = null;
   if (!targetUserId && previousCapUsd !== null && capUsd > previousCapUsd) {
     const { data: own, error: ownError } = await supabaseAdmin.from("ai_usage_limits")
@@ -303,7 +349,10 @@ export async function POST(req: NextRequest) {
     if (ownError && !limitsTableMissing(ownError)) {
       return bad(`Couldn't read your own cap, so the default was not changed: ${ownError.message}`, 503);
     }
-    if (!own && !ownError) {
+    const v = !own && !ownError ? await soleHolderVerdict() : null;
+    if (v && !v.ok) return v.res;
+    if (v?.ok && v.sole) soleHolder = true;
+    else if (v?.ok) {
       const { error: pinError } = await supabaseAdmin.from("ai_usage_limits").insert({
         org_id: orgId, user_id: auth.userId, monthly_cap_usd: previousCapUsd,
         updated_by: auth.userId, updated_at: new Date().toISOString(),
@@ -344,12 +393,18 @@ export async function POST(req: NextRequest) {
     action: "AI_CAP_CHANGED",
     resource_type: "ai_usage_limit", resource_id: orgId,
     org_id: orgId, user_id: auth.userId,
-    details: targetUserId ? { targetUserId, capUsd, previousCapUsd } : { capUsd, previousCapUsd },
+    details: {
+      ...(targetUserId ? { targetUserId } : {}), capUsd, previousCapUsd,
+      ...(soleHolder ? { soleHolder: true } : {}),
+    },
   }).then(() => undefined, () => undefined);
   await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
   return NextResponse.json({
     ok: true, capUsd, locked: capUsd === 0,
     ...(pinnedSelfAtUsd !== null ? { selfHeldAtUsd: pinnedSelfAtUsd } : {}),
+    // GOV-10: said, not silent — the setter's own cap moved with no second
+    // signature because nobody else holds the capability.
+    ...(soleHolder ? { soleHolder: true } : {}),
   });
 }

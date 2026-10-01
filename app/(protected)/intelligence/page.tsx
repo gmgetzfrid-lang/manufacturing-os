@@ -24,7 +24,7 @@ import { getAiConnections } from "@/lib/knowledge";
 import { isControllerPrincipal } from "@/lib/permissions";
 import {
   hubSnapshotKey, hubGapsKey, legacyHubKeys, readHubSnapshot, writeHubSnapshot,
-  meaningIndexCard, knowledgeFix, meaningIndexFix, recentQuestionsCopy, firstSetupStep,
+  meaningIndexCard, knowledgeFix, meaningIndexFix, recentQuestionsCopy, firstSetupStep, setupCountsPatch,
 } from "@/lib/hubStatus";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
@@ -61,6 +61,16 @@ interface Status {
   asksFailed?: string;
   coverageFailed?: string;
   gapsFailed?: string;
+  setupFailed?: string;
+}
+
+/** HUB-10: the status on the board and WHOSE it is (`uid|org`), plus the
+ *  effect run that last touched it — one piece of state, so an updater can
+ *  never build one identity's status on top of another's. */
+interface Board {
+  for: string;
+  run: number;
+  status: Status;
 }
 
 const EMPTY_STATUS: Status = {
@@ -71,7 +81,7 @@ const EMPTY_STATUS: Status = {
 
 const NO_FAILURES: Partial<Status> = {
   keysFailed: undefined, librariesFailed: undefined, docsFailed: undefined, proposalsFailed: undefined,
-  asksFailed: undefined, coverageFailed: undefined, gapsFailed: undefined,
+  asksFailed: undefined, coverageFailed: undefined, gapsFailed: undefined, setupFailed: undefined,
 };
 
 const why = (e: unknown) => (e as { message?: string } | null)?.message || "the request failed";
@@ -81,15 +91,14 @@ export default function IntelligencePage() {
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const isAdmin = hasAnyRole(["Admin"]);
   const isController = isControllerPrincipal({ role: activeRole, roles });
-  const [status, setStatus] = useState<Status | null>(null);
-  /** HUB-10: the `uid|org` the status in state belongs to — the board never
-   *  paints a status for anyone else, even for the frame before it resets. */
-  const [statusFor, setStatusFor] = useState<string | null>(null);
+  /** HUB-10: the status AND whose it is — the board never paints a status
+   *  for anyone else, even for the frame before it resets. */
+  const [board, setBoard] = useState<Board | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const retry = () => setReloadTick((t) => t + 1);
-  /** HUB-10: whose status is on screen (`uid|org`). Only a Retry for the
-   *  SAME person and workspace keeps it; any other change starts over. */
-  const shownFor = useRef<string | null>(null);
+  /** Numbers each effect run, so the first write of a run (reset or patch,
+   *  whichever lands first) clears the last run's failures exactly once. */
+  const runSeq = useRef(0);
 
   // SUB-500ms CONTRACT. What actually made this page "take forever":
   //   (a) the WHOLE page (even static cards) waited on one Promise.all,
@@ -108,38 +117,42 @@ export default function IntelligencePage() {
     let cancelled = false;
     const snapKey = hubSnapshotKey(uid, activeOrgId);
     const identity = `${uid}|${activeOrgId}`;
-    const sameIdentity = shownFor.current === identity;
-    shownFor.current = identity;
+    const run = ++runSeq.current;
+    // Read THIS identity's snapshot before any source can answer — a cached
+    // source (the Admin's database check) patches synchronously, below.
+    let snap: Status | null = null;
+    try {
+      // HUB-10: the org-only keys of before are another person's data on a
+      // shared device — dropped, never read.
+      for (const k of legacyHubKeys(activeOrgId)) {
+        window.localStorage.removeItem(k);
+        window.sessionStorage.removeItem(k);
+      }
+      snap = readHubSnapshot<Status>(window.localStorage.getItem(snapKey), uid);
+    } catch { /* no snapshot */ }
+    const fresh: Status = { ...EMPTY_STATUS, ...(snap ?? {}), ...NO_FAILURES };
+    // HUB-10: what this run builds on. A board that belongs to another uid
+    // or workspace (an account switched in another tab, a workspace change)
+    // is never inherited — the run starts from THIS identity's own snapshot,
+    // so no patch can paint, or save under this identity's key, the last
+    // identity's figures. The same identity keeps what is on screen (a
+    // retry), clearing the last run's failures on this run's first write.
+    // A snapshot IS known data (last known) for the sources it knew.
+    const baseFor = (prev: Board | null): Status =>
+      !prev || prev.for !== identity ? fresh
+        : prev.run === run ? prev.status
+          : { ...prev.status, ...NO_FAILURES };
     queueMicrotask(() => {
       if (cancelled) return;
-      let snap: Status | null = null;
-      try {
-        // HUB-10: the org-only keys of before are another person's data on a
-        // shared device — dropped, never read.
-        for (const k of legacyHubKeys(activeOrgId)) {
-          window.localStorage.removeItem(k);
-          window.sessionStorage.removeItem(k);
-        }
-        snap = readHubSnapshot<Status>(window.localStorage.getItem(snapKey), uid);
-      } catch { /* no snapshot */ }
-      // A snapshot IS known data (last known) for the sources it knew; a
-      // retry keeps what is on screen and clears the failures it re-asks.
-      // HUB-10: a different uid or workspace (an account switched in another
-      // tab, a workspace change) never inherits what is on screen — it starts
-      // from ITS OWN snapshot, so the next patch can never save the last
-      // person's figures under the new person's key.
-      setStatusFor(identity);
-      setStatus((prev) => prev && sameIdentity
-        ? { ...prev, ...NO_FAILURES }
-        : { ...EMPTY_STATUS, ...(snap ?? {}), ...NO_FAILURES });
+      setBoard((prev) => ({ for: identity, run, status: baseFor(prev) }));
     });
 
     const patch = (p: Partial<Status>) => {
       if (cancelled) return;
-      setStatus((prev) => {
-        const next = { ...(prev ?? EMPTY_STATUS), ...p } as Status;
+      setBoard((prev) => {
+        const next = { ...baseFor(prev), ...p } as Status;
         try { window.localStorage.setItem(snapKey, writeHubSnapshot(uid, next)); } catch { /* quota */ }
-        return next;
+        return { for: identity, run, status: next };
       });
     };
 
@@ -205,11 +218,8 @@ export default function IntelligencePage() {
     void Promise.all([
       supabase.from("codebook_entries").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId),
       supabase.from("assets").select("id", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("archived", false),
-    ]).then(([cb, as]) => {
-      // a pre-migration table reads as "not started", which is what it is
-      if (cb.error && as.error) return;
-      patch({ codebookEntries: cb.count ?? 0, assets: as.count ?? 0, setupKnown: true });
-    }, () => undefined);
+    ]).then(([cb, as]) => patch(setupCountsPatch(cb, as)),
+      (e) => patch({ setupFailed: why(e) }));
 
     if (isAdmin) {
       void (async () => {
@@ -238,12 +248,13 @@ export default function IntelligencePage() {
 
   if (!activeOrgId) return <div className="p-8 text-sm text-slate-500">Select a workspace to continue.</div>;
 
-  const s = (status && statusFor === `${uid}|${activeOrgId}` ? status : null) ?? EMPTY_STATUS;
+  const s = (board && board.for === `${uid}|${activeOrgId}` ? board.status : null) ?? EMPTY_STATUS;
   const meaning = meaningIndexCard(s.chunksTotal, s.chunksEmbedded);
   const kFix = knowledgeFix({ isController, libraries: s.libraries, firstLibraryId: s.firstLibraryId });
   const mFix = meaningIndexFix({ isController, chunksTotal: s.chunksTotal, libraries: s.libraries, firstLibraryId: s.firstLibraryId });
   const asksCopy = recentQuestionsCopy(isController);
-  const setupStep = s.setupKnown && s.librariesKnown
+  // HUB-3 / HUB-7: a failed count is never "not started" — no card then.
+  const setupStep = s.setupKnown && !s.setupFailed && s.librariesKnown
     ? firstSetupStep({ codebookEntries: s.codebookEntries, assets: s.assets, libraries: s.libraries })
     : null;
   const knowledgeFailed = s.librariesFailed ?? s.docsFailed;

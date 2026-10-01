@@ -2,10 +2,12 @@
 //
 //   GOV-10  setting caps is the `ai.manage_caps` capability (default Admin)
 //           read from the org's policy — Doc Control is refused unless
-//           granted; nobody raises their OWN cap — by an override, by
-//           clearing one, or by raising the workspace default they follow
-//           (they are held where they were); every change notifies the
-//           other holders and the person whose cap moved
+//           granted; nobody raises their OWN cap while another person holds
+//           the capability — by an override, by clearing one, or by raising
+//           the workspace default they follow (they are held where they
+//           were); a SOLE holder has nobody to ask, so their raise goes
+//           through, audited soleHolder; every change notifies the other
+//           holders and the person whose cap moved
 //   GOV-4   an unreadable cap table refuses (503) — the team view and the
 //           audit's "previous figure" never fall back to $10
 //   GOV-3   a $0 cap reads `locked`, 100% — what the server enforces
@@ -34,7 +36,10 @@ vi.mock("@/lib/supabaseAdmin", () => {
       // `table:select:nolimit` fails only the reads that are not .limit()ed —
       // the team view and the route's own default / override reads, never
       // getCapUsd's two bound reads.
-      const err = db.errors[`${table}:${action}`] ?? (limited ? undefined : db.errors[`${table}:${action}:nolimit`]);
+      // `table:select:many` fails only the list reads (never a maybeSingle) —
+      // the holder roster, never authMember's own-membership read.
+      const err = db.errors[`${table}:${action}`] ?? (limited ? undefined : db.errors[`${table}:${action}:nolimit`])
+        ?? (one ? undefined : db.errors[`${table}:${action}:many`]);
       if (err) return { data: null, error: err };
       const rows = (db.tables[table] ??= []);
       if (action === "insert") {
@@ -141,11 +146,12 @@ describe("GOV-10 — cap changes are the ai.manage_caps capability, never the co
   });
 
   it("raising the workspace default you follow does NOT raise your own cap — you are held where you were (the finding's own scenario)", async () => {
-    // A single holder at $10 of $10, no personal override, raises the default to $10,000.
-    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    // A holder at $10 of $10, no personal override, raises the default to
+    // $10,000 — another Admin (ADMIN2) holds the capability, so a raise of
+    // ADMIN's own cap is theirs to make.
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
     db.tables.ai_usage_events = [spend(ADMIN, "knowledgeAsk", 10)];
-    expect((await get(ADMIN)).json.selfFollowsDefault).toBe(true);
+    expect((await get(ADMIN)).json).toMatchObject({ selfFollowsDefault: true, soleCapsHolder: false });
     const r = await post(ADMIN, { capUsd: 10000 });
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ ok: true, capUsd: 10000, selfHeldAtUsd: 10 });
@@ -164,6 +170,70 @@ describe("GOV-10 — cap changes are the ai.manage_caps capability, never the co
     // and the hold cannot be undone by the holder: clearing it onto the $10,000 default is a self-raise
     expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(403);
     expect((await post(ADMIN, { capUsd: 500, userId: ADMIN })).status).toBe(403);
+    expect(r.json.soleHolder).toBeUndefined();
+  });
+
+  it("a SOLE holder (the only Admin; nobody else granted it) has nobody to ask: their own raise goes through, audited soleHolder and said", async () => {
+    // The deadlock this closes: $10 default, a self-override refused, a
+    // default raise pinning them at $10, clearing the pin refused — capped
+    // for good, with no in-app remedy in a one-person workspace.
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    expect((await get(ADMIN)).json).toMatchObject({ selfFollowsDefault: true, soleCapsHolder: true });
+
+    // raising the default they follow: not held — they follow it like everyone else
+    const def = await post(ADMIN, { capUsd: 50 });
+    expect(def.status).toBe(200);
+    expect(def.json).toMatchObject({ ok: true, capUsd: 50, soleHolder: true });
+    expect(def.json.selfHeldAtUsd).toBeUndefined();
+    expect(db.tables.ai_usage_limits.some((l) => l.user_id === ADMIN)).toBe(false);
+    expect((await get(ADMIN)).json).toMatchObject({ capUsd: 50 });
+
+    // an override of their own, and clearing it onto a higher default
+    const own = await post(ADMIN, { capUsd: 75, userId: ADMIN });
+    expect(own.status).toBe(200);
+    expect(own.json.soleHolder).toBe(true);
+    await post(ADMIN, { capUsd: 5, userId: ADMIN }); // lowering is not a self-raise
+    const cleared = await post(ADMIN, { capUsd: null, userId: ADMIN });
+    expect(cleared.status).toBe(200);
+    expect(cleared.json).toMatchObject({ cleared: true, soleHolder: true });
+
+    const audits = db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED").map((a) => a.details);
+    expect(audits).toEqual([
+      { capUsd: 50, previousCapUsd: 10, soleHolder: true },
+      { targetUserId: ADMIN, capUsd: 75, previousCapUsd: 50, soleHolder: true },
+      { targetUserId: ADMIN, capUsd: 5, previousCapUsd: 75 },
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true },
+    ]);
+  });
+
+  it("a one-person workspace is a sole holder too; a second holder brings the ban back", async () => {
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid === ADMIN);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    expect((await post(ADMIN, { capUsd: 50, userId: ADMIN })).status).toBe(200);
+    // grant the capability to a second member (by person): the ban is back
+    db.tables.org_members.push({ org_id: ORG, uid: ENG, role: "Engineer", roles: ["Engineer"], status: "active", display_name: "Eve" });
+    db.tables.org_configurations = [{ org_id: ORG, key: "capability_policy", data: { grants: [{ cap: "ai.manage_caps", uid: ENG }] } }];
+    const r = await post(ADMIN, { capUsd: 100, userId: ADMIN });
+    expect(r.status).toBe(403);
+    expect(String(r.json.error)).toMatch(/another person with the “Manage AI spend caps” permission has to/);
+    // a holder who is not active does not count as a second signature
+    db.tables.org_members.find((m) => m.uid === ENG)!.status = "removed";
+    expect((await post(ADMIN, { capUsd: 100, userId: ADMIN })).status).toBe(200);
+  });
+
+  it("a holder roster that cannot be read refuses a self-raise (503) — never 'nobody else'", async () => {
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    db.errors["org_members:select:many"] = { message: "statement timeout" };
+    const own = await post(ADMIN, { capUsd: 50, userId: ADMIN });
+    expect(own.status).toBe(503);
+    expect(String(own.json.error)).toMatch(/Couldn't check who else manages AI caps/);
+    expect((await post(ADMIN, { capUsd: 50 })).status).toBe(503); // the default raise they follow
+    expect(db.tables.ai_usage_limits).toEqual([{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }]);
+    expect(db.tables.audit_logs).toHaveLength(0);
+    // a change that is not a self-raise does not need the roster's answer
+    expect((await post(ADMIN, { capUsd: 5 })).status).toBe(200);
   });
 
   it("only a setter who FOLLOWS the default is held, and only when it goes up; a hold that cannot be written changes nothing", async () => {

@@ -125,8 +125,8 @@ beforeEach(() => {
       { org_id: ORG, uid: ME, role: "Engineer", roles: ["Engineer"], status: "active", display_name: "Me" },
       { org_id: ORG, uid: CTRL, role: "Manager", roles: ["Manager", "DocCtrl"], status: "active", display_name: "Ctl" },
     ],
-    ai_connections: [{ id: "c1", org_id: ORG, user_id: ME, provider: "anthropic", model: "claude-sonnet-4", api_key: "sk-ant-legacy-plain", key_last4: "lain", updated_at: "x",
-      embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa-plain", embedding_key_last4: "lain" }],
+    ai_connections: [{ id: "c1", org_id: ORG, user_id: ME, provider: "anthropic", model: "chat-model", api_key: "sk-ant-legacy-plain", key_last4: "lain", updated_at: "x",
+      embedding_provider: "voyage", embedding_model: "embed-model", embedding_api_key: "pa-plain", embedding_key_last4: "lain" }],
     ai_key_agreements: [],
     ai_usage_events: [],
     ai_usage_limits: [],
@@ -150,8 +150,8 @@ describe("GOV-7 — tests are gated and metered", () => {
   });
 
   it("the saved key is tested on the SAVED model — a body model is ignored", async () => {
-    await post({ action: "test", model: "claude-opus-5" });
-    expect(ai.chat[0].model).toBe("claude-sonnet-4");
+    await post({ action: "test", model: "body-model" });
+    expect(ai.chat[0].model).toBe("chat-model");
   });
 
   it("a member at their cap cannot run a test (402, no provider call, nothing left reserved)", async () => {
@@ -164,7 +164,7 @@ describe("GOV-7 — tests are gated and metered", () => {
 
   it("the embeddings test is metered too, and a locked ($0) member is refused", async () => {
     expect((await post({ action: "embedding-test" })).status).toBe(200);
-    expect(ledger()[0]).toMatchObject({ op: "connectionTest", provider: "voyage", model: "voyage-3.5-lite", input_tokens: 3 });
+    expect(ledger()[0]).toMatchObject({ op: "connectionTest", provider: "voyage", model: "embed-model", input_tokens: 3 });
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ME, monthly_cap_usd: 0 }];
     expect((await post({ action: "embedding-test" })).status).toBe(402);
     expect(ai.embed).toHaveLength(1);
@@ -179,11 +179,11 @@ describe("GOV-7 — tests are gated and metered", () => {
 
   it("at the cap a NEW key is still verified on save (de minimis, metered) — at most five an hour", async () => {
     db.tables.ai_usage_events = [{ id: "s1", created_at: new Date().toISOString(), org_id: ORG, user_id: ME, op: "orchestrator", input_tokens: 1, output_tokens: 1, est_cost_usd: 50, ok: true }];
-    const ok = await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-new-key-1" });
+    const ok = await post({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-new-key-1" });
     expect(ok.status).toBe(200);
     expect(ledger().filter((r) => r.op === "connectionTest")).toHaveLength(1);
-    for (let i = 2; i <= 5; i++) expect((await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: `sk-ant-new-key-${i}` })).status).toBe(200);
-    const sixth = await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-new-key-6" });
+    for (let i = 2; i <= 5; i++) expect((await post({ provider: "anthropic", model: "chat-model", apiKey: `sk-ant-new-key-${i}` })).status).toBe(200);
+    const sixth = await post({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-new-key-6" });
     expect(sixth.status).toBe(429);
     expect(String(sixth.json.error)).toMatch(/five|5 times an hour/);
     expect(ai.chat).toHaveLength(5);
@@ -194,7 +194,7 @@ describe("GOV-7 — tests are gated and metered", () => {
     const chat = await post({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-new-key-1" });
     expect(chat.status).toBe(402);
     expect(String(chat.json.error)).toMatch(/set to \$0.*can't be checked while AI is locked for you, so it was not saved/);
-    const emb = await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "voyage-3.5-lite", embeddingApiKey: "pa-new-key" });
+    const emb = await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "embed-model", embeddingApiKey: "pa-new-key" });
     expect(emb.status).toBe(402);
     // no provider call, no metering row, and the stored key is the old one
     expect(ai.chat).toHaveLength(0);
@@ -225,7 +225,7 @@ describe("GOV-12 — keys at rest", () => {
   it("production without EXPORT_ENCRYPTION_KEY: saving a key is refused (503) before the verify call is spent", async () => {
     delete process.env.EXPORT_ENCRYPTION_KEY;
     vi.stubEnv("NODE_ENV", "production");
-    const r = await post({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-brand-new" });
+    const r = await post({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-brand-new" });
     expect(r.status).toBe(503);
     expect(String(r.json.error)).toMatch(/EXPORT_ENCRYPTION_KEY/);
     expect(ai.chat).toHaveLength(0);
@@ -243,11 +243,11 @@ describe("GOV-12 — keys at rest", () => {
   });
 
   it("a new key is stored sealed; a model-only save re-seals a legacy plaintext key (chat and embeddings)", async () => {
-    expect((await post({ provider: "anthropic", model: "claude-haiku-4-5" })).status).toBe(200);
+    expect((await post({ provider: "anthropic", model: "chat-model-2" })).status).toBe(200);
     const row = db.tables.ai_connections[0];
     expect(String(row.api_key).startsWith("encv1:")).toBe(true);
-    expect(row.model).toBe("claude-haiku-4-5");
-    expect((await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "voyage-3.5" })).status).toBe(200);
+    expect(row.model).toBe("chat-model-2");
+    expect((await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "embed-model-2" })).status).toBe(200);
     expect(String(row.embedding_api_key).startsWith("encv1:")).toBe(true);
     // and it still opens to the same key for the next call
     expect((await post({ action: "test" })).status).toBe(200);
@@ -255,7 +255,7 @@ describe("GOV-12 — keys at rest", () => {
   });
 
   it("the GET reports storage: encrypted or not, the member's own unsealed keys, and (controllers) the org's", async () => {
-    db.tables.ai_connections.push({ id: "c2", org_id: ORG, user_id: CTRL, provider: "openai", model: "gpt-4o", api_key: "encv1:abc", embedding_api_key: null });
+    db.tables.ai_connections.push({ id: "c2", org_id: ORG, user_id: CTRL, provider: "openai", model: "chat-model-3", api_key: "encv1:abc", embedding_api_key: null });
     const mine = await (await GET(req("GET"))).json() as { keyStorage: Row };
     expect(mine.keyStorage).toEqual({ encrypted: true, plaintextRefused: false, yoursUnsealed: 2 });
     const ctl = await (await GET(req("GET", undefined, CTRL))).json() as { keyStorage: Row; canManageOrg: boolean };

@@ -75,7 +75,7 @@ import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 const ORG = "o1", ME = "u1";
 const signed = () => ({ org_id: ORG, user_id: ME, scope: "use", agreement_version: AGREEMENT_VERSION });
 const spent = (usd: number, op = "knowledgeVision"): Row => ({
-  id: `s${++db.seq}`, created_at: new Date().toISOString(), org_id: ORG, user_id: ME, op, model: "claude-sonnet-4",
+  id: `s${++db.seq}`, created_at: new Date().toISOString(), org_id: ORG, user_id: ME, op, model: "chat-model",
   input_tokens: 10, output_tokens: 1, est_cost_usd: usd, ok: true,
 });
 
@@ -83,8 +83,8 @@ beforeEach(() => {
   db.seq = 0;
   db.errors = {};
   db.tables = {
-    ai_connections: [{ org_id: ORG, user_id: ME, provider: "anthropic", model: "claude-sonnet-4", api_key: "sk-ant-plain",
-      embedding_provider: "voyage", embedding_model: "voyage-3.5-lite", embedding_api_key: "pa-voyage" }],
+    ai_connections: [{ org_id: ORG, user_id: ME, provider: "anthropic", model: "chat-model", api_key: "sk-ant-plain",
+      embedding_provider: "voyage", embedding_model: "embed-model", embedding_api_key: "pa-voyage" }],
     ai_key_agreements: [signed()],
     ai_usage_events: [],
     ai_usage_limits: [],
@@ -111,7 +111,7 @@ describe("aiGates — the five gates, in order", () => {
 
   it("2: the embeddings key is gated by the EMBEDDINGS allowlist, and opened for the caller", async () => {
     const pass = await assertAiGates({ orgId: ORG, userId: ME, op: "knowledgeEmbed", key: "embedding" });
-    expect(pass.connection).toEqual({ provider: "voyage", model: "voyage-3.5-lite", apiKey: "pa-voyage" });
+    expect(pass.connection).toEqual({ provider: "voyage", model: "embed-model", apiKey: "pa-voyage" });
     db.tables.ai_connections = [{ org_id: ORG, user_id: ME, provider: "anthropic", model: "m", api_key: "k", embedding_provider: "cohere", embedding_model: "c", embedding_api_key: "x" }];
     const e = await refusal(assertAiGates({ orgId: ORG, userId: ME, op: "knowledgeEmbed", key: "embedding" }));
     expect(e.status).toBe(412);
@@ -121,7 +121,7 @@ describe("aiGates — the five gates, in order", () => {
   it("2: a caller-supplied key (a test before saving) is allowlisted too", async () => {
     const e = await refusal(assertAiGates({ orgId: ORG, userId: ME, op: "connectionTest", requireAgreement: false, connection: { provider: "gemini", model: "g", apiKey: "k" } }));
     expect(e.status).toBe(412);
-    const pass = await assertAiGates({ orgId: ORG, userId: ME, op: "connectionTest", requireAgreement: false, connection: { provider: "openai", model: "gpt-4o", apiKey: "sk-new" } });
+    const pass = await assertAiGates({ orgId: ORG, userId: ME, op: "connectionTest", requireAgreement: false, connection: { provider: "openai", model: "chat-model-3", apiKey: "sk-new" } });
     expect(pass.connection.apiKey).toBe("sk-new");
   });
 
@@ -188,11 +188,11 @@ describe("governedAiCall — one call, reserved before, settled after (GOV-13)",
     ai.next = { text: "fine", usage: { inputTokens: 2000, outputTokens: 500 } };
     const out = await governedAiCall({ orgId: ORG, userId: ME, op: "graphShape", system: "sys", user: "hello", maxTokens: 800 });
     expect(out.text).toBe("fine");
-    expect(ai.calls[0]).toMatchObject({ provider: "anthropic", model: "claude-sonnet-4", apiKey: "sk-ant-plain", maxTokens: 800 });
+    expect(ai.calls[0]).toMatchObject({ provider: "anthropic", model: "chat-model", apiKey: "sk-ant-plain", maxTokens: 800 });
     const rows = db.tables.ai_usage_events;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ op: "graphShape", input_tokens: 2000, output_tokens: 500, ok: true });
-    expect(Number(rows[0].est_cost_usd)).toBeCloseTo(0.0135, 6); // 2000×$3/M + 500×$15/M
+    expect(Number(rows[0].est_cost_usd)).toBeCloseTo(0.0225, 6); // 2000×$5/M + 500×$25/M (an unlisted model prices at the frontier fallback)
   });
 
   it("a provider failure is metered as a failed call (ok:false, $0) and the error still surfaces", async () => {

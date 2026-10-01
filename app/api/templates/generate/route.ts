@@ -31,9 +31,14 @@
 // stops at that row: the documents drafted before it come back (they were
 // paid for), the row is named in `skippedRows` with the reason and `stopped`
 // says so, and `nextOffset` is the row AFTER it — so a row whose reply is
-// unreadable every time cannot hold the batch, and nothing paid is thrown
-// away. A summary document (one call) answers 502. A field the model
-// deliberately wrote as "" is kept as written.
+// unreadable every time cannot hold the batch. A cap stop, or a provider
+// failure (a timeout, a 429, a 5xx) after the first row, also stops the
+// slice at its row with the earlier documents kept, and the next slice
+// starts AT that row (nothing was drafted for it). So in a per-row batch no
+// drafted, paid-for row is thrown away; a provider failure on the slice's
+// FIRST row answers with its error (nothing was drafted). A summary
+// document (one call) answers 502. A field the model deliberately wrote as
+// "" is kept as written.
 
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
@@ -350,6 +355,16 @@ export async function POST(req: NextRequest) {
             // was drafted and paid for; the next slice starts at this row
             // and answers the refusal itself.
             if (e instanceof GovernedCallError && documents.length > 0) { stopped = e.message; break; }
+            // PR-6: a provider failure (timeout, 429, 5xx) part-way: the
+            // rows drafted before it were paid for and come back; this row
+            // drafted nothing, so the next slice starts AT it.
+            if (e instanceof AiCallError && documents.length > 0) {
+              const row = offset + i + 1;
+              const said = e.message.trim();
+              stopped = `The AI provider failed on row ${row}: ${/[.!?]$/.test(said) ? said : `${said}.`} ` +
+                `The rows drafted before it are kept; the next batch starts at row ${row}.`;
+              break;
+            }
             // PR-6: an unreadable draft stops the slice AT its row and skips
             // it — the earlier rows are kept, the next slice starts after it.
             if (e instanceof DraftParseError) {
@@ -387,7 +402,8 @@ export async function POST(req: NextRequest) {
       return bad(`Drafting failed: ${(e as Error).message}`, 502);
     }
 
-    // Rows this slice used up: every drafted document, plus a skipped row.
+    // Rows this slice used up: every drafted document, plus a skipped row
+    // (a cap stop or a provider failure uses up nothing — it is retried).
     const consumed = mode === "summary" ? slice.length : documents.length + skippedRows.length;
     const nextOffset = mode === "summary" ? null
       : (offset + consumed < sheetData.rows.length ? offset + consumed : null);

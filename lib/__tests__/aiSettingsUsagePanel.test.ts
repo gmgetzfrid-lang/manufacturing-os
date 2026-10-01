@@ -4,7 +4,8 @@
 //   GOV-3   "Cap reached" / "locked" copy matches what the server enforces —
 //           a $0 cap reads LOCKED, never "Cap reached" over an uncapped key
 //   GOV-10  the cap editor appears only for a holder of ai.manage_caps; the
-//           copy names who can raise a cap
+//           copy names who can raise a cap (and tells a sole holder their own
+//           raise goes through, recorded)
 //   GOV-4   an unreadable meter is an alert with a retry, not a vanished panel;
 //           calls recorded without a cost are said, with the figure the
 //           server counts each at
@@ -108,6 +109,24 @@ describe("UsagePanel", () => {
     await act(async () => { await Promise.resolve(); });
     expect(kn.setAiCap).toHaveBeenCalledWith("o1", 500);
     expect(String(toast.showToast.mock.calls.at(-1)?.[0]?.title)).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 — nobody raises their own cap/);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10: a SOLE holder is told the default raise includes their own cap, and that it is recorded — not sent to a person who doesn't exist", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true, soleCapsHolder: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    expect(host.textContent).toMatch(/You're the only person who manages AI caps here, so you can raise your own/);
+    expect(host.textContent).not.toMatch(/Nobody can raise their own cap/);
+    const input = host.querySelector("input") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(input, "50"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set")!;
+    await act(async () => { set.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    const title = String(toast.showToast.mock.calls.at(-1)?.[0]?.title);
+    expect(title).toMatch(/Default monthly cap set to \$50\.00 per person, yours included — you're the only person who manages AI caps here/);
+    expect(title).not.toMatch(/another person who manages AI caps has to/);
     kn.getAiUsage.mockReset();
   });
 

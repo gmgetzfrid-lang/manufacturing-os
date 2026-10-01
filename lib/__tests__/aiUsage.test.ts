@@ -93,7 +93,7 @@ import { GovernedCallError } from "@/lib/ai/governedCall";
 
 const NOW = new Date().toISOString();
 const row = (over: Partial<UsageRow> & Row): Row => ({
-  id: `u${String(++db.seq).padStart(4, "0")}`, created_at: NOW, org_id: "o1", user_id: "u1", op: "knowledgeAsk", model: "claude-sonnet-4",
+  id: `u${String(++db.seq).padStart(4, "0")}`, created_at: NOW, org_id: "o1", user_id: "u1", op: "knowledgeAsk", model: "chat-model",
   input_tokens: 1000, output_tokens: 100, est_cost_usd: 0.01, ok: true, ...over,
 });
 
@@ -308,7 +308,7 @@ describe("GOV-14 — the cap read binds the user id; nothing is spliced into a f
 
 describe("GOV-13 / ORCH-7 — reserve, then call", () => {
   const reserve = (worstCaseUsd: number, capUsd = 10, extra: Partial<Parameters<typeof reserveWithinCap>[0]> = {}) =>
-    reserveWithinCap({ orgId: "o1", userId: "u1", op: "orchestrator", provider: "anthropic", model: "claude-sonnet-4", worstCaseUsd, capUsd, ...extra });
+    reserveWithinCap({ orgId: "o1", userId: "u1", op: "orchestrator", provider: "anthropic", model: "chat-model", worstCaseUsd, capUsd, ...extra });
 
   it("a call whose worst case fits is reserved; the reservation counts toward the month until settled", async () => {
     db.tables.ai_usage_events = [row({ est_cost_usd: 4 })];
@@ -318,10 +318,10 @@ describe("GOV-13 / ORCH-7 — reserve, then call", () => {
     expect(during.spentUsd).toBe(5.5);
     expect(during.reservedUsd).toBe(1.5);
     expect(during.calls).toBe(1); // a reservation is not a call yet
-    await settleUsage(r.id, { model: "claude-sonnet-4", usage: { inputTokens: 100_000, outputTokens: 10_000 }, ok: true });
+    await settleUsage(r.id, { model: "chat-model", usage: { inputTokens: 100_000, outputTokens: 10_000 }, ok: true });
     const after = await getMonthUsage("o1", "u1");
     expect(after.reservedUsd).toBe(0);
-    expect(after.spentUsd).toBe(4.45); // 0.3 + 0.15 at $3/$15
+    expect(after.spentUsd).toBe(4.75); // 0.5 + 0.25 at the $5/$25 frontier fallback (an unlisted model)
     expect(after.calls).toBe(2);
   });
 

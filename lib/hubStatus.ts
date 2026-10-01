@@ -12,7 +12,8 @@
 //   HUB-5   a fix CTA lands on the control that fixes it, or the card says
 //           who can fix it instead of offering a button that dead-ends
 //   HUB-3   a workspace missing its first setup steps is pointed at Facility
-//           setup from the front door
+//           setup from the front door — from counts that were actually read
+//           (a failed count is never "not started", HUB-7's rule)
 //   I-02    knowledge_questions is readable by the asker and controllers
 //           (20261120), so the hub's list is "your" questions for a member
 
@@ -98,4 +99,41 @@ export function firstSetupStep(counts: { codebookEntries: number; assets: number
   if (counts.assets <= 0) return { stage: "Equipment registry", why: "the equipment the drawings and answers point at" };
   if (counts.libraries <= 0) return { stage: "Knowledge", why: "a library of documents for the AI to read" };
   return null;
+}
+
+/** A head-count read as supabase-js resolves it. */
+export interface CountRead {
+  count?: number | null;
+  error?: { code?: string | null; message: string } | null;
+}
+
+/** A table that is not there yet (raw Postgres 42P01, or PostgREST's schema
+ *  cache PGRST205) — a setup step genuinely not started. */
+const tableMissing = (e: { code?: string | null; message: string }) =>
+  e.code === "42P01" || e.code === "PGRST205" || /relation "[^"]+" does not exist/i.test(e.message ?? "");
+
+/** HUB-3 / HUB-7: the patch the "Start here — Facility setup" card reads from
+ *  the codebook and registry counts. Each count comes only from a read that
+ *  succeeded (a missing table is 0 — not started, which is what it is). Any
+ *  other error is `setupFailed` — never persisted (writeHubSnapshot drops
+ *  *Failed) — and `setupKnown` is left alone, so a timeout on one table
+ *  never paints, or saves as last-known, a false "Next step: Site codebook". */
+export function setupCountsPatch(codebook: CountRead, assets: CountRead): {
+  codebookEntries?: number; assets?: number; setupKnown?: true; setupFailed?: string;
+} {
+  const out: { codebookEntries?: number; assets?: number; setupKnown?: true; setupFailed?: string } = {};
+  const failed: string[] = [];
+  const read = (r: CountRead, label: string): number | undefined => {
+    if (!r.error) return r.count ?? 0;
+    if (tableMissing(r.error)) return 0;
+    failed.push(`${label}: ${r.error.message}`);
+    return undefined;
+  };
+  const cb = read(codebook, "codebook");
+  const as = read(assets, "equipment registry");
+  if (cb !== undefined) out.codebookEntries = cb;
+  if (as !== undefined) out.assets = as;
+  if (failed.length > 0) out.setupFailed = failed.join("; ");
+  else out.setupKnown = true;
+  return out;
 }

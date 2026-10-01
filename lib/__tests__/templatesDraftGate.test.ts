@@ -7,7 +7,9 @@
 //                   never a document with blank AI sections: the rows drafted
 //                   before it are kept (paid for), the row is named in
 //                   skippedRows, the next slice starts after it (a row that
-//                   always fails cannot hold the batch); a field the model
+//                   always fails cannot hold the batch); a provider failure
+//                   part-way keeps the rows before it too, and the next
+//                   slice starts AT the failed row; a field the model
 //                   wrote as "" is kept
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,7 +20,7 @@ const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   seq: 0,
 }));
-const ai = vi.hoisted(() => ({ replies: [] as string[], calls: 0 }));
+const ai = vi.hoisted(() => ({ replies: [] as string[], calls: 0, failOn: 0 as number, failStatus: 504 }));
 const sheet = vi.hoisted(() => ({ rows: [{ Name: "A" }, { Name: "B" }, { Name: "C" }] as Array<Record<string, string>> }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
@@ -78,6 +80,8 @@ vi.mock("@/lib/ai/providerCall", async (orig) => {
     ...real,
     callAiModel: vi.fn(async () => {
       ai.calls += 1;
+      // the provider fails on the Nth call (a timeout, a 429, a 5xx)
+      if (ai.failOn === ai.calls) throw new real.AiCallError("Anthropic timed out — try again", ai.failStatus);
       return { text: ai.replies.shift() ?? "{}", webSources: [], liveWeb: false, usage: { inputTokens: 1000, outputTokens: 200 } };
     }),
   };
@@ -108,13 +112,15 @@ beforeEach(() => {
         { tag: "closing", label: "Closing", kind: "ai" },
       ],
     }],
-    ai_connections: [{ org_id: "orgA", user_id: "u1", provider: "anthropic", model: "claude-sonnet-4", api_key: "sk-ant-x" }],
+    ai_connections: [{ org_id: "orgA", user_id: "u1", provider: "anthropic", model: "chat-model", api_key: "sk-ant-x" }],
     ai_key_agreements: [{ org_id: "orgA", user_id: "u1", scope: "use", agreement_version: AGREEMENT_VERSION }],
     ai_usage_events: [],
     ai_usage_limits: [],
   };
   ai.replies = [];
   ai.calls = 0;
+  ai.failOn = 0;
+  ai.failStatus = 504;
   sheet.rows = [{ Name: "A" }, { Name: "B" }, { Name: "C" }];
 });
 
@@ -155,10 +161,11 @@ describe("GOV-13 — each document reserved, then settled", () => {
   });
 
   it("the cap stops the batch part-way: the drafted rows come back, the next slice starts at the stopped row", async () => {
-    // A document's worst case is ~$0.046 (3,000 output tokens at $15/M plus
-    // its prompt) and its settled cost $0.006: with $0.049 left the first
-    // fits, and after it settles the second does not.
-    db.tables.ai_usage_events = [{ id: "s", created_at: new Date().toISOString(), org_id: "orgA", user_id: "u1", op: "knowledgeAsk", input_tokens: 1, output_tokens: 1, est_cost_usd: 9.951, ok: true }];
+    // The fixture's model is unlisted, so it prices at the $5/$25 frontier
+    // fallback: a document's worst case is ~$0.077 (3,000 output tokens at
+    // $25/M plus its prompt) and its settled cost $0.01: with $0.08 left the
+    // first fits, and after it settles the second does not.
+    db.tables.ai_usage_events = [{ id: "s", created_at: new Date().toISOString(), org_id: "orgA", user_id: "u1", op: "knowledgeAsk", input_tokens: 1, output_tokens: 1, est_cost_usd: 9.92, ok: true }];
     ai.replies = ['{"body":"b1","closing":"c1"}', '{"body":"b2","closing":"c2"}'];
     const r = await draft();
     expect(r.status).toBe(200);
@@ -204,6 +211,35 @@ describe("PR-6 — an unreadable draft fails its row, never blanks it, and never
     expect(second.json.nextOffset).toBeNull();
     expect(ai.calls).toBe(30);
     expect(ledger()).toHaveLength(30);
+  });
+
+  it("a provider failure part-way (a timeout on row 12 of a slice) keeps rows 1-11 and the next slice starts AT row 12 — nothing paid is drafted twice", async () => {
+    sheet.rows = Array.from({ length: 30 }, (_, i) => ({ Name: `R${i + 1}` }));
+    const ok = (n: number) => `{"body":"b${n}","closing":"c${n}"}`;
+    ai.replies = Array.from({ length: 11 }, (_, i) => ok(i + 1));
+    ai.failOn = 12;
+    const first = await draft();
+    expect(first.status).toBe(200);
+    expect((first.json.documents as Array<{ sourceRow: number }>).map((d) => d.sourceRow)).toEqual(Array.from({ length: 11 }, (_, i) => i + 1));
+    expect(first.json.nextOffset).toBe(11);
+    expect(first.json.skippedRows).toBeUndefined(); // nothing was skipped: row 12 is retried, not left out
+    expect(String(first.json.stopped)).toBe("The AI provider failed on row 12: Anthropic timed out — try again. The rows drafted before it are kept; the next batch starts at row 12.");
+    // the failed call was settled as a failed, zero-token row; the eleven paid rows stand
+    expect(ledger().map((x) => x.ok)).toEqual([...Array(11).fill(true), false]);
+    // the next slice drafts from row 12 on — rows 1-11 are not paid for again
+    ai.failOn = 0;
+    ai.replies = Array.from({ length: 19 }, (_, i) => ok(i + 12));
+    const second = await draft({ rowOffset: first.json.nextOffset });
+    expect((second.json.documents as Array<{ sourceRow: number }>)[0].sourceRow).toBe(12);
+    expect(ai.calls).toBe(12 + 19);
+  });
+
+  it("a provider failure on the slice's FIRST row answers with its error — nothing was drafted to keep", async () => {
+    ai.failOn = 1;
+    ai.failStatus = 429;
+    const r = await draft();
+    expect(r.status).toBe(429);
+    expect(String(r.json.error)).toMatch(/timed out/);
   });
 
   it("a failing FIRST row still moves the batch on: no documents, the row named, nextOffset past it", async () => {

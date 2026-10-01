@@ -5,8 +5,13 @@
 // handing a VisionContext to the ingest engine (lib/knowledgeIngest →
 // lib/knowledgeVision) — is classified:
 //   GATED      — runs lib/ai/aiGates (or governedAiCall, built on it)
-//   INLINE     — an older inline stack that still checks the signed agreement
-//                (references AGREEMENT_VERSION); its owner moves it onto aiGates
+//   INLINE     — an older inline stack that carries ALL FIVE gates: it reads
+//                the member's own key (ai_connections), checks the provider
+//                allowlist, the signed agreement (AGREEMENT_VERSION), the cap
+//                (getCapUsd / getMonthUsage / reserveWithinCap) and meters
+//                (recordAskUsage / settleUsage). A static reference check —
+//                that each gate is present in the file, not a proof of its
+//                order before the call; its owner moves it onto aiGates
 //   PENDING    — a route whose agreement gate is a cross-package handoff,
 //                named with its owner (I-09 and I-07 run in parallel with
 //                this package; once a route checks the agreement or runs
@@ -40,7 +45,17 @@ const VISION_CONTEXT = /\bVisionContext\b/;
 const indirect = files.filter((f) => f.startsWith("app/") && VISION_CONTEXT.test(src(f)) && !callers.includes(f));
 
 const usesGates = (s: string) => /from "@\/lib\/ai\/aiGates"/.test(s) || /\bgovernedAiCall\s*\(/.test(s);
-const checksAgreement = (s: string) => /\bAGREEMENT_VERSION\b/.test(s);
+/** GOV-11 done-when 3: the five gates an INLINE stack must carry, each by
+ *  the reference that implements it. */
+const FIVE_GATES: Array<[gate: string, ref: RegExp]> = [
+  ["own key", /\bai_connections\b/],
+  ["provider allowlist", /\b(ALLOWED_PROVIDERS|EMBEDDING_PROVIDERS)\b/],
+  ["signed agreement", /\bAGREEMENT_VERSION\b/],
+  ["monthly cap", /\b(getCapUsd|getMonthUsage|reserveWithinCap)\s*\(/],
+  ["metering", /\b(recordAskUsage|settleUsage)\s*\(/],
+];
+const missingGates = (s: string) => FIVE_GATES.filter(([, re]) => !re.test(s)).map(([g]) => g);
+const carriesAllFive = (s: string) => missingGates(s).length === 0;
 
 /** Routes whose agreement gate is another package's file (owner — limb). */
 const PENDING: Record<string, string> = {
@@ -72,13 +87,22 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     expect(indirect).toContain("app/api/knowledge/ingest/route.ts");
   });
 
-  it("every direct caller is GATED, INLINE (checks the agreement), PENDING with an owner, or a HELPER", () => {
-    const unclassified = [...callers, ...indirect].filter((f) => {
-      if (HELPERS[f] || PENDING[f]) return false;
-      const s = src(f);
-      return !usesGates(s) && !checksAgreement(s);
-    });
+  it("every direct caller is GATED, INLINE (carries all five gates), PENDING with an owner, or a HELPER", () => {
+    const unclassified = [...callers, ...indirect]
+      .filter((f) => !HELPERS[f] && !PENDING[f] && !usesGates(src(f)))
+      .map((f) => ({ f, missing: missingGates(src(f)) }))
+      .filter((x) => x.missing.length > 0);
     expect(unclassified).toEqual([]);
+  });
+
+  it("INLINE needs all five gates — the agreement reference alone (the old rule) is not enough", () => {
+    const agreementOnly = 'import { AGREEMENT_VERSION } from "@/lib/ai/pricing";\nawait callAiModel({ provider, model, apiKey });';
+    expect(missingGates(agreementOnly)).toEqual(["own key", "provider allowlist", "monthly cap", "metering"]);
+    expect(carriesAllFive(agreementOnly)).toBe(false);
+    // the INLINE routes as they stand carry each of the five
+    const inline = [...callers, ...indirect].filter((f) => !HELPERS[f] && !PENDING[f] && !usesGates(src(f)));
+    expect(inline.length).toBeGreaterThan(0);
+    for (const f of inline) expect(missingGates(src(f)), f).toEqual([]);
   });
 
   it("the routes this package owns run aiGates: governedAiCall, /api/ai/connection, /api/templates/generate", () => {
