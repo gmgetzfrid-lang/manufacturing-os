@@ -662,19 +662,15 @@ function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; ref
 // backed by the SAME unified notification hook the sidebar badge + bell use.
 function AttentionBody() {
   const {
-    items, markRead, markAllRead, loading,
+    items, counts, markRead, markAllRead, loading,
   } = useTicketNotifications();
   const [filter, setFilter] = useState<AttnFilter>("all");
   const [markingAll, setMarkingAll] = useState(false);
 
-  const counts = {
-    all: items.length,
-    action: items.filter((i) => i.actionRequired).length,
-    unread: items.filter((i) => !i.actionRequired).length,
-  };
+  // counts are the hook's — the same numbers every badge shows (TAX-7).
   const filtered = filter === "action"
     ? items.filter((i) => i.actionRequired)
-    : filter === "unread"
+    : filter === "activity"
       ? items.filter((i) => !i.actionRequired)
       : items;
 

@@ -11,7 +11,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch,
-  Briefcase, FileSignature, Lock, UserPlus, FileText, ListChecks, MailPlus, ClipboardList,
+  Briefcase, FileSignature, Lock, UserPlus, FileText, MailPlus, ClipboardList, HardDrive, Database,
 } from "lucide-react";
 import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
@@ -38,9 +38,14 @@ const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   branch_open: GitBranch,
   branch_resolved: Check,
   provenance_flag: FileText,
-  task_overdue_digest: ListChecks,
   request_pending_approval: MailPlus,
   orchestrator_message: MessageSquare,
+  // notifications Round G, N2: the storage watchdogs' kinds (KIND_META icon
+  // keys); the dead task_overdue_digest entry is gone with its kind. N3
+  // derives this whole map from lib/notificationKinds.ts KIND_META.
+  storage_alert: HardDrive,
+  storage_platform_r2: HardDrive,
+  storage_platform_db: Database,
 };
 
 interface NotificationBellProps {

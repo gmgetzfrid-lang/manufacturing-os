@@ -52,7 +52,7 @@ function CenterPanel({
   filter: AttnFilter;
   onFilter: (f: AttnFilter) => void;
 }) {
-  const { items, markRead, markAllRead, loading } = useTicketNotifications();
+  const { items, counts, markRead, markAllRead, loading } = useTicketNotifications();
   const [markingAll, setMarkingAll] = useState(false);
 
   // Escape closes just the center (capture — the same trick every overlay in
@@ -73,14 +73,10 @@ function CenterPanel({
 
   if (typeof document === "undefined") return null;
 
-  const counts = {
-    all: items.length,
-    action: items.filter((i) => i.actionRequired).length,
-    unread: items.filter((i) => !i.actionRequired).length,
-  };
+  // counts come from the hook — the same numbers every badge shows (TAX-7).
   const filtered = filter === "action"
     ? items.filter((i) => i.actionRequired)
-    : filter === "unread"
+    : filter === "activity"
       ? items.filter((i) => !i.actionRequired)
       : items;
 

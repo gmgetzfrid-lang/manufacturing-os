@@ -5,8 +5,25 @@
 // and unit-tested; runStorageAlerts wires it to the DB from the daily cron.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { notifyChecked, type NotificationInput } from "@/lib/inAppNotifications";
 
 export type AlertBand = "ok" | "warn" | "crit";
+
+/**
+ * Write one bell row through notify()'s typed insert (notifyChecked), so the
+ * kind is a NotificationKind the registry classifies (PROD-10 / TAX-11: the
+ * two storage watchdogs inserted raw rows whose kinds no union declared),
+ * under the watchdog's own service-role client for this call only
+ * (lib/serverClientScope, the intake door's pattern). The cron runs these
+ * steps outside its module-wide client swap, so without the binding the
+ * insert would go out as the anonymous client and be refused. Resolves true
+ * when the row was written. Imported lazily: alertBand's importers (the
+ * storage-stats route) do not need node:async_hooks.
+ */
+export async function notifyAsServiceRole(sb: SupabaseClient, input: NotificationInput): Promise<boolean> {
+  const { runWithServerClient } = await import("@/lib/serverClientScope");
+  return runWithServerClient(sb, () => notifyChecked(input));
+}
 
 /** Usage→band against a real quota. warn at 70%, crit at 90%. */
 export function alertBand(usedBytes: number, quotaBytes: number): { pct: number; band: AlertBand } {
@@ -57,13 +74,15 @@ export async function runStorageAlerts(sb: SupabaseClient): Promise<{ alerts: nu
         .from("notifications").select("id", { count: "exact", head: true })
         .eq("org_id", s.org_id).eq("user_id", a.uid).eq("kind", "storage_alert").gte("created_at", sevenDaysAgo);
       if ((count ?? 0) > 0) continue;
-      await sb.from("notifications").insert({
-        org_id: s.org_id, user_id: a.uid, kind: "storage_alert",
+      const sent = await notifyAsServiceRole(sb, {
+        orgId: s.org_id, userId: a.uid, kind: "storage_alert",
         title: band === "crit" ? `Storage critical — ${pct}% full` : `Storage high — ${pct}% full`,
         body: `This workspace is at ${pct}% of its storage limit. Take a full backup and free up space (archive superseded revisions, purge disposable rows).`,
         link: "/admin/storage",
       });
-      alerts++;
+      // Counted only when the row landed (notify() logs a refusal) — the
+      // cron's storageAlerts figure used to count attempts.
+      if (sent) alerts++;
     }
   }
   return { alerts, orgsChecked, usedBytes };

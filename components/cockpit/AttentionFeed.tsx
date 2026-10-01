@@ -16,10 +16,12 @@ import {
   Send, Zap, ClipboardList, AtSign, GitBranch, Layers, Lock, AlertOctagon,
   FileSignature, CheckCheck, Briefcase,
 } from "lucide-react";
-import type { AttentionItem } from "@/hooks/useTicketNotifications";
+import type { AttentionItem, AttentionCounts } from "@/hooks/useTicketNotifications";
 import { formatAgo } from "@/components/cockpit/CommandDeck";
 
-export type AttnFilter = "all" | "action" | "unread";
+// The key matches its label (TAX-7): "activity" is the feed's non-action
+// items — not DB-unread; see the vocabulary note in useTicketNotifications.
+export type AttnFilter = "all" | "action" | "activity";
 
 const FEED_TONES: Record<string, string> = {
   orange: "bg-orange-50 text-[var(--color-accent)] border-orange-200",
@@ -52,7 +54,8 @@ function attentionVisual(item: AttentionItem): { Icon: React.ComponentType<{ cla
 
 export interface AttentionFeedProps {
   items: AttentionItem[];
-  counts: { all: number; action: number; unread: number };
+  /** The hook's counts (useTicketNotifications().counts), never recounted here. */
+  counts: AttentionCounts;
   filter: AttnFilter;
   onFilter: (f: AttnFilter) => void;
   onMarkRead: (id: string) => void;
@@ -85,7 +88,7 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
   const FILTERS: Array<{ key: AttnFilter; label: string; n: number }> = [
     { key: "all", label: "All", n: counts.all },
     { key: "action", label: "Action", n: counts.action },
-    { key: "unread", label: "Activity", n: counts.unread },
+    { key: "activity", label: "Activity", n: counts.activity },
   ];
 
   return (
@@ -117,7 +120,10 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
               </button>
             ))}
           </div>
-          {counts.unread > 0 && (
+          {/* Offered whenever the feed holds a notification row — what
+              markAllRead clears, action rows included — whichever filter is
+              showing: the header bell's rule. */}
+          {counts.notifications > 0 && (
             <button
               onClick={onMarkAll}
               disabled={markingAll}

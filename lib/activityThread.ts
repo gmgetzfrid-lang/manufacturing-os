@@ -9,7 +9,7 @@
 // whatever it gets back.
 
 import { supabase } from "@/lib/supabase";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { notifyMany, type NotificationKind } from "@/lib/inAppNotifications";
 import { getActiveEpisode, isMissingEpisodeSchema } from "@/lib/checkoutEpisodes";
 
 export type ActivityKind =
@@ -149,13 +149,23 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
       input.kind === "answer" ? "replied on" :
       input.kind === "markup_ref" ? "requested markup on" :
       "posted to";
+    // PROD-8: a handoff and a markup-request post keep their own kind, so the
+    // bell, the feed and the registry (lib/notificationKinds.ts) can tell them
+    // from chat; every other post (chat, question, answer, proposal, system)
+    // is checkout_message as before. All three are 'documents' kinds, so no
+    // badge moves. In-app only, as before (notifyMany writes the bell row; no
+    // email leg).
+    const kind: NotificationKind =
+      input.kind === "handoff" ? "checkout_handoff" :
+      input.kind === "markup_ref" ? "markup_request" :
+      "checkout_message";
 
     await notifyMany({
       orgId: input.orgId,
       userIds,
       actorUserId: actor,
       actorName: input.userName,
-      kind: "checkout_message",
+      kind,
       title: `${input.userName} ${kindWord} ${label}`,
       body: snippet,
       link,

@@ -7,6 +7,11 @@
 
 import { supabase } from "@/lib/supabase";
 
+// Every kind is classified — section, action, compliance, icon, group — in
+// lib/notificationKinds.ts KIND_META; a kind added here without an entry there
+// is a `tsc` error. A kind leaves this union only when nothing writes it:
+// grep app/, lib/, components/ AND supabase/migrations (functions, triggers)
+// first — ack_*, review_*, legal_hold_* are legally significant.
 export type NotificationKind =
   | "ticket_comment"          // someone commented on a ticket the user is involved in
   | "ticket_mention"          // user was @-mentioned in a ticket comment
@@ -23,17 +28,18 @@ export type NotificationKind =
   | "project_comment"         // a comment on a project you're on / watching
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
   | "hold_released"           // a hold was released
-  | "markup_request"          // someone asked the user for markups
+  | "markup_request"          // a markup request on a document: you were asked for markups, or markups were shared to its thread
   | "doc_superseded"          // a doc the user has open was superseded
   | "checkout_released"       // the user's checkout was force-released / auto-expired
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened
   | "branch_resolved"         // a revision branch was merged / withdrawn
   | "provenance_flag"         // your own publish landed without a work trail (private, gentle)
-  | "task_overdue_digest"     // legacy digest — your scratchpad has overdue tasks
-  | "morning_digest"          // composed daily digest: overdue + today + aging dateless
-  | "task_nudge"              // someone sent you a scratchpad task as a heads-up
-  | "task_reminder"           // a precise scratchpad alarm ("remind me at 3pm") just elapsed
+  // (task_overdue_digest, morning_digest, task_nudge, task_reminder were removed
+  //  in notifications Round G, N2: the scratchpad that wrote them was deleted
+  //  (CLEAN-2), and no producer anywhere — app, lib, components, scripts, SQL —
+  //  writes them (PROD-8 / OS-7 / NEDGE-13). A legacy row of one still renders,
+  //  bell-only.)
   | "request_pending_approval" // a new drafting request needs approval / assignment
   | "review_due"              // a controlled document is due (or overdue) for periodic review
   | "owner_assigned"          // you were made the owner of a document / folder / library
@@ -57,7 +63,12 @@ export type NotificationKind =
   | "orchestrator_message"       // a colleague sent this via the document-controller assistant
   | "security_export"            // (to other Admins/DocCtrl) a full workspace export was run
   | "member_revoked"             // (to controllers) a member was suspended/removed; lists what became unowned (GAP-5)
-  | "library_unowned";           // (to controllers) a library was created unowned through the Save-As door (OWN-22)
+  | "library_unowned"            // (to controllers) a library was created unowned through the Save-As door (OWN-22)
+  | "storage_alert"              // (to Admin/DocCtrl) the workspace is over 70% / 90% of its set quota (lib/storageAlerts.ts)
+  | "storage_platform_r2"        // (to Admin/DocCtrl) file storage is near the plan ceiling (lib/storageUsage.ts)
+  | "storage_platform_db"        // (to Admin/DocCtrl) the database is near the plan ceiling (lib/storageUsage.ts)
+  | "ai_cap_changed"             // a monthly AI spend cap was changed, put back or held (app/api/ai/usage/route.ts)
+  | "transmittal_unstampable";   // (to the issuer) the portal refused to stamp an issued PDF (TRX-15, app/api/transmittal/route.ts)
 
 export interface NotificationInput {
   orgId: string;
@@ -79,6 +90,15 @@ export interface NotificationInput {
  * logged but never re-raised.
  */
 export async function notify(input: NotificationInput): Promise<void> {
+  await notifyChecked(input);
+}
+
+/**
+ * notify(), answering whether the row was written (true) or refused / threw
+ * (false — logged, never re-raised). The same typed insert; for a caller that
+ * counts deliveries (the storage watchdogs) and must count only real ones.
+ */
+export async function notifyChecked(input: NotificationInput): Promise<boolean> {
   try {
     const { error } = await supabase.from("notifications").insert({
       org_id: input.orgId,
@@ -93,9 +113,11 @@ export async function notify(input: NotificationInput): Promise<void> {
       actor_name: input.actorName ?? null,
       metadata: input.metadata ?? null,
     });
-    if (error) console.warn("[notify] insert failed", error.message);
+    if (error) { console.warn("[notify] insert failed", error.message); return false; }
+    return true;
   } catch (e) {
     console.warn("[notify] insert threw", e);
+    return false;
   }
 }
 
