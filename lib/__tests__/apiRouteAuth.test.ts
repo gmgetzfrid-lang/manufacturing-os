@@ -235,6 +235,34 @@ describe("POST /api/orchestrator/execute", () => {
     expect(mockState.calls.some((c) => c.table === "drawing_audit_logs")).toBe(false);
   });
 
+  it("ORCH-1 / PR-1: a Viewer executing a stored log_audit_completion gets 403 — the tool's controller gate runs at execute", async () => {
+    mockState.user = { id: "u1" };
+    mockState.tables["org_members"] = { data: { uid: "u1", role: "Viewer", roles: ["Viewer"] } };
+    stored("log_audit_completion", { sheet_number: "P-101", revision: "C", status: "passed" });
+    const { POST } = await load();
+    const res = await POST(req("http://test/api/orchestrator/execute", {
+      method: "POST",
+      headers: { authorization: "Bearer tok" },
+      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+    }));
+    expect(res.status).toBe(403);
+    expect(String((await res.json()).error)).toMatch(/Only Admin or Document Control/);
+    expect(mockState.calls.some((c) => c.table === "drawing_audit_logs" && c.method === "upsert")).toBe(false);
+  });
+
+  it("ORCH-8: a Manager or Supervisor is not the controller tier either — 403", async () => {
+    mockState.user = { id: "u1" };
+    mockState.tables["org_members"] = { data: { uid: "u1", role: "Manager", roles: ["Manager", "Supervisor"] } };
+    stored("log_audit_completion", { sheet_number: "P-101", revision: "C", status: "passed" });
+    const { POST } = await load();
+    const res = await POST(req("http://test/api/orchestrator/execute", {
+      method: "POST",
+      headers: { authorization: "Bearer tok" },
+      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+    }));
+    expect(res.status).toBe(403);
+  });
+
   it("executes a stored proposal end-to-end (audit record logged first)", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };

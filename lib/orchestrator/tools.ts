@@ -23,6 +23,9 @@ import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowled
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { holdsReadOnlyRole } from "@/lib/roleHeld";
+import { RANK, replaceDecision, storedProvisional, type AuditStatus } from "@/lib/drawingAuditLog";
 
 export interface ToolContext {
   orgId: string;
@@ -73,12 +76,38 @@ export interface ToolDef {
   run: (args: Record<string, string | number | boolean>, ctx: ToolContext) => Promise<ToolResult>;
 }
 
-const CONTROLLER_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
-
-/** The controller tier by the role COLLECTION (an additively held DocCtrl
- *  counts — DEC-2), never the headline alone. */
+/** The controller tier — Admin or DocCtrl, held anywhere in the role
+ *  COLLECTION (DEC-2) — through the app's one definition
+ *  (lib/permissions isControllerPrincipal, the same set is_org_controller
+ *  uses). No local role list (ORCH-8): Manager and Supervisor are not the
+ *  controller tier anywhere else, so they are not here either. */
 function holdsControllerTier(ctx: ToolContext): boolean {
-  return ctx.principal.roles.some((r) => CONTROLLER_ROLES.includes(r));
+  return isControllerPrincipal(ctx.principal);
+}
+
+/**
+ * ORCH-8: may the caller EDIT this document (check it out, revise it)? The
+ * answer the real door gives, not a role list:
+ *   - the controller tier always may;
+ *   - a read-only role (Viewer / Auditor, held anywhere — lib/roleHeld,
+ *     deny-if-any) never does;
+ *   - anyone else may unless the document's ACL index (the merged library →
+ *     folder → document chain) denies them `write` or `editMetadata` — the
+ *     predicate documents_deny_write_guard (20260901) applies, evaluated by
+ *     the database's own acl_index_denies, so the two cannot drift.
+ * Fails closed: an index that cannot be evaluated is a "no".
+ */
+async function mayEdit(ctx: ToolContext, aclIndex: unknown): Promise<boolean> {
+  if (holdsControllerTier(ctx)) return true;
+  if (holdsReadOnlyRole(ctx.principal.roles)) return false;
+  if (!aclIndex) return true;
+  for (const action of ["write", "editMetadata"]) {
+    const { data, error } = await supabaseAdmin.rpc("acl_index_denies", {
+      p_idx: aclIndex, p_org: ctx.orgId, p_uid: ctx.userId, p_action: action,
+    });
+    if (error || data !== false) return false;
+  }
+  return true;
 }
 
 /** SURF-7: which of these controlled documents may the CALLER read? Fails
@@ -300,7 +329,7 @@ const checkPermissions: ToolDef = {
     // here — the caller's ACL principal is evaluated explicitly, and a "no"
     // is the same "no" the database would give the caller directly.
     const { data } = await supabaseAdmin
-      .from("documents").select("id, document_number, status, org_id")
+      .from("documents").select("id, document_number, status, org_id, acl_index")
       .eq("id", String(args.document_id)).eq("org_id", ctx.orgId).maybeSingle();
     if (!data) return { data: { readable: false, editable: false, note: "Not visible to this user." } };
     const readable = await readableIds(ctx, [String(args.document_id)]);
@@ -314,10 +343,14 @@ const checkPermissions: ToolDef = {
       .from("document_holds").select("id, reason")
       .eq("document_id", String(args.document_id)).is("released_at", null).limit(5);
     const hold = (holds ?? []).length > 0;
+    // ORCH-8: editable is the real door's answer for THIS caller on THIS
+    // document (mayEdit), not a role list — a Drafter the ACL grants is
+    // told yes, anyone the ACL denies write is told no.
+    const canEdit = await mayEdit(ctx, (data as { acl_index?: unknown }).acl_index);
     return {
       data: {
         readable: true,
-        editable: holdsControllerTier(ctx) && !hold,
+        editable: canEdit && !hold,
         on_hold: hold,
         holds: (holds ?? []).map((h) => (h as { reason: string }).reason),
         status: (data as { status: string }).status,
@@ -340,18 +373,54 @@ const checkAuditHistory: ToolDef = {
       .select("sheet_number, revision_code, status, audited_at, audit_details")
       .eq("org_id", ctx.orgId).eq("sheet_number", String(args.sheet_number));
     if (args.revision) q = q.eq("revision_code", String(args.revision));
-    const { data, error } = await q.order("audited_at", { ascending: false }).limit(5);
-    if (error) return { data: { audited: false, note: "Audit memory isn't installed yet." } };
-    const rows = data ?? [];
-    // Without a revision in the question, prior audits are history, not an
-    // answer — the sheet may well have been revised since.
-    const recommendation = rows.length === 0
-      ? (args.revision ? "Not audited at this revision — go ahead." : "Never audited — go ahead.")
-      : args.revision
-        ? "Already audited at this revision. Skip it unless the drawing has been revised since."
-        : `Audited before (latest: rev ${String((rows[0] as { revision_code: string }).revision_code)}). `
-          + "Ask which revision is in front of you before deciding.";
-    return { data: { audited: rows.length > 0, history: rows, recommendation } };
+    const { data, error } = await q.order("audited_at", { ascending: false }).limit(10);
+    if (error) {
+      return isMissingTable(error)
+        ? { data: { audited: false, note: "Audit memory isn't installed yet." } }
+        : { data: { audited: false, error: "The audit record could not be read — this is not the same as 'never audited'." } };
+    }
+    // One row per library that audited the sheet, plus the org-wide row
+    // (DEC-68). Summarised — never the whole stored set — and each row says
+    // whether it is SETTLED. A provisional row (audit_details.provisional)
+    // is still waiting on a document that is not read whole; a `skipped` row
+    // says only that the sheet could not be read; a verdict under an unknown
+    // revision ("") is never "already recorded" (DWG-13).
+    const history = ((data ?? []) as Array<{ revision_code: string; status: string; audited_at: string; audit_details: unknown }>).map((r) => {
+      const d = (r.audit_details ?? {}) as { note?: unknown; provisional?: { waitingOn?: unknown } };
+      const provisional = storedProvisional(r.audit_details);
+      return {
+        revision: r.revision_code, status: r.status, audited_at: r.audited_at,
+        scope: libraryOf(r.audit_details) ? "library" : "org-wide",
+        ...(typeof d.note === "string" && d.note ? { note: d.note.slice(0, 300) } : {}),
+        ...(provisional ? {
+          provisional: true,
+          settled_status: provisional.settledStatus,
+          waiting_on: Array.isArray(d.provisional?.waitingOn) ? (d.provisional?.waitingOn as unknown[]).map(String).slice(0, 6) : [],
+        } : {}),
+      };
+    });
+    const settled = history.filter((h) => h.status !== "skipped" && !h.provisional && h.revision !== "");
+    const waiting = history.filter((h) => h.provisional);
+    const severest = (rows: typeof history) =>
+      rows.map((h) => h.status).sort((a, b) => (RANK[b as AuditStatus] ?? 9) - (RANK[a as AuditStatus] ?? 9))[0];
+    let recommendation: string;
+    if (history.length === 0) {
+      recommendation = args.revision ? "Not audited at this revision — go ahead." : "Never audited — go ahead.";
+    } else if (!args.revision) {
+      recommendation = `Audited before (latest: rev ${history[0].revision || "unknown"}). `
+        + "Ask which revision is in front of you before deciding.";
+    } else if (settled.length > 0) {
+      recommendation = `Already audited at this revision (${severest(settled)}). Skip it unless the drawing has been revised since.`;
+    } else if (waiting.length > 0) {
+      const names = [...new Set(waiting.flatMap((h) => h.waiting_on ?? []))];
+      recommendation = "The verdict at this revision is PROVISIONAL — not settled. It is waiting on "
+        + (names.length > 0 ? names.join(", ") : "a document that is not read whole yet")
+        + ` (settled so far as ${severest(waiting.map((h) => ({ ...h, status: h.settled_status ?? h.status })))}). `
+        + "Do not skip it: audit it again once what it waits on is read.";
+    } else {
+      recommendation = "Recorded only as skipped (it could not be read) — audit it.";
+    }
+    return { data: { audited: settled.length > 0, history, recommendation } };
   },
 };
 
@@ -517,7 +586,7 @@ const checkoutDocument: ToolDef = {
   ],
   async run(args, ctx) {
     const { data: doc } = await supabaseAdmin
-      .from("documents").select("id, document_number, title, library_id, checked_out_by, checked_out_by_name")
+      .from("documents").select("id, document_number, title, library_id, checked_out_by, checked_out_by_name, acl_index")
       .eq("id", String(args.document_id)).eq("org_id", ctx.orgId).maybeSingle();
     if (!doc) return { data: { error: "No such document in this org." } };
     // SURF-7: a document the caller cannot read does not exist for them.
@@ -527,6 +596,7 @@ const checkoutDocument: ToolDef = {
     const d = doc as {
       document_number: string; library_id: string;
       checked_out_by: string | null; checked_out_by_name: string | null;
+      acl_index?: unknown;
     };
 
     // Say the conflict out loud before proposing anything. Offering to check
@@ -540,8 +610,11 @@ const checkoutDocument: ToolDef = {
         },
       };
     }
-    if (!holdsControllerTier(ctx)) {
-      return { data: { error: "This user's role can't check documents out." } };
+    // ORCH-8: the same door check_permissions reports. Proposing never
+    // writes — the confirmation opens the real checkout flow, which enforces
+    // its own guards under the user's session.
+    if (!(await mayEdit(ctx, d.acl_index))) {
+      return { data: { error: "This user can't edit this document, so it can't be checked out by them.", forbidden: true } };
     }
 
     const params = { document_id: args.document_id, reason: args.reason };
@@ -583,6 +656,10 @@ const notifyPersonnel: ToolDef = {
       .eq("org_id", ctx.orgId).eq("uid", String(args.user_id)).eq("status", "active").maybeSingle();
     if (!member) return { data: { error: "That user isn't an active member of this org." } };
 
+    // Authority (DEC-44 (I-04), the plan default): any active member may
+    // notify a colleague about a document they can read — a message is not
+    // a record. It is sent in the caller's own name (actorName), proposed
+    // like every write, and runs once, from the stored proposal.
     const params = { user_id: args.user_id, document_id: args.document_id, message: args.message };
     const gate = proposal(
       "notify_personnel",
@@ -605,11 +682,73 @@ const notifyPersonnel: ToolDef = {
   },
 };
 
+type DbError = { code?: string; message?: string } | null | undefined;
+const isMissingColumn = (e: DbError) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /column .* does not exist/i.test(e.message ?? ""));
+const isMissingTable = (e: DbError) =>
+  !!e && (e.code === "42P01" || /relation .* does not exist/i.test(e.message ?? ""));
+
+const AUDIT_STATUSES: readonly AuditStatus[] = ["passed", "broken_connectors", "flagged", "skipped"];
+
+/** The library a drawing-route verdict names in its details, if any. */
+function libraryOf(details: unknown): string | null {
+  const l = (details as { libraryId?: unknown } | null)?.libraryId;
+  return typeof l === "string" && l ? l : null;
+}
+
+/**
+ * The ORG-WIDE verdict stored for (sheet, revision) — the row
+ * log_audit_completion writes (DEC-68 item 2, 20261124: drawing_audit_logs
+ * is unique on (org_id, library_id, sheet_number, revision_code) NULLS NOT
+ * DISTINCT; an org-wide row has library_id NULL). Before 20261124 there is
+ * no library_id column and the key is (org_id, sheet_number,
+ * revision_code): `legacy` says so, and the row found there may be one a
+ * library's audit filed.
+ */
+async function storedOrgWideVerdict(orgId: string, sheet: string, revision: string): Promise<
+  { legacy: boolean; row: { status: string; revision_code: string; audit_details: unknown } | null } | { error: string }
+> {
+  const scoped = await supabaseAdmin
+    .from("drawing_audit_logs").select("status, revision_code, audit_details, library_id")
+    .eq("org_id", orgId).eq("sheet_number", sheet).eq("revision_code", revision)
+    .is("library_id", null).maybeSingle();
+  if (!scoped.error) return { legacy: false, row: scoped.data as { status: string; revision_code: string; audit_details: unknown } | null };
+  if (isMissingTable(scoped.error)) return { error: "Audit memory isn't installed yet (migration 20260929)." };
+  if (!isMissingColumn(scoped.error)) return { error: `The audit record could not be read: ${scoped.error.message}` };
+  const legacy = await supabaseAdmin
+    .from("drawing_audit_logs").select("status, revision_code, audit_details")
+    .eq("org_id", orgId).eq("sheet_number", sheet).eq("revision_code", revision).maybeSingle();
+  if (legacy.error) return { error: `The audit record could not be read: ${legacy.error.message}` };
+  return { legacy: true, row: legacy.data as { status: string; revision_code: string; audit_details: unknown } | null };
+}
+
+/** Would writing `status` over the stored verdict lower what it settled?
+ *  The drawing layer's own rule (lib/drawingAuditLog replaceDecision, RANK):
+ *  a known revision's verdict is never lowered; a provisional row's floor is
+ *  what it settled; on the pre-20261124 key a row a library filed is never
+ *  lowered whatever its revision. Returns the refusal, or null to write. */
+function lowersStored(
+  stored: { status: string; revision_code: string; audit_details: unknown } | null,
+  status: AuditStatus, legacy: boolean,
+): string | null {
+  if (!stored) return null;
+  const provisional = storedProvisional(stored.audit_details);
+  const decision = replaceDecision(
+    { revision_code: stored.revision_code, status: stored.status, provisional },
+    { status },
+    { neverLower: legacy && !!libraryOf(stored.audit_details) },
+  );
+  if (decision === "write") return null;
+  const floor = provisional ? provisional.settledStatus : stored.status;
+  return `This sheet is already recorded as ${floor} at this revision; a less severe verdict (${status}) is not recorded over it.`;
+}
+
 const logAuditCompletion: ToolDef = {
   name: "log_audit_completion",
   description:
-    "Record that a drawing sheet was audited at a revision, so it isn't audited again. "
-    + "Requires the user's confirmation.",
+    "Record that a drawing sheet was audited at a revision, so it isn't audited again. The record is "
+    + "org-wide and never lowers a more severe verdict already recorded for that sheet and revision. "
+    + "Document controllers only. Requires the user's confirmation.",
   writes: true,
   params: [
     { name: "sheet_number", type: "string", required: true, description: "Sheet or drawing number." },
@@ -618,15 +757,26 @@ const logAuditCompletion: ToolDef = {
     { name: "details", type: "string", description: "What was found." },
   ],
   async run(args, ctx) {
-    const status = String(args.status);
-    if (!["passed", "broken_connectors", "flagged", "skipped"].includes(status)) {
+    const status = String(args.status) as AuditStatus;
+    if (!AUDIT_STATUSES.includes(status)) {
       return { data: { error: "status must be passed, broken_connectors, flagged, or skipped." } };
     }
-    // SURF-7: recording an audit completion is a controller-tier act; the
-    // service-role write must not let a Viewer's confirmation mint one.
+    // ORCH-1 / PR-1 / SURF-7: recording an audit completion is a
+    // controller-tier act (Admin / DocCtrl by the role collection — the same
+    // gate /api/knowledge/drawing applies); the service-role write must not
+    // let anyone else's confirmation mint one.
     if (!holdsControllerTier(ctx)) {
-      return { data: { error: "Only Admin, Document Control, Manager or Supervisor can record an audit completion." } };
+      return { data: { error: "Only Admin or Document Control can record an audit completion.", forbidden: true } };
     }
+    const sheet = String(args.sheet_number);
+    const revision = String(args.revision);
+    // Never lower a verdict already settled for this key (DEC-68) — checked
+    // before proposing, and again when the confirmation runs.
+    const stored = await storedOrgWideVerdict(ctx.orgId, sheet, revision);
+    if ("error" in stored) return { data: { error: stored.error } };
+    const lowers = lowersStored(stored.row, status, stored.legacy);
+    if (lowers) return { data: { error: lowers, kept: stored.row?.status ?? null } };
+
     const params = { sheet_number: args.sheet_number, revision: args.revision, status };
     const gate = proposal(
       "log_audit_completion",
@@ -634,11 +784,17 @@ const logAuditCompletion: ToolDef = {
     );
     if (gate) return gate;
 
-    const { error } = await supabaseAdmin.from("drawing_audit_logs").upsert({
-      org_id: ctx.orgId, sheet_number: String(args.sheet_number),
-      revision_code: String(args.revision), status,
-      audit_details: { note: args.details ?? "", by: ctx.userId },
-    }, { onConflict: "org_id,sheet_number,revision_code" });
+    // An ORG-WIDE row (library_id NULL) on 20261124's key; before 20261124,
+    // the org-wide key that database has.
+    const row = {
+      org_id: ctx.orgId, sheet_number: sheet,
+      revision_code: revision, status,
+      audited_at: new Date().toISOString(),
+      audit_details: { note: args.details ?? "", by: ctx.userId, byName: ctx.actorName, source: "orchestrator" },
+    };
+    const { error } = stored.legacy
+      ? await supabaseAdmin.from("drawing_audit_logs").upsert(row, { onConflict: "org_id,sheet_number,revision_code" })
+      : await supabaseAdmin.from("drawing_audit_logs").upsert({ ...row, library_id: null }, { onConflict: "org_id,library_id,sheet_number,revision_code" });
     if (error) return { data: { error: error.message } };
     return { data: { status: "logged" } };
   },

@@ -68,6 +68,8 @@ vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisi
 import { POST as runPOST } from "@/app/api/orchestrator/route";
 import { POST as executePOST } from "@/app/api/orchestrator/execute/route";
 import { REFUSAL, NOT_INSTALLED, PROPOSAL_TTL_MS } from "@/lib/orchestrator/proposals";
+import { toolByName, type ToolContext } from "@/lib/orchestrator/tools";
+import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 
 const ORG = "o1";
 const AUDIT_CALL = JSON.stringify({
@@ -256,7 +258,7 @@ describe("ORCH-4 / ORCH-10 — an action that does not run gives its claim back 
     const dc = db.tables.org_members.find((m) => m.uid === "u-dc")!;
     dc.roles = ["Requester"];
     const res = await execute("dc", { proposalId: card.proposalId });
-    expect([403, 409]).toContain(res.status);
+    expect(res.status).toBe(403);
     expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
     expect(auditRows("AI_ACTION_FAILED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_FAILED")[0].details).toMatchObject({ proposalId: card.proposalId });
@@ -338,3 +340,162 @@ describe("20261147 — orchestrator_proposals: one paste, service role only, pro
     expect(lib).toMatch(/await pruneOrchestratorProposals\(now\)/);
   });
 });
+
+/** A stored proposal row, as a run would have written it. */
+function storedProposal(over: Partial<Row> & { tool: string; parameters: Record<string, unknown>; user_id: string }): string {
+  const params = over.parameters;
+  const id = `p-${rowsOf("orchestrator_proposals").length + 1}`;
+  db.tables.orchestrator_proposals.push({
+    id, org_id: ORG, fingerprint: `${over.tool}(${Object.keys(params).sort().map((k) => `${k}=${String(params[k])}`).join("&")})`,
+    summary: "s", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString(),
+    executed_at: null, dismissed_at: null, ...over,
+  });
+  return id;
+}
+async function ctxOf(uid: string): Promise<ToolContext> {
+  const p = await loadPrincipal(ORG, uid) as KnowledgePrincipal;
+  return { orgId: ORG, userId: uid, role: p.role, principal: p, actorName: "Name", approved: new Set() };
+}
+
+describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the audit record; notify is any member, about a document they can read", () => {
+  it("a Viewer holding a stored log_audit_completion proposal gets 403 at execute — nothing written, the attempt recorded", async () => {
+    const id = storedProposal({ user_id: "u-viewer", tool: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "passed" } });
+    const res = await execute("viewer", { proposalId: id });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Only Admin or Document Control can record an audit completion.");
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
+    expect(auditRows("AI_ACTION_FAILED")).toHaveLength(1);
+  });
+
+  it("a Viewer cannot even be PROPOSED an audit record (the run's tool refuses first)", async () => {
+    net.script = [AUDIT_CALL, "You can't record that."];
+    const { body } = await ask("viewer", "record 0103 rev C");
+    expect(pendingOf(body)).toHaveLength(0);
+    expect(rowsOf("orchestrator_proposals")).toHaveLength(0);
+  });
+
+  it("notify_personnel (DEC-44 (I-04)): a Viewer may notify a colleague about a document they can read — once, in their own name", async () => {
+    net.script = [JSON.stringify({ tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Rev C is out" } }), "Proposed."];
+    const { body } = await ask("viewer", "tell Dana rev C is out");
+    const [card] = pendingOf(body);
+    expect(card.proposalId).toEqual(expect.any(String));
+    const res = await execute("viewer", { proposalId: card.proposalId });
+    expect(res).toMatchObject({ status: 200, body: { ok: true, result: { status: "sent" } } });
+    expect(net.emitted).toHaveLength(1);
+    expect(net.emitted[0]).toMatchObject({ actorUserId: "u-viewer", actorName: "Vic Viewer", audience: { involved: ["u-dc"] } });
+    expect((await execute("viewer", { proposalId: card.proposalId })).status).toBe(409);
+    expect(net.emitted).toHaveLength(1);
+  });
+
+  it("notify_personnel about a document the caller cannot read is refused — at proposal and again at execute", async () => {
+    db.tables.libraries[0].acl = { inherit: true, visibility: "normal", rules: [{ effect: "allow", subject: { type: "role", id: "DocCtrl" }, actions: ["read"] }] };
+    const run = await toolByName("notify_personnel")!.run({ user_id: "u-dc", document_id: "d-1", message: "hi" }, await ctxOf("u-viewer"));
+    expect(run.pending).toBeUndefined();
+    expect(run.data).toMatchObject({ error: "No such document in this org." });
+    const id = storedProposal({ user_id: "u-viewer", tool: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "hi" } });
+    const res = await execute("viewer", { proposalId: id });
+    expect(res.status).toBe(409);
+    expect(net.emitted).toHaveLength(0);
+  });
+});
+
+describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE rows on 20261124's key and never lowers a settled verdict", () => {
+  const verdict = (over: Row) => ({ id: `v-${Math.random()}`, org_id: ORG, library_id: null, sheet_number: "025-PID-0103", revision_code: "C", status: "broken_connectors", audit_details: {}, audited_at: "2026-09-01T00:00:00Z", ...over });
+
+  it("a stored broken_connectors is never replaced by passed — refused before proposing, and again if it appears before the confirmation runs", async () => {
+    db.tables.drawing_audit_logs.push(verdict({}));
+    const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "passed" }, await ctxOf("u-dc"));
+    expect(refused.pending).toBeUndefined();
+    expect(String((refused.data as { error: string }).error)).toMatch(/already recorded as broken_connectors/);
+
+    db.tables.drawing_audit_logs = [];
+    net.script = [JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "passed" } }), "Proposed."];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C passed")).body);
+    db.tables.drawing_audit_logs.push(verdict({}));
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(409);
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
+    expect(rowsOf("drawing_audit_logs")[0].status).toBe("broken_connectors");
+    expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
+  });
+
+  it("a more severe verdict replaces a less severe one on the org-wide row; a library's row at the same key is untouched", async () => {
+    db.tables.drawing_audit_logs.push(verdict({ status: "passed" }), verdict({ library_id: "KL-1", status: "passed", audit_details: { libraryId: "KL-1" } }));
+    const ctx = await ctxOf("u-dc");
+    const params = { sheet_number: "025-PID-0103", revision: "C", status: "flagged" };
+    const fp = `log_audit_completion(revision=C&sheet_number=025-PID-0103&status=flagged)`;
+    const out = await toolByName("log_audit_completion")!.run(params, { ...ctx, approved: new Set([fp]) });
+    expect(out.data).toMatchObject({ status: "logged" });
+    const rows = rowsOf("drawing_audit_logs");
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.library_id === null)).toMatchObject({ status: "flagged", audit_details: expect.objectContaining({ source: "orchestrator", by: "u-dc" }) });
+    expect(rows.find((r) => r.library_id === "KL-1")).toMatchObject({ status: "passed" });
+  });
+
+  it("a PROVISIONAL row's floor is what it settled: below it is refused, at it is written", async () => {
+    // Computed broken_connectors while a neighbour was parked; what it SETTLED is flagged.
+    db.tables.drawing_audit_logs.push(verdict({ status: "broken_connectors", audit_details: { provisional: { waitingOn: ["0104.pdf"], settledStatus: "flagged" } } }));
+    const ctx = await ctxOf("u-dc");
+    const lower = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "passed" }, ctx);
+    expect(lower.pending).toBeUndefined();
+    expect(String((lower.data as { error?: string }).error)).toMatch(/already recorded as flagged/);
+    const fp = "log_audit_completion(revision=C&sheet_number=025-PID-0103&status=flagged)";
+    const atFloor = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "C", status: "flagged" }, { ...ctx, approved: new Set([fp]) });
+    expect(atFloor.data).toMatchObject({ status: "logged" });
+    expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "flagged" });
+  });
+
+  it("before 20261124 (no library_id column) it writes on the org-wide key that database has, and never lowers a library's row there", async () => {
+    db.missingColumns.drawing_audit_logs = ["library_id"];
+    db.tables.drawing_audit_logs.push({ id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "", status: "broken_connectors", audit_details: { libraryId: "KL-1" } });
+    const ctx = await ctxOf("u-dc");
+    const refused = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "", status: "passed" }, ctx);
+    // revision "" is treated as given here (the tool is called directly).
+    expect(String((refused.data as { error?: string }).error)).toMatch(/already recorded/);
+    const fp = "log_audit_completion(revision=D&sheet_number=025-PID-0103&status=passed)";
+    const ok = await toolByName("log_audit_completion")!.run({ sheet_number: "025-PID-0103", revision: "D", status: "passed" }, { ...ctx, approved: new Set([fp]) });
+    expect(ok.data).toMatchObject({ status: "logged" });
+    const writes = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+    expect(writes).toHaveLength(1);
+    expect(Object.keys(writes[0].payload as Row)).not.toContain("library_id");
+  });
+});
+
+describe("DEC-68 handoff — check_audit_history never answers 'already audited' for a provisional row", () => {
+  const history = async (revision?: string) => (await toolByName("check_audit_history")!.run(
+    revision ? { sheet_number: "025-PID-0103", revision } : { sheet_number: "025-PID-0103" }, await ctxOf("u-dc"))).data as {
+    audited: boolean; recommendation: string; history: Array<Record<string, unknown>>;
+  };
+  const row = (over: Row) => ({ id: `v-${Math.random()}`, org_id: ORG, library_id: "KL-1", sheet_number: "025-PID-0103", revision_code: "C", audited_at: "2026-09-01T00:00:00Z", ...over });
+
+  it("a provisional row is reported as provisional with what it waits on — and the model is told not to skip it", async () => {
+    db.tables.drawing_audit_logs.push(row({ status: "flagged", audit_details: { libraryId: "KL-1", provisional: { waitingOn: ["025-PID-0104.pdf"], settledStatus: "passed" }, set: { sheets: Array.from({ length: 500 }, (_, i) => `S-${i}`) } } }));
+    const h = await history("C");
+    expect(h.audited).toBe(false);
+    expect(h.recommendation).toMatch(/PROVISIONAL/);
+    expect(h.recommendation).toMatch(/025-PID-0104\.pdf/);
+    expect(h.recommendation).toMatch(/settled so far as passed/);
+    expect(h.recommendation).toMatch(/Do not skip it/);
+    expect(h.recommendation).not.toMatch(/Skip it unless/);
+    expect(h.history[0]).toMatchObject({ provisional: true, settled_status: "passed", waiting_on: ["025-PID-0104.pdf"], scope: "library" });
+    // Summarised: the stored set list never reaches the model.
+    expect(JSON.stringify(h.history)).not.toContain("S-499");
+  });
+
+  it("a settled row is 'already audited'; a skipped row is not", async () => {
+    db.tables.drawing_audit_logs.push(row({ status: "skipped", audit_details: {} }));
+    expect((await history("C")).recommendation).toMatch(/Recorded only as skipped/);
+    db.tables.drawing_audit_logs.push(row({ status: "broken_connectors", library_id: null, audit_details: { note: "box 14 missing" } }));
+    const h = await history("C");
+    expect(h.audited).toBe(true);
+    expect(h.recommendation).toMatch(/Already audited at this revision \(broken_connectors\)/);
+  });
+
+  it("a read that fails is an error, never 'never audited'", async () => {
+    db.hooks.push((op) => (op.table === "drawing_audit_logs" ? { error: { code: "57014", message: "timeout" } } : undefined));
+    const h = await history("C") as unknown as { error?: string; recommendation?: string };
+    expect(h.error).toMatch(/not the same as 'never audited'/);
+    expect(h.recommendation).toBeUndefined();
+  });
+});
+
