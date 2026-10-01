@@ -32,6 +32,7 @@ import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
+import { StatusMark, StatusLegend, RUBRIC_MARKS } from "@/components/projects/StatusMark";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -368,10 +369,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                   </button>
                 </span>
               </div>
+              {/* A11Y-2: covered vs gap is a glyph and a word, never hue alone. */}
+              <StatusLegend marks={RUBRIC_MARKS} title="Rubric key" />
               <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                 {proposal.findings.map((f) => (
                   <li key={f.area} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
-                    <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${f.covered ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <StatusMark spec={f.covered ? RUBRIC_MARKS.covered : RUBRIC_MARKS.gap} />
                     <span><b className="text-[var(--color-text)]">{areaLabel.get(f.area) ?? f.area}:</b> <span className="text-[var(--color-text-muted)]">{f.finding}</span></span>
                   </li>
                 ))}
@@ -439,7 +442,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
         <ul className="divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto">
           {events.map((e) => (
             <li key={e.id} className="px-4 py-2 flex items-start gap-2 text-xs">
-              <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
+              <span aria-hidden="true" className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
                 e.kind === "recordable" || e.kind === "stop_work" ? "bg-rose-500"
                 : e.kind === "warning" ? "bg-amber-500"
                 : e.kind === "commendation" ? "bg-emerald-500"
@@ -579,13 +582,17 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
             <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
-              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). 'Inactive' needs the same override to be awarded.">
+              aria-label="Status" aria-describedby="company-status-help"
+              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="do_not_use">Do not use</option>
             </select>
           </div>
+          {/* A11Y-12: what "Do not use" does is said in text, not in a hover title on a select. */}
+          <p id="company-status-help" className="text-[11px] text-[var(--color-text-muted)]">
+            <b>Do not use</b> keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). <b>Inactive</b> needs the same override to be awarded.
+          </p>
           <div className="grid grid-cols-3 gap-3">
             <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />

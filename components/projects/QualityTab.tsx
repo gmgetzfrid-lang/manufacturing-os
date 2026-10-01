@@ -65,6 +65,13 @@ import {
 import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, reasonProblem, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appPrompt } from "@/components/providers/DialogProvider";
+import HelpTooltip from "@/components/ui/HelpTooltip";
+import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
+
+/** A11Y-8: a decision control is never under 24 px, and on a coarse
+ *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
+ *  by a bare element rule in the shared stylesheet. */
+const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -603,15 +610,19 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
           {canManage && checklist.status === "open" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => void assess()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-                title="AI judges which items apply to THIS job, grounded on the project's purpose, SOW, schedule, and documents. You review each proposal before it applies.">
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                 {busy === "assess" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Which items apply to this job?
               </button>
+              <HelpTooltip label="What “Which items apply to this job?” does">
+                AI judges which items apply to THIS job, grounded on the project&apos;s purpose, SOW, schedule, and documents. It only <b>proposes</b> — you review each proposal before it applies, and it never marks an item not applicable on its own.
+              </HelpTooltip>
               <button onClick={() => void sweep()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-                title="Deterministic — no AI. Greens items the platform can PROVE (accepted turnover on the same subject, Issued documents on file), citation attached; withdraws a green whose document is no longer current; flags the rest needs-evidence.">
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
+              <HelpTooltip label="What “Check evidence we already hold” does">
+                Deterministic — no AI. Greens items the platform can <b>prove</b> (accepted turnover on the same subject, Issued documents on file), citation attached; withdraws a green whose document is no longer current; flags the rest needs-evidence. It writes statuses on this checklist.
+              </HelpTooltip>
               <button onClick={() => setSigning(true)} disabled={busy != null || completeBlocked}
                 aria-disabled={completeBlocked || undefined}
                 title={completeTitle}
@@ -660,6 +671,8 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
               onApply={() => void applyReview()} onCancel={() => setReview(null)} />
           )}
 
+          {/* A11Y-2 / A11Y-12: the key to the item marks, always visible. */}
+          <StatusLegend marks={CHECKLIST_STATUS_MARKS} />
           {items == null ? (
             <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" /></div>
           ) : itemsError ? (
@@ -797,8 +810,8 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
 
   return (
     <li className={`px-3 py-2 text-xs ${na ? "opacity-50" : ""}`}>
-      <div className="flex items-start gap-2">
-        <StatusDot status={na ? "na" : item.status} />
+      <div className="flex flex-wrap sm:flex-nowrap items-start gap-2">
+        <StatusMark spec={CHECKLIST_STATUS_MARKS[na ? "na" : item.status] ?? CHECKLIST_STATUS_MARKS.open} className="mt-px" />
         <div className="min-w-0 flex-1">
           <div className="text-[var(--color-text)]">{item.text}</div>
           {item.aiRationale && (
@@ -828,30 +841,30 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
           )}
         </div>
         {canManage && !busy && (
-          <span className="shrink-0 flex items-center gap-1">
+          <span className="shrink-0 basis-full sm:basis-auto flex flex-wrap items-center justify-end gap-2">
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+                className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10`} title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
             {unverifiedGreen && (
               <button onClick={() => void override({ status: "satisfied" }, "Verify this item",
                 "Say what you checked. Your note goes on the record with your name and makes this green a human decision — the sweep's citation stays attached, and the sweep will not withdraw it from then on.")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10`}
                 title="Confirm this machine green yourself — only a checklist whose every green carries a person can be cited as proof elsewhere">✓ Verify</button>
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job — your reason goes on the record">N/A</button>
+                className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`} title="Not applicable to this job — your reason goes on the record">N/A</button>
             )}
             {unreasonedNa && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Confirm not applicable",
                 "Say why this item does not apply to this job. Your reason goes on the record with your name and makes this N/A your decision.")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
                 title="Confirm the assessment's N/A yourself — only a checklist where a person stands behind every N/A can be cited as proof elsewhere">✓ Confirm N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
+                className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}>Reopen</button>
             )}
           </span>
         )}
@@ -880,20 +893,10 @@ function EvidenceChip({ chip, doc, checked }: { chip: ChecklistItem["evidence"][
   const title = `${chip.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}${doc ? ` — the cited document is currently ${doc.status ?? "of unknown status"}${doc.rev ? `, rev ${doc.rev}` : ""}` : ""}${hidden ? " — you can't open the cited document (it is access-restricted for you, or it was removed); ask someone who can to check its status" : ""}${stale ? ". This citation no longer proves anything." : ""}`;
   return (
     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${tone}`} title={title}>
+      <span className="font-black uppercase tracking-wider mr-1">{chip.source === "auto" ? "Sweep" : "Attached"}</span>
       {chip.label}{standing}
     </span>
   );
-}
-
-function StatusDot({ status }: { status: ChecklistItem["status"] }) {
-  const map: Record<string, { c: string; t: string }> = {
-    satisfied: { c: "bg-emerald-500", t: "Satisfied — evidence attached" },
-    needs_evidence: { c: "bg-amber-500", t: "Needs evidence — the system holds no proof yet" },
-    open: { c: "bg-[var(--color-text-faint)]", t: "Open — not assessed against evidence" },
-    na: { c: "bg-[var(--color-border-strong)]", t: "Not applicable to this job" },
-  };
-  const m = map[status] ?? map.open;
-  return <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${m.c}`} title={m.t} />;
 }
 
 // ── Turnover package ─────────────────────────────────────────────────────
@@ -1111,37 +1114,37 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                   {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
                   <TurnoverChip status={it.status} />
                   {canManage && busy !== it.id && (
-                    <span className="ml-auto flex items-center gap-1">
+                    <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
                       {it.status === "open" && (
-                        <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10">Received</button>
+                        <button onClick={() => void review(it, "received")} className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10`}>Received</button>
                       )}
                       {(it.status === "received" || it.status === "rejected") && (separation.blocked ? (
                         <button type="button" disabled aria-disabled title={separationReason ?? undefined}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700/50 dark:text-emerald-300/50 cursor-not-allowed">
+                          className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700/50 dark:text-emerald-300/50 cursor-not-allowed`}>
                           {separation.pending ? "Accept — checking who else can sign" : "Accept — needs a second person"}
                         </button>
                       ) : (
-                        <button onClick={() => setAccepting(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                        <button onClick={() => setAccepting(it)} className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10`}
                           title={separation.singleSigner ? "You added this item and nobody else on this project can accept it — your acceptance will be marked single-signer." : "Accept — signed with your e-signature"}>
                           Accept
                         </button>
                       ))}
                       {it.status === "received" && (
-                        <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10">Reject</button>
+                        <button onClick={() => void review(it, "rejected")} className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10`}>Reject</button>
                       )}
                       {(it.status === "open" || it.status === "received") && (separation.blocked ? (
                         <button type="button" disabled aria-disabled title={separationReason ?? undefined}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] cursor-not-allowed">
+                          className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] cursor-not-allowed`}>
                           {separation.pending ? "Waive — checking who else can sign" : "Waive — needs a second person"}
                         </button>
                       ) : (
-                        <button onClick={() => void startWaive(it)} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                        <button onClick={() => void startWaive(it)} className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
                           title={separation.singleSigner ? "You added this item and nobody else on this project can waive it — your waiver will be marked single-signer." : "Waive — your reason, signed with your e-signature"}>
                           Waive
                         </button>
                       ))}
                       {(it.status === "accepted" || it.status === "waived") && (
-                        <button onClick={() => void reopen(it)} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                        <button onClick={() => void reopen(it)} className={`${DECISION_TARGET} inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
                           title={`Reopen this ${it.status} item for review — the ${it.status === "accepted" ? "acceptance" : "waiver"} stays in the history.`}>
                           <RotateCcw className="w-3 h-3" /> Reopen
                         </button>
@@ -1335,6 +1338,8 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
       ) : items.length === 0 ? (
         <div className="px-4 py-5 text-center text-xs text-[var(--color-text-muted)]">Nothing on the punch list.</div>
       ) : (
+        <>
+        <StatusLegend marks={PUNCH_STATUS_MARKS} className="px-4 pt-2.5" />
         <ul className="divide-y divide-[var(--color-border)]">
           {[...open, ...closed].map((it) => {
             // Overdue starts AFTER the due day ends, in the viewer's timezone
@@ -1343,7 +1348,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             return (
               <li key={it.id} className={`px-4 py-2 text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${it.status === "done" ? "bg-emerald-500" : it.status === "void" ? "bg-[var(--color-border-strong)]" : overdue ? "bg-rose-500" : "bg-amber-500"}`} />
+                  <StatusMark spec={PUNCH_STATUS_MARKS[it.status === "done" ? "done" : it.status === "void" ? "void" : overdue ? "overdue" : "open"]} />
                   <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
                   {it.dueDate && it.status === "open" && (
@@ -1358,11 +1363,11 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                     </span>
                   )}
                   {canManage && it.status === "open" && busy !== it.id && (
-                    <span className="ml-auto flex items-center gap-1">
+                    <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
                       <button onClick={() => void close(it, "done")}
-                        className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
-                      <button onClick={() => void close(it, "void")}
-                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void — not a real snag (a reason is required)">
+                        className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10`}>Done</button>
+                      <button onClick={() => void close(it, "void")} aria-label={`Void "${it.title}" — not a real snag (a reason is required)`}
+                        className={`${DECISION_TARGET} inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-500/10`} title="Void — not a real snag (a reason is required)">
                         <Ban className="w-3 h-3" /> Void
                       </button>
                     </span>
@@ -1378,6 +1383,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             );
           })}
         </ul>
+        </>
       )}
     </div>
   );

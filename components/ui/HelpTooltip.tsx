@@ -7,8 +7,15 @@
 // Designed to be sprinkled next to confusing labels (MOC, SPI, scope
 // FKs, etc.) without dominating the layout. Per the directive's
 // Phase 10 rules: lightweight inline, not modal-heavy.
+//
+// A disclosure, not a hover tip (projects A11Y-12): the trigger is a real
+// button in the tab order with a visible focus ring, it says whether the
+// note is open (aria-expanded) and which element it opens (aria-controls),
+// and callers may name what it explains (`label`). Escape closes an open
+// note first — it is handled in the capture phase and marked
+// (defaultPrevented), so a dialog the note sits in stays open.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { HelpCircle } from "lucide-react";
 
 interface HelpTooltipProps {
@@ -20,13 +27,17 @@ interface HelpTooltipProps {
   size?: "sm" | "md";
   /** Optional className on the trigger button. */
   className?: string;
+  /** Accessible name of the trigger — what the note explains. Defaults to
+   *  "More info". */
+  label?: string;
 }
 
 export default function HelpTooltip({
-  children, placement = "bottom", size = "sm", className = "",
+  children, placement = "bottom", size = "sm", className = "", label = "More info",
 }: HelpTooltipProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
+  const popId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -34,13 +45,13 @@ export default function HelpTooltip({
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") { e.preventDefault(); setOpen(false); }
     };
     window.addEventListener("mousedown", onClickAway);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("mousedown", onClickAway);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
 
@@ -56,15 +67,18 @@ export default function HelpTooltip({
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
-        className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors focus:outline-none"
-        aria-label="More info"
+        className="rounded text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
+        aria-label={label}
+        aria-expanded={open}
+        aria-controls={open ? popId : undefined}
       >
         <HelpCircle className={iconSize} />
       </button>
       {open && (
         <div
+          id={popId}
           className={`absolute z-[300] ${popClass} w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 text-[11px] leading-relaxed rounded-lg shadow-md p-3 animate-in fade-in zoom-in-95 duration-150`}
-          role="tooltip"
+          role="note"
         >
           {children}
         </div>

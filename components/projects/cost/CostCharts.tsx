@@ -380,11 +380,22 @@ export const COST_GLOSSARY_TERMS: Array<{ term: string; plain: string }> = [
   { term: "Change order (CO)", plain: "A priced change to the contract, with a reason code. Approving one posts the money; nothing changes the budget silently." },
 ];
 
+/** Remembers (per browser) that the glossary has been seen once. */
+const GLOSSARY_SEEN_KEY = "costGlossarySeen.v1";
+
 export function CostGlossary() {
-  const [open, setOpen] = React.useState(false);
+  // A11Y-12: open on a viewer's FIRST visit — the definitions are not an
+  // Easter egg at the foot of the page — and collapsed after that. Storage
+  // can be blocked; then it simply opens.
+  const [open, setOpen] = React.useState(() => {
+    try { return typeof window !== "undefined" && window.localStorage.getItem(GLOSSARY_SEEN_KEY) !== "1"; } catch { return true; }
+  });
+  React.useEffect(() => {
+    try { window.localStorage.setItem(GLOSSARY_SEEN_KEY, "1"); } catch { /* storage blocked: it opens again next time */ }
+  }, []);
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <button onClick={() => setOpen((v) => !v)}
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <span className="text-sm font-bold text-[var(--color-text)]">What do these words mean?</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>

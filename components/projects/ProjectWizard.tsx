@@ -271,13 +271,19 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             </div>
             <button onClick={() => void closeWizard()} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
           </div>
-          <div className="mt-3 flex items-center gap-1">
+          {/* A11Y-8: the progress bar is a picture of "Step N of 6", not a
+              control — out of the tab order (Back is the keyboard path), the
+              current step marked; a mouse can still click a past segment. */}
+          <ol aria-label="Wizard steps" className="mt-3 flex items-center gap-1">
             {STEPS.map((s, i) => (
-              <button key={s.key} onClick={() => i < step && setStep(i)} disabled={i > step}
-                className={`h-1.5 flex-1 rounded-full transition-colors ${i < step ? "bg-[var(--color-accent)]" : i === step ? "bg-[var(--color-accent)]/50" : "bg-[var(--color-surface-2)]"}`}
-                title={s.label} />
+              <li key={s.key} className="flex-1" aria-current={i === step ? "step" : undefined}>
+                <button type="button" tabIndex={-1} onClick={() => i < step && setStep(i)} disabled={i > step}
+                  aria-label={i < step ? `${s.label} (done) — go back to this step` : i === step ? `${s.label} (current step)` : `${s.label} (not reached)`}
+                  className={`block w-full h-1.5 rounded-full transition-colors ${i < step ? "bg-[var(--color-accent)]" : i === step ? "bg-[var(--color-accent)]/50" : "bg-[var(--color-surface-2)]"}`}
+                  title={s.label} />
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
 
         <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">

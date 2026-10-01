@@ -398,7 +398,7 @@ function StatCard({ icon, label, value, sub, tone }: {
         <span className={`p-1.5 rounded-lg ${tones[tone]}`}>{icon}</span>
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
       </div>
-      <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] truncate">{value}</div>
+      <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] break-words">{value}</div>
       {sub && <div className="text-[10px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
     </div>
   );
@@ -569,6 +569,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
             </select>
           </label>
           <div className="text-[10px] text-[var(--color-text-muted)] pb-1.5">
+            <span className="block">Earned value (EV) = this line&apos;s budget × the pinned task&apos;s % complete.</span>
             Committed {fmtMoney(r.committed, cur)} · Actual {fmtMoney(r.actual, cur)}{r.adjustments !== 0 ? ` · Adjustments ${fmtMoney(r.adjustments, cur)}` : ""}
             {r.approvedChanges !== 0 ? ` · Approved changes ${fmtMoney(r.approvedChanges, cur)} (revised budget ${fmtMoney(r.revisedBudget, cur)})` : ""}
             {` · Exposure ${fmtMoney(r.exposure, cur)}`}
@@ -654,13 +655,18 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
 
   return (
     <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5 flex items-end gap-2 flex-wrap">
-      <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
-        {ENTRY_TYPES.map((t) => (
-          <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-            {t.label}
-          </button>
-        ))}
+      <div className="flex flex-col gap-0.5">
+        <div role="group" aria-label="Entry type" className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
+          {ENTRY_TYPES.map((t) => (
+            <button key={t.v} type="button" onClick={() => setType(t.v)} aria-pressed={type === t.v} title={t.hint}
+              className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {/* A11Y-12: Commitment vs Actual vs Adjustment, in text — the three
+            most confusable words in cost control are never hover-only. */}
+        <span className="text-[10px] text-[var(--color-text-muted)]">{ENTRY_TYPES.find((t) => t.v === type)?.hint}</span>
       </div>
       <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
         className="h-8 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
@@ -738,7 +744,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
           <option value="">Pin to schedule task (optional, enables EV/CPI)…</option>
           {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
         </select>
-        {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+        {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
@@ -809,7 +815,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+          {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         </div>
       )}
     </div>

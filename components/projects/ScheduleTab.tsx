@@ -833,15 +833,19 @@ function AddMilestoneForm({
     <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-accent-soft)]/60 border-b border-[var(--color-border)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (required)" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" autoFocus />
-        <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" title="Planned date" />
+        <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} aria-label="Planned date" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]" title="Planned date" />
         <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="Weight (default 1)"
           title="How much this milestone counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
           className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
         <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "Rev 3 release")' className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
       </div>
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" rows={2} className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y" />
+      {/* A11Y-12: what the weight means, in text — not only in a hover title. */}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        <b>Weight</b> is how much this milestone counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure.
+      </p>
       {error && (
-        <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>
+        <div role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded px-2 py-1">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Cancel</button>

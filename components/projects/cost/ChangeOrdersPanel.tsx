@@ -332,8 +332,12 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
+      {/* A11Y-12: the scoring consequence of the reason code, visible before the choice. */}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        The reason code scores both sides: a <b>scope gap</b> counts against the contractor&apos;s record; a <b>design error</b> or an <b>owner request</b> counts on ours; field conditions and other reasons score neither.
+      </p>
       <div className="flex items-center gap-2">
-        {error && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" />{error}</span>}
+        {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300"><AlertTriangle className="w-3 h-3" />{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
