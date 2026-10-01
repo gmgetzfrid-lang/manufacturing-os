@@ -651,7 +651,8 @@
         "GAP-304",
         "GAP-307",
         "GAP-308",
-        "GAP-309"
+        "GAP-309",
+        "GAP-314 (opened at the I-13 merge 2026-10-01: the unit decode at create time — the Bridge at ingest writes documents.unit_code through the backfill's planner)"
       ],
       "severityMix": "0 CRITICAL / 4 HIGH / 9 MEDIUM / 4 LOW (+7 gaps: 302 S, 301 S, 303 M, 304 M, 309 M, 307 M, 308 M)",
       "files": [

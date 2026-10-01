@@ -557,6 +557,8 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 
 - [ ] The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step (run the indexer / see the failure).
 
+*Handoff (2026-10-01, intelligence Round G, I-13; corrected at the fourth review): `OrgGraph.mentionCoverage { installed, rows, drawn, unmapped, capped }` exposes only what the mention read can tell — `installed: false` when entity_mentions does not exist (42P01), and `installed: true, rows: 0` when it exists but no row is visible to this reader; `drawn` the mention edges on the map, `capped` when the read stopped at the edge cap. It does NOT tell "never built" from "built, nothing named" from "built, every row out of view" (with `rows: 0` all three look the same), and it carries no failed build: the indexer (`lib/mentionIndexer.ts`) keeps no run state — a failure is logged and thrown to its caller. The done-when's "see the failure" therefore needs an index-run state (a last run, its outcome, its error) that does not exist yet; I-14 must read or add it elsewhere, not infer it from `mentionCoverage`. The first handoff line said the lib half was exposed whole; it is not.*
+
 ---
 
 <a id="irls-15"></a>

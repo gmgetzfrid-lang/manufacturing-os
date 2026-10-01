@@ -74,7 +74,7 @@ page.tsx:240 passes `view.nodes, view.edges`. page.tsx:153-155: `const typeOk = 
 ## GM-2 · Documents and equipment attach to two DIFFERENT unit node families that no edge ever joins — assets.unit_id is dead code, never written by any path
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:254-261`, `lib/orgGraph.ts:190-203`, `lib/assets.ts:196-213`, `supabase/migrations/20260928_site_codebook.sql:78`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The 'never written' half is confirmed by repo-wide search: `createAsset` (lib/assets.ts:183-203) inserts only org_id/tag/tag_normalized/type_id/description/location/library_id/created_by/updated_by plus unit_code and code; `updateAsset` (assets.ts:206) whitelists `"tag"|"type_id"|"description"|"location"|"library_id"|"archived"|"cover_photo_id"|"unit_code"|"code"` — no unit_id. No migration backfills it either (only the ADD COLUMN and its index). Codebook units come from `codebook_entries` (20260928_site_codebook.sql), a different table entirely, so the two violet nodes are real.
@@ -112,6 +112,23 @@ orgGraph.ts:255-256 adds asset→cbunit and asset→unit; orgGraph.ts:259 adds d
 - [ ] A test asserts that a document with unit_id and an asset with the corresponding unit_code land within 2 hops of each other in the assembled graph
 - [ ] lib/assets.ts createAsset/updateAsset either write unit_id or the dead `if (a.unit_id)` branch at orgGraph.ts:256 is removed
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here "a mapped operational unit IS its codebook unit" fails with `expected […] to not include 'unit:u1'`: the drawing (documents.unit_id → `unit:u1`) and the exchanger (assets.unit_code → `cbunit:20`) had no path between them. Decision, the plan's default (`DEC-67`, provisional number): keep BOTH unit models — a configured operating unit and a decoded code mean different things — JOIN them as data, retire nothing. What landed:
+- `supabase/migrations/20261138_intel_roundG_unit_identity.sql`: `units.codebook_code` with a UNIQUE `(org_id, codebook_code)` partial index — the persisted mapping row, one codebook unit to at most one operational unit; `documents.unit_code` for the drawing-number decode (kept the decode's by `trg_documents_unit_code_guard`). Review fix (2026-10-01): `trg_units_codebook_code_guard` makes the mapping the Operational scope writer tier's in the database — the only policy on `units` (`units_member_all`, 20260606) lets any active member write the row, so the page's `canEdit` was a browser check alone; every change to the mapping (a code set, cleared, released by an archive, or deleted with its row) by anyone else is now refused 42501, and an archived unit holds no code (archiving releases it, so the code can be remapped).
+- `lib/orgGraph.ts` (`assembleOrgGraph`): an operational unit mapped to a codebook unit IS that unit's node (`cbunit:<code>`) — its unit_id edges, its plant edge and its systems land there, and the node carries `unitId` / `plantId`; an unmapped units row stays its own `unit:<uuid>` node (a configured unit the codebook does not hold). `documents.unit_code` draws document → `cbunit:<code>`. Where the decode and documents.unit_id disagree, both ties are drawn and a truncation counts them. Third review fix (2026-10-01): they "differ" only when the operational unit is mapped to a codebook unit other than the decode (or, for equipment, the filing); an operational unit that is not mapped — or not on the map — was counted as a disagreement, so right after 20261138 (before anyone maps units) every decoded document with a `documents.unit_id` read as mis-filed. It is now counted apart with its own note ("… carry an operational unit that is not mapped to the Site Codebook … cannot be compared"), as the decode's report (`unitIdUnmapped`) and 20261138's inventory keep it.
+- `assets.unit_id` is now written: `lib/operationalGraph.ts` `planUnitIdentity` FILLS an empty `assets.unit_id` with the operational unit mapped to `assets.unit_code`, run by `POST /api/admin/unit-identity` (the unit-identity backfill: service role, preview by default, refusals counted, audited) from the new Unit identity panel on `/admin/scope`, where each operational unit is mapped (`setUnitCodebookCode`, a checked write that reads the value back). Review fix (2026-10-01): the first cut also re-pointed or cleared a value already there whenever it pointed at a mapped unit, treating it as its own stale output — on a first run every such value was set by hand or by an import, and the audit kept counts only, so nothing recorded what was overwritten. A value already there is now never rewritten: one that disagrees with the filing is counted (`disagreeWithFiling`), one held while the filing maps to no unit is kept (`keptWithoutFiling`), the way a document's disagreement is counted and both ties drawn. Second review fix (2026-10-01): the rule now holds in the UPDATE itself — a fill lands only while `unit_id` is still NULL and the item still has the planned filing (`.is("unit_id", null).eq("unit_code", …)`), so a unit set by hand between the decode's read and its write is kept and counted `changed` instead of overwritten (GAP-305 (d)). Third review fix (2026-10-01): the backfill was the projection's only writer and nothing kept it current — a refile (`lib/assets.ts` `updateAsset`, or the Bridge filling `unit_code`) or a remap of the unit left the old unit on the equipment permanently (every later run reported it "kept"; no screen sets or clears `unit_id`), and equipment created after a run had none until someone re-ran the decode. 20261138 now keeps the projection in the database for every writer: `trg_assets_unit_id_follows_filing` (BEFORE INSERT OR UPDATE OF unit_code ON assets; not SECURITY DEFINER) gives a new item the unit its filing maps to, moves a refiled item's unit when it was the old filing's projection (or empty), keeps a unit that disagreed with the old filing (set by hand or by an import), and takes a write that sets `unit_id` itself as written; `trg_units_codebook_code_follow` (AFTER INSERT OR UPDATE OF codebook_code, archived ON units; SECURITY DEFINER as a foreign key's own cascade is, re-checking the scope writer tier) moves a released code's projected equipment to the code's holder (none) and fills the new code's empty equipment. The decode's own fill goes through the same trigger — it re-sends the planned filing on a row whose unit is still empty, and the database fills it by the mapping as it stands at the write — so a remap between the decode's read and its write lands the new holder (or none), never the planned unit, and is counted `changed` (GAP-305 (g)). Fourth review fix (2026-10-01): because a mapping change now moves equipment, `/admin/scope` no longer tells a person archiving a mapped unit that "equipment that references it keeps its data": a mapped unit's archive, unmap or remap is confirmed with what it does — the codebook unit, how many items filed under the code point at the unit and lose it (`countProjectedEquipment`), and that restoring an archived unit does not restore the mapping (`codebookReleaseConfirm`; GAP-305 (j)).
+
+Tests: `lib/__tests__/orgGraph.test.ts` (new; 30 cases after the review fixes — the third adds an unmapped operational unit that is "cannot be compared", never "differ", over the filter-aware stand-in `lib/__tests__/helpers/graphFakeDb.ts`) — one node per unit, the 2-hop case, the decode-only case, the unmapped unit, the disagreement note, the pre-migration fallback; `lib/__tests__/intelRoundGUnitIdentity.test.ts` (the fill-only projection rules — a hand-set or imported value on a mapped unit is kept through a real apply; the route; the mapping write and its read-back; the migration's shape, including the mapping guard's role list pinned to `ADMIN_SURFACES` "scope".writes; third review fix: a refile after a decode moves the projected unit and `searchAssets({ unitId })` follows it, a remap after a decode moves the projected equipment to the code's new holder, equipment created after a decode carries its unit at once, a remap between the decode's read and its write is never written as it was, and the two projection triggers' shape and probes). The migration was applied to a scratch PostgreSQL 16 with stubbed auth (every probe true; see GAP-305).
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied; one paste — its result set carries the pre-apply inventory and every probe). Until it is applied the graph builds on the legacy columns and says so ("The unit-identity migration (20261138) is not applied …"), and the decode route answers 409.
+
+**Done-when.**
+1. ✓ A persisted mapping row joins them: `units.codebook_code`, unique per org (20261138); `documents.unit_code` carries each document's decode.
+2. ✓ buildOrgGraph emits one node per real unit: a mapped operational unit is its codebook unit's node; no `unit:<uuid>` twin is drawn for it.
+3. ✓ `orgGraph.test.ts`: a document with unit_id `u1` (mapped to 20) and an asset with unit_code 20 are exactly 2 hops apart; so are a document carrying only unit_code 20 and that asset.
+4. ✓ `assets.unit_id` is written and kept current — the database projects it on every insert, refile and mapping change (20261138's two projection triggers: `lib/assets.ts` `createAsset` / `updateAsset` write `unit_code`, and the projection follows; the file is not edited), and the unit-identity backfill fills what the triggers could not see — so the `if (a.unit_id)` branch is live, and a projected value resolves through the mapping to the same node as the filing, after a refile or a remap too (corrected at the third review: before, only a manual decode run wrote it, and a refile or remap left it pointing at the old unit for good). A unit set by hand that disagrees with the filing is kept, drawn as a second tie and counted.
+
+**Scope / residual.** The mapping is entered by a person on /admin/scope, never inferred (20261138's inventory counts operational units whose code equals a codebook code as a hint only). A document created or renumbered after a decode run has no unit_code until the next run (the database drops a renumbered document's old decode); a create-time decode belongs with the writers that already decode — the Bridge at ingest (I-11, `lib/equipmentBridgeServer.ts`) and document creation (document-control, `lib/documentLifecycle`) — which are not this package's files. Equipment needs no re-run: the database projects its unit on insert, refile and remap (20261138). A unit set by hand that disagrees with the filing is kept — `assets.unit_id` records no provenance, so one that happens to equal the old filing's projection is treated as the projection: it moves on a refile and is cleared when its unit's code is released by an unmap, a remap or an archive (no screen sets one by hand today; the release confirmation counts it). Apply 20261138, map the units, run the decode.
+
 ---
 
 <a id="gm-3"></a>
@@ -119,7 +136,7 @@ orgGraph.ts:255-256 adds asset→cbunit and asset→unit; orgGraph.ts:259 adds d
 ## GM-3 · Node caps silently sever edges, and the truncation notice that fires ("densest web shown") is factually false — edge pagination has no ORDER BY at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:59-62`, `lib/orgGraph.ts:74-94`, `lib/orgGraph.ts:114-117`, `lib/orgGraph.ts:164-167`, `lib/orgGraph.ts:173-181`, `lib/orgGraph.ts:306`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Both halves are true: 'densest web shown' is a fabrication over an unordered PostgREST range, and edges to nodes cut by DOC_CAP/ASSET_CAP vanish uncounted. Downgraded from HIGH because the page does warn about the node caps themselves (page.tsx:737-741 renders 'Showing the 1500 most recently updated documents' / 'Showing the first 2000 equipment items'), so the user is told the map is partial — the defect is that the description of HOW it is partial is false.
@@ -161,6 +178,24 @@ lib/orgGraph.ts:59-62 `const DOC_CAP = 1500; const ASSET_CAP = 2000; const EDGE_
 - [ ] The "densest web shown" strings are either removed or backed by an actual density-ordered query
 - [ ] A test asserts that an org exceeding ASSET_CAP produces a truncation naming the number of severed edges
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here an org past ASSET_CAP produced no note about the severed links and still said "densest web shown". What landed in `lib/orgGraph.ts`:
+- `pageRows` pages in KEYSET order (`.order("id")`, `.gt("id", last)`) — never an unordered OFFSET window — and, when the cap is reached, one head count says how many rows exist ("8,000 of 12,345 read"); `pageIn` does the same over `IN` chunks.
+- documents (`updated_at` desc, `id`), assets (`tag`, `id`), libraries / projects / plot plans (`name`, `id`) are read with an explicit ORDER BY to `cap + 1` rows, so "the first N" is a rule and a cap is reported only when it is actually exceeded. Documents and equipment are read in WINDOWS of at most 1,000 rows (corrected at review — below).
+- `addEdge` keeps its endpoint guard (Verified sound — an edge still never dangles) and now COUNTS what it drops, per edge type: one truncation names the total and the breakdown ("N links lead to equipment, documents or units not on this map (beyond a cap above, archived, or outside your access) — 5 equipment-tag, …") and `OrgGraph.severed` carries the number.
+- "densest web shown" is gone; every cap note states its rule ("Showing the first 2,000 equipment items by tag.").
+
+*Corrected at review (2026-10-01).* The first cut read documents with ONE `.limit(1501)` request and equipment with ONE `.limit(2001)` request, and the operational units, plants, systems and codebook units with one unpaged request each. PostgREST cuts every response at db-max-rows (1,000 by default) without an error (the repo's own `lib/assets.ts` AREA-9 note), so neither cap could ever be reached in production: an org with 1,200 documents and 2,005 equipment items got 1,000 of each, no cap note, and the severed-link note blamed "a cap above" that was never shown. The tests passed only because the stand-in honoured any limit. Now no request of the assembly asks for more than 1,000 rows: `readDocumentsByRecency` reads `.range()` windows over (`updated_at` desc nulls last, `id`) until DOC_CAP + 1 rows are in hand (rows kept once by id, so a document re-sorted between two windows is not drawn twice); `readAssetsByTag` reads KEYSET windows over (`tag`, `id`) — each window starts at the last tag read (`tag >= last`) and drops the rows already in hand, so a tag shared by rows on both sides of a window edge loses none; `readStructure` pages codebook units, operational units, plants and systems through `pageRows` (keyset, to `STRUCT_CAP` = 5,000 each, a cap said with its count) for both the org-wide and the scoped assembly. The stand-in now cuts every response at 1,000 rows (`maxRows`, as production), so a single over-sized request can no longer pass a test.
+
+Tests: `lib/__tests__/orgGraph.test.ts` (new, 30 cases, over the filter-aware stand-in `lib/__tests__/helpers/graphFakeDb.ts`, which cuts every response at max-rows), the GM-3 / GPV-6 block: the reviewer's scenario (1,200 documents all drawn with no document note; 2,005 equipment items → the equipment note fires and the first 2,000 by tag are drawn); DOC_CAP + 300 documents → the 1,500 most recent are drawn across windows (undated last) and the note fires; a tag shared across a window edge loses no row; 1,005 systems are all drawn and STRUCT_CAP + 3 says "Systems capped — 5,000 of 5,003 read"; no request of a build asks for more than 1,000 rows. `lib/__tests__/scope.test.ts`: a unit with 1,005 systems draws every one on its own map. Against the first cut with the max-rows stand-in, 9 of these cases fail on this mechanism (e.g. `expected … to have a length of 1200 but got 1000`).
+
+**Done-when.**
+1. ✓ Edges are counted at the existence guard and a truncation reports the dropped count, by type.
+2. ✓ Link-table paging is keyset-ordered on the unique `id`; the assets read is `.order("tag").order("id")` in keyset windows; the documents read is `.order("updated_at", desc nulls last).order("id")` in range windows.
+3. ✓ The "densest web shown" strings are removed.
+4. ✓ `orgGraph.test.ts`: ASSET_CAP + 5 assets with links to the five past the cap → "5 links lead to … — 5 equipment-tag." and `severed === 5`; exactly ASSET_CAP is not reported as a cap — and (corrected at review) both hold under a stand-in that cuts every response at 1,000 rows, as PostgREST does.
+
+**Scope / residual.** The cap values are unchanged; the way past them for a unit is GAP-306's scoped assembly (`buildOrgGraph(orgId, { scope })`), which loads that unit's whole population. Recorded at the fourth review: the windowed and paged reads (`pageRows`, `pageIn`, the document and equipment windows) end at a window shorter than they asked for, so they assume PostgREST's max-rows is at least 1,000 — the default, and what the stand-in emulates; a project that sets it lower gets a short graph with no cap note. The unit-identity route, which writes from what it reads, pages to an empty window instead (GAP-305 (m)).
+
 ---
 
 <a id="gm-4"></a>
@@ -168,7 +203,7 @@ lib/orgGraph.ts:59-62 `const DOC_CAP = 1500; const ASSET_CAP = 2000; const EDGE_
 ## GM-4 · optional() swallows every query error — a failed assets, units, plants, projects, flows or plot-plan read renders a silently smaller graph with no error and no truncation
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:149-162`, `lib/orgGraph.ts:216-221`, `lib/orgGraph.ts:275-280`, `lib/orgGraph.ts:296-298`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The core claim holds for assets/units/plants/projects/plot-plans, and the contrast is stark against orgGraph.ts:86-87 where pageRows narrows to `if (error.code === "42P01" || /does not exist/i.test(error.message)) return { rows, capped: false }; throw new Error(error.message);`. Corrected because the title is wrong about FLOWS: process_flows goes through pageRows (:133-134), which THROWS on a real error rather than swallowing it. Severity lowered accordingly — the swallowed set is smaller than claimed and the surface is an advisory map.
@@ -201,6 +236,17 @@ lib/orgGraph.ts:152-155 quoted above. Contrast with the correctly narrowed handl
 - [ ] Every swallowed error appends a visible note ("Equipment could not be loaded — the map is incomplete") to OrgGraph.truncations
 - [ ] A test injects a non-42P01 error on the assets query and asserts the graph either throws or reports the gap
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a statement timeout on the assets read rendered an equipment-free map with no note (`expected '' to match /Equipment could not be loaded/`). What landed in `lib/orgGraph.ts`: `optionalRows(res, what, notes)` — a pre-migration missing table (42P01 / PGRST205) contributes nothing silently, exactly as `pageRows` already did; ANY other error appends "<What> could not be loaded (<message>) — the map is incomplete." It covers equipment, operational units, plants, systems, projects, plot plans, knowledge libraries and the Site Codebook units — now read directly, because `loadCodebook` answers an empty book on any error (a failed codebook read used to delete every unit node silently). (Review fix, 2026-10-01: operational units, plants, systems and the codebook units are now read by `readStructure` — paged past PostgREST's max-rows, see GM-3 — with the same "could not be loaded" note.) The link tables keep `pageRows`' shape (a real error is fatal, now naming the table), and documents and libraries stay fatal.
+
+Tests: `lib/__tests__/orgGraph.test.ts` (new, 24 cases, over the filter-aware stand-in `lib/__tests__/helpers/graphFakeDb.ts`), the GM-4 block (a timeout on assets; JWT-expired plot plans, failing units and codebook reads each noted; missing process_flows / entity_mentions tables silent; a real link-table error fatal).
+
+**Done-when.**
+1. ✓ The optional reads narrow to the missing-table codes and record a truncation for any other error.
+2. ✓ Every swallowed error appends a visible note naming what could not be loaded and why.
+3. ✓ `orgGraph.test.ts` injects a non-42P01 error on the assets query and asserts the note.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="gm-5"></a>
@@ -208,7 +254,7 @@ lib/orgGraph.ts:152-155 quoted above. Contrast with the correctly narrowed handl
 ## GM-5 · Bridge detection systematically misses the most common real bridge, because a doc↔asset pair carrying both a tag edge and a mention edge is treated as a redundant parallel connection
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/graphInsights.ts:79-84`, `lib/graphInsights.ts:142-143`, `lib/orgGraph.ts:262`, `lib/orgGraph.ts:300-305`, `lib/mentionIndexer.ts:104-142`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/mentionIndexer.ts:104-120 writes an entity_mentions row for every asset it finds in the text with no exclusion for already-tagged pairs, so a Bridge-tagged drawing that also names the tag reliably lands at multiplicity 2 and is silently disqualified — while page.tsx:654-656 prints 'No single-thread bridges — every big neighbourhood has redundant connections.'
@@ -252,6 +298,17 @@ lib/graphInsights.ts:79-84 and 142 quoted above. lib/orgGraph.ts:175: `const key
 - [ ] A test builds two clusters joined only by a doc/asset pair carrying both a tag and a mention edge and asserts a bridge is reported
 - [ ] The empty state distinguishes "no bridges found" from "bridge analysis suppressed"
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): the new GM-5 cases in `lib/__tests__/graphInsights.test.ts`, run against the base commit's `lib/graphInsights.ts`, report 0 bridges for two clusters joined only by a drawing that is both tagged to E-2201 and names it. What landed in `lib/graphInsights.ts`: adjacency is one logical link per node PAIR, and a pair is never disqualified for carrying several edge types — the multiplicity map and its `=== 1` test are removed. The traversal (disc/low/subtree bookkeeping, the single-parent skip — this report's "already there" row) is untouched. In this graph a pair can carry two edges only as two TYPES (addEdge dedupes one edge per type per pair, and a directional type now one per direction), and two types between the same two things are one relationship: remove the pair and the clusters fall apart. 08's substrate row praising "a pair connected twice can never be a bridge" is superseded by this finding; the existing case that encoded it (a related + tag pair) is rewritten in place with the reason.
+
+Tests: `lib/__tests__/graphInsights.test.ts` — the PID-4402 / E-2201 tag+mention bridge (sides 6 / 6), the rewritten two-type pair, a flow in each direction, and a source pin that no multiplicity test remains.
+
+**Done-when.**
+1. ✓ Multiplicity counts relationships — the pair — not edge types.
+2. ✓ Two clusters joined only by a doc/asset pair carrying a tag and a mention report that bridge.
+3. ✓ By construction: no analysis path suppresses a candidate bridge any more. The only filter left is the side-size floor (`minBridgeSide`), which the empty state's own words ("every big neighbourhood has redundant connections") already name, so "no bridges found" is now the only empty state there is; the source pin keeps it so. The panel copy itself is the page's (I-14).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="gm-6"></a>
@@ -283,6 +340,23 @@ lib/graphInsights.ts:79-84 and 142 quoted above. lib/orgGraph.ts:175: `const key
 - [ ] The graph reports when the viewer's ACL removed documents (a count is enough: "N documents are outside your access")
 - [ ] Insights counts are labelled as viewer-scoped, or the compliance-facing orphan analysis is moved to a controller-only server route that sees everything
 - [ ] A test compares assembled graphs for a controller and a granted-nothing member on the same org and asserts the difference is surfaced
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a granted-nothing member's graph was silent about the restricted drawing it could not see. What landed:
+- `supabase/migrations/20261138_intel_roundG_unit_identity.sql` `documents_total_for_org(p_org_id)`: the org's document COUNT for an active member, 0 for anyone else — never a row, an id or a title. SECURITY DEFINER (the count must be whole whatever the caller reads), `SET search_path = public`, EXECUTE revoked from PUBLIC and anon and granted to authenticated (DRLS-16's rule; a NULL `auth.uid()` matches no member and gets 0).
+- `lib/orgGraph.ts` `readAccess` compares it with the reader's own count (a head count under documents RLS) → `OrgGraph.access { documentsVisible, documentsTotal, outsideAccess, documentsDrawn, scoped }` and, when the reader is missing documents, the truncation "N documents in this org are outside your access and not on this map — orphans, hubs and bridges are computed on what you can see." — shown by the page's existing truncation strip.
+- A SCOPED graph makes no total or outside-access claim (`documentsTotal` and `outsideAccess` are null, `scoped: true`). Review fix (2026-10-01): the first cut reported the scope's resolved count as the total and the relation-named hidden documents as `outsideAccess` — but a scope is resolved from the reader's own reads, so a restricted document decoded, filed or pinned to the unit never enters it, and that count under-stated what the reader's ACL removed. The scope still states the floor it does know as a truncation ("N documents linked to <unit>'s equipment are outside your access — not drawn").
+- `lib/graphInsights.ts`: `computeInsights(…, { access })` returns `basis { viewerScoped: true, outsideAccess, note }` (`insightsBasisNote`) — the label for the Insights counts. Review fix (2026-10-01): the note never says "every document in the org" — org-wide with nothing hidden it says "Computed on the documents on this map; none of the org's documents are hidden from you." (and, past the document cap, how many of the visible documents are drawn); on a scoped map it says the answers are computed on the scope's documents the reader can see, with documents outside their access not in it.
+
+Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a granted-nothing member assemble different graphs (V-7 is an orphan only for the member) and only the member's says so; with no count function (pre-migration) the graph makes no claim; an org-wide map past DOC_CAP says how many documents are drawn. `lib/__tests__/scope.test.ts` — a hidden governing drawing is stated as a floor; twelve private drawings DECODED to the unit are invisible to a granted-nothing member's resolution, and the scoped graph makes no count claim and its basis never says "all". `graphInsights.test.ts` — the basis for the scoped, capped and uncapped cases, and never "every document in the org". The review-fix cases fail against the first cut.
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied; one paste — its result set carries the pre-apply inventory and every probe). Until it is applied the graph builds on the legacy columns and says so ("The unit-identity migration (20261138) is not applied …"), and the decode route answers 409.
+
+**Done-when.**
+1. ✓ The org-wide graph reports the count the reader's ACL removed (`access`, and the truncation line). A scoped graph cannot count it and says only the floor it knows (above).
+2. **Not met here:** Insights counts are labelled viewer-scoped where a user sees them. The line on the map says what the orphans, hubs and bridges were computed on whenever the reader is missing documents, and `GraphInsights.basis.note` carries the label for the Insights panel — but nothing displays `basis.note` yet: placing it beside the counts is `app/(protected)/graph/page.tsx`, I-14's file (the page also does not pass `access` to `computeInsights` yet).
+3. ✓ `orgGraph.test.ts` compares the two readers on one org and asserts the difference is surfaced.
+
+**Scope / residual.** One read widens and is declared in the migration header: an active member learns how many documents the org holds (never which). Before 20261138 is applied the graph makes no access claim (`access` null). Remaining limb: I-14 passes `graph.access` to `computeInsights` and places `basis.note` in the Insights panel. Corrected 2026-10-01 at review: first recorded RESOLVED, with a scoped `outsideAccess` that under-counted and a basis note that could say "every document in the org".
 
 ---
 
@@ -337,7 +411,7 @@ lib/linkProposals.ts:200-204 quoted above (`.limit(4000)`, `if (error) return []
 ## GM-8 · Process-flow direction is destroyed by the undirected dedup key: A→B and B→A collapse into one edge, so every recycle loop disappears from the Process lens
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/orgGraph.ts:34`, `lib/orgGraph.ts:46-50`, `lib/orgGraph.ts:173-181`, `lib/orgGraph.ts:282-289`, `components/graph/graphTheme.ts:44`, `lib/graphSettings.ts:40`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — two antiparallel flow rows collapse to one edge keeping only the first-seen direction — but the title's consequence and the report's own example are false. The cited distillation loop (tower→condenser, condenser→drum, drum→tower) is three DISTINCT unordered pairs and renders completely; only a true 2-node A⇄B recycle is lost. Compounding the low impact: DEFAULT_GRAPH_SETTINGS.showArrows is `false` (lib/graphSettings.ts:65), so direction is not drawn by default at all.
@@ -369,6 +443,17 @@ lib/orgGraph.ts:46-50 `export interface GraphEdge { a: string; b: string; type: 
 - [ ] A test asserts that A→B and B→A both survive assembly as distinct flow edges
 - [ ] Non-confirmed flows are either drawn as ghosts or their count is reported in truncations
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here two antiparallel confirmed flows assembled to one edge (`expected […] to have a length of 2 but got 1`). What landed in `lib/orgGraph.ts`: `DIRECTED_EDGE_TYPES = {flow, supersession}`; for those `addEdge` dedupes on the ORDERED key (`a|b|type`, a = source), every other type on the unordered pair; `GraphEdge` documents that a directional edge runs a → b. Non-confirmed flows are counted: "N process flows are proposed and awaiting review — not drawn (the operating area's flow panel lists them)." (dismissed flows are decisions, not counted).
+
+Tests: `lib/__tests__/orgGraph.test.ts` — "A→B and B→A are two flow edges, each keeping its direction; a proposed flow is counted", "supersession is directional too; symmetric types still dedupe as a pair".
+
+**Done-when.**
+1. ✓ The dedup key for flow and supersession preserves order.
+2. ✓ A test asserts that A→B and B→A both survive as distinct flow edges.
+3. ✓ Proposed flows' count is reported in truncations.
+
+**Scope / residual.** Drawing the direction (arrowheads on flow) is the renderer's — I-14 (FLOW-10 / GPV-8).
+
 ---
 
 <a id="gm-9"></a>
@@ -376,7 +461,7 @@ lib/orgGraph.ts:46-50 `export interface GraphEdge { a: string; b: string; type: 
 ## GM-9 · REGION_ANCHOR_ORDER omits "plot", so indexOf returns -1 and any plot-plan node always hijacks its region's name
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/graphInsights.ts:47`, `lib/graphInsights.ts:166-177`, `lib/orgGraph.ts:23`, `lib/orgGraph.ts:216-221`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed exactly as claimed: any plot-plan node in a component wins the anchor race outright, so the region is named after the plot plan rather than its unit. Real but purely a display-label defect on the zoomed-out map (and the Process lens hides `plot` entirely, page.tsx:430), so LOW rather than MEDIUM.
@@ -417,6 +502,17 @@ lib/graphInsights.ts:47 quoted in full above — six entries, no "plot". lib/gra
 - [ ] The list is typed so that adding a GraphNodeType without adding it here is a compile error (Record<GraphNodeType, number>)
 - [ ] A test builds a component containing a plot node plus a unit node and asserts the region is named after the unit
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): the new case in `lib/__tests__/graphInsights.test.ts`, against the base `lib/graphInsights.ts`, names the region "Site Plot Plan Rev C". What landed: `REGION_ANCHOR_ORDER` (six entries, no "plot", ranked by `indexOf` = -1) is replaced by `REGION_ANCHOR_RANK: Record<GraphNodeType, number>` (unit 0 … plot 6); an unranked type would be a compile error, and the loop starts from +∞.
+
+Tests: `graphInsights.test.ts` — a component holding a plot plan and a unit is named after the unit; a source pin that the rank table is a `Record<GraphNodeType, number>`.
+
+**Done-when.**
+1. ✓ Every GraphNodeType is ranked.
+2. ✓ The table is a `Record<GraphNodeType, number>` — adding a node type without a rank fails to compile.
+3. ✓ The test names the region after the unit.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="gm-10"></a>
@@ -455,6 +551,17 @@ orgGraph.ts:110 select list quoted above contains `unit_id` and nothing else sco
 - [ ] documents.plant_id and documents.system_id are selected and drawn as "unit"-class edges to their plant/system nodes
 - [ ] A `system` node type exists (or systems are deliberately folded into units with the decision documented in the module header)
 - [ ] The lens presets are renamed to what they actually show, or rebuilt on scope rather than node-type subtraction
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here a system-filed drawing and a plant-filed standard had no scope tie and were orphans. What landed in `lib/orgGraph.ts`: documents.plant_id / system_id (and assets.plant_id / system_id) are selected and drawn as "unit"-class edges to `plant:` / `system:` nodes; the `systems` table (non-archived) is assembled, FOLDED into the unit node class (`system:<uuid>`, type "unit", sub "System …", `unitCode` of its mapped unit), each system hanging from its unit's node (systems.unit_id). The decision — no node type beyond these (the plan's WIRE-4 default; every renderer keys a Record on GraphNodeType) — is written in the module header and `DEC-67`.
+
+Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbunit:20`; the system- and plant-filed documents are tied and are not orphans).
+
+**Done-when.**
+1. ✓ documents.plant_id and documents.system_id are selected and drawn as unit-class edges to their plant / system nodes.
+2. ✓ Systems are deliberately folded into units, documented in the module header.
+3. **Not met here:** the lens presets are renamed to what they show — `app/(protected)/graph/page.tsx`, I-14's file (GPV-10 / GPV-4, the plan's lens-set decision).
+
+**Scope / residual.** Remaining limb: I-14's lens rename. No migration is needed for this finding's half (the columns exist since 20260606); a system's unit is a codebook node only once 20261138's mapping is set.
 
 ---
 
@@ -499,7 +606,7 @@ lib/orgGraph.ts:179-180 increments GraphNode.degree unconditionally inside addEd
 ## GM-12 · The whole graph is rebuilt in the browser on every mount — up to ~47 HTTP round trips and ~48,000 rows, with five sequential eight-deep pagination chains
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** WONTFIX
 - **Verification:** SUSPECTED
 - **Locations:** `lib/orgGraph.ts:96-144`, `lib/orgGraph.ts:74-94`, `app/(protected)/graph/page.tsx:102-132`, `app/(protected)/graph/page.tsx:106-109`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The rebuild-on-every-mount and the row volume are real (the finding in fact understates both: six chains, not five, and ~56k rows, not 48k). Two corrections lower it: the six chains run CONCURRENTLY inside one Promise.all, not sequentially, and a stale-while-revalidate sessionStorage snapshot (page.tsx:110-122) means a returning user sees the previous map immediately rather than 'no visible progress beyond a spinner' — the spinner only appears on a first visit or an oversized (>2MB) graph. A perf/cost concern, not a correctness one: LOW.
@@ -531,6 +638,21 @@ lib/orgGraph.ts:79-92 is the sequential paging loop; lib/orgGraph.ts:99-144 show
 - [ ] The truncation/cache path reports when the snapshot was skipped rather than swallowing it
 - [ ] The "dozen parallel table pulls" comment matches the real request count
 
+**Resolution (2026-10-01, intelligence Round G) — WONTFIX for now (DEC-28; the plan's default).** Real, as the verifier corrected it: the graph is assembled in the browser on every mount (about 14 requests for a typical org, up to ~56 at the caps), and the sessionStorage snapshot is skipped above 2 MB. Not built now:
+- **Cost.** A server-assembled graph must re-implement, per caller, every document ACL rule the client read gets from RLS for free — `node_visible`, plus the app-enforced allow lists and role / team denies (this report's "already there" row on documents_acl_select warns exactly this) — for every table it reads, and add a cache with invalidation. That is a security-sensitive rewrite, and the page that would call it is I-14's file.
+- **Alternative rejected.** Moving assembly behind `supabaseAdmin` this round without that ACL work — it would hand restricted drawings to every member.
+- **What this round did to the cost instead.** Link tables page in keyset order (no 8-deep overlapping OFFSET windows); knowledge mirrors are read by id, only those the mentions point through; and `buildOrgGraph(orgId, { scope })` (GAP-306, `lib/scope.ts`) assembles one unit's world instead of the org's — the load most large orgs need.
+- **What would change the answer.** A measured slow load on a real plant (none was observed — the finding is SUSPECTED), or a server-side per-caller document-ACL helper equal to the documents RLS predicate (I-12's chain work).
+
+Follow-up recorded as `GAP-313` (90-gap-register.md — server-assembled graph).
+
+**Done-when.**
+1. Not done — WONTFIX for now (above); carried by GAP-313.
+2. Not done — the snapshot path is the page's (I-14); GAP-313's acceptance carries it.
+3. Not done — the page comment is the page's (I-14).
+
+**Scope / residual.** GAP-313.
+
 ---
 
 <a id="gm-13"></a>
@@ -538,7 +660,7 @@ lib/orgGraph.ts:79-92 is the sequential paging loop; lib/orgGraph.ts:99-144 show
 ## GM-13 · Three of the five paged join tables never report their truncation, and the kdoc mirror cap turns dropped mentions into a false explanation — contradicting the module's own stated contract
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:17-18`, `lib/orgGraph.ts:164-167`, `lib/orgGraph.ts:306-315`, `lib/orgGraph.ts:107-108`, `lib/orgGraph.ts:137`, `lib/orgGraph.ts:141-143`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed and the module's own header contract at lines 17-18 is the line that settles it. The kdoc-mirror cap is the sharper defect: a mention on a mirrored PDF beyond the 5000th mirror is misreported to the user as evidence that the PDF was never brought under document control — a false explanation, not merely a missing one. Libraries and projects are also silently capped at 300 (orgGraph.ts:107-108), and plot plans at 300 (:137). MEDIUM stands.
@@ -573,6 +695,20 @@ lib/orgGraph.ts:17-18 is the contract. The six push/capped sites are lines 164, 
 - [ ] Every pageRows result's `capped` flag pushes a truncation, and every `.limit(...)` in the file reports when it is reached
 - [ ] The kdoc mirror map is paged to completion (or its cap is reported), so the unmappedMentions message can only ever be true
 - [ ] A test asserts that a capped supersessions/related/flows pull produces a truncation string
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here capped supersessions / curated links / flows produced no note, and with 6,000 mirrors the 5,000-row mirror cap announced a mirrored CONTROLLED drawing's mention as "library-only". What landed in `lib/orgGraph.ts`:
+- every `pageRows` result's `capped` flag pushes a truncation that says what was read of how many — equipment-tag, project, curated document, supersession, mention and process-flow links (the last is FLOW-9's orgGraph half);
+- every list read reaches `cap + 1` rows and reports when the cap is exceeded (documents, equipment, libraries, projects, plot plans — the 300-row caps included). *Corrected at review (2026-10-01):* the documents (`limit(1501)`) and equipment (`limit(2001)`) reads were single requests, which PostgREST cuts at max-rows (1,000), so their caps could never be reported; they are now read in windows of at most 1,000 rows, and the operational units, plants, systems and codebook units — unpaged in the first cut — are paged with their cap said (GM-3's correction, `readStructure`);
+- the knowledge-mirror map is no longer a capped slice: only the mirrors the mentions point through are read, by id, to completion (`resolveMirrors`), so "N mentions come from library-only documents" counts only knowledge documents whose source_document_id is NULL; a mirror that cannot be read is said separately ("… could not be loaded — their mention links are not drawn"). `OrgGraph.mentionCoverage` reports rows read, edges drawn, unmapped and capped (IRLS-14's lib half). Review fix (2026-10-01): on a scoped graph `installed` is false when ANY of the three mention reads (by asset, by document, through mirrors) finds the table missing — a read with no ids issues no request and cannot see a missing table, so a unit with paper but no filed equipment read "installed" on an org without the mention index (test: `lib/__tests__/scope.test.ts`, "mention coverage …").
+
+Tests: `lib/__tests__/orgGraph.test.ts` GM-13 block — 8,003 supersessions / curated links / flows each say "8,000 of 8,003 read"; 6,000 mirrors: the controlled drawing's mention is drawn and only the true library-only one is announced.
+
+**Done-when.**
+1. ✓ Every pageRows result's `capped` flag pushes a truncation, and every capped read reports when its cap is reached — no request asks for more rows than one PostgREST response carries (corrected at review: the documents and equipment caps were unreachable behind max-rows; the structure reads were unpaged).
+2. ✓ The mirror map is resolved to completion for every mention that needs it, so the unmapped message can only be true.
+3. ✓ A test asserts capped supersessions / related / flows produce truncation strings.
+
+**Scope / residual.** None in the assembly. FLOW-9's other half (`lib/processFlows.ts` `listProcessFlows`) is I-09's.
 
 ---
 

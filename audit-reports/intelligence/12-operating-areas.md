@@ -343,6 +343,19 @@ lib/orgGraph.ts:190-194 and :198-202 — two node families, both `type: "unit"`,
 - [ ] Until then, orgGraph must not emit two node families under the same type label, and Connect mode must refuse a `unit:` endpoint rather than writing a units-table code into process_flows.from_ref.
 - [ ] No process_flows row can be created whose unit ref does not resolve to a codebook_entries row.
 
+**Partial (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/orgGraph.test.ts` run against the base commit's `lib/orgGraph.ts` (57609d2) fails 23 of its 24 cases, each on a finding's own mechanism — here the two "Crude Unit" nodes never met. What landed — the decision (`DEC-67`, the plan's default) made and executed: codebook units are BACKED by the units table through `units.codebook_code` (one codebook unit to at most one operational unit; the mapping is data), with the migration (20261138), the mapping control and the decode on /admin/scope (`setUnitCodebookCode`, `POST /api/admin/unit-identity`), and one node family in `lib/orgGraph.ts`. Every unit node carries `unitCode` — the codebook code on a `cbunit:` node and on a mapped unit's system, null on an unmapped operational unit — which is what Connect needs to write a flow endpoint.
+
+Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (hand-applied; one paste — its result set carries the pre-apply inventory and every probe). Until it is applied the graph builds on the legacy columns and says so ("The unit-identity migration (20261138) is not applied …"), and the decode route answers 409.
+
+**Done-when.**
+1. ✓ The decision is made and executed: codebook units are backed by the units table (`units.codebook_code`); /admin/scope stays, nothing is retired.
+2. Partly. ✓ orgGraph no longer emits two node families for one unit: a mapped operational unit IS its codebook node; an unmapped one is a different unit (`unitCode` null, href /admin/scope). **Not met here:** Connect mode refusing a `unit:` endpoint is `app/(protected)/graph/page.tsx` — I-14's GPV-7, which reads `node.unitCode`.
+3. **Not met here:** no process_flows row whose unit ref resolves to no codebook_entries row — the endpoint-existence trigger in I-09's process-flows migration (WIRE-10).
+
+**Scope / residual.** Remaining limbs: I-14 GPV-7 (write `node.unitCode`; refuse a unit node without one), I-09 WIRE-10 (endpoint-existence trigger). Apply 20261138.
+
 ---
 
 <a id="area-11"></a>
