@@ -344,22 +344,24 @@ clocks before the `DOCUMENT_CREATED` record so the record carries
 ⚠ **Paste order — P15 SURFACE REMAINDERS (2026-10-01).** One one-paste
 migration, `20261152_dc_roundF_hold_other_reason.sql` (public-surfaces
 `VFY-6`): independent of every other pending migration; paste it
-**immediately BEFORE deploying the app carrying P15 — a hard prerequisite,
-with the gap kept short**. It re-creates `20260612`'s open-reason unique
+**BEFORE deploying the app carrying P15 (a prerequisite of that deploy)**.
+It re-creates `20260612`'s open-reason unique
 index so an open "Other" hold is keyed by (the md5 of) its note — the P15
 picker writes the "Other" code with the description in the note instead of
 free text in `reason` — and (second review fix) adds the database limb: a
-signed-in hold's reason must be a code ("Other" with a description), or
+signed-in hold's reason is a code ("Other" with a description), or
 legacy text the org already carries (a lifecycle carry); an "Other" hold's
 description cannot be changed. If the app ran ahead of the paste, a
 document could hold only one open "Other" hold at a time: a second custom
 hold — two different free-text reasons are placeable today — would be
 refused, and a split / merge / reversal carrying two "Other" holds onto one
 document would be refused and rolled back (fail closed). If the paste runs
-ahead of the app, today's "Other…" picker (free text in `reason`) is
-refused for any text new to the org until the P15 app is live — a
-predefined reason still places, carries are unaffected. The integrator
-orders it so in `MIGRATION-PASTE-ORDER.md` (right before the P15 deploy).
+ahead of the app (or the P15 deploy is rolled back), nothing stops (third
+review fix): today's "Other…" picker writes free text into `reason`, and
+the rail coerces it into an "Other" hold described by that text — the row
+the P15 picker writes — instead of refusing it; only an "Other" hold with
+no description is refused. The integrator orders it before the P15 deploy
+in `MIGRATION-PASTE-ORDER.md`; the gap no longer needs to be short.
 Widening (the index) and narrowing (the rail and the freeze); its result
 set carries the DEC-30 inventory of the custom-reason holds placed before
 P15 (kept, never rewritten). The P15 app
