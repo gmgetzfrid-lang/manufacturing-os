@@ -210,10 +210,15 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
       : "none — the governing policy does not require sign-off for this revision";
   } else {
     // No rev-up: the kept target takes the absorbed sources' holds and tag
-    // union — the same gate it met when the wizard listed it as a source.
+    // union. Its content does not change and neither write advances it at
+    // the database, so its gate is authority and the lock ONLY (review fix
+    // 3): a held target — the natural place to absorb obsolete sheets —
+    // still takes a merge, as it did before Round F and as the database
+    // allows. Carrying more holds onto a held document is harmless.
     await authorizePublish({
       documentId: keptId!, libraryId: target.libraryId, orgId, actorUserId, actorRole,
       overrideReason: input.overrideReason ?? reason, force: input.force, operation: "merge",
+      holds: "ignore",
     });
     reviewPolicy = "none — the extended target's content is unchanged (no rev-up)";
   }
@@ -398,13 +403,15 @@ async function finishMerge(
   }
 
   if (target.kind === "extend_existing") {
-    // 6. The kept target's tag union (checked — a refusal is on its record,
-    //    the merge stands) and the record that it absorbed the sources.
-    const { error: tagErr } = await supabase.from("documents").update({
+    // 6. The kept target's tag union (checked for the row too — an RLS
+    //    zero-row answer is a refusal; either is on its record, the merge
+    //    stands) and the record that it absorbed the sources.
+    const { data: tagged, error: tagWriteErr } = await supabase.from("documents").update({
       asset_tags: target.assetTagsUnion,
       updated_at: new Date().toISOString(),
       updated_by: actorUserId,
-    }).eq("id", targetDocumentId);
+    }).eq("id", targetDocumentId).select("id");
+    const tagErr = tagWriteErr ?? (((tagged as unknown[] | null) ?? []).length === 0 ? { message: "the write was refused" } : null);
     await logRevisionEvent({
       orgId, documentId: targetDocumentId, versionId: "",
       userId: actorUserId, userEmail: actorEmail ?? "", userRole: actorRole ?? "",

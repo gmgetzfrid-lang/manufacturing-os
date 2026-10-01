@@ -541,7 +541,9 @@ describe("the rails, exercised (transcriptions pinned to 20261131)", () => {
     // fails here — never passes silently
     expect(() => evalPolicyExpr("auth.uid() IS NOT NULL", viewer, row)).toThrow(/unknown policy expression/);
     const rev = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
-    expect(rev).toMatch(/if \(error \|\| remaining > 0\) \{\n\s*throw new Error\(`The documents were restored, but/);
+    // review fix 3: a lineage row left behind stops the reversal's saga (which
+    // then puts every document back and re-links what was removed)
+    expect(rev).toMatch(/if \(error \|\| remaining > 0\) \{\n\s*throw new Error\(`Reversal stopped: \$\{remaining \|\| "the"\} supersession link\(s\) could not be removed/);
     const common = readFileSync(join(process.cwd(), "lib/documentLifecycle/common.ts"), "utf8");
     expect(common).toMatch(/if \(delErr \|\| remaining > 0\) \{/);
   });

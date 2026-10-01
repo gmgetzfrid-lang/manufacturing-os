@@ -479,6 +479,8 @@ export async function completeSourceRetirement(input: {
       pendingDraftVoidProblem: draftVoid.problem,
       revokedShareLinks: shares.revoked,
       shareRevokeError: shares.error,
+      liveShareLinksLeft: shares.liveLeft,
+      shareRevokeAuditError: shares.auditError,
     },
   });
 }

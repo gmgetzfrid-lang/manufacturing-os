@@ -142,15 +142,18 @@ themselves app changes.)*
      then versions deleted, then the document) stops at the version step and
      leaves a live document with no current file. Fix: delete the document
      row directly, or pre-check and refuse before any write.
-   Until `20261131` is applied, `DRLS-3` and `DRLS-13` are landed but not
-   live (recorded OPEN with a Partial block), and `REV-13` / `REV-14` /
-   `DRLS-14`'s database halves wait with them.
+   Until `20261131` is applied, `DRLS-3`, `DRLS-13` and `REV-13` are landed
+   but not live (recorded OPEN with a Partial block — `REV-13` since review
+   fix 3: its intake-door half is the rail's), and `REV-14` / `DRLS-14`'s
+   database halves wait with them.
 2. **Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` before the wave-2 app ships**
    (`REV-9`; the facility's IANA zone, e.g. `America/Chicago`; documented in
    `.env.example`). Unset, the app decides "in effect" in UTC-12 — the
-   latest calendar, so never early anywhere, but up to a day late for the
-   badge and the "now in effect" notice. Make the app deploy conditional on
-   it.
+   latest calendar, so never early anywhere, but late by the facility's UTC
+   offset plus 12 hours (up to 26 hours for a UTC+14 site) for the badge
+   and the "now in effect" notice; it logs the unset zone once per runtime,
+   and `facilityTimeZoneHealth()` (`lib/effectiveDate.ts`) answers for a
+   health surface. Make the app deploy conditional on it.
 3. Do not re-paste `20261105` or any earlier `publish_revision` migration
    after `20261130`: it would re-create the 11-argument overload; re-running
    `20261130` removes it.

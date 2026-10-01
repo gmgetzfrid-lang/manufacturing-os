@@ -160,3 +160,39 @@ describe("REV-13 — the scan announces only a date the CURRENT version carries"
     expect(belongsToCurrentVersion(null, "v-cur", dates)).toBe(false);
   });
 });
+
+describe("REV-9 (review fix 3) — an UNSET facility zone is said, not silent", () => {
+  const prevZone = process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+  afterEach(() => {
+    if (prevZone === undefined) delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+    else process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = prevZone;
+  });
+  it("facilityTimeZoneHealth names an unset zone and what the fallback costs (up to 26 hours for UTC+14); a valid zone is healthy; an unknown one is named", async () => {
+    const { facilityTimeZoneHealth } = await import("@/lib/effectiveDate");
+    delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+    const unset = facilityTimeZoneHealth();
+    expect(unset).toMatchObject({ configured: false, valid: false, zone: "Etc/GMT+12" });
+    expect(unset.message).toMatch(/NEXT_PUBLIC_FACILITY_TIME_ZONE is not set[\s\S]*up to 26 hours for a UTC\+14 site/);
+    process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "Australia/Brisbane";
+    expect(facilityTimeZoneHealth()).toEqual({ configured: true, valid: true, zone: "Australia/Brisbane", message: null });
+    process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "Nowhere/Atlantis";
+    expect(facilityTimeZoneHealth()).toMatchObject({ configured: true, valid: false, zone: "Etc/GMT+12" });
+  });
+  it("effectiveDateTimeZone logs the unset zone ONCE per runtime (a fresh module), then stays quiet", async () => {
+    vi.resetModules();
+    const fresh = await import("@/lib/effectiveDate");
+    delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(fresh.effectiveDateTimeZone()).toBe("Etc/GMT+12");
+    expect(fresh.effectiveDateTimeZone()).toBe("Etc/GMT+12");
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(String(err.mock.calls[0][0])).toMatch(/^\[effectiveDate\] NEXT_PUBLIC_FACILITY_TIME_ZONE is not set/);
+    err.mockRestore();
+  });
+  it(".env.example states the real worst case, not 'up to a day'", async () => {
+    const { readFileSync } = await import("node:fs");
+    const env = readFileSync(`${process.cwd()}/.env.example`, "utf8");
+    expect(env).toMatch(/up to\s*\n?#?\s*26 hours for a UTC\+14 site/);
+    expect(env).not.toMatch(/but up to a day late/);
+  });
+});

@@ -116,12 +116,17 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
     setCreating(true); setUpError(null);
     try {
       const folder = folders.find((f) => f.id === folderId);
-      const { documentId } = await createDocumentWithFile({
+      const { documentId, creationAuditError } = await createDocumentWithFile({
         orgId, libraryId: upLibraryId, collectionId: folderId || null,
         folderPath: folder ? folder.pathNames : undefined,
         documentNumber: docNum.trim(), title: docTitle.trim() || undefined,
         file, status: fileAs, actorUserId: userId, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined,
       });
+      // REV-11: the document exists, but its creation record did not land —
+      // say so (Document Control can reconstruct it), never stay silent.
+      if (creationAuditError) {
+        await appAlert({ message: `${docNum.trim()} was created, but its creation record could not be written (${creationAuditError}). Tell Document Control so the record can be completed.`, tone: "danger" });
+      }
       await onPick(documentId);
     } catch (e) { setUpError((e as Error).message); } finally { setCreating(false); }
   };

@@ -274,6 +274,13 @@ export async function authorizePublish(opts: {
    *  holds the override reason to OVERRIDE_REASON_MIN — the database's rule
    *  for publish_revision; the others need a non-blank reason. */
   operation?: GuardedOperation;
+  /** "ignore" asks authority and the lock ONLY — for a write that does not
+   *  advance the document (HLD-2, review fix 3: an existing merge target
+   *  kept without a rev-up takes more holds and a tag union; its content is
+   *  unchanged and the database does not treat either as advancing, so its
+   *  own holds do not stop it). Default "block". The returned state still
+   *  carries the holds. */
+  holds?: "block" | "ignore";
 }): Promise<PublishGuardState> {
   // OWN-3 / OWN-6: the principal carries the actor's full role collection
   // and team memberships — resolved from the same rows the DB guard reads —
@@ -310,7 +317,7 @@ export async function authorizePublish(opts: {
   // independently and are never satisfied by an override — only a
   // controller's explicit force clears them (evaluatePublishGuard enforces
   // that split; the publish_revision RPC re-checks it transactionally).
-  const decision = evaluatePublishGuard(state, {
+  const decision = evaluatePublishGuard(opts.holds === "ignore" ? { ...state, activeHolds: [] } : state, {
     actorUserId: opts.actorUserId,
     actorRole: opts.actorRole,
     actorRoles: principal.roles ?? null,
@@ -525,22 +532,73 @@ export async function voidPendingDraftAfterPublish(documentId: string, actorUser
 // only (20261080 freezes revoked_at once set), what this actor may revoke
 // under RLS (the creator or a controller), with the count and any refusal on
 // the retirement's own audit event.
+//
+// Review fix 3: each revoked link gets P1's SHARE_LINK_REVOKED row (the
+// DRLS-7 external-access trail — revokeShareLink writes the same row, with
+// the same shareId), and the links still live afterwards — another creator's,
+// which a non-controller retirer may not revoke under 20261022 — are COUNTED
+// and returned (`liveLeft`), so the retirement's record flags them for
+// Document Control instead of reading as "revoked: 0" and nothing more.
 
-export type ShareRevocation = { revoked: number; error: string | null };
+export type ShareRevocation = {
+  revoked: number;
+  /** Live links left on the document after the revoke (as far as this actor
+   *  can see them — the 20261066 read rule shows a reader of the document
+   *  every link on it): another creator's, for a non-controller. Document
+   *  Control must revoke them. null when the count could not be read. */
+  liveLeft: number | null;
+  error: string | null;
+  /** SHARE_LINK_REVOKED rows that could not be written, if any. */
+  auditError: string | null;
+};
 
 export async function revokeLiveSharesForDocument(documentId: string, actorUserId: string): Promise<ShareRevocation> {
+  let revoked = 0;
+  let error: string | null = null;
+  const auditFailures: string[] = [];
   try {
-    const { data, error } = await supabase
+    const { data, error: revokeErr } = await supabase
       .from("document_shares")
       .update({ revoked_at: new Date().toISOString(), revoked_by: actorUserId })
       .eq("document_id", documentId)
       .is("revoked_at", null)
-      .select("id");
-    if (error) return { revoked: 0, error: error.message };
-    return { revoked: ((data as unknown[] | null) ?? []).length, error: null };
+      .select("id, org_id");
+    if (revokeErr) {
+      error = revokeErr.message;
+    } else {
+      const rows = (data as Array<{ id: string; org_id?: string | null }> | null) ?? [];
+      revoked = rows.length;
+      for (const row of rows) {
+        const { error: auditErr } = await logAuditAction({
+          action: "SHARE_LINK_REVOKED",
+          resourceId: documentId,
+          resourceType: "document",
+          orgId: row.org_id ?? undefined,
+          userId: actorUserId,
+          details: { shareId: row.id, via: "retirement" },
+        });
+        if (auditErr) auditFailures.push(`${row.id}: ${auditErr}`);
+      }
+    }
   } catch (e) {
-    return { revoked: 0, error: (e as Error).message };
+    error = (e as Error).message;
   }
+  let liveLeft: number | null = null;
+  try {
+    const { count, error: countErr } = await supabase
+      .from("document_shares")
+      .select("id", { count: "exact", head: true })
+      .eq("document_id", documentId)
+      .is("revoked_at", null);
+    if (!countErr && typeof count === "number") liveLeft = count;
+  } catch { /* unreadable → null: the record says the count is unknown */ }
+  if (liveLeft !== 0) {
+    console.error(`[retire] ${documentId}: ${liveLeft ?? "an unknown number of"} share link(s) are still live after the retirement — Document Control must revoke them.`);
+  }
+  return {
+    revoked, liveLeft, error,
+    auditError: auditFailures.length > 0 ? `${auditFailures.length} SHARE_LINK_REVOKED row(s) not written (${auditFailures.join("; ")})` : null,
+  };
 }
 
 /** REV-11: the initial statuses a created document may be born with — a
@@ -633,6 +691,13 @@ export async function canPutFirstRevisionInContainer(opts: {
  * a library publisher, or the folder / library owner. Asked BEFORE anything
  * is inserted, so a member without it is refused cleanly instead of leaving
  * a document row with no file that only a controller can delete.
+ *
+ * Review fix 3 (REV-11 / DEC-44 §2): the creation is RECORDED — a
+ * DOCUMENT_CREATED audit row, written once the first pointer write has
+ * landed, carries the initial status, the review policy decision (for a
+ * controller issuing unreviewed in a require-mode library: that the required
+ * sign-off was not collected, and by whom) and the actor. A refused audit
+ * write is returned (`creationAuditError`), never dropped.
  */
 export async function createDocumentWithFile(input: {
   orgId: string;
@@ -646,7 +711,7 @@ export async function createDocumentWithFile(input: {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
-}): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null }> {
+}): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {
   const now = new Date().toISOString();
   const docNum = input.documentNumber.trim();
   if (!docNum) throw new Error("A document number is required.");
@@ -669,11 +734,14 @@ export async function createDocumentWithFile(input: {
       : "You don't have authority to add documents to this library (attaching a new document's file takes publish authority here, or ownership of the folder / library) — ask an Admin or Doc Control. Nothing was created.");
   }
   let reviewPolicy: string | null = null;
+  let reviewPolicyMode: string | null = null;
   if (input.status === "Issued") {
-    reviewPolicy = (await resolveCreationReviewGate({
+    const gate = await resolveCreationReviewGate({
       libraryId: input.libraryId, collectionId: input.collectionId ?? null, what: `${docNum}`,
       actor: { orgId: input.orgId, actorUserId: input.actorUserId, actorRole: input.actorRole },
-    })).recorded;
+    });
+    reviewPolicy = gate.recorded;
+    reviewPolicyMode = gate.mode;
   }
 
   const { data: docRow, error: docErr } = await supabase
@@ -737,6 +805,27 @@ export async function createDocumentWithFile(input: {
   if (ptrErr || ((promoted as unknown[] | null) ?? []).length === 0) {
     throw new Error(`The document was created but its file could not be attached (${ptrErr?.message ?? "the write was refused"}) — ask Doc Control to remove ${docNum} or attach its file.`);
   }
+  // REV-11 / DEC-44 §2: the creation — and, for an issue, the review policy
+  // decision and who made it — is on the record (split / merge record theirs
+  // on CREATED_FROM_SPLIT / CREATED_FROM_MERGE).
+  const { error: creationAuditError } = await logAuditAction({
+    action: "DOCUMENT_CREATED",
+    resourceId: documentId,
+    resourceType: "document",
+    orgId: input.orgId,
+    userId: input.actorUserId,
+    userEmail: input.actorEmail,
+    userRole: input.actorRole,
+    details: {
+      versionId: ver.id,
+      documentNumber: docNum,
+      revisionLabel: "0",
+      initialStatus: input.status,
+      reviewPolicyMode,
+      reviewPolicy,
+      fileHash,
+    },
+  });
   if (input.status === "Issued") {
     // Seed the review clock so a new doc picks up any library/folder review cycle.
     await onDocumentIssued({ orgId: input.orgId, documentId, userId: input.actorUserId, userName: input.actorEmail });
@@ -746,7 +835,7 @@ export async function createDocumentWithFile(input: {
   // Seed retention state so a doc created AFTER a library/folder retention
   // policy exists is not invisible to the retention system.
   try { await recomputeRetention(documentId); } catch { /* best-effort */ }
-  return { documentId, status: input.status, reviewPolicy };
+  return { documentId, status: input.status, reviewPolicy, creationAuditError };
 }
 
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
@@ -1678,6 +1767,7 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
       revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
+      liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
     },
   });
 }
@@ -2032,6 +2122,8 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       unresolvedDocNumbers: unresolved,
       revokedShareLinks,
       shareRevokeError: shares.error,
+      liveShareLinksLeft: shares.liveLeft,
+      shareRevokeAuditError: shares.auditError,
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
     },

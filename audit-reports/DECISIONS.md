@@ -3349,7 +3349,10 @@ and an unverifiable sheet needs a deliberate single adopt.
    (an owner splitting past a mandatory review). Doc Control and Admin — the
    people who own the policy — proceed, and the creation event records the
    decision and who made it (`reviewPolicy: "require — issued WITHOUT the
-   sign-off the policy requires, by controller <uid> …"`). Under
+   sign-off the policy requires, by controller <uid> …"` — on
+   `CREATED_FROM_SPLIT` / `CREATED_FROM_MERGE`, and on the upload path's
+   `DOCUMENT_CREATED` row since the third review fix; before it, the upload
+   only returned the decision and its caller discarded it). Under
    `publisher_choice` / `none` it proceeds and the decision is recorded too.
    An unreadable policy refuses (RG-6). *(Second review fix: the first
    version refused controllers as well, removing a write path the database
@@ -3377,7 +3380,9 @@ and an unverifiable sheet needs a deliberate single adopt.
    there only after it has begun in every facility's calendar, so with no
    zone named a date is never shown, stamped or announced as in force early
    anywhere; it is late instead, by the facility's offset plus twelve hours
-   at most (a Houston badge flips at 07:00, not midnight). *(Second review
+   (a Houston badge flips at 07:00, not midnight; a UTC+14 site is 26 hours
+   late), and the app logs the unset zone once per runtime
+   (`facilityTimeZoneHealth()` answers for a health surface). *(Second review
    fix: the first version fell back to UTC, which moved the field-facing
    badge onto a calendar that flips a date early for every site west of UTC
    — a Houston publisher's "tomorrow" read in effect from 19:00 the evening
@@ -3435,3 +3440,5 @@ and its evidence FKs stop the page's delete flow part-way, so `20261131` is
 the order is in `document-control/99-fix-sequencing.md`).
 
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, second review fix): §2's controller path (recorded) and §3's dialog picker (`REV-16`) withdraw the two capability removals; §4's fallback is UTC-12, never early. The split / merge / supersede saga now does nothing irreversible (the review void, the share revocation) before its last step that can roll back, registers each source's restore before its flip, and runs an extended merge target's rev-up last. See `REV-6`, `REV-9`, `REV-11`, `REV-12`, `REV-14`, `REV-16`, `HLD-2`.*
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, third review fix): §2's "recorded" now holds for every creation path — `createDocumentWithFile` writes `DOCUMENT_CREATED` with the initial status, the policy decision and the actor, and returns a refused write (`REV-11`). The reversal (§3) is two-phase: every restored document is proved restorable before any write, the parks / restores / lineage delete roll back whole, and the review voids and link revocations run only after (`REV-6`, `REV-12`). A merge into a held existing target with no rev-up is no longer refused (authority and the lock only — `HLD-2`), so no section removes a write path the database allows. §4's unset zone is logged and its worst case stated as 26 hours (`REV-9`). `REV-13` is back to OPEN: its every-door half is `20261131`'s rail, not yet pasteable.*

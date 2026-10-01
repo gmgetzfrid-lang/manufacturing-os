@@ -32,8 +32,8 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 // LATEST calendar on Earth — UTC-12 — never UTC: a day begins there only
 // after it has begun in every facility's calendar, so with no zone named a
 // date is never shown, stamped or announced as in force EARLY anywhere; it
-// is late, by the facility's offset plus twelve hours at most (Houston: the
-// badge flips at 07:00 instead of midnight). Late is the safe side of a
+// is late, by the facility's offset plus twelve hours (Houston: the badge
+// flips at 07:00 instead of midnight; a UTC+14 facility: 26 hours late). Late is the safe side of a
 // procedure that must not be in force before the training. REV-9 stays open
 // until every deployment names its zone (or an org / library zone setting
 // lands, which changes effectiveDateTimeZone() and nothing else). Dates are
@@ -46,6 +46,28 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 export const EFFECTIVE_DATE_FALLBACK_TIME_ZONE = "Etc/GMT+12";
 
 let warnedZone: string | null = null;
+let warnedUnset = false;
+
+/** REV-9 (review fix 3): what the fallback costs, in the words every warning
+ *  uses — the hours a date can be late are the facility's offset plus 12,
+ *  so up to 26 for a UTC+14 site. */
+const FALLBACK_COST = `${EFFECTIVE_DATE_FALLBACK_TIME_ZONE} (UTC-12: never early, but late by the facility's UTC offset plus 12 hours — up to 26 hours for a UTC+14 site)`;
+
+/** REV-9 (review fix 3): is the facility zone named, and valid? For a health
+ *  surface (an admin panel or deploy check can read it) — an unset zone is
+ *  not an error the app can see otherwise. Pure: no warning is logged. */
+export function facilityTimeZoneHealth(): { configured: boolean; valid: boolean; zone: string; message: string | null } {
+  const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim();
+  if (!raw) {
+    return { configured: false, valid: false, zone: EFFECTIVE_DATE_FALLBACK_TIME_ZONE, message: `NEXT_PUBLIC_FACILITY_TIME_ZONE is not set — effective dates are decided in ${FALLBACK_COST}. Set the facility's IANA zone (document-control REV-9).` };
+  }
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: raw });
+    return { configured: true, valid: true, zone: raw, message: null };
+  } catch {
+    return { configured: true, valid: false, zone: EFFECTIVE_DATE_FALLBACK_TIME_ZONE, message: `NEXT_PUBLIC_FACILITY_TIME_ZONE="${raw}" is not a time zone this runtime knows — effective dates are decided in ${FALLBACK_COST} until it is fixed.` };
+  }
+}
 
 /** The calendar every effective-date decision is made in (REV-9): the
  *  deployment's facility zone, read at call time — the literal
@@ -55,14 +77,22 @@ let warnedZone: string | null = null;
  *  late, never early. */
 export function effectiveDateTimeZone(): string {
   const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim();
-  if (!raw) return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
+  if (!raw) {
+    // Review fix 3: an UNSET zone is said once per runtime too — silence
+    // made "set it before deploying" depend on the operator noticing.
+    if (!warnedUnset) {
+      warnedUnset = true;
+      console.error(`[effectiveDate] ${facilityTimeZoneHealth().message}`);
+    }
+    return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
+  }
   try {
     new Intl.DateTimeFormat("en-CA", { timeZone: raw });
     return raw;
   } catch {
     if (warnedZone !== raw) {
       warnedZone = raw;
-      console.error(`[effectiveDate] NEXT_PUBLIC_FACILITY_TIME_ZONE="${raw}" is not a time zone this runtime knows — effective dates are decided in ${EFFECTIVE_DATE_FALLBACK_TIME_ZONE} (UTC-12: never early, up to a day late) until it is fixed.`);
+      console.error(`[effectiveDate] ${facilityTimeZoneHealth().message}`);
     }
     return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
   }
