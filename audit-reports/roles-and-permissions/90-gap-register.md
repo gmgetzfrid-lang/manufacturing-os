@@ -30,7 +30,7 @@ the specific wrong turn an implementing agent would otherwise take.
 | [GAP-6](#gap-6) | The ticket → document hand-back | **BUILD** | L | `LIFE-2`/`DEC-23` **first** |
 | [GAP-7](#gap-7) | Markup as a durable artifact | **BUILD_NARROW** | M | — |
 | [GAP-8](#gap-8) | Multi-sheet source documents | **BUILD_NARROW** | S | `LIFE-4` |
-| [GAP-9](#gap-9) | Field-verification currency | **BUILD_NARROW** | S | `LIFE-10` |
+| [GAP-9](#gap-9) | Field-verification currency | **BUILD_NARROW → BUILT** (LIFE-10 + DC P14, 2026-10-01) | S | `LIFE-10` |
 | [GAP-10](#gap-10) | A first-class hand-off record | **DECLINE** | — | — |
 | [GAP-11](#gap-11) | Document declares downstream approval requirements | **FOLD_INTO_FINDING** | — | `LIFE-5`, `LIFE-12` |
 | [GAP-12](#gap-12) | Library ownership admin surface | **BUILD → BUILT** `98a65d5` | S | — |
@@ -595,6 +595,14 @@ to put in the array at all.
 ## GAP-9 · Field verification has currency and expiry
 
 **Verdict: BUILD_NARROW** · Effort: **S** · Depends on: `LIFE-10`
+
+**Status: RESOLVED (2026-10-01, document-control Round F wave 3 — P14 RECORDS & REVIEW REMAINDERS).** Acceptance 1–3 were met by `LIFE-10` (Round A2: the "Last field-verified" banner — who, when, against which revision, superseded by a later discrepancy — and history rows linking to the tickets they spawned); this closes the remainder the orphan sweep named: the staleness state from a configurable interval, rendered beside the other pills.
+
+**Resolution (2026-10-01, document-control Round F wave 3).** The cadence rides the EXISTING periodic-review policy: `ReviewPolicy` gains `fieldVerifyIntervalCount` / `fieldVerifyIntervalUnit` (`types/schema.ts`), set in the library / folder policy editor (`ReviewPolicyModal`: "Field verification expires — a walkdown stays current for N days / months / years"), resolved by the same `resolveEffectivePolicy` (document → folder → library, most specific defined level wins, `enabled:false` opts out). The currency is the review cycle's own rule — no third implementation: `lib/reviewCycles.ts` `summarizeFieldVerification` takes the last `field_verified` walkdown, dates its expiry with `addInterval` (`computeNextVerificationDate`), and gives `reviewStatusFor`'s verdict with the policy's own `leadDays` (current / due soon / overdue); a cadence with no walkdown is `never`, a walkdown with no cadence is `verified`, and a `discrepancy` reported after the last verification supersedes it (`discrepancy`, whatever the cadence; a later walkdown supersedes the discrepancy in turn). `VerificationPill` renders it beside `ReviewPill` in the inspector's Compliance & control header and beside `AckPill` in a new "Field" column of the master register, with the facts on hover (who, when, against which revision, what superseded it, the cadence); the register CSV carries it as its last column, "Field verification". Every read is CHECKED: one document's currency (`loadFieldVerification`) and the register's (`loadFieldOutcomes`, PAGED past PostgREST's row cap) answer `unknown` — never "never verified" and never "current" — when the check-in register or an inherited policy cannot be read. The LIFE-10 banner now derives from the same `summarizeFieldVerification` (one derivation, its own copy gone).
+
+**Done-when.** ✓ A document shows a staleness state derived from a configurable interval, reusing the review-cycle pattern, rendered beside the review / acknowledgment / effective pills (inspector + register + CSV); ✓ a discrepancy visibly supersedes an earlier verification in the state itself; ✓ no new clock: the verdict is `reviewStatusFor`'s, the due date `addInterval`'s, the words `describeInterval`'s (pinned). Tests: `lib/__tests__/dcRoundFFieldVerificationCurrency.test.ts` (13 cases, all fail on the base); the LIFE-10 pins (`lifeSweep2`) and the register / ownership suites unchanged and green.
+
+**Scope / residual.** Out, as specified: no reminder or notification cadence (a due or overdue walkdown is a state, not a nudge). The cadence lives in the periodic-review policy object, so the editor offers it under "Require periodic review" (an opted-out policy carries neither); a document's own review policy (the inspector's ReviewSection) overrides the inherited cadence exactly as it overrides the review cycle, and that section does not offer the verification cadence itself. The library page's document list (app/(protected)/documents/[libraryId]/page.tsx, another package's file) does not render the pill; the inspector and the register do. "Do not let `auto_released` overwrite a real outcome" is `LIFE-14`'s, already resolved.
 
 ### Scope
 

@@ -10,13 +10,17 @@
 
 import { supabase } from "@/lib/supabase";
 import { resolveEffectiveOwner, teamSupervisorMap } from "@/lib/ownership";
-import { reviewStatusFor, daysUntilReview, type ReviewStatus } from "@/lib/reviewCycles";
+import {
+  reviewStatusFor, daysUntilReview, resolveEffectivePolicy, summarizeFieldVerification, unknownFieldVerification,
+  verificationPillText, verificationPillTitle, FIELD_OUTCOMES,
+  type ReviewStatus, type FieldOutcomeRow, type FieldVerification,
+} from "@/lib/reviewCycles";
 import { getAckSummaries, ackStatusFor, type AckSummary, type AckStatus } from "@/lib/acknowledgments";
 import { getReviewSummaries, type ReviewSummary } from "@/lib/reviewControl";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { retentionStatusFor } from "@/lib/retention";
 import { resolveEffectiveRetentionPolicy, scheduledActionFor, scheduledActionLabel, describeRetentionPolicy, type ScheduledAction } from "@/lib/retentionPolicy";
-import type { RetentionPolicy } from "@/types/schema";
+import type { RetentionPolicy, ReviewPolicy } from "@/types/schema";
 import { describeOrigin } from "@/lib/documentOrigin";
 import { csvCell } from "@/lib/csvSafe";
 
@@ -60,6 +64,11 @@ export interface RegisterRow {
   scheduledActionLabel: string | null;
   retentionSchedule: string | null;
   retentionScheduleUnknown: boolean;
+  // GAP-9: field-verification currency — the last walkdown (who, when,
+  // against which revision), the cadence's verdict from the EFFECTIVE review
+  // policy, a later discrepancy superseding it; `unknown` (never "never
+  // verified") when the register or an inherited policy could not be read.
+  fieldVerification: FieldVerification | null;
   // Origin (ISO 9001 §7.5.3)
   external: boolean;
   originLabel: string;
@@ -105,7 +114,7 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   const limit = opts?.limit ?? 4000;
   const { data: docsData } = await supabase
     .from("documents")
-    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold, retention_policy, origin, external_source, external_reference")
+    .select("id, document_number, title, name, library_id, collection_id, status, rev, updated_at, owner_user_id, owner_name, next_review_date, pending_version_id, effective_date, retention_until, disposition_state, legal_hold, retention_policy, review_policy, origin, external_source, external_reference")
     .eq("org_id", orgId)
     // or(): NULL-status documents are CONTROLLED records too — plain
     // not-in drops them via SQL NULL semantics, silently shrinking the
@@ -118,9 +127,9 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
   if (!docs.length) return { rows: [], kpis: computeRegisterKpis([]), capped };
 
   const docIds = docs.map((d) => d.id as string);
-  const [{ data: libs, error: libsErr }, { data: cols, error: colsErr }, ackMap, reviewMap, distAckRes, { data: activeRows }] = await Promise.all([
-    supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id, retention_policy").eq("org_id", orgId),
-    supabase.from("collections").select("id, owner_user_id, owner_name, retention_policy").eq("org_id", orgId),
+  const [{ data: libs, error: libsErr }, { data: cols, error: colsErr }, ackMap, reviewMap, distAckRes, { data: activeRows }, fieldOutcomes] = await Promise.all([
+    supabase.from("libraries").select("id, name, owner_user_id, owner_name, owner_team_id, retention_policy, review_policy").eq("org_id", orgId),
+    supabase.from("collections").select("id, owner_user_id, owner_name, retention_policy, review_policy").eq("org_id", orgId),
     getAckSummaries(orgId, docIds),
     getReviewSummaries(orgId, docIds),
     // Outstanding DISTRIBUTION confirmations ("I have this revision") — the
@@ -130,6 +139,8 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     // GAP-5 / OWN-12: only ACTIVE members can be effective owners — a departed
     // owner's documents show as UNOWNED here (the actionable signal).
     supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active"),
+    // GAP-9: the check-in register's walkdown outcomes, read CHECKED and paged.
+    loadFieldOutcomes(orgId),
   ]);
   const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
   // DEL-8: the owner's CURRENT name, never the owner_name snapshot.
@@ -181,6 +192,19 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     const inForce = !!retention && !!retention.years;
     const ack = ackMap.get(d.id as string) ?? null;
     const review = reviewMap.get(d.id as string) ?? null;
+    // GAP-9: the same EFFECTIVE review policy the cycle resolves (document →
+    // folder → library); an inherited level that could not be read makes the
+    // currency unknown, never "never verified".
+    const ownReview = (d.review_policy as ReviewPolicy | null) ?? null;
+    const folderReview = collectionId ? ((colMap.get(collectionId) as { review_policy?: ReviewPolicy | null } | undefined)?.review_policy ?? null) : null;
+    const libReview = ((lib as { review_policy?: ReviewPolicy | null } | undefined)?.review_policy) ?? null;
+    const reviewPolicyUnknown = !ownReview && ((!!collectionId && !!colsErr && !folderReview) || (!folderReview && !!libsErr));
+    const outcomes = fieldOutcomes.byDoc.get(d.id as string) ?? [];
+    const fieldVerification = fieldOutcomes.error
+      ? unknownFieldVerification(`the check-in register could not be read (${fieldOutcomes.error})`)
+      : reviewPolicyUnknown
+        ? unknownFieldVerification("the review policy could not be read", summarizeFieldVerification(outcomes, null))
+        : summarizeFieldVerification(outcomes, resolveEffectivePolicy(ownReview, folderReview, libReview));
     return {
       id: d.id as string,
       number: (d.document_number as string) || (d.title as string) || (d.name as string) || "—",
@@ -209,12 +233,48 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
       scheduledActionLabel: inForce ? scheduledActionLabel(retention) : null,
       retentionSchedule: inForce ? describeRetentionPolicy(retention) : null,
       retentionScheduleUnknown: scheduleUnknown,
+      fieldVerification,
       external: (d.origin as string | null) === "external",
       originLabel: describeOrigin({ origin: (d.origin as "internal" | "external" | null) ?? null, externalSource: (d.external_source as string | null) ?? null, externalReference: (d.external_reference as string | null) ?? null }),
     };
   });
 
   return { rows, kpis: computeRegisterKpis(rows), capped };
+}
+
+const FIELD_OUTCOME_PAGE = 1000;
+const FIELD_OUTCOME_MAX_PAGES = 100;
+
+/** GAP-9: every walkdown outcome in the org (field_verified / discrepancy),
+ *  grouped by document. CHECKED and PAGED — a failed or truncated read would
+ *  show a verified record as never verified, so either answers `error`. */
+async function loadFieldOutcomes(orgId: string): Promise<{ byDoc: Map<string, FieldOutcomeRow[]>; error: string | null }> {
+  const byDoc = new Map<string, FieldOutcomeRow[]>();
+  for (let page = 0; page < FIELD_OUTCOME_MAX_PAGES; page++) {
+    const from = page * FIELD_OUTCOME_PAGE;
+    const { data, error } = await supabase
+      .from("checkout_sessions")
+      .select("id, document_id, outcome, ended_at, user_name, outcome_ref")
+      .eq("org_id", orgId).in("outcome", [...FIELD_OUTCOMES])
+      .order("ended_at", { ascending: false }).order("id", { ascending: true })
+      .range(from, from + FIELD_OUTCOME_PAGE - 1);
+    if (error) return { byDoc, error: error.message };
+    const rows = (data ?? []) as Array<FieldOutcomeRow & { document_id: string }>;
+    for (const r of rows) {
+      const list = byDoc.get(r.document_id) ?? [];
+      list.push(r);
+      byDoc.set(r.document_id, list);
+    }
+    if (rows.length < FIELD_OUTCOME_PAGE) return { byDoc, error: null };
+  }
+  return { byDoc, error: `more than ${FIELD_OUTCOME_PAGE * FIELD_OUTCOME_MAX_PAGES} walkdown outcomes — read a document's own panel` };
+}
+
+/** GAP-9: the currency as the CSV states it — the pill's words plus the facts
+ *  (never blank when it could not be read). */
+export function fieldVerificationCsv(v: FieldVerification | null): string {
+  if (!v) return "";
+  return `${verificationPillText(v).full}. ${verificationPillTitle(v)}`;
 }
 
 // ── Filtering (pure) ─────────────────────────────────────────────────────────
@@ -246,7 +306,7 @@ export function filterRegister(rows: RegisterRow[], filter: RegisterFilter, libr
 
 /** The master register as CSV — the artifact an auditor asks to be handed. */
 export function registerToCsv(rows: RegisterRow[]): string {
-  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Owner status", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition", "Scheduled end of life"];
+  const header = ["Document", "Title", "Library", "Rev", "Status", "Owner", "Owner status", "Origin", "Effective", "Next review", "Review status", "Ack", "Distribution unconfirmed", "In review", "Retain until", "Legal hold", "Disposition", "Scheduled end of life", "Field verification"];
   const lines = rows.map((r) => [
     r.number, r.title, r.libraryName, r.rev ?? "", r.status ?? "",
     // DEL-8: branch on the id, not the name — an owned-but-unnamed row never
@@ -265,6 +325,8 @@ export function registerToCsv(rows: RegisterRow[]): string {
     r.dispositionEligible ? "eligible" : "",
     // RET-11: the schedule's action (never a guess when it could not be read)
     r.retentionScheduleUnknown ? "unknown (the retention policy could not be read)" : (r.retentionSchedule ?? ""),
+    // GAP-9: the field-verification currency (the pill's words + the facts)
+    fieldVerificationCsv(r.fieldVerification),
   ].map(csvCell).join(","));
   return [header.join(","), ...lines].join("\n");
 }

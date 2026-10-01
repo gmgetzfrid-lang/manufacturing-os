@@ -17,6 +17,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import ReviewPill from "@/components/documents/ReviewPill";
 import AckPill from "@/components/documents/AckPill";
+import VerificationPill from "@/components/documents/VerificationPill";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
@@ -137,6 +138,7 @@ export default function RegisterPage() {
                 <th className="text-left font-black px-3 py-2">Effective</th>
                 <th className="text-left font-black px-3 py-2">Review</th>
                 <th className="text-left font-black px-3 py-2">Ack</th>
+                <th className="text-left font-black px-3 py-2" title="Field-verification currency (GAP-9)">Field</th>
                 <th className="text-left font-black px-3 py-2 hidden lg:table-cell" title="Distribution confirmations outstanding">Dist.</th>
                 <th className="text-left font-black px-3 py-2">Gate</th>
                 <th className="text-left font-black px-3 py-2">Records</th>
@@ -162,6 +164,7 @@ export default function RegisterPage() {
                   <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">—</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
                   <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2">{r.fieldVerification ? <VerificationPill verification={r.fieldVerification} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
                   <td className="px-3 py-2 hidden lg:table-cell">
                     {r.distributionAcksOutstanding > 0
                       ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>

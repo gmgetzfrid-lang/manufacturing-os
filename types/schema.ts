@@ -172,6 +172,13 @@ export interface ReviewPolicy {
   leadDays?: number;
   /** Specific people to notify, on top of the library's Admin/DocCtrl. */
   reviewerIds?: string[];
+  /** GAP-9 (R&P): field-verification currency. A document's last
+   *  `field_verified` walkdown stays CURRENT for this long, then goes due
+   *  soon (`leadDays`) and overdue through the same status rule as the
+   *  review cycle (lib/reviewCycles.ts summarizeFieldVerification). Unset =
+   *  no verification cadence (the last verification is still shown). */
+  fieldVerifyIntervalCount?: number;
+  fieldVerifyIntervalUnit?: "days" | "months" | "years";
 }
 
 /** A read-&-understood (training acknowledgment) policy. Attaches to a library,

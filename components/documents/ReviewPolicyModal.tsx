@@ -30,6 +30,10 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   const [count, setCount] = useState(12);
   const [unit, setUnit] = useState<"days" | "months" | "years">("months");
   const [lead, setLead] = useState(30);
+  // GAP-9: field-verification currency rides the same policy (and lead time).
+  const [verifyOn, setVerifyOn] = useState(false);
+  const [verifyCount, setVerifyCount] = useState(3);
+  const [verifyUnit, setVerifyUnit] = useState<"days" | "months" | "years">("years");
   const [reviewers, setReviewers] = useState<OrgUser[]>([]);
   const [existing, setExisting] = useState<ReviewPolicy | null>(null);
   const [userQuery, setUserQuery] = useState("");
@@ -68,6 +72,9 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
         setCount(p.intervalCount ?? 12);
         setUnit(p.intervalUnit ?? "months");
         setLead(p.leadDays ?? 30);
+        setVerifyOn(!!p.fieldVerifyIntervalCount && !!p.fieldVerifyIntervalUnit);
+        setVerifyCount(p.fieldVerifyIntervalCount ?? 3);
+        setVerifyUnit(p.fieldVerifyIntervalUnit ?? "years");
         // Resolve reviewer names for display (org_members is the source of truth).
         if (p.reviewerIds?.length) {
           const { data: us } = await supabase.from("org_members").select("uid, email, display_name").eq("org_id", orgId).in("uid", p.reviewerIds);
@@ -104,6 +111,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
         intervalUnit: enabled ? unit : undefined,
         leadDays: lead,
         reviewerIds: reviewers.map((r) => r.uid),
+        ...(enabled && verifyOn ? { fieldVerifyIntervalCount: verifyCount, fieldVerifyIntervalUnit: verifyUnit } : {}),
       };
       await setReviewPolicy({ level, id, orgId, policy, userId: uid, userName });
       onSaved?.(); onClose();
@@ -171,6 +179,21 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                   <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
                     <option value="days">days</option><option value="months">months</option><option value="years">years</option>
                   </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
+                    <input type="checkbox" checked={verifyOn} onChange={(e) => setVerifyOn(e.target.checked)} /> Field verification expires
+                  </label>
+                  {verifyOn && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--color-text-muted)]">A walkdown stays current for</span>
+                      <input type="number" min={1} value={verifyCount} onChange={(e) => setVerifyCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
+                      <select value={verifyUnit} onChange={(e) => setVerifyUnit(e.target.value as typeof verifyUnit)} className={inp}>
+                        <option value="days">days</option><option value="months">months</option><option value="years">years</option>
+                      </select>
+                    </div>
+                  )}
+                  <div className="text-[10px] text-[var(--color-text-muted)]">The last field verification shows as current, due soon (with the warning below), overdue or never verified; a later field discrepancy supersedes it.</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-[var(--color-text-muted)]">Warn</span>

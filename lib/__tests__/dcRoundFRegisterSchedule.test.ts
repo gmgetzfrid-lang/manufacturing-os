@@ -108,15 +108,16 @@ describe("RET-11 — the register surfaces the scheduled end-of-life action", ()
     expect(rows.get("at-root")).toMatchObject({ retentionScheduleUnknown: false, scheduledAction: "destroy" });
   });
 
-  it("the CSV an auditor is handed carries the schedule as its last column (and 'unknown' — never blank — when it could not be read)", async () => {
+  it("the CSV an auditor is handed carries the schedule column (and 'unknown' — never blank — when it could not be read)", async () => {
     doc("lib");
     doc("none", { library_id: "L2" });
     const { rows } = await loadDocControlRegister(ORG);
     const lines = registerToCsv(rows).split("\n");
-    expect(lines[0].split(",").pop()).toBe("Scheduled end of life");
+    // the schedule column (GAP-9's field-verification column follows it)
+    expect(lines[0].split(",").slice(-2)).toEqual(["Scheduled end of life", "Field verification"]);
     const csvFor = (id: string) => lines[1 + rows.findIndex((r) => r.id === id)];
-    expect(csvFor("lib")).toMatch(/,"Retain 7 years from issued, then destroy"$/); // csvCell quotes the comma
-    expect(csvFor("none").endsWith(",")).toBe(true);
+    expect(csvFor("lib")).toMatch(/,"Retain 7 years from issued, then destroy",$/); // csvCell quotes the comma; no walkdown, no cadence
+    expect(csvFor("none").endsWith(",,")).toBe(true);
     const unknown = registerToCsv([{ ...rows[0], retentionScheduleUnknown: true, retentionSchedule: null }]).split("\n")[1];
     expect(unknown).toContain("unknown (the retention policy could not be read)");
   });

@@ -23,6 +23,9 @@ import {
   type CheckoutEpisode,
 } from "@/lib/checkoutEpisodes";
 import { listActivity, type ActivityMessage } from "@/lib/activityThread";
+// LIFE-10 / GAP-9: the standing field-verification claim and whether a later
+// discrepancy superseded it — ONE derivation, shared with the currency pill.
+import { summarizeFieldVerification, type FieldOutcomeRow, type FieldVerification } from "@/lib/reviewCycles";
 import Link from "next/link";
 
 interface CheckoutHistoryPanelProps {
@@ -32,14 +35,6 @@ interface CheckoutHistoryPanelProps {
   activeEpisodeId?: string | null;
 }
 
-/** LIFE-10: the document's standing field-verification claim, and whether a
- *  later discrepancy has superseded it. */
-interface FieldVerification {
-  verifiedAt: string | null;
-  rev: string | null;
-  by: string | null;
-  supersededBy: { at: string | null; by: string | null } | null;
-}
 
 interface EpisodeSessionRow {
   id: string;
@@ -109,16 +104,9 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
         .eq("document_id", documentId).in("outcome", ["field_verified", "discrepancy"])
         .order("ended_at", { ascending: false }).limit(50);
       if (!alive) return;
-      const rows = ((data ?? []) as Array<Record<string, unknown>>);
-      const last = rows.find((r) => r.outcome === "field_verified");
-      if (!last) { setFieldVerification(null); return; }
-      const lastAt = (last.ended_at as string | null) ?? null;
-      const later = rows.find((r) => r.outcome === "discrepancy" && ((r.ended_at as string | null) ?? "") > (lastAt ?? ""));
-      const ref = (last.outcome_ref as { rev?: string | null } | null) ?? null;
-      setFieldVerification({
-        verifiedAt: lastAt, rev: ref?.rev ?? null, by: (last.user_name as string | null) ?? null,
-        supersededBy: later ? { at: (later.ended_at as string | null) ?? null, by: (later.user_name as string | null) ?? null } : null,
-      });
+      const v = summarizeFieldVerification((data ?? []) as FieldOutcomeRow[], null);
+      // The banner states a verification on record; the pill carries the rest.
+      setFieldVerification(v && v.verifiedAt ? v : null);
     })();
     return () => { alive = false; };
   }, [documentId]);
