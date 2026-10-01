@@ -102,7 +102,7 @@ export function parseLocateResponse(text: string, requested: string[]): TagPosit
  *  position did NOT show the tag — the classic symptom of pointing at the
  *  equipment summary row, a table or a note instead of the drawn vessel.
  *  The locate route runs this round when a close-up refutes a coarse point
- *  (DWG-13 / PR-10), and never caches a point no round confirmed. */
+ *  (DWG-13 / PR-10), and never caches a point a close-up refuted. */
 export function buildRelocateUser(
   tags: string[], documentName: string, page: number,
   wrong: Record<string, [number, number]>,

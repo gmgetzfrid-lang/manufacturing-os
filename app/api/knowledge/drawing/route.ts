@@ -16,7 +16,9 @@
 //                                           revision in front of it (with
 //                                           anything but `skipped`) is NOT
 //                                           re-audited — the response lists
-//                                           it as already recorded (DWG-13)
+//                                           it as already recorded (DWG-13);
+//                                           one whose revision is unknown
+//                                           ("") always is
 //   POST { orgId, libraryId, action:"rebuild", cursor? }
 //                                         → re-extract everything through
 //                                           the ONE reset of a document's
@@ -51,8 +53,8 @@ import {
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
-  verdictsForSheets, verdictRows, sheetsNeedingAudit, sheetsAloneInTheirSeries, RANK,
-  wouldLowerSeverity, type AuditSheet, type SheetVerdict,
+  verdictsForSheets, verdictRows, sheetsNeedingAudit, sheetsAloneInTheirSeries, seriesHeldBySet,
+  seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, RANK, type AuditSheet, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
@@ -260,9 +262,18 @@ async function loadEntityIndex(docIds: string[]): Promise<IndexRead> {
   return out;
 }
 
+type TextRead = {
+  stats: Map<string, TextStats>;
+  truncated: boolean;
+  /** Documents whose text was NOT read whole (at or past the stop): their
+   *  zero is "not counted", never "no text" (DWG-11). */
+  unread: string[];
+  error?: string;
+};
+
 /** Characters, chunks and letter case per document — the database's
  *  knowledge_doc_text_stats() (20261124), or the chunks read whole. */
-async function loadTextStats(docIds: string[]): Promise<{ stats: Map<string, TextStats>; truncated: boolean; error?: string }> {
+async function loadTextStats(docIds: string[]): Promise<TextRead> {
   const stats = new Map<string, TextStats>();
   let viaRows = false;
   let budget = maxIndexRows();
@@ -271,7 +282,7 @@ async function loadTextStats(docIds: string[]): Promise<{ stats: Map<string, Tex
     if (!viaRows) {
       const { data, error } = await supabaseAdmin.rpc("knowledge_doc_text_stats", { p_document_ids: slice });
       if (error && isMissingFunction(error)) viaRows = true;
-      else if (error) return { stats, truncated: false, error: error.message };
+      else if (error) return { stats, truncated: false, unread: [], error: error.message };
       else {
         for (const r of (data ?? []) as Array<{ document_id: string; chunks: number; chars: number; lower_letters: number; upper_letters: number }>) {
           stats.set(r.document_id, {
@@ -288,8 +299,15 @@ async function loadTextStats(docIds: string[]): Promise<{ stats: Map<string, Tex
       .in("document_id", slice)
       .order("document_id", { ascending: true }).order("page", { ascending: true }).order("seq", { ascending: true })
       .range(from, to) as unknown as PromiseLike<PageResult<{ document_id: string; content: string | null }>>, budget);
-    if (res.error) return { stats, truncated: false, error: res.error.message };
+    if (res.error) return { stats, truncated: false, unread: [], error: res.error.message };
+    // A cut read stops inside the document its last row belongs to: that
+    // document, and every one after it, is unread — dropped whole, never
+    // counted in part.
+    const lastDoc = res.capped ? res.rows[res.rows.length - 1]?.document_id : undefined;
+    const cutAt = res.capped ? Math.max(lastDoc ? slice.indexOf(lastDoc) : 0, 0) : slice.length;
+    const counted = new Set(slice.slice(0, cutAt));
     for (const c of res.rows) {
+      if (!counted.has(c.document_id)) continue;
       const s = stats.get(c.document_id) ?? { chunks: 0, chars: 0, lower: 0, upper: 0 };
       const text = c.content ?? "";
       s.chunks++;
@@ -299,9 +317,12 @@ async function loadTextStats(docIds: string[]): Promise<{ stats: Map<string, Tex
       stats.set(c.document_id, s);
     }
     budget -= res.rows.length;
-    if (res.capped || budget <= 0) return { stats, truncated: true };
+    if (res.capped) return { stats, truncated: true, unread: [...slice.slice(cutAt), ...docIds.slice(i + DOC_SLICE)] };
+    if (budget <= 0 && i + DOC_SLICE < docIds.length) {
+      return { stats, truncated: true, unread: docIds.slice(i + DOC_SLICE) };
+    }
   }
-  return { stats, truncated: false };
+  return { stats, truncated: false, unread: [] };
 }
 
 /** A document still waiting on work it cannot do right now — a vision
@@ -353,7 +374,6 @@ export async function GET(req: NextRequest) {
 
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
   const { selfByDoc, refsByDoc, equipment } = indexMaps(index);
-  const unreadNames = index.unread.map((id) => nameById.get(id) ?? "Sheet");
 
   // Site decoder: the library's own AI-setup decoder, or (when it has none)
   // the org's Site Codebook — unit names AND tag-prefix meanings.
@@ -369,7 +389,7 @@ export async function GET(req: NextRequest) {
     // A register that silently lacks sheets is worse than none.
     if (index.truncated) {
       return bad(
-        `The equipment index is larger than one export can read whole (${unreadNames.length} sheet(s) were not ` +
+        `The equipment index is larger than one export can read whole (${index.unread.length} sheet(s) were not ` +
         "reached), so no partial register was produced. Split the library or ask your admin to apply migration 20261124.",
         409,
       );
@@ -395,9 +415,16 @@ export async function GET(req: NextRequest) {
   const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
   const { boxCount: opcBoxCount, unreturned: opcUnreturned, noRef: opcNoRef, unknown: opcUnknown } = opc;
 
-  const text = docs.length > 0 ? await loadTextStats(docs.map((d) => d.id)) : { stats: new Map<string, TextStats>(), truncated: false };
+  const text: TextRead = docs.length > 0
+    ? await loadTextStats(docs.map((d) => d.id))
+    : { stats: new Map<string, TextStats>(), truncated: false, unread: [] };
   if (text.error) return bad(text.error, 500);
   const truncated = index.truncated || text.truncated;
+  // Not counted: whatever either read could not reach (DWG-11). A sheet
+  // whose text was not read is never "textless" and never "Nothing read".
+  const unread = new Set([...index.unread, ...text.unread]);
+  const textUnread = new Set(text.unread);
+  const unreadNames = docs.filter((d) => unread.has(d.id)).map((d) => d.name);
 
   // Deterministic coach suggestions — "give me X and I can do more".
   const suggestions: string[] = [];
@@ -415,7 +442,8 @@ export async function GET(req: NextRequest) {
 
   // Which ready docs produced ANY text at all? Zero-text docs are scans —
   // a completely different problem than "no tags matched".
-  const textlessCount = docs.filter((d) => isReadyHere(d) && (text.stats.get(d.id)?.chunks ?? 0) === 0).length;
+  const textlessCount = docs.filter((d) =>
+    isReadyHere(d) && !textUnread.has(d.id) && (text.stats.get(d.id)?.chunks ?? 0) === 0).length;
 
   if (textlessCount > 0) {
     suggestions.push(
@@ -443,7 +471,7 @@ export async function GET(req: NextRequest) {
     cover(r.document_id, r.pages);
   }
   for (const o of index.opc) cover(o.document_id, [o.page]);
-  const unread = new Set(index.unread);
+  const indexUnread = new Set(index.unread);
 
   const sheets = docs.map((d) => {
     const st = text.stats.get(d.id) ?? { chunks: 0, chars: 0, lower: 0, upper: 0 };
@@ -453,6 +481,7 @@ export async function GET(req: NextRequest) {
     const verdict =
       d.status === "error" ? "error"
       : d.status !== "ready" || parked ? "indexing"   // a parked sheet is still indexing
+      : unread.has(d.id) ? "not-counted"     // past what a read could reach (DWG-11)
       : visionPages > 0 ? "vision"           // AI read it — SHX/scan handled
       : tags > 0 ? "text"                    // text layer carried the tags
       : st.chars > 0 ? "text-no-tags"        // readable text, no tags found
@@ -473,7 +502,7 @@ export async function GET(req: NextRequest) {
     // one-line instruction: rebuild, and let it finish.
     const covered = coveredByDoc.get(d.id) ?? new Set<number>();
     const gapPages: number[] = [];
-    if (!unread.has(d.id)) {
+    if (!indexUnread.has(d.id)) {
       for (let pg = 1; pg <= Number(d.page_count ?? 0); pg++) {
         if (!covered.has(pg)) gapPages.push(pg);
       }
@@ -574,15 +603,21 @@ export async function GET(req: NextRequest) {
   }
   // Connector BOX pairing has input only from AI-vision transcripts: drawings
   // print a pennant, not the letters OPC. Say so rather than show a
-  // reassuring zero (DWG-4).
+  // reassuring zero (DWG-4) — as a fact, not a purchase order: a set with a
+  // working text layer is audited through its references already, and must
+  // never be told to pay for every page to be read as an image (DEC-59).
   const isDrawingSet = census.totalDistinct > 0 || audit.totalRefs > 0;
   const opcPairing: "ok" | "no-boxes" = opcBoxCount > 0 ? "ok" : "no-boxes";
   if (isDrawingSet && opcPairing === "no-boxes") {
+    const visionRead = docs.filter((d) => isReadyHere(d) && Number(d.vision_pages ?? 0) > 0).length;
     suggestions.push(
-      "Connector box pairing needs AI-vision indexing: no off-page connector box numbers were read from " +
-      "this set (the text layer carries drawing numbers, not box numbers). Connectors are still audited " +
-      "through their drawing references — one-way and missing sheets above. To pair the boxes too, turn on " +
-      "\"Text doesn't extract from these files — index every page as an image\" and rebuild.",
+      "Connector box pairing has no input here: box numbers are read only from AI-vision transcripts, and " +
+      "none were read from this set (a text layer carries drawing numbers, not box numbers). Connectors are " +
+      "still audited through their drawing references — one-way and missing sheets above." +
+      (visionRead > 0
+        ? ` ${visionRead} sheet(s) were read by AI vision before connector lines were transcribed; ` +
+          "rebuilding re-reads them with box numbers (and bills those pages again)."
+        : ""),
     );
   }
   if (opcUnreturned.length > 0) {
@@ -600,7 +635,8 @@ export async function GET(req: NextRequest) {
   if (opcUnknown.length > 0) {
     suggestions.push(
       `${opcUnknown.length} connector(s) have a destination that could not be read — the stored line may ` +
-      "have been cut before the drawing number. Check them on the sheet; they are NOT counted as broken.",
+      "have been cut before the drawing number, or what stands there isn't shaped like one. Check them on " +
+      "the sheet; they are NOT counted as broken.",
     );
   }
   if (audit.oneWay.length > 0) {
@@ -652,7 +688,11 @@ export async function POST(req: NextRequest) {
 
   if (body.action === "record-audit") return recordAudit(orgId, libraryId, user.id);
   if (body.action !== "rebuild") return bad("Unknown action");
-  return rebuild(orgId, libraryId, typeof body.cursor === "string" ? body.cursor : null);
+  // A caller that sends no `cursor` key at all cannot follow one (the
+  // library page's "Re-index all", lib/knowledge.ts rebuildDrawingIndex —
+  // I-02's, owed the cursor loop). It must never be able to report a
+  // partial reset as done: see rebuild().
+  return rebuild(orgId, libraryId, typeof body.cursor === "string" ? body.cursor : null, !("cursor" in body));
 }
 
 /**
@@ -667,7 +707,7 @@ export async function POST(req: NextRequest) {
  * `cursor` to continue from, so a continuation never resets (and re-bills)
  * a document twice.
  */
-async function rebuild(orgId: string, libraryId: string, cursor: string | null) {
+async function rebuild(orgId: string, libraryId: string, cursor: string | null, cursorless = false) {
   const startedAt = Date.now();
   const res = await readAllPages<{ id: string; name: string }>((from, to, withCount) => supabaseAdmin
     .from("knowledge_documents").select("id, name", withCount ? { count: "exact" } : undefined)
@@ -701,11 +741,34 @@ async function rebuild(orgId: string, libraryId: string, cursor: string | null) 
       return nameById.has(id) ? `${nameById.get(id)}${e.slice(id.length)}` : e;
     }),
     remaining,
-    cursor: remaining > 0 ? all[next - 1].id : null,
+    // Where to continue: after the last document this call took — or, when
+    // the budget was spent before it took any, where the caller asked to
+    // start.
+    cursor: remaining > 0 ? (next > 0 ? all[next - 1].id : cursor) : null,
   };
   // Nothing reset and something failed: a failure, said as one.
   if (reset.length === 0 && errors.length > 0) {
     return NextResponse.json({ ...body, error: `The rebuild failed: ${body.errors.slice(0, 3).join("; ")}` }, { status: 500 });
+  }
+  // A caller that cannot follow the cursor, or show busy documents and
+  // per-document failures, must not be able to call this complete: it is
+  // told what happened, as a refusal it will show (ING-12).
+  if (cursorless && (remaining > 0 || body.busy.length > 0 || body.errors.length > 0)) {
+    const parts = [`${reset.length} of ${all.length} document(s) were queued for re-indexing`];
+    if (body.busy.length > 0) {
+      parts.push(`${body.busy.length} were being indexed right then and were left alone (${body.busy.slice(0, 3).join(", ")}${body.busy.length > 3 ? ", …" : ""})`);
+    }
+    if (body.errors.length > 0) parts.push(`${body.errors.length} failed (${body.errors.slice(0, 2).join("; ")})`);
+    if (remaining > 0) {
+      parts.push(`${remaining} were not reached in time — the library is larger than one call can reset, and this ` +
+        "button cannot continue a partial re-index yet (in a drawing library, \"Rebuild index\" in the Drawing " +
+        "intelligence panel continues from where a call stops)");
+    }
+    return NextResponse.json({
+      ...body,
+      partial: true,
+      error: `Re-index is not complete: ${parts.join("; ")}.`,
+    }, { status: 409 });
   }
   return NextResponse.json(body);
 }
@@ -730,9 +793,17 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     reason and nothing is recorded for it.
  *   * A sheet already recorded at this revision, in this library, with
  *     anything but `skipped`, is not re-audited (DWG-13 — sheetsNeedingAudit).
- *   * A stored verdict is never replaced by a less severe one (RANK).
- *   * A sheet whose series this library does not hold is not recorded at all
- *     (sheetsAloneInTheirSeries).
+ *     A sheet whose revision is unknown ("") always is: "unrevised" cannot
+ *     be established for it, and its row takes the latest verdict.
+ *   * A stored verdict under a known revision is never replaced by a less
+ *     severe one (RANK — mayReplaceStored).
+ *   * A gap ("isn't in the set") is judged only inside a series the library
+ *     holds: a sheet that is the only one of its series here is recorded
+ *     for what is its own (its connectors, its boxes), and references into
+ *     that series are out of the set's scope (sheetsAloneInTheirSeries /
+ *     seriesHeldBySet). The series not judged are named on the record.
+ *   * Pages AI vision never read (an accepted partial index) keep a sheet
+ *     from passing.
  *   * Nothing is recorded from a partial read of the index (DWG-11).
  */
 async function recordAudit(orgId: string, libraryId: string, userId: string) {
@@ -781,6 +852,13 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc);
   const opc = auditOpcBoxes(index.opc, selfByDoc, nameById);
 
+  // The set's scope (DWG-6): the series this library holds. A sheet alone in
+  // its series is still recorded; gaps in that series are not judged.
+  const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
+  const aloneInSeries = sheetsAloneInTheirSeries(identities);
+  const heldSeries = seriesHeldBySet(identities, aloneInSeries);
+  const notJudged = seriesNotJudged(identities, aloneInSeries);
+
   // The controlled documents the mirrors stand for: current version + rev.
   const mirrored = [...new Set(docs.map((d) => d.source_document_id).filter((id): id is string => !!id))];
   const ctrlById = new Map<string, { rev: string; current_version_id: string | null }>();
@@ -794,8 +872,6 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   }
 
   const withEntities = new Set([...index.rollup.map((r) => r.document_id), ...index.opc.map((o) => o.document_id)]);
-  const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
-  const aloneInSeries = sheetsAloneInTheirSeries(identities);
 
   const notRecorded: Array<{ name: string; sheetNumber: string; revision: string; status: "skipped"; reason: string }> = [];
   const sheets: AuditSheet[] = [];
@@ -826,13 +902,6 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
         continue;
       }
     }
-    if (aloneInSeries.has(d.id)) {
-      notRecorded.push({
-        name: d.name, sheetNumber, revision, status: "skipped",
-        reason: "this library holds no other sheet of its drawing series, so a verdict here would judge a set it does not contain",
-      });
-      continue;
-    }
     sheets.push({
       documentId: d.id,
       controlledDocumentId: d.source_document_id,
@@ -844,7 +913,8 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   }
 
   // DWG-13: a sheet already recorded at this revision in this library (with
-  // anything but `skipped`) is done — not re-audited, not rewritten.
+  // anything but `skipped`) is done — not re-audited, not rewritten. A sheet
+  // whose revision is unknown never is.
   const priorRows = prior.rows;
   const needing = new Set(sheetsNeedingAudit(sheets, priorRows).map((s) => s.documentId));
   const alreadyRecorded = sheets.filter((s) => !needing.has(s.documentId)).map((s) => {
@@ -855,9 +925,14 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const verdicts = verdictsForSheets(sheets.filter((s) => needing.has(s.documentId)), {
     connectorsWithNoTarget: opc.noRef.map((n) => ({ sheet: n.sheet, box: n.box })),
     unreturnedConnectors: opc.unreturned.map((u) => ({ from: u.from, to: u.to, box: u.box })),
-    missingInSeries: audit.missingInSeries.map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
+    missingInSeries: missingWithinHeldSeries(audit.missingInSeries, heldSeries)
+      .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
     oneWay: audit.oneWay.map((o) => ({ from: o.from, to: o.to })),
     unreadableConnectors: opc.unknown.map((u) => ({ sheet: u.sheet, box: u.box })),
+    // An accepted partial index: the pages nobody read are not a clean bill.
+    unreadPages: docs
+      .filter((d) => (d.vision_failed_pages ?? []).length > 0)
+      .map((d) => ({ sheet: d.name, pages: [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b) })),
   });
 
   // Two sheets of one set can declare the same number; the unique index would
@@ -869,11 +944,13 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     const was = bestByKey.get(key);
     if (!was || RANK[v.status] > RANK[was.status]) bestByKey.set(key, v);
   }
-  // …and never replace a stored verdict with a less severe one (DWG-6).
+  // …and never replace a stored verdict with a less severe one (DWG-6) —
+  // except under an unknown revision, where the latest verdict is the only
+  // one that can be about the drawing in front of us.
   const keptStored: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }> = [];
   const deduped = [...bestByKey.values()].filter((v) => {
     const stored = priorRows.find((r) => r.sheet_number === v.sheetNumber && r.revision_code === v.revision);
-    if (stored && wouldLowerSeverity(stored.status, v.status)) {
+    if (stored && !mayReplaceStored(stored, v.status)) {
       keptStored.push({ sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status });
       return false;
     }
@@ -881,7 +958,11 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   });
 
   if (deduped.length > 0) {
-    const scope = { libraryId, sheets: docs.map((d) => declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base ?? d.name) };
+    const scope = {
+      libraryId,
+      sheets: docs.map((d) => declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base ?? d.name),
+      seriesNotJudged: notJudged,
+    };
     const { error: writeError } = await supabaseAdmin
       .from("drawing_audit_logs")
       .upsert(verdictRows(orgId, deduped, userId, scope), { onConflict: "org_id,library_id,sheet_number,revision_code" });
@@ -908,12 +989,14 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       sheetNumber: v.sheetNumber, revision: v.revision, status: v.status,
       findings: [
         ...v.details.brokenConnectors, ...v.details.missingReferences, ...v.details.oneWay,
-        ...v.details.unreadableConnectors,
+        ...v.details.unreadableConnectors, ...v.details.unreadPages,
       ],
     })),
     // DWG-13: what was NOT re-audited, and why.
     alreadyRecorded,
     notRecorded,
     keptStored,
+    // DWG-6: series present only as a lone sheet — gaps in them not judged.
+    seriesNotJudged: notJudged,
   });
 }

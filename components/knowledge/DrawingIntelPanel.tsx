@@ -24,7 +24,9 @@ import { supabase } from "@/lib/supabase";
 // Round G, I-07): whether the counts are whole (DWG-11), connectors whose
 // destination could not be read (DWG-8), whether box pairing had any input
 // (DWG-4), and per sheet: drawing-or-prose (DWG-7), what it waits on (ING-6).
-type SheetRow = NonNullable<DrawingIntel["sheets"]>[number] & {
+type SheetRow = Omit<NonNullable<DrawingIntel["sheets"]>[number], "verdict"> & {
+  /** "not-counted": past what a read of the index could reach (DWG-11). */
+  verdict: NonNullable<DrawingIntel["sheets"]>[number]["verdict"] | "not-counted";
   looksLike?: "drawing" | "prose" | null;
   waiting?: { pages: number[]; reason: string | null; retryAfter: string | null } | null;
   acceptedUnread?: number[] | null;
@@ -39,6 +41,8 @@ type Intel = DrawingIntel & {
 type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   alreadyRecorded?: Array<{ name: string; sheetNumber: string; revision: string; status: string }>;
   notRecorded?: Array<{ name: string; sheetNumber: string; revision: string; reason: string }>;
+  /** Series this library holds only one sheet of: gaps in them not judged (DWG-6). */
+  seriesNotJudged?: string[];
 };
 type RebuildResult = {
   ok: boolean; docs: number; busy: string[]; errors: string[]; remaining: number; cursor: string | null; error?: string;
@@ -88,6 +92,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     counts: Partial<Record<RecordedAuditSheet["status"], number>>;
     alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
+    seriesNotJudged: string[];
   } | null>(null);
   const [showUnknown, setShowUnknown] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
@@ -139,6 +144,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     try {
       const res = await rebuildAll(orgId, libraryId);
       showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+      // The follow loop has a ceiling of its own; past it, say what is left.
+      if (res.remaining > 0) {
+        showToast({
+          type: "warning",
+          title: `${res.remaining} document(s) were not reached yet — press "Rebuild index" again to continue.`,
+        });
+      }
       // Said, never swallowed: documents another indexer held right then,
       // and any reset step that failed (the row is queued either way).
       if (res.busy.length > 0) {
@@ -166,6 +178,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       setRecorded({
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
+        seriesNotJudged: res.seriesNotJudged ?? [],
       });
       showToast({
         type: "success",
@@ -246,6 +259,13 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               {recorded.alreadyRecorded.length > 4 ? "…" : ""}).
             </div>
           )}
+          {recorded.seriesNotJudged.length > 0 && (
+            <div className="mt-0.5">
+              Gaps were not judged in {recorded.seriesNotJudged.slice(0, 4).join(", ")}
+              {recorded.seriesNotJudged.length > 4 ? "…" : ""} — this library holds only one sheet of
+              {recorded.seriesNotJudged.length === 1 ? " that series" : " each of those series"}, so it can&rsquo;t say what the series is missing.
+            </div>
+          )}
           {recorded.notRecorded.length > 0 && (
             <div className="mt-0.5 text-amber-800 dark:text-amber-300">
               <b>{recorded.notRecorded.length}</b> not recorded (skipped):{" "}
@@ -254,7 +274,8 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             </div>
           )}
           <div className="mt-0.5 opacity-80">
-            Sheets already recorded at this revision won&rsquo;t need auditing again until they&rsquo;re revised.
+            Sheets already recorded at this revision won&rsquo;t need auditing again until they&rsquo;re revised
+            (a sheet whose revision isn&rsquo;t known is audited every time).
           </div>
         </div>
       )}
@@ -466,8 +487,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
           {showUnknown && (
             <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
               <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
-                The stored line for these connectors may have been cut before a drawing number. That is
-                absence of evidence, not a defect — check each one on the sheet.
+                The stored line for these connectors may have been cut before a drawing number, or what
+                stands where the drawing number goes isn&apos;t shaped like one. That is absence of
+                evidence, not a defect — check each one on the sheet.
               </p>
               <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
                 {intel.opcUnknown!.map((o, i) => (
@@ -490,9 +512,10 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         <div className="mb-2 text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
           <Link2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span>
-            <b className="text-[var(--color-text)]">Connector pairing needs vision indexing</b> — no connector box
-            numbers were read from this set, so box-to-box pairing has nothing to check (a clean result here would mean
-            nothing). Connectors are still audited through their drawing references above.
+            <b className="text-[var(--color-text)]">Connector box pairing has no input here</b> — box numbers are read
+            only from AI-vision transcripts, and none were read from this set, so box-to-box pairing has nothing to
+            check (a clean result here would mean nothing). Connectors are still audited through their drawing
+            references above.
           </span>
         </div>
       )}
@@ -523,6 +546,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       ? s.looksLike === "drawing"
                         ? { label: "Drawing, no tags", cls: "text-amber-600", Icon: AlertTriangle }
                         : { label: "Prose", cls: "text-[var(--color-text-muted)]", Icon: FileText }
+                    : s.verdict === "not-counted" ? { label: "Not counted", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.verdict === "empty" ? { label: "Nothing read", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.verdict === "error" ? { label: "Error", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.waiting ? { label: "Waiting on AI vision", cls: "text-amber-600", Icon: Loader2 }

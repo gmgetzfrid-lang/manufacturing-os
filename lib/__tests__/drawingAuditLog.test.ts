@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity, sheetsAloneInTheirSeries,
-  AUDIT_SET_LIST_MAX,
+  seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
   type AuditSheet, type AuditFindings,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities } from "@/lib/drawingText";
@@ -142,6 +142,42 @@ describe("sheetsNeedingAudit", () => {
   it("audits everything when there's no history", () => {
     expect(sheetsNeedingAudit([sheet(), sheet({ sheetNumber: "P-2" })], [])).toHaveLength(2);
   });
+
+  it("never treats a verdict under an UNKNOWN revision as done — 'unrevised' can't be established (fix pass)", () => {
+    // A library-only PDF: revision "". The base froze its first verdict for good.
+    for (const status of ["passed", "flagged", "broken_connectors"]) {
+      const out = sheetsNeedingAudit(
+        [sheet({ sheetNumber: "025-PID-0101", revision: "" })],
+        [{ sheet_number: "025-PID-0101", revision_code: "", status }],
+      );
+      expect(out, status).toHaveLength(1);
+    }
+  });
+});
+
+describe("mayReplaceStored — the latest verdict, never a lower one at a known revision", () => {
+  it("a known revision's verdict is never lowered", () => {
+    expect(mayReplaceStored({ revision_code: "C", status: "flagged" }, "passed")).toBe(false);
+    expect(mayReplaceStored({ revision_code: "C", status: "broken_connectors" }, "skipped")).toBe(false);
+    expect(mayReplaceStored({ revision_code: "C", status: "passed" }, "flagged")).toBe(true);
+    expect(mayReplaceStored(null, "skipped")).toBe(true);
+  });
+  it("under an unknown revision the latest computation replaces the row — except a skip", () => {
+    expect(mayReplaceStored({ revision_code: "", status: "flagged" }, "passed")).toBe(true);
+    expect(mayReplaceStored({ revision_code: "", status: "broken_connectors" }, "passed")).toBe(true);
+    expect(mayReplaceStored({ revision_code: "", status: "broken_connectors" }, "skipped")).toBe(false);
+    expect(mayReplaceStored({ revision_code: "", status: "skipped" }, "skipped")).toBe(true);
+  });
+});
+
+describe("unread pages keep a sheet from passing (an accepted partial index)", () => {
+  it("files the pages nobody read and flags the sheet — never passed, never broken", () => {
+    const [v] = verdictsForSheets([sheet()], { ...NOTHING, unreadPages: [{ sheet: "PID-44-012.pdf", pages: [5, 6] }] });
+    expect(v.status).toBe("flagged");
+    expect(v.details.unreadPages[0]).toMatch(/Page\(s\) 5, 6 were never read by AI vision/);
+    const [clean] = verdictsForSheets([sheet()], { ...NOTHING, unreadPages: [{ sheet: "PID-44-012.pdf", pages: [] }] });
+    expect(clean.status).toBe("passed");
+  });
 });
 
 const SCOPE = { libraryId: "kl-1", sheets: ["PID-44-012", "PID-44-013"] };
@@ -211,7 +247,7 @@ describe("sheetsAloneInTheirSeries — a verdict needs the set it judges (DWG-6)
   const ids = (docs: Array<[string, string, string[]]>) =>
     new Map(docs.map(([id, name, self]) => [id, sheetIdentities(name, self)]));
 
-  it("a lone mirrored sheet of a series the library does not hold is not recorded", () => {
+  it("a lone mirrored sheet of a series the library does not hold is alone in it", () => {
     // "Tank Farm Reference": 025-PID-0104 alone from the 025-PID series.
     const alone = sheetsAloneInTheirSeries(ids([
       ["a", "x.pdf", ["025-PID-0104"]],
@@ -236,5 +272,48 @@ describe("sheetsAloneInTheirSeries — a verdict needs the set it judges (DWG-6)
       ["s2", "b.pdf", ["2002-D-2001", "2002-D-2001-SH2"]],
     ]));
     expect(alone.size).toBe(0);
+  });
+
+  it("a combined PDF declaring several numbers of one series holds that series itself (fix pass)", () => {
+    // 0101/0102/0103 in one file, no SHEET fields: the base called it alone.
+    const alone = sheetsAloneInTheirSeries(ids([["c", "combined.pdf", ["025-PID-0101", "025-PID-0102", "025-PID-0103"]]]));
+    expect(alone.size).toBe(0);
+  });
+
+  it("a single-sheet library, and one sheet per series, are alone — and recorded for what is their own", () => {
+    const single = ids([["a", "x.pdf", ["025-PID-0101"]]]);
+    expect([...sheetsAloneInTheirSeries(single)]).toEqual(["a"]);
+    const perSeries = ids([["a", "x.pdf", ["025-PID-0101"]], ["b", "y.pdf", ["030-PID-0201"]]]);
+    const alone = sheetsAloneInTheirSeries(perSeries);
+    expect([...alone].sort()).toEqual(["a", "b"]);
+    // Nothing is held, so no gap can be judged…
+    expect(seriesHeldBySet(perSeries, alone)).toEqual([]);
+    // …and the record names the series it did not judge.
+    expect(seriesNotJudged(perSeries, alone)).toEqual(["025-PID", "030-PID"]);
+  });
+
+  it("gaps are judged only inside a series the library holds", () => {
+    const lib = ids([
+      ["a", "x.pdf", ["025-PID-0104"]],             // alone in 025-PID
+      ["b", "y.pdf", ["040-TK-0001"]], ["c", "z.pdf", ["040-TK-0002"]],
+    ]);
+    const alone = sheetsAloneInTheirSeries(lib);
+    const held = seriesHeldBySet(lib, alone);
+    expect(held).toEqual(["040-TK"]);
+    const missing = [
+      { ref: "025-PID-0107", referencedBy: ["x.pdf"] },   // into the lone sheet's series: not a gap here
+      { ref: "040-TK-0003", referencedBy: ["x.pdf"] },    // into a held series: a gap, whoever cites it
+    ];
+    expect(missingWithinHeldSeries(missing, held).map((m) => m.ref)).toEqual(["040-TK-0003"]);
+    expect(seriesNotJudged(lib, alone)).toEqual(["025-PID"]);
+  });
+});
+
+describe("verdictRows — the series not judged are on the record", () => {
+  it("carries seriesNotJudged in the set when there are any, and nothing extra when not", () => {
+    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", { ...SCOPE, seriesNotJudged: ["025-PID"] });
+    expect((row.audit_details as { set: { seriesNotJudged?: string[] } }).set.seriesNotJudged).toEqual(["025-PID"]);
+    const [plain] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", SCOPE);
+    expect((plain.audit_details as { set: Record<string, unknown> }).set).not.toHaveProperty("seriesNotJudged");
   });
 });

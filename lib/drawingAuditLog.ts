@@ -71,9 +71,13 @@ export interface AuditFindings {
   missingInSeries: Array<{ ref: string; referencedBy: string[] }>;
   /** Both sheets loaded, target never references back. */
   oneWay: Array<{ from: string; to: string }>;
-  /** Connectors whose stored evidence line may have been cut before a
-   *  drawing number (DWG-8): unknown, so worth a look — never broken. */
+  /** Connectors whose destination could not be read — the stored line may
+   *  have been cut before it (DWG-8), or it is not shaped like a drawing
+   *  number: unknown, so worth a look — never broken. */
   unreadableConnectors?: Array<{ sheet: string; box: string }>;
+  /** Pages AI vision never read on a sheet whose partial index was
+   *  accepted: nothing on them — connectors included — was audited. */
+  unreadPages?: Array<{ sheet: string; pages: readonly number[] }>;
 }
 
 export interface SheetVerdict {
@@ -88,6 +92,8 @@ export interface SheetVerdict {
     oneWay: string[];
     /** Connectors whose destination could not be read (DWG-8). */
     unreadableConnectors: string[];
+    /** Pages never read (an accepted partial index). */
+    unreadPages: string[];
   };
 }
 
@@ -129,7 +135,13 @@ export function verdictsForSheets(
   const unreadable = new Map<string, string[]>();
   for (const c of findings.unreadableConnectors ?? []) {
     push(unreadable, c.sheet,
-      `Connector ${c.box}: its destination could not be read (the stored line may be cut) — check it on the sheet`);
+      `Connector ${c.box}: its destination could not be read — check it on the sheet`);
+  }
+  const unreadPages = new Map<string, string[]>();
+  for (const u of findings.unreadPages ?? []) {
+    if (u.pages.length === 0) continue;
+    push(unreadPages, u.sheet,
+      `Page(s) ${u.pages.join(", ")} were never read by AI vision (partial index accepted) — nothing on them was audited`);
   }
 
   return sheets.map((s) => {
@@ -137,12 +149,14 @@ export function verdictsForSheets(
     const m = missing.get(s.name) ?? [];
     const w = oneWay.get(s.name) ?? [];
     const u = unreadable.get(s.name) ?? [];
-    // An unreadable destination is absence of evidence: it keeps a sheet
-    // from "passing", and never makes it "broken".
+    const p = unreadPages.get(s.name) ?? [];
+    // An unreadable destination, or a page nobody read, is absence of
+    // evidence: it keeps a sheet from "passing", and never makes it
+    // "broken".
     const status: AuditStatus = !s.indexed
       ? "skipped"
       : b.length > 0 ? "broken_connectors"
-      : (m.length > 0 || w.length > 0 || u.length > 0) ? "flagged"
+      : (m.length > 0 || w.length > 0 || u.length > 0 || p.length > 0) ? "flagged"
       : "passed";
     return {
       documentId: s.documentId,
@@ -150,21 +164,27 @@ export function verdictsForSheets(
       sheetNumber: s.sheetNumber,
       revision: s.revision,
       status,
-      details: { brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u },
+      details: { brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u, unreadPages: p },
     };
   });
 }
 
 /**
- * Sheets whose drawing series this library does not actually hold (DWG-6).
+ * Sheets that are the only sheet of their drawing series in this library
+ * (DWG-6). `identities`: each document's numbers (sheetIdentities).
  *
- * A verdict is a statement about a SET: "references 025-PID-0107, which
- * isn't in the set" is only true of a library that holds the 025-PID
- * series. A reference library holding one mirrored sheet of it would file
- * a gap against a set that is complete elsewhere. So a sheet whose series
- * no OTHER sheet in the library shares is not recorded at all — unless the
- * document itself declares several sheets (a multi-sheet PDF is a series on
- * its own). `identities`: each document's numbers (sheetIdentities).
+ * A gap is a statement about a SET: "references 025-PID-0107, which isn't
+ * in the set" is only true of a library that holds the 025-PID series. A
+ * reference library holding one mirrored sheet of it would file a gap
+ * against a set that is complete elsewhere. A document holds a series of
+ * its own when it declares several numbers of one series itself — a
+ * combined PDF declaring 025-PID-0101/0102/0103, or a drawing's sheets
+ * (-SH1, -SH2) — and otherwise shares one when another document's series
+ * matches.
+ *
+ * Such a sheet IS still recorded: its connectors and boxes are its own, and
+ * a connector that names no drawing is a defect of the sheet whatever the
+ * set. What it cannot do is define the set — see seriesHeldBySet.
  */
 export function sheetsAloneInTheirSeries(identities: ReadonlyMap<string, readonly string[]>): Set<string> {
   const seriesOf = new Map<string, string[]>();
@@ -173,13 +193,63 @@ export function sheetsAloneInTheirSeries(identities: ReadonlyMap<string, readonl
   }
   const alone = new Set<string>();
   for (const [doc, ids] of identities) {
-    if (ids.filter((t) => /-SH\d+$/.test(t)).length > 1) continue;
+    // Several numbers of one series declared by the document itself.
+    const perSeries = new Map<string, Set<string>>();
+    for (const t of new Set(ids)) {
+      const series = refSeries(t);
+      if (!series) continue;
+      perSeries.set(series, (perSeries.get(series) ?? new Set<string>()).add(t));
+    }
+    if ([...perSeries.values()].some((set) => set.size > 1)) continue;
     const mine = seriesOf.get(doc) ?? [];
     const shared = [...seriesOf].some(([other, theirs]) =>
       other !== doc && theirs.some((t) => mine.some((m) => seriesMatch(m, t))));
     if (!shared) alone.add(doc);
   }
   return alone;
+}
+
+/** The drawing series this library HOLDS: those of every document that is
+ *  not alone in its series. "Isn't in the set" is a finding only inside
+ *  one of these. */
+export function seriesHeldBySet(
+  identities: ReadonlyMap<string, readonly string[]>, alone: ReadonlySet<string>,
+): string[] {
+  const held = new Set<string>();
+  for (const [doc, ids] of identities) {
+    if (alone.has(doc)) continue;
+    for (const t of ids) { const series = refSeries(t); if (series) held.add(series); }
+  }
+  return [...held].sort();
+}
+
+/** The series a sheet alone in its series brings into the library without
+ *  the library holding them — recorded on the verdict, so a reader can see
+ *  what was NOT judged. */
+export function seriesNotJudged(
+  identities: ReadonlyMap<string, readonly string[]>, alone: ReadonlySet<string>,
+): string[] {
+  const held = seriesHeldBySet(identities, alone);
+  const out = new Set<string>();
+  for (const doc of alone) {
+    for (const t of identities.get(doc) ?? []) {
+      const series = refSeries(t);
+      if (series && !held.some((h) => seriesMatch(h, series))) out.add(series);
+    }
+  }
+  // Root series only — "025-PID", not also "025-PID-0104" from its -SH1.
+  const all = [...out];
+  return all.filter((x) => !all.some((r) => r !== x && x.startsWith(`${r}-`))).sort();
+}
+
+/** Missing-sheet findings limited to the series the library holds. A
+ *  reference into a series the library has only one sheet of is out of the
+ *  set's scope — exactly like a reference into another unit — never a gap. */
+export function missingWithinHeldSeries<T extends { ref: string }>(missing: readonly T[], held: readonly string[]): T[] {
+  return missing.filter((m) => {
+    const series = refSeries(m.ref);
+    return held.some((h) => seriesMatch(h, series));
+  });
 }
 
 /**
@@ -190,6 +260,12 @@ export function sheetsAloneInTheirSeries(identities: ReadonlyMap<string, readonl
  * has been redrawn since, and the old verdict says nothing about the new
  * drawing. `skipped` never counts as done, because it means we couldn't read
  * the sheet, not that we cleared it.
+ *
+ * Nor does a verdict filed under an UNKNOWN revision (""): "unrevised" can't
+ * be established for a sheet whose revision nobody knows — a library-only
+ * PDF replaced by a corrected drawing, or a set widened since, still reads
+ * "". Such a sheet is audited every time, and its row takes the latest
+ * verdict (unknownRevisionReplaceable).
  */
 export function sheetsNeedingAudit(
   sheets: readonly AuditSheet[],
@@ -197,10 +273,23 @@ export function sheetsNeedingAudit(
 ): AuditSheet[] {
   const done = new Set(
     priorAudits
-      .filter((a) => a.status !== "skipped")
+      .filter((a) => a.status !== "skipped" && a.revision_code !== "")
       .map((a) => `${a.sheet_number}@${a.revision_code}`),
   );
-  return sheets.filter((s) => !done.has(`${s.sheetNumber}@${s.revision}`));
+  return sheets.filter((s) => s.revision === "" || !done.has(`${s.sheetNumber}@${s.revision}`));
+}
+
+/** May `next` be written over the row stored at this key? Never lower a
+ *  known revision's verdict (RANK). A row under an unknown revision ("")
+ *  takes the latest computation — it can't be told apart from the drawing
+ *  that replaced it — except `skipped`, which only says the sheet could not
+ *  be read right now and never erases a verdict. */
+export function mayReplaceStored(
+  stored: { revision_code: string; status: string } | null | undefined, next: AuditStatus,
+): boolean {
+  if (!stored) return true;
+  if (stored.revision_code === "") return next !== "skipped" || stored.status === "skipped";
+  return !wouldLowerSeverity(stored.status, next);
 }
 
 /** The set a verdict was computed against (DWG-6): which library, and
@@ -210,6 +299,9 @@ export interface AuditScope {
   libraryId: string;
   /** Every sheet number in the library when the verdict was computed. */
   sheets: readonly string[];
+  /** Series present only as a lone sheet (seriesNotJudged): gaps in them
+   *  were not judged. */
+  seriesNotJudged?: readonly string[];
 }
 
 /** At most this many sheet numbers are stored per row; the count is
@@ -229,6 +321,8 @@ export function verdictRows(
     count: sheets.length,
     sheets: sheets.slice(0, AUDIT_SET_LIST_MAX),
     truncated: sheets.length > AUDIT_SET_LIST_MAX,
+    ...(scope.seriesNotJudged && scope.seriesNotJudged.length > 0
+      ? { seriesNotJudged: [...scope.seriesNotJudged] } : {}),
   };
   return verdicts.map((v) => ({
     org_id: orgId,

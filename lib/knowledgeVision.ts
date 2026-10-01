@@ -47,7 +47,8 @@ export const VISION_SYSTEM =
   "'LINE 6\"-P-1024-A1A') — a line number is never an equipment tag;\n" +
   "- every off-page connector (the numbered box or pennant at the sheet edge) on its own line, " +
   `EXACTLY in this form: ${OPC_LINE_FORMAT} — e.g. '${OPC_LINE_EXAMPLE}'. Put the destination ` +
-  "drawing number FIRST, right after the box number. If the connector shows no drawing number, " +
+  "drawing number FIRST, right after the box number and the word DWG, exactly as written. Leave " +
+  "out 'SH <sheet>' when the connector shows no sheet. If the connector shows no drawing number, " +
   `write ${OPC_NO_DRAWING} in its place. Any other continuation reference (e.g. 'CONT ON DWG ` +
   "21-D-1105 SH 3') is transcribed as written;\n" +
   "- the title block, from the border's own fields ONLY — never from a connector, a note or a " +

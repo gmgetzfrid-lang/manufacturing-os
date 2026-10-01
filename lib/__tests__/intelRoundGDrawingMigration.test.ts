@@ -24,7 +24,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
-import { rollUpEntities } from "@/lib/drawingText";
+import { rollUpEntities, extractEquipmentTags } from "@/lib/drawingText";
 
 const root = process.cwd();
 const MIG = join(root, "supabase", "migrations");
@@ -62,6 +62,24 @@ describe("20261124 — one paste: inventory, transaction, one result set", () =>
     expect(inv).toMatch(/mirrored into more than one library/);
     expect(inv).toMatch(/COUNT\(DISTINCT kd\.library_id\)[\s\S]*> 1/);
     expect(inv).toMatch(/WHERE pos_source = 'vision'/);
+  });
+
+  it("the DWG-2 phantom count uses the extractor's own line grammar — a size-annotated valve is not a phantom (fix pass)", () => {
+    const m = code.match(/AND upper\(e\.raw\) ~ \('([\s\S]*?)'\);/);
+    expect(m).not.toBeNull();
+    // The SQL literal, as Postgres reads it: '' is one quote, each tag splice
+    // is the row's own tag.
+    const asRegex = (tag: string) => new RegExp(m![1].replace(/' \|\| e\.tag \|\| '/g, tag).replace(/''/g, "'"));
+    const cases: Array<[string, string, boolean]> = [
+      ['6"-P-1024-A1A', "P-1024", true], ['6 IN-P-1024', "P-1024", true], ['6" P-1024-A1A', "P-1024", true],
+      ['2" PSV-2001', "PSV-2001", false], ['4" FCV-101 TO V-3', "FCV-101", false], ['3"X4" PSV-101', "PSV-101", false],
+      ['2" PSV-2001-A', "PSV-2001", false], ["V-1402 6\" DRAIN", "V-1402", false],
+    ];
+    for (const [raw, tag, phantom] of cases) {
+      expect(asRegex(tag).test(raw), raw).toBe(phantom);
+      // …and the extractor agrees: a phantom is exactly what it no longer mints.
+      expect(extractEquipmentTags(raw).some((t) => t.tag === tag), raw).toBe(!phantom);
+    }
   });
 
   it("probes compare deparsed/catalog text only — no bare casts inside LIKE patterns", () => {

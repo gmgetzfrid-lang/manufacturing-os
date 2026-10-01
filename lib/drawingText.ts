@@ -136,23 +136,53 @@ const EQUIPMENT_STOP_PREFIXES = new Set([
 // exactly like a tag — P-1024 reads as a pump — so every line on a P&ID
 // minted a phantom piece of equipment (DWG-2). The SIZE is what gives it
 // away: a number (whole, fraction, or whole-and-fraction) followed by an
-// inch mark (", '', ”, ″) or IN/INCH, then the dash. A metric size
-// (150-P-1024, DN150-P-1024) ends in a digit-dash and is already caught by
-// the drawing-number guard below.
+// inch mark (", '', ”, ″) or IN/INCH. A metric size (150-P-1024,
+// DN150-P-1024) ends in a digit-dash and is already caught by the
+// drawing-number guard below.
+//
+// A size alone is NOT enough. Valves and instruments are routinely written
+// with the size of the line they sit in — 2" PSV-2001, 4" FCV-101,
+// 3"x4" PSV-101 — and those are real, PSM-critical tags. What separates
+// the two is the joint: a line number's size is GLUED to its service by a
+// dash (6"-P-1024, 6 IN-P-1024); a size written with only a space (or
+// nothing) before a tag makes it a line number only when the token goes on
+// to carry a line SPEC segment (6" P-1024-A1A). The LINE label is the same:
+// "LINE NO." always introduces a line; a bare LINE word ("SUCTION LINE
+// P-101A") only when the spec segment follows.
 /** The size of a line: 6", 1-1/2", 3/4", .75", 6'', 6 IN, 6INCH. */
 const LINE_SIZE_SRC =
   String.raw`(?:\d+\s*[-\s]\s*\d+\/\d+|\d+\/\d+|\d*\.\d+|\d+)\s*(?:"|''|”|″|IN(?:CH(?:ES)?)?\.?)`;
-/** Text ending in a line size (and the dash after it) — what sits right
- *  before a line number's service letters. */
-const LINE_SIZE_BEFORE_RE = new RegExp(String.raw`${LINE_SIZE_SRC}\s*[-–]?\s*$`);
-/** "LINE 6\"-P-1024-A1A" / "LINE NO. P-1024": the vision prompt labels
- *  line numbers LINE, and a label-led token is a line, never equipment. */
-const LINE_LABEL_BEFORE_RE = /\bLINE\s*(?:NO\.?|#)?\s*$/;
-/** A whole line number: size, service, number, then spec segments. */
+/** Text ending in a line size with the dash glued to it — "6\"-",
+ *  "1-1/2\"-", "6 IN-": unambiguously the head of a line number. */
+const LINE_SIZE_DASH_BEFORE_RE = new RegExp(String.raw`${LINE_SIZE_SRC}[-–]\s*$`);
+/** Text ending in a line size with no dash — "2\" ", "2\"": a line number
+ *  only when a spec segment follows the token (LINE_SPEC_AFTER_RE). */
+const LINE_SIZE_SPACE_BEFORE_RE = new RegExp(String.raw`${LINE_SIZE_SRC}\s*$`);
+/** "LINE NO. P-1024" / "LINE # P-1024": always a line. */
+const LINE_NO_LABEL_BEFORE_RE = /\bLINE\s*(?:NO\.?|#)\s*$/;
+/** A bare LINE word — a line only with a spec segment after the token. */
+const LINE_WORD_BEFORE_RE = /\bLINE\s*$/;
+/** The first spec segment of a line number right after its service-number:
+ *  "-A1A", "-B2", "-CS". Two characters at least — "PSV-2001-A" (a valve
+ *  with a one-letter suffix) is a tag, not a line. */
+const LINE_SPEC_SRC = String.raw`[-–][A-Z0-9]{2,6}(?![A-Z0-9])`;
+const LINE_SPEC_AFTER_RE = new RegExp(String.raw`^${LINE_SPEC_SRC}`);
+/** A whole line number: size, service, number, then spec segments — the
+ *  same two joints: dash-glued, or spaced with a spec segment required. */
 const LINE_NUMBER_RE = new RegExp(
-  String.raw`(?<![A-Z0-9./-])(${LINE_SIZE_SRC})\s*[-–]?\s*([A-Z]{1,4})[-–](\d{1,6})((?:[-–][A-Z0-9]{1,6})*)`,
+  String.raw`(?<![A-Z0-9./-])(${LINE_SIZE_SRC})(?:[-–]\s*|\s*(?=[A-Z]{1,4}[-–]\d{1,6}${LINE_SPEC_SRC}))` +
+  String.raw`([A-Z]{1,4})[-–](\d{1,6})((?:[-–][A-Z0-9]{1,6})*)`,
   "g",
 );
+
+/** Is the tag-shaped token between `before` and `after` part of a pipe
+ *  line number? The ONE rule extractEquipmentTags and extractLineNumbers
+ *  share (DWG-2). */
+function isLineNumberContext(before: string, after: string): boolean {
+  if (LINE_SIZE_DASH_BEFORE_RE.test(before) || LINE_NO_LABEL_BEFORE_RE.test(before)) return true;
+  return (LINE_SIZE_SPACE_BEFORE_RE.test(before) || LINE_WORD_BEFORE_RE.test(before))
+    && LINE_SPEC_AFTER_RE.test(after);
+}
 
 export function extractEquipmentTags(text: string): EquipmentTagHit[] {
   const out: EquipmentTagHit[] = [];
@@ -166,9 +196,10 @@ export function extractEquipmentTags(text: string): EquipmentTagHit[] {
     // of a larger number, not a tag.
     const at = m.index ?? 0;
     if (at >= 2 && /[-–]/.test(upper[at - 1]) && /\d/.test(upper[at - 2])) continue;
-    // A pipe line number (6"-P-1024-A1A) — the size in front of it says so.
+    // A pipe line number (6"-P-1024-A1A) — its size and joint say so; a
+    // size-annotated valve (2" PSV-2001) is still a tag.
     const before = upper.slice(Math.max(0, at - 16), at);
-    if (LINE_SIZE_BEFORE_RE.test(before) || LINE_LABEL_BEFORE_RE.test(before)) continue;
+    if (isLineNumberContext(before, upper.slice(at + m[0].length))) continue;
     const tag = `${prefix}-${m[2]}${m[3] ?? ""}`;
     out.push({ tag, prefix });
   }
@@ -454,11 +485,20 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // FIRST, right after the box: an evidence line is stored cut to
 // OPC_RAW_STORED_MAX characters, and a long service description must never
 // push the drawing number off the end of it (DWG-8).
+//
+// The destination is LABELLED (DWG) and read BY POSITION (parseOpcLine).
+// Sites number drawings every way there is — 025-M-0107, 4410-01-001,
+// 123456, M-101 — and extractDrawingRefs deliberately reads the ambiguous
+// shapes only after a context word. The label gives the reference layer
+// that context; the position lets the connector audit read ANY number the
+// field holds. "Broken" is then exactly what the contract says it is: the
+// field reads NONE, or is empty. A destination present but unreadable is
+// unknown, never broken.
 
 /** What a transcript line for one connector looks like. */
-export const OPC_LINE_FORMAT = "OPC <box number>: <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>";
-/** A worked example — parsed by parseOpcBoxes / extractDrawingRefs in the tests. */
-export const OPC_LINE_EXAMPLE = "OPC 14: 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD";
+export const OPC_LINE_FORMAT = "OPC <box number>: DWG <destination drawing number> SH <sheet> — <TO|FROM> <service or equipment>";
+/** A worked example — parsed by parseOpcBoxes / parseOpcLine / extractDrawingRefs in the tests. */
+export const OPC_LINE_EXAMPLE = "OPC 14: DWG 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD";
 /** Written in place of the drawing number when the connector shows none. */
 export const OPC_NO_DRAWING = "NONE";
 /** Ingest stores a connector's evidence line cut to this many characters
@@ -474,6 +514,72 @@ export function parseOpcBoxes(line: string): string[] {
   OPC_BOX_RE.lastIndex = 0;
   for (const m of line.toUpperCase().matchAll(OPC_BOX_RE)) out.push(String(Number(m[1])));
   return [...new Set(out)];
+}
+
+/** A connector line in the contract's shape, read by position. */
+export interface OpcLine {
+  box: string;
+  /** The destination field as written (upper case, trimmed); null when it
+   *  is empty or reads NONE. */
+  destination: string | null;
+  /** The sheet the connector names, when it names one. */
+  sheet: string | null;
+  /** The field reads NONE — the connector says it names no drawing. */
+  none: boolean;
+}
+
+// "OPC <n>: DWG <field> [SH <n>] [— <service>]". The label may carry NO. /
+// NUMBER / #; the separator is an em or en dash (spaced or not), or a
+// spaced hyphen — never a bare hyphen, which is part of drawing numbers.
+const OPC_CONTRACT_RE = /^\s*OPC[\s#.:-]*(\d{1,4})\s*:\s*(?:DWG|DRG|DRAWING)\b\.?(?:\s*(?:NO\b\.?|NUMBER\b|#))?\s*[:.]?\s*(.*)$/;
+const OPC_SEPARATOR_RE = /\s*[—–]\s*|\s+-{1,2}\s+/;
+const OPC_SHEET_RE = /^(.*?)[\s,]*\bSH(?:T|EET)?\b\.?\s*(?:NO\b\.?)?\s*[:#]?\s*(\d{1,3})\b/;
+
+/** Read a transcript line written in OPC_LINE_FORMAT; null for a line in any
+ *  other shape (a text layer's own phrasing, or an older transcript). */
+export function parseOpcLine(line: string): OpcLine | null {
+  const m = line.toUpperCase().match(OPC_CONTRACT_RE);
+  if (!m) return null;
+  const rest = m[2];
+  const cut = rest.search(OPC_SEPARATOR_RE);
+  const head = cut >= 0 ? rest.slice(0, cut) : rest;
+  const sh = head.match(OPC_SHEET_RE);
+  const field = (sh ? sh[1] : head).trim().replace(/[\s,.;:]+$/, "");
+  const none = field === OPC_NO_DRAWING || field.startsWith(`${OPC_NO_DRAWING} `);
+  return {
+    box: String(Number(m[1])),
+    destination: none || field === "" ? null : field,
+    sheet: sh ? String(Number(sh[2])) : null,
+    none,
+  };
+}
+
+/** The forms a positional destination is looked up by: the field itself,
+ *  normalised, and whatever the reference grammar reads out of it with the
+ *  contract's label in front — each sheet-addressed when a sheet is named
+ *  (a bare number may identify a whole multi-sheet set, never one sheet).
+ *  Empty when the field holds nothing shaped like a drawing number. */
+function opcDestinationForms(dest: OpcLine): string[] {
+  if (!dest.destination) return [];
+  const viaGrammar = extractDrawingRefs(`DWG ${dest.destination}`).map((r) => r.replace(/-SH\d+$/, ""));
+  // One token with a digit in it is a drawing number however it is shaped
+  // (4410-01-001, 123456, M-101); several words are only when the grammar
+  // reads one out of them ("SEE NOTE 3" is not a destination).
+  const single = /^[A-Z0-9][A-Z0-9\-–./_&]*$/.test(dest.destination) && /\d/.test(dest.destination)
+    ? [normalizeRef(dest.destination)] : [];
+  const bases = [...new Set([...single, ...viaGrammar])];
+  return bases.map((b) => (dest.sheet ? `${b}-SH${dest.sheet}` : b));
+}
+
+/** A line outside the contract with no readable reference: does anything on
+ *  it still look like a drawing number? Three or more digits in a row, once
+ *  the box number, equipment tags and a sheet number are set aside. */
+function hasUnreadNumber(raw: string): boolean {
+  const rest = raw.toUpperCase()
+    .replace(OPC_BOX_RE, " ")
+    .replace(EQUIPMENT_RE, " ")
+    .replace(/\bSH(?:T|EET)?\b\.?\s*(?:NO\b\.?)?\s*[:#]?\s*\d{1,3}\b/g, " ");
+  return /\d{3,}/.test(rest);
 }
 
 // ── Census ─────────────────────────────────────────────────────────────────
@@ -944,12 +1050,14 @@ export interface OpcAudit {
   /** Box leaves a sheet naming a loaded destination that has no matching box. */
   unreturned: Array<{ box: string; from: string; to: string; line: string }>;
   /** Box names no drawing at all — broken by definition, since nothing on the
-   *  sheet tells the reader where to continue. Only a COMPLETE evidence line
-   *  can say that. */
+   *  sheet tells the reader where to continue. Only POSITIVE evidence can
+   *  say that: a contract line whose destination reads NONE or is empty, or
+   *  a complete line that holds nothing a drawing number could be. */
   noRef: Array<{ box: string; sheet: string; page: number; line: string }>;
-  /** Box whose stored line may have been cut before a drawing number could
-   *  be read (DWG-8): absence of evidence, recorded as unknown — worth a
-   *  look on the sheet, never "broken". */
+  /** Box whose destination could not be read: the stored line may have been
+   *  cut before it (DWG-8), or what stands there is not shaped like a
+   *  drawing number. Absence of evidence, recorded as unknown — worth a look
+   *  on the sheet, never "broken". */
   unknown: Array<{ box: string; sheet: string; page: number; line: string }>;
 }
 
@@ -974,28 +1082,13 @@ export function auditOpcBoxes(
     }
   }
 
-  const unreturned: OpcAudit["unreturned"] = [];
-  for (const o of opcRows) {
-    if (!o.raw) continue;
-    for (const ref of extractDrawingRefs(o.raw)) {
-      const owners = identityIndex.get(ref);
-      // An ambiguous number identifies a multi-sheet set, not one sheet —
-      // never guess which one and report the guess as a defect.
-      if (!owners || owners.size !== 1) continue;
-      const target = [...owners][0];
-      if (target === o.document_id) continue;
-      if (!(opcByDoc.get(target)?.has(o.tag))) {
-        unreturned.push({
-          box: o.tag,
-          from: nameById.get(o.document_id) ?? "Sheet",
-          to: nameById.get(target) ?? "Sheet",
-          line: o.raw,
-        });
-      }
-    }
-  }
+  // A stored line at the storage cut may have lost its tail — and with it
+  // the drawing number. That is not evidence the connector names nothing.
+  const mayBeCut = (o: OpcEntity) => (o.raw ?? "").length >= OPC_RAW_STORED_MAX - 1;
 
-  const noDestination = opcRows.filter((o) => !o.raw || extractDrawingRefs(o.raw).length === 0);
+  const unreturned: OpcAudit["unreturned"] = [];
+  const noRef: OpcAudit["noRef"] = [];
+  const unknown: OpcAudit["unknown"] = [];
   const shape = (o: OpcEntity) => ({
     box: o.tag,
     sheet: nameById.get(o.document_id) ?? "Sheet",
@@ -1004,11 +1097,51 @@ export function auditOpcBoxes(
     // was decided on, not a shorter slice of it.
     line: o.raw ?? "",
   });
-  // A stored line at the storage cut may have lost its tail — and with it
-  // the drawing number. That is not evidence the connector names nothing.
-  const mayBeCut = (o: OpcEntity) => (o.raw ?? "").length >= OPC_RAW_STORED_MAX - 1;
-  const noRef = noDestination.filter((o) => !mayBeCut(o)).map(shape);
-  const unknown = noDestination.filter(mayBeCut).map(shape);
+
+  for (const o of opcRows) {
+    const raw = o.raw ?? "";
+    // Nothing stored says nothing — about the destination either way.
+    if (!raw) { unknown.push(shape(o)); continue; }
+    const contract = parseOpcLine(raw);
+    const positional = contract ? opcDestinationForms(contract) : [];
+    const refs = [...new Set([...positional, ...extractDrawingRefs(raw)])];
+
+    // Is there a destination at all? (DWG-4 / DWG-8) A reference read
+    // anywhere on the line is one, whatever the field says.
+    if (refs.length === 0) {
+      if (contract) {
+        // NONE, or nothing in the field: the connector says it names no
+        // drawing. Something in the field that is not a drawing number:
+        // unreadable, never broken.
+        if (contract.none || (!contract.destination && !mayBeCut(o))) noRef.push(shape(o));
+        else unknown.push(shape(o));
+      } else {
+        (mayBeCut(o) || hasUnreadNumber(raw) ? unknown : noRef).push(shape(o));
+      }
+      continue;
+    }
+
+    // Box pairing: the box must reappear on the sheet it names.
+    const targets = new Set<string>();
+    for (const ref of refs) {
+      const owners = identityIndex.get(ref);
+      // An ambiguous number identifies a multi-sheet set, not one sheet —
+      // never guess which one and report the guess as a defect.
+      if (!owners || owners.size !== 1) continue;
+      targets.add([...owners][0]);
+    }
+    for (const target of targets) {
+      if (target === o.document_id) continue;
+      if (!(opcByDoc.get(target)?.has(o.tag))) {
+        unreturned.push({
+          box: o.tag,
+          from: nameById.get(o.document_id) ?? "Sheet",
+          to: nameById.get(target) ?? "Sheet",
+          line: raw,
+        });
+      }
+    }
+  }
 
   return { boxCount: opcRows.length, unreturned, noRef, unknown };
 }

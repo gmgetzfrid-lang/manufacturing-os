@@ -75,10 +75,10 @@ SELECT 'knowledge_page_entities rows with pos_source = vision (cached AI positio
   FROM knowledge_page_entities
  WHERE pos_source = 'vision'
 UNION ALL
-SELECT 'equipment rows whose evidence line puts a pipe-line size right before the tag (DWG-2 phantoms; gone at each document''s next re-index)', COUNT(*)
+SELECT 'equipment rows whose evidence line reads as a pipe line number — a size glued to the tag by a dash, or a size, the tag and a line spec (DWG-2 phantoms; gone at each document''s next re-index)', COUNT(*)
   FROM knowledge_page_entities e
  WHERE e.kind = 'equipment' AND e.raw IS NOT NULL
-   AND upper(e.raw) ~ ('[0-9]\s*("|''''|IN)\s*[-]?\s*' || e.tag || '([^0-9]|$)');
+   AND upper(e.raw) ~ ('[0-9]\s*("|''''|IN)(-\s*' || e.tag || '([^0-9]|$)|\s*' || e.tag || '-[A-Z0-9]{2,6}([^A-Z0-9]|$))');
 
 BEGIN;
 

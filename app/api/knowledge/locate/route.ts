@@ -15,7 +15,13 @@
 //                        APPROXIMATE estimate (pos_source 'vision') until
 //                        the sheet is revised or rebuilt (both clear every
 //                        page entity — resetKnowledgeIndex), or a viewer
-//                        rejects it.
+//                        rejects it. A point a close-up REFUTED is never
+//                        cached (one relocate round replaces it, or nothing
+//                        does); a point no close-up checked — past the first
+//                        REFINE_MAX tags, or when time, the cap, a close-up's
+//                        provider error or the canvas stopped the refining —
+//                        is cached as the coarse estimate it is, drawn as
+//                        approximate and rejectable like every other.
 //
 // Every model call one request makes — the coarse pass, each close-up and
 // any relocate round — is metered in ONE ai_usage_events row written after
@@ -373,7 +379,9 @@ export async function POST(req: NextRequest) {
     //    is not kept: one RELOCATE round asks again on the whole page, told
     //    where the wrong answer was (buildRelocateUser, DWG-13 / PR-10); if
     //    that finds nothing either, the tag is reported not visible and
-    //    nothing is cached.
+    //    nothing is cached. A point no close-up checked (beyond REFINE_MAX,
+    //    or once the loop stops on time, cap, a provider error or the canvas)
+    //    keeps its coarse estimate — refuted by nothing, cached as approximate.
     const REFINE_MAX = 4;
     const CROP_DIVISORS = [3, 9];
     /** Room each extra call needs to render, call, and still return. */

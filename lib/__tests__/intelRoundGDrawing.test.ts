@@ -53,7 +53,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
 import { textMarkPosition } from "@/lib/drawingLocate";
-import { OPC_LINE_EXAMPLE, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE } from "@/lib/drawingText";
+import { OPC_LINE_EXAMPLE, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE, auditOpcBoxes } from "@/lib/drawingText";
 
 const DOC = "kd-7";
 const KEY = "orgs/o1/knowledge/kl-1/sheet.pdf";
@@ -201,7 +201,8 @@ describe("PR-11 / DWG-4 — the vision transcript contract through the real inge
     vision.text = [
       "CONT ON DWG NO. 040-B-2002 SH 1",
       OPC_LINE_EXAMPLE,
-      "OPC 15: NONE — FROM DESALTER",
+      "OPC 15: DWG NONE — FROM DESALTER",
+      "OPC 16: DWG 025-M-0107 SH 2 — TO P-205A",
       'LINE 6"-P-1024-A1A',
       "V-1402 CRUDE OVERHEAD ACCUMULATOR",
       TITLE_BLOCK_OPEN,
@@ -216,8 +217,15 @@ describe("PR-11 / DWG-4 — the vision transcript contract through the real inge
     expect(self).toEqual(expect.arrayContaining(["025-PID-0104", "025-PID-0104-SH2"]));
     expect(self).not.toContain("040-B-2002");
     const opc = rows.filter((r) => r.kind === "opc");
-    expect(opc.map((r) => r.tag).sort()).toEqual(["14", "15"]);
+    expect(opc.map((r) => r.tag).sort()).toEqual(["14", "15", "16"]);
     expect(String(opc.find((r) => r.tag === "14")!.raw)).toContain("2002-D-2001 SH 4");
+    // The contract's DWG label gives a loose-shaped site number the context
+    // the reference grammar needs: it lands as a reference too (fix pass).
+    expect(rows.filter((r) => r.kind === "ref").map((r) => r.tag)).toEqual(expect.arrayContaining(["2002-D-2001-SH4", "025-M-0107-SH2"]));
+    // …and the connector audit reads every stored line the way the lens will.
+    const audit = auditOpcBoxes(opc.map((r) => ({ document_id: "d", page: 1, tag: String(r.tag), raw: String(r.raw) })), new Map(), new Map([["d", "D.pdf"]]));
+    expect(audit.noRef.map((o) => o.box)).toEqual(["15"]);
+    expect(audit.unknown).toEqual([]);
     const equipment = rows.filter((r) => r.kind === "equipment").map((r) => r.tag);
     expect(equipment).toContain("V-1402");
     expect(equipment).not.toContain("P-1024");

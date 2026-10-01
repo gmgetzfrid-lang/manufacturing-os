@@ -494,7 +494,7 @@ describe("SHX drawings whose only text is the title block", () => {
 // ── intelligence Round G (I-07) ────────────────────────────────────────────
 
 import {
-  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities,
+  extractLineNumbers, drawingSignals, auditOpcBoxes, declaredSheetIdentity, rollUpEntities, parseOpcLine,
   OPC_LINE_EXAMPLE, OPC_LINE_FORMAT, OPC_NO_DRAWING, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE,
   SPARSE_PAGE_MAX_CHARS, DENSE_DRAWING_MIN_TAGS_PER_KCHAR, DRAWING_MAX_LOWERCASE_RATIO,
 } from "../drawingText";
@@ -518,6 +518,25 @@ describe("DWG-2 — a pipe line number is never equipment", () => {
   it("a LINE-labelled token is a line (the vision prompt's label)", () => {
     expect(extractEquipmentTags("LINE P-1024-A1A")).toEqual([]);
     expect(extractEquipmentTags("LINE NO. P-1024")).toEqual([]);
+    expect(extractEquipmentTags("LINE # P-1024")).toEqual([]);
+    expect(extractEquipmentTags('LINE 6"-P-1024-A1A')).toEqual([]);
+  });
+
+  it("a valve or instrument written with the size of its line is still a tag (fix pass)", () => {
+    // The base extracted every one of these; a size with only a space (or
+    // nothing) before a tag is a line number only when a spec segment follows.
+    const cases: Array<[string, string[]]> = [
+      ['2" PSV-2001', ["PSV-2001"]], ['4" FCV-101', ["FCV-101"]], ['6" SDV-1001', ["SDV-1001"]],
+      ['3"x4" PSV-101', ["PSV-101"]], ['1-1/2" PSV-12', ["PSV-12"]], ['3/4" TW-12', ["TW-12"]],
+      ['2"PSV-2001', ["PSV-2001"]], ["NPS 2 IN PSV-101", ["PSV-101"]], ['2" V-1 DRAIN', ["V-1"]],
+      ['2"x3" PSV-2001 SET 150 PSIG', ["PSV-2001"]], ['2" PSV-2001-A', ["PSV-2001"]],
+      // A bare LINE word is a label only with the line's spec segment after it.
+      ["SUCTION LINE P-101A", ["P-101A"]],
+    ];
+    for (const [s, tags] of cases) {
+      expect(extractEquipmentTags(s).map((t) => t.tag), s).toEqual(tags);
+      expect(extractLineNumbers(s), s).toEqual([]);
+    }
   });
 
   it("real tags still extract — alone, next to a line number, and after a dimension that is not a line size", () => {
@@ -544,17 +563,18 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
   it("the prompt's own example parses: box number, and the destination drawing with its sheet", () => {
     expect(parseOpcBoxes(OPC_LINE_EXAMPLE)).toEqual(["14"]);
     expect(extractDrawingRefs(OPC_LINE_EXAMPLE)).toEqual(["2002-D-2001-SH4"]);
-    expect(OPC_LINE_FORMAT.startsWith("OPC <box number>: <destination drawing number>")).toBe(true);
+    expect(parseOpcLine(OPC_LINE_EXAMPLE)).toEqual({ box: "14", destination: "2002-D-2001", sheet: "4", none: false });
+    expect(OPC_LINE_FORMAT.startsWith("OPC <box number>: DWG <destination drawing number>")).toBe(true);
   });
 
   it("a prompt-shaped transcript round-trips through parseOpcBoxes + auditOpcBoxes with a non-empty boxCount", () => {
     const sheetA = [
       "=== TITLE BLOCK ===", "DRAWING NO: 2002-D-2001", "SHEET: 3 OF 12", "REV: 4", "=== END TITLE BLOCK ===",
-      "OPC 14: 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD",
-      `OPC 15: ${OPC_NO_DRAWING} — FROM DESALTER`,
-      "OPC 16: 2002-D-2001 SH 5 — TO E-201 FEED",
+      "OPC 14: DWG 2002-D-2001 SH 4 — TO V-1402 CRUDE OVERHEAD",
+      `OPC 15: DWG ${OPC_NO_DRAWING} — FROM DESALTER`,
+      "OPC 16: DWG 2002-D-2001 SH 5 — TO E-201 FEED",
     ];
-    const sheetB = ["OPC 14: 2002-D-2001 SH 3 — FROM V-1401"];
+    const sheetB = ["OPC 14: DWG 2002-D-2001 SH 3 — FROM V-1401"];
     const rows = [
       ...sheetA.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "a", page: 3, tag: box, raw: l }))),
       ...sheetB.flatMap((l) => parseOpcBoxes(l).map((box) => ({ document_id: "b", page: 4, tag: box, raw: l }))),
@@ -570,6 +590,71 @@ describe("DWG-4 — the connector line contract between the vision prompt and th
     // NONE in place of a drawing number is the one broken-by-definition case.
     expect(audit.noRef).toEqual([expect.objectContaining({ box: "15", sheet: "SH3.pdf" })]);
     expect(audit.unknown).toEqual([]);
+  });
+
+  // Fix pass: the destination is read BY POSITION, so a site's own numbering
+  // can never turn a connector into a broken one.
+  const one = (raw: string, self: Array<[string, string[]]> = []) => auditOpcBoxes(
+    [{ document_id: "a", page: 1, tag: parseOpcBoxes(raw)[0] ?? "1", raw }],
+    new Map(self), new Map([["a", "A.pdf"], ["b", "B.pdf"]]),
+  );
+
+  it("a destination in any numbering scheme is a destination — never 'names no drawing'", () => {
+    for (const n of ["025-M-0107", "21-A-1105", "100-E-001", "025-P-1001", "4410-01-001", "123456", "D-2001", "M-101", "2002-D-2001"]) {
+      const raw = `OPC 7: DWG ${n} SH 2 — TO V-1402`;
+      expect(parseOpcLine(raw), n).toMatchObject({ box: "7", destination: n, sheet: "2", none: false });
+      const audit = one(raw);
+      expect(audit.noRef, n).toEqual([]);
+      expect(audit.unknown, n).toEqual([]);
+    }
+  });
+
+  it("the DWG label gives the reference layer its context: loose-shaped numbers are references too", () => {
+    expect(extractDrawingRefs("OPC 7: DWG 025-M-0107 SH 2 — TO V-1402")).toEqual(["025-M-0107-SH2"]);
+    // …which the base contract, with the bare number after the colon, lost.
+    expect(extractDrawingRefs("OPC 7: 025-M-0107 SH 2 — TO V-1402")).toEqual([]);
+  });
+
+  it("pairs by the positional destination, whatever its shape: the box must come back on that sheet", () => {
+    const raw = "OPC 7: DWG 4410-01-001 SH 2 — TO V-1402";
+    expect(extractDrawingRefs(raw)).toEqual([]);                    // the grammar cannot read it…
+    const audit = one(raw, [["b", ["4410-01-001", "4410-01-001-SH2"]]]);
+    expect(audit.unreturned).toEqual([expect.objectContaining({ box: "7", from: "A.pdf", to: "B.pdf" })]);  // …the position can
+    // A sheet named by the connector is never paired with a sheet that did
+    // not declare it (the bare number may be a whole set).
+    expect(one(raw, [["b", ["4410-01-001"]]]).unreturned).toEqual([]);
+  });
+
+  it("broken means what the contract says: the field reads NONE, or is empty", () => {
+    expect(one(`OPC 15: DWG ${OPC_NO_DRAWING} — FROM DESALTER`).noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG NONE SHOWN — FROM DESALTER").noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG — FROM DESALTER").noRef).toHaveLength(1);
+    expect(one("OPC 15: DWG").noRef).toHaveLength(1);
+    // …unless the line names a drawing elsewhere: then it does say where to go.
+    expect(one("OPC 15: DWG NONE — CONT ON DWG 025-PID-0107").noRef).toEqual([]);
+  });
+
+  it("a destination present but not shaped like a drawing number is unknown, never broken", () => {
+    for (const raw of ["OPC 9: DWG SEE NOTE 3 — TO FLARE", "OPC 9: DWG ILLEGIBLE — TO FLARE", "OPC 9: DWG [illegible] SH 2"]) {
+      const audit = one(raw);
+      expect(audit.noRef, raw).toEqual([]);
+      expect(audit.unknown, raw).toHaveLength(1);
+    }
+  });
+
+  it("a line outside the contract: unknown when something on it could still be a drawing number, broken only when nothing could", () => {
+    // A text layer's own "OPC" box with a loose number and no context word.
+    expect(one("OPC 3 TO 025-M-0107").unknown).toHaveLength(1);
+    expect(one("OPC 3 TO 025-M-0107").noRef).toEqual([]);
+    // Only the box, equipment and a sheet number: nothing names a drawing.
+    expect(one("OPC 3 TO V-1402 SH 2 CRUDE").noRef).toHaveLength(1);
+    expect(one("OPC 3 FROM 12\"-P-14022-A1A").noRef).toHaveLength(1);
+    // A readable reference outside the contract still pairs as before.
+    expect(one("OPC 3 CONT ON DWG 025-PID-0107", [["b", ["025-PID-0107"]]]).unreturned).toHaveLength(1);
+    // A row with no stored line says nothing about its destination.
+    const bare = auditOpcBoxes([{ document_id: "a", page: 1, tag: "3", raw: null }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(bare.noRef).toEqual([]);
+    expect(bare.unknown).toHaveLength(1);
   });
 
   it("the text layer's connectors are its references: CONT ON / pennant numbers extract as refs and pair one-way", () => {
@@ -680,8 +765,18 @@ describe("DWG-8 — a cut evidence line is unknown, never broken", () => {
   });
 
   it("a complete short line with no drawing number is still broken by definition", () => {
-    const audit = auditOpcBoxes([{ document_id: "a", page: 1, tag: "7", raw: "OPC 7: NONE — FROM DESALTER" }], new Map(), new Map([["a", "A.pdf"]]));
-    expect(audit.noRef).toHaveLength(1);
+    for (const raw of ["OPC 7: DWG NONE — FROM DESALTER", "OPC 7: NONE — FROM DESALTER"]) {
+      const audit = auditOpcBoxes([{ document_id: "a", page: 1, tag: "7", raw }], new Map(), new Map([["a", "A.pdf"]]));
+      expect(audit.noRef, raw).toHaveLength(1);
+      expect(audit.unknown, raw).toEqual([]);
+    }
+  });
+
+  it("a contract line keeps its destination at the head, so the storage cut can never take it", () => {
+    const longContract = `OPC 14: DWG 2002-D-2001 SH 4 — TO ${"CRUDE COLUMN OVERHEAD ACCUMULATOR ".repeat(6)}`;
+    const raw = truncateSafe(longContract, OPC_RAW_STORED_MAX);
+    const audit = auditOpcBoxes([{ document_id: "a", page: 2, tag: "14", raw }], new Map(), new Map([["a", "A.pdf"]]));
+    expect(audit.noRef).toEqual([]);
     expect(audit.unknown).toEqual([]);
   });
 
