@@ -19,6 +19,13 @@
 //     candidates;
 //   - deletion re-runs the full scan server-side and only deletes keys that
 //     are STILL orphans — the client's list is display, not authority;
+//   - and just before each DeleteObjects batch it asks the database again,
+//     key by key (recheckStillNamed): the scan read the reference set page by
+//     page, so a reference that moved behind its cursor while it ran (a row
+//     already read deleted while one naming the key lands behind it) can be
+//     missing from it. One statement per column sees one snapshot; a key any
+//     column names then is kept, and a read error stops the purge before
+//     that batch with nothing in it deleted (intelligence ILIFE-6 c. 3);
 //   - the WALK is confined to the caller's org prefix (RET-7): one
 //     workspace's admin never lists, sizes or deletes another tenant's
 //     objects. The reference collector stays bucket-wide on purpose — a key
@@ -28,7 +35,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { orgKeyPrefix } from "@/lib/shedKeyGuard";
-import { STORAGE_KEY_SOURCES, keysOf, selectFor, registryGaps, type StorageKeySource } from "@/lib/storageKeyRegistry";
+import { STORAGE_KEY_SOURCES, keysOf, selectFor, registryGaps, keysReferencedOutside, type StorageKeySource } from "@/lib/storageKeyRegistry";
 
 const MIN_AGE_DAYS = 7;
 const PROTECTED_PREFIXES = ["data/", "exports/"];
@@ -154,19 +161,85 @@ export async function scanOrphans(sb: SupabaseClient, orgId: string, maxPages = 
   };
 }
 
+/** intelligence ILIFE-6 criterion 3: one containment read per key for each
+ *  JSON-embedded key column (JSON_KEY_COLUMNS — a `.in()` cannot match a key
+ *  inside a JSON value). Each probe is the JSON shape the registry's
+ *  extractor reads the key from; lib/__tests__/storageOrphansRecheck.test.ts
+ *  pins one probe set per JSON_KEY_COLUMNS entry. */
+export const JSON_KEY_PROBES: Readonly<Record<string, ReadonlyArray<{ table: string; column: string; shape: (key: string) => unknown }>>> = {
+  "tickets.attachments": [{ table: "tickets", column: "attachments", shape: (key) => [{ url: key }] }],
+  "org_configurations.data": [{ table: "org_configurations", column: "data", shape: (key) => ({ logoPath: key }) }],
+  "output_templates.example_files": [
+    { table: "output_templates", column: "example_files", shape: (key) => [{ key }] },
+    { table: "output_templates", column: "example_files", shape: (key) => [{ url: key }] },
+  ],
+  "libraries.page_config": [{ table: "libraries", column: "page_config", shape: (key) => ({ background: { imagePath: key } }) }],
+  "collections.page_config": [{ table: "collections", column: "page_config", shape: (key) => ({ background: { imagePath: key } }) }],
+};
+
+/** How many JSON containment reads run at once. */
+const RECHECK_CONCURRENCY = 16;
+
+/** The keys among `keys` that ANY registered key column names right now: the
+ *  plain columns by one `.in()` statement per column and 200 keys
+ *  (keysReferencedOutside, which also refuses a read a row cap cut short),
+ *  the JSON-embedded ones by a containment read per key. Throws on any read
+ *  error — the caller deletes nothing it could not clear. */
+export async function recheckStillNamed(sb: SupabaseClient, keys: readonly string[]): Promise<Set<string>> {
+  const named = await keysReferencedOutside(sb, keys);
+  const probes = Object.values(JSON_KEY_PROBES).flat();
+  const work: Array<{ key: string; probe: (typeof probes)[number] }> = [];
+  for (const key of keys) {
+    if (named.has(key)) continue;
+    for (const probe of probes) work.push({ key, probe });
+  }
+  let next = 0;
+  let failure: Error | null = null;
+  const run = async () => {
+    while (failure === null && next < work.length) {
+      const { key, probe } = work[next++];
+      if (named.has(key)) continue;
+      const { data, error } = await sb.from(probe.table).select("id").contains(probe.column, probe.shape(key) as Record<string, unknown>).limit(1);
+      if (error) {
+        failure = new Error(`Couldn't verify whether ${probe.table}.${probe.column} still references ${key} (${error.message}); refusing to delete.`);
+        return;
+      }
+      if (Array.isArray(data) && data.length > 0) named.add(key);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(RECHECK_CONCURRENCY, work.length) }, run));
+  if (failure) throw failure;
+  return named;
+}
+
 /** Delete THIS org's orphans. RE-SCANS server-side (confined to the org
  *  prefix) and deletes only keys that are still orphans right now — the
  *  caller's list is never trusted, and a key outside the prefix is never
- *  sent to DeleteObjects. */
+ *  sent to DeleteObjects. Each batch is re-checked against every registered
+ *  key column just before it is deleted (ILIFE-6 c. 3): a key named there is
+ *  kept (`kept`), and a re-check that cannot read stops the purge before
+ *  that batch, nothing in it deleted. */
 export async function deleteOrphans(sb: SupabaseClient, orgId: string): Promise<{
-  deleted: number; freedBytes: number; errors: string[]; scope: string;
+  deleted: number; freedBytes: number; errors: string[]; scope: string; kept: number;
 }> {
   const scan = await scanOrphans(sb, orgId);
   const prefix = scan.scope;
-  const out = { deleted: 0, freedBytes: 0, errors: [] as string[], scope: prefix };
+  const out = { deleted: 0, freedBytes: 0, errors: [] as string[], scope: prefix, kept: 0 };
   const candidates = scan.orphans.filter((o) => o.key.startsWith(prefix));
   for (let i = 0; i < candidates.length; i += 500) {
-    const batch = candidates.slice(i, i + 500);
+    let batch = candidates.slice(i, i + 500);
+    let stillNamed: Set<string>;
+    try {
+      stillNamed = await recheckStillNamed(sb, batch.map((o) => o.key));
+    } catch (e) {
+      out.errors.push(`${(e as Error).message} The purge stopped before this batch; nothing in it was deleted.`);
+      break;
+    }
+    if (stillNamed.size > 0) {
+      out.kept += batch.filter((o) => stillNamed.has(o.key)).length;
+      batch = batch.filter((o) => !stillNamed.has(o.key));
+    }
+    if (batch.length === 0) continue;
     try {
       const res = await r2.send(new DeleteObjectsCommand({
         Bucket: R2_BUCKET,
