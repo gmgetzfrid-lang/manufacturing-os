@@ -12,12 +12,13 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callAiModel, type AiProviderId, type AiCallResult, type AiCallImage } from "@/lib/ai/providerCall";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { getMonthUsage, getCapUsd, recordAskUsage, capReached } from "@/lib/ai/usageServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 
-export class GovernedCallError extends Error {
-  constructor(message: string, public status: number) { super(message); }
-}
+// The refusal class lives in lib/ai/gateError (the ledger throws it too);
+// re-exported here under the name every caller imports.
+export { GovernedCallError };
 
 /** Run one governed model call on the member's own key. Throws
  *  GovernedCallError with an HTTP status when a gate refuses — routes map
@@ -63,7 +64,7 @@ export async function governedAiCall(input: {
   const [monthSoFar, capUsd] = await Promise.all([
     getMonthUsage(orgId, userId), getCapUsd(orgId, userId),
   ]);
-  if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
+  if (capReached(monthSoFar.spentUsd, capUsd)) {
     throw new GovernedCallError(
       `Monthly AI budget reached ($${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}).`, 402);
   }
