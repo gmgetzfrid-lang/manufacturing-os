@@ -19,7 +19,7 @@
 
 import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactedColumnsFor } from "@/lib/exportTables";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -175,6 +175,19 @@ export function restoreTableRefusal(table: string): string | null {
 export function bindRestoredRow(table: string, row: Record<string, unknown>, orgId: string): Record<string, unknown> {
   if (table in ORG_LESS_RESTORE_PARENTS) return row;
   return { ...row, org_id: orgId };
+}
+
+/** admin-and-org BKP-11 (restore half): a restored export destination lands
+ *  INERT whatever the backup row carries — disabled, with no next run (the
+ *  scheduler selects only enabled rows with a due next_run_at) and with every
+ *  credential column null, even when the row omits the keys (scrubRestoredRow
+ *  only sees the columns a row carries). An Admin re-enters credentials and
+ *  re-saves the schedule before it can fire again. Returns a new object. */
+export function landRestoredRow(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  if (table !== "export_destinations") return row;
+  const out: Record<string, unknown> = { ...row, enabled: false, next_run_at: null };
+  for (const c of redactedColumnsFor(table)) out[c] = null;
+  return out;
 }
 
 /** SURF-8 done-when 3: a restored placeholder never carries a privileged role
@@ -610,7 +623,8 @@ export function restoreRowLabel(table: string, row: Record<string, unknown>): st
  *  skipped). Never throws for a database refusal; the caller answers with
  *  `status` / `error` when `ok` is false. Order of rules:
  *    1. the table must be on the backup contract and not reconciled / append-only;
- *    2. every row is remapped (uids, org paths, bearer scrub) and bound to `orgId`;
+ *    2. every row is remapped (uids, org paths, bearer scrub), bound to `orgId`
+ *       and landed inert where the table requires it (export destinations);
  *    3. comments of a ticket archived since the backup are dropped;
  *    4. a row of an org-less table lands only under a parent of this workspace;
  *    5. upsert on the table's real conflict target. */
@@ -636,7 +650,7 @@ export async function applyRestoreChunk(
   if (refusal) return fail(400, refusal);
   if (!orgId) return fail(400, "No target workspace.");
 
-  let mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap), orgId));
+  let mapped = params.rows.map((r) => landRestoredRow(table, bindRestoredRow(table, remapRow(r, idRemap), orgId)));
 
   // Never resurrect comments onto a ticket that's since been archived to a
   // stub — the JSONB stays cleared, so re-inserting rows would split-brain it.

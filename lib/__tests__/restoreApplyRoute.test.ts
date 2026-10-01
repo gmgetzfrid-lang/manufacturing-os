@@ -448,3 +448,40 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
     expect(page).not.toMatch(/it&apos;s additive and safe/);
   });
 });
+
+describe("BKP-11 / BKP-1 (restore halves) — nothing restored can fire or be presented", () => {
+  it("an export destination lands disabled, with no next run and no credentials — even when the row omits the credential keys", async () => {
+    const past = "2026-01-01T00:00:00.000Z";
+    const dest = (id: string, extra: Row = {}) => ({
+      id, org_id: "backup-org", name: "Nightly", destination_type: "webhook", webhook_url: "https://hooks.example.com/x",
+      enabled: true, schedule_kind: "daily", next_run_at: past, ...extra,
+    });
+    // a hand-made row with NO credential keys (scrubRestoredRow alone would not see it)
+    const r = await chunk("export_destinations", [dest("e1"), dest("e2", { webhook_secret_encrypted: "v1:ciphertext", access_key_id_encrypted: "v1:x" })]);
+    expect(r.status).toBe(200);
+    for (const row of rowsOf("export_destinations")) {
+      expect(row).toMatchObject({ org_id: ORG, enabled: false, next_run_at: null, webhook_secret_encrypted: null, access_key_id_encrypted: null, secret_access_key_encrypted: null });
+    }
+    // the single-shot route lands it the same way
+    db.rows.export_destinations = [];
+    await single({ manifest: { orgId: "backup-org" }, tables: { export_destinations: [dest("e3")] } });
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, next_run_at: null, webhook_secret_encrypted: null });
+  });
+
+  it("the single-shot route scrubs every bearer column like the chunked one: shares and intake links revoked behind a placeholder, an issued transmittal voided", async () => {
+    await single({
+      manifest: { orgId: "backup-org" },
+      tables: {
+        document_shares: [{ id: "s1", org_id: "backup-org", token: "live-share", revoked_at: null }],
+        project_intake_links: [{ id: "l1", org_id: "backup-org", token: "live-intake", revoked_at: null }],
+        transmittals: [{ id: "t1", org_id: "backup-org", portal_token: "live-portal", status: "issued", notes: null }],
+      },
+    });
+    for (const t of ["document_shares", "project_intake_links"]) {
+      const row = rowsOf(t)[0];
+      expect(String(row.token), t).toMatch(/^restored-/);
+      expect(row.revoked_at, t).toBeTruthy();
+    }
+    expect(rowsOf("transmittals")[0]).toMatchObject({ portal_token: null, status: "voided" });
+  });
+});
