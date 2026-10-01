@@ -8,6 +8,12 @@
 //     the ON HOLD watermark and the hold line leading the footer — as the
 //     plain download and print do; an export of a document that is not held
 //     is stamped exactly as before.
+// Third review fix: these are source pins and the lib/downloads.ts helpers.
+// The behaviour is RENDERED / DRIVEN in dcRoundFP15InspectorStaleRendered
+// .test.ts (the banner, with getDocumentRecall unavailable, throwing, clear)
+// and dcRoundFP15MarkupExportRendered.test.ts (downloadWithMarkup with the
+// hold read held, held as Other, unreadable and clear; applyStampToPdfDoc
+// spied) — the composition this file used to re-implement is gone.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -89,39 +95,28 @@ describe("HLD-1 limb 2 — the markup export carries the hold stamp the plain do
     expect(fn).toMatch(/state: "uncontrolled",/);
   });
 
-  // The composition the viewer performs, run on the real lib/downloads.ts helpers.
-  const compose = async (documentId: string | undefined, viewingIsCurrent = true) => {
-    const hold = await readCopyHoldState(documentId);
-    const markupFooter = "P-101 Rev C WITH MARKUPS at time of export — markups are not part of the controlled revision.";
-    return {
-      watermark: hold.blocked ? copyWatermark({ versionIsCurrent: viewingIsCurrent }, hold) : "UNCONTROLLED — FOR REVIEW ONLY",
-      footer: [holdFooterLine(hold), markupFooter].filter(Boolean).join(" "),
-    };
-  };
-  it("a held document's redlined export says ON HOLD — watermark and the footer's lead line", async () => {
-    state.holds = { data: [{ id: "h1", reason: "Client Review", opened_at: null, opened_by_name: null }], error: null };
-    const out = await compose("doc-1");
-    expect(out.watermark).toBe("ON HOLD — DO NOT USE");
-    expect(out.footer).toBe("ON HOLD at time of issue (Client Review) — work from this document is stopped until Document Control releases the hold. P-101 Rev C WITH MARKUPS at time of export — markups are not part of the controlled revision.");
-  });
-  it("an unreadable hold state is a hold (fail closed)", async () => {
+  // The helpers the viewer calls (its own call is driven in dcRoundFP15MarkupExportRendered.test.ts).
+  it("readCopyHoldState → holdFooterLine / copyWatermark: held, unreadable (fail closed), clear, no record", async () => {
+    state.holds = { data: [{ id: "h1", reason: "Client Review", notes: null, opened_at: null, opened_by_name: null }], error: null };
+    const held = await readCopyHoldState("doc-1");
+    expect(copyWatermark({ versionIsCurrent: true }, held)).toBe("ON HOLD — DO NOT USE");
+    expect(holdFooterLine(held)).toBe("ON HOLD at time of issue (Client Review) — work from this document is stopped until Document Control releases the hold.");
     state.holds = { data: [], error: { message: "permission denied" } };
-    const out = await compose("doc-1");
-    expect(out.watermark).toBe("UNCONTROLLED — HOLD STATUS UNKNOWN");
-    expect(out.footer).toMatch(/^HOLD STATUS UNKNOWN at time of issue — treat this document as ON HOLD/);
+    const unknown = await readCopyHoldState("doc-1");
+    expect(copyWatermark({ versionIsCurrent: true }, unknown)).toBe("UNCONTROLLED — HOLD STATUS UNKNOWN");
+    expect(holdFooterLine(unknown)).toMatch(/^HOLD STATUS UNKNOWN at time of issue — treat this document as ON HOLD/);
+    state.holds = { data: [], error: null };
+    expect(holdFooterLine(await readCopyHoldState("doc-1"))).toBeNull();
+    const reads = state.holdReads;
+    expect((await readCopyHoldState(undefined)).blocked).toBe(false);
+    expect(state.holdReads).toBe(reads); // the ad-hoc viewer reads no hold
   });
-  it("REGRESSION: an export of a document that is not held is stamped exactly as before (review watermark, the markup footer alone)", async () => {
-    const out = await compose("doc-1");
-    expect(out).toEqual({
-      watermark: "UNCONTROLLED — FOR REVIEW ONLY",
-      footer: "P-101 Rev C WITH MARKUPS at time of export — markups are not part of the controlled revision.",
-    });
-    // an old revision's export keeps the review watermark too (its footer already names the revision)
-    expect((await compose("doc-1", false)).watermark).toBe("UNCONTROLLED — FOR REVIEW ONLY");
-  });
-  it("the ad-hoc viewer (no document record) reads no hold and is stamped as before", async () => {
-    const out = await compose(undefined);
-    expect(state.holdReads).toBe(0);
-    expect(out.watermark).toBe("UNCONTROLLED — FOR REVIEW ONLY");
+  it("VFY-6 (P15 third review fix), by decision: the copy footer — paper that leaves the organisation — names a custom hold by its CATEGORY, never its private description", async () => {
+    state.holds = { data: [{ id: "h2", reason: "Other", notes: "waiting on vendor weld map", opened_at: null, opened_by_name: null }], error: null };
+    const held = await readCopyHoldState("doc-1");
+    // the gate's members-only message names it (lib/holdGate.ts holdRefusalMessage) …
+    expect(held.blocked && !held.unreadable && held.message).toBe("Document has an active hold (Other: waiting on vendor weld map); release the hold before taking a copy.");
+    // … the footer printed on the copy does not
+    expect(holdFooterLine(held)).toBe("ON HOLD at time of issue (Other) — work from this document is stopped until Document Control releases the hold.");
   });
 });

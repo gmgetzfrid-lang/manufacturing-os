@@ -193,6 +193,9 @@ describe("SHR-14 dw3 — createShareLink says the deny when the policy refuses f
   });
 });
 
+// Source pins only; the modal's behaviour (the Create box absent for a deny
+// and for an unknown answer, offered when the predicate is not installed or
+// clear) is RENDERED in dcRoundFP15ShareModalRendered.test.ts (third review fix).
 describe("SHR-14 dw3 — the modal asks the predicate and says why instead of offering Create", () => {
   const m = readFileSync(join(process.cwd(), "components/documents/ShareLinkModal.tsx"), "utf8");
   it("asks it with the creator's uid and the context's acl_index, beside the tier and the refusal", () => {
