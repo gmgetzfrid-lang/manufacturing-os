@@ -40,6 +40,12 @@ vi.mock("@/lib/answerSkillsServer", async () => {
 });
 vi.mock("@/lib/knowledgeTagResolve", () => ({ resolveTagAgainstIndex: vi.fn(async (_o: string, t: string) => ({ resolved: t })) }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
+// The real ledger, behind a spy: one ASK-7 case scripts a refusal the route's
+// gate options cannot produce on their own (429, too many calls in flight).
+vi.mock("@/lib/ai/usageServer", async (orig) => {
+  const real = await orig<typeof import("@/lib/ai/usageServer")>();
+  return { ...real, reserveWithinCap: vi.fn(real.reserveWithinCap) };
+});
 
 import { POST } from "@/app/api/knowledge/ask/route";
 import { POST as feedbackPOST } from "@/app/api/knowledge/feedback/route";
@@ -50,6 +56,8 @@ import {
 } from "@/lib/knowledgeAskGuards";
 import { AGREEMENT_VERSION, worstCaseCostUsd } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
+import { reserveWithinCap } from "@/lib/ai/usageServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 
 // Embedding model names come from the catalogue, never spelled out here.
 const catalogue = (id: string) => EMBEDDING_PROVIDERS.find((p) => p.id === id)!.models;
@@ -960,6 +968,67 @@ describe("ASK-7 — the cap is enforced against THIS ask's projected cost, and t
     expect(body.answer).toMatch(UNANSWERED);
     expect(body.answer).not.toMatch(/were not attached/);
     expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).not.toContain("k-tab");
+  });
+
+  it("reproduction → fix (fix pass 6): the second answer priced as fitting, but its reservation refused (402) — another tab spent the month meanwhile — ends the same way, never a 402 after the first answer was paid for", async () => {
+    ordinaryLibrary();
+    // Another tab's spend lands in the ledger between the route's pricing
+    // (the month as the gate read it) and the second answer's reservation.
+    let landed = false;
+    db.hooks.push((op) => {
+      if (landed || op.table !== "ai_usage_events" || op.kind !== "insert" || h.calls.length !== 3) return;
+      landed = true;
+      rowsOf("ai_usage_events").push({
+        id: "u-other-tab", org_id: ORG, user_id: CTRL, op: "knowledgeVision", model: "chat-model-a", ok: true,
+        input_tokens: 1, output_tokens: 1, est_cost_usd: 9.99, created_at: new Date().toISOString(),
+      });
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } }, ANSWER];
+    const res = await ask({ question: Q });
+    // Fix pass 5: the reservation's 402 escaped as the ask's response.
+    expect(res.status).toBe(200);
+    expect(landed).toBe(true);
+    const body = await res.json();
+    expect(h.calls).toHaveLength(3);
+    expect(body.answer).toMatch(UNANSWERED);
+    expect(body.questionId).toBeNull();
+    expect(body.partial).toBeUndefined();
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row).toMatchObject({ mode: "library", answer: body.answer });
+    expect((row.context as { documents: string[] }).documents).toEqual(["k-std"]);
+    // The refused reservation is gone; the three calls are metered, once.
+    const metered = rowsOf("ai_usage_events").filter((r) => r.op === "knowledgeAsk");
+    expect(metered).toHaveLength(1);
+    expect(metered[0]).toMatchObject({ ok: true, input_tokens: 300 + 500 + 4000 });
+  });
+
+  it("fix pass 6: a 429 refusal of the second answer's reservation (too many calls in flight) ends the ask with a sentence that says so, never the budget's; a 503 (ledger unreadable) still refuses it (GOV-4)", async () => {
+    const real = vi.mocked(reserveWithinCap).getMockImplementation()!;
+    try {
+      for (const [status, expected] of [[429, 200], [503, 503]] as const) {
+        resetHarness();
+        ordinaryLibrary();
+        let n = 0;
+        vi.mocked(reserveWithinCap).mockImplementation(async (input) => {
+          if (++n === 4) throw new GovernedCallError(status === 429 ? "You already have 2 of these running — wait for one to finish." : "AI usage can't be read right now.", status);
+          return real(input);
+        });
+        h.script = [QUERY_GEN, REFINE_NONE, { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } }, ANSWER];
+        const res = await ask({ question: Q });
+        expect(res.status).toBe(expected);
+        expect(h.calls).toHaveLength(3);
+        if (status === 429) {
+          const body = await res.json();
+          expect(body.answer).toMatch(/^\*\*Answer:\*\* This question was not answered\. To answer it, the AI asked to read a page it had not been shown \(a table or figure\), and answering again after that page request was refused because too many of your AI calls were already running\.\n! Ask again once they have finished\./);
+          expect(body.answer).not.toMatch(/budget/);
+          expect(rowsOf("knowledge_questions")[0]).toMatchObject({ mode: "library", answer: body.answer });
+        } else {
+          expect(rowsOf("knowledge_questions")).toHaveLength(0);
+        }
+      }
+    } finally {
+      vi.mocked(reserveWithinCap).mockImplementation(real);
+    }
   });
 
   it("control: a Fetch the month can cover attaches its pages, as before", async () => {

@@ -2482,9 +2482,12 @@ export async function POST(req: NextRequest) {
     let fetchUnaffordable = false;
     /** ASK-7: the answer asked for pages, and what was left of the month
      *  after paying for it could not cover even the shortest answer again —
-     *  without the pages too. The ask ends with a stated sentence (saved as
-     *  a library answer), never a 402 after the first answer was paid for. */
+     *  without the pages too — or the second answer's reservation refused it
+     *  (402 / 429). The ask ends with a stated sentence (saved as a library
+     *  answer), never a 402 or 429 after the first answer was paid for. */
     let refetchUnaffordable = false;
+    /** The refusal was 429 (too many calls in flight), not the month's cap. */
+    let refetchBusy = false;
     let answerOut = await call({
       system: answerSystem(pageImages),
       user: answerUser(pageImages),
@@ -2526,25 +2529,39 @@ export async function POST(req: NextRequest) {
         // little even for the answer without the pages, the reservation would
         // refuse it (402) after query generation, refine and a first answer
         // were paid for. The ask ends here instead, and says why.
+        // That pricing reads the month as the gate read it; the reservation
+        // reads the live ledger (another tab's spend, calls in flight). So a
+        // reservation that still refuses the second answer (402, or 429) ends
+        // the ask the same way (fix pass 6) — the call was never made. A
+        // ledger that cannot be read (503) still refuses the ask (GOV-4).
         if (!shortestFits(pageImages, fetchNote)) {
           refetchUnaffordable = true;
         } else {
-          answerOut = await call({
-            system: answerSystem(pageImages, fetchNote),
-            user: answerUser(pageImages),
-            maxTokens: answerMaxTokens(pageImages, fetchNote),
-            ...(pageImages.length > 0
-              ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
-              : {}),
-          });
+          try {
+            answerOut = await call({
+              system: answerSystem(pageImages, fetchNote),
+              user: answerUser(pageImages),
+              maxTokens: answerMaxTokens(pageImages, fetchNote),
+              ...(pageImages.length > 0
+                ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
+                : {}),
+            });
+          } catch (e) {
+            if (!(e instanceof GovernedCallError) || (e.status !== 402 && e.status !== 429)) throw e;
+            refetchUnaffordable = true;
+            refetchBusy = e.status === 429;
+          }
         }
       }
     }
     let answer = refetchUnaffordable
       ? "**Answer:** This question was not answered. To answer it, the AI asked to read a page it had not been " +
-        "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
-        "that page request.\n" +
-        "! Ask about a narrower part of the question, or ask again once your monthly AI budget allows it."
+        (refetchBusy
+          ? "shown (a table or figure), and answering again after that page request was refused because too many " +
+            "of your AI calls were already running.\n! Ask again once they have finished."
+          : "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
+            "that page request.\n" +
+            "! Ask about a narrower part of the question, or ask again once your monthly AI budget allows it.")
       : answerOut.text;
     // ASK-3: the provider says when its output ceiling cut the answer off. A
     // cut-off answer says so, is stored as partial, and is never offered for
