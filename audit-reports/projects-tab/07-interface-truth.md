@@ -484,6 +484,8 @@ database migration (20261013) applied."*
 
 **Scope / residual.** Server routes' JSON error bodies are J12's (see `REL-3`).
 
+*Integrator fix pass (final review minors, 2026-10-01):* One broken read was still shown as data. The Quality tab reads the project's contractors on its own and only `console.warn`-ed a failure, so every assigned turnover / punch row said its contractor was "a contractor not on this project's list" and the contractor pickers vanished without a word. Now (`components/projects/QualityTab.tsx`) the failure is an alert — "The project's contractors couldn't be loaded — <reason>. …" — with a Retry; until the list answers, an assigned item says "contractor not loaded"; the seed, add and row pickers say why they are not there. Once the list has loaded, an id it does not hold is still named "a contractor not on this project's list" (that is data). Pinned rendered in `qualityTabContractorAssign.test.ts` "UX-10 (final review) — …". See projects-tab `MON-7`.
+
 ---
 
 ## UX-11 · The Documents tab shows two divergent lists and badges the wrong one
@@ -629,6 +631,8 @@ the vendor, and spending an AI call on the read**.
 
 **Scope / residual.** The readiness is advisory: the server's gates stay the authority (a key revoked in the minute a "ready" answer is shared is still refused by the route, with its own message). `clearAiReadinessCache` is not called from the AI settings save path — that is `lib/knowledge.ts`, the AI area's file; with refusals no longer cached and re-read on focus, the settings save does not need to clear it.
 
+*Integrator fix pass (final review minors, 2026-10-01):* The review fix's re-check bypassed the shared cache in every `useAiReadiness` instance (`fetchAiReadiness(…, { fresh: true })`), and the Quality tab holds one per checklist card (up to 50), so one alt-tab — which fires both `focus` and `visibilitychange` — could send up to 50 × 3 authenticated requests, twice. `fetchAiReadiness` (`lib/aiReadiness.ts`) now shares a read even when `fresh` is asked if that read is still in flight or was started within `FRESH_SHARE_MS` (1 s); a re-check after the window reads again. `components/projects/AiPrecondition.tsx` is unchanged. Tests: `ux13Preconditions.test.ts` (14, +1: twelve mounted hooks send one triplet of requests for a focus and a visibilitychange together, a second focus inside the window shares it, a later one reads once — the previous code sent 75 requests in the same run; the review-fix cache test now shows a fresh read inside the window shared and one past it read; the focus test advances the clock past the window, as a person returning from saving a key elsewhere does).
+
 ---
 
 ## UX-14 · The observer role is a label with no behaviour
@@ -750,6 +754,8 @@ Tests: `ux15Vocabulary.test.ts` (11: no "party" in any user-facing string across
 **Scope / residual.** Table names, identifiers and audit actions keep their schema words (`project_parties`, `milestones`, `COST_PARTY_*`). The ExecutionView's own row labels for a summary row ("Phases") and the critical-path legend were already consistent and were not changed.
 
 *Review fix (2026-10-01, projects Round G).* The rewording turned the scorecard's mixed-awards note from "parties" into "projects", but the figure counts contractor rows (`project_parties` — `awardsPostedPartyCount`), and one company can be two contractors on one project; the note now says "awards from posted commitments on N contractor record(s) and the typed contract value on M" (`lib/companyScore.ts`), pinned by `companiesRegistry.test.ts` (one project, two posted contractors → "2 contractor records", never "2 projects"). *Second review fix:* the company profile page's own mixed-awards note (`app/(protected)/companies/[id]/page.tsx`) still said "Awards on some projects come from a typed contract value"; it now reads "Awards on some contractor records come from a typed contract value (no commitment has posted against that contractor), the rest from posted commitments.", pinned rendered in `companiesPagesRender.test.ts` (one company as two contractors, `awardsSource: "mixed"`; "Awards on some projects" absent).
+
+*Integrator fix pass (final review minors, 2026-10-01):* Two glossary entries misstated the rollup. `lib/costs.ts` `computeCostRollup` computes spent = actual + signed adjustments, Unspent (`remainingActualsOnly`) = revised budget − spent, and Available (`remaining`) = revised budget − spent − open commitments, with open commitments never below 0. "Actual" said "Actuals add up to Spent" (adjustments count too), and "Unspent (actuals only)" said "the revised budget minus the actuals alone". They now read "… Spent = actuals plus signed adjustments (a negative adjustment credits money back)." and "The revised budget minus Spent — it ignores open commitments, so it is never smaller than Available." (`components/projects/cost/CostCharts.tsx`). The term "Unspent (actuals only)" is the label the Costs tab shows and was not renamed. Tests: `costChartsRender.test.ts` (+2: the rendered glossary carries both sentences and neither old one; the same claims checked against `computeCostRollup` on a line with a negative adjustment, an open commitment and an approved change order).
 
 ---
 

@@ -224,6 +224,8 @@ matching `Modal.tsx`. Do not "fix" those.*
 
 - Done-when after the second fix: ✓ all five compose `Modal`; ✓ Escape and the backdrop close each, and every way out of each of the five asks before discarding typed input — the transition confirm's reason included; ✓ focus trapped and restored, without taking a key another handler already owns.
 
+*Integrator fix pass (final review minors, 2026-10-01):* Nothing changed here. The final review's optional item — a rendered behaviour test for the project page's lessons-learned or status-transition dialog (Escape with typed text opens the discard confirm; "no" keeps the dialog) — was not added: both dialogs are inline in `app/(protected)/projects/[id]/page.tsx`, which no test renders (it needs the whole project), and extracting them would edit a page another package edits later. They stay pinned on the source in `modalFocus.test.ts`. DEC-44 (J10) item 5 is still NOT ratified.
+
 ---
 
 ## A11Y-5 · The wizard's lookalike `Field` breaks label association, so every wizard input is unlabeled
@@ -639,12 +641,20 @@ background to the one date input.
 - ✓ No error panel renders light-on-dark (every error panel in the area — the execution board's two dialog errors included — is the token recipe).
 - ✓ All date inputs match the theme.
 
-**Scope / residual.** The 35 slabs above (the schedule engine's own surfaces); the next pass converts them with the same recipe and extends the census.
+**Scope / residual.** The 35 slabs above (the schedule engine's own surfaces); the next pass converts them with the same recipe and extends the census. The uncited `-600` text pairs with no `dark:` variant are listed in the final-review note below.
 
 
 *Review fix (2026-10-01, projects Round G).* Two dimmed rows on the checklist surface were missed: an N/A checklist row (`opacity-50`) and a closed punch row (`opacity-55`) took their text — the muted rationale line most of all — under 4.5 : 1 in both themes. They are now set back by their status mark, the muted text token and (punch) a strike with the done / voided label, never whole-row opacity (`components/projects/QualityTab.tsx`); `a11yProjects.test.ts` computes the old composite (< 4.5) and the muted token at full strength (≥ 4.5 in light and dark) and pins both rows. The finding stays OPEN for the 35 uncited schedule-engine slabs above.
 
 *Third review fix (2026-10-01, projects Round G).* Six of the 35 slabs above went with A11Y-6's announced sites, to the token recipe: the task panel's save error (`TaskDetailPanel.tsx`, 1), the rebase result (`RebaseScheduleModal.tsx`, rose / emerald, 2), the import result (`ScheduleImportModal.tsx`, rose / emerald, 2) and the stale-checkout release error (`StaleCheckoutBanner.tsx`, 1) — 29 remain in the files listed, and the finding stays OPEN for them.
+
+*Integrator fix pass (final review minors, 2026-10-01).* The task panel's announced delete error (`TaskDetailPanel.tsx:445`) now wears the area's token recipe, `text-rose-700 dark:text-rose-300` (it was `text-rose-600`, under 4.5 : 1 on the dark footer). The residual above understated what remains: besides the 29 light tint slabs, the area holds uncited `text-{rose,red,amber,emerald}-600` pairs whose class string carries no `dark:` text variant — 61 sites in 21 files (`components/projects`, `app/(protected)/projects`, `app/(protected)/companies`, `app/submit`; none is `red-600`). None is changed here, and the finding stays OPEN for them:
+- **Text** (23 — 4.5 : 1, or 3 : 1 for the 2xl / 3xl figures): `TaskDetailPanel.tsx:442` (the "Delete task" label, with a `hover:bg-rose-50` slab), `:619` (the edit form's field note, rose error / amber advice); `ExecutionReportView.tsx:93, 104, 211, 216, 284, 285, 286` (10 — % complete, ahead / behind, finish drift, slipped / pulled in, blocked / hold / late); `ExecutionView.tsx:1146, 1162`; `ScheduleProgress.tsx:93` (the SPI figure, 3); `ScheduleCalendarTileView.tsx:380` (today's date); `TransitionInPanel.tsx:201, 202, 263`; `CostsTab.tsx:347` (a line's negative remaining).
+- **Icons** (22 — non-text, SC 1.4.11's 3 : 1): `CostsTab.tsx:397, 398` (stat-card icon chips); `EditProjectModal.tsx:287`; `ExecutionReportView.tsx:158, 247, 346` (346: the health icons, 3); `ExecutionView.tsx:861`; `IntakePanel.tsx:525`; `ProjectCoach.tsx:101`; `ProjectWizard.tsx:337, 456`; `ScheduleImportModal.tsx:824, 825`; `ScheduleProgress.tsx:97` (2); `StaleCheckoutBanner.tsx:127` (the dismiss X, with a `hover:bg-amber-100` slab), `:137`; `TabErrorBoundary.tsx:51`; `app/(protected)/companies/error.tsx:17` (its tile has a dark background variant, its icon colour none); `app/submit/[token]/page.tsx:295`.
+- **Hover-only** (16 — `hover:text-rose-600` on a faint or muted control, no dark hover variant): `CostsTab.tsx:180, 618`; `EditProjectModal.tsx:266, 289`; `IntakePanel.tsx:598`; `ProjectDocumentsCard.tsx:236`; `ProjectWizard.tsx:430, 458, 500, 525, 549`; `QualityTab.tsx:387, 441`; `cost/ChangeOrdersPanel.tsx:252`; `cost/QuotesPanel.tsx:1215`; `app/(protected)/companies/[id]/page.tsx:325`.
+
+Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused delete, in the recipe, with the old pair under 4.5 : 1 on the dark footer and the new one over it in both themes; a ratchet census over this list — per file, no more such sites than listed — mutation-checked).
+
 ---
 
 ## A11Y-14 · Decision controls outside the Quality tab are still under 24 px
