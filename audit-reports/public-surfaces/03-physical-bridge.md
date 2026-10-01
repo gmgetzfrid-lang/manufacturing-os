@@ -55,6 +55,20 @@ verify/route.ts:89-90 `const docRetired = d.status === "Superseded" || d.status 
 - [ ] documents with status Draft or Void get their own non-green verdict rather than falling into isCurrent=true
 - [ ] lib/downloads.ts buildFooterNotice adds a hold line when the document has an active hold at issue time
 
+**Partial (2026-10-01, public-surfaces Round F).** PS-VERIFY. Verified at `3a3203d`: done-when 1 and 3 landed at document-control `DIST-2` (2026-08-24) — `/api/verify` reads `legal_hold` and unreleased `document_holds` and returns a distinct `held` verdict (red "ON HOLD — STOP WORK", fail-safe on a read error), and Void / Draft have their own verdicts. This pass:
+- **Done-when 2:** `/api/verify-package` reads holds ONCE for every printed sheet and marks a held sheet `held` with its own label ("ON HOLD · <category>"), never fresh; the pack reads `held` ("PACK ON HOLD — STOP WORK"); an unreadable hold state holds every sheet (`VFY-5`, document-control `HLD-3`).
+- **The rest of done-when 3:** the shared allow-list (`lib/verifyVerdict.ts`, `VFY-1`) makes every status outside Issued / Locked non-green on both routes; `/api/verify` now also names the hold categories (`VFY-5`).
+- Files: `app/api/verify-package/route.ts`, `app/api/verify/route.ts`, `lib/verifyVerdict.ts`, `lib/verifyPresent.ts`, `app/verify-package/[packageId]/page.tsx`. Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` "HLD-3 / PHYS-1 / VFY-5 …"; `lib/__tests__/verifyRouteVerdict.test.ts`.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when (this pass).**
+1. ✓ (DIST-2; categories added here, `VFY-5`)
+2. ✓ A held member sheet is not-fresh with its own label.
+3. ✓ (DIST-2 + the `VFY-1` allow-list)
+4. ✗ Not done here — the hold line in `lib/downloads.ts` `buildFooterNotice` is document-control P8 FIELD's (the `HLD-1` download / footer limb); PS-VERIFY owns `lib/downloads.ts` only at `buildVerifyUrl`.
+
+**Scope / residual.** Stays OPEN for done-when 4 → document-control P8 FIELD.
+
 ---
 
 <a id="phys-2"></a>
@@ -92,7 +106,7 @@ page.tsx:1391 `deliverableRev={ticket?.deliverableRev}`; page.tsx:1360 `const fi
 ## PHYS-3 · "Print doc pack" reports "all current, all stamped" while packing Superseded, Void and Draft documents and every document under an active hold — the hold state is displayed on the same page and never reaches the paper
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/assets/[tag]/page.tsx:52-56`, `app/(protected)/assets/[tag]/page.tsx:75`, `app/(protected)/assets/[tag]/page.tsx:94`, `app/(protected)/assets/[tag]/page.tsx:139-142`, `lib/docPack.ts:51-54`, `lib/docPack.ts:100-106`, `lib/docPack.ts:3-7`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every leg. The QR does partly self-correct a Superseded sheet (app/api/verify/route.ts:89), but a VOID sheet is not in that route's docRetired list, so a voided drawing in the pack scans green — the paper claim 'all current' is unqualified and unchecked. HIGH stands.
@@ -115,6 +129,18 @@ assets/[tag]/page.tsx:56 `.neq("status", "Archived")`; assets/[tag]/page.tsx:139
 - [ ] The success toast's wording matches what was actually packed (it cannot say "all current" when a retired or held sheet was included)
 - [ ] The work-package cover's CONTENTS list prints the pinned rev that /verify-package will compare against
 
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only — closed by document-control `PKG-4`, `PKG-6` and Phase 7b; verified at `3a3203d`:
+- `lib/docPack.ts` `filterPackDocs` refuses Draft / Superseded / Void / Archived and every actively held sheet, failing CLOSED on an errored hold read, with the reason in `skipped`; `assessPackDocs` runs the same gate before any side-effect.
+- The asset page says "all current, all stamped" only when nothing was skipped and otherwise names every sheet left out and why (`app/(protected)/assets/[tag]/page.tsx`); the packages page lists the left-out sheets the same way.
+- The work-package cover is built from the sheets actually in the merged PDF (`buildCoverAfter(includedSheets)`), each with the revision recorded in the immutable print snapshot — the version `/api/verify-package` compares against (PKG-6: snapshot = cover = paper; PKG-2 replaced the live pin as the comparison).
+
+**Done-when.**
+1. ✓ Non-issued and held documents are skipped with a reason (PKG-4).
+2. ✓ The success copy matches what was packed (PKG-4 / 7b).
+3. ✓ The cover prints the revision the QR verifies against (PKG-6 / PKG-2) — and, since this pass, every sheet (document-control `PKG-12` cover limb).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="phys-4"></a>
@@ -122,7 +148,7 @@ assets/[tag]/page.tsx:56 `.neq("status", "Archived")`; assets/[tag]/page.tsx:139
 ## PHYS-4 · /d/[number] resolves any document number against ALL orgs with the service-role client and redirects with the document UUID — destroying the "unguessable UUID" premise that /api/verify's unauthenticated exposure rests on
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** WONTFIX
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:14-32`, `lib/supabaseAdmin.ts:3-8`, `app/api/verify/route.ts:4-10`, `app/api/verify/route.ts:96-108`, `components/documents/RelatedPanel.tsx:111-113`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and slightly worse than described: the `?? (rows ?? [])[0]` fallback at :36 means even a non-matching 2-character substring returns some real document's UUID, and app/api/verify/route.ts:34-38/:96-108 then returns number, title, current rev and status for any UUID with no org scoping. HIGH stands.
@@ -154,6 +180,19 @@ d/[number]/route.ts:26-30 `const { data: rows } = await supabaseAdmin\n    .from
 - [ ] /d/[number] resolves the caller's session and scopes the query to that user's org ids (or redirects to sign-in when there is no session), instead of using the service-role client unscoped
 - [ ] The `(rows ?? [])[0]` loose fallback is removed or confined to the caller's own org
 - [ ] An unauthenticated GET to /d/<any real number> returns a redirect to sign-in, not a Location containing a document UUID
+
+**Resolution (2026-10-01, public-surfaces Round F) — WONTFIX for the residual, by design.** The `/d/[number]` half — the cross-tenant number → UUID oracle — was RESOLVED by roles-and-permissions `EGRESS-2` (commit `67e6bdd`): the route does no lookup and holds no service-role client (verified; `lib/__tests__/shortLinkRoute.test.ts`). The residual this record kept open — `/api/verify` returns document metadata for any document UUID with no org scoping — is the design of an unauthenticated field verify endpoint, not a defect to remove:
+- **Cost of fixing it as written.** There is no org to scope by: the scanner has no session by design (a contractor at a pump). "Scope to the caller's org" means a login wall on every printed QR — the lesson `lib/physicalBridge.ts` records twice (traveler, pack cover) — or a second secret on paper that already carries an unguessable 128-bit UUID.
+- **What bounds it now.** The leaked-UUID entry point is gone (EGRESS-2); every answered scan is recorded with its client IP and target, and an address is capped at 1200 scans an hour, so a walk of a register is visible and slow (`VFY-12`); a document-only QR no longer answers green (`VFY-3`); the payload is revision-status metadata only — no file, URL or person (`VFY-14`).
+- **Rejected alternative.** An org check on the verify routes — impossible without a session. A per-print token for single sheets (intelligence `DACL-8` criterion 2) would swap the document UUID for another bearer string on the same paper — it moves the secret without shrinking it.
+- **What would change the answer.** UUIDs leaking outside printed copies again (a new oracle), or a requirement that private / hidden documents' titles stay off the verify pages — that limb is opened as `VFY-16` (the `DACL-8` handover).
+
+**Done-when.**
+1. ✓ (EGRESS-2) `/d/[number]` no longer queries anything; it forwards to the protected documents page, which resolves under the caller's RLS.
+2. ✓ (EGRESS-2) No loose fallback; an exact normalized match or the search page.
+3. ◐ An unauthenticated GET returns a Location of `/documents?d=<number>` — never a document UUID ✓; it is not a redirect to sign-in (the protected layout does not itself bounce a no-session visit — an identity-and-session question outside this finding).
+
+**Scope / residual.** WONTFIX covers only the unauthenticated, org-unscoped metadata answer of `/api/verify`. The visibility limb is `VFY-16` (OPEN).
 
 ---
 
@@ -194,7 +233,7 @@ FullScreenViewer.tsx:966 `const stampNow = liveState !== "controlled";`; :1005-1
 ## PHYS-6 · Downloading an older revision from Version History stamps the footer and names the file with the document's CURRENT rev — the paper asserts a revision it does not contain
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/downloads.ts:80-88`, `lib/downloads.ts:71-76`, `lib/downloads.ts:228-240`, `components/documents/VersionHistoryPanel.tsx:150-159`, `lib/downloads.ts:95-102`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as claimed, including the internal contradiction the finding relies on: the same stamped page asserts the current rev in text and the printed rev in the QR. HIGH stands.
@@ -217,6 +256,15 @@ downloads.ts:82 `parts.push(\`Rev ${doc.rev ?? "?"} at time of issue — verify 
 - [ ] A history download of rev N on a document at rev M (M>N) produces a footer and filename naming rev N
 - [ ] The footer distinguishes "this print is Rev N" from "the current revision is Rev M" rather than printing one number
 
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only — closed by document-control `REV-1` (2026-08-24); verified at `3a3203d`: `DownloadContext` carries `versionRev` / `versionIsCurrent`; `servedRev(ctx)` names the SERVED version in `defaultFilename` (`…_Rev2_UNCONTROLLED.pdf`) and `buildFooterNotice`; `VersionHistoryPanel` passes `versionRev: v.revisionLabel` and `versionIsCurrent`. A history pull of Rev 2 on a Rev 5 document is stamped "SUPERSEDED REVISION — Rev 2. This is NOT the current revision; do not use for construction. Scan to verify." Tests: `lib/__tests__/downloadsRevLabel.test.ts` (the footer names the served rev and SUPERSEDED, never the current one; the QR carries the served version).
+
+**Done-when.**
+1. ✓ `DownloadContext` carries the delivered version's label; the footer and filename use it.
+2. ✓ A history download of Rev N on a document at Rev M names Rev N.
+3. ✓ in substance — the footer distinguishes "this print is Rev N" from the current revision ("NOT the current revision") rather than printing one number as if it were both; it does not print the current label M, which would itself go stale on the paper. The QR answers the live current revision ("DO NOT USE — This print is Rev 2 — the current revision is Rev 5").
+
+**Scope / residual.** None.
+
 ---
 
 <a id="phys-7"></a>
@@ -224,7 +272,7 @@ downloads.ts:82 `parts.push(\`Rev ${doc.rev ?? "?"} at time of issue — verify 
 ## PHYS-7 · Equipment QR labels point at /assets/[tag], a route inside the (protected) group — the sticker on the pump advertises "SCAN: drawings · holds · report a problem" and lands an account-less scan on the signed-in app shell with nothing in it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/physicalBridge.ts:84`, `lib/physicalBridge.ts:99`, `lib/physicalBridge.ts:6-7`, `lib/physicalBridge.ts:219-220`, `lib/physicalBridge.ts:272-274`, `app/(protected)/assets/[tag]/page.tsx:1`, `app/(protected)/layout.tsx:27-51`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually correct: the sticker's URL is inside the protected group, nothing redirects an account-less scan to a login, and the page spins forever because refresh() early-returns without clearing its initial loading=true. Severity lowered to MEDIUM — this is a dead-end for account-less scans only (signed-in staff get the real page), it discloses nothing and, unlike PHYS-10, shows no misleading information; the label also never promises 'no login needed' the way the package cover (physicalBridge.ts:279) does.
@@ -246,6 +294,20 @@ physicalBridge.ts:84 `const url = \`${origin()}/assets/${encodeURIComponent(asse
 - [ ] Scanning an equipment label with no session lands on a page that names the tag and states whether any document on it is under an active hold
 - [ ] The label's caption only promises what the unauthenticated landing actually delivers
 - [ ] The path shape survives, or the change is accompanied by a re-print plan for existing stickers
+
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY — one fix with document-control `HLD-13`, under option (b) (the user-informed default, 2026-09-17; recorded as `DEC-44 (PS-VERIFY)`). Reproduced on `3a3203d`: `drawLabel` built `${origin()}/assets/<tag>` with the one-line caption "SCAN: drawings · holds · report a problem" (drawn unfitted — about 160pt into the single sticker's 100pt text column), and the protected asset page's `refresh()` returned early without an org, leaving its spinner up, so a no-session scan sat on an empty app shell.
+- **Option (b):** keep `/assets/<tag>` — every sticker in the plant stays valid, no re-print — and make the page honest about being a staff page.
+- `lib/physicalBridge.ts`: `equipmentLabelUrl(tag)` (the path shape, pinned by test) and `LABEL_CAPTION_LINES` — "SCAN — STAFF SIGN-IN" / "drawings · holds ·" / "report a problem" — each fitted to the label's text column (measured at 7pt with pdf-lib's Helvetica metrics in the test).
+- `app/(protected)/assets/[tag]/page.tsx`: once the session boot has settled with no user (`booted && !loading && !uid`), the page shows "Equipment <tag> — Drawings, holds and problem reports for this equipment are for signed-in staff — Sign in to continue" and `router.replace("/?next=/assets/<tag>")` — sign-in, carrying the tag.
+- Files: `lib/physicalBridge.ts`, `app/(protected)/assets/[tag]/page.tsx`. Tests: `lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b) — the equipment label".
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. Not done as written, by decision (b): a no-session scan lands on the sign-in page with the tag carried in `next`, not on a public page naming the tag and its hold state. The public minimal-facts tag page was option (a); the default chose (b).
+2. ✓ The caption promises only what the landing delivers — staff sign-in.
+3. ✓ The path shape survives; no re-print.
+
+**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet read `next`, so after signing in a person lands on `/dashboard`, not back on the tag — a small follow-up in a file no current package owns (flagged to the integrator). Overriding the default to option (a) means a public tag page under the `/verify*` contract (DEC-44 (PS-VERIFY), reversal).
 
 ---
 
@@ -327,7 +389,7 @@ requests/[id]/page.tsx:647 `watermarkText: file.type === "Draft" ? "REVIEW ONLY 
 ## PHYS-10 · A hold card scans GREEN "RELEASED — this tag can come down" when its own hold is released, even while other holds are still active on the same document — the multi-hold design is explicit and the verify page has no knowledge of siblings
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/verify-hold/route.ts:27-32`, `app/api/verify-hold/route.ts:53-61`, `app/verify-hold/[holdId]/page.tsx:53-54`, `app/verify-hold/[holdId]/page.tsx:81-88`, `lib/holds.ts:11-14`, `lib/physicalBridge.ts:150`, `lib/physicalBridge.ts:170-172`
 - **Also surfaced independently as** [`VFY-10`](./01-verify-endpoints.md#vfy-10) — two lenses found this separately. Fix once.
@@ -352,6 +414,17 @@ verify-hold/route.ts:54 `active: !h.released_at,`; verify-hold/[holdId]/page.tsx
 - [ ] /api/verify-hold returns the count of other active holds on the same document
 - [ ] The landing page shows a non-green verdict when this hold is released but siblings remain, and does not say "this tag can come down"
 - [ ] The printed card's instruction text matches the conditional verdict
+
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY — fixed once with `VFY-10` (see that record for the route and page). `/api/verify-hold` returns the document's other active holds (count and categories) and a verdict; the page is green ONLY when this hold is released and no other hold is active, amber "RELEASED — DOCUMENT STILL ON HOLD … leave the equipment tagged" when siblings remain (or "CHECK OTHER HOLDS" when they could not be read), and never says "this tag can come down" otherwise. The printed card's instruction now matches: `lib/physicalBridge.ts` `HOLD_CARD_SCAN_LINES` — "GREEN when scanned = no hold remains on this document — this tag comes down." / "AMBER = this hold is released but another is still active — leave the equipment tagged." (each line fitted left of the QR).
+- Files: `app/api/verify-hold/route.ts`, `app/verify-hold/[holdId]/page.tsx`, `lib/verifyPresent.ts`, `lib/physicalBridge.ts`. Tests: `lib/__tests__/verifyHold.test.ts`, `lib/__tests__/verifyPresent.test.ts`, `lib/__tests__/verifyDoor.test.ts` "VFY-10 / PHYS-10 — the hold card says what the scan answers".
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ The route returns the count of other active holds on the document.
+2. ✓ Released-with-siblings is non-green and does not say "this tag can come down".
+3. ✓ The printed card's instruction matches the conditional verdict.
+
+**Scope / residual.** None.
 
 ---
 

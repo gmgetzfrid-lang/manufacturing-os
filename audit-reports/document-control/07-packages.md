@@ -313,7 +313,7 @@ lib/workPackages.ts:99-106 — `const pinned = (m.pinned_version_id as string | 
 ## PKG-8 · Both public verify surfaces treat only Superseded and Archived as retired — a VOID or never-issued DRAFT drawing scans full-screen GREEN 'CURRENT' / 'PACK IS CURRENT'
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:54-64`, `app/api/verify/route.ts:89-90`, `app/verify-package/[packageId]/page.tsx:90-98`, `app/verify/[docId]/page.tsx:99-107`, `types/schema.ts:613`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: only Superseded and Archived retire a document on either public surface, so a Void (or Draft) doc whose printed/pinned version still equals current_version_id scans full-screen green. The rest of the codebase already knows better — lib/aiBoundary.ts:25 `NOT_CURRENT_STATUSES = new Set(["Superseded", "Void", "Archived"])` and lib/staleCopies.ts:76 both include Void. Only nuance: a pack sheet for a doc with NO version at all reads stale (fresh requires a non-null pinned_version_id), so the Void case, not the never-uploaded-Draft case, is the live one; pinned_version_id is set to current_version_id at pin/refresh time (lib/workPackages.ts:163,185,214), so a Void doc pins green.
@@ -336,6 +336,22 @@ app/api/verify-package/route.ts:56 — `const retired = d?.status === "Supersede
 - [ ] the field pages render a distinct state for Void ('VOIDED — DO NOT USE') and Draft ('NOT ISSUED')
 - [ ] /api/verify-package applies the same effective-date qualification /api/verify already has
 - [ ] an empty package renders a distinct 'no sheets recorded' state, not red-stale
+
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only for this area — `/api/verify`'s half is `DIST-2` (2026-08-24); the rest is public-surfaces PS-VERIFY (`VFY-1`, `VFY-9`, `VFY-11`), which owns both verify routes this round; verified at the branch:
+- **One shared helper:** `lib/verifyVerdict.ts` `documentStanding(status)` — retirement from `NOT_CURRENT_STATUSES`, Draft, and an ALLOW-list (Issued / Locked) for in force; anything else `not_issued`. `/api/verify` and `/api/verify-package` both call it; neither spells a status list.
+- **Distinct states on both pages:** `/verify` — "VOID — DO NOT USE", "DRAFT — NOT ISSUED", "NOT ISSUED — DO NOT USE" (DIST-2 + PS-VERIFY); `/verify-package` — each sheet labelled VOID / SUPERSEDED / ARCHIVED / DRAFT — NOT ISSUED / NOT ISSUED and never fresh.
+- **Effective dates in the pack:** `/api/verify-package` reads the current revisions' `effective_date` and a pending one makes the sheet and the pack `not_yet_effective` (amber) — decided by `effectiveStatusFor`, the facility's calendar (`REV-9`).
+- **Empty pack:** its own verdict, "NO SHEETS IN THIS PACK" (slate), never red '0 of 0'.
+- Tests: public-surfaces `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-1 / PKG-8 — the shared allow-list decides every sheet" (Void / Superseded / Archived / Draft / NULL / In Review → never fresh; Locked in force; a pending effective date → `not_yet_effective`; no status list in the route) and "VFY-8 / VFY-11 …"; `lib/__tests__/verifyRouteVerdict.test.ts`; `lib/__tests__/verifyPresent.test.ts`.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ One shared helper decides retired / usable; both endpoints call it; Void and Draft are never current or fresh.
+2. ✓ The field pages render distinct Void and Draft states.
+3. ✓ `/api/verify-package` applies the not-yet-in-force qualification.
+4. ✓ An empty package renders a distinct state.
+
+**Scope / residual.** None.
 
 ---
 
@@ -473,6 +489,17 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
 - [ ] docPack enforces an explicit cap (document count and cumulative page/byte budget), refuses above it with a clear message, and offers a split
 - [ ] both the documents query and the member query order deterministically, and the cover's contents list is generated from the merged pack's actual page order with a page number per entry
 - [ ] the cover lists every sheet (continuation page when needed) rather than truncating at 24
+
+**Partial (2026-10-01, public-surfaces Round F).** PS-VERIFY — the cover limb (`lib/physicalBridge.ts` is PS-VERIFY's this round). `buildPackageCover` now lists EVERY sheet in pack order — 24 on the cover above the QR, then continuation pages of 40 ("CONTENTS (continued) … page n of N"), all prepended to the pack by the existing `buildCoverAfter` path — instead of 24 and "…and N more sheets". `coverContentsChunks(count)` (pure) decides the ranges.
+- Files: `lib/physicalBridge.ts`. Tests: public-surfaces `lib/__tests__/verifyDoor.test.ts` "PKG-12 — the cover lists every sheet" (every index exactly once, in order, for 0–200 sheets; a 30-sheet pack builds a two-page cover; the "more sheets" summary is gone).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when (this pass).**
+1. ✗ Not done here — the cap (document count / page / byte budget, refuse with a split) belongs in `lib/docPack.ts`, which serves both callers; P8 FIELD's file. The asset page's `.limit(500)` is unchanged for the same reason.
+2. ◐ The cover's list is the merged pack's actual order (PKG-6: it is built from `includedSheets`), but the `documents` and member queries (`lib/docPack.ts`, `lib/workPackages.ts`) are still unordered and the cover carries no page number per entry — `buildPackageCover` receives no page counts; P8 FIELD.
+3. ✓ The cover lists every sheet, with continuation pages.
+
+**Scope / residual.** Stays OPEN for done-when 1 and 2 → document-control P8 FIELD (`lib/docPack.ts`, `lib/workPackages.ts`, `app/(protected)/packages/page.tsx`); adding page numbers needs docPack to hand the cover each sheet's page count.
 
 ---
 

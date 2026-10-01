@@ -73,7 +73,7 @@ Token entropy, expiry, revocation, and whether a share respects a hold.
 ## SHR-2 · /d/[number] is an unauthenticated cross-org document lookup that redirects to a substring match — it leaks foreign document UUIDs and can put the wrong drawing in a field worker's hands
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:14-32` *(the whole current handler)*
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the exact fallback the summary describes: when no candidate's normalized number matches, `?? rows[0]` silently returns the most recently updated substring hit from ANY tenant. The route's own header comment — 'this route only translates a number into a location; it reveals nothing' — is contradicted by the Location header, which carries a foreign library_id and document UUID to an unauthenticated caller.
@@ -112,6 +112,16 @@ app/d/[number]/route.ts:26-32 `const { data: rows } = await supabaseAdmin.from("
 - [ ] a non-exact substring candidate is never auto-followed — no match means the /documents?q= fallback at lines 39-42, never rows[0]
 - [ ] the ilike pattern is escaped with the same escaper as lib/globalSearch.ts:196 so `*`, `%`, `_` and `,` are all literal
 - [ ] a test asserts /d/<number belonging to another org> never emits that org's document id or library id in the response
+
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only — RESOLVED by roles-and-permissions `EGRESS-2` (commit `67e6bdd`), as the cross-area update above says; verified at `3a3203d`: `app/d/[number]/route.ts` performs no database lookup and holds no service-role client — it bounds the input and redirects every caller to `/documents?d=<number>`; the protected documents page resolves the number CLIENT-SIDE with `searchDocuments({ orgId: activeOrgId, … })` under the caller's own RLS, deep-links only on an exact normalized match, and otherwise pre-fills the search (`app/(protected)/documents/page.tsx:93-120`).
+
+**Done-when.**
+1. ✓ The number resolves only within the caller's authenticated org (session + RLS, the number carried as a query param).
+2. ✓ A non-exact candidate is never auto-followed — no `rows[0]`.
+3. ✓ in substance — the route runs no pattern at all, so the unauthenticated wildcard scan cannot exist; the client-side search's ILIKE fallback (`lib/search.ts`) runs only under the caller's own RLS, and the exact normalized comparison decides the target.
+4. ✓ `lib/__tests__/shortLinkRoute.test.ts` — "always redirects to /documents — never to a document deep link", "holds no service-role client".
+
+**Scope / residual.** Two exact normalized matches are still resolved to the first (no chooser) — public-surfaces `VFY-7` (OPEN).
 
 ---
 

@@ -1,6 +1,6 @@
 # 01 · The public verify endpoints
 
-**14 findings** — 1 CRITICAL · 2 HIGH · 11 MEDIUM.
+**16 findings** — 1 CRITICAL · 2 HIGH · 11 MEDIUM, plus `VFY-15` and `VFY-16` (LOW) opened by public-surfaces Round F (PS-VERIFY), 2026-10-01.
 
 Unauthenticated. What each returns to someone holding only a scanned code.
 
@@ -31,7 +31,7 @@ Unauthenticated. What each returns to someone holding only a scanned code.
 ## VFY-1 · A VOIDED drawing scans GREEN "CURRENT" — the public verify endpoints use a two-value retired set while four other places in the repo use the three-value one that includes Void
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:89-90`, `app/api/verify-package/route.ts:56`, `lib/aiBoundary.ts:25`, `lib/staleCopies.ts:76`, `lib/docControlRegister.ts:101`, `lib/downloads.ts:52-68`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and reachable: `Void` is a first-class document status (types/schema.ts:613) offered in the status dropdown at components/documents/MetadataEditor.tsx:9/394. app/verify/[docId]/page.tsx:106 only special-cases Superseded/Archived too, so a Void document renders the full-screen emerald 'CURRENT — This print matches the current revision.' CRITICAL stands.
@@ -52,6 +52,20 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 - [ ] The verdict is computed by allow-list ('Issued'/'Locked' can be green) rather than by deny-list, so a status added later defaults to not-green
 - [ ] A test asserts that status='Void' with versionId === current_version_id yields isCurrent:false / fresh:false
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: document-control `DIST-2` (2026-08-24) had moved `/api/verify` onto the shared `NOT_CURRENT_STATUSES` set, but its verdict was still a deny-list — the final `else verdict = "current"` let any status outside the set (NULL, "In Review", a value added later) read green — and `/api/verify-package` still spelled its own inline list (`d?.status === "Superseded" || d?.status === "Archived" || d?.status === "Void"`, `app/api/verify-package/route.ts:96`) with Draft fresh. Fixed with ONE shared decision:
+- `lib/verifyVerdict.ts` (new) — `documentStanding(status)`: retirement from `NOT_CURRENT_STATUSES` (`void` / `archived` / `superseded`; any other member of the set `retired`), `draft`, and an ALLOW-list `IN_FORCE_STATUSES = {Issued, Locked}` (`in_force`); everything else — an empty / NULL status, or one added to the vocabulary later — is `not_issued`.
+- `/api/verify` and `/api/verify-package` both call it; neither route spells a status list any more (pinned by test). A non-allow-listed document reads `not_issued` ("NOT ISSUED — DO NOT USE"); a pack sheet carries its own state (`void`, `draft`, `not_issued`, …) and is never fresh.
+- Files: `lib/verifyVerdict.ts`, `app/api/verify/route.ts`, `app/api/verify-package/route.ts`, `lib/verifyPresent.ts`, `app/verify/[docId]/page.tsx`, `app/verify-package/[packageId]/page.tsx`.
+- Tests: `lib/__tests__/verifyRouteVerdict.test.ts` "VFY-1 / VFY-9 — green is an ALLOW-list (Issued, Locked) …" (Locked current; NULL / "" / In Review / Pending / an unknown status → `not_issued`; Void at the current version → `isCurrent: false`; the route imports the shared decision); `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-1 / PKG-8 — the shared allow-list decides every sheet" (Void / Superseded / Archived / Draft / NULL / In Review at the printed current version → not fresh, never green; Locked in force; no status list in the route); `lib/__tests__/verifyPresent.test.ts` (green only for `current`, and never for a verdict the page does not know).
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Both routes read retirement from `NOT_CURRENT_STATUSES`, through the shared `lib/verifyVerdict.ts`.
+2. ✓ The verdict is an allow-list (Issued / Locked can be green); a status added later defaults to not-green.
+3. ✓ `status = 'Void'` with the printed version = `current_version_id` → `isCurrent: false` (`/api/verify`) and `fresh: false` (`/api/verify-package`) — both tested.
+
+**Scope / residual.** None for this finding. A legacy document with an EMPTY status, which PKG-4's pack gate still admits as "pre-status legacy data" (`lib/docPack.ts` `filterPackDocs`, document-control P8 FIELD's file), now verifies `not_issued` — the fail-safe side; the two disagree only for such rows.
+
 ---
 
 <a id="vfy-2"></a>
@@ -59,7 +73,7 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 ## VFY-2 · "Refresh pins" silently flips every already-printed work pack from red STALE to green PACK IS CURRENT — the tripwire is disarmed by a click, with the paper unchanged in the field
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:39-63`, `lib/workPackages.ts:192-228`, `app/(protected)/packages/page.tsx:108-128`, `lib/physicalBridge.ts:275`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a repo-wide grep for `printed_at`/`last_printed` finds nothing, so no data anywhere records what the paper says. One correction to the wording: it is not fully 'silent' — the confirm dialog (packages/page.tsx:112-114) and the success toast (:121) both say 'then re-print the pack so the paper matches'. The tripwire is still disarmed with no technical trace, so HIGH stands.
@@ -85,6 +99,21 @@ app/api/verify-package/route.ts:61 — `fresh: !retired && !!r.pinned_version_id
 - [ ] A scan of a package UUID with no print token returns a non-green 'cannot confirm which printing this is' state rather than computing freshness from live pins
 - [ ] Sheets present in the printed manifest but no longer in the package, and sheets in the package but not in the manifest, are both reported explicitly rather than silently folded into the live list
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY, on top of document-control `PKG-2` (2026-08-24), which landed done-when 1–2: the immutable `work_package_prints` snapshot, the `?print=<id>` cover QR, and a verdict computed against the RECORDED versions. Reproduced on `3a3203d`: a cover QR with no print id still computed freshness from the live pins (`app/api/verify-package/route.ts:75-82`) and painted "PACK IS CURRENT" — the PKG-2 test pinned exactly that ("legacy QR without a print id still uses the live pins") — and a print-keyed scan never compared the manifest with the package, so a sheet added since printing was invisible and a removed one still counted.
+- **A legacy QR is never green** (the fail-safe default, user-informed 2026-09-17; `DEC-44 (PS-VERIFY)`): verdict `unconfirmed_print` — grey "CAN'T CONFIRM WHICH PRINTING — … do not assume this pack is current"; each sheet reads `unconfirmed` with no "printed" rev (a live pin is not what was printed). What is true of every printing still shows: a held sheet makes the pack `held`, a voided one `stale`.
+- **The manifest against the package:** the route always reads the live membership; with a print it reports `addedSincePrint` (listed on the page as "Added to the package since printing — NOT in this pack") and marks a printed sheet no longer in the package `removed` ("REMOVED FROM PACKAGE"); either makes the pack `stale`.
+- Files: `app/api/verify-package/route.ts`, `lib/verifyPresent.ts`, `app/verify-package/[packageId]/page.tsx`.
+- Tests: `lib/__tests__/verifyPackageSnapshot.test.ts` "VFY-2 — the printed manifest, not the live package" (legacy never green even with the pin at current; a legacy scan still reports held / void; an added sheet is reported and the pack is not green; a removed sheet is marked `removed`). The PKG-2 legacy test is replaced — its assertion is the behaviour this finding retires.
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ (PKG-2) The printed cover carries a per-print token (`work_package_prints` row: package, printed_at, the {document, version} manifest); the QR encodes it.
+2. ✓ (PKG-2) `/api/verify-package` compares the PRINTED manifest against each document's current version; re-pinning cannot change the verdict.
+3. ✓ A scan with no print token returns the non-green "cannot confirm which printing this is".
+4. ✓ Sheets in the manifest but no longer in the package (`removed`) and in the package but not in the manifest (`addedSincePrint`) are both reported explicitly.
+
+**Scope / residual.** Packs printed before PKG-2 (2026-08-24) carry legacy QRs and now read grey until re-printed — intended (the default). A re-print records a new snapshot and a fresh QR.
+
 ---
 
 <a id="vfy-3"></a>
@@ -92,7 +121,7 @@ app/api/verify-package/route.ts:61 — `fresh: !retired && !!r.pinned_version_id
 ## VFY-3 · /verify/<docId> with no ?v= returns isCurrent:true unconditionally — and lib/downloads.ts stamps exactly that URL onto prints of documents with no current version
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:29-31,90`, `lib/downloads.ts:96-101`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-115`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and reachable (documents.current_version_id is nullable, schema.sql:144, while DocumentRecord.fileUrl is not, types/schema.ts:763, so a version-less document can still be printed). But 'unconditionally' is wrong — the docRetired guard at :89 still returns isCurrent:false for Superseded/Archived — and two of the four cited stamp sites actually GUARD against it: lib/docPack.ts:104-105 and app/api/share/file/route.ts:114-116 both emit `verifyUrl: undefined` when versionId is null rather than a bare /verify/<docId>. Only lib/downloads.ts produces the version-less URL, which narrows this to MEDIUM.
@@ -115,6 +144,21 @@ app/api/verify/route.ts:90 — `const isCurrent = !docRetired && (!versionId || 
 - [ ] buildVerifyUrl returns undefined when no version can be resolved, matching lib/docPack.ts:104 and app/api/share/file/route.ts:114, so no print is stamped with an unqualifiable QR
 - [ ] The page has no branch in which it prints 'Rev ?' next to a green CURRENT
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: `const isThisTheCurrentVersion = !versionId || versionId === d.current_version_id;` (`app/api/verify/route.ts:116`) — a doc-only QR read green; `buildVerifyUrl` returned `…/verify/<doc>` with no `?v=` when no version resolved (`lib/downloads.ts:131-133`).
+- `/api/verify`: no `?v=` — or a document with no current revision — → verdict `unverifiable` (grey "CAN'T CONFIRM THIS REVISION — this code does not say which revision was printed … do not assume it is"), `isCurrent: false`. The held / retired / not-issued verdicts still win: they are true of every print of the document.
+- `lib/downloads.ts` `buildVerifyUrl` returns `undefined` when no version resolves — no QR is stamped, the guard `lib/docPack.ts` and `app/api/share/file` already use. (The only change in that file.)
+- The page never prints "Rev ?" beside green: a green answer names the printed revision (falling back to the current label — the printed version IS the current one); an unknown rev renders "—" with "not stated on this code"; and the legacy fallback for a payload without `verdict` needs a printed revision before it paints green (`lib/verifyPresent.ts` `presentDocVerdict`).
+- Files: `app/api/verify/route.ts`, `lib/downloads.ts`, `lib/verifyPresent.ts`, `app/verify/[docId]/page.tsx`.
+- Tests: `verifyRouteVerdict.test.ts` "VFY-3 — a code with no ?v= never reads green" (Issued doc-only → `unverifiable`; Void / held still say so without `?v=`; no current revision → `unverifiable`); `lib/__tests__/verifyDoor.test.ts` "VFY-3 — buildVerifyUrl never stamps a document-only QR"; `verifyPresent.test.ts` (a legacy payload without a printed rev is not green; no blurb prints "Rev ?"; the page's Rev line).
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ A request with `doc` alone returns the distinct "cannot confirm which revision this print is" verdict, never `isCurrent: true` (a verdict rather than a 400, so a held or retired document still says so).
+2. ✓ `buildVerifyUrl` returns `undefined` when no version can be resolved.
+3. ✓ No branch prints "Rev ?" next to a green CURRENT.
+
+**Scope / residual.** Prints already stamped with a doc-only QR now read grey "can't confirm" (they read green) — the fail-safe direction. A doc-only request still returns the number and title; whether a private / hidden document's title should be withheld is intelligence `DACL-8`'s question, opened here as `VFY-16`.
+
 ---
 
 <a id="vfy-4"></a>
@@ -122,7 +166,7 @@ app/api/verify/route.ts:90 — `const isCurrent = !docRetired && (!versionId || 
 ## VFY-4 · "NOT YET IN EFFECT" drops hours early: /api/verify reimplements the effective-date comparison in server UTC instead of calling the repo's canonical local-date helper
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:91-94`, `lib/effectiveDate.ts:21-28`, `lib/docControlRegister.ts:187`, `supabase/migrations/20260819_effective_date.sql:17`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The divergence is real but the finding misdiagnoses the fix. effectiveStatusFor is RUNTIME-local, and this is a server route on a UTC host, so calling the canonical helper would compute the identical answer — the two only disagree because the register/badge call sites run in the browser (lib/docControlRegister.ts:187 uses the browser supabase client). A repo-wide grep for timezone/org-locale settings finds none, so there is no plant timezone to compare against; the actual defect is a one-day-boundary disagreement bounded by the UTC offset between the field page and the in-app badge. LOW.
@@ -147,6 +191,20 @@ app/api/verify/route.ts:91-94 — `// A published rev with a FUTURE effective da
 - [ ] The comparison is made against the org's configured plant timezone, not the host's, so a UTC deployment and a plant in UTC-6 agree
 - [ ] A test pins the clock to 19:30 local on the day before an effective date and asserts notYetEffective is true
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: `inForceNow && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10)` (`app/api/verify/route.ts:138-139`) — the server's UTC date.
+- `/api/verify` decides "not yet in effect" with `effectiveStatusFor(effectiveDate) === "pending"` (`lib/effectiveDate.ts`), whose "today" is `effectiveTodayISO()` — document-control P3 LIFECYCLE's one calendar (`REV-9`, DEC-63 §4): the facility's IANA zone named in `NEXT_PUBLIC_FACILITY_TIME_ZONE`, else UTC-12, which can only be late, never early. No parallel helper was created (the plan's `lib/effectiveDateCore.ts` is superseded by P3's module); the route no longer spells a UTC "today" (pinned by test). REV-9 records the swap.
+- The page's "comes into force <date>" line now formats the stored calendar DAY — it parsed "2026-03-02" as UTC midnight and printed 1 March anywhere west of UTC (`formatEffectiveDay`, `lib/verifyPresent.ts`).
+- Files: `app/api/verify/route.ts`, `lib/verifyPresent.ts`.
+- Tests: `verifyRouteVerdict.test.ts` "VFY-4 / REV-9 — 'not yet in effect' is decided in the facility's calendar …": the clock pinned to 19:30 America/Chicago on 1 March with an effective date of 2 March → `not_yet_effective` / `notYetEffective: true`; 00:30 local on 2 March → `current`; with no zone configured, 19:30 is still `not_yet_effective` (late, never early); the route source carries no UTC today. `verifyPresent.test.ts` `formatEffectiveDay`.
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `/api/verify` calls `effectiveStatusFor` from `lib/effectiveDate.ts` (through `effectiveTodayISO`) rather than open-coding the comparison.
+2. ✓ for the deployment's facility zone — a UTC host and a UTC-6 plant agree once the deployment names the plant's zone; with none named the answer is late by design, never early. A per-ORG zone (one deployment serving plants in different zones) is beyond P3's facility zone; per DEC-31 it is opened as `VFY-15`, not built here.
+3. ✓ A test pins the clock to 19:30 local on the day before the effective date and asserts `notYetEffective: true`.
+
+**Scope / residual.** Two limbs live elsewhere: every deployment setting `NEXT_PUBLIC_FACILITY_TIME_ZONE` (an operator step — document-control `REV-9`, which stays OPEN for it) and a per-org zone (`VFY-15`).
+
 ---
 
 <a id="vfy-5"></a>
@@ -154,7 +212,7 @@ app/api/verify/route.ts:91-94 — `// A published rev with a FUTURE effective da
 ## VFY-5 · /api/verify and /api/verify-package are blind to active holds — a document under a HOLD scans green while the hold card twenty feet away says the work is stopped
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-108`, `app/api/verify-package/route.ts:31-77`, `app/verify-hold/[holdId]/page.tsx:93-94`, `supabase/migrations/20260713_document_publish_guard.sql:70-79`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by reading both routes end to end. A hold blocks publication at the database level but is invisible to the two public endpoints the field actually scans, so a held drawing and its pack both render green while the printed hold card says stop.
@@ -174,6 +232,21 @@ grep -rn 'document_holds|hold' app/api/verify/route.ts app/api/verify-package/ro
 - [ ] /api/verify returns an activeHolds count for the document and the page renders amber (not green) when it is non-zero, naming the hold categories
 - [ ] /api/verify-package marks any sheet with an active hold as not-fresh, or reports holds as a separate non-green condition alongside staleness
 - [ ] The three public surfaces give consistent answers about the same document being held
+
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: document-control `DIST-2` (2026-08-24) made `/api/verify` hold-aware — a `held` verdict, red "ON HOLD — STOP WORK", fail-safe on a read error — but it read `.select("id").limit(1)`, so no count or category reached the page; `/api/verify-package` read no holds at all.
+- `/api/verify` reads every unreleased hold's `reason` and returns `activeHolds` (null when unreadable) and `holdReasons` — public CATEGORIES via `publicHoldReason` (operator text → "On hold"); the page names them ("under 2 active holds (Client Review, On hold)"). The colour stays DIST-2's red stop-work, stronger than the criterion's amber.
+- `/api/verify-package` reads holds ONCE for every printed sheet (an unreadable hold state holds every sheet); a held sheet reads `held` with its categories ("ON HOLD · Client Review") and the pack `held` ("PACK ON HOLD — STOP WORK").
+- `/api/verify-hold` now reports the document's other active holds (`VFY-10`), so all three surfaces agree: a held document is never green on any of them.
+- Files: `app/api/verify/route.ts`, `app/api/verify-package/route.ts`, `app/api/verify-hold/route.ts`, `lib/verifyPresent.ts`, the three pages.
+- Tests: `verifyRouteVerdict.test.ts` "VFY-5 — the hold's public categories are named; operator text never is"; `verifyPackageSnapshot.test.ts` "HLD-3 / PHYS-1 / VFY-5 …" (held sheet + category, released hold ignored, legal hold, unreadable → held); `lib/__tests__/verifyHold.test.ts`.
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `/api/verify` returns the active-hold count and the categories; the page renders a non-green held verdict naming them (red, by DIST-2's stop-work design).
+2. ✓ `/api/verify-package` marks a held sheet with its own label and the pack non-green.
+3. ✓ The three public surfaces give consistent answers about a held document.
+
+**Scope / residual.** None here. The printed-copy footer's hold line is document-control P8 FIELD's (`PHYS-1` done-when 4).
 
 ---
 
@@ -206,6 +279,21 @@ app/api/verify-hold/route.ts:55 — `reason: (h.reason as string) ?? null,`  |  
 - [ ] The response returns the reason only when it matches the predefined picker vocabulary; a custom reason is reported as a generic category ('Other') to unauthenticated callers
 - [ ] Either the reason column is split into reason_code (constrained) plus reason_text (never public), or the free-text path is closed
 - [ ] The route comment is corrected to describe what is actually disclosed, including that docLabel falls back to the document title
+
+**Partial (2026-10-01, public-surfaces Round F).** PS-VERIFY. The payload half landed at document-control P5 HOLDS (`HLD-7`, 2026-09-23): `/api/verify-hold` returns `reason` only as a predefined category (`publicHoldReason`, otherwise "On hold"), and the route comment says what is disclosed, title fallback included. This pass:
+- **The wording HLD-7 left to this package:** the route adds `reasonWithheld` (true when the stored reason was operator text) and the page renders such a reason as "Not shown online — read it on the printed tag" instead of a "Reason: On hold" that is not a reason. `PUBLIC_HOLD_REASON_FALLBACK` is unchanged.
+- **One rule for every hold a public surface names:** `/api/verify` (`holdReasons`), `/api/verify-package` (per-sheet `holdReasons`) and `/api/verify-hold`'s other active holds (`otherHoldReasons`) all publish categories only.
+- **HLD-7's page residual:** the hold page shows "Held at Rev N — the document is now at Rev M" when the held and current revs differ (`heldRev`).
+- Files: `app/api/verify-hold/route.ts`, `app/verify-hold/[holdId]/page.tsx`, `lib/verifyPresent.ts`.
+- Tests: `lib/__tests__/verifyHold.test.ts` "VFY-6 — operator text never leaves; the page is told it was withheld"; `verifyPresent.test.ts` (the page's withheld line and the held-vs-current rev); `lib/__tests__/holds.test.ts` HLD-7 key set updated for the new fields (still no notes, no names).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when (this pass).**
+1. ✓ (HLD-7) A custom reason reaches an unauthenticated caller only as a generic category; the page says it is not shown online.
+2. ✗ Not done — neither split nor closed: `document_holds.reason` is still one free-text column and the picker's "Other…" still writes it. The payload guarantee holds (no route publishes it), but the structural guarantee the criterion asks for is a schema / picker change in the holds fleet's files (`components/documents/HoldStrip.tsx`, a migration), not this package's.
+3. ✓ (HLD-7) The route comment describes what is disclosed, including the title fallback.
+
+**Scope / residual.** Stays OPEN for done-when 2 — the holds fleet: `reason_code` (constrained) + `reason_text` (never public), or close the "Other…" path.
 
 ---
 
@@ -240,6 +328,16 @@ app/d/[number]/route.ts:20 — `const norm = raw.toLowerCase().replace(/[^a-z0-9
 - [ ] More than one exact normalized match renders a chooser instead of picking by updated_at
 - [ ] The query is scoped to the caller's org (which also closes the cross-tenant half of DACL-3)
 
+**Partial (2026-10-01, public-surfaces Round F).** Record-only — no code in this package (`app/(protected)/documents/page.tsx` and `lib/search.ts` are not PS-VERIFY's files). Verified at `3a3203d`: roles-and-permissions `EGRESS-2` (commit `67e6bdd`) rebuilt `/d/[number]` to do no database work — it bounds the input and forwards the raw number to `/documents?d=` (`app/d/[number]/route.ts:20-31`) — and the protected documents page resolves it CLIENT-SIDE under the caller's RLS with `searchDocuments({ orgId: activeOrgId, query: raw, limit: 25 })` and an exact normalized match, else a pre-filled search (`app/(protected)/documents/page.tsx:93-120`).
+
+**Done-when (this pass).**
+1. ◐ The candidate query is the app's own org-scoped search (`lib/search.ts` `searchDocuments`: full-text, then an ILIKE fallback on the raw string) — no normalized column or expression, so a number typed with different separators can still miss and land on the search page (no wrong target; the "punctuation-forgiving" promise is only as good as the search).
+2. ✓ No `?? rows[0]` fallback: zero exact normalized matches → the search page, never a redirect to a partial match.
+3. ✗ Two exact normalized matches → `rows.find(…)` silently takes the first (newest-updated); there is no chooser.
+4. ✓ Org-scoped: `activeOrgId` + RLS; the route holds no service-role client (`lib/__tests__/shortLinkRoute.test.ts`).
+
+**Scope / residual.** Stays OPEN for done-when 1 and 3 — the client-side resolver in `app/(protected)/documents/page.tsx` (with `lib/search.ts` for a normalized candidate match). No package in the current fleet plans owns that change; the integrator assigns it.
+
 ---
 
 <a id="vfy-8"></a>
@@ -247,7 +345,7 @@ app/d/[number]/route.ts:20 — `const norm = raw.toLowerCase().replace(/[^a-z0-9
 ## VFY-8 · A CLOSED work package still scans green "PACK IS CURRENT" — the verdict ignores packageStatus and closed_at entirely
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:65-76`, `app/verify-package/[packageId]/page.tsx:57-59,89-101`, `app/(protected)/packages/page.tsx:130-147`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The verdict-ignores-closure part is true, but 'ignores packageStatus and closed_at entirely' is not: page.tsx:97 appends `{result.closed ? " (This package has been closed.)" : ""}` to the sentence directly under the headline, so closure IS disclosed on the same screen. The green banner is also literally accurate — every sheet still is the current revision. That mitigation drops this to LOW.
@@ -270,6 +368,19 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 - [ ] packageStatus and closed drive the headline and background, not a trailing parenthetical
 - [ ] The verdict acknowledges that a closed package's pins are no longer monitored, so freshness is not evidence
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: `allFresh: !snapshotMissing && sheets.length > 0 && staleCount === 0` (`app/api/verify-package/route.ts:116`) ignored `closed_at` / `status`, and the page's colour read only `allFresh` — closure was a trailing parenthetical.
+- `/api/verify-package` computes `closed = !!closed_at || status === "closed"` and returns verdict `closed` ahead of every freshness verdict (only an unreadable print record outranks it). The page paints it slate — "PACKAGE CLOSED — DO NOT WORK FROM IT" — with "This work package has been closed. Its pins stopped being monitored when it closed, so freshness here proves nothing." and the advice "A closed package is retired: its drawings are no longer watched, so its sheet list is not evidence that anything is current…".
+- Files: `app/api/verify-package/route.ts`, `lib/verifyPresent.ts`, `app/verify-package/[packageId]/page.tsx`.
+- Tests: `verifyPackageSnapshot.test.ts` "VFY-8 / VFY-11 — closed and empty packs have their own verdicts" (`closed_at` set; `status` alone); `verifyPresent.test.ts` "VFY-8".
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ A closed package has its own non-green verdict regardless of pin freshness.
+2. ✓ `closed` drives the headline and the background.
+3. ✓ The verdict says a closed package's pins are no longer monitored, so freshness is not evidence.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="vfy-9"></a>
@@ -277,7 +388,7 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 ## VFY-9 · A never-issued DRAFT scans GREEN "CURRENT" — /api/verify has no concept of "issued", only of "not superseded"
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:89-90,103-106`, `app/verify/[docId]/page.tsx:99-110`, `lib/downloads.ts:52-68`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the only retirement test is Superseded/Archived, so a document whose status is Draft (or 'In Review', or 'Void' — all offered in components/documents/MetadataEditor.tsx:9 and BulkEditModal.tsx:32) with current_version_id set returns isCurrent:true, and app/verify/[docId]/page.tsx:99 renders 'CURRENT' on emerald with 'This print matches the current revision.' The narrated scenario is slightly off — a submit-for-review draft lands in pending_version_id, not current_version_id (lib/revisions.ts:1550, app/api/intake/upload/route.ts:330), so that particular version scans RED — but the template-filing path above produces exactly the claimed Draft-scans-green state, and Void scanning green is the same hole.
@@ -300,6 +411,20 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 - [ ] A Draft or In Review document produces a distinct non-green verdict ('NOT ISSUED — this is not an approved revision'), not the red superseded copy and not green
 - [ ] docStatus is surfaced on the page in every branch, so the field can see what state the document is actually in
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: DIST-2 had given Draft its own verdict, but the deny-list fall-through (`else verdict = "current"`) still let "In Review", NULL or any unknown status read green, and the page showed `docStatus` in no branch.
+- The allow-list (`VFY-1`): anything outside Issued / Locked reads `draft` ("DRAFT — NOT ISSUED") or `not_issued` ("NOT ISSUED — DO NOT USE … not an issued, controlled revision (In Review)") — distinct from the red superseded copy, never green.
+- The facts card shows "Document status: <docStatus>" ("Not recorded" when empty; "· on hold" when held) in every branch.
+- Files: `app/api/verify/route.ts`, `lib/verifyVerdict.ts`, `lib/verifyPresent.ts`, `app/verify/[docId]/page.tsx`.
+- Tests: `verifyRouteVerdict.test.ts` "VFY-1 / VFY-9 …"; `verifyPresent.test.ts` (the not-issued blurb names the status; the page's status line).
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `isCurrent` is an allow-list over Issued / Locked.
+2. ✓ Draft and In Review produce distinct non-green "not issued" verdicts.
+3. ✓ `docStatus` is on the page in every branch.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="vfy-10"></a>
@@ -307,7 +432,7 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 ## VFY-10 · A released HOLD card scans green "this tag can come down" while other holds on the same document are still active — the endpoint has document_id in hand and never asks
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-hold/route.ts:28-32,54`, `app/verify-hold/[holdId]/page.tsx:92-95`, `supabase/migrations/20260612_phase5_holds.sql:20-24`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the endpoint has document_id in hand and never asks about sibling holds, and multiple concurrent holds are an explicit design goal. But the card is printed per hold (lib/physicalBridge.ts:150-171 stamps one `reason` and one holdId per card) and its own footer at :168 says 'A released hold shows GREEN when scanned — then this tag comes down', so 'this tag can come down' is literally true for that tag; the other hold's card is still hanging and still scans red. Missing-context enhancement rather than a wrong verdict — LOW.
@@ -330,6 +455,21 @@ app/api/verify-hold/route.ts:54 — `active: !h.released_at,`  |  app/api/verify
 - [ ] The page renders amber, not green, when this hold is released but siblings remain — with copy along the lines of 'this hold is released, but N other holds are still active on this document; leave the equipment tagged'
 - [ ] The green 'this tag can come down' copy is reachable only when zero holds are active on the document
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY — one fix with `PHYS-10`. Reproduced on `3a3203d`: `active: !h.released_at` from the single row (`app/api/verify-hold/route.ts:66`), no sibling read, and green "this tag can come down" on any released card.
+- `/api/verify-hold` reads every unreleased hold on the document (filtered by id in code, so the count can never include this hold) and returns `otherActiveHolds` (null when unreadable), `otherHoldReasons` (categories) and a verdict: `active` / `released_others_active` / `released_others_unknown` / `released`.
+- The page (`presentHoldVerdict`, `lib/verifyPresent.ts`): green "RELEASED — … no other hold is active on this document — this tag can come down" ONLY for `released`; amber "RELEASED — DOCUMENT STILL ON HOLD — This hold is released, but N other holds are still active on this document (…). Do not advance it, and leave the equipment tagged until every hold is released." when siblings remain; amber "RELEASED — CHECK OTHER HOLDS" when they could not be read; a missing or unknown verdict is never green.
+- The printed card says the same (`lib/physicalBridge.ts` `HOLD_CARD_SCAN_LINES`, `PHYS-10` done-when 3).
+- Files: `app/api/verify-hold/route.ts`, `app/verify-hold/[holdId]/page.tsx`, `lib/verifyPresent.ts`, `lib/physicalBridge.ts`.
+- Tests: `lib/__tests__/verifyHold.test.ts` "VFY-10 / PHYS-10 — green only when no hold at all remains on the document" (sibling counted and named; nothing else → `released`; an active hold never counts itself; sibling read failure → `released_others_unknown`; hold read failure → 503); `verifyPresent.test.ts` "presentHoldVerdict …" ("this tag can come down" only in `released`); `verifyDoor.test.ts` "VFY-10 / PHYS-10 — the hold card says what the scan answers" (each line fits left of the QR at 9pt, measured with pdf-lib's Helvetica metrics).
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ The route returns the other active holds' count and categories.
+2. ✓ Released-with-siblings renders amber with "leave the equipment tagged".
+3. ✓ "This tag can come down" is reachable only when zero holds are active on the document.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="vfy-11"></a>
@@ -337,7 +477,7 @@ app/api/verify-hold/route.ts:54 — `active: !h.released_at,`  |  app/api/verify
 ## VFY-11 · An empty work package scans full-screen red "PACK IS STALE — 0 of 0 sheets changed since this pack was printed"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-package/route.ts:73`, `app/verify-package/[packageId]/page.tsx:89-101,116-118`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The '0 of 0' red screen is real and reads as nonsense. Severity is overstated: the failure direction is fail-closed (stop work), and the same page prints an accurate corrective line inside the card — page.tsx:118-120 `{result.sheets.length === 0 && (<div ...>This package has no sheets.</div>)}` — so the crew is not told a stale sheet exists that they must go find. Copy/verdict-taxonomy defect, LOW.
@@ -358,6 +498,19 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 - [ ] The '0 of 0 sheets changed' sentence is unreachable
 - [ ] The red STOP treatment is reserved for a package with at least one sheet that is actually stale or retired
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: an empty package failed `sheets.length > 0` and rendered red "PACK IS STALE — 0 of 0 sheets changed since this pack was printed".
+- Verdict `empty` for a print with no sheets or a legacy package with no members — slate "NO SHEETS IN THIS PACK — This package records no sheets, so there is nothing to verify." It precedes `stale`, and the stale sentence prints a count only when it is non-zero.
+- Files: `app/api/verify-package/route.ts`, `lib/verifyPresent.ts`, `app/verify-package/[packageId]/page.tsx`.
+- Tests: `verifyPackageSnapshot.test.ts` "an empty print and an empty legacy package are 'empty' — never the red '0 of 0' stale"; `verifyPresent.test.ts` "VFY-11".
+- Reproduced / verified: the new route tests were run against the base routes (the three route files stashed): 55 of 67 failed; all pass after. `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Zero sheets → its own verdict, colour and headline.
+2. ✓ The "0 of 0 sheets changed" sentence is unreachable.
+3. ✓ Red is reserved for `stale` (at least one sheet changed, withdrawn, not issued, missing or removed — or a sheet added since printing) and `held`.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="vfy-12"></a>
@@ -365,7 +518,7 @@ app/api/verify-package/route.ts:73 — `allFresh: sheets.length > 0 && staleCoun
 ## VFY-12 · None of the four public endpoints is rate limited or leaves any record that a scan happened — while /api/auth/signup, the one other unauthenticated route, has both
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:22-31`, `app/api/verify-hold/route.ts:17-25`, `app/api/verify-package/route.ts:21-29`, `app/api/verify-ticket/route.ts:38-49`, `app/api/auth/signup/route.ts:6-33`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. The enumeration premise also checks out: app/d/[number]/route.ts is unauthenticated, queries with `supabaseAdmin` (service role, RLS bypassed) on a cross-tenant `ilike` over document_number (:26-32) and redirects with `dest.searchParams.set("doc", match.id)` (:45) — a free document-number-to-UUID oracle feeding /api/verify.
@@ -389,6 +542,24 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 - [ ] The retention/export tables account for the new scan table
 - [ ] No new vercel.json cron entry is introduced — a third entry fails deployment on this plan (app/api/cron/maintenance/route.ts:286-291); any pruning rides the existing maintenance route
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: none of the four routes imported anything beyond `next/server`, `@supabase/supabase-js` and (verify-hold) `lib/holds`; no counter, no insert.
+- `lib/verifyRateLimit.ts` (new): `checkVerifyRate` counts the caller's `verify_scans` rows in the last hour (the `signup_attempts` / `intake_attempts` pattern; `clientIp` reused from `lib/intakeRateLimit.ts`). Default **1200 per IP per hour** (`VERIFY_MAX_PER_IP_HOUR` overrides) — sized for a crew behind one plant NAT address re-checking a pack, not a script. FAILS OPEN on a read error or a missing table, and never limits an unknown IP. A capped scan gets 429 + `Retry-After: 300` and a fail-safe message ("treat the paper as unverified …") that the pages show on their "Can't verify" screen; it writes no row, so one address adds at most the cap per hour.
+- `lib/verifyScanLog.ts` (new): `recordVerifyScan` writes one row per answered scan — `endpoint`, `target_id` (the UUID the QR carried; null for a malformed code), the `verdict` shown (or `invalid` / `unknown` / `error`), `ip`, `user_agent`; bounded lengths; checked (`{ error }`) but never blocking; the missing table is logged once per runtime as the deploy order. All four routes: cap → validate → read → record → answer — invalid and unknown codes are recorded too, so an enumeration is visible.
+- Migration `20261134_ps_roundF_verify_scans.sql`: `verify_scans` (RLS on, NO policies, anon / authenticated table grants revoked; indexes `(ip, created_at)`, `(target_id, created_at)`, `(created_at)`) and `prune_verify_scans()` — 90 days, SECURITY INVOKER (no definer rights, so DRLS-16's NULL-uid shape cannot arise), `SET search_path = public`, EXECUTE revoked from PUBLIC / anon / authenticated, granted to `service_role`. One paste: a TEMP before-apply inventory (counts only: table / function / policies already present), `BEGIN … COMMIT`, one final `SELECT (check, ok, n)`. Not widening; re-creates nothing.
+- The ONE prune step on the existing maintenance cron (step 4d; no-op until the function exists; no new `vercel.json` entry); a `lib/schemaExpectations.ts` row; `lib/exportTables.ts` `EXPORT_EXCLUDED_TABLES.verify_scans` with its reason (the export-coverage tripwire requires one for every CREATE TABLE — a one-row edit outside the plan's file list, declared to the integrator).
+- Files: `lib/verifyRateLimit.ts`, `lib/verifyScanLog.ts`, the four `app/api/verify*/route.ts`, `supabase/migrations/20261134_ps_roundF_verify_scans.sql`, `app/api/cron/maintenance/route.ts`, `lib/schemaExpectations.ts`, `lib/exportTables.ts`.
+- Tests: `lib/__tests__/verifyRateLimit.test.ts` (cap, window query, fail-open, unknown IP, no-store answers, row shape, once-per-runtime deploy-order log, never throws); `verifyRouteVerdict.test.ts` "VFY-12 / VFY-13 …" (row from `x-forwarded-for` / `user-agent`; invalid and unknown recorded; 429 at the cap with no row; fail-open; 503 on a read error); scan rows in `verifyPackageSnapshot.test.ts` and `verifyHold.test.ts`; `lib/__tests__/verifyDoor.test.ts` "VFY-12 — migration 20261134 …" (one-paste shape, columns, RLS / no policy / revokes, prune invoker + pinned + grants, the prosrc probe's quoting, nothing earlier re-created, one cron step, schema and export rows). The `dcHotfixAnonExecute`, `searchPathPin`, `migrationSourceOfTruth`, `exportCoverage` and `schemaExpectations` suites pass with the new file.
+- Pending migration: `supabase/migrations/20261134_ps_roundF_verify_scans.sql` (not applied). Until it is pasted every scan is still answered; nothing is recorded or capped, and the routes log the deploy order once per runtime.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Each verify endpoint applies a per-IP cap in the signup_attempts pattern, fail-open on a missing table, sized for field use.
+2. ✓ Every answered scan writes a row (endpoint, target id, verdict, ip, timestamp — and user agent, per the 2026-09-17 default).
+3. ✓ The export coverage excludes the table with a reason, schema health expects it, and the 90-day prune is its retention.
+4. ✓ No new `vercel.json` cron entry — the prune rides the existing maintenance route.
+
+**Scope / residual.** The rows carry no org (derivable from the target) and are readable by the service role only — there is no in-app viewer; an operator reads them in SQL. The code half is RESOLVED; the record is live only once `20261134` is pasted (DEC-30).
+
 ---
 
 <a id="vfy-13"></a>
@@ -396,7 +567,7 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 ## VFY-13 · The public verify pages are indexable and carry no robots directive, and the four verdict endpoints send no cache directive of their own
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/layout.tsx:20-40`, `app/verify/[docId]/page.tsx`, `app/verify-package/[packageId]/page.tsx`, `app/api/verify/route.ts:96-108`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both assertions are literally true. Impact is smaller than MEDIUM: all four verify pages are client components that fetch their data from /api/verify* after hydration, so the HTML a crawler is served contains no document number, title or rev — only the URL, which by hypothesis the leaker already had; and package.json pins `"next": "^16.1.0"`, where a route handler reading `req.nextUrl.searchParams` is dynamic and is served uncached with a no-store default, so the missing hand-written Cache-Control carries little practical risk.
@@ -419,6 +590,20 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 - [ ] The four API routes set an explicit Cache-Control: no-store rather than relying on framework defaults, so no intermediary caches a revision verdict
 - [ ] A check confirms none of these paths appears in any generated sitemap
 
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: no `app/robots.ts`, no robots metadata on any verify segment, and no `dynamic` export or Cache-Control on any of the four routes.
+- All four routes `export const dynamic = "force-dynamic"` and answer only through `verifyJson` (`lib/verifyRateLimit.ts`) — `Cache-Control: no-store` on every answer, errors and 429 included (this is also public-surfaces `OFF-1` done-when 3); the three pages fetch with `cache: "no-store"`.
+- `app/verify/layout.tsx`, `app/verify-package/layout.tsx`, `app/verify-hold/layout.tsx`, `app/verify-ticket/layout.tsx` (new): `robots: { index: false, follow: false, nocache: true }`.
+- `app/robots.ts` (new): disallows `/verify/`, `/verify-hold/`, `/verify-package/`, `/verify-ticket/`, `/d/`, `/api/verify`.
+- Tests: `verifyDoor.test.ts` "VFY-13 …" (each route's `dynamic`, no bare `NextResponse.json`, the cap and the scan wired; the four layouts' metadata; the robots disallow list; no sitemap lists these paths); `Cache-Control` asserted in the three route suites.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Both: the four segments carry robots noindex/nofollow, and `app/robots.ts` disallows the scan surfaces and `/d`.
+2. ✓ The four API routes send an explicit `Cache-Control: no-store`.
+3. ✓ No sitemap exists; the test fails if one lists these paths.
+
+**Scope / residual.** The verification label stays SUSPECTED (discovery of a leaked URL is unobservable from the repo). The service worker's own cache — `OFF-1` done-when 1, 2 and 4 — is PKG-1 SW-OFFLINE's.
+
 ---
 
 <a id="vfy-14"></a>
@@ -426,7 +611,7 @@ grep -rn 'audit|logEvent|recordIntent|insert(' app/api/verify app/api/verify-hol
 ## VFY-14 · The verify routes over-select the exact fields they promise not to disclose, one careless spread away from publishing them
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/verify-hold/route.ts:29,35`, `app/api/verify/route.ts:36,56`, `app/api/verify-ticket/route.ts:51`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Nothing is disclosed today — every route hand-builds its JSON, and the `h as Record<string, unknown>` cast at verify-hold:34 is the only place a spread would be easy. The claim is true for verify-hold but over-generalized to 'the verify routes', and it describes a hypothetical future refactor rather than a present defect, so LOW (defensive-coding hardening) rather than MEDIUM.
@@ -452,5 +637,85 @@ app/api/verify-hold/route.ts:29 — `.select("id, document_id, reason, notes, op
 - [ ] revision_count is either used in the ticket verdict or dropped from the select
 
 *Cross-area note (2026-09-30, intelligence Round G): handed over from intelligence `DACL-8` (and `DACL-3` criterion 3) — no verify route checks visibility. The default carried with it: for a private or hidden document answer "current / superseded" without the number or title (fail-safe, less disclosure). DACL-8 also asks `/api/verify` to require the version id or a per-print token. No VFY finding covers the private / hidden refusal and PS-VERIFY's plan does not list it yet; the integrator adds it (or public-surfaces opens a VFY finding).*
+
+**Resolution (2026-10-01, public-surfaces Round F).** PS-VERIFY. Reproduced on `3a3203d`: `/api/verify` selected `superseded_at` on the document (`:37`) and the printed version (`:76`) and used neither; `/api/verify-hold` widened its row to `Record<string, unknown>` (`:42`); `/api/verify-ticket` selected `revision_count` (`:75`) and never read it. (The hold route's notes / names were already out of its select — P5 `HLD-7`.)
+- `/api/verify` selects `id, document_number, title, name, rev, status, current_version_id, legal_hold`, the printed version's `revision_label, created_at, record_id` and the holds' `reason` — each row an explicit interface.
+- `/api/verify-hold`: `HoldRow` / `DocLabelRow` / `SiblingRow` interfaces — no `Record<string, unknown>`, so a `...hold` spread cannot compile a column into the response.
+- `/api/verify-package`: typed rows for every read.
+- `/api/verify-ticket`: `revision_count` dropped from the select and the row type; its verdict (drafting-flow's) is untouched.
+- Tests: `verifyRouteVerdict.test.ts` "VFY-14 — the route selects only what it uses"; `verifyHold.test.ts` "VFY-14 …"; `verifyDoor.test.ts` "VFY-14 — verify-ticket selects only what it reads"; `lib/__tests__/sweepRoundE_A.test.ts`'s verify-ticket verdict tests pass unchanged.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Each route selects only what its verdict or its response uses (`record_id`, `status`, `legal_hold`, `current_version_id` are read for the verdict and never returned).
+2. ✓ Rows are explicit interfaces.
+3. ✓ `revision_count` is dropped from the ticket select.
+
+**Scope / residual.** The cross-area note above (intelligence `DACL-8`: no verify route checks visibility) is opened as `VFY-16`; it is not in this package's plan.
+
+---
+
+<a id="vfy-15"></a>
+
+## VFY-15 · Effective dates are decided in ONE deployment-wide facility zone — a deployment whose orgs run plants in different zones has no per-org calendar, so "NOT YET IN EFFECT" can lift early for one org's field scans
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/effectiveDate.ts` (`effectiveDateTimeZone`, `effectiveTodayISO`, `effectiveStatusFor`, `scanEffectiveDates`), `app/api/verify/route.ts` (the `effectiveStatusFor` call)
+- **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) from `VFY-4` done-when 2 ("the org's configured plant timezone"), per DEC-31; verified against the branch, not yet challenged by a second party.
+
+**Mechanism.** Document-control P3 LIFECYCLE (`REV-9`, DEC-63 §4) made one calendar decide "in effect" everywhere — the badge, the suppression watermark, the daily scan and, since PS-VERIFY, `/api/verify`: `effectiveDateTimeZone()` reads `NEXT_PUBLIC_FACILITY_TIME_ZONE` (one IANA zone per DEPLOYMENT), else UTC-12. There is no org or library zone column, and nothing passes an org to the resolver. A deployment that serves more than one org can name only one zone, so every other org's effective dates are decided in a calendar that is not its plant's.
+
+**Failure scenario.** One deployment hosts a Houston org and a Perth org and is configured `America/Chicago`. A Perth procedure is made effective 2 March for a training on 1 March. The Perth crew scans the print at 09:00 on 2 March local (19:00 on 1 March in Chicago): the verify page still says "NOT YET IN EFFECT" — late, the safe side. The mirror case is the unsafe one: a deployment configured for Perth serving a Houston org lifts the banner on a Houston procedure effective 2 March at 10:00 on 1 March Houston time — fourteen hours early. (With no zone configured the fallback is UTC-12, which is never early anywhere — only late.)
+
+**Evidence.**
+
+```
+lib/effectiveDate.ts — effectiveDateTimeZone(): const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim(); … return raw;  (no org argument)
+app/api/verify/route.ts — else if (effectiveStatusFor(effectiveDate) === "pending") verdict = "not_yet_effective";
+DEC-63 §4 Reversal (4): "An org / library zone setting replaces the deployment variable."
+```
+
+**Done when.**
+
+- [ ] An org (or library) time-zone setting exists, and the resolver takes the document's org and prefers that setting over the deployment variable (DEC-63 §4, reversal 4 — "changes `effectiveDateTimeZone()` and nothing else")
+- [ ] `/api/verify`, the badge, the suppression watermark and the daily scan pass the document's org to the resolver
+- [ ] A test pins two orgs in different zones deciding the same effective date differently at the same instant
+
+**Owner.** Unassigned — a settings column plus a resolver signature change across the four callers (document-control P3's module); not built in PS-VERIFY (DEC-31).
+
+---
+
+<a id="vfy-16"></a>
+
+## VFY-16 · The public verify endpoints answer for a private or hidden document with its number and title — no verify route reads `documents.visibility` (intelligence `DACL-8` / `DACL-3` criterion 3, handed over)
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/api/verify/route.ts` (the `documents` select and the `docNumber` / `title` response fields), `app/api/verify-package/route.ts` (each sheet's `label`), `app/api/verify-hold/route.ts` (`docLabel`)
+- **Independently verified:** — opened 2026-10-01 by public-surfaces Round F (PS-VERIFY) so the intelligence handover on `VFY-14` is a finding rather than a note (DEC-31: not in PS-VERIFY's plan, not built here); re-read against the branch, not yet challenged by a second party.
+
+**Mechanism.** The three document-bearing verify routes select by UUID with the service role and never read `documents.visibility` (or the ACL index). `/api/verify` returns `docNumber` and `title`, `/api/verify-package` labels every sheet `document_number || title || name`, `/api/verify-hold` returns `docLabel` with the same fallback. The UUID is the only authorization — by design for a field scan (`PHYS-4`, WONTFIX) — but a private or hidden document's title is then disclosed to whoever holds its UUID, which intelligence `DACL-8` asks to stop.
+
+**Failure scenario.** A hidden document (an incident investigation drawing) appears in a work pack that leaves site on a contractor's traveler. The cover's print QR lists the sheet's number and title to anyone who scans it.
+
+**Evidence.**
+
+```
+app/api/verify/route.ts — .select("id, document_number, title, name, rev, status, current_version_id, legal_hold") … docNumber: d.document_number || d.name || null, title: d.title || null
+app/api/verify-package/route.ts — label: labelOf(s.document_id, s.label)  →  document_number || title || name || the snapshot label
+app/api/verify-hold/route.ts — docLabel = String(d.document_number || d.title || d.name || "")
+grep -n "visibility" app/api/verify*/route.ts → no match
+```
+
+**Done when.**
+
+- [ ] For a private or hidden document the verify routes answer the verdict without the number or title (the default `DACL-8` carried: fail-safe, less disclosure) — `/api/verify`, each pack sheet, and the hold's document label
+- [ ] A test pins it on all three routes, including an unreadable visibility (treated as hidden)
+- [ ] `DACL-8` criterion 1 and `DACL-3` criterion 3 are closed by pointer
+
+**Owner.** Unassigned — the integrator assigns it (the verify routes are PS-VERIFY's files this round; this pass did not take it because the plan does not list it).
 
 ---

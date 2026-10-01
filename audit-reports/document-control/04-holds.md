@@ -145,7 +145,7 @@ lib/documentLifecycle/common.ts:351-364 — `const { data: insertedHold, error }
 ## HLD-3 · The field-verification QR surfaces are hold-blind: /api/verify flashes green "CURRENT" and /api/verify-package flashes "all fresh" for a document under an active stop-work hold
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-39`, `app/api/verify/route.ts:89-108`, `app/verify/[docId]/page.tsx:65`, `app/verify/[docId]/page.tsx:99`, `app/api/verify-package/route.ts:47-74`, `lib/docPack.ts:100-105`, `lib/physicalBridge.ts:275-281`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both public field-verification surfaces are hold-blind, confirmed by full-file inspection rather than inference. The QR that lands on the hold-blind page is stamped by lib/docPack.ts:100-105 (`verifyUrl: ${publicOrigin()}/verify/${d.id}?v=${versionId}`) and lib/physicalBridge.ts:275-281, so the print that a held drawing produces actively points the field at the green answer.
@@ -167,6 +167,19 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 - [ ] /api/verify queries document_holds for the doc and returns an `onHold` flag plus the hold reasons; the verdict page renders a distinct HOLD state (red, "DO NOT USE — WORK STOPPED") that outranks isCurrent
 - [ ] /api/verify-package does the same per sheet and forces allFresh:false when any member document carries an active hold
 - [ ] A test asserts that a document whose version matches current but which has an unreleased document_holds row returns a non-green verdict from both routes
+
+**Resolution (2026-10-01, public-surfaces Round F).** Record-only for this area — the `/api/verify` half is `DIST-2` (2026-08-24), the `/api/verify-package` half is public-surfaces PS-VERIFY (`VFY-5` / `PHYS-1`), which owns the verify routes this round; verified at the branch:
+- `/api/verify` (`DIST-2`): `legal_hold` or an unreleased `document_holds` row → verdict `held`, red "ON HOLD — STOP WORK", outranking `current`; an errored hold read is `held`. PS-VERIFY added the count and the public categories (`activeHolds`, `holdReasons` — operator text published only as "On hold").
+- `/api/verify-package` (PS-VERIFY): ONE `document_holds` read for every printed sheet; a held sheet reads `held` with its own label and categories, the pack `held` (never `allFresh`); an unreadable hold state holds every sheet.
+- Tests: public-surfaces `lib/__tests__/verifyRouteVerdict.test.ts` (an active hold overrides a current Issued version; legal hold; hold-read error → held; categories) and `lib/__tests__/verifyPackageSnapshot.test.ts` "HLD-3 / PHYS-1 / VFY-5 …" (held sheet at the current version → `held`; released hold ignored; legal hold; unreadable → every sheet held).
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `/api/verify` returns `onHold` and the hold categories; the HOLD verdict outranks current (`DIST-2` + PS-VERIFY).
+2. ✓ `/api/verify-package` does the same per sheet and is never `allFresh` with a held sheet (PS-VERIFY).
+3. ✓ Both routes are tested non-green for a current-version document with an unreleased hold.
+
+**Scope / residual.** None. The print-path hold mark (download footer, doc pack) is `HLD-1` / `HLD-4` — P8 FIELD.
 
 ---
 
@@ -537,7 +550,7 @@ supabase/migrations/20260822_review_completion_guard.sql:21-22 — `CREATE OR RE
 ## HLD-13 · The printed equipment QR label promises "SCAN: drawings · holds · report a problem" but targets the login-walled /assets/[tag] route — the one printed artifact that advertises hold visibility in the field is the one that cannot be scanned by field staff
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/physicalBridge.ts:84`, `lib/physicalBridge.ts:99`, `app/(protected)/assets/[tag]/page.tsx:1`, `app/(protected)/layout.tsx:27-45`, `lib/physicalBridge.ts:219-221`, `lib/physicalBridge.ts:272-275`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the two other printed artifacts were explicitly repointed to unauthenticated /verify-* pages and the equipment label was not. One detail is imprecise — there is no middleware and no explicit redirect, so an anonymous scanner gets the app shell with an empty asset page rather than a literal sign-in screen; the outcome (no drawings, no hold badge for field staff) is the same.
@@ -559,6 +572,16 @@ lib/physicalBridge.ts:84 — `const url = \`${origin()}/assets/${encodeURICompon
 - [ ] The equipment label QR points at a public tag page (mirroring /verify, /verify-hold, /verify-package) that shows current revisions and any active holds for the tag's documents, or the label text stops promising hold visibility
 - [ ] The public tag surface follows the same minimal-facts contract as the other verify routes
 - [ ] A test asserts the printed QR target is not under the (protected) route group
+
+**Resolution (2026-10-01, public-surfaces Round F).** Fixed once with public-surfaces `PHYS-7` (PS-VERIFY owns `lib/physicalBridge.ts` and the asset page), under option (b) — the user-informed default of 2026-09-17, recorded as `DEC-44 (PS-VERIFY)`: the label keeps `/assets/<tag>` (every sticker in the plant stays valid), its caption reads "SCAN — STAFF SIGN-IN / drawings · holds · / report a problem" (three lines fitted to the label), and the protected asset page sends a no-session scan to sign-in carrying the tag (`/?next=/assets/<tag>`) instead of an empty shell. See `PHYS-7` for files and tests (`lib/__tests__/verifyDoor.test.ts` "PHYS-7 / HLD-13 (option b)").
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (267 files / 5088 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ by its second branch, in substance — the label no longer promises hold visibility to anyone who cannot sign in; it says staff sign-in, and the staff page shows the tag's documents and holds.
+2. Not applicable under (b) — no public tag surface exists; the protected page enforces auth and RLS.
+3. Replaced by decision (b): the QR target deliberately stays under `(protected)` so existing stickers keep working; the test asserts the contract (b) chose instead — the path is kept, the caption says staff sign-in, and a no-session scan is sent to sign-in carrying the tag.
+
+**Scope / residual.** The sign-in page (`app/page.tsx`) does not yet honour `next` (a person lands on `/dashboard` after signing in) — flagged to the integrator; no current package owns that file. Overriding (b) with a public tag page reopens done-when 2–3 (DEC-44 (PS-VERIFY), reversal).
 
 ---
 
