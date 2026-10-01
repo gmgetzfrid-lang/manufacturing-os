@@ -4489,22 +4489,30 @@ against.
 3. **The email rule lives in one place, plus its database copy.** The rule is: master switch, then `'never'`, then the event's own toggle. Recall (`safety_recall`), PSM (`safety_alert`), `system` and the digest have no toggle. The app's copy is `lib/notificationPrefs.ts` `emailAllowedByPrefs` / `shouldSendForEvent`, which the compliance digest (N6) also imports. The database's copy is `email_gate()` (`20261148`), a `SECURITY DEFINER` function that sees the recipient's row whoever calls it. A test pins the two equal, event by event.
 4. **When the gate cannot answer, the email is still sent — and the row says so.**
    - A dropped compliance email is worse than an unwanted one. If `email_gate()` errors, the email is queued, stamped `metadata.pref_gate = 'unverified'`, with a warning.
-   - If the function is not deployed yet (PGRST202, or 42883 naming it), the old caller-side read runs, with a warning, so the app may deploy before the paste.
+   - If the function is not deployed yet (PGRST202, or 42883 naming it), the old caller-side read runs, with a warning, so the app may deploy before the paste. It uses the dedupe key of §6. A missing row there is the defaults when the read could have seen the row: under the service role (the cron, the intake door), or when the recipient is the caller. It is stamped `'unverified'` only when a browser reads another member's row, where absent and hidden look the same, or when the session cannot be read.
    - Nothing reads a hidden row as "all on" silently.
 5. **Who may ask.** `email_gate()` answers to an active member of the org or to the service role, and only with a boolean. A member asking about someone outside their org gets TRUE without that person's row being read. EXECUTE is revoked from PUBLIC and anon.
-6. **What the dedupe merges.** It merges only the same recipient, event and resource in the same org within 60 seconds. Two different resources are two emails, and an email with no resource is never deduped.
+6. **What the dedupe merges: a repeat, nothing else.** An email is dropped only when the latest email to the same recipient, about the same event and resource in the same org, within 60 seconds, has the same subject.
+   - `event_type` is `emit()`'s category (`lib/notify/dispatch.ts` `categoryToEventType`), not the notification kind. So different messages about one document share it: a hold placed and a hold released (both `'status'`), or "advanced to Rev C" and "work package went stale" (both `'watched'`). Those are separate emails.
+   - A repeat that a different message has followed is not merged either. Placed, released, then placed again within a minute is three emails, so the mailbox ends at "stop".
+   - Two different resources are two emails. An email with no resource is never deduped.
 7. **"In-app" means the toast, never the bell.**
    - Bell rows are always written: a durable obligation is never suppressible.
    - The member's in-app switch is `toast_enabled` (pop-up toasts only). Its reader, `readToastPreference`, fails open.
    - `inapp_enabled` is never read and is marked DEPRECATED. It is **kept, not dropped**, by integrator override of the plan's default, because a dropped column cannot be restored and older backup envelopes carry it.
    - `push_enabled` is the push channel's (N10) and is untouched.
-8. **No inert switch.** The settings page offers the pop-up switch only once the toast listener reads it (`TOAST_PREFERENCE_HONOURED`). A test ties that flag to the listener's source, so the switch and its effect ship together.
+8. **No inert switch.** The settings page offers the pop-up switch only once the toast listener reads it (`TOAST_PREFERENCE_HONOURED`). A test ties that flag to the listener's source (`readToastPreference` or `toast_enabled`), so the switch and its effect ship together. Whoever wires the listener (N3) flips the flag in the same change.
+9. **The master switch and 'never' silence recall and safety email too, on every path, from `20261148` on. FOR THE INTEGRATOR TO RATIFY.**
+   - A recall (`safety_recall`) and a PSM alert (`safety_alert`) have no per-category toggle, so no toggle muted for noise can stop them (`dispatch.ts`'s own comments). The master switch and `'never'` do stop them, in both copies of the rule.
+   - This follows GAP-203 acceptance 2: "a user who sets `email_enabled = false` receives no email from **any** path". The plan's "recall/safety categories are un-mutable regardless (dispatch.ts:59-66)" is read as un-mutable by a per-category toggle, which is what those lines say.
+   - What changes: the service-role path always behaved this way. Browser-initiated recalls and PSM alerts used to reach a member with email off or `'never'` too, because the browser could not see the row (`DELIV-2`). After the paste, that member gets only the bell row for them. The bell row is always written.
+   - Pinned by `lib/__tests__/notificationsLib.test.ts` "DEC-44 (N1) §9" and `lib/__tests__/notificationPrefs.test.ts` "both copies stop on the master switch and on 'never' before the toggle".
 
 **Rationale.** The page that could not save (`NEDGE-2`) had a twin: once a row did exist, every browser-initiated email ignored it (`DELIV-2`), because the read ran under the sender's RLS. GAP-203 is explicit that "preferences that save and are then ignored is a worse bug than preferences that fail loudly". So the vocabulary fix and the gate ship together, and every degraded path is visible rather than silent.
 
 **Implementation.**
 - `lib/notificationPrefs.ts` (new).
-- `lib/notifications.ts`: `queueEmail`, `evaluateEmailGate`, `legacyEmailGate`.
+- `lib/notifications.ts`: `queueEmail`, `evaluateEmailGate`, `legacyEmailGate`, `callerSeesRecipientRow`.
 - `app/(protected)/settings/notifications/page.tsx`.
 - `supabase/migrations/20261148_notif_roundG_prefs_gate.sql`: `email_gate()`, `toast_enabled`, and the `inapp_enabled` deprecation comment.
 
@@ -4518,7 +4526,10 @@ against.
 - **Offering a cadence.** Offering Hourly / Daily again is one constant (`OFFERED_DIGEST_FREQUENCIES`). It should come with a batcher, or the page lies again.
 - **Fail-closed delivery.** Making the gate fail closed is one line in `queueEmail`: return on `'unverified'`. Only do it for a non-safety event type.
 - **The deprecated column.** Dropping `inapp_enabled` needs a migration plus a backup-envelope reader that tolerates the missing column.
+- **Recall / safety past the master switch (§9).** Exempt `safety_recall` and `safety_alert` before the master and `'never'` checks in `emailAllowedByPrefs` and in `email_gate()` (one migration re-creating it), and extend the CASE-equality test to pin the exemption in both copies.
 
 **Risk:** low.
-- After the paste, members who opted out stop receiving browser-initiated email, which is the intended change. `20261148`'s inventory counts their rows and the last 30 days of email that ignored them.
-- Before the paste, behaviour is unchanged, apart from a warning and an `unverified` stamp on rows whose recipient could not be checked.
+- After the paste, members who opted out stop receiving browser-initiated email, which is the intended change. That includes recall and PSM email for a member with email off or `'never'` (§9). `20261148`'s inventory counts their rows and the last 30 days of email that ignored them.
+- Before the paste, behaviour is unchanged, apart from a warning, an `unverified` stamp on rows whose recipient could not be checked, and one narrowing of the dedupe: where the old window could see the queue (the service role, an Admin or Manager), it merged different messages about one resource, and now it merges only a repeat. No email that was queued before is dropped.
+
+*Corrected 2026-10-01 (notifications Round G, N1 PREFS-GATE fix pass): §6 first keyed the 60-second dedupe on recipient, event, resource and org only. Because `emit()` passes the category as the event, that merged different messages about one document, such as a hold released and then another hold placed, and dropped the second. `email_gate()` now takes `p_subject` and merges only a repeat of the latest email (§6). §4's fallback stamped every missing row; it now stamps only a read that could not have seen the row. §9, recall and safety under the master switch, is new and is for the integrator to ratify.*
