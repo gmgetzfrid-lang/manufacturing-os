@@ -9,14 +9,16 @@
 //
 // TRX-5: downloads stream through /api/transmittal, which stamps each PDF
 // UNCONTROLLED with the as-issued revision and a verify QR and records the
-// copy before it is released — this page only saves the bytes it is given,
-// and says so when a file arrived WITHOUT the marking (not a PDF, or a PDF
-// too large to mark: the route's X-Transmittal-Stamped header).
+// copy before it is released. TRX-15: a PDF the route cannot stamp is refused
+// (only a file that is not a PDF leaves unmarked), and this page never holds
+// a download in memory — it points a hidden frame at the route (`&nav=1`), so
+// the browser streams the attachment straight to disk; a refusal renders in
+// that frame as plain text, which the page reads back and explains.
 // TRX-3 / TRX-8: each document shows its status and effective date AS SENT
 // and the fingerprint (SHA-256) and size of the file issued. TRX-4: a revoked
 // or expired link says so, distinctly from a voided transmittal.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileText, Loader2, AlertTriangle, CheckCircle2, Download, Building2, PenLine,
 } from "lucide-react";
@@ -24,6 +26,11 @@ import {
 interface PortalItem {
   documentId: string; number: string; title: string | null; rev: string | null;
   statusAsSent?: string | null; effectiveDate?: string | null; fileHash?: string | null; fileSize?: number | null;
+  /** REV-9: decided by the route in the facility's calendar. */
+  notYetInForce?: boolean;
+  /** TRX-15: the file is not a PDF, so it is released as issued WITHOUT the
+   *  UNCONTROLLED marking (null = unknown). */
+  releasedUnmarked?: boolean | null;
 }
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
@@ -46,14 +53,45 @@ function sizeLabel(bytes: number | null | undefined): string | null {
 }
 
 /** What the route's refusal codes mean to the recipient. */
-function downloadError(status: number, body: { error?: string } | null): string {
+function downloadError(status: number, body: { error?: string; reason?: string } | null): string {
   const code = body?.error;
   if (code === "revoked") return "The issuer has revoked this link — contact them for access.";
   if (code === "expired") return "This link has expired — contact the issuer for a fresh one.";
   if (code === "voided") return "This transmittal was voided by the issuer.";
   if (code === "unrecorded") return "The download could not be recorded on the issuer's distribution record, so the file was not released. Try again shortly.";
+  if (code === "unstampable") {
+    return body?.reason === "oversize"
+      ? "This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released — an unmarked drawing cannot be told from a controlled one once it is printed. Ask the issuer to send it another way (or split into smaller files)."
+      : "This PDF could not be marked as an UNCONTROLLED copy (it may be encrypted or damaged), so it was not released. Contact the issuer.";
+  }
   return code || `The file couldn't be prepared (HTTP ${status}).`;
 }
+
+/** TRX-15: the refusal a download frame rendered, read back as the route's
+ *  plain-text JSON; null for an empty or unreadable frame (a download never
+ *  renders into the frame). */
+function frameRefusal(text: string | null | undefined): { error?: string; reason?: string; status?: number } | null {
+  const raw = (text ?? "").trim();
+  if (!raw) return null;
+  try {
+    const body = JSON.parse(raw) as { error?: unknown; reason?: unknown; status?: unknown };
+    if (!body || typeof body !== "object" || typeof body.error !== "string") return null;
+    return {
+      error: body.error,
+      reason: typeof body.reason === "string" ? body.reason : undefined,
+      status: typeof body.status === "number" ? body.status : undefined,
+    };
+  } catch {
+    return { error: "The file couldn't be prepared — try again shortly." };
+  }
+}
+
+/** How long the button shows "preparing" before the browser's own download
+ *  UI takes over — a large PDF is stamped before its first byte arrives. A
+ *  refusal still shows whenever it lands. */
+const DOWNLOAD_SETTLE_MS = 8000;
+/** A download frame is kept this long — past the route's 300 s budget. */
+const DOWNLOAD_FRAME_TTL_MS = 10 * 60 * 1000;
 
 export default function TransmittalPortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
@@ -64,6 +102,8 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   const [ackNote, setAckNote] = useState("");
   const [ackBusy, setAckBusy] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const frames = useRef<HTMLIFrameElement[]>([]);
+  useEffect(() => () => { for (const f of frames.current) f.remove(); frames.current = []; }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -82,32 +122,42 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
   }, [token]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const download = async (docId: string) => {
+  // TRX-15: the server stamps and records before it responds; the browser
+  // saves the stream straight to disk (Content-Disposition: attachment) —
+  // nothing is read into this page's memory. A hidden frame does the
+  // navigation so the portal stays on screen; only a refusal renders in it.
+  const download = (docId: string, number: string) => {
     setDownloading(docId); setMsg(null);
-    try {
-      // The server stamps and records before it responds — this saves the blob.
-      const res = await fetch(`/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}`);
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(downloadError(res.status, body));
+    const frame = document.createElement("iframe");
+    frame.style.display = "none";
+    frame.setAttribute("aria-hidden", "true");
+    frame.title = "download";
+    frame.addEventListener("load", () => {
+      let text: string | null = null;
+      try { text = frame.contentDocument?.body?.textContent ?? null; } catch { text = null; }
+      const refusal = frameRefusal(text);
+      if (refusal) {
+        setMsg({ tone: "err", text: downloadError(refusal.status ?? 0, refusal) });
+        setDownloading((cur) => (cur === docId ? null : cur));
+        frame.remove();
+        frames.current = frames.current.filter((f) => f !== frame);
       }
-      const blob = await res.blob();
-      const disposition = res.headers.get("content-disposition") ?? "";
-      const named = disposition.match(/filename="([^"]+)"/)?.[1];
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = named || "document";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      if (res.headers.get("x-transmittal-stamped") === "0") {
-        setMsg({ tone: "ok", text: `${named || "The file"} was released without the UNCONTROLLED marking (it is not a PDF, or it is too large to mark). It is the file as issued — confirm with the issuer that this revision is still current before you use it.` });
-      }
-    } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
-    } finally { setDownloading(null); }
+    });
+    frame.src = `/api/transmittal?token=${encodeURIComponent(token)}&file=${encodeURIComponent(docId)}&nav=1`;
+    document.body.appendChild(frame);
+    frames.current.push(frame);
+    window.setTimeout(() => {
+      if (!frames.current.includes(frame)) return; // refused — already said
+      setDownloading((cur) => (cur === docId ? null : cur));
+      setMsg({ tone: "ok", text: `${number}: your browser is saving the file as issued — check its downloads.` });
+    }, DOWNLOAD_SETTLE_MS);
+    // The frame outlives the transfer (removing it earlier would cancel a
+    // download still being stamped); it is dropped well after the route's
+    // own time budget, or when the page goes.
+    window.setTimeout(() => {
+      frame.remove();
+      frames.current = frames.current.filter((f) => f !== frame);
+    }, DOWNLOAD_FRAME_TTL_MS);
   };
 
   const acknowledge = async () => {
@@ -197,8 +247,13 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   </div>
                   {i.title && <div className="text-[11px] text-slate-500 truncate">{i.title}</div>}
                   {i.effectiveDate && (
-                    <div className={`text-[10px] font-bold ${i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10) ? "text-amber-700" : "text-slate-500"}`}>
-                      Effective {i.effectiveDate.slice(0, 10)}{i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10) ? " — not yet in force" : ""}
+                    <div className={`text-[10px] font-bold ${i.notYetInForce ? "text-amber-700" : "text-slate-500"}`}>
+                      Effective {i.effectiveDate.slice(0, 10)}{i.notYetInForce ? " — not yet in force" : ""}
+                    </div>
+                  )}
+                  {i.releasedUnmarked === true && (
+                    <div className="text-[10px] font-bold text-amber-700">
+                      Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking. Confirm with the issuer that this revision is still current before you use it.
                     </div>
                   )}
                   {(i.fileHash || sizeLabel(i.fileSize)) && (
@@ -208,7 +263,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                   )}
                 </div>
                 <button
-                  onClick={() => void download(i.documentId)}
+                  onClick={() => download(i.documentId, i.number)}
                   disabled={downloading === i.documentId}
                   className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-[11px] font-black hover:opacity-85 disabled:opacity-50 transition-opacity"
                 >
@@ -217,7 +272,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current (a file that cannot be marked — not a PDF, or a very large one — is released as issued, and this page tells you when that happens).{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
+          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current; a PDF that cannot be marked is not released (contact the issuer), and a file that is not a PDF (a CAD model, a spreadsheet) is released as issued, without the marking — confirm with the issuer that its revision is still current before you use it.{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
         </div>
 
         {data.notes && (

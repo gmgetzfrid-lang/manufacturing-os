@@ -24,10 +24,17 @@
 //                  over the stamping bound is hashed chunk by chunk, re-read
 //                  pinned to the verified ETag (If-Match) and piped through
 //                  unstamped, recorded with the reason.
+//   TRX-15 (P8)    a PDF goes out stamped or not at all: a PDF over the bound
+//                  (its first bytes say so — the rest is never read) or one
+//                  the stamper refuses is 422 "unstampable", nothing recorded
+//                  as delivered, the refusal on the issuer's trail; only a
+//                  non-PDF leaves unstamped. `&nav=1` answers a refusal as
+//                  plain text for the portal page's download frame.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
 
 const state = vi.hoisted(() => ({
@@ -145,6 +152,7 @@ vi.mock("@/lib/stamping", () => ({
 vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => "https://app.example.com" }));
 
 import { GET, POST } from "@/app/api/transmittal/route";
+import { applyStampToPdfDoc } from "@/lib/stamping";
 
 const TOKEN = "abcdefabcdefabcdefabcdefabcdefab";
 const DOC = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -269,6 +277,10 @@ describe("TRX-5 / EGR-8 — streamed through the route and stamped, never a pres
 describe("size — a streamed body, never one buffered response; a large file is verified, pinned and piped", () => {
   beforeEach(() => {
     state.versionRow = { file_url: `orgs/orgA/d/${DOC}.dwg`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+    // A large NON-PDF (a drawing model) is the file the pinned pipe carries
+    // since TRX-15 — a large PDF is refused (below).
+    state.bytes = new TextEncoder().encode("AC1027 a large CAD model, not a pdf");
+    state.contentType = "application/acad";
   });
 
   it("a 5 MB file (over the ~4.5 MB buffered-response cap) comes back whole, as a stream read in several chunks", async () => {
@@ -292,23 +304,22 @@ describe("size — a streamed body, never one buffered response; a large file is
     expect(state.getInputs).toHaveLength(1); // held once, read once
   });
 
-  it("a PDF over the stamping bound is hashed chunk by chunk, re-read pinned to the verified ETag, piped through unstamped and recorded with the reason", async () => {
+  it("a NON-PDF over the stamping bound is hashed chunk by chunk, re-read pinned to the verified ETag, piped through unstamped and recorded with the reason", async () => {
     state.contentLength = 64 * 1024 * 1024 + 1; // claimed by the store; the bytes stay small in the test
     (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(state.bytes);
-    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
     const res = await get(DOC);
     expect(res.status).toBe(200);
     expect(state.stamps).toHaveLength(0);
     expect(state.getInputs).toEqual([
-      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf` },
-      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf`, IfMatch: '"etag-1"' },
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.dwg` },
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.dwg`, IfMatch: '"etag-1"' },
     ]);
     expect(res.headers.get("x-transmittal-stamped")).toBe("0");
-    expect(res.headers.get("content-type")).toBe("application/pdf"); // the object's own type
+    expect(res.headers.get("content-type")).toBe("application/acad"); // the object's own type
     expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes));
     expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
     const a = state.audits.find((x) => x.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
-    expect(a.details).toMatchObject({ stamped: false, unstampedReason: "oversize", servedSha256: sha(state.bytes), hashVerified: true });
+    expect(a.details).toMatchObject({ stamped: false, unstampedReason: "not_pdf", servedSha256: sha(state.bytes), hashVerified: true });
   });
 
   it("a large file whose digest does not match releases nothing and is never re-read", async () => {
@@ -461,6 +472,8 @@ describe("TRX-4 — the link has its own lifecycle", () => {
     expect(body.portalExpiresAt).toBe("2099-01-01T00:00:00Z");
     expect((body.items as Array<Record<string, unknown>>)[0]).toEqual({
       documentId: DOC, number: "P-101", title: null, rev: "3", statusAsSent: "Issued", effectiveDate: "2026-11-01", fileHash: "abc123", fileSize: null,
+      notYetInForce: expect.any(Boolean), // REV-9 — decided in the facility's calendar (pinned below)
+      releasedUnmarked: null,             // TRX-15 — no version row in this fixture: unknown
     });
     (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileSize = 2516582;
     const again = await (await get()).json() as Record<string, unknown>;
@@ -524,5 +537,143 @@ describe("TRX-11 — a key under another workspace's prefix is never read", () =
     state.versionRow = { file_url: "orgs/orgA/../orgB/x.pdf", org_id: "orgA", record_id: DOC };
     expect((await get(DOC)).status).toBe(404);
     expect(state.fetchedKeys).toEqual([]);
+  });
+});
+
+// ─── document-control Round F wave 2, P8 FIELD ─────────────────────────────
+
+function getNav(file: string): Promise<Response> {
+  const u = new URL("https://app/api/transmittal");
+  u.searchParams.set("token", TOKEN);
+  u.searchParams.set("file", file);
+  u.searchParams.set("nav", "1");
+  return GET(new NextRequest(u));
+}
+
+describe("TRX-15 — a PDF leaves the portal stamped or not at all", () => {
+  beforeEach(() => {
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+  });
+
+  it("a PDF over the stamping bound is REFUSED (422 unstampable / oversize): its first bytes say PDF, the rest is never read, nothing is recorded as delivered, the refusal is on the issuer's trail", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1; // claimed by the store; the bytes stay small in the test
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(state.bytes);
+    const res = await get(DOC);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "unstampable", reason: "oversize" });
+    expect(state.getInputs).toHaveLength(1);           // never re-read for a send
+    expect(state.destroyed).toBe(1);                    // the first read released at the PDF header
+    expect(state.stamps).toHaveLength(0);
+    expect(state.downloads).toHaveLength(0);            // no copy recorded — none left
+    expect(state.rpcs.filter((r) => r.args.p_kind === "download")).toHaveLength(0);
+    const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")!;
+    expect(trail).toBeTruthy();
+    expect(trail.user_id).toBe("issuer1");
+    expect(trail.details).toMatchObject({ number: "TR-0001", documentId: DOC, versionId: VER, reason: "oversize", maxStampBytes: 64 * 1024 * 1024 });
+    expect(state.audits.some((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")).toBe(false);
+  });
+
+  it("a PDF the stamper refuses (encrypted, malformed) is REFUSED (422 unstampable / stamp_failed) — never delivered unstamped", async () => {
+    vi.mocked(applyStampToPdfDoc).mockImplementationOnce(async () => {
+      throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
+    });
+    const res = await get(DOC);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "unstampable", reason: "stamp_failed" });
+    expect(state.downloads).toHaveLength(0);
+    const trail = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")!;
+    expect(trail.details).toMatchObject({ reason: "stamp_failed", detail: expect.stringMatching(/encrypted/) });
+  });
+
+  it("only a file that is not a PDF ever leaves unstamped — the route has no unstamped-PDF branch left", () => {
+    const src = readFileSync("app/api/transmittal/route.ts", "utf8");
+    expect(src).toContain('const unstampedReason: "not_pdf" | null = isPdf ? null : "not_pdf";');
+    expect(src).not.toMatch(/delivering unstamped/);
+    expect(src).not.toMatch(/unstampedReason = "stamp_failed"|"oversize" \| null/);
+    expect(src).toContain('if (oversizePdf) return refuseUnstampable("oversize", null);');
+  });
+
+  it("&nav=1 (the portal page's download frame): a refusal is plain text carrying the status; without it the JSON answer is unchanged", async () => {
+    const r1 = await getNav("ffffffff-ffff-ffff-ffff-ffffffffffff"); // not on the transmittal
+    expect(r1.status).toBe(403);
+    expect(r1.headers.get("content-type")).toMatch(/^text\/plain/);
+    expect(r1.headers.get("cache-control")).toBe("no-store");
+    expect(JSON.parse(await r1.text())).toEqual({ error: "That document is not on this transmittal.", status: 403 });
+    state.transmittal!.portal_revoked_at = "2026-09-10T00:00:00Z";
+    const r2 = await getNav(DOC);
+    expect(r2.status).toBe(410);
+    expect(JSON.parse(await r2.text())).toEqual({ error: "revoked", status: 410 });
+    state.transmittal!.portal_revoked_at = null;
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    const r3 = await getNav(DOC);
+    expect(JSON.parse(await r3.text())).toEqual({ error: "unstampable", reason: "oversize", status: 422 });
+    // a successful navigation is the attachment itself
+    state.contentLength = null;
+    const ok = await getNav(DOC);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-disposition")).toBe('attachment; filename="P-101_Rev3.pdf"');
+    // and the JSON callers are untouched
+    const j = await get("ffffffff-ffff-ffff-ffff-ffffffffffff");
+    expect(j.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await j.json()).toEqual({ error: "That document is not on this transmittal." });
+  });
+
+  it("the portal page never holds a download in memory: a hidden frame navigates to the route (&nav=1); no fetch().blob(), no object URL", () => {
+    const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
+    expect(page).not.toMatch(/res\.blob\(\)|\.blob\(\)/);
+    expect(page).not.toMatch(/createObjectURL/);
+    expect(page).toContain('document.createElement("iframe")');
+    expect(page).toMatch(/&nav=1`/);
+    expect(page).toMatch(/frameRefusal\(text\)/);
+    // the refusal it can now receive is explained
+    expect(page).toMatch(/code === "unstampable"/);
+    // and it no longer claims a large PDF is released unmarked
+    expect(page).not.toMatch(/or it is too large to mark|or a very large one/);
+  });
+});
+
+describe("REV-9 — the portal's 'not yet in force' is decided in the facility's calendar, not the recipient's browser or UTC", () => {
+  const prevZone = process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+  afterEach(() => {
+    vi.useRealTimers();
+    if (prevZone === undefined) delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
+    else process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = prevZone;
+  });
+
+  it("Houston evening before the effective date → not yet in force; the facility's next morning → in force", async () => {
+    process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "America/Chicago";
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0] = {
+      documentId: DOC, number: "P-101", rev: "3", versionId: VER, effectiveDate: "2026-08-22",
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-22T01:30:00Z")); // 20:30 on 21 Aug in Houston — already 22 Aug in UTC
+    let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0].notYetInForce).toBe(true);
+    vi.setSystemTime(new Date("2026-08-22T06:00:00Z")); // 01:00 on 22 Aug in Houston
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0].notYetInForce).toBe(false);
+  });
+
+  it("the page reads the route's flag — no inline UTC 'today'", () => {
+    const page = readFileSync("app/transmittal/[token]/page.tsx", "utf8");
+    expect(page).not.toMatch(/toISOString\(\)\.slice\(0, 10\)/);
+    expect(page).toContain("i.notYetInForce");
+    const route = readFileSync("app/api/transmittal/route.ts", "utf8");
+    expect(route).toContain('notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",');
+  });
+});
+
+describe("TRX-15 — the snapshot flags a pinned file that is not a PDF (the page can no longer read the download's headers)", () => {
+  it("a .dwg pin → releasedUnmarked true; a PDF pin → false; read scoped to the transmittal's org", async () => {
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.dwg`, file_type: "application/acad", org_id: "orgA" }];
+    let body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0].releasedUnmarked).toBe(true);
+    state.versionRows = [{ id: VER, file_url: `orgs/orgA/d/${DOC}.pdf`, file_type: "application/pdf", org_id: "orgA" }];
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0].releasedUnmarked).toBe(false);
+    // another org's row of the same id resolves nothing → unknown
+    state.versionRows = [{ id: VER, file_url: `orgs/orgB/d/x.dwg`, file_type: null, org_id: "orgB" }];
+    body = await (await get()).json() as { items: Array<Record<string, unknown>> };
+    expect(body.items[0].releasedUnmarked).toBeNull();
   });
 });

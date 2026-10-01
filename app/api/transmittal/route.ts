@@ -16,20 +16,31 @@
 // issue (TRX-8), and — when they are a PDF — stamped UNCONTROLLED with the
 // as-issued revision and transmittal number in the footer and a /verify QR
 // bound to the exact version served (the /api/share/file treatment for the
-// same audience). A file that cannot be stamped still goes out through this
-// route, recorded as unstamped.
+// same audience). A file that is not a PDF goes out through this route
+// unstamped, recorded as unstamped with the reason.
+//
+// TRX-15 (document-control P8 FIELD): a PDF goes out STAMPED OR NOT AT ALL.
+// A PDF the portal cannot stamp — over the stamping bound, or one pdf-lib
+// cannot load or stamp (encrypted, malformed) — is refused (422
+// "unstampable", with the reason) and the refusal is on the issuer's trail
+// (TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED): an unmarked PDF is
+// indistinguishable from a controlled print once it is on paper.
 //
 // Size: the response is a STREAMED body handed out in 1 MiB chunks, never one
 // buffered body — the platform caps a buffered function response at ~4.5 MB
 // (app/api/admin/restore/begin/route.ts), and a multi-sheet drawing set is
 // routinely larger. A file up to PORTAL_STAMP_MAX_BYTES is held once in
 // memory, verified, stamped (a PDF) and streamed. A larger one is never held
-// whole: a first read hashes it chunk by chunk, and only when the digest
-// matches is a second read — pinned to the verified object by If-Match on its
-// ETag, so the bytes cannot change between the check and the send — piped
-// through to the recipient. It goes out unstamped (stamping would need the
-// whole document in memory twice) and its distribution row says so, with the
-// reason, exactly like a PDF that cannot be stamped.
+// whole: its first bytes say whether it is a PDF (refused, above, without
+// reading the rest); anything else is hashed chunk by chunk, and only when
+// the digest matches is a second read — pinned to the verified object by
+// If-Match on its ETag, so the bytes cannot change between the check and the
+// send — piped through to the recipient, unstamped and recorded so.
+//
+// TRX-15: the portal page saves a file by navigating a hidden frame here with
+// `&nav=1`, so the browser streams the attachment straight to disk and the
+// page never holds it in memory; in that mode a refusal is plain text (it
+// renders inside the frame, where the page reads it back).
 //
 // TRX-9: every portal pull is a download_audits row BEFORE the bytes leave —
 // user_id NULL, transmittal_id set, the served version_id, source
@@ -47,6 +58,8 @@ import { PDFDocument } from "pdf-lib";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
+import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { isPdfFile } from "@/lib/verifyVerdict";
 
 export const runtime = "nodejs";
 // The download is streamed through the function, so the function lives while
@@ -57,7 +70,9 @@ export const maxDuration = 300;
 /** Above this the portal does not stamp (and never holds the file whole):
  *  pdf-lib keeps the parsed document and writes a second copy, and a drawing
  *  set beyond this would spend the function's memory and time stamping
- *  instead of delivering. Stated bound (DEC-61 §5). */
+ *  instead of delivering. Stated bound (DEC-61 §5). A PDF above it is
+ *  REFUSED, never sent unstamped (TRX-15); any other file above it is
+ *  verified and piped through. */
 const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;
 /** The streamed body's chunk size. */
 const STREAM_CHUNK_BYTES = 1024 * 1024;
@@ -76,9 +91,14 @@ function chunkedStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
+const looksLikePdf = (b: Uint8Array) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
+
 /** SHA-256 of an object body read chunk by chunk (constant memory), plus its
- *  first bytes (to tell a PDF from anything else). */
-async function hashBody(body: unknown): Promise<{ sha256: string; head: Uint8Array }> {
+ *  first bytes (to tell a PDF from anything else). TRX-15: with `stopIfPdf`
+ *  the read stops — and the body is released — as soon as the first bytes
+ *  say PDF (`stoppedAtPdf`; the digest is then meaningless): a PDF over the
+ *  bound is refused, so the rest of it is never read. */
+async function hashBody(body: unknown, opts?: { stopIfPdf?: boolean }): Promise<{ sha256: string; head: Uint8Array; stoppedAtPdf: boolean }> {
   const h = createHash("sha256");
   let head = new Uint8Array();
   for await (const chunk of body as AsyncIterable<Uint8Array>) {
@@ -88,16 +108,30 @@ async function hashBody(body: unknown): Promise<{ sha256: string; head: Uint8Arr
       next.set(head);
       next.set(take, head.length);
       head = next;
+      if (opts?.stopIfPdf && looksLikePdf(head)) {
+        try { (body as { destroy?: () => void }).destroy?.(); } catch { /* already closed */ }
+        return { sha256: "", head, stoppedAtPdf: true };
+      }
     }
     h.update(chunk);
   }
-  return { sha256: h.digest("hex"), head };
+  return { sha256: h.digest("hex"), head, stoppedAtPdf: false };
 }
-
-const looksLikePdf = (b: Uint8Array) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
+}
+
+/** A GET refusal. TRX-15: in the portal page's frame-navigation mode
+ *  (`&nav=1` on a file request) it is plain text — it renders inside a hidden
+ *  frame, never a browser JSON viewer — and carries the status, so the page
+ *  can read it back; otherwise the JSON answer every caller already reads. */
+function portalRefusal(nav: boolean, body: Record<string, unknown>, status: number): NextResponse {
+  if (!nav) return NextResponse.json(body, { status });
+  return new NextResponse(JSON.stringify({ ...body, status }), {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
 async function loadByToken(token: string) {
@@ -184,24 +218,40 @@ async function bumpUse(id: string, kind: "open" | "download"): Promise<void> {
 
 export async function GET(req: NextRequest) {
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
-  const t = await loadByToken(token);
-  if (!t) return NextResponse.json({ error: "notfound" }, { status: 404 });
-  const refusal = portalRowRefusal(t);
-  if (refusal) return NextResponse.json({ error: refusal.error }, { status: refusal.status });
-
   const fileDoc = req.nextUrl.searchParams.get("file");
+  const nav = !!fileDoc && req.nextUrl.searchParams.get("nav") === "1";
+  const refuse = (body: Record<string, unknown>, status: number) => portalRefusal(nav, body, status);
+  const t = await loadByToken(token);
+  if (!t) return refuse({ error: "notfound" }, 404);
+  const refusal = portalRowRefusal(t);
+  if (refusal) return refuse({ error: refusal.error }, refusal.status);
+
   const items = (Array.isArray(t.items) ? t.items : []) as Item[];
   const orgId = t.org_id as string;
 
   if (fileDoc) {
     const item = items.find((i) => i.documentId === fileDoc);
-    if (!item) return bad("That document is not on this transmittal.", 403);
+    if (!item) return refuse({ error: "That document is not on this transmittal." }, 403);
     const file = await fileKeyForItem(item, orgId, (t.issued_at as string | null) ?? null);
-    if (!file.ok) return bad(file.error, file.status);
+    if (!file.ok) return refuse({ error: file.error }, file.status);
     if (!portalKeyAllowed(file.key, orgId)) {
       console.error("[transmittal portal] refused a storage key outside the transmittal's workspace", { transmittal: t.id, document: fileDoc });
-      return bad("The as-sent file for this document isn't available — contact the issuer.", 404);
+      return refuse({ error: "The as-sent file for this document isn't available — contact the issuer." }, 404);
     }
+
+    // TRX-15: a PDF the portal cannot stamp is never released — refused with
+    // the reason, on the issuer's trail, nothing recorded as delivered.
+    const refuseUnstampable = async (reason: "oversize" | "stamp_failed", detail: string | null) => {
+      console.warn("[transmittal portal] a PDF that cannot be stamped was refused", { transmittal: t.id, document: fileDoc, reason, detail });
+      const { error: trailErr } = await supabaseAdmin.from("audit_logs").insert({
+        action: "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED",
+        resource_type: "transmittal", resource_id: String(t.id),
+        org_id: orgId, user_id: (t.created_by as string | null) ?? null,
+        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, reason, detail, maxStampBytes: PORTAL_STAMP_MAX_BYTES },
+      });
+      if (trailErr) console.error("[transmittal portal] the unstampable refusal could not be put on the issuer's trail", trailErr.message);
+      return refuse({ error: "unstampable", reason }, 422);
+    };
 
     // Pull the bytes server-side (no presigned URL leaves this route). A file
     // up to the stamping bound is held once in memory; a larger one is only
@@ -211,6 +261,7 @@ export async function GET(req: NextRequest) {
     let etag: string | null = null;
     let servedSha256: string;
     let head: Uint8Array;
+    let oversizePdf = false;
     try {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.key }));
       objectType = (obj.ContentType as string | undefined) ?? null;
@@ -218,7 +269,7 @@ export async function GET(req: NextRequest) {
       if (size !== null && size > PORTAL_STAMP_MAX_BYTES) {
         etag = (obj.ETag as string | undefined) ?? null;
         if (!obj.Body || !etag) throw new Error("large object without a body or an ETag");
-        ({ sha256: servedSha256, head } = await hashBody(obj.Body));
+        ({ sha256: servedSha256, head, stoppedAtPdf: oversizePdf } = await hashBody(obj.Body, { stopIfPdf: true }));
       } else {
         const bytes = await obj.Body?.transformToByteArray();
         if (!bytes) throw new Error("empty object body");
@@ -228,8 +279,9 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[transmittal portal] file fetch failed", (e as Error).message);
-      return bad("The file couldn't be fetched right now — try again shortly.", 502);
+      return refuse({ error: "The file couldn't be fetched right now — try again shortly." }, 502);
     }
+    if (oversizePdf) return refuseUnstampable("oversize", null);
 
     // TRX-8: the bytes must be the bytes that were issued — the hash the
     // database wrote onto the item at issue, or (an item issued before
@@ -243,7 +295,7 @@ export async function GET(req: NextRequest) {
         org_id: orgId, user_id: (t.created_by as string | null) ?? null,
         details: { number: t.number, documentId: fileDoc, versionId: file.versionId, recordedSha256: recorded, servedSha256 },
       }).then(() => undefined, () => undefined);
-      return bad("This file no longer matches the one recorded when the transmittal was issued, so it was not released. Contact the issuer.", 409);
+      return refuse({ error: "This file no longer matches the one recorded when the transmittal was issued, so it was not released. Contact the issuer." }, 409);
     }
 
     // TRX-5 / EGR-8: stamp a PDF the way /api/share/file does for the same
@@ -257,8 +309,10 @@ export async function GET(req: NextRequest) {
     const isPdf = looksLikePdf(head);
     let outBytes: Uint8Array | null = source;
     let stamped = false;
-    let unstampedReason: "not_pdf" | "stamp_failed" | "oversize" | null = !isPdf ? "not_pdf" : source ? null : "oversize";
-    if (isPdf && source) {
+    // TRX-15: only a file that is not a PDF ever leaves unstamped.
+    const unstampedReason: "not_pdf" | null = isPdf ? null : "not_pdf";
+    if (isPdf) {
+      if (!source) return refuseUnstampable("oversize", null);
       try {
         const pdfDoc = await PDFDocument.load(source);
         await applyStampToPdfDoc(pdfDoc, {
@@ -270,10 +324,8 @@ export async function GET(req: NextRequest) {
         });
         outBytes = await pdfDoc.save();
         stamped = true;
-        unstampedReason = null;
       } catch (e) {
-        unstampedReason = "stamp_failed";
-        console.warn("[transmittal portal] stamping failed — delivering unstamped", (e as Error).message);
+        return refuseUnstampable("stamp_failed", (e as Error).message || null);
       }
     }
 
@@ -291,7 +343,7 @@ export async function GET(req: NextRequest) {
         piped = { stream, release: () => { try { body?.destroy?.(); } catch { /* already closed */ } } };
       } catch (e) {
         console.warn("[transmittal portal] verified large file could not be re-read for the send", (e as Error).message);
-        return bad("The file couldn't be fetched right now — try again shortly.", 502);
+        return refuse({ error: "The file couldn't be fetched right now — try again shortly." }, 502);
       }
     }
 
@@ -322,7 +374,7 @@ export async function GET(req: NextRequest) {
       console.error("[transmittal portal] download_audits insert failed — portal download refused, nothing left the building", {
         transmittal: t.id, document: fileDoc, version: file.versionId, message: recordError.message,
       });
-      return NextResponse.json({ error: "unrecorded" }, { status: 503 });
+      return refuse({ error: "unrecorded" }, 503);
     }
 
     // The issuer's accountability trail (EGR-1 attribution), now with the
@@ -357,6 +409,25 @@ export async function GET(req: NextRequest) {
   // The snapshot the portal renders — nothing beyond this transmittal.
   const { data: org } = await supabaseAdmin.from("orgs").select("name").eq("id", orgId).maybeSingle();
   await bumpUse(String(t.id), "open");
+  // TRX-15: the page saves a file without reading the response, so it can no
+  // longer see the X-Transmittal-Stamped header — it says up front which
+  // pinned files are not a PDF and so leave without the UNCONTROLLED marking
+  // (one read; null = unknown, and the page's standing note covers it).
+  const pinnedIds = [...new Set(items.map((i) => i.versionId ?? i.version_id ?? null).filter((v): v is string => !!v))];
+  const fileByVersion = new Map<string, { file_url: string | null; file_type: string | null }>();
+  if (pinnedIds.length) {
+    const { data: fileRows, error: fileErr } = await supabaseAdmin
+      .from("document_versions").select("id, file_url, file_type").in("id", pinnedIds).eq("org_id", orgId);
+    if (!fileErr) {
+      for (const v of (fileRows as Array<{ id: string; file_url: string | null; file_type?: string | null }> | null) ?? []) {
+        fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null });
+      }
+    }
+  }
+  const releasedUnmarked = (i: Item): boolean | null => {
+    const f = fileByVersion.get(String(i.versionId ?? i.version_id ?? ""));
+    return f?.file_url ? !isPdfFile(f.file_url, f.file_type) : null;
+  };
   return NextResponse.json({
     number: t.number,
     subject: t.subject,
@@ -375,6 +446,11 @@ export async function GET(req: NextRequest) {
       documentId: i.documentId, number: i.number, title: i.title ?? null, rev: i.rev ?? null,
       // TRX-3 / TRX-8: what was sent, as the database recorded it at issue.
       statusAsSent: i.statusAsSent ?? null, effectiveDate: i.effectiveDate ?? null, fileHash: i.fileHash ?? null,
+      // REV-9: "not yet in force" decided in the facility's calendar (the one
+      // shared "today"), not in the recipient's browser or in UTC.
+      notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",
+      // TRX-15: not a PDF → released as issued, without the marking.
+      releasedUnmarked: releasedUnmarked(i),
       fileSize: typeof i.fileSize === "number" ? i.fileSize : null,
     })),
   });
