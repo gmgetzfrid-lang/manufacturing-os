@@ -118,7 +118,11 @@ export async function POST(req: NextRequest) {
   // pass. Controller-only like the rest of this route, and audited FIRST — a
   // re-run that cannot be recorded runs nothing. Only when a back-off is
   // actually in force: otherwise it is an ordinary batch, and nothing is
-  // recorded.
+  // recorded. A failed batch's back-off in either stage — the main pass or
+  // a vision-retry batch — and the engine lets the re-run past both of its
+  // gates. A vision retry's own back-off (ING-6, the provider refused a
+  // whole round) is not a failed batch's: nothing is recorded, and the
+  // answer is the 409 with its reason.
   let retryNow = false;
   const backoffUntil = body.retryNow === true ? failureBackoffUntil(doc as Record<string, unknown>) : null;
   if (backoffUntil) {

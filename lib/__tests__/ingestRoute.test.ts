@@ -38,6 +38,10 @@ vi.mock("@/lib/r2", () => ({
   },
 }));
 vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
+vi.mock("unpdf", async (orig) => ({
+  ...(await orig<typeof import("unpdf")>()),
+  renderPageAsImage: vi.fn(async () => new Uint8Array([137, 80, 78, 71]).buffer),
+}));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
 vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn() }));
@@ -45,8 +49,11 @@ vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(a
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
-import { sniffBytes, reindexLibraryChunks, resetKnowledgeIndex } from "@/lib/knowledgeIngest";
+import {
+  sniffBytes, reindexLibraryChunks, resetKnowledgeIndex, ingestFailureMessage, ingestFailureBackoffMs, visionRetryMessage,
+} from "@/lib/knowledgeIngest";
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
+import { transcribePageImage } from "@/lib/knowledgeVision";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -279,6 +286,59 @@ describe("ING-8 — a person's explicit re-run (retryNow)", () => {
     expect(res.status).toBe(500);
     expect((await res.json()).error).toMatch(/The re-run could not be recorded, so nothing was run: permission denied/);
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", pages_indexed: 1, ingest_failures: 1, ingest_claimed_by: null });
+  });
+
+  // The main pass is through and page 1 waits on AI vision; the person
+  // re-running it has a key.
+  const atRetryStage = async (over: Row) => {
+    seed(docRow({ status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1], ...over }));
+    db.tables.knowledge_chunks = [{ id: "c2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "sheet 2" }];
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "user-model", api_key: "k" }];
+    r2.objects.set(KEY, await makePdf([null, drawingSheet(2, ["V-102", "P-202A", "E-302"])]));
+    vi.mocked(transcribePageImage).mockReset();
+    vi.mocked(transcribePageImage).mockImplementation(async () => ({
+      text: "DRAWING NO: 025-PID-0101\nSHEET: 1 OF 2\nREV: 4\nV-101 SUCTION DRUM\nP-201A CHARGE PUMP\nE-301 FEED EXCHANGER\n",
+      usage: { inputTokens: 1, outputTokens: 1 }, model: "user-model",
+    }));
+  };
+
+  it("a failed vision-retry batch: Resume's retryNow performs the retry, audited first — never recorded and then refused", async () => {
+    // The reviewer's probe R1: the retry batch read page 1, then its chunk
+    // insert failed, and markIngestFailed stamped the back-off on the column
+    // the vision-retry gate reads. The re-run used to be audited, then
+    // answered 409 by that gate with no vision call.
+    await atRetryStage({
+      ingest_failures: 1,
+      error: ingestFailureMessage("chunk insert failed: connection reset by peer", 1, ingestFailureBackoffMs(1), true),
+      vision_retry_after: new Date(Date.now() + 600_000).toISOString(),
+    });
+    const plain = await post({ documentId: DOC });
+    expect(plain.status).toBe(409);
+    expect(await plain.json()).toMatchObject({ failureRetryBlocked: true, visionRetryBlocked: false });
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+    expect(rowsOf("audit_logs")).toEqual([]);
+
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ done: true, visionRetryBlocked: false, failureRetryBlocked: false, visionFailedPages: [] });
+    expect(vi.mocked(transcribePageImage)).toHaveBeenCalledTimes(1);
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_DOC_RETRY_NOW", "KNOWLEDGE_DOC_INDEXED"]);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null, vision_failed_pages: [] });
+  });
+
+  it("a vision retry's own back-off is not a failed batch's: retryNow records nothing and answers 409 with the vision reason", async () => {
+    // A retry pass that read nothing (no page left this round) keeps an
+    // earlier failure's count but writes the vision retry's reason and its
+    // round back-off. That stamp is not the failed batch's: nothing is let
+    // through, so nothing is recorded.
+    const reason = visionRetryMessage([1], "provider 529 overloaded");
+    await atRetryStage({ ingest_failures: 1, error: reason, vision_retry_after: new Date(Date.now() + 1_800_000).toISOString() });
+    const res = await post({ documentId: DOC, retryNow: true });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ visionRetryBlocked: true, failureRetryBlocked: false, error: reason });
+    expect(rowsOf("audit_logs")).toEqual([]);
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", ingest_failures: 1, ingest_claimed_by: null });
   });
 
   it("with no back-off in force it is an ordinary batch — nothing is recorded — and it stays a controller's action", async () => {

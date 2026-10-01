@@ -70,7 +70,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
-  INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil,
+  INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil, ingestFailureMessage,
 } from "@/lib/knowledgeIngest";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
@@ -558,6 +558,18 @@ describe("ING-8 — the entity insert ladder", () => {
     expect(res.visionRetryBlocked).toBe(true);
     expect(vision.calls).toEqual([]);
     expect(docRow()).toMatchObject({ ingest_failures: 1, vision_retry_tried: [], status: "indexing" });
+    // The stamp it wrote is the vision retry's round back-off, and the row
+    // now carries the vision retry's reason: it is reported as that — never
+    // as the failed batch's back-off, which it is not (review fix pass 5).
+    expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThan(Date.now());
+    expect(failureBackoffUntil(docRow())).toBeNull();
+    const next = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(next).toMatchObject({ visionRetryBlocked: true, failureRetryBlocked: false, visionRetryMessage: docRow().error });
+    // A person's re-run is for a failed batch's back-off only: a vision
+    // retry's own is not skipped (the route records nothing for it).
+    const rerun = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx(), undefined, { retryNow: true });
+    expect(rerun).toMatchObject({ visionRetryBlocked: true, failureRetryBlocked: false });
+    expect(vision.calls).toEqual([]);
   });
 
   it("a person's explicit re-run (retryNow) skips the back-off; no automatic driver does", async () => {
@@ -570,6 +582,68 @@ describe("ING-8 — the entity insert ladder", () => {
     const res = await ingestKnowledgeDocBatch(asArg(docRow()), undefined, undefined, { retryNow: true });
     expect(res.done).toBe(true);
     expect(docRow()).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null });
+  });
+
+  it("a person's re-run of a failed vision-retry batch (retryNow) performs the retry: the failure's back-off shares the vision column and holds it at neither gate", async () => {
+    // The reviewer's probe P1: the main pass is through, the retry batch read
+    // page 1 and then its chunk insert failed. markIngestFailed stamped the
+    // ING-8 back-off on vision_retry_after — the column the vision-retry
+    // gate reads. The re-run used to be audited by the route and then
+    // refused by that second gate, with no vision call.
+    const until = new Date(Date.now() + ingestFailureBackoffMs(1)).toISOString();
+    await seed([null, prosePage("bolting")], {
+      status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1], ingest_failures: 1,
+      error: ingestFailureMessage("chunk insert failed: connection reset by peer", 1, ingestFailureBackoffMs(1), true),
+      vision_retry_after: until,
+    });
+    db.tables.knowledge_chunks = [{ id: "c-2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "bolting text" }];
+    vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" });
+    expect(failureBackoffUntil(docRow())).toBe(until);
+    // Every automatic driver waits it out, as the failed batch's back-off.
+    const waits = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(waits).toMatchObject({ failureRetryBlocked: true, visionRetryBlocked: false, failureRetryAfter: until });
+    expect(vision.calls).toEqual([]);
+    // The person's re-run reads the page now and completes the document.
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx(), undefined, { retryNow: true });
+    expect(res).toMatchObject({ done: true, visionRetryBlocked: false, failureRetryBlocked: false, visionFailedPages: [] });
+    expect(vision.calls).toEqual([1]);
+    expect(docRow()).toMatchObject({ status: "ready", ingest_failures: 0, error: null, vision_retry_after: null, vision_failed_pages: [] });
+    expect(rowsOf("knowledge_page_entities").some((e) => e.page === 1 && e.tag === "V-101")).toBe(true);
+  });
+
+  it("a long cause never pushes the attempt count or the cadence out of the stored message", async () => {
+    // A withdrawal note can make the cause run to hundreds of characters;
+    // the row's error holds 500. The cause is cut (and marked), never what
+    // the person is told to expect — and never mid-pair of a surrogate.
+    // The cut falls between the two halves of a surrogate pair (a symbol a
+    // provider or a file name can carry): it moves back to keep the pair whole.
+    const tool = "\u{1F527}";
+    const cause = `chunk insert failed: ${"x".repeat(200)}${tool.repeat(40)}; and rows this batch wrote could not be withdrawn: 30 knowledge_chunks rows — the document was re-queued for a full re-index`;
+    expect(cause.length).toBeGreaterThan(400);
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    await midway();
+    expect(await markIngestFailed(asArg(docRow()), new Error(cause))).toMatchObject({ marked: true });
+    const stored = String(docRow().error);
+    expect(stored.length).toBeLessThanOrEqual(500);
+    expect(stored).toMatch(/^chunk insert failed: x{200}(?:\uD83D\uDD27){6}… — attempt 1 of 3\. Indexing is tried again automatically on the next indexing pass \(.*\), no sooner than about 10 minutes from now\. The pages indexed so far stay searchable meanwhile\.$/);
+    expect(stored).not.toMatch(lone);
+    // …so the back-off still holds while the message is the failure's.
+    expect(failureBackoffUntil(docRow())).toBe(docRow().vision_retry_after);
+    // A short cause is stored whole, exactly as before.
+    expect(ingestFailureMessage("entity insert failed: boom", 2, ingestFailureBackoffMs(2), false))
+      .toBe("entity insert failed: boom — attempt 2 of 3. Indexing is tried again automatically on the next indexing pass (while an Admin or Doc Control member has the app open, or the nightly maintenance run), no sooner than about 30 minutes from now.");
+    // At the bound, the instruction to re-run survives the same way.
+    Object.assign(docRow(), { ingest_failures: 2, vision_retry_after: null });
+    await markIngestFailed(asArg(docRow()), new Error(`entity insert failed: ${"x".repeat(405)}${tool.repeat(40)} and more`));
+    const atBound = String(docRow().error);
+    expect(docRow()).toMatchObject({ status: "error", ingest_failures: 3 });
+    expect(atBound.length).toBeLessThanOrEqual(500);
+    expect(atBound).toMatch(/^entity insert failed: x{405}… — indexing failed 3 times in a row; re-run it once the cause is fixed\.$/);
+    expect(atBound).not.toMatch(lone);
+    // The vision retry's reason keeps its cadence and its way out too.
+    const vmsg = visionRetryMessage([1, 2, 3], `provider 529 overloaded: ${"y".repeat(400)}`);
+    expect(vmsg.length).toBeLessThanOrEqual(500);
+    expect(vmsg).toMatch(/^AI vision could not read 3 pages \(p\. 1, 2, 3\): provider 529 overloaded: y+…\. They are tried again automatically .*no sooner than about 30 minutes from now\. .*ask an admin to accept the partial index\.$/);
   });
 
   it("a failure record another writer cleared holds nothing back: the drawing rebuild's own reset nulls the message, and the rebuilt index runs", async () => {
@@ -792,6 +866,61 @@ describe("ING-6 — a failed vision page is never silently 'read'", () => {
       ["ingest_claimed_at", "ingest_claimed_by"], ["ingest_claimed_at", "ingest_claimed_by"],
     ]);
     expect(docRow()).toMatchObject({ ...said, status: "indexing", ingest_claimed_by: null });
+  });
+
+  it("a keyless park whose stamp is half an hour old or more is written again, to now: its place in the cron's queue moves behind fresh work", async () => {
+    const old = new Date(Date.now() - VISION_RETRY_BACKOFF_MS - 60_000).toISOString();
+    await awaitingRetry({ error: visionRetryMessage([1], null), vision_retry_after: old });
+    r2.objects.clear();
+    const t0 = Date.now();
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ visionRetryBlocked: true, visionRetryAfter: null });
+    expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(t0);
+    expect(docRow()).toMatchObject({ status: "indexing", error: visionRetryMessage([1], null), ingest_claimed_by: null });
+  });
+
+  it("twenty keyless-parked documents never keep the nightly drain from a lapsed failed batch: it is retried on the next run", async () => {
+    // The reviewer's probe P2: documents parked on failed vision pages with
+    // no sponsored key (the uploader's AI cap reached), each carrying its
+    // own reason and the stamp of its first park, and another document whose
+    // ING-8 back-off lapsed an hour ago. The keyless skip used to keep those
+    // first stamps for good, so every nightly run took the same twenty, and
+    // the failure was never retried.
+    const parkedPdf = await makePdf([null, prosePage("bolting")]);
+    const parked = Array.from({ length: 20 }, (_, i) => baseDoc({
+      id: `kd-p${i}`, created_at: `2026-08-${String(i + 1).padStart(2, "0")}`, file_key: `orgs/o1/knowledge/kl-1/p${i}.pdf`,
+      status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1],
+      error: visionRetryMessage([1], null), vision_retry_after: `2026-09-0${1 + (i % 9)}T00:00:00.000Z`,
+    }));
+    parked.forEach((d) => r2.objects.set(d.file_key as string, parkedPdf));
+    const lapsed = new Date(Date.now() - 3_600_000).toISOString();
+    const failed = baseDoc({
+      id: "kd-failed", created_at: "2026-07-01", file_key: "orgs/o1/knowledge/kl-1/f.pdf",
+      status: "indexing", pages_indexed: 1, page_count: 2, ingest_failures: 1,
+      error: ingestFailureMessage("entity insert failed: connection reset by peer", 1, ingestFailureBackoffMs(1), true),
+      vision_retry_after: lapsed,
+    });
+    r2.objects.set("orgs/o1/knowledge/kl-1/f.pdf", await makePdf([prosePage("a"), prosePage("b")]));
+    resetDb({
+      knowledge_documents: [...parked, failed], knowledge_chunks: [], knowledge_page_entities: [], entity_mentions: [],
+      knowledge_line_traces: [], knowledge_libraries: [{ id: "kl-1", org_id: "o1", ai_features: {} }], ai_connections: [],
+    });
+    const failedRow = () => rowsOf("knowledge_documents").find((d) => d.id === "kd-failed")!;
+    const parkedStamps = () => rowsOf("knowledge_documents").filter((d) => String(d.id).startsWith("kd-p")).map((d) => Date.parse(String(d.vision_retry_after)));
+
+    // The first run takes the twenty oldest stamps — the parked rows — and
+    // files each one behind the failure: its stamp moves to now.
+    const t0 = Date.now();
+    await drainKnowledgeIngestQueue({ maxPages: 500, deadlineMs: Date.now() + 30_000 });
+    expect(parkedStamps().every((t) => t >= t0)).toBe(true);
+    expect(failedRow()).toMatchObject({ pages_indexed: 1, ingest_failures: 1 });
+
+    // The next run reaches the failure first, and completes it.
+    const second = await drainKnowledgeIngestQueue({ maxPages: 500, deadlineMs: Date.now() + 30_000 });
+    expect(second.completed).toBe(1);
+    expect(failedRow()).toMatchObject({ status: "ready", pages_indexed: 2, ingest_failures: 0, error: null, vision_retry_after: null });
+    expect(vision.calls).toEqual([]);
+    expect(rowsOf("knowledge_documents").filter((d) => d.status === "error")).toHaveLength(0);
   });
 
   it("the cron drain without a sponsored key does the same — never 'error', never billed", async () => {

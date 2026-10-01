@@ -180,7 +180,8 @@ type KnowledgeDocRow = {
   chunk_version?: number | null;
   /** Nothing waiting on this document is tried before this: failed vision
    *  pages after a refused retry pass (ING-6), or the next batch after a
-   *  failed one (ING-8). */
+   *  failed one (ING-8; a person's `retryNow` excepted). Also the document's
+   *  place in the cron drain's queue, oldest first. */
   vision_retry_after?: string | null;
   /** Failed vision pages whose retry failed again since the last back-off —
    *  the current round (ING-6). */
@@ -641,24 +642,52 @@ const NEXT_INDEXING_PASS =
 export const ingestFailureBackoffMs = (attempt: number): number =>
   10 * 60_000 * 3 ** Math.max(0, attempt - 1);
 
-/** The plain-language record of a failed batch that will be retried. */
+/** The longest message a document row's `error` is given. */
+const ERROR_MAX_CHARS = 500;
+
+/** A cause cut to `room` characters (surrogate-safe, marked "…"), so the
+ *  sentences written around it — the attempt count, when it is tried again —
+ *  always fit in the row's `error`: a long cause loses its own end, never
+ *  what the person is told to expect. */
+function fitCause(cause: string, room: number): string {
+  const n = Math.max(1, room);
+  return cause.length > n ? truncateSafe(cause, n - 1) + "…" : cause;
+}
+
+/** A cause and the sentence that follows it, within ERROR_MAX_CHARS. */
+const causeThen = (cause: string, tail: string): string => fitCause(cause, ERROR_MAX_CHARS - tail.length) + tail;
+
+/** What names a retried failure's attempt in its message. failureBackoffUntil
+ *  matches it, so a back-off holds only while the row still carries the
+ *  message written for its count. */
+const attemptMarker = (attempt: number): string => ` — attempt ${attempt} of ${INGEST_FAILURE_MAX_ATTEMPTS}.`;
+
+/** The plain-language record of a failed batch that will be retried. The
+ *  attempt count and the cadence come after the cause and always survive:
+ *  the cause is cut to fit (ERROR_MAX_CHARS), never they. */
 export function ingestFailureMessage(cause: string, attempt: number, retryAfterMs: number, searchable: boolean): string {
   const mins = Math.max(1, Math.round(retryAfterMs / 60_000));
-  return `${cause} — attempt ${attempt} of ${INGEST_FAILURE_MAX_ATTEMPTS}. ` +
+  const tail = `${attemptMarker(attempt)} ` +
     `Indexing is tried again automatically ${NEXT_INDEXING_PASS}, no sooner than about ${mins} minutes from now.` +
     (searchable ? " The pages indexed so far stay searchable meanwhile." : "");
+  return causeThen(cause, tail);
 }
 
 /** When a failed batch's back-off (ING-8) still holds this document back:
  *  the time it lapses, or null. It holds only while the row carries the
- *  failure's record — the count AND its message. A writer that cleared the
- *  message without the count (the drawing rebuild's own reset, until I-07
- *  moves it onto resetKnowledgeIndex, which zeroes both) releases it. */
+ *  failure's record — the count AND the message markIngestFailed wrote for
+ *  that count (it names the attempt). A writer that cleared the message
+ *  without the count (the drawing rebuild's own reset, until I-07 moves it
+ *  onto resetKnowledgeIndex, which zeroes both) releases it. So does a
+ *  vision-retry park that kept the count (it read nothing) but wrote its
+ *  own reason and back-off over the failure's (ING-6): that stamp is the
+ *  vision retry's, and it is reported, and held, as one. */
 export function failureBackoffUntil(
   row: { ingest_failures?: unknown; error?: unknown; vision_retry_after?: unknown },
   nowMs: number = Date.now(),
 ): string | null {
-  if (!(Number(row.ingest_failures ?? 0) > 0) || row.error == null) return null;
+  const failures = Number(row.ingest_failures ?? 0);
+  if (!(failures > 0) || typeof row.error !== "string" || !row.error.includes(attemptMarker(failures))) return null;
   const after = Date.parse(String(row.vision_retry_after ?? ""));
   return Number.isFinite(after) && after > nowMs ? String(row.vision_retry_after) : null;
 }
@@ -701,21 +730,21 @@ export async function markIngestFailed(
   const retry = read.failures !== undefined && !permanent && attempt < INGEST_FAILURE_MAX_ATTEMPTS;
   const wait = ingestFailureBackoffMs(attempt);
   const retryAfter = retry ? new Date(nowMs + wait).toISOString() : null;
-  const legacyUpdate = { status: "error", error: cause.slice(0, 500) };
+  const legacyUpdate = { status: "error", error: cause.slice(0, ERROR_MAX_CHARS) };
   const update: Record<string, unknown> = read.failures === undefined ? legacyUpdate
     : retry
       ? {
         // A queued status, never 'error': an 'indexing' document stays in
         // Ask; one with nothing indexed yet stays out of it.
         status: read.pagesIndexed > 0 ? "indexing" : read.status === "stale" ? "stale" : "pending",
-        error: ingestFailureMessage(cause, attempt, wait, read.pagesIndexed > 0).slice(0, 500),
+        error: ingestFailureMessage(cause, attempt, wait, read.pagesIndexed > 0),
         ingest_failures: attempt, vision_retry_after: retryAfter,
       }
       : {
         ...legacyUpdate,
-        error: (attempt >= INGEST_FAILURE_MAX_ATTEMPTS && !permanent
-          ? `${cause} — indexing failed ${attempt} times in a row; re-run it once the cause is fixed.`
-          : cause).slice(0, 500),
+        error: attempt >= INGEST_FAILURE_MAX_ATTEMPTS && !permanent
+          ? causeThen(cause, ` — indexing failed ${attempt} times in a row; re-run it once the cause is fixed.`)
+          : cause.slice(0, ERROR_MAX_CHARS),
         ingest_failures: attempt, vision_retry_after: null,
       };
   const write = (patch: Record<string, unknown>, withCount: boolean) => {
@@ -823,14 +852,19 @@ export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
 /** The plain-language reason failed vision pages were not retried. It
  *  offers only what a person can do from the app today: the acceptance of a
  *  partial index has no button yet (I-02's library page), so it is named as
- *  something to ask an admin for, not an action. */
+ *  something to ask an admin for, not an action. The provider's message is
+ *  cut to fit the row's `error` (ERROR_MAX_CHARS), never the cadence or the
+ *  way out that follow it. */
 export function visionRetryMessage(pages: number[], cause: string | null): string {
   const list = pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
   const meanwhile = "The rest of the document is searchable meanwhile.";
-  return cause
-    ? `${what}: ${cause}. They are tried again automatically ${NEXT_INDEXING_PASS}, no sooner than about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes from now. ${meanwhile} If they stay unreadable, ask an admin to accept the partial index.`
-    : `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
+  if (!cause) {
+    return `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
+  }
+  const head = `${what}: `;
+  const rest = `. They are tried again automatically ${NEXT_INDEXING_PASS}, no sooner than about ${Math.round(VISION_RETRY_BACKOFF_MS / 60_000)} minutes from now. ${meanwhile} If they stay unreadable, ask an admin to accept the partial index.`;
+  return head + fitCause(cause, ERROR_MAX_CHARS - head.length - rest.length) + rest;
 }
 
 /** Everything that follows a document reaching 'ready': the mention pass
@@ -972,12 +1006,19 @@ export async function ingestKnowledgeDocBatch(
       queue?: { failed: number[]; tried: number[]; attempts: number },
     ): Promise<IngestBatchResult> => {
       const stamped = Date.parse(String(cur.vision_retry_after ?? ""));
+      const nowMs = Date.now();
       if (claimed && !queue && claimed.error === message.slice(0, 500) &&
-          Number.isFinite(stamped) && stamped <= Date.now()) {
+          Number.isFinite(stamped) && stamped <= nowMs && nowMs - stamped < VISION_RETRY_BACKOFF_MS) {
         // A driver without a key that finds its own reason already on the
-        // row, holding no one back, has nothing to add: it gives the claim
-        // back and writes nothing else (the app-shell indicator asks again
-        // every two minutes, from every open tab).
+        // row, stamped within the last half hour and holding no one back,
+        // has nothing to add: it gives the claim back and writes nothing
+        // else (the app-shell indicator asks again every two minutes, from
+        // every open tab). An older stamp is written again, to now: the
+        // stamp is the row's place in the cron drain's queue (oldest
+        // first), and a parked row that kept its first stamp for good would
+        // sort ahead of every lapsed failure — twenty of them would hold
+        // the queue's head, in every org, and no failed batch would ever
+        // be retried by the nightly run (ING-8).
         released = await releaseIngestLease(doc.id, driver);
       } else if (claimed) {
         const known = new Set(Object.keys(claimed));
@@ -1009,17 +1050,15 @@ export async function ingestKnowledgeDocBatch(
     //    tried are on the row already. Checked before anything is
     //    downloaded, by every driver alike — except a person's explicit
     //    re-run (`retryNow`), which the route audits.
-    if (claimed && !opts.retryNow) {
-      const until = failureBackoffUntil(cur);
-      if (until) {
-        released = await releaseIngestLease(doc.id, driver);
-        return idle(claimed, {
-          failureRetryBlocked: true,
-          failureRetryMessage: typeof claimed.error === "string" && claimed.error
-            ? claimed.error : `The last indexing attempt failed; it is tried again automatically ${NEXT_INDEXING_PASS}.`,
-          failureRetryAfter: until,
-        });
-      }
+    const failureHold = claimed ? failureBackoffUntil(cur) : null;
+    if (claimed && failureHold && !opts.retryNow) {
+      released = await releaseIngestLease(doc.id, driver);
+      return idle(claimed, {
+        failureRetryBlocked: true,
+        failureRetryMessage: typeof claimed.error === "string" && claimed.error
+          ? claimed.error : `The last indexing attempt failed; it is tried again automatically ${NEXT_INDEXING_PASS}.`,
+        failureRetryAfter: failureHold,
+      });
     }
 
     // ── The vision retry queue, before anything is downloaded (ING-6) ────
@@ -1033,7 +1072,12 @@ export async function ingestKnowledgeDocBatch(
       if (claimed && !genStart && storedCount > 0 && from >= storedCount && waiting.length > 0 &&
           cur.vision_partial_accepted !== true) {
         const after = Date.parse(String(cur.vision_retry_after ?? ""));
-        if (Number.isFinite(after) && after > Date.now()) {
+        // One column holds both back-offs. A person's re-run that the gate
+        // above let through (`retryNow`, the stamp a failed batch's back-off
+        // — failureBackoffUntil) is past it here too: a failed vision-retry
+        // batch is retried now, exactly like a failed main-pass one, rather
+        // than refused after the route has recorded the re-run.
+        if (Number.isFinite(after) && after > Date.now() && !(opts.retryNow && failureHold)) {
           released = await releaseIngestLease(doc.id, driver);
           return idle(claimed, {
             visionRetryBlocked: true,
@@ -1932,8 +1976,13 @@ export async function drainKnowledgeIngestQueue(opts: {
   // here rather than raced (ING-2). A document whose failed vision pages
   // wait on a retry (ING-6) stays 'indexing' too: its vision_retry_after
   // files it behind every document with real work (never-stamped first),
-  // so twenty of them can never hold the queue's head. A pre-20261122
-  // database has neither column: the legacy selector.
+  // and every park this run makes re-stamps it to now — a keyless park
+  // skips its write only while its stamp is under half an hour old — so a
+  // parked row sorts behind anything that lapsed before its last park.
+  // Parked rows rotate through the head twenty at a time and can never hold
+  // it: a lapsed failure (ING-8) comes up as they do — on the next run,
+  // behind twenty of them. A pre-20261122 database has neither column: the
+  // legacy selector.
   const cutoff = new Date(Date.now() - INGEST_LEASE_TTL_MS).toISOString();
   const select = (claimFilter: boolean) => {
     let q = supabaseAdmin
