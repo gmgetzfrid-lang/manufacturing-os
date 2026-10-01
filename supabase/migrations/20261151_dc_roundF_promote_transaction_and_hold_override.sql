@@ -36,13 +36,22 @@
 --
 --   REV-20  20261144 refused a status-only issue over an active hold for
 --           everyone; two controller writes still passed a hold unrecorded:
---           (a) the exit of a retirement that carries NO stamp (retired
---               before 20261144, or by the service role) into an issue
---               status — it kept OWN-15's advancing rule, which a controller
---               passes. Now judged as a status-only issue: the new-door hold
---               binds a controller too (the same sentence as 20261144's —
---               the un-archive dialog recognises it; the Draft restore stays
---               open to a controller);
+--           (a) the exit of an Archived or Void retirement that carries NO
+--               stamp (retired before 20261144, or by the service role) into
+--               an issue status — it kept OWN-15's advancing rule, which a
+--               controller passes. Now judged as a status-only issue: the
+--               new-door hold binds a controller too (the same sentence as
+--               20261144's — the un-archive dialog recognises it; the Draft
+--               restore stays open to a controller). An unstamped
+--               SUPERSEDED document is spared, as REV-20's done-when 2
+--               allows (P14 review fix): its exit is how the legacy reversal
+--               (reverseSplit / reverseMerge) puts back a source superseded
+--               before 20261144 — HLD-2 carries the parked sheet's hold onto
+--               that source BEFORE restoring it, the guard cannot tell that
+--               put-back from a bare un-supersede, and binding it would
+--               strand the reversal (a stamped put-back, v_restoring, passes
+--               a controller over a hold the same way). Counted by the
+--               inventory; the bare un-supersede it leaves open is REV-21;
 --           (b) ONE write that moves the pointer AND makes the status an
 --               issue (a direct PATCH; the review promote of a Draft / In
 --               Review document) — an advancing write a controller passed.
@@ -76,8 +85,11 @@
 -- records it. DEC-30 inventories (aggregate counts only, captured BEFORE the
 -- transaction): the documents whose finalize or direct pointer-and-issue
 -- write by a controller is now refused while a hold stands; the unstamped
--- retirements, and those of them under an active hold (their exit into an
--- issue now needs the hold released, controllers included); the documents
+-- Archived / Void retirements, and those of them under an active hold (their
+-- exit into an issue now needs the hold released, controllers included);
+-- the unstamped Superseded documents REV-20 spares, and those of them under
+-- an active hold now (a hold HLD-2 carries at reversal time is not yet
+-- there to count); the documents
 -- whose current revision is still marked in_review (RG-12's residue —
 -- counted, not repaired); whether document_versions.updated_at existed.
 -- HOW TO APPLY: after 20261144 (the guard's base) and 20261130
@@ -120,18 +132,33 @@ SELECT 'inventory (before apply): documents in Draft / In Review with a review d
    AND btrim(COALESCE(d.status, '')) IN ('Draft', 'In Review')
    AND EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
 UNION ALL
-SELECT 'inventory (before apply): documents in Superseded / Archived / Void with no retirement stamp and a current revision (retired before 20261144, or by the service role — their exit into an issue is judged as a status-only issue from now on)',
+SELECT 'inventory (before apply): documents in Archived / Void with no retirement stamp and a current revision (retired before 20261144, or by the service role — their exit into an issue is judged as a status-only issue from now on)',
        COUNT(*)::text
   FROM documents d
  WHERE d.current_version_id IS NOT NULL
-   AND d.status IN ('Superseded', 'Archived', 'Void')
+   AND d.status IN ('Archived', 'Void')
    AND d.retired_issue_status IS NULL
 UNION ALL
 SELECT 'inventory (before apply): of those, under an active hold (REV-20: their exit into an issue now needs the hold released, Document Control included)',
        COUNT(*)::text
   FROM documents d
  WHERE d.current_version_id IS NOT NULL
-   AND d.status IN ('Superseded', 'Archived', 'Void')
+   AND d.status IN ('Archived', 'Void')
+   AND d.retired_issue_status IS NULL
+   AND EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
+UNION ALL
+SELECT 'inventory (before apply): documents in Superseded with no retirement stamp and a current revision (SPARED by REV-20: a split / merge / supersede recorded before 20261144, whose reversal puts the source back over the hold HLD-2 carries onto it; their exit keeps OWN-15''s rule for Document Control — REV-21)',
+       COUNT(*)::text
+  FROM documents d
+ WHERE d.current_version_id IS NOT NULL
+   AND d.status = 'Superseded'
+   AND d.retired_issue_status IS NULL
+UNION ALL
+SELECT 'inventory (before apply): of those, under an active hold now (Document Control may put them back to an issue over it, unrecorded — REV-21; a hold carried at reversal time is not counted here)',
+       COUNT(*)::text
+  FROM documents d
+ WHERE d.current_version_id IS NOT NULL
+   AND d.status = 'Superseded'
    AND d.retired_issue_status IS NULL
    AND EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
 UNION ALL
@@ -285,11 +312,16 @@ BEGIN
                                  AND OLD.retired_issue_status = 'not-issued'
                                  AND OLD.retired_issue_version_id IS NULL, false));
   -- REV-20 (document-control Round F wave 3, P14): two writes passed an
-  -- active hold for a controller, unrecorded. (a) The exit of a retirement
-  -- that carries NO stamp (retired before 20261144, or by the service role)
-  -- into an issue status, its pointer unmoved: what that retirement took
-  -- away is not known, so the exit is judged as a status-only issue — the
-  -- new door, whose hold binds everyone. (b) ONE write that moves the
+  -- active hold for a controller, unrecorded. (a) The exit of an Archived /
+  -- Void retirement that carries NO stamp (retired before 20261144, or by
+  -- the service role) into an issue status, its pointer unmoved: what that
+  -- retirement took away is not known, so the exit is judged as a
+  -- status-only issue — the new door, whose hold binds everyone. An
+  -- unstamped SUPERSEDED document is spared (P14 review fix): its exit is
+  -- the legacy reversal's put-back of a source superseded before 20261144,
+  -- over the hold HLD-2 carries onto it first — as a stamped put-back
+  -- (v_restoring) passes a controller; the bare un-supersede left open is
+  -- REV-21. (b) ONE write that moves the
   -- pointer AND makes the status an issue: a controller passes a hold only
   -- through publish_revision's recorded force, which sets the
   -- transaction-local flag app.publish_hold_override to this document's id
@@ -300,7 +332,7 @@ BEGIN
   v_new_door := v_new_door
                 OR COALESCE(v_issuing
                             AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
-                            AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                            AND OLD.status IN ('Archived', 'Void')
                             AND OLD.retired_issue_status IS NULL
                             AND is_org_controller(NEW.org_id), false);
   v_unforced_issue := COALESCE(v_issuing
@@ -950,8 +982,9 @@ SELECT 'RG-12: document_versions.updated_at exists (the relabel writes it)',
                 WHERE table_schema = 'public' AND table_name = 'document_versions' AND column_name = 'updated_at'),
        NULL
 UNION ALL
-SELECT 'REV-20 (a): an unstamped retirement''s exit into an issue is the new door for a controller (its hold binds them)',
+SELECT 'REV-20 (a): an unstamped Archived / Void retirement''s exit into an issue is the new door for a controller (its hold binds them); an unstamped Superseded one is spared (the legacy reversal''s put-back over a carried hold)',
        (SELECT prosrc LIKE '%v_new_door := v_new_door%'
+           AND prosrc LIKE '%AND OLD.status IN (''Archived'', ''Void'')%'
            AND prosrc LIKE '%AND OLD.retired_issue_status IS NULL%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL

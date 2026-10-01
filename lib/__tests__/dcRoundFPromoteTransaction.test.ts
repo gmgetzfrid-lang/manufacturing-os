@@ -94,13 +94,13 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(G.next.replace(G_DECL, "").replace(G_BLOCK, "").replace(G_HOLD, "")).toBe(G.live);
   });
 
-  it("the guard's added code is exactly the two REV-20 limbs (both bound to a controller)", () => {
+  it("the guard's added code is exactly the two REV-20 limbs (both bound to a controller; limb (a) an unstamped Archived / Void exit only — P14 review fix: an unstamped Superseded put-back is the legacy reversal's, spared)", () => {
     expect(code((G_DECL + G_BLOCK + G_HOLD).split("\n"))).toEqual([
       "  v_unforced_issue boolean;",
       "  v_new_door := v_new_door",
       "                OR COALESCE(v_issuing",
       "                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id",
-      "                            AND OLD.status IN ('Superseded', 'Archived', 'Void')",
+      "                            AND OLD.status IN ('Archived', 'Void')",
       "                            AND OLD.retired_issue_status IS NULL",
       "                            AND is_org_controller(NEW.org_id), false);",
       "  v_unforced_issue := COALESCE(v_issuing",
@@ -237,7 +237,7 @@ describe("20261151 — the one-paste shape", () => {
     expect((M.match(/^BEGIN;$/gm) ?? []).length).toBe(1);
     expect((M.match(/^COMMIT;$/gm) ?? []).length).toBe(1);
     const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
-    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(6);
+    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(8);
     expect(inventory).not.toMatch(/SELECT \*|d\.id\s*,|document_number/);
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
     expect((c.match(/;/g) ?? []).length).toBe(1); // one statement: the final SELECT

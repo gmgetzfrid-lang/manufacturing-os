@@ -352,11 +352,19 @@ one-paste migrations, independent of one another (any order among them):
   to its three checked writes on a database without the function. After
   the paste a controller passes an active hold only through
   `publish_revision`'s recorded force (`REV_HOLD_OVERRIDDEN`), never with a
-  bare pointer-and-issue write or an unstamped retirement's exit.
+  bare pointer-and-issue write or an unstamped Archived / Void
+  retirement's exit. An unstamped Superseded source still comes back over a
+  carried hold — the legacy reversal of a split / merge recorded before
+  `20261144` (P14 review fix; its inventory counts them); that bare
+  un-supersede, and a controller's bare pointer move on a held document
+  already issued, are `REV-21` (open).
 `GAP-4` (owner-must-approve) and `GAP-9` (field-verification currency) need
-no migration: the owner's roster row is counted by the guard's existing
-per-slot-group count, and the verification cadence rides the `review_policy`
-JSON.
+no migration: the owner's roster row, once the app writes it, is counted by
+the guard's existing per-slot-group count, and the verification cadence
+rides the `review_policy` JSON. The database does not know the
+owner-must-approve POLICY — a roster opened without the owner's row
+(directly through PostgREST) completes without it; that half is `RG-14`
+(open).
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
