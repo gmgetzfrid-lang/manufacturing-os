@@ -4,10 +4,10 @@
 // knowledge page puts text the MODEL wrote in front of the reader: a clarify
 // round's question and aspect buttons, and a calculation's Need prompt above
 // an input. Both are framed as the assistant's words and screened by
-// lib/assistantScreen.ts: a tier-1 request (a password, an MFA code, an
-// account or identity detail, a link) is refused in place of the card; a
-// tier-2 mention of a PIN or a code is shown with an amber caution and the
-// input / buttons stay enabled — no pin or code heuristic ever blocks input.
+// lib/assistantScreen.ts, which refuses in exactly two cases — a real URL,
+// or a secret plus an instruction to put it in this box — shown in place of
+// the card. Anything else that touches a credential is an amber caution
+// beside the text, and the input / buttons stay enabled.
 
 import React, { useState } from "react";
 import { Sparkles, Send, AlertTriangle } from "lucide-react";
@@ -50,8 +50,8 @@ function AssistantRequestRefused({ reason }: { reason: string }) {
   );
 }
 
-/** ASK-6 tier 2: a PIN or a code is named — said beside the text, never in
- *  place of the input. */
+/** ASK-6: a credential or a web address is mentioned — said beside the text,
+ *  never in place of the input. */
 function AssistantCaution({ text }: { text: string }) {
   return (
     <p role="note" data-assistant-caution="true"
@@ -71,11 +71,11 @@ export function ClarifyCard({ prompt, options, onAnswer }: {
   onAnswer: (focus: string[]) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // The question sits above buttons, not an input: refused only when it asks
-  // for a tier-1 credential; a PIN or code it names is a caution. An aspect
-  // is a short label the model proposed (length and links only — "Password
-  // length and rotation" is an aspect); one that fails is dropped, and too
-  // few left means no card at all.
+  // The question gets the same two refusals as a Need prompt; anything else
+  // is at most a caution. An aspect is a short label the model proposed:
+  // dropped only for a real URL or its length ("Mean and Std.Dev." and
+  // "Password length and rotation" are aspects), and too few left means no
+  // card at all.
   const promptCheck = screenAssistantRequest(prompt, "clarify");
   const safeOptions = options.filter((o) => screenAssistantRequest(o, "aspect").ok).map((o) => o.slice(0, 80));
   const toggle = (o: string) => {
@@ -125,8 +125,9 @@ export function NeedCard({ prompt, onProvide }: {
   onProvide: (values: string) => void;
 }) {
   const [value, setValue] = useState("");
-  // A Need prompt opens an input: the strictest screen — but a PIN or code it
-  // names is a caution above the input, never a refusal.
+  // A Need prompt opens an input: refused only for a real URL or a secret it
+  // asks to have typed into this box; any other credential it mentions is a
+  // caution above the input, never a refusal.
   const check = screenAssistantRequest(prompt, "need");
   if (!check.ok) return <AssistantRequestRefused reason={check.reason} />;
   return (

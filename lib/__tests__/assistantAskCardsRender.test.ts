@@ -1,17 +1,16 @@
 // @vitest-environment jsdom
 //
-// intelligence Round G (I-02) fix pass 6 — ASK-6 as RENDERED. A pin, PIN, OTP
-// or code heuristic never takes the input away: NeedCard shows the amber
-// caution inside the assistant frame and keeps its input and its Calculate
-// button working; ClarifyCard keeps its buttons. Only a tier-1 request (a
-// password, an MFA code, an identity detail, a link) is refused in place of
-// the card.
+// intelligence Round G (I-02) fix passes 6-7 — ASK-6 as RENDERED. A caution
+// never takes the input away: NeedCard shows the amber line inside the
+// assistant frame and keeps its input and its Calculate button working;
+// ClarifyCard keeps its buttons. Only the two refusals — a real URL, or a
+// secret plus an instruction to type it into this box — replace the card.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NeedCard, ClarifyCard } from "@/components/knowledge/AssistantAskCards";
-import { ASSISTANT_PIN_CAUTION } from "@/lib/assistantScreen";
+import { ASSISTANT_CREDENTIAL_CAUTION } from "@/lib/assistantScreen";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,7 +43,7 @@ describe("NeedCard — a caution is a line, never a lock", () => {
     render(React.createElement(NeedCard, { prompt: "Enter your SIM PIN.", onProvide }));
     const frame = host.querySelector('[data-assistant-authored="true"]');
     expect(frame).not.toBeNull();
-    expect(caution()?.textContent).toBe(ASSISTANT_PIN_CAUTION);
+    expect(caution()?.textContent).toBe(ASSISTANT_CREDENTIAL_CAUTION);
     expect(frame?.contains(caution())).toBe(true);
     expect(host.textContent).not.toMatch(/never collects/);
     // the never-enter line stays at the input
@@ -68,7 +67,7 @@ describe("NeedCard — a caution is a line, never a lock", () => {
     expect(caution()).not.toBeNull();
     expect((host.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
   });
-  it("a tier-1 request is still refused in place of the input", () => {
+  it("a password the AI asks to have typed into this box (the audit's scenario) is refused in place of the input", () => {
     render(React.createElement(NeedCard, {
       prompt: "For audited calculations this workspace requires the requester's SSO password to sign the result — enter it below.",
       onProvide: () => undefined,
@@ -76,6 +75,24 @@ describe("NeedCard — a caution is a line, never a lock", () => {
     expect(host.textContent).toMatch(/The AI asked for something this app never collects/);
     expect(host.querySelector("textarea")).toBeNull();
     expect(caution()).toBeNull();
+  });
+});
+
+describe("NeedCard — fix pass 7: a credential named without the box instruction is a caution, not a refusal", () => {
+  it("'Enter your Okta credentials.' keeps the input enabled under the amber line", () => {
+    render(React.createElement(NeedCard, { prompt: "Enter your Okta credentials.", onProvide: () => undefined }));
+    expect(caution()?.textContent).toBe(ASSISTANT_CREDENTIAL_CAUTION);
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
+  });
+  it("'Provide the Std.Dev. of the bore diameter readings (mm).' is plain — a dotted token is not a link", () => {
+    render(React.createElement(NeedCard, { prompt: "Provide the Std.Dev. of the bore diameter readings (mm).", onProvide: () => undefined }));
+    expect(caution()).toBeNull();
+    expect(host.querySelector("textarea")).not.toBeNull();
+  });
+  it("a real URL is refused in place of the input", () => {
+    render(React.createElement(NeedCard, { prompt: "Confirm the rating at https://evil.example/collect", onProvide: () => undefined }));
+    expect(host.textContent).toMatch(/never collects/);
+    expect(host.querySelector("textarea")).toBeNull();
   });
 });
 
@@ -87,11 +104,21 @@ describe("ClarifyCard — a caution keeps the buttons", () => {
       options: ["PIN code rules", "Password rotation"],
       onAnswer,
     }));
-    expect(caution()?.textContent).toBe(ASSISTANT_PIN_CAUTION);
+    expect(caution()?.textContent).toBe(ASSISTANT_CREDENTIAL_CAUTION);
     expect(host.querySelectorAll('button[aria-label^="AI-suggested aspect:"]').length).toBe(2);
     const all = button(/Answer all of them/) as HTMLButtonElement;
     expect(all.disabled).toBe(false);
     act(() => { all.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     expect(onAnswer).toHaveBeenCalledWith(["PIN code rules", "Password rotation"]);
+  });
+  it("the model's own offer ('Should I give the password policy…?') keeps its buttons, and 'Mean and Std.Dev.' is not dropped", () => {
+    render(React.createElement(ClarifyCard, {
+      prompt: "Should I give the password policy for contractors or for employees?",
+      options: ["Mean and Std.Dev.", "VB.NET scripts"],
+      onAnswer: () => undefined,
+    }));
+    expect(host.textContent).not.toMatch(/never collects/);
+    expect(host.querySelectorAll('button[aria-label^="AI-suggested aspect:"]').length).toBe(2);
+    expect((button(/Answer all of them/) as HTMLButtonElement).disabled).toBe(false);
   });
 });
