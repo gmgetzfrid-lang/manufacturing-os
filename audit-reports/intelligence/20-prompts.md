@@ -33,7 +33,7 @@ Where the instruction, the UI's promise, and the code's validation diverge.
 ## PR-1 · The AI write-approval door mints its own approval and skips the role check for 2 of 3 write tools
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/orchestrator/execute/route.ts:57-60`, `lib/orchestrator/tools.ts:474-518`, `lib/orchestrator/tools.ts:520-552`, `lib/orchestrator/tools.ts:408-427`, `lib/orchestrator/loop.ts:95-97`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as stated: 2 of 3 write tools have no role gate, the route supplies the approval itself, and the route's own comment ('this route grants confirmation, not authority', :56) is only true for checkout_document. lib/__tests__/apiRouteAuth.test.ts:132-150 exercises the end-to-end write with role 'Admin' and has no Viewer case, so nothing in the test suite would catch it. loop.ts:95-97 then feeds the forged row back to the next asker via check_audit_history.
@@ -56,6 +56,18 @@ execute/route.ts:46 `const role = (member.role as string) ?? "Viewer";` then :57
 - [ ] /api/orchestrator/execute verifies the action against a server-side record of what was actually proposed in a run (or the approval is signed), rather than fingerprinting whatever the client sent
 - [ ] notify_personnel's emit() carries the real actor's name, not the fixed string "Document controller"
 - [ ] apiRouteAuth.test.ts covers a Viewer-role caller against both write tools and expects 403
+
+**Resolution (2026-10-01, intelligence Round G).** Closed with `ORCH-1` and `ORCH-4` (report `15`). `log_audit_completion` is the controller tier through `lib/permissions` `isControllerPrincipal`, refused with `forbidden` (403 at `/execute`); `notify_personnel` follows the decided default (`DEC-44 (I-04)` item 2: any active member, about a document they can read). The approval no longer comes from what the client sent: `/api/orchestrator/execute` runs only a proposal stored server-side at the end of a run, for the person and org it was proposed to, within 15 minutes, once (`lib/orchestrator/proposals.ts`, `20261147`).
+
+**Pending migration:** `20261147_intel_roundG_orchestrator_proposals.sql` (see `ORCH-4`; until it is applied no assistant write can be confirmed).
+
+**Done-when.**
+1. ✓ `logAuditCompletion` checks the controller tier before its proposal gate (the app's one definition, not a role list); for `notifyPersonnel` the criterion is replaced by `DEC-44 (I-04)` item 2.
+2. ✓ `/execute` verifies the action against the server-side record of what was proposed (`orchestrator_proposals`), not a fingerprint of the request body.
+3. ✓ `notify_personnel`'s `emit()` carries the caller's name (EGRESS-3; re-pinned in `lib/__tests__/orchestratorExecute.test.ts`).
+4. ✓ `lib/__tests__/apiRouteAuth.test.ts` covers a Viewer-role caller executing `log_audit_completion` and expects 403 (and a Manager / Supervisor); for `notify_personnel` the decision admits a Viewer about a readable document, and `orchestratorExecute.test.ts` pins both that and the refusal for an unreadable one.
+
+**Scope / residual.** None.
 
 ---
 
@@ -86,6 +98,15 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 - [ ] validateParsedQuote computes Σ lineItems[].total and, when it differs from total by more than a tolerance, records the discrepancy on the row
 - [ ] the review UI shows the discrepancy and the extraction cannot be used in the bid tab until a human resolves it
 - [ ] invoice extraction validates its payload against a schema instead of storing `raw`
+
+**Partial (2026-10-01, intelligence Round G).** The plan default (`DEC-44 (I-04)` item 5): flag only — never auto-correct, never block. `lib/bidTab.ts` gains `reconcileQuoteTotal` (`:113`) and `validateParsedQuote` attaches its result as `ParsedQuote.totalCheck` whenever a line prints a total: Σ of the priced lines, the difference, the priced / unpriced line counts, and `mismatch` beyond max(1 unit, 0.5 % of the total) with a sentence for the reviewer ("The priced lines add up to 1,820,000, not the quoted total of 182,000 … check the PDF …"). The total stays what was read and the read is not refused. `/api/projects/cost-docs` (projects J11 / J12's file, not edited) stores and returns `validateParsedQuote`'s record, so the flag lands on `cost_documents.parsed` and in the response unchanged; `parsedQuoteFrom` re-validates the stored extraction, so a stored row and a fresh read agree. Test: `lib/__tests__/quoteTotalCheck.test.ts` (the finding's 182,000 vs 1,820,000 scenario, tolerance, no priced lines, idempotence, a human-corrected total, and the unchanged route storing and returning the flag).
+
+**Done-when.**
+1. ✓ `validateParsedQuote` computes Σ `lineItems[].total` and, beyond the tolerance, records the discrepancy on the row (`parsed.totalCheck`).
+2. **Not met here:** showing the discrepancy on the review screen is `components/projects/cost/QuotesPanel.tsx` (projects J4 / J10b), not this package's file — handed over: render `quote.totalCheck.note` beside the total when `quote.totalCheck?.mismatch` (the panel already holds the re-validated `ParsedQuote`). The criterion's "cannot be used in the bid tab until a human resolves it" is declined by the decided default (never block).
+3. **Not met here:** validating the invoice payload instead of storing `raw` is the cost-docs route's invoice branch (projects J11 / J12's file) — handed over.
+
+**Scope / residual.** Criteria 2 (display) and 3 → the projects fleet (`QuotesPanel.tsx`; the cost-docs route). Cross-referenced on projects-and-cost `COST-3` and `COST-5`, which also edit `lib/bidTab.ts` (scoring), not `validateParsedQuote`.
 
 ---
 

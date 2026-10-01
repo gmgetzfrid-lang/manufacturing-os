@@ -30,7 +30,7 @@
 ## GPV-1 · /api/graph/ask runs the corpus search as service role and never applies the per-asker ACL filter — the graph's Ask box reads every ACL-protected controlled document in the org
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/graph/ask/route.ts:83-87`, `app/api/graph/ask/route.ts:21-23`, `supabase/migrations/20260917_knowledge_sources.sql:69-82`, `supabase/migrations/20260929_mention_engine.sql:112-134`, `app/api/knowledge/ask/route.ts:157-186`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the route's own header comment at :21-23 asserts the opposite ("the corpus RPC runs SECURITY INVOKER under the caller's own RLS, so this can never widen what the person is allowed to read"), which is precisely why it was never caught. supabase/migrations/20260917_knowledge_sources.sql:69-82 shows the chunk RLS the service role is bypassing: `knowledge_chunks_select` explicitly excludes any chunk whose document has `source_document_id IS NOT NULL`. CRITICAL is the right severity — any active member, including a Viewer with no ACL grant, gets ts_headline excerpts of controlled-document text.
@@ -52,6 +52,21 @@ app/api/graph/ask/route.ts:21-23 — "Security: org membership is checked here, 
 - [ ] the entity_mentions and knowledge_documents fan-out at lines 137-172 is restricted to the surviving kdocIds, so a hidden document cannot leak via nodeIds or the asset snippet
 - [ ] the route header comment is rewritten to describe what the code actually does
 - [ ] an authorization test asserts that a member with no ACL grant on a source-linked library gets zero hits for a term that only appears in that library
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): `lib/__tests__/graphAskAcl.test.ts` drives `POST /api/graph/ask` through the REAL ACL seam (`lib/knowledgeAccess`: `loadPrincipal`, the library → folder → document chain, `lib/acl`) over the in-memory PostgREST stand-in (`lib/__tests__/knowledgeFakeDb.ts`); five of its cases fail at the base `d466a59` — a Viewer the Legal library does not grant got the settlement passage, its page, the mirror's document node and the equipment its mentions name. What landed, in `app/api/graph/ask/route.ts` only (I-04's first commit, on its own):
+- `askerView` (`:63`) reads the hits' knowledge documents once (`knowledge_documents.source_document_id`, org-scoped) and evaluates every mirror's controlled document with `readableControlledDocIds` for the asker's `loadPrincipal`, BEFORE ranking (`:168`). A hit whose controlled document the asker may not read is dropped; upload-origin hits stay org-readable.
+- The `entity_mentions` fan-out runs over the surviving knowledge documents only, and a mention row that names a controlled document directly (`document_id`) is kept only when that document is readable (`:230`) — whatever knowledge document it was read from. The mirror's document node comes from the same map (`:248`; the second `knowledge_documents` read is gone).
+- Fails CLOSED: a mirror lookup that errors withholds every hit (which ones are mirrors is unknown); a principal that cannot be loaded, or a readable set that throws, withholds every source-linked hit and every mention row naming a controlled document. A withheld hit is never counted or named — the response reads exactly as "nothing matches".
+- The header now says the RPC runs on the service-role key and describes this filter.
+
+**Done-when.**
+1. ✓ The route resolves the asker's principal and excludes every knowledge document whose `source_document_id` is not in `readableControlledDocIds` — the helper pair `/api/knowledge/ask` uses.
+2. ✓ Fails closed: when the readable set cannot be computed, every source-linked knowledge document is excluded from hits, nodeIds and assets (test "fails CLOSED: when the asker's readable set cannot be built …"); when the mirror lookup fails, nothing is returned ("fails CLOSED: when the mirror lookup cannot be read …").
+3. ✓ The mentions and mirror fan-out is restricted to the surviving knowledge documents, and a mention naming an unreadable controlled document directly is dropped too ("a mention row naming an unreadable controlled document is dropped even when its knowledge document is upload-origin").
+4. ✓ The header describes the enforcement that actually runs.
+5. ✓ A member with no ACL grant on a source-linked library gets zero hits, nodes and assets for a term only that library holds; a controller by the role collection and an engineer the library grants both see it (non-vacuous).
+
+**Scope / residual.** The same change closes `IEDGE-1` (one fix, two records). The seam's own reads failing OPEN (`loadDcLandscape`'s container reads, `loadPrincipal`'s `team_members` read — `KACL-12`, owner I-12) apply here as to every caller of `readableControlledDocIds`; this route fails closed on everything the seam reports. `ai_excluded` is not applied by this evidence-only route (the exclusion route purges the mirror — unchanged, out of scope).
 
 ---
 
@@ -401,6 +416,14 @@ app/api/graph/ask/route.ts:174-176 — `const payload: GraphAskResponse = { mode
 
 - [ ] the count reported reflects nodes actually present in the current view, and hidden matches are called out with a one-click way to unhide them ("6 more in Equipment — show")
 - [ ] the ANSWERED mode is either implemented and consumed by the client, or the mode/answer fields and the header comment are removed so the surface stops claiming a written answer it never produces
+
+**Partial (2026-10-01, intelligence Round G).** The route half — criterion 2 — closed with [`IEDGE-11`](./21-edges-and-invariants.md#iedge-11) (I-04): `GraphAskResponse` is `mode: "evidence"` with no `answer` field, the header says a written answer is `/api/knowledge/ask`'s job, and the one consumer (`app/(protected)/graph/page.tsx`, `interface GraphAsk`) never declared either (pinned by `lib/__tests__/graphAskAcl.test.ts`, IEDGE-11 block).
+
+**Done-when.**
+1. **Not met here:** the count of lit nodes against the current view, and the "N more in Equipment — show" call-out, are the page's (I-14, `app/(protected)/graph/page.tsx` and `components/graph/*`), not edited by I-04.
+2. ✓ The mode union, the answer field and the header comment are reduced to what the route does (the "removed" branch, per the plan default, `DEC-44 (I-04)` item 4).
+
+**Scope / residual.** Criterion 1 — owner I-14.
 
 ---
 
