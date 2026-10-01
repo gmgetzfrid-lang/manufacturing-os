@@ -2,7 +2,11 @@
 //
 // Reads go straight to supabase (RLS scopes them); anything involving the
 // PDF pipeline or a provider key goes through the /api routes with a bearer
-// token (same contract as lib/storage.ts).
+// token (same contract as lib/storage.ts). The team's stored answers are the
+// exception: they were built under the ASKER's ACL, so they are read only
+// through /api/knowledge/history, which re-checks every citation for the
+// current reader (20261120 narrows the table itself to the asker and
+// controllers).
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
@@ -124,6 +128,10 @@ export interface KnowledgeAnswer {
    *  It's stated so an answer can never IMPLY a meaning-based search that
    *  didn't run. */
   retrieval?: "keyword" | "hybrid";
+  /** Meaning-index coverage over the libraries this answer searched, when
+   *  the ask route reports it. Absent, the page falls back to the asked
+   *  library's own coverage (describeRetrieval). */
+  retrievalCoverage?: { embedded: number; total: number };
   /** Clarify round (opt-in feature): no answer yet — the AI found the
    *  question's answer across several distinct aspects and asks which to
    *  cover. Re-ask with `focus` to get the actual answer. */
@@ -164,6 +172,21 @@ export interface KnowledgeQuestion {
   userName: string | null;
   mode: AskMode;
   createdAt: string;
+  /** The reader asked it. Continuing someone else's conversation starts a
+   *  new thread seeded with their turns — never appends to theirs. */
+  mine?: boolean;
+}
+
+/** A page of the team's record as THIS reader may see it. `withheld` counts
+ *  answers left out — because they draw on a document the reader cannot open
+ *  (or one since removed from the library), or because they are a
+ *  teammate's library answer that cites no document (shown to its asker
+ *  only), or a later turn of a conversation holding either — said out loud,
+ *  never silently, and never as a claim about which of these it was. */
+export interface KnowledgeHistoryPage {
+  questions: KnowledgeQuestion[];
+  withheld: number;
+  error?: string;
 }
 
 export interface AiConnectionInfo {
@@ -275,17 +298,47 @@ export async function saveLibraryAiInstructions(libraryId: string, instructions:
   if (error) throw new Error(error.message);
 }
 
-/** Save the library's AI feature toggles (controllers; RLS enforces). */
+/** Save the library's AI feature toggles (controllers; RLS enforces).
+ *
+ *  The toggles are replaced as a set, but ai_features also carries the
+ *  meaning index's background-build marker (`embedBuild` — who pays, and a
+ *  standing "keep current" consent, SEM-8), which this save must never
+ *  erase: knowledge_library_save_ai_features (20261121) replaces every key
+ *  EXCEPT embedBuild in one statement, so a drain writing the marker at the
+ *  same moment is not reverted either. Before 20261121 the marker is carried
+ *  over by reading it first. A save that changed nothing (no permission, or
+ *  no such library) is an error, never a silent success. */
 export async function saveLibraryAiFeatures(libraryId: string, features: KnowledgeAiFeatures): Promise<void> {
-  const { error } = await supabase.from("knowledge_libraries")
-    .update({ ai_features: features }).eq("id", libraryId);
-  if (error) {
+  const toggles = { ...(features as Record<string, unknown>) };
+  delete toggles.embedBuild;
+  const fail = (error: { code?: string; message: string }): never => {
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
         ? "AI features need migration 20260918 — run it in Supabase first."
         : error.message,
     );
+  };
+  const notSaved = "Library AI setup was not saved — only Admin or Doc Control can change it.";
+
+  const rpc = await supabase.rpc("knowledge_library_save_ai_features", { p_library_id: libraryId, p_features: toggles });
+  if (!rpc.error) {
+    if (rpc.data !== true) throw new Error(notSaved);
+    return;
   }
+  const missing = rpc.error.code === "PGRST202" || rpc.error.code === "42883"
+    || /Could not find the function|does not exist/i.test(rpc.error.message);
+  if (!missing) fail(rpc.error);
+
+  // 20261121 not applied: keep the marker by reading it first.
+  const { data: cur, error: readErr } = await supabase.from("knowledge_libraries")
+    .select("ai_features").eq("id", libraryId).maybeSingle();
+  if (readErr) fail(readErr);
+  const marker = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).embedBuild;
+  const { data, error } = await supabase.from("knowledge_libraries")
+    .update({ ai_features: marker !== undefined ? { ...toggles, embedBuild: marker } : toggles })
+    .eq("id", libraryId).select("id");
+  if (error) fail(error);
+  if (!Array.isArray(data) || data.length === 0) throw new Error(notSaved);
 }
 
 export async function listLibraryLinks(libraryId: string): Promise<KnowledgeLibraryLink[]> {
@@ -407,6 +460,13 @@ export async function ingestKnowledgeDocument(
   }
 }
 
+/** How many `busy` answers in a row a page's loop waits through (each is a
+ *  route call that already polled the claim for up to ~30 s, then a wait of
+ *  `retryAfterMs`, capped) — longer than the claim's TTL, so a claim a
+ *  killed invocation left behind lapses first. */
+export const INGEST_BUSY_ROUNDS_MAX = 12;
+const INGEST_BUSY_WAIT_MS = 30_000;
+
 async function ingestLoop(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
@@ -420,14 +480,27 @@ async function ingestLoop(
   // abandoned — progress lives on the document row, so re-POSTing is safe.
   // What we refuse to do is spin: rounds that succeed without indexing a
   // single new page mean something is genuinely wrong, and that gets said.
+  //
+  // Since the ingest claim (ING-2, DEC-58) a POST can answer `busy`: another
+  // driver holds the document — a tab, the nightly drain, or a killed
+  // invocation whose claim stands until its TTL. That is waiting, not a
+  // stall: the loop waits `retryAfterMs` and asks again, and only a long run
+  // of busy answers ends it, with the true reason. A vision retry that
+  // re-reads failed pages does not move `pagesIndexed`; a fall in
+  // `visionFailedPages` (or a rise in `pagesReadable`) is progress too.
   let visionPages = 0;
   let lastIndexed = -1;
+  let lastFailed: number | null = null;
+  let lastReadable = -1;
   let noProgressRounds = 0;
+  let busyRounds = 0;
   let transientFailures = 0;
   for (let i = 0; i < 2000; i++) {
     let out: {
       done: boolean; pageCount: number; pagesIndexed: number;
       visionPages?: number; visionSkipReason?: string | null;
+      busy?: boolean; retryAfterMs?: number | null;
+      visionFailedPages?: number[]; pagesReadable?: number;
     };
     try {
       out = await apiPost("/api/knowledge/ingest", { documentId });
@@ -445,8 +518,27 @@ async function ingestLoop(
     });
     if (out.done) return;
 
-    noProgressRounds = out.pagesIndexed > lastIndexed ? 0 : noProgressRounds + 1;
+    if (out.busy) {
+      if (++busyRounds > INGEST_BUSY_ROUNDS_MAX) {
+        throw new Error(
+          "Another session is indexing this document right now. It carries on by itself — reopen the library later to see it finish.",
+        );
+      }
+      const waitMs = Math.min(Math.max(out.retryAfterMs ?? INGEST_BUSY_WAIT_MS, 2_000), INGEST_BUSY_WAIT_MS);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+    busyRounds = 0;
+
+    const failed = Array.isArray(out.visionFailedPages) ? out.visionFailedPages.length : null;
+    const readable = typeof out.pagesReadable === "number" ? out.pagesReadable : -1;
+    const progressed = out.pagesIndexed > lastIndexed
+      || (failed !== null && lastFailed !== null && failed < lastFailed)
+      || readable > lastReadable;
+    noProgressRounds = progressed ? 0 : noProgressRounds + 1;
     lastIndexed = Math.max(lastIndexed, out.pagesIndexed);
+    if (failed !== null) lastFailed = failed;
+    lastReadable = Math.max(lastReadable, readable);
     if (noProgressRounds >= 3) {
       throw new Error(
         `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} — ` +
@@ -485,6 +577,87 @@ export async function askKnowledgeLibrary(
   });
 }
 
+// ── What a follow-up may send back as context (IEDGE-5 / KACL-1) ────────────
+//
+// A conversation reopened from the saved record — a teammate's thread, one
+// holding a turn the reader can no longer see, or a memory-card answer —
+// starts a NEW thread, so the follow-up is filed under the reader. Those
+// seeded turns were built under someone else's ACL (or an earlier one) and
+// the new thread records nothing of them, so the history rule could never
+// withhold a follow-up that restated them. They are therefore SHOWN, never
+// sent: `seeded` counts the leading turns of the thread that came from the
+// saved record, and only the turns after them go back to the model.
+
+/** Turns sent back as context with a follow-up (the latest ones). */
+export const ASK_CONTEXT_TURNS = 4;
+
+/** The history a follow-up sends: the turns after the `seeded` ones, the
+ *  last ASK_CONTEXT_TURNS of them. An unreadable `seeded` sends nothing. */
+export function askContextHistory(
+  thread: ReadonlyArray<{ question: string; answer: { answer: string } }>,
+  seeded: number,
+): Array<{ question: string; answer: string }> {
+  const from = Number.isFinite(seeded) ? Math.min(thread.length, Math.max(0, Math.floor(seeded))) : thread.length;
+  return thread.slice(from).slice(-ASK_CONTEXT_TURNS).map((t) => ({ question: t.question, answer: t.answer.answer }));
+}
+
+/** The active conversation as mirrored to sessionStorage: the last `keep`
+ *  turns, with the seeded count re-based onto them. */
+export function persistedThread<T>(turns: readonly T[], seeded: number, keep = 6): { turns: T[]; seeded: number } {
+  const kept = turns.slice(-keep);
+  const safe = Number.isFinite(seeded) ? Math.max(0, Math.floor(seeded)) : turns.length;
+  return { turns: kept, seeded: Math.min(kept.length, Math.max(0, safe - (turns.length - kept.length))) };
+}
+
+/** The seeded count of a restored conversation. A saved conversation that
+ *  does not say (written before this rule) is treated as seeded whole —
+ *  shown, nothing of it sent. */
+export function restoredSeeded(saved: { turns?: readonly unknown[] | null; seeded?: unknown }): number {
+  const n = saved.turns?.length ?? 0;
+  return typeof saved.seeded === "number" && Number.isFinite(saved.seeded)
+    ? Math.min(n, Math.max(0, Math.floor(saved.seeded)))
+    : n;
+}
+
+/** SEM-12: what an answer's retrieval flag means, in words, for every reader.
+ *  "keyword" is not a degraded state to hide — it is what this product has
+ *  always done well — but an answer must never IMPLY a meaning search that
+ *  did not run, and a 3%-built index must never read like a 100% one. */
+export const MEANING_COVERAGE_NOTE_BELOW = 95;
+export function describeRetrieval(
+  retrieval: KnowledgeAnswer["retrieval"],
+  coverage: { embedded: number; total: number } | null | undefined,
+): { label: string; note: string | null; keywordOnly: boolean; emphasize: boolean } | null {
+  if (!retrieval) return null;
+  const pct = coverage && coverage.total > 0 ? Math.floor((coverage.embedded / coverage.total) * 100) : null;
+  if (retrieval === "keyword") {
+    return {
+      label: "Keyword search only",
+      keywordOnly: true,
+      // A library that never built a meaning index answers by keyword as it
+      // always has: the chip says so; the note box is for a library that HAS
+      // an index this answer did not use.
+      emphasize: pct !== null && pct > 0,
+      note: "Meaning search did not run for this answer"
+        + (pct === null ? "" : pct === 0 ? " — this library has no meaning index yet" : ` — the meaning index covers ${pct}% of this library`)
+        + ". A passage that says the same thing in other words may be missing.",
+    };
+  }
+  const partial = pct !== null && pct < MEANING_COVERAGE_NOTE_BELOW;
+  return {
+    label: "Keyword + meaning search",
+    keywordOnly: false,
+    emphasize: partial,
+    note: partial
+      ? `Meaning search covers ${pct}% of this library — passages without a meaning vector were found by keyword only.`
+      : null,
+  };
+}
+
+/** ASK-6: the screen for model-written text shown at an input or on a
+ *  button — pure, so the ask route can apply the same screen server-side. */
+export { screenAssistantRequest, ASSISTANT_REQUEST_MAX } from "@/lib/assistantScreen";
+
 /** A calculation answer that stopped because it needs user-specific values
  *  (test temperature, design pressure…) starts with a **Need:** line —
  *  detect it so the UI can ask instead of showing a dead-end answer. */
@@ -493,56 +666,80 @@ export function parseNeedPrompt(answer: string): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** Ask memory: search the ORG's past Q&A before spending a fresh AI call.
- *  FTS via the generated search_tsv (websearch syntax); falls back to a plain
- *  ilike on a pre-migration DB so the feature degrades, never breaks. */
+/** Ask memory: past answers in THIS library that match the question, offered
+ *  before a fresh AI call. Served by /api/knowledge/history, which withholds
+ *  every answer citing a document the reader cannot open — the card never
+ *  replays what the original asker's ACL admitted (ASK-1). Best-effort: a
+ *  failure answers [] and the ask goes ahead. */
 export interface PastAsk {
   id: string; library_id: string; question: string; answer: string;
   user_name: string | null; created_at: string;
   citations: unknown;
 }
+
+/** One row as /api/knowledge/history returns it. */
+interface HistoryRowWire {
+  id: string; libraryId: string; threadId: string | null; question: string; answer: string | null;
+  citations: unknown; userName: string | null; mode: AskMode; createdAt: string; mine: boolean;
+}
+
+const toQuestion = (r: HistoryRowWire): KnowledgeQuestion => ({
+  id: r.id,
+  threadId: r.threadId ?? null,
+  question: r.question,
+  answer: r.answer ?? null,
+  citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
+  userName: r.userName ?? null,
+  mode: r.mode === "internet" ? "internet" : "library",
+  createdAt: r.createdAt,
+  mine: r.mine === true,
+});
+
 export async function searchAskHistory(
-  orgId: string, query: string, limit = 5,
+  orgId: string, libraryId: string, query: string, limit = 5,
 ): Promise<PastAsk[]> {
   const q = query.trim();
   if (q.length < 8) return []; // too short to mean anything
   try {
-    const { data, error } = await supabase
-      .from("knowledge_questions")
-      .select("id, library_id, question, answer, user_name, created_at, citations")
-      .eq("org_id", orgId)
-      .textSearch("search_tsv", q, { type: "websearch", config: "english" })
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (!error && data) return data as PastAsk[];
-  } catch { /* fall through */ }
-  const { data } = await supabase
-    .from("knowledge_questions")
-    .select("id, library_id, question, answer, user_name, created_at, citations")
-    .eq("org_id", orgId)
-    .ilike("question", `%${q.slice(0, 60).replace(/[%_]/g, " ")}%`)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  return (data as PastAsk[]) ?? [];
+    const out = await apiPost<{ rows: HistoryRowWire[] }>("/api/knowledge/history", {
+      orgId, libraryId, action: "search", query: q, limit,
+    });
+    // The route reads at least its default for a search (its answer must not
+    // depend on the caller's window), and a smaller limit's answer is a prefix
+    // of that one — so the caller's own limit is applied here.
+    return (out.rows ?? []).filter((r) => typeof r.answer === "string").map((r) => ({
+      id: r.id, library_id: r.libraryId, question: r.question, answer: r.answer as string,
+      user_name: r.userName ?? null, created_at: r.createdAt, citations: r.citations,
+    })).slice(0, Math.max(0, limit));
+  } catch {
+    return [];
+  }
 }
 
+/** The library's recent answers as THIS reader may see them. A failure is
+ *  reported on the page, never shown as an empty record. */
 export async function listKnowledgeQuestions(
-  libraryId: string, limit = 25,
-): Promise<KnowledgeQuestion[]> {
-  const { data, error } = await supabase
-    .from("knowledge_questions").select("*").eq("library_id", libraryId)
-    .order("created_at", { ascending: false }).limit(limit);
-  if (error) return [];
-  return (data ?? []).map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    threadId: (r.thread_id as string | null) ?? null,
-    question: r.question as string,
-    answer: (r.answer as string | null) ?? null,
-    citations: Array.isArray(r.citations) ? (r.citations as KnowledgeCitation[]) : [],
-    userName: (r.user_name as string | null) ?? null,
-    mode: (r.mode as AskMode) === "internet" ? "internet" as const : "library" as const,
-    createdAt: r.created_at as string,
-  }));
+  orgId: string, libraryId: string, limit = 25,
+): Promise<KnowledgeHistoryPage> {
+  try {
+    const out = await apiPost<{ rows: HistoryRowWire[]; withheld: number }>("/api/knowledge/history", {
+      orgId, libraryId, action: "list", limit,
+    });
+    return { questions: (out.rows ?? []).map(toQuestion), withheld: Number(out.withheld) || 0 };
+  } catch (e) {
+    return { questions: [], withheld: 0, error: (e as Error).message };
+  }
+}
+
+/** Every turn of one conversation this reader may see, oldest first. A turn
+ *  after a withheld one is withheld too — it was answered with it as context. */
+export async function loadConversation(
+  orgId: string, libraryId: string, threadId: string,
+): Promise<KnowledgeHistoryPage> {
+  const out = await apiPost<{ rows: HistoryRowWire[]; withheld: number }>("/api/knowledge/history", {
+    orgId, libraryId, action: "thread", threadId,
+  });
+  return { questions: (out.rows ?? []).map(toQuestion), withheld: Number(out.withheld) || 0 };
 }
 
 // ── AI connection (BYO keys — always via the API, never direct) ───────────
@@ -789,8 +986,12 @@ export async function setDocumentAiExclusion(
 export interface SemanticProgress {
   /** Passages embedded by THIS call. */
   embedded: number;
+  /** Retrievable passages — those of documents that are indexed and
+   *  searchable (SEM-5: the same population meaning search returns). */
   total: number;
   coveredNow: number;
+  /** Still to embed. Passages the provider refused are NOT counted here —
+   *  they are `failed`, and do not hold the library below done (SEM-4). */
   remaining: number;
   done: boolean;
   error: string | null;
@@ -798,6 +999,37 @@ export interface SemanticProgress {
   /** Provider said "slow down" (free-tier RPM/TPM). Pacing, not failure. */
   rateLimited?: boolean;
   retryAfterMs?: number;
+  /** Passages the provider refused every time — skipped, with where they are. */
+  failed?: number;
+  /** Where they are — for controllers only; other readers get the count. */
+  failedSamples?: Array<{ documentName: string; page: number; error: string | null }>;
+  /** Passages another run is embedding right now (SEM-7: the queue is a claim). */
+  busy?: number;
+  /** Passages the provider refused that wait to be offered again (SEM-4) —
+   *  nobody is embedding them; the background build retries them. */
+  waiting?: number;
+  /** Passages the provider refused during THIS call (an attempt recorded). */
+  refused?: number;
+  /** Vectors per embedding model, and whether the library holds more than
+   *  one (then meaning search is off for it until rebuilt — SEM-1). */
+  models?: Record<string, number>;
+  mixed?: boolean;
+  /** The viewer's embedding setup (never the key). */
+  connection?: { provider: string; model: string } | null;
+  /** Why building with the viewer's setup would mix two vector spaces. */
+  conflict?: string | null;
+  /** SEM-13: the price, from the ledger's own table, for the viewer's model. */
+  estimate?: { model: string; remainingUsd: number; fullUsd: number; placeholderRate: boolean } | null;
+  /** The background continuation, and why it is holding off (SEM-11). */
+  background?: {
+    mine: boolean; standing: boolean; startedAt: string | null; lastDrainAt: string | null;
+    blockedUntil: string | null; blockedReason: string | null; lastError: string | null;
+  } | null;
+  /** The background continuation could not be recorded this time. */
+  backgroundNote?: string;
+  /** Reset: another member's background build / standing consent was ended
+   *  so the rebuild runs on the caller's own key. */
+  backgroundCleared?: boolean;
 }
 
 /** Coverage only — spends nothing, so it's safe to call on page load. */
@@ -814,12 +1046,24 @@ export async function semanticStatus(orgId: string, libraryId: string): Promise<
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "status" });
 }
 
+/** One nudge per tab per this long: navigating between libraries must not
+ *  fan out a 300-second drain per page view (SEM-7). The server skips a
+ *  library drained in the last two minutes as well. */
+const NUDGE_DEBOUNCE_MS = 10 * 60_000;
+let lastNudgeAt = 0;
+
 /** Fire-and-forget: ask the server to continue any pending meaning-index
  *  build in the background (up to ~4 minutes of server-side embedding).
  *  Called on library page load so merely OPENING the app advances a large
  *  build — the browser tab stopped being the engine. Never awaited, never
- *  surfaces errors: the hourly cron covers whatever this misses. */
+ *  surfaces errors: the daily cron covers whatever this misses. */
 export function nudgeEmbedDrain(): void {
+  const now = Date.now();
+  let last = lastNudgeAt;
+  try { last = Math.max(last, Number(window.sessionStorage.getItem("kl-embed-nudge-at")) || 0); } catch { /* no storage */ }
+  if (now - last < NUDGE_DEBOUNCE_MS) return;
+  lastNudgeAt = now;
+  try { window.sessionStorage.setItem("kl-embed-nudge-at", String(now)); } catch { /* no storage */ }
   void (async () => {
     try {
       const token = await authToken();
@@ -841,6 +1085,64 @@ export function nudgeEmbedDrain(): void {
  *  regimes at once. */
 export async function resetSemanticIndex(orgId: string, libraryId: string): Promise<SemanticProgress> {
   return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "reset" });
+}
+
+/** Give the passages the provider refused another chance (controllers). */
+export async function retryFailedPassages(orgId: string, libraryId: string): Promise<{ requeued: number }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "retry-failed" });
+}
+
+/** SEM-8: the standing consent — keep this library's meaning index current
+ *  as documents are added, on the caller's own key and monthly cap. */
+export async function setKeepIndexCurrent(orgId: string, libraryId: string, on: boolean): Promise<{ standing: boolean }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "keep-current", on });
+}
+
+/** Stop the background build (its payer, or a controller). */
+export async function releaseBackgroundBuild(orgId: string, libraryId: string): Promise<{ released: boolean }> {
+  return apiPost("/api/knowledge/embed", { orgId, libraryId, action: "release" });
+}
+
+/** What the panel says after a background-build control, decided by what the
+ *  route ANSWERED — never by the call merely returning (SEM-8 / SEM-11): a
+ *  Stop that found nothing running stopped nothing, and a consent flag that
+ *  came back other than the one asked for was not recorded. (A refused or
+ *  failed write is a non-2xx, which apiPost throws.) */
+export type EmbedControlOutcome = { type: "success" | "info" | "error"; title: string };
+export function releaseOutcome(out: { released?: unknown } | null | undefined): EmbedControlOutcome {
+  if (out?.released === true) return { type: "success", title: "Background build stopped." };
+  if (out?.released === false) return { type: "info", title: "No background build was running any more — nothing was stopped." };
+  return { type: "error", title: "The server didn't say whether the background build stopped — look at it again." };
+}
+export function retryOutcome(out: { requeued?: unknown } | null | undefined): EmbedControlOutcome {
+  const n = typeof out?.requeued === "number" ? out.requeued : null;
+  if (n === null) return { type: "error", title: "The server didn't say whether the refused passages were queued — look at them again." };
+  if (n === 0) return { type: "info", title: "No refused passages were waiting any more — nothing was queued." };
+  return { type: "success", title: `Queued ${n.toLocaleString()} refused passage${n === 1 ? "" : "s"} for another try.` };
+}
+export function keepCurrentOutcome(out: { standing?: unknown } | null | undefined, asked: boolean): EmbedControlOutcome {
+  if (out?.standing === asked) {
+    return { type: "success", title: asked ? "This library's meaning index will be kept current." : "No longer kept current in the background." };
+  }
+  return {
+    type: "error",
+    title: asked
+      ? "The standing consent was not recorded — look at it again."
+      : "The standing consent was not withdrawn — it may still be spending; look at it again.",
+  };
+}
+
+/** SEM-8: the one-line drift statement every reader sees on the library page
+ *  — null when the index is complete, not built at all, or unknown. It says
+ *  what is true either way — passages added since a build, or a build that
+ *  was stopped part-way — without claiming which. */
+export function meaningIndexDrift(status: Pick<SemanticProgress, "total" | "coveredNow" | "remaining"> | null): string | null {
+  if (!status || status.total <= 0) return null;
+  const covered = status.coveredNow ?? 0;
+  if (covered <= 0 || status.remaining <= 0) return null;
+  const pct = Math.floor((covered / status.total) * 100);
+  const one = status.remaining === 1;
+  return `Meaning search covers ${pct}% of this library — ${status.remaining.toLocaleString()} passage${one ? "" : "s"} ${one ? "doesn't" : "don't"} carry a meaning vector yet and ${one ? "is" : "are"} found by keyword only.`;
 }
 
 /** Embed one batch. The server stops on a time budget rather than trying to
@@ -899,18 +1201,35 @@ export async function buildSemanticIndex(
 
   let last = await embedBatchWithRetry();
   onProgress?.(last);
+  // Rounds in a row where every remaining passage was claimed by another
+  // run (the background drain): wait for it rather than calling that stuck.
+  let busyRounds = 0;
   for (;;) {
     if (last.done || last.error || shouldStop?.()) break;
     if (last.rateLimited) {
       // Pacing, not failure: wait out the provider's per-minute window and
       // continue with a batch small enough to fit inside it.
       paced = true;
+      busyRounds = 0;
       await sleepUnlessStopped(last.retryAfterMs ?? 65_000);
       if (shouldStop?.()) break;
-    } else if (last.embedded === 0) {
-      // Embedded nothing, not done, not rate-limited — stuck. Hand back
-      // what happened rather than spinning forever.
+    } else if (last.embedded === 0 && (last.busy ?? 0) > 0 && (last.busy ?? 0) + (last.waiting ?? 0) >= last.remaining) {
+      // Another run holds the rest (SEM-7): the passages are being embedded,
+      // just not by this tab. Give it a moment, a bounded number of times.
+      if (++busyRounds > 6) break;
+      await sleepUnlessStopped(20_000);
+      if (shouldStop?.()) break;
+    } else if ((last.busy ?? 0) === 0 && (last.waiting ?? 0) > 0 && (last.waiting ?? 0) >= last.remaining) {
+      // Everything left was refused by the provider and waits to be offered
+      // again (SEM-4): nobody is embedding it, and this tab has nothing to
+      // do until then. Say so rather than wait on a build that isn't running.
       break;
+    } else if (last.embedded === 0 && (last.refused ?? 0) === 0) {
+      // Embedded nothing, refused nothing, not done, not rate-limited —
+      // stuck. Hand back what happened rather than spinning forever.
+      break;
+    } else {
+      busyRounds = 0;
     }
     last = await embedBatchWithRetry(paced ? RATE_LIMITED_BATCH : undefined);
     onProgress?.(last);

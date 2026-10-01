@@ -21,6 +21,7 @@
 // Embedding a library costs real money, so it is opt-in and batched.
 
 import { AiCallError } from "@/lib/ai/providerCall";
+import { estimateCostUsd } from "@/lib/ai/pricing";
 
 export type EmbeddingProviderId = "voyage" | "openai";
 
@@ -86,23 +87,39 @@ interface EmbedRequest {
   signal?: AbortSignal;
 }
 
-function friendly(provider: EmbeddingProviderId, status: number, detail: string): AiCallError {
+/** An embeddings-provider refusal, carrying the provider's own HTTP status so
+ *  a caller can tell "this PASSAGE was refused" (400 / 413 / 422 — split the
+ *  batch, skip the one) from "this KEY or MODEL was refused" (everything
+ *  else — stop, and never blame the passages). */
+export type EmbeddingCallError = AiCallError & { providerStatus?: number };
+
+function friendly(provider: EmbeddingProviderId, status: number, detail: string): EmbeddingCallError {
   const who = provider === "voyage" ? "Voyage AI" : "OpenAI";
   // Surface the provider's OWN words — "rejected the key" without the reason
   // ("expired trial", "add a payment method", "invalid key format") turns a
   // 30-second fix into a guessing game.
   const said = extractProviderDetail(detail);
   const suffix = said ? ` ${who} said: "${said}"` : "";
+  const err = (message: string, code: number): EmbeddingCallError =>
+    Object.assign(new AiCallError(message, code), { providerStatus: status });
   if (status === 401 || status === 403) {
-    return new AiCallError(`${who} rejected the embeddings key.${suffix || " Check the key in AI settings."}`, 401);
+    return err(`${who} rejected the embeddings key.${suffix || " Check the key in AI settings."}`, 401);
   }
   if (status === 429) {
-    return new AiCallError(`${who} rate/credit limit hit — add credits or wait a moment.${suffix}`, 429);
+    return err(`${who} rate/credit limit hit — add credits or wait a moment.${suffix}`, 429);
   }
   if (status === 404) {
-    return new AiCallError(`${who} doesn't recognise that embedding model.${suffix}`, 400);
+    return err(`${who} doesn't recognise that embedding model.${suffix}`, 400);
   }
-  return new AiCallError(`${who} embedding call failed (${status}): ${said || detail.slice(0, 200)}`, 502);
+  return err(`${who} embedding call failed (${status}): ${said || detail.slice(0, 200)}`, 502);
+}
+
+/** Did the provider refuse the INPUT (a passage), rather than the key, the
+ *  model or itself? Only these justify splitting a batch and, at a single
+ *  passage, counting an attempt against it. */
+export function isPassageRefusal(e: unknown): boolean {
+  const s = (e as { providerStatus?: number } | null)?.providerStatus;
+  return s === 400 || s === 413 || s === 422;
 }
 
 /** Pull the human sentence out of a provider error body — Voyage uses
@@ -255,6 +272,120 @@ export function embeddingConnectionFrom(row: {
     return { provider: "openai", model: defaultEmbeddingModel("openai"), apiKey: row.api_key };
   }
   return null;
+}
+
+// ── One vector space per corpus (SEM-1 / SEM-3 / SEM-6) ──────────────────────
+//
+// A vector only means something next to vectors from the SAME model. The
+// corpus records the model on every row (knowledge_chunks.embedding_model);
+// the provider follows from the model. These helpers are the one reading of
+// that stamp, shared by the build (never add a second model to a corpus) and
+// the ask route (embed the query with the corpus's model, on the corpus's
+// provider — or report why meaning search cannot run).
+
+/** Passages the provider refused this many times are skipped by the queue
+ *  (embed_claim_batch's p_max_attempts) and reported as failed. */
+export const EMBED_MAX_ATTEMPTS = 3;
+
+/** The provider that produced a vector, read off its model stamp. */
+export function embeddingProviderForModel(model: string | null | undefined): EmbeddingProviderId | null {
+  const m = (model ?? "").trim().toLowerCase();
+  if (m.startsWith("voyage-")) return "voyage";
+  if (m.startsWith("text-embedding-")) return "openai";
+  return null;
+}
+
+export type CorpusModelVerdict =
+  | { state: "empty" }
+  | { state: "single"; model: string; provider: EmbeddingProviderId | null; vectors: number }
+  | { state: "mixed"; models: Array<{ model: string; vectors: number }> };
+
+/** Resolve a corpus's model from its per-model vector counts
+ *  (semantic_coverage_detail.models). Deterministic: never "whichever row
+ *  came back first". A mixed corpus is reported as mixed — search refuses it
+ *  (20261121) until it is rebuilt under one model. */
+export function resolveCorpusModel(models: Record<string, number> | null | undefined): CorpusModelVerdict {
+  const entries = Object.entries(models ?? {})
+    .map(([model, n]) => ({ model, vectors: Number(n) || 0 }))
+    .filter((e) => e.vectors > 0)
+    .sort((a, b) => b.vectors - a.vectors || a.model.localeCompare(b.model));
+  if (entries.length === 0) return { state: "empty" };
+  if (entries.length > 1) return { state: "mixed", models: entries };
+  return { state: "single", model: entries[0].model, provider: embeddingProviderForModel(entries[0].model), vectors: entries[0].vectors };
+}
+
+export type QueryEmbedPlan =
+  | { ok: true; provider: EmbeddingProviderId; model: string }
+  | { ok: false; reason: "no_vectors" | "mixed" | "no_key" | "provider_mismatch" | "unknown_model"; detail: string };
+
+/** How a question must be embedded to search this corpus — the corpus's own
+ *  model on the corpus's own provider — or, when it cannot be, a reason a
+ *  caller can report instead of an empty result. Resolve it PER LIBRARY:
+ *  linked libraries are built independently and may carry other models. */
+export function planQueryEmbedding(corpus: CorpusModelVerdict, connection: EmbeddingConnection | null): QueryEmbedPlan {
+  if (corpus.state === "empty") return { ok: false, reason: "no_vectors", detail: "No passage carries a meaning vector yet." };
+  if (corpus.state === "mixed") {
+    return {
+      ok: false, reason: "mixed",
+      detail: `The meaning index holds vectors from ${corpus.models.length} models (${corpus.models.map((m) => m.model).join(", ")}) — rebuild it under one.`,
+    };
+  }
+  if (!corpus.provider) {
+    return { ok: false, reason: "unknown_model", detail: `The meaning index was built with ${corpus.model}, which no supported provider serves.` };
+  }
+  if (!connection) return { ok: false, reason: "no_key", detail: NO_EMBEDDING_KEY_MESSAGE };
+  if (connection.provider !== corpus.provider) {
+    return {
+      ok: false, reason: "provider_mismatch",
+      detail: `The meaning index was built with ${corpus.model} (${providerLabel(corpus.provider)}); your embeddings key is ${providerLabel(connection.provider)}, which cannot search it. Add a ${providerLabel(corpus.provider)} key, or rebuild the index with yours.`,
+    };
+  }
+  return { ok: true, provider: corpus.provider, model: corpus.model };
+}
+
+/** Would building with this connection put a second model into the corpus?
+ *  Null when it may build; otherwise the refusal, stated so the reader knows
+ *  both ways out (rebuild, or set the model back). */
+export function buildModelConflict(
+  corpus: CorpusModelVerdict, connection: EmbeddingConnection,
+): { stamped: string[]; yours: string; message: string } | null {
+  if (corpus.state === "empty") return null;
+  if (corpus.state === "single" && corpus.model === connection.model) return null;
+  const stamped = corpus.state === "single" ? [corpus.model] : corpus.models.map((m) => m.model);
+  const message = corpus.state === "mixed"
+    ? `This library's meaning index already mixes ${stamped.join(" and ")} — meaning search is off for it until it is rebuilt. Use Rebuild index to re-embed every passage with ${connection.model}.`
+    : `This library's meaning index was built with ${stamped[0]}; your embeddings setting is ${connection.model}. Adding ${connection.model} vectors would mix two vector spaces that cannot be compared, so the build stops here. Use Rebuild index to switch the whole library to ${connection.model}, or set your embedding model back to ${stamped[0]} in AI settings.`;
+  return { stamped, yours: connection.model, message };
+}
+
+function providerLabel(p: EmbeddingProviderId): string {
+  return EMBEDDING_PROVIDERS.find((x) => x.id === p)?.label ?? p;
+}
+
+// ── The price of a build (SEM-13) ────────────────────────────────────────────
+//
+// Quoted from the SAME function the ledger bills with (estimateCostUsd, the
+// per-model table in lib/ai/pricing), over the library's real character
+// volume — never a flat constant. Tokens are estimated at 4 characters each
+// plus the contextual heading every passage is sent with; the ledger then
+// records the provider's own count.
+
+export const CHARS_PER_TOKEN_ESTIMATE = 4;
+/** Document name + section + page, prepended to every passage (knowledgeEmbedCore). */
+export const HEADING_TOKENS_PER_PASSAGE = 16;
+
+export function estimateEmbeddingTokens(chars: number, passages: number): number {
+  return Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN_ESTIMATE) + Math.max(0, passages) * HEADING_TOKENS_PER_PASSAGE;
+}
+
+export function estimateEmbeddingCostUsd(model: string, chars: number, passages: number): number {
+  return estimateCostUsd(model, { inputTokens: estimateEmbeddingTokens(chars, passages), outputTokens: 0 });
+}
+
+/** Voyage's in-app rate is a declared conservative placeholder
+ *  (lib/ai/pricing) — its figures are labelled estimates until corrected. */
+export function embeddingRateIsPlaceholder(model: string): boolean {
+  return embeddingProviderForModel(model) === "voyage";
 }
 
 export const NO_EMBEDDING_KEY_MESSAGE =

@@ -15,12 +15,17 @@
 //   * Say when the engine hasn't run. An empty panel that looks broken is
 //     worse than a panel that says "nothing has been indexed yet".
 //   * Never dead-end. Every row goes somewhere, on the page it came from.
+//   * Never leak and never hide silently. A mention's sentence shows only to
+//     people who can open its document (20261120); the rest are counted —
+//     "N further pages mentioning P-101 are in documents you don't have
+//     access to" — so an empty-looking panel is never mistaken for "nothing
+//     mentions this".
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Quote, ChevronDown, ChevronRight, ExternalLink, Loader2, Link2 } from "lucide-react";
 import {
-  mentionsForAsset, groupByDocument,
+  mentionsForAsset, groupByDocument, mentionAccessGap, describeWithheldMentions,
   type MentionedDocument, type MentionEvidence,
 } from "@/lib/mentions";
 
@@ -43,20 +48,23 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   // response that lands late must never overwrite the current one.
   const key = `${orgId}:${assetId}`;
   const [state, setState] = useState<{
-    key: string; docs: MentionedDocument[] | null; error: string | null;
-  }>({ key: "", docs: null, error: null });
+    key: string; docs: MentionedDocument[] | null; error: string | null; withheld: number;
+  }>({ key: "", docs: null, error: null, withheld: 0 });
 
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const mentions = await mentionsForAsset(orgId, assetId);
-        if (live) setState({ key, docs: groupByDocument(mentions), error: null });
+        const [mentions, gap] = await Promise.all([
+          mentionsForAsset(orgId, assetId),
+          mentionAccessGap(orgId, assetId).catch(() => null),
+        ]);
+        if (live) setState({ key, docs: groupByDocument(mentions), error: null, withheld: gap?.withheld ?? 0 });
       } catch (e) {
         // mentionsForAsset already tolerates a missing table (pre-migration)
         // by returning []; anything reaching here is a real failure.
         if (live) {
-          setState({ key, docs: null, error: e instanceof Error ? e.message : "Couldn't load mentions." });
+          setState({ key, docs: null, error: e instanceof Error ? e.message : "Couldn't load mentions.", withheld: 0 });
         }
       }
     })();
@@ -66,6 +74,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
   const ready = state.key === key;
   const docs = ready ? state.docs : null;
   const error = ready ? state.error : null;
+  const withheld = ready ? state.withheld : 0;
 
   const total = docs?.reduce((n, d) => n + d.totalMentions, 0) ?? 0;
 
@@ -92,7 +101,7 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
         <div className="p-4 text-xs text-[var(--color-text-muted)]">{error}</div>
       )}
 
-      {docs !== null && docs.length === 0 && !error && (
+      {docs !== null && docs.length === 0 && !error && withheld === 0 && (
         <div className="p-6 text-center text-xs text-[var(--color-text-faint)] italic">
           Nothing indexed mentions <span className="font-mono not-italic">{tag}</span> yet.
           <div className="mt-1 not-italic text-[11px]">
@@ -106,6 +115,12 @@ export default function MentionsPanel({ orgId, assetId, tag }: Props) {
         <ul className="divide-y divide-[var(--color-border)]">
           {docs.map((d) => <DocRow key={d.key} doc={d} />)}
         </ul>
+      )}
+
+      {docs !== null && !error && withheld > 0 && (
+        <div className={`px-4 py-2.5 text-[11px] text-[var(--color-text-muted)] ${docs.length > 0 ? "border-t border-[var(--color-border)]" : ""}`}>
+          {describeWithheldMentions(withheld, docs.length > 0, tag)}
+        </div>
       )}
     </div>
   );

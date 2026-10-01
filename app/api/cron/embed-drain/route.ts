@@ -11,7 +11,10 @@
 //     merely opening the app advances the index for up to ~4 minutes
 //
 // Auth: CRON_SECRET bearer (server-to-server) OR a signed-in user — a user
-// trigger drains only the orgs they belong to.
+// trigger drains only the orgs they belong to, and skips any library drained
+// in the last USER_TRIGGER_MIN_INTERVAL_MS (SEM-7): every page load nudges,
+// so a burst of nudges must cost one drain, not ten. Two runs that do overlap
+// still take disjoint passages — the queue is a claim (20261121).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -23,6 +26,8 @@ export const maxDuration = 300;
 /** Whole-run budget: stop starting new work at 240s so every library's last
  *  slice commits and the response returns inside maxDuration. */
 const RUN_BUDGET_MS = 240_000;
+/** A user-bearer trigger leaves alone any library drained this recently. */
+const USER_TRIGGER_MIN_INTERVAL_MS = 120_000;
 
 async function handle(req: NextRequest) {
   const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -42,7 +47,10 @@ async function handle(req: NextRequest) {
     if (scopeOrgIds.length === 0) return NextResponse.json({ drained: [] });
   }
 
-  const out = await drainEmbedBacklog({ scopeOrgIds, budgetMs: RUN_BUDGET_MS });
+  const out = await drainEmbedBacklog({
+    scopeOrgIds, budgetMs: RUN_BUDGET_MS,
+    ...(scopeOrgIds ? { minIntervalMs: USER_TRIGGER_MIN_INTERVAL_MS } : {}),
+  });
   return NextResponse.json(out);
 }
 

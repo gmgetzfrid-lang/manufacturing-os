@@ -17,6 +17,7 @@ import dynamic from "next/dynamic";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
@@ -25,9 +26,10 @@ import { parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, 
 import {
   getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocument, deleteKnowledgeLibrary,
-  askKnowledgeLibrary, listKnowledgeQuestions, listLibraryLinks, acceptAiAgreement,
-  parseNeedPrompt,
-  type AgreementRequiredError,
+  askKnowledgeLibrary, listKnowledgeQuestions, loadConversation, listLibraryLinks, acceptAiAgreement,
+  parseNeedPrompt, describeRetrieval, meaningIndexDrift,
+  askContextHistory, persistedThread, restoredSeeded,
+  type AgreementRequiredError, type SemanticProgress,
   type KnowledgeLibrary, type KnowledgeDocument, type KnowledgeAnswer,
   type KnowledgeQuestion, type KnowledgeCitation, type AskMode,
   type KnowledgeLibraryLink,
@@ -38,6 +40,7 @@ import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
+import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
 // pdf.js only loads when someone actually opens a cited page.
@@ -530,90 +533,6 @@ function AskProgress() {
   );
 }
 
-// Clarify round (opt-in library feature): the AI found the answer across
-// several distinct aspects and asks WHICH before answering — select all that
-// apply, or take everything. One round max: the re-ask always carries focus.
-function ClarifyCard({ prompt, options, onAnswer }: {
-  prompt: string;
-  options: string[];
-  onAnswer: (focus: string[]) => void;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const toggle = (o: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(o)) next.delete(o); else next.add(o);
-      return next;
-    });
-  };
-  return (
-    <div className="mt-4 rounded-2xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/20 p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-sky-600 flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">One thing before I answer</div>
-          <p className="text-xs text-[var(--color-text)] mt-1">{prompt}</p>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {options.map((o) => (
-              <button key={o} type="button" onClick={() => toggle(o)}
-                className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-colors ${
-                  selected.has(o)
-                    ? "border-sky-600 bg-sky-600 text-white"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-sky-400"}`}>
-                {o}
-              </button>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <Button size="sm" onClick={() => onAnswer([...selected])} disabled={selected.size === 0}>
-              <Send className="w-3.5 h-3.5" /> Answer selected ({selected.size})
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => onAnswer(options)}>
-              Answer all of it
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Need round: a calculation answer stopped because it needs user-specific
-// values (test temperature, design pressure…). Ask, collect, re-ask — the
-// documents can't know these, only the person can.
-function NeedCard({ prompt, onProvide }: {
-  prompt: string;
-  onProvide: (values: string) => void;
-}) {
-  const [value, setValue] = useState("");
-  return (
-    <div className="mt-4 rounded-2xl border-2 border-indigo-300 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/20 p-4 animate-rise">
-      <div className="flex items-start gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
-          <Sparkles className="w-3.5 h-3.5 text-white" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black text-[var(--color-text)]">I need a value from you to run this calculation</div>
-          <p className="text-xs text-[var(--color-text)] mt-1 whitespace-pre-wrap">{prompt}</p>
-          <div className="mt-2.5 flex items-end gap-2">
-            <Textarea value={value} onChange={(e) => setValue(e.target.value)} rows={1}
-              placeholder='e.g. "test temperature = 150°F, design pressure = 285 psig"'
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && value.trim()) onProvide(value.trim());
-              }}
-              className="flex-1 text-xs" />
-            <Button size="sm" onClick={() => onProvide(value.trim())} disabled={!value.trim()}>
-              <Send className="w-3.5 h-3.5" /> Calculate
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CopyButton({ text, label, onDark }: { text: string; label: string; onDark?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -700,9 +619,12 @@ function SourceCard({ citation, onOpen, delay }: {
 
 /** The full answer experience: question echo → hero answer card → basis →
  *  check callout → source cards. Cards, air, hierarchy — never a wall. */
-function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
+function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, coverage }: {
   question: string;
   answer: KnowledgeAnswer;
+  /** The asked library's meaning-index coverage — read with the answer's
+   *  retrieval flag, so "hybrid" over a 3% index never reads like 100%. */
+  coverage?: { embedded: number; total: number } | null;
   onCite: (c: KnowledgeCitation) => void;
   /** Open a sheet in the viewer with a tag ringed (equipment table rows). */
   onOpenTag?: (documentId: string, page: number, tag: string, documentName: string) => void;
@@ -710,6 +632,9 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
   onOpenDoc?: (d: DocLink) => void;
 }) {
   const blocks = parseAnswerBlocks(answer.answer);
+  // SEM-12: how the passages were found, for every reader. A replayed answer
+  // carries no flag (it was not searched now) and shows none.
+  const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);
   const hero = blocks.find((b) => b.type === "hero");
   const rest = blocks.filter((b) => b !== hero);
   // Imperatives (! lines) stay visible even collapsed — never hide a MUST or
@@ -912,6 +837,15 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
                 <Waypoints className="w-3 h-3" /> Shape the graph
               </button>
             )}
+            {retrieval && (
+              <span data-retrieval={answer.retrieval}
+                title={retrieval.note ?? undefined}
+                className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border ${retrieval.emphasize
+                  ? "border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20"
+                  : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                <Search className="w-3 h-3" /> {retrieval.label}
+              </span>
+            )}
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
             <span>·</span>
             <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
@@ -958,6 +892,11 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc }: {
           used to render 60 equal flat cards — a pile nobody could
           prioritize. Now: the top documents lead, each group opens on tap,
           and the long tail waits behind "Show all". */}
+      {retrieval?.note && retrieval.emphasize && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2" data-retrieval-note="true">
+          <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span>{retrieval.note}</span>
+        </div>
+      )}
       {sourceGroups.length > 0 && (
         <>
           <div className="text-[9px] font-black uppercase tracking-[0.2em] text-[var(--color-text-muted)] pt-1">
@@ -1128,6 +1067,15 @@ export default function KnowledgeLibraryPage() {
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [history, setHistory] = useState<KnowledgeQuestion[]>([]);
+  // Answers the history route left out for THIS reader (they cite a document
+  // the reader cannot open) and a failed read — both said, never hidden.
+  const [historyWithheld, setHistoryWithheld] = useState(0);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const applyHistory = useCallback((page: { questions: KnowledgeQuestion[]; withheld: number; error?: string }) => {
+    setHistory(page.questions);
+    setHistoryWithheld(page.withheld);
+    setHistoryError(page.error ?? null);
+  }, []);
   // The per-document status list is bookkeeping, not the point of the page —
   // collapsed by default, live counts always in the header.
   const [docsOpen, setDocsOpen] = useState(false);
@@ -1142,6 +1090,13 @@ export default function KnowledgeLibraryPage() {
   // knowledge_questions so a conversation can be reopened tomorrow.
   const [thread, setThread] = useState<Array<{ question: string; answer: KnowledgeAnswer }>>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
+  // How many leading turns of `thread` came from the saved record (a
+  // teammate's conversation, one holding a withheld turn, a memory-card
+  // answer): shown, NEVER sent back to the model with a follow-up — the new
+  // thread records nothing of them, so the history rule could not withhold a
+  // follow-up that restated them (IEDGE-5 / KACL-1; lib/knowledge.ts
+  // askContextHistory).
+  const [seededTurns, setSeededTurns] = useState(0);
   // Conversations survive reloads. Thread state used to live only in this
   // component — any reload, navigation, or crash silently reset the chat to
   // zero while looking identical, which read as "my chats are one-shot".
@@ -1163,10 +1118,12 @@ export default function KnowledgeLibraryPage() {
       const saved = JSON.parse(raw) as {
         threadId: string | null;
         turns: Array<{ question: string; answer: KnowledgeAnswer }>;
+        seeded?: number;
       };
       if (saved?.turns?.length) {
         setThread(saved.turns);
         setThreadId(saved.threadId);
+        setSeededTurns(restoredSeeded(saved));
         const last = saved.turns[saved.turns.length - 1];
         setAnswer(last.answer);
         setLastQuestion(last.question);
@@ -1178,10 +1135,10 @@ export default function KnowledgeLibraryPage() {
       if (thread.length === 0) { window.sessionStorage.removeItem(threadStoreKey); return; }
       window.sessionStorage.setItem(
         threadStoreKey,
-        JSON.stringify({ threadId, turns: thread.slice(-6) }),
+        JSON.stringify({ threadId, ...persistedThread(thread, seededTurns) }),
       );
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
-  }, [thread, threadId, threadStoreKey]);
+  }, [thread, threadId, seededTurns, threadStoreKey]);
   // Org Playbooks visibility: how many standing instructions ride on asks.
   const [instructionCount, setInstructionCount] = useState(0);
   useEffect(() => {
@@ -1228,6 +1185,13 @@ export default function KnowledgeLibraryPage() {
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
+  // The meaning index's live coverage, reported by SemanticIndexPanel: the
+  // drift line (SEM-8) and each answer's retrieval note (SEM-12) read it.
+  const [semanticStatus, setSemanticStatus] = useState<SemanticProgress | null>(null);
+  const libraryCoverage = semanticStatus && semanticStatus.total > 0
+    ? { embedded: semanticStatus.coveredNow ?? 0, total: semanticStatus.total }
+    : null;
+  const drift = meaningIndexDrift(semanticStatus);
   const [links, setLinks] = useState<KnowledgeLibraryLink[]>([]);
   const [showAiSetup, setShowAiSetup] = useState(false);
 
@@ -1316,15 +1280,17 @@ export default function KnowledgeLibraryPage() {
     const [lib, documents, questions, libLinks] = await Promise.all([
       getKnowledgeLibrary(libraryId),
       listKnowledgeDocuments(libraryId),
-      listKnowledgeQuestions(libraryId),
+      activeOrgId
+        ? listKnowledgeQuestions(activeOrgId, libraryId)
+        : Promise.resolve({ questions: [] as KnowledgeQuestion[], withheld: 0 }),
       listLibraryLinks(libraryId),
     ]);
     setLibrary(lib);
     setDocs(documents);
-    setHistory(questions);
+    applyHistory(questions);
     setLinks(libLinks);
     setLoading(false);
-  }, [libraryId]);
+  }, [libraryId, activeOrgId, applyHistory]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   // ── Auto-index queued documents while the page is open ─────────────────
@@ -1399,9 +1365,11 @@ export default function KnowledgeLibraryPage() {
     })();
   }, [hasQueued, uploadState, reindexing, libraryId, refresh]);
 
-  // Ask memory: a near-duplicate of a past question gets offered from the
-  // org's own record BEFORE a fresh AI call spends anything. "Ask fresh"
-  // always available — memory is a shortcut, never a wall.
+  // Ask memory: a near-duplicate of a past question in THIS library gets
+  // offered from the team's record BEFORE a fresh AI call spends anything —
+  // only answers whose every source this reader may open (the history route
+  // re-checks each citation; ASK-1). "Ask fresh" always available — memory
+  // is a shortcut, never a wall.
   const [priorAsks, setPriorAsks] = useState<import("@/lib/knowledge").PastAsk[] | null>(null);
   const priorDismissedRef = useRef<string>("");
 
@@ -1411,7 +1379,7 @@ export default function KnowledgeLibraryPage() {
     if (!skipMemory && thread.length === 0 && mode === "library" && priorDismissedRef.current !== q) {
       try {
         const { searchAskHistory } = await import("@/lib/knowledge");
-        const past = await searchAskHistory(activeOrgId, q, 3);
+        const past = await searchAskHistory(activeOrgId, libraryId, q, 3);
         if (past.length > 0) {
           setPriorAsks(past);
           priorDismissedRef.current = q;
@@ -1426,7 +1394,8 @@ export default function KnowledgeLibraryPage() {
       const tid = threadId ?? crypto.randomUUID();
       const run = () => askKnowledgeLibrary(activeOrgId, libraryId, q, mode, focusArg, inputsArg,
         {
-          history: thread.slice(-4).map((t) => ({ question: t.question, answer: t.answer.answer })),
+          // Seeded turns (from the saved record) are shown, never sent.
+          history: askContextHistory(thread, seededTurns),
           threadId: tid,
         });
       let res: KnowledgeAnswer;
@@ -1463,7 +1432,7 @@ export default function KnowledgeLibraryPage() {
         setAnswer(res);
         setThread((prev) => [...prev, { question: q, answer: res }]);
         setThreadId(tid);
-        setHistory(await listKnowledgeQuestions(libraryId));
+        applyHistory(await listKnowledgeQuestions(activeOrgId, libraryId));
       }
     } catch (e) {
       const msg = (e as Error).message || "The question failed.";
@@ -1494,10 +1463,41 @@ export default function KnowledgeLibraryPage() {
   };
 
   /** Reopen a past conversation IN FULL and make it continuable — the way
-   *  every chat product works. Rows sharing a thread_id load together in
-   *  order; pre-thread history rows load as single-turn conversations. */
-  const openConversation = (rows: KnowledgeQuestion[]) => {
-    const ordered = [...rows].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+   *  every chat product works. A threaded conversation is read whole through
+   *  the history route, every turn re-checked for THIS reader (a turn after a
+   *  withheld one is withheld too); pre-thread rows load as single-turn
+   *  conversations. Continuing keeps the thread only when every turn is the
+   *  reader's own AND none was withheld — a teammate's conversation, or one
+   *  with a turn the reader can no longer see, seeds a NEW one, so the next
+   *  ask is filed under the reader and never lands behind a withheld turn
+   *  (which would withhold it too). Seeded turns are shown, never sent back
+   *  to the model: the new thread records nothing of them, so a follow-up
+   *  built on them could reach readers they were withheld from. */
+  const openConversation = async (rows: KnowledgeQuestion[]) => {
+    const threadKey = rows.find((r) => r.threadId)?.threadId ?? null;
+    let source = rows;
+    let withheldTurns = 0;
+    if (threadKey && activeOrgId) {
+      try {
+        const page = await loadConversation(activeOrgId, libraryId, threadKey);
+        source = page.questions;
+        withheldTurns = page.withheld;
+        if (page.withheld > 0) {
+          showToast({
+            type: "warning",
+            title: `${page.withheld} turn(s) of this conversation are withheld — they draw on documents you can't open, or are a teammate's answer that cites no document.`,
+          });
+        }
+      } catch (e) {
+        showToast({ type: "error", title: `Couldn't reopen the conversation: ${(e as Error).message}` });
+        return;
+      }
+    }
+    if (source.length === 0) {
+      showToast({ type: "warning", title: "Nothing in this conversation is visible to you — it draws on documents you can't open, or is a teammate's answer that cites no document." });
+      return;
+    }
+    const ordered = [...source].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const turns = ordered.map((q) => ({
       question: q.question,
       answer: {
@@ -1508,7 +1508,10 @@ export default function KnowledgeLibraryPage() {
       } as KnowledgeAnswer,
     }));
     setThread(turns);
-    setThreadId(ordered[0]?.threadId ?? crypto.randomUUID());
+    const own = withheldTurns === 0 && ordered.every((q) => q.mine === true);
+    const kept = own ? ordered[0]?.threadId ?? null : null;
+    setThreadId(kept ?? crypto.randomUUID());
+    setSeededTurns(kept ? 0 : turns.length);
     setAnswer(turns[turns.length - 1]?.answer ?? null);
     setLastQuestion(turns[turns.length - 1]?.question ?? "");
     setPriorAsks(null); setClarify(null); setNeed(null);
@@ -1600,6 +1603,7 @@ export default function KnowledgeLibraryPage() {
 
   return (
     <PageShell>
+      <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         icon={BookOpen}
         eyebrow={<button onClick={() => router.push("/knowledge")} className="inline-flex items-center gap-1 hover:underline"><ArrowLeft className="w-3 h-3" /> Knowledge</button>}
@@ -1680,6 +1684,11 @@ export default function KnowledgeLibraryPage() {
             {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask
           </Button>
         </div>
+        {mode === "library" && drift && (
+          <p className="mt-2 text-[11px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5" data-meaning-drift="true">
+            <Search className="w-3.5 h-3.5 shrink-0" /> {drift}
+          </p>
+        )}
         {mode === "library" && readyDocs === 0 && (
           <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
             {docs.some((d) => d.status === "pending" || d.status === "stale" || d.status === "indexing")
@@ -1710,10 +1719,12 @@ export default function KnowledgeLibraryPage() {
                         provider: "memory", model: "past answer", mode: "library",
                       };
                       setAnswer(past);
-                      // Seed the conversation so the next question CONTINUES
-                      // from this answer instead of starting cold.
+                      // Shown as the start of a new conversation — for
+                      // reference only: it is never sent back to the model
+                      // with a follow-up (built under its asker's ACL).
                       setThread([{ question: pa.question, answer: past }]);
                       setThreadId(crypto.randomUUID());
+                      setSeededTurns(1);
                       setLastQuestion(pa.question);
                       setPriorAsks(null);
                     }}
@@ -1772,15 +1783,21 @@ export default function KnowledgeLibraryPage() {
           <div className="space-y-6 mb-2">
             {thread.slice(0, -1).map((t, i) => (
               <div key={i} className="opacity-90">
-                <AnswerExperience question={t.question} answer={t.answer} onCite={openCitation} onOpenDoc={openMentionedDoc} />
+                <AnswerExperience question={t.question} answer={t.answer} coverage={libraryCoverage} onCite={openCitation} onOpenDoc={openMentionedDoc} />
               </div>
             ))}
           </div>
         )}
         {thread.length > 0 && !asking && (
-          <div className="flex justify-end -mb-2">
+          <div className="flex items-start justify-end gap-3 -mb-2">
+            {seededTurns > 0 && (
+              <p className="flex-1 text-[10px] text-[var(--color-text-faint)]" data-seeded-context="true">
+                Opened from the saved record — {seededTurns === 1 ? "that answer is" : `those ${seededTurns} answers are`} shown
+                for reference only and never sent to the AI with a follow-up, so ask it in full.
+              </p>
+            )}
             <button
-              onClick={() => { setThread([]); setThreadId(null); setAnswer(null); setLastQuestion(""); }}
+              onClick={() => { setThread([]); setThreadId(null); setSeededTurns(0); setAnswer(null); setLastQuestion(""); }}
               className="text-[11px] font-black px-2.5 py-1 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
               + New conversation
             </button>
@@ -1803,7 +1820,7 @@ export default function KnowledgeLibraryPage() {
             </div>
           ) : (
             <>
-            <AnswerExperience question={lastQuestion} answer={answer} onCite={openCitation} onOpenDoc={openMentionedDoc}
+            <AnswerExperience question={lastQuestion} answer={answer} coverage={libraryCoverage} onCite={openCitation} onOpenDoc={openMentionedDoc}
               onOpenTag={(documentId, page, tag, documentName) => {
                 const doc = docs.find((d) => d.id === documentId);
                 if (!doc) { showToast({ type: "error", title: "That sheet is no longer in the library." }); return; }
@@ -1961,7 +1978,7 @@ export default function KnowledgeLibraryPage() {
               onRebuilt={() => void refresh()} />
           )}
           {activeOrgId && (
-            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} />
+            <SemanticIndexPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} onStatus={setSemanticStatus} />
           )}
         </div>
 
@@ -1978,9 +1995,23 @@ export default function KnowledgeLibraryPage() {
               return seen.size;
             })()})
           </h2>
+          {historyError && (
+            <div className="mb-2 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+              Couldn&apos;t load the conversations: {historyError}
+            </div>
+          )}
+          {historyWithheld > 0 && (
+            <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+              {historyWithheld} recent answer{historyWithheld === 1 ? " is" : "s are"} not shown — {historyWithheld === 1 ? "it draws" : "they draw"} on documents
+              you can&apos;t open (or that have since left this library), or {historyWithheld === 1 ? "it is a teammate's answer that cites" : "they are teammates' answers that cite"} no
+              document, which only whoever asked can see.
+            </div>
+          )}
           {history.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
-              Questions and their cited answers land here for the whole team — click one to reopen and continue it.
+              Questions and their cited answers land here for the team — each answer shows only to people who can open
+              every document it cites, and an answer that cites no document only to whoever asked it. Click one to reopen
+              and continue it.
             </div>
           ) : (
             <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -1996,7 +2027,7 @@ export default function KnowledgeLibraryPage() {
                   return (
                     <li key={first.threadId ?? first.id}>
                       <button
-                        onClick={() => openConversation(rows)}
+                        onClick={() => void openConversation(rows)}
                         className="w-full text-left px-3.5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-2.5 group"
                       >
                         {first.mode === "internet"

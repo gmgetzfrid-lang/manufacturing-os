@@ -821,6 +821,28 @@
         "GPV-11 — default: lens, focus, scope and query in the URL; forces, colours and mode stay per-org local"
       ],
       "alreadyResolvedElsewhere": []
+    },
+    {
+      "name": "I-02b KNOWLEDGE UI HANDOFFS — the library page, Resume and the app-shell indicator catch up with the ingest claim (I-06) and the meaning index (I-02)",
+      "findings": [
+        "ING-6 (the accept-partial button; showing `error` on a document still `indexing`; parked rows in the indicator)",
+        "ING-8 (Resume passes `retryNow: true`)",
+        "ING-4 / ING-7 (the 'Re-index with table-aware chunking' button and its copy: a re-index drops the library out of Ask until each document is re-indexed)",
+        "ING-9 (the browser-side .pdf check)",
+        "ING-11 (render 'N of M pages had no extractable text')"
+      ],
+      "files": [
+        "app/(protected)/knowledge/[id]/page.tsx",
+        "lib/knowledge.ts (ingestKnowledgeDocument / resumeIndex wiring only — the ingestLoop busy and retry-progress limbs landed at the I-02 merge)",
+        "components/providers/KnowledgeIndexIndicator.tsx (leave out rows with vision_retry_after set or error non-null; re-show the card only on progress)",
+        "lib/__tests__/ingestLoopClient.test.ts and a page render test"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-06 INGESTION and I-02 KNOWLEDGE MEMORY merged (they ran in parallel at the same base, so I-06's handoffs addressed to I-02 were never seen by it)",
+        "the API contract in audit-reports/intelligence/01-ingestion.md (pagesIndexed, pagesReadable, visionFailedPages, busy / retryAfterMs, the 409 reasons)"
+      ],
+      "sequencingNotes": "Added by the integrator at the I-02 merge (2026-10-01). Small and UI-only; schedule before I-03 so the ask route and the page meet one contract."
     }
   ],
   "crossAreaFileOverlaps": [
