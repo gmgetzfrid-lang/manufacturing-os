@@ -290,20 +290,27 @@ export async function DELETE(req: NextRequest) {
 
 /** A disposed record's LOWER BOUND on its pre-disposal updated_at (the basis
  *  disposal overwrote): the later of created_at and the current revision's
- *  created_at less one day. Every write that makes a revision current stamps
- *  documents.updated_at in the same write (publish_revision, lib/revisions.ts,
- *  lib/reviewControl.ts, lib/documentLifecycle/common.ts), and a revision is
- *  created before it is made current, so its created_at is never after the
- *  updated_at disposal replaced. The one writer that does not stamp is the
- *  library page's create-with-file, which inserts the document row a moment
- *  BEFORE its first revision — milliseconds, but across midnight a whole day,
- *  hence the day's margin (which also absorbs a modest clock difference
- *  between the browser that drafted a revision and the one that approved it).
- *  A reversal that points back at an older revision only lowers the bound.
- *  The revision read is CHECKED: a failed read throws (the caller answers 503). */
+ *  created_at less one day. A revision is created before it is made current,
+ *  and every writer that makes one current stamps documents.updated_at at
+ *  that moment or later — publish_revision and lib/revisions.ts /
+ *  lib/documentLifecycle/common.ts stamp both from one `now`; the library
+ *  page's create-with-file sets them equal at insert; lib/reviewControl.ts
+ *  stamps the approver's time on a draft created earlier; restore writes
+ *  both verbatim from the backup — so the revision's created_at is never
+ *  after the updated_at disposal replaced, up to the clocks that stamped
+ *  them. Those can be different browsers (a submitter, an approver, a later
+ *  metadata editor), so the bound allows one day of skew; a clock off by
+ *  more than a day can only make the route over-refuse (fail closed). A
+ *  reversal that points back at an older revision only lowers the bound.
+ *  An unreadable created_at is returned as is, before any revision read: the
+ *  pre-disposal updated_at may have been NULL too, so the record stays
+ *  unclockable and refuses, as it did before this bound. The revision read
+ *  is CHECKED: a failed read throws (the caller answers 503). */
 async function disposedBasisLowerBound(row: OwnerDoc): Promise<string | null> {
   const DAY_MS = 86_400_000;
   const created = row.created_at ?? null;
+  const ct = Date.parse(String(created ?? ""));
+  if (!Number.isFinite(ct)) return created;
   const currentVersionId = (row as OwnerDoc & { current_version_id?: string | null }).current_version_id;
   if (!currentVersionId) return created;
   const { data, error } = await supabaseAdmin
@@ -315,7 +322,6 @@ async function disposedBasisLowerBound(row: OwnerDoc): Promise<string | null> {
   const vt = Date.parse(String((data as { created_at?: string | null } | null)?.created_at ?? ""));
   if (!Number.isFinite(vt)) return created;
   const fromRevision = vt - DAY_MS;
-  const ct = Date.parse(String(created ?? ""));
-  if (Number.isFinite(ct) && ct >= fromRevision) return created;
+  if (ct >= fromRevision) return created;
   return new Date(fromRevision).toISOString();
 }

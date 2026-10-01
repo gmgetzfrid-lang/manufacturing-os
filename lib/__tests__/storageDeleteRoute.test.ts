@@ -845,7 +845,16 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     for (const created of [null, "not-a-date"]) {
       inLibrary({ created_at: created, updated_at: ts(0), retention_until: iso(-10) }, { enabled: true, years: 5, basis: "issued" });
       expect((await del(SOURCE)).status, String(created)).toBe(423);
+      // a readable current revision does not make it clockable: the pre-disposal updated_at may have been NULL too
+      inLibrary(
+        { created_at: created, updated_at: ts(0), retention_until: iso(-10), current_version_id: "v1" },
+        { enabled: true, years: 5, basis: "issued" },
+      );
+      (state.rows.document_versions[0] as Row).created_at = ts(-7 * 365);
+      expect((await del(SOURCE)).status, `${String(created)} with a revision`).toBe(423);
     }
     expect(state.r2sends).toBe(0);
+    // the revision is not even read without a readable created_at
+    expect(state.eqs.filter((e) => e.startsWith("document_versions|id="))).toEqual([]);
   });
 });
