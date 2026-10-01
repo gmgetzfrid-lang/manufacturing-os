@@ -1258,38 +1258,25 @@ export default function LibraryExplorerPage() {
 
     setError(null);
     try {
-      // Foreign keys require us to delete versions BEFORE the parent
-      // document — otherwise the constraint rejects the delete and
-      // the UI silently does nothing. Order matters:
-      //   1. Null out documents.current_version_id (it FKs to versions)
-      //   2. Delete every document_versions row pointing to this doc
-      //   3. Delete the document itself
-      // We log every step so a failure is visible in the console.
+      // DRLS-17: ONE statement, never "clear the pointer first". Deleting the
+      // document row takes its revisions with it (document_versions.record_id
+      // ON DELETE CASCADE) and their evidence through each table's own
+      // document_id cascade; current_version_id is not a declared FK, so
+      // nothing has to be detached first. A refusal anywhere (a legal hold, a
+      // work package pinning a revision, RLS) refuses the whole statement, so
+      // the document is left exactly as it was — never a live document with
+      // no current file.
       const docId = selectedDoc.id;
-      console.log("[delete] starting doc delete", docId);
-
-      // Step 1: detach current_version pointer (avoids circular FK)
-      const { error: e1 } = await supabase
-        .from("documents")
-        .update({ current_version_id: null })
-        .eq("id", docId);
-      if (e1) throw new Error(`Couldn't clear current version pointer: ${e1.message}`);
-
-      // Step 2: delete child versions
-      const { error: e2 } = await supabase
-        .from("document_versions")
-        .delete()
-        .eq("record_id", docId);
-      if (e2) throw new Error(`Couldn't delete revisions: ${e2.message}`);
-
-      // Step 3: delete the document
-      const { error: e3 } = await supabase
+      const { data: deleted, error: delErr } = await supabase
         .from("documents")
         .delete()
-        .eq("id", docId);
-      if (e3) throw new Error(`Couldn't delete document: ${e3.message}`);
+        .eq("id", docId)
+        .select("id");
+      if (delErr) throw new Error(`the database refused it, so nothing was changed: ${delErr.message}`);
+      if (!deleted || deleted.length === 0) {
+        throw new Error("the database deleted nothing (you may not have permission to delete this document); nothing was changed.");
+      }
 
-      console.log("[delete] success", docId);
       setDocuments(prev => prev.filter(d => d.id !== docId));
       setSelectedDoc(null);
       setSelectedVersion(null);
@@ -2659,8 +2646,11 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; rev?: string; status?: string } }) => {
+  const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; status?: string } }) => {
     if (!selectedDoc?.id) return;
+    // DRLS-15: never `rev` — the label is the current revision's (corrected
+    // on the revision; the database keeps the document in step and refuses a
+    // divergent one, which would sink every other edit in this statement).
     const payload: Record<string, unknown> = {
       metadata: next.metadata,
       updated_at: new Date().toISOString(),
@@ -2668,18 +2658,24 @@ export default function LibraryExplorerPage() {
     };
     if (next.core?.title !== undefined) payload.title = next.core.title;
     if (next.core?.documentNumber !== undefined) payload.document_number = next.core.documentNumber;
-    if (next.core?.rev !== undefined) payload.rev = next.core.rev;
     if (next.core?.status !== undefined) payload.status = next.core.status;
     // Recompute uniqueness_key from the freshest field values so that
     // edits to any uniqueness-contributing field stay consistent.
     payload.uniqueness_key = computeUniquenessKey({
       documentNumber: next.core?.documentNumber ?? selectedDoc.documentNumber,
       title: next.core?.title ?? selectedDoc.title,
-      rev: next.core?.rev ?? selectedDoc.rev,
+      rev: selectedDoc.rev,
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);
-    await supabase.from("documents").update(payload).eq("id", selectedDoc.id);
+    // Checked: a refusal, or a write the database filtered to no row, is
+    // thrown — the editor stays open and shows it (it never closes as saved).
+    const { data: saved, error: saveErr } = await supabase
+      .from("documents").update(payload).eq("id", selectedDoc.id).select("id");
+    if (saveErr) throw new Error(`Save refused — nothing was saved: ${saveErr.message}`);
+    if (!saved || saved.length === 0) {
+      throw new Error("Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it).");
+    }
   };
 
   const saveInlineDocNumber = async (docId: string, nextValue: string) => {

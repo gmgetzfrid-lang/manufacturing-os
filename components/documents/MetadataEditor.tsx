@@ -116,10 +116,12 @@ function normalizeValue(value: unknown, type: MetadataFieldDefinition["type"]): 
 // ── Props ─────────────────────────────────────────────────────────────────────
 export interface MetadataEditorSavePayload {
   metadata: Record<string, MetadataValue>;
+  /** No `rev`: the revision label is the current revision's (DRLS-15) — it
+   *  is corrected on the revision (`correctRevisionLabel`, the history
+   *  panel), and the database keeps the document's label in step. */
   core?: {
     title?: string;
     documentNumber?: string;
-    rev?: string;
     status?: string;
   };
 }
@@ -137,6 +139,7 @@ export default function MetadataEditor(props: {
   /** Active org id — required for asset-tag chips to be clickable. */
   orgId?: string;
   onCheckout?: (doc: DocumentRecord) => void;
+  /** Rejects with a message when the save was refused; the dialog stays open and shows it. */
   onSave: (payload: MetadataEditorSavePayload) => Promise<void>;
 }) {
   const { isOpen, onClose, document, columns, onSave, userRole, userRoles, currentUserId, currentUserEmail, orgId, onCheckout } = props;
@@ -150,7 +153,6 @@ export default function MetadataEditor(props: {
   // ── Core fields state ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [documentNumber, setDocumentNumber] = useState("");
-  const [rev, setRev] = useState("");
   const [status, setStatus] = useState("");
 
   // ── Custom metadata state ───────────────────────────────────────────────────
@@ -160,15 +162,17 @@ export default function MetadataEditor(props: {
   );
   const [draft, setDraft] = useState<Record<string, MetadataValue>>(initialMetadata);
   const [saving, setSaving] = useState(false);
+  // DRLS-15: a refused save keeps the dialog open and says why.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Sync when document or open state changes
   useEffect(() => {
     if (!document) return;
     setTitle(document.title ?? document.name ?? "");
     setDocumentNumber(document.documentNumber ?? "");
-    setRev(document.rev ?? "");
     setStatus(document.status ?? "");
     setDraft((document.metadata ?? {}) as Record<string, MetadataValue>);
+    setSaveError(null);
   }, [document, isOpen]);
 
   if (!isOpen || !document) return null;
@@ -187,12 +191,16 @@ export default function MetadataEditor(props: {
   const save = async () => {
     if (!canEdit) return;
     setSaving(true);
+    setSaveError(null);
     try {
+      // DRLS-15: never the revision label — it is not this dialog's to set.
       await onSave({
         metadata: draft,
-        core: { title, documentNumber, rev, status },
+        core: { title, documentNumber, status },
       });
       onClose();
+    } catch (e) {
+      setSaveError((e as Error)?.message || "The save was refused — nothing was saved.");
     } finally {
       setSaving(false);
     }
@@ -377,13 +385,16 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Revision</label>
+                {/* DRLS-15: read-only — the label is the current revision's. */}
                 <input
-                  value={rev}
-                  onChange={(e) => canEdit && setRev(e.target.value)}
-                  disabled={!canEdit}
+                  value={document.rev ?? ""}
+                  readOnly
+                  disabled
                   className={fieldClass}
-                  placeholder="e.g. A, 0, 1"
                 />
+                <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
+                  The current revision&apos;s label. Correct it on the revision in the history panel; the document follows.
+                </p>
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Status</label>
@@ -429,6 +440,11 @@ export default function MetadataEditor(props: {
         </div>
 
         {/* Footer */}
+        {saveError && (
+          <div role="alert" className="px-6 py-3 border-t border-red-200 bg-red-50 text-xs text-red-800">
+            {saveError}
+          </div>
+        )}
         <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}

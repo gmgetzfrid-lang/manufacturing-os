@@ -615,7 +615,7 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 ## DRLS-15 · The library page's metadata editor writes `documents.rev` directly and discards the result — after 20261131 a divergent revision label is refused by the database and the page says nothing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P12 WAVE-2 RESIDUALS (a deploy prerequisite of `20261131`) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2662-2683`, `components/documents/MetadataEditor.tsx:188-196`, `components/documents/MetadataEditor.tsx:381-382`, `components/documents/BulkEditModal.tsx:57-58`, `supabase/migrations/20261131_dc_roundF_documents_rails.sql`
@@ -636,6 +636,19 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 **Deploy prerequisite.** This is a prerequisite of pasting `20261131` (recorded in `99-fix-sequencing.md` next to the paste order): ship the `saveMetadata` / bulk-edit change first, or accept the silent loss for the window between the paste and the fix.
 
 **Closer:** unassigned — the integrator assigns it before `20261131` is pasted (`saveMetadata` lives in the library page, P6 CHECKOUT's file; `MetadataEditor` and `BulkEditModal` are in no wave-2 package's list).
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P12 WAVE-2 RESIDUALS — landed first, as its own commit, because it gates the `20261131` paste. Reproduced on `00560fb`: `MetadataEditor` rendered an editable Revision input for a controller and saved `core: { title, documentNumber, rev, status }`; the page's `saveMetadata` put `payload.rev = next.core.rev` into the one `documents` UPDATE and ended `await supabase.from("documents").update(payload).eq("id", selectedDoc.id);` with the result discarded; `BulkEditModal` offered `<option value="rev">Revision</option>` and wrote `updates.rev`.
+- `components/documents/MetadataEditor.tsx`: `MetadataEditorSavePayload.core` has no `rev` (no caller can send one); the Revision field is shown read-only (`document.rev`, `readOnly` + `disabled`) with "The current revision's label. Correct it on the revision in the history panel; the document follows." (`correctRevisionLabel` in `VersionHistoryPanel`, which `20261131`'s `trg_sync_current_version_label` carries onto the document); `save()` sends `{ title, documentNumber, status }`, catches a rejected `onSave`, keeps the dialog open and shows the refusal in a `role="alert"` strip (it used to close as saved).
+- `app/(protected)/documents/[libraryId]/page.tsx` `saveMetadata` (only): never writes `rev` (the uniqueness key keeps the stored label); the UPDATE is `.select("id")` and checked — an error throws `Save refused — nothing was saved: <message>`, zero rows (a write RLS filtered away) throws `… the database updated no document (you may no longer have edit access to it).`; the editor shows either.
+- `components/documents/BulkEditModal.tsx`: Revision is no longer a bulk field (the target union, the option, the write and the key recompute branch are gone; a custom column keyed `rev` was already excluded). Each row's UPDATE is now `.select("id")` and a zero-row answer is reported as that row's failure instead of counted as applied.
+- Tests: `lib/__tests__/dcRoundFLibraryRails.test.ts` "DRLS-15 — …" — the editor AS RENDERED (jsdom): Revision read-only, the payload's `core` keys exactly `documentNumber` / `status` / `title`, a refused save leaves the dialog open with the refusal shown and Save re-enabled; the payload type carries no `rev`; `saveMetadata`'s write and both checks pinned by source (a Next.js page exports nothing else); the bulk editor AS RENDERED: the field picker lists Status and the custom columns only, a bulk write carries no `rev` and is checked, a zero-row row and an erroring row are each reported failed with the reason while the other is applied. Run against the base, 8 of the DRLS-15 cases fail.
+
+**Done-when.**
+1. ✓ The metadata editor no longer offers `rev` as a free-text field — it shows the current revision's label read-only and points at the revision correction; it never sends `rev`.
+2. ✓ `saveMetadata` checks `{ error }` and the row count and surfaces a refusal instead of closing.
+3. ✓ The bulk editor no longer offers Revision as a bulk field.
+
+**Scope / residual.** Code only; no migration. This removes the page's half of the `20261131` deploy prerequisite: once the app carrying this commit (and `DRLS-17`'s) is deployed, `20261131` may be pasted (`99-fix-sequencing.md`, order step 1). The editor's Status and Document Number fields are unchanged (a controller is a publisher, so the rail admits a number change; status is the publish guard's) — a refusal of either now reaches the user. The editor's own `canEdit` role test is untouched (not this finding).
 
 ---
 
@@ -690,7 +703,7 @@ SELECT 'authenticated can still execute publish_revision/11 (expect ok = true)',
 ## DRLS-17 · The library page's delete flow clears the current-revision pointer before deleting the versions — after `20261131` a revision with acknowledgment or sign-off evidence stops it part-way, leaving a live document with no current file
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P12 WAVE-2 RESIDUALS (a deploy prerequisite of `20261131`) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:1245-1289` (`confirmDeleteDoc`), `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (the evidence FKs, NO ACTION)
@@ -706,5 +719,15 @@ SELECT 'authenticated can still execute publish_revision/11 (expect ok = true)',
 - [ ] A refusal at any step leaves the document as it was.
 
 **Closer:** unassigned — the integrator assigns it (the page is P6 CHECKOUT's file); a deploy prerequisite of `20261131`, recorded in `99-fix-sequencing.md`. What a document delete should do with its evidence is `DRLS-14`'s open half.
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P12 WAVE-2 RESIDUALS — landed first, with `DRLS-15`, as its own commit (the two deploy prerequisites of `20261131`). Reproduced on `00560fb`: `confirmDeleteDoc` ran (1) `update({ current_version_id: null })`, (2) `document_versions.delete().eq("record_id", …)`, (3) `documents.delete()`, each checked for an error only — so a refusal at (2) left the document committed without a current revision.
+- `app/(protected)/documents/[libraryId]/page.tsx` `confirmDeleteDoc` (only): the flow is ONE statement, `supabase.from("documents").delete().eq("id", docId).select("id")`. Deleting the document row takes its revisions (`document_versions.record_id … ON DELETE CASCADE`) and their evidence (`document_acknowledgments`, `document_review_signoffs`, `distribution_acks`, `download_audits` — each `document_id … ON DELETE CASCADE`) in the same statement, so `20261131`'s NO ACTION evidence FKs are satisfied at statement end and its `trg_document_versions_pointer_rail` finds no document naming the deleted revision. `current_version_id` is not a declared FK (`DRLS-14`), so nothing has to be detached first. An error throws (`the database refused it, so nothing was changed: …`) and zero rows (RLS — `documents_delete_controllers`) throws too; local state is touched only after both checks; the refusal is surfaced in the page error and an alert, as before. The authority is unchanged: the old step 3 already cascaded the revisions for whoever could delete the document.
+- Tests: `lib/__tests__/dcRoundFLibraryRails.test.ts` "DRLS-17 — …": no pointer clear and no separate revision delete in the handler, exactly one `.delete()` and no `.update(`; the document delete, its error check and its row-count check precede the local-state update; and the database facts the single statement stands on are pinned to their migrations (the `record_id` cascade, the evidence tables' `document_id` cascades, `current_version_id` with no `REFERENCES`, `20261131`'s AFTER DELETE constraint trigger reading `documents`). Run against the base, both handler cases fail.
+
+**Done-when.**
+1. ✓ The flow never clears the pointer first: it deletes the document row directly and the versions go with it through their own cascade.
+2. ✓ A refusal at any step leaves the document as it was — there is one step, one statement, refused whole (a legal hold's `BEFORE DELETE` guard, a work package pinning a revision — `work_package_documents.pinned_version_id`, NO ACTION — or RLS).
+
+**Scope / residual.** Code only; no migration. What a document delete should do with its evidence is still `DRLS-14`'s open half (today it cascades, as it always did); this change neither widens nor narrows that. With this and `DRLS-15` deployed, `20261131` is pasteable (`99-fix-sequencing.md`).
 
 ---
