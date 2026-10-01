@@ -24,7 +24,13 @@
 --      controller approves or declines its share request (visibility /
 --      share_requested) and changes nothing else while it is private — the
 --      guards refuse any other change by someone who is not its author —
---      and deletes only org-wide custom rows. Nobody changes a skill's
+--      and deletes only org-wide custom rows. The decision answers an OPEN
+--      request: a controller publishes a member's private skill only while
+--      share_requested is set, and never sets it for them (an unoffered or
+--      withdrawn draft is not theirs to publish); the author's edit of a
+--      requested draft withdraws the request, so the version a controller
+--      approves is one its author asked for (the Skill Library approves
+--      only the version it showed — the row's updated_at). Nobody changes a skill's
 --      org, author or built-in key, and an author keeps a row only in an
 --      org they are an active member of.
 --   2. Built-ins belong to nobody: created_by NULL, managed by controllers,
@@ -83,10 +89,11 @@
 -- leaves a row private must read back — and so, for the first time, their
 -- UPDATE reaches a member's private row (before, it matched nothing: the
 -- read hid the row). That write is held to the share decision: approve
--- (visibility -> 'org') or decline (share_requested -> false). The guards
+-- (visibility -> 'org') or decline (share_requested -> false), and approve
+-- only while the author's request is open. The guards
 -- refuse any other change to a private skill by someone who is not its
 -- author — no rewrite of its text or patterns, no switching it, no new
--- author — and the DELETE policy admits a controller on org-wide custom
+-- author, no publishing a draft its author did not offer or withdrew — and the DELETE policy admits a controller on org-wide custom
 -- rows only. The inventory counts, per table, the private custom skills
 -- that become controller-readable; after apply it also counts the custom
 -- connection skills holding a pattern the bounded subset refuses (that
@@ -426,6 +433,27 @@ BEGIN
     RAISE EXCEPTION 'link_rules_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'
       USING ERRCODE = '42501';
   END IF;
+  -- The share decision answers an OPEN request (DEC-55): a controller
+  -- publishes a member's private skill only while its author is asking, and
+  -- never raises the request itself — an unoffered or withdrawn draft stays
+  -- its author's.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()
+     AND OLD.visibility IS DISTINCT FROM 'org'
+     AND ((NEW.visibility = 'org' AND NOT OLD.share_requested)
+          OR (NEW.share_requested AND NOT OLD.share_requested)) THEN
+    RAISE EXCEPTION 'link_rules_request: a member''s private skill is shared only while its author asks for it'
+      USING ERRCODE = '42501';
+  END IF;
+  -- An edited draft is asked for again: the author's change to what a
+  -- controller reviews (name, description, kind, patterns) withdraws a
+  -- request already waiting; a request raised in the same write asks for
+  -- the edited skill.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by = auth.uid()
+     AND NEW.visibility = 'private' AND OLD.share_requested
+     AND (NEW.name IS DISTINCT FROM OLD.name OR NEW.description IS DISTINCT FROM OLD.description
+          OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.config IS DISTINCT FROM OLD.config) THEN
+    NEW.share_requested := false;
+  END IF;
   -- A new or changed config, and a skill being published, is held to the subset.
   IF TG_OP = 'INSERT' OR NEW.config IS DISTINCT FROM OLD.config
      OR (NEW.visibility = 'org' AND OLD.visibility IS DISTINCT FROM 'org') THEN
@@ -519,6 +547,27 @@ BEGIN
          IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['visibility', 'share_requested', 'shared_by', 'shared_at', 'updated_at']) THEN
     RAISE EXCEPTION 'answer_skills_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'
       USING ERRCODE = '42501';
+  END IF;
+  -- The share decision answers an OPEN request (DEC-55): a controller
+  -- publishes a member's private pack only while its author is asking, and
+  -- never raises the request itself — an unoffered or withdrawn draft stays
+  -- its author's.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()
+     AND OLD.visibility IS DISTINCT FROM 'org'
+     AND ((NEW.visibility = 'org' AND NOT OLD.share_requested)
+          OR (NEW.share_requested AND NOT OLD.share_requested)) THEN
+    RAISE EXCEPTION 'answer_skills_request: a member''s private skill is shared only while its author asks for it'
+      USING ERRCODE = '42501';
+  END IF;
+  -- An edited draft is asked for again: the author's change to what a
+  -- controller reviews (name, description, the pack) withdraws a request
+  -- already waiting; a request raised in the same write asks for the
+  -- edited pack.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by = auth.uid()
+     AND NEW.visibility = 'private' AND OLD.share_requested
+     AND (NEW.name IS DISTINCT FROM OLD.name OR NEW.description IS DISTINCT FROM OLD.description
+          OR NEW.instructions IS DISTINCT FROM OLD.instructions) THEN
+    NEW.share_requested := false;
   END IF;
   IF TG_OP = 'INSERT' OR NEW.instructions IS DISTINCT FROM OLD.instructions
      OR (NEW.visibility = 'org' AND OLD.visibility IS DISTINCT FROM 'org') THEN
@@ -700,12 +749,12 @@ SELECT 'search_path pinned on skill_pattern_issue, link_rules_guard, answer_skil
        AND (SELECT prosecdef FROM pg_proc WHERE proname = 'is_org_controller_for'),
        NULL
 UNION ALL
-SELECT 'DEC-35: is_org_controller_for is is_org_controller for another user (same predicate; the inventory spells the same text), and clients cannot call it',
-       (SELECT prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'
-               AND prosrc LIKE '%uid = auth.uid()%'
+SELECT 'DEC-35: is_org_controller_for is is_org_controller for another user (same predicate, case and whitespace folded; the inventory spells the same text), and clients cannot call it',
+       (SELECT lower(regexp_replace(prosrc, '\s+', ' ', 'g')) LIKE '%(role in (''admin'', ''docctrl'') or roles && array[''admin'', ''docctrl'']::text[])%'
+               AND lower(regexp_replace(prosrc, '\s+', ' ', 'g')) LIKE '%uid = auth.uid()%'
           FROM pg_proc WHERE proname = 'is_org_controller')
-       AND (SELECT prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'
-                   AND prosrc LIKE '%uid = p_uid%'
+       AND (SELECT lower(regexp_replace(prosrc, '\s+', ' ', 'g')) LIKE '%(role in (''admin'', ''docctrl'') or roles && array[''admin'', ''docctrl'']::text[])%'
+                   AND lower(regexp_replace(prosrc, '\s+', ' ', 'g')) LIKE '%uid = p_uid%'
               FROM pg_proc WHERE proname = 'is_org_controller_for')
        AND NOT has_function_privilege('authenticated', 'public.is_org_controller_for(uuid, uuid)', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'public.is_org_controller_for(uuid, uuid)', 'EXECUTE'),
@@ -767,6 +816,20 @@ SELECT 'both guards: a member''s private skill is approved or declined by a cont
        AND (SELECT prosrc LIKE '%IF TG_OP = ''INSERT'' OR NEW.config IS DISTINCT FROM OLD.config%'
                    AND prosrc LIKE '%OR (NEW.visibility = ''org'' AND OLD.visibility IS DISTINCT FROM ''org'') THEN%'
               FROM pg_proc WHERE proname = 'link_rules_guard'),
+       NULL
+UNION ALL
+SELECT 'both guards: a controller publishes a member''s private skill only while its author asks (never raising the request itself); the author''s edit of a requested draft withdraws the request',
+       (SELECT COUNT(*) = 2 FROM pg_proc
+         WHERE proname IN ('link_rules_guard', 'answer_skills_guard')
+           AND prosrc LIKE '%AND ((NEW.visibility = ''org'' AND NOT OLD.share_requested)%'
+           AND prosrc LIKE '%OR (NEW.share_requested AND NOT OLD.share_requested)) THEN%'
+           AND prosrc LIKE '%_request: a member''''s private skill is shared only while its author asks for it''%'
+           AND prosrc LIKE '%AND NEW.visibility = ''private'' AND OLD.share_requested%'
+           AND prosrc LIKE '%OR NEW.description IS DISTINCT FROM OLD.description%')
+       AND (SELECT prosrc LIKE '%OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.config IS DISTINCT FROM OLD.config) THEN%'
+              FROM pg_proc WHERE proname = 'link_rules_guard')
+       AND (SELECT prosrc LIKE '%OR NEW.instructions IS DISTINCT FROM OLD.instructions) THEN%'
+              FROM pg_proc WHERE proname = 'answer_skills_guard'),
        NULL
 UNION ALL
 SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SKILL_DELETED; the text only while the row is org-visible, a private skill''s words withheld',

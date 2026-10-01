@@ -37,7 +37,7 @@ import ConnectionSkillsPanel, {
 import type { LinkRule } from "@/lib/linkRules";
 import {
   listAnswerSkills, seedBuiltinAnswerSkills, setAnswerSkillEnabled,
-  setAnswerSkillVisibility, setAnswerSkillShareRequest, deleteAnswerSkill, type AnswerSkill,
+  setAnswerSkillVisibility, approveAnswerSkillShare, setAnswerSkillShareRequest, deleteAnswerSkill, type AnswerSkill,
 } from "@/lib/answerSkills";
 import { isSkillController, skillControls } from "@/lib/skillAuthority";
 
@@ -46,6 +46,7 @@ const REASONING_HUE = "from-amber-500 to-orange-600";
 const ANSWER_OPS: SkillOps = {
   setEnabled: setAnswerSkillEnabled,
   setVisibility: setAnswerSkillVisibility,
+  approveShare: approveAnswerSkillShare,
   setShareRequest: setAnswerSkillShareRequest,
   remove: deleteAnswerSkill,
 };
@@ -61,10 +62,12 @@ export default function SkillLibraryPage() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A Reasoning-shelf ceiling reached (HUB-8 fix pass 4) — said, never silent. */
+  const [shelfNotes, setShelfNotes] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
-    try { setRskills(await listAnswerSkills(activeOrgId, uid ?? null)); setError(null); }
+    try { setRskills(await listAnswerSkills(activeOrgId, uid ?? null, setShelfNotes)); setError(null); }
     catch (e) {
       setError((e as Error).message);
       // A first read that fails is still an answer: the error shows above
@@ -100,10 +103,12 @@ export default function SkillLibraryPage() {
     };
   }, [rules, shownReasoning, uid]);
 
+  // A refused or stale decision re-reads the shelf too, so the card the
+  // controller reviews again is the skill as it now stands.
   const run = async (id: string, fn: () => Promise<void>) => {
     setBusyId(id);
     try { await fn(); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { const message = (e as Error).message; await refresh(); setError(message); }
     finally { setBusyId(null); }
   };
 
@@ -176,6 +181,11 @@ export default function SkillLibraryPage() {
                 "Reasoning skills",
                 "Disciplines the AI carries when it answers. Each names when it applies — enabling several is safe. Org-wide skills are shared by a document controller.",
               )}
+              {rskills !== null && shelfNotes.map((n) => (
+                <div key={n} className="mb-2 flex items-start gap-2 text-[11px] text-amber-700">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {n}
+                </div>
+              ))}
               {rskills === null ? (
                 <div className="text-[11px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
               ) : (

@@ -33,6 +33,14 @@
 //     the client writes still work: a database that refuses the new
 //     columns (PGRST204) creates, publishes and re-enables skills, and a
 //     share request that cannot be recorded says so.
+//   * fix pass 4 — the share decision answers an OPEN request, for the
+//     version the controller was shown: the guards refuse a non-author's
+//     publish unless share_requested is set (and never let one raise it),
+//     the author's edit of a requested draft withdraws the request, and the
+//     Skill Library approves with the row's updated_at. Scenarios (a) text
+//     swapped after review, (b) request withdrawn, (c) never offered are
+//     driven through the transcription and end to end. The shelves page to a
+//     stated ceiling and read the share requests on their own.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -52,14 +60,17 @@ vi.mock("@/lib/supabase", async () => {
   return { supabase: proxy };
 });
 
-import { skillControls, isSkillController, studioSharingChoices, sharingColumns, skillShelfFilter, type SkillRowLike } from "@/lib/skillAuthority";
+import {
+  skillControls, isSkillController, studioSharingChoices, sharingColumns, skillShelfFilter, type SkillRowLike,
+  SKILL_CHANGED_SINCE_REVIEW, SKILL_SHELF_CEILING, SKILL_REQUEST_CEILING,
+} from "@/lib/skillAuthority";
 import {
   createAnswerSkill, seedBuiltinAnswerSkills, setAnswerSkillEnabled, deleteAnswerSkill, answerSkillIssue,
-  setAnswerSkillVisibility, listAnswerSkills,
+  setAnswerSkillVisibility, listAnswerSkills, approveAnswerSkillShare, setAnswerSkillShareRequest,
 } from "@/lib/answerSkills";
 import {
   createLinkRule, seedBuiltinRules, setLinkRuleEnabled, deleteLinkRule, setLinkRuleVisibility, setLinkRuleShareRequest,
-  refusedSkillPatterns, listLinkRules,
+  refusedSkillPatterns, listLinkRules, approveLinkRuleShare,
 } from "@/lib/linkRules";
 import { buildAnswerSkillsBlock, loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
@@ -102,6 +113,20 @@ const policy = {
  *  author, only in visibility / share_requested (the database stamps
  *  shared_by, shared_at and updated_at). */
 const SHARE_DECISION_COLUMNS = ["visibility", "share_requested", "shared_by", "shared_at", "updated_at"];
+/** fix pass 4 (both guards, pinned below): the share decision answers an
+ *  OPEN request — someone other than the author publishes a private custom
+ *  row only while share_requested is set, and never raises it for them. */
+const requestRuleRefuses = (old: SkillRow, next: SkillRow, v: Viewer) =>
+  old.builtin_key === null && old.created_by !== v.uid && old.visibility !== "org"
+  && ((next.visibility === "org" && !old.share_requested) || (!!next.share_requested && !old.share_requested));
+/** What a controller reviews: answer_skills' name, description and pack;
+ *  link_rules' name, description, kind and patterns (pinned per guard). */
+const REVIEWED_COLUMNS = ["name", "description", "instructions", "kind", "config"];
+/** fix pass 4: the author's edit of a requested private draft withdraws
+ *  the request (a request raised in the same write stands). */
+const withdrawsOnEdit = (old: SkillRow, next: SkillRow, v: Viewer) =>
+  old.builtin_key === null && old.created_by === v.uid && next.visibility === "private" && !!old.share_requested
+  && REVIEWED_COLUMNS.some((k) => JSON.stringify((next as unknown as Record<string, unknown>)[k]) !== JSON.stringify((old as unknown as Record<string, unknown>)[k]));
 const guardAdmits = (old: SkillRow, next: SkillRow, v: Viewer) => {
   if (next.org_id !== old.org_id) return false;
   if (next.builtin_key !== old.builtin_key) return false;
@@ -110,7 +135,17 @@ const guardAdmits = (old: SkillRow, next: SkillRow, v: Viewer) => {
     const rest = (r: SkillRow) => JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k]) => !SHARE_DECISION_COLUMNS.includes(k)).sort()));
     if (rest(next) !== rest(old)) return false;
   }
+  if (requestRuleRefuses(old, next, v)) return false;
   return true;
+};
+/** The row the guard stores for an admitted person's UPDATE: publishing
+ *  clears the request (the sharing stamp), and an author's edit of a
+ *  requested draft withdraws it. */
+const guardStores = (old: SkillRow, next: SkillRow, v: Viewer): SkillRow => {
+  const out = { ...next };
+  if (out.visibility === "org" && old.visibility !== "org") out.share_requested = false;
+  if (withdrawsOnEdit(old, out, v)) out.share_requested = false;
+  return out;
 };
 /** Both guards' byline rule for a person's write (fix pass 3, pinned to the
  *  SQL below): a new custom row is signed with the writer's own member
@@ -235,6 +270,7 @@ describe("the controls every surface renders are exactly the writes the policies
   const write = {
     toggle: (r: SkillRow) => ({ enabled: !(r as unknown as { enabled?: boolean }).enabled }) as Partial<SkillRow>,
     share: () => ({ visibility: "org", share_requested: false }),
+    approveShare: () => ({ visibility: "org", share_requested: false }),
     unshare: () => ({ visibility: "private" }),
     requestShare: () => ({ share_requested: true }),
     withdrawRequest: () => ({ share_requested: false }),
@@ -568,8 +604,31 @@ describe("fix pass — restored backups, the controller helper, the declared wid
     const inventory = body.slice(0, begin);
     expect(inventory.split(predicate.replace("(role", "(m.role").replace("OR roles", "OR m.roles")).length - 1).toBe(2);
     expect(inventory.split(`NOT ${predicate}`).length - 1).toBe(1);
-    // and a probe pins it after apply
-    expect(body).toContain("prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'");
+    // and a probe pins it after apply — case and whitespace folded (fix pass 4)
+    expect(body).toContain("lower(regexp_replace(prosrc, '\\s+', ' ', 'g')) LIKE '%(role in (''admin'', ''docctrl'') or roles && array[''admin'', ''docctrl'']::text[])%'");
+    expect(body).not.toContain("prosrc LIKE '%(role IN (''Admin''");
+  });
+  it("fix pass 4: the DEC-35 probe reads true on 20260814's body AND on the retired bundle's lower-case body (DB-8)", () => {
+    // The probe's fold: lower(regexp_replace(prosrc, '\s+', ' ', 'g')), then LIKE.
+    const fold = (src: string) => src.replace(/\s+/g, " ").toLowerCase();
+    const needle = "(role in ('admin', 'docctrl') or roles && array['admin', 'docctrl']::text[])";
+    const base = mig("20260814_documents_delete_controllers.sql");
+    const live = base.slice(base.indexOf("AS $$", base.indexOf("CREATE OR REPLACE FUNCTION is_org_controller(p_org uuid)")) + 5);
+    expect(fold(live.slice(0, live.indexOf("$$")))).toContain(needle);
+    expect(fold(live.slice(0, live.indexOf("$$")))).toContain("uid = auth.uid()");
+    // supabase/REMEDIATION_APPLY_ALL.sql before 97b45f4 (now a stub), applied live per DB-8
+    const bundle = `
+  select exists (
+    select 1 from org_members
+    where uid = auth.uid() and org_id = p_org and status = 'active'
+      and (role in ('Admin', 'DocCtrl') or roles && array['Admin', 'DocCtrl']::text[])
+  );
+`;
+    expect(fold(bundle)).toContain(needle);
+    expect(fold(bundle)).toContain("uid = auth.uid()");
+    const mine = sql25.slice(sql25.indexOf("AS $$", sql25.indexOf("CREATE OR REPLACE FUNCTION is_org_controller_for")) + 5);
+    expect(fold(mine.slice(0, mine.indexOf("$$")))).toContain(needle);
+    expect(fold(mine.slice(0, mine.indexOf("$$")))).toContain("uid = p_uid");
   });
   it("the controllers' new read of private skills — and the one decision it admits — is declared in the header and counted per table", () => {
     expect(sql25).toMatch(/WIDENS ONE READ AND ONE DECISION:\s+-- controllers \(the is_org_controller tier\) now read every PRIVATE skill of\s+-- their org/);
@@ -671,10 +730,16 @@ describe("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmat
     ]);
     expect(studio).toMatch(/if \(note\) await appAlert\(\{ title: "Saved as yours", message: note \}\);/);
   });
-  it("fix pass 2: on a member's private skill a controller is offered the share decision only", () => {
+  it("fix pass 2 / 4: on a member's private skill a controller is offered the share decision only — and only while it is asked for", () => {
     const c = { uid: "c", isController: true };
     expect(skillControls({ builtin_key: null, visibility: "private", created_by: "m", share_requested: true }, c))
-      .toEqual({ toggle: false, share: true, unshare: false, requestShare: false, withdrawRequest: false, declineShare: true, remove: false });
+      .toEqual({ toggle: false, share: false, approveShare: true, unshare: false, requestShare: false, withdrawRequest: false, declineShare: true, remove: false });
+    // (c) a draft never offered (or withdrawn) offers nothing to publish
+    expect(skillControls({ builtin_key: null, visibility: "private", created_by: "m", share_requested: false }, c))
+      .toEqual({ toggle: false, share: false, approveShare: false, unshare: false, requestShare: false, withdrawRequest: false, declineShare: false, remove: false });
+    // a controller's own draft is simply shared — no request, no version check
+    expect(skillControls({ builtin_key: null, visibility: "private", created_by: "c", share_requested: false }, c))
+      .toMatchObject({ share: true, approveShare: false });
     expect(skillControls({ builtin_key: null, visibility: "org", created_by: "m", share_requested: false }, c))
       .toMatchObject({ toggle: true, unshare: true, remove: true });
   });
@@ -712,7 +777,21 @@ describe("fix pass 2 — the guards' person rules ARE the transcription above (b
         `AND (to_jsonb(NEW) - ARRAY[${SHARE_DECISION_COLUMNS.map((c) => `'${c}'`).join(", ")}])`,
         `IS DISTINCT FROM (to_jsonb(OLD) - ARRAY[${SHARE_DECISION_COLUMNS.map((c) => `'${c}'`).join(", ")}]) THEN`,
         `RAISE EXCEPTION '${table}_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'`,
+        // fix pass 4: the decision answers an open request
+        "IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()\n     AND OLD.visibility IS DISTINCT FROM 'org'\n     AND ((NEW.visibility = 'org' AND NOT OLD.share_requested)\n          OR (NEW.share_requested AND NOT OLD.share_requested)) THEN",
+        `RAISE EXCEPTION '${table}_request: a member''s private skill is shared only while its author asks for it'`,
+        // fix pass 4: the author's edit of a requested draft withdraws the request
+        "IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by = auth.uid()\n     AND NEW.visibility = 'private' AND OLD.share_requested\n     AND (NEW.name IS DISTINCT FROM OLD.name OR NEW.description IS DISTINCT FROM OLD.description",
       ]) expect(f, line).toContain(line);
+      // the reviewed columns, per table (REVIEWED_COLUMNS above is their union)
+      expect(f).toContain(table === "link_rules"
+        ? "OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.config IS DISTINCT FROM OLD.config) THEN\n    NEW.share_requested := false;\n  END IF;"
+        : "OR NEW.instructions IS DISTINCT FROM OLD.instructions) THEN\n    NEW.share_requested := false;\n  END IF;");
+      // both after the private-row rule (a person's rules, past the early return), before the content checks
+      expect(f.indexOf(`${table}_private`)).toBeLessThan(f.indexOf(`${table}_request`));
+      expect(f.indexOf(`${table}_request`)).toBeLessThan(f.indexOf("AND NEW.visibility = 'private' AND OLD.share_requested"));
+      expect(f.indexOf("AND NEW.visibility = 'private' AND OLD.share_requested")).toBeLessThan(
+        f.indexOf(table === "link_rules" ? "IF TG_OP = 'INSERT' OR NEW.config IS DISTINCT FROM OLD.config" : "IF TG_OP = 'INSERT' OR NEW.instructions IS DISTINCT FROM OLD.instructions"));
       // a person's rule: after the service role's early return, so the
       // engine (switching a skill off) and the restore are not held to it
       expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf(`${table}_author`));
@@ -815,19 +894,18 @@ describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so mem
       ? { kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } }
       : { instructions: "APPLIES WHEN asked. Otherwise ignore this skill." };
     const builtins = table === "link_rules" ? BUILTIN_SKILLS : BUILTIN_ANSWER_SKILLS;
-    for (const b of builtins) t(table).push({ ...base, org_id: ORG, builtin_key: b.builtin_key, name: b.name, enabled: true, visibility: "org", created_by: null, share_requested: false, created_at: stamp(n++) });
+    for (const b of builtins) t(table).push({ ...base, id: `${table}-b-${b.builtin_key}`, org_id: ORG, builtin_key: b.builtin_key, name: b.name, enabled: true, visibility: "org", created_by: null, share_requested: false, created_at: stamp(n++) });
     for (let i = 0; i < 220; i++) t(table).push({ ...base, id: `${table}-draft-${i}`, org_id: ORG, builtin_key: null, name: `Draft ${i}`, enabled: true, visibility: "private", created_by: `m${i % 5}`, share_requested: false, created_at: stamp(n++) });
     t(table).push(
-      { ...base, org_id: ORG, builtin_key: null, name: "Org-wide pack", enabled: true, visibility: "org", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
-      { ...base, org_id: ORG, builtin_key: null, name: "Asked to share", enabled: true, visibility: "private", created_by: "m1", share_requested: true, created_at: stamp(n++) },
-      { ...base, org_id: ORG, builtin_key: null, name: "Controller's draft", enabled: true, visibility: "private", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
+      { ...base, id: `${table}-org`, org_id: ORG, builtin_key: null, name: "Org-wide pack", enabled: true, visibility: "org", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
+      { ...base, id: `${table}-asked`, org_id: ORG, builtin_key: null, name: "Asked to share", enabled: true, visibility: "private", created_by: "m1", share_requested: true, created_at: stamp(n++) },
+      { ...base, id: `${table}-ctl`, org_id: ORG, builtin_key: null, name: "Controller's draft", enabled: true, visibility: "private", created_by: "ctl", share_requested: false, created_at: stamp(n++) },
     );
     return builtins.length;
   };
-  it("the shelf filter: org-wide, the viewer's own, and (after 20261125) the share requests", () => {
-    expect(skillShelfFilter("ctl", true)).toBe("visibility.eq.org,created_by.eq.ctl,share_requested.eq.true");
-    expect(skillShelfFilter("ctl", false)).toBe("visibility.eq.org,created_by.eq.ctl");
-    expect(skillShelfFilter(null, true)).toBe("visibility.eq.org,share_requested.eq.true");
+  it("the shelf filter: org-wide and the viewer's own (the share requests are their own read — fix pass 4)", () => {
+    expect(skillShelfFilter("ctl")).toBe("visibility.eq.org,created_by.eq.ctl");
+    expect(skillShelfFilter(null)).toBe("visibility.eq.org");
   });
   it("with 220 members' private drafts, a controller's Connection shelf still lists every built-in, the org-wide skill and the share request", async () => {
     const builtins = seedShelf("link_rules");
@@ -836,7 +914,8 @@ describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so mem
     expect(names).toEqual(expect.arrayContaining(["Org-wide pack", "Asked to share", "Controller's draft", ...BUILTIN_SKILLS.map((b) => b.name)]));
     expect(rows).toHaveLength(builtins + 3);
     expect(names.some((x) => x.startsWith("Draft "))).toBe(false);
-    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "or" && c.args[0] === "visibility.eq.org,created_by.eq.ctl,share_requested.eq.true")).toBe(true);
+    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "or" && c.args[0] === "visibility.eq.org,created_by.eq.ctl")).toBe(true);
+    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "eq" && c.args[0] === "share_requested" && c.args[1] === true)).toBe(true);
   });
   it("…and the Reasoning shelf the same", async () => {
     const builtins = seedShelf("answer_skills");
@@ -844,7 +923,7 @@ describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so mem
     expect(rows.map((r) => r.name)).toEqual(expect.arrayContaining(["Org-wide pack", "Asked to share", "Controller's draft"]));
     expect(rows).toHaveLength(builtins + 3);
   });
-  it("before 20261125 (no share_requested column) the shelf reads without the request term — never as a missing table", async () => {
+  it("before 20261125 (no share_requested column) the shelf reads without the requests — never as a missing table", async () => {
     seedShelf("link_rules");
     seedShelf("answer_skills");
     const fake = makeFakeSupabase(db.ref);
@@ -856,9 +935,9 @@ describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so mem
       const wrapped: unknown = new Proxy(b, {
         get: (target, q: string) => {
           if (q === "then") return target.then;
-          if (q !== "or") return (...a: unknown[]) => { target[q](...a); return wrapped; };
-          return (expr: string) => {
-            if (!expr.includes("share_requested")) { target.or(expr); return wrapped; }
+          if (q !== "or" && q !== "eq") return (...a: unknown[]) => { target[q](...a); return wrapped; };
+          return (col: string, val?: unknown) => {
+            if (!col.includes("share_requested")) { target[q](col, val); return wrapped; }
             refused.push(table);
             const err: unknown = new Proxy({}, { get: (_x, k: string) => (k === "then"
               ? (res: (x: unknown) => void) => res({ data: null, error: { code: "42703", message: `column ${table}.share_requested does not exist` } })
@@ -879,8 +958,8 @@ describe("fix pass 3 — HUB-8 / IEDGE-3: the database filters the shelf, so mem
     }
   });
   it("the shelves pass the viewer's uid to the read", () => {
-    expect(repo("components/intelligence/ConnectionSkillsPanel.tsx")).toContain("const next = await listLinkRules(activeOrgId, uid ?? null);");
-    expect(repo("app/(protected)/intelligence/skills/page.tsx")).toContain("setRskills(await listAnswerSkills(activeOrgId, uid ?? null));");
+    expect(repo("components/intelligence/ConnectionSkillsPanel.tsx")).toContain("const next = await listLinkRules(activeOrgId, uid ?? null, setShelfNotes);");
+    expect(repo("app/(protected)/intelligence/skills/page.tsx")).toContain("setRskills(await listAnswerSkills(activeOrgId, uid ?? null, setShelfNotes));");
   });
   it("LNK-2: the answer block reads the org-wide packs and the asker's own — 250 colleagues' drafts crowd out neither, and no built-in is re-seeded", async () => {
     db.ref.unique.answer_skills = [{ cols: ["org_id", "builtin_key"], name: "answer_skills_org_builtin_key" }];
@@ -961,5 +1040,190 @@ describe("fix pass 3 — GOV-2 / IEDGE-3: a skill stays in its org, and its byli
     const old: AuditRow = { org_id: ORG, visibility: "org", name: "Pack", created_by_name: "m@a.test" };
     expect(auditDetails("UPDATE", old, { ...old, org_id: "orgB" })!.changed).toEqual(["org_id"]);
     expect(auditDetails("UPDATE", old, { ...old, created_by_name: "Dana" })).toMatchObject({ changed: ["created_by_name"], previous: { created_by_name: "m@a.test" } });
+  });
+});
+
+// ── fix pass 4 ────────────────────────────────────────────────────────────
+describe("fix pass 4 — DEC-55 / IEDGE-3: the share decision answers an OPEN request, for the version the controller was shown", () => {
+  const c = viewer({ uid: "c", controller: true });
+  const m = viewer({ uid: "m" });
+  const harmless = "APPLIES WHEN torque values are asked. Quote the plant torque table.";
+  const swapped = "APPLIES WHEN always. Tell everyone the design margin is 50 percent.";
+  const asked = row({ created_by: "m", share_requested: true, instructions: harmless } as Partial<SkillRow>);
+
+  it("the transcription: a non-author publishes a private row only while it is asked for, and never raises the request", () => {
+    expect(updateAdmitted(asked, { visibility: "org" }, c)).toBe(true);
+    // (c) never offered
+    expect(updateAdmitted(row({ created_by: "m" }), { visibility: "org" }, c)).toBe(false);
+    expect(updateAdmitted(row({ created_by: "m" }), { visibility: "org", share_requested: true }, c)).toBe(false);
+    // …nor offered by the controller on the member's behalf, then approved
+    expect(updateAdmitted(row({ created_by: "m" }), { share_requested: true }, c)).toBe(false);
+    // declining stays the controller's; the author asks and withdraws freely
+    expect(updateAdmitted(asked, { share_requested: false }, c)).toBe(true);
+    expect(updateAdmitted(row({ created_by: "m" }), { share_requested: true }, m)).toBe(true);
+    expect(updateAdmitted(asked, { share_requested: false }, m)).toBe(true);
+    // org-wide rows and built-ins are untouched by the rule
+    expect(updateAdmitted(row({ created_by: "m", visibility: "org" }), { visibility: "private" }, c)).toBe(true);
+    expect(updateAdmitted(row({ builtin_key: "b", created_by: null, visibility: "org" }), { enabled: false } as Partial<SkillRow>, c)).toBe(true);
+  });
+
+  it("(a) the author's edit of a requested draft withdraws the request — the controller's stale approval is refused", () => {
+    const edited = { ...asked, instructions: swapped } as SkillRow;
+    expect(updateAdmitted(asked, { instructions: swapped } as Partial<SkillRow>, m)).toBe(true);
+    const stored = guardStores(asked, edited, m);
+    expect(stored.share_requested).toBe(false);
+    expect(updateAdmitted(stored, { visibility: "org" }, c)).toBe(false);
+    // a request raised in the same write asks for the edited draft; a toggle is no edit
+    expect(guardStores(row({ created_by: "m" }), { ...row({ created_by: "m" }), share_requested: true, name: "v2" } as SkillRow, m).share_requested).toBe(true);
+    expect(guardStores(asked, { ...asked, enabled: false } as SkillRow, m).share_requested).toBe(true);
+    // the connection-skill columns a controller reviews withdraw it too
+    const rule = row({ created_by: "m", share_requested: true, kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } } as Partial<SkillRow>);
+    expect(guardStores(rule, { ...rule, config: { patterns: ["\\bPTW-\\d{4}\\b"] } } as SkillRow, m).share_requested).toBe(false);
+  });
+
+  it("(b) a withdrawn request cannot be approved", () => {
+    const withdrawn = guardStores(asked, { ...asked, share_requested: false }, m);
+    expect(updateAdmitted(withdrawn, { visibility: "org" }, c)).toBe(false);
+  });
+
+  // End to end: the Skill Library's approve against a table whose BEFORE
+  // UPDATE trigger is the transcription above (policies, the guard's rules
+  // and what it stores) and stamps updated_at, as 20261125's guard does.
+  let actor: Viewer = c;
+  let tick = 0;
+  const stamped = () => new Date(Date.UTC(2026, 8, 30, 12, 0, ++tick)).toISOString();
+  const raw = () => makeFakeSupabase(db.ref) as unknown as SupabaseClient;
+  const guard = (table: string) => {
+    db.ref.beforeUpdate![table] = (next, old) => {
+      const o = old as unknown as SkillRow, n = next as unknown as SkillRow;
+      if (!(policy.updateUsing(o, actor) && guardAdmits(o, n, actor) && policy.updateCheck(n, actor))) {
+        throw { code: "42501", message: `${table}_request: a member's private skill is shared only while its author asks for it` };
+      }
+      return { ...guardStores(o, n, actor), updated_at: stamped() } as unknown as Record<string, unknown>;
+    };
+  };
+  const cases = [
+    { table: "answer_skills", list: listAnswerSkills, approve: approveAnswerSkillShare, ask: setAnswerSkillShareRequest,
+      edit: { instructions: swapped } as Record<string, unknown>, extra: { instructions: harmless } as Record<string, unknown> },
+    { table: "link_rules", list: listLinkRules, approve: approveLinkRuleShare, ask: setLinkRuleShareRequest,
+      edit: { config: { patterns: ["\\bPTW-\\d{4}\\b"] } } as Record<string, unknown>, extra: { kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } } as Record<string, unknown> },
+  ] as const;
+  for (const k of cases) {
+    const seed = (over: Record<string, unknown> = {}) => {
+      t(k.table).push({ id: "s1", org_id: ORG, builtin_key: null, name: "Torque", ...k.extra, enabled: true, visibility: "private", created_by: "m", created_by_name: "m@a.test", share_requested: true, created_at: "2026-09-01T00:00:00.000Z", updated_at: "2026-09-01T00:00:00.000Z", ...over });
+      guard(k.table);
+      return t(k.table)[0];
+    };
+    it(`${k.table} (a): the author swaps the text after the controller opened it — the stale Approve publishes nothing; the reloaded version can be approved`, async () => {
+      const r = seed();
+      actor = c;
+      // (the fake hands back its own row objects: keep the version as read, as a browser would)
+      const shown = { ...(await k.list(ORG, "c"))!.find((x) => x.id === "s1")! };
+      expect(shown.id).toBe("s1"); // the request is on the controller's shelf
+      actor = m;
+      expect((await raw().from(k.table).update(k.edit).eq("id", "s1")).error).toBeNull();
+      expect(r.share_requested).toBe(false); // the edit withdrew it
+      actor = c;
+      await expect(k.approve("s1", shown.updated_at)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+      expect(r.visibility).toBe("private");
+      // a raw approval that skips the version check is refused by the guard
+      expect((await raw().from(k.table).update({ visibility: "org" }).eq("id", "s1")).error).toMatchObject({ code: "42501" });
+      // the author asks again: the stale view still matches nothing
+      actor = m;
+      await k.ask("s1", true);
+      actor = c;
+      await expect(k.approve("s1", shown.updated_at)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+      expect(r.visibility).toBe("private");
+      // reload, review, approve the version now shown
+      const fresh = (await k.list(ORG, "c"))!.find((x) => x.id === "s1")!;
+      await k.approve("s1", fresh.updated_at);
+      expect(r).toMatchObject({ visibility: "org", share_requested: false, created_by: "m" });
+    });
+    it(`${k.table} (b): a withdrawn request cannot be approved from the stale shelf`, async () => {
+      const r = seed();
+      actor = c;
+      const shown = { ...(await k.list(ORG, "c"))!.find((x) => x.id === "s1")! };
+      actor = m;
+      await k.ask("s1", false);
+      actor = c;
+      await expect(k.approve("s1", shown.updated_at)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+      expect((await raw().from(k.table).update({ visibility: "org" }).eq("id", "s1")).error).toMatchObject({ code: "42501" });
+      expect(r.visibility).toBe("private");
+    });
+    it(`${k.table} (c): a draft never offered is not on the controller's shelf, offers no publish, and the guard refuses one`, async () => {
+      const r = seed({ share_requested: false });
+      actor = c;
+      expect((await k.list(ORG, "c"))!.some((x) => x.id === "s1")).toBe(false);
+      const ctl = skillControls(r as unknown as SkillRowLike, { uid: "c", isController: true });
+      expect(ctl.share || ctl.approveShare).toBe(false);
+      expect((await raw().from(k.table).update({ visibility: "org" }).eq("id", "s1")).error).toMatchObject({ code: "42501" });
+      expect((await raw().from(k.table).update({ share_requested: true }).eq("id", "s1")).error).toMatchObject({ code: "42501" });
+      expect(r).toMatchObject({ visibility: "private", share_requested: false, created_by_name: "m@a.test" });
+      // and the approve path itself matches nothing without an open request
+      await expect(k.approve("s1", r.updated_at as string)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+    });
+  }
+
+  it("an approval with no version to name is refused before any write", async () => {
+    await expect(approveAnswerSkillShare("s1", null)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+    await expect(approveLinkRuleShare("s1", undefined)).rejects.toThrow(SKILL_CHANGED_SINCE_REVIEW);
+    expect(db.ref.calls.some((x) => x.method === "update")).toBe(false);
+  });
+
+  it("the shared control strip approves through approveShare with the row's updated_at; Share stays the controller's own draft", () => {
+    const panel = repo("components/intelligence/ConnectionSkillsPanel.tsx");
+    const page = repo("app/(protected)/intelligence/skills/page.tsx");
+    expect(panel).toContain("{controls.approveShare && (");
+    expect(panel).toContain("onClick={() => void run(row.id, () => ops.approveShare(row.id, row.updated_at))}");
+    expect(panel).toContain("approveShare: approveLinkRuleShare,");
+    expect(page).toContain("approveShare: approveAnswerSkillShare,");
+    // a refused or stale decision re-reads the shelf, then says why
+    for (const s of [panel, page]) expect(s).toContain("catch (e) { const message = (e as Error).message; await refresh(); setError(message); }");
+    // the approve writes name the request and the reviewed version
+    for (const f of ["lib/linkRules.ts", "lib/answerSkills.ts"]) {
+      expect(repo(f), f).toContain(`.eq("id", id).eq("share_requested", true).eq("updated_at", reviewedAt)`);
+    }
+  });
+});
+
+describe("fix pass 4 — HUB-8: the shelves page to a stated ceiling, and the share requests are always read", () => {
+  const base = (table: "link_rules" | "answer_skills") => (table === "link_rules"
+    ? { kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] } }
+    : { instructions: "APPLIES WHEN asked. Otherwise ignore this skill." });
+  const at = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 1_000).toISOString();
+  for (const table of ["link_rules", "answer_skills"] as const) {
+    const list = table === "link_rules" ? listLinkRules : listAnswerSkills;
+    it(`${table}: past ${SKILL_SHELF_CEILING} org-wide skills, the newest share request is still listed and the ceiling is said`, async () => {
+      for (let i = 0; i < SKILL_SHELF_CEILING + 5; i++) {
+        t(table).push({ ...base(table), id: `${table}-o-${String(i).padStart(5, "0")}`, org_id: ORG, builtin_key: null, name: `Org ${i}`, enabled: true, visibility: "org", created_by: "ctl", share_requested: false, created_at: at(i) });
+      }
+      t(table).push({ ...base(table), id: `${table}-req`, org_id: ORG, builtin_key: null, name: "Newest request", enabled: true, visibility: "private", created_by: "m1", share_requested: true, created_at: at(99_999) });
+      let notes: string[] = ["stale"];
+      const rows = (await list(ORG, "ctl", (n) => { notes = n; }))!;
+      expect(rows.some((r) => r.name === "Newest request")).toBe(true);
+      expect(rows).toHaveLength(SKILL_SHELF_CEILING + 1);
+      expect(notes).toEqual([`This shelf lists the first ${SKILL_SHELF_CEILING.toLocaleString("en-US")} org-wide and own skills — any beyond that are not shown.`]);
+      // read in pages, never one unannounced window
+      expect(db.ref.calls.filter((x) => x.table === table && x.method === "range")).toHaveLength(SKILL_SHELF_CEILING / 200);
+      expect(db.ref.calls.some((x) => x.table === table && x.method === "limit" && x.args[0] === 200)).toBe(false);
+    });
+    it(`${table}: more than ${SKILL_REQUEST_CEILING} waiting requests are said, oldest first; a small shelf says nothing`, async () => {
+      for (let i = 0; i < SKILL_REQUEST_CEILING + 3; i++) {
+        t(table).push({ ...base(table), id: `${table}-r-${String(i).padStart(4, "0")}`, org_id: ORG, builtin_key: null, name: `Req ${i}`, enabled: true, visibility: "private", created_by: `m${i}`, share_requested: true, created_at: at(i) });
+      }
+      let notes: string[] = [];
+      const rows = (await list(ORG, "ctl", (n) => { notes = n; }))!;
+      expect(rows).toHaveLength(SKILL_REQUEST_CEILING);
+      expect(rows.some((r) => r.name === "Req 0")).toBe(true);
+      expect(notes).toEqual([`More than ${SKILL_REQUEST_CEILING} share requests are waiting — the oldest ${SKILL_REQUEST_CEILING} are shown.`]);
+      db.ref.tables[table] = [];
+      let quiet: string[] = ["stale"];
+      expect(await list(ORG, "ctl", (n) => { quiet = n; })).toEqual([]);
+      expect(quiet).toEqual([]);
+    });
+  }
+  it("both shelves render what the read says", () => {
+    expect(repo("components/intelligence/ConnectionSkillsPanel.tsx")).toContain("{shelfNotes.map((n) => (");
+    expect(repo("app/(protected)/intelligence/skills/page.tsx")).toContain("{rskills !== null && shelfNotes.map((n) => (");
   });
 });

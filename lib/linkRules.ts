@@ -13,7 +13,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { compileSkillPatterns, BUILTIN_SKILLS } from "@/lib/linkProposalLogic";
-import { skillShelfFilter } from "@/lib/skillAuthority";
+import { skillShelfFilter, readSkillShelf, SKILL_CHANGED_SINCE_REVIEW } from "@/lib/skillAuthority";
 
 export { BUILTIN_SKILLS };
 
@@ -59,28 +59,42 @@ const REFUSED = "That change was not made — this skill is not yours to change 
 /** A share request needs 20261125's share_requested column. */
 export const SHARE_NEEDS_MIGRATION = "Share requests arrive with the skills-authority migration (20261125), which this database does not have yet.";
 
-/** The skills this viewer's shelf lists: org-wide, their own, and the
- *  share requests (skillShelfFilter — filtered by the database, so a
- *  controller's read of every private skill never crowds the shelf).
- *  Returns null when the table is missing (the migration hasn't run) — an
- *  empty library is [] (IRLS-12 limb). */
-export async function listLinkRules(orgId: string, uid: string | null): Promise<LinkRule[] | null> {
-  const read = (withRequests: boolean) => supabase
-    .from("link_rules").select("*")
-    .eq("org_id", orgId)
-    .or(skillShelfFilter(uid, withRequests))
-    .order("builtin_key", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true })
-    .limit(200);
-  let { data, error } = await read(true);
-  // Before 20261125 there is no share_requested column (and no request):
-  // read without that term. Checked first — its message says "does not exist".
-  if (error && missingSkillColumn(error)) ({ data, error } = await read(false));
+/** The skills this viewer's shelf lists: org-wide and their own, in pages
+ *  to a stated ceiling (skillShelfFilter — filtered by the database, so a
+ *  controller's read of every private skill never crowds the shelf), plus
+ *  the share requests, read on their own so none is ever pushed off
+ *  (readSkillShelf; before 20261125 there is no request to read).
+ *  `onNotes` receives what the shelf must say — a ceiling reached — on
+ *  every read (empty when there is nothing to say). Returns null when the
+ *  table is missing (the migration hasn't run) — an empty library is []
+ *  (IRLS-12 limb). */
+export async function listLinkRules(
+  orgId: string, uid: string | null, onNotes?: (notes: string[]) => void,
+): Promise<LinkRule[] | null> {
+  const { rows, error, notes } = await readSkillShelf<LinkRule>(
+    (from, to) => supabase
+      .from("link_rules").select("*")
+      .eq("org_id", orgId)
+      .or(skillShelfFilter(uid))
+      .order("builtin_key", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+    (limit) => supabase
+      .from("link_rules").select("*")
+      .eq("org_id", orgId)
+      .eq("share_requested", true)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(limit),
+    missingSkillColumn,
+  );
   if (error) {
     if (missing(error)) return null;
     throw new Error(error.message);
   }
-  return (data as LinkRule[]) ?? [];
+  onNotes?.(notes);
+  return rows;
 }
 
 /** Idempotently create any missing built-in skills for the org. HUB-2 /
@@ -184,11 +198,28 @@ export async function setLinkRuleEnabled(id: string, enabled: boolean): Promise<
   await checkedUpdate(id, { enabled });
 }
 
-/** 'org' is a controller act (publishing, or approving a share request);
- *  an author may always take their own skill back to 'private'. Publishing
- *  clears the share request — 20261125's guard does it on the flip. */
+/** 'org' is a controller act on their own draft (a member's request is
+ *  approved with approveLinkRuleShare); an author may always take their own
+ *  skill back to 'private'. Publishing clears the share request —
+ *  20261125's guard does it on the flip. */
 export async function setLinkRuleVisibility(id: string, visibility: LinkRuleVisibility): Promise<void> {
   await checkedUpdate(id, { visibility });
+}
+
+/** A controller approves a member's share request (DEC-55 fix pass 4): the
+ *  write names the request and the version the shelf showed (`reviewedAt`,
+ *  the row's updated_at — the guard stamps it on every write), so a draft
+ *  whose author edited it or withdrew the request since matches nothing and
+ *  the controller is told to review it again. 20261125's guard refuses an
+ *  approval with no open request whatever the client sends. */
+export async function approveLinkRuleShare(id: string, reviewedAt: string | null | undefined): Promise<void> {
+  if (!reviewedAt) throw new Error(SKILL_CHANGED_SINCE_REVIEW);
+  const { data, error } = await supabase.from("link_rules")
+    .update({ visibility: "org", updated_at: new Date().toISOString() })
+    .eq("id", id).eq("share_requested", true).eq("updated_at", reviewedAt)
+    .select("id");
+  if (error) throw new Error(error.message);
+  if (((data as unknown[] | null) ?? []).length === 0) throw new Error(SKILL_CHANGED_SINCE_REVIEW);
 }
 
 /** The author asks (or stops asking) a controller to share it; a controller

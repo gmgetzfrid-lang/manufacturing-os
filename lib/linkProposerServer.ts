@@ -207,6 +207,51 @@ async function loadRules(
   return { rows, privateDrafts: privateDrafts ?? 0 };
 }
 
+/** LNK-5 (fix pass 4): pending proposals queued by a custom connection skill
+ *  that is not org-wide now — an author or a controller unshared it after
+ *  20261126 retired the earlier ones — are retired to 'stale': the engine no
+ *  longer runs the skill, so nothing else would ever refresh or retire them,
+ *  and reviewers would keep deciding the output of a skill the org withdrew.
+ *  'stale', not dismissed: if a controller shares the skill again, the next
+ *  run re-derives them. A deleted skill's proposals stay (what a skill
+ *  produced carries its own evidence). Every failure is said on the run. */
+async function retirePrivateSkillProposals(
+  admin: SupabaseClient, orgId: string, notes: string[], errors: string[],
+): Promise<number> {
+  const ids = await readPaged<{ id: string }>((from, to) => admin
+    .from("link_rules").select("id")
+    .eq("org_id", orgId).is("builtin_key", null).neq("visibility", "org")
+    .order("id", { ascending: true })
+    .range(from, to), READ_CAP.rules);
+  if (ids.error) {
+    notes.push(`Proposals from private connection skills could not be checked (${ids.error.message}) — any a withdrawn skill queued stay in review this pass.`);
+    return 0;
+  }
+  if (ids.saturated) {
+    notes.push(`Checked the proposals of the first ${READ_CAP.rules.toLocaleString("en-US")} private connection skills — the rest were not checked this pass.`);
+  }
+  const proposers = ids.rows.map((r) => `rule:${r.id}`);
+  let retired = 0;
+  let writeErr: string | null = null;
+  // 100 keys a request: 'rule:' + a uuid is longer than the ids CHUNK sizes.
+  for (let i = 0; i < proposers.length; i += 100) {
+    const { data, error } = await admin
+      .from("proposed_links")
+      .update({ status: "stale" })
+      .eq("org_id", orgId)
+      .eq("status", "pending")
+      .in("proposer", proposers.slice(i, i + 100))
+      .select("id");
+    if (error) { writeErr ??= error.message; continue; }
+    retired += ((data as unknown[] | null) ?? []).length;
+  }
+  if (writeErr) errors.push(`Proposals from connection skills that are no longer org-wide could not be retired (${writeErr}).`);
+  if (retired > 0) {
+    notes.push(`${retired} pending proposal${retired === 1 ? "" : "s"} from connection skills that are no longer org-wide ${retired === 1 ? "was" : "were"} retired — ${retired === 1 ? "it comes" : "they come"} back if a controller shares the skill again.`);
+  }
+  return retired;
+}
+
 /** Page a large `in` filter without blowing the URL length. */
 async function inChunks<T>(
   ids: string[],
@@ -297,6 +342,9 @@ export async function runLinkProposers(
   });
   // Fail closed: with the rulebook unreadable, no detector runs this pass.
   if (loaded === "unreadable") return emptyRun();
+  // LNK-5 (fix pass 4): a skill unshared since 20261126 no longer runs, so
+  // nothing would ever refresh or retire what it queued — retire it here.
+  if (typeof loaded === "object") await retirePrivateSkillProposals(admin, orgId, notes, errors);
 
   // ── Controlled documents: identity index + revision, excluding anything
   // carved out of AI reading. ai_excluded is a young column; if it isn't
@@ -519,8 +567,10 @@ export async function runLinkProposers(
         if (regexes.length === 0) continue;
         // A fair share of what is left: every skill gets its turn this pass.
         const share = left / (customRules.length - k);
+        // runLeftMs: a starting worker may use what is left of the RUN's
+        // budget, not only this skill's share (fix pass 4).
         const res = await matcher.match(regexes.map((r) => r.source), {
-          softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: share, maxMatches: MAX_MATCHES_PER_TEXT,
+          softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: share, runLeftMs: left, maxMatches: MAX_MATCHES_PER_TEXT,
         });
         if (res.error) {
           notes.push(`Custom skills did not run to the end — ${res.error}. Not run this pass: ${customRules.slice(k).map((r) => `“${r.name}”`).join(", ")}.`);
@@ -544,6 +594,13 @@ export async function runLinkProposers(
           notes.push(offErr
             ? `Skill “${rule.name}”: one match never finished and was stopped; it could not be switched off (${offErr.message}).`
             : `Skill “${rule.name}”: one match ran for ${res.terminated.ms} ms on one page without finishing and was stopped — the skill was switched off.`);
+          continue;
+        }
+        if (res.startPending) {
+          // The worker was still loading the texts when this pass's time ran
+          // out: this skill read nothing; the run goes on (the worker keeps
+          // loading for the next skill, or the run's budget ends the loop).
+          notes.push(`Skill “${rule.name}” did not run this pass — the custom-skill worker was still loading the indexed text when this pass's ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s ran out.`);
           continue;
         }
         customDrafts.push(...customSkillDrafts({ id: rule.id, name: rule.name }, textOccurrences, res.found, identityIndex));
@@ -777,7 +834,7 @@ export async function runLinkProposers(
       .add(o.tag);
   }
   const evidenceLost = await flagLostEvidence(admin, orgId, currentTagsByDoc, () =>
-    ceiling("systemLinks", READ_CAP.systemLinks, "system-applied links for the evidence audit"));
+    ceiling("systemLinks", READ_CAP.systemLinks, "system-applied links for the evidence audit"), notes, errors);
 
   return {
     scanned: docRows.length,
@@ -887,6 +944,8 @@ async function flagLostEvidence(
   orgId: string,
   currentTagsByDoc: Map<string, Set<string>>,
   onCeiling: () => void,
+  notes: string[],
+  errors: string[],
 ): Promise<number> {
   type SysLink = {
     id: string; document_id: string; target_document_id: string | null;
@@ -898,7 +957,11 @@ async function flagLostEvidence(
     .eq("org_id", orgId).eq("origin", "system").is("evidence_lost_at", null)
     .order("id", { ascending: true })
     .range(from, to), READ_CAP.systemLinks);
-  if (read.error) return 0;
+  // LNK-2 (fix pass 4): a failed read is said, never a quiet "nothing lost".
+  if (read.error) {
+    notes.push(`The evidence audit could not read the system-applied links (${read.error.message}) — no link was checked for lost evidence this pass.`);
+    return 0;
+  }
   if (read.saturated) onCeiling();
 
   const lost: string[] = [];
@@ -914,13 +977,21 @@ async function flagLostEvidence(
   }
   if (lost.length === 0) return 0;
 
+  // The count reported is the rows actually marked (checked writes); a
+  // refused write is an error on the run.
   const stamp = new Date().toISOString();
+  let marked = 0;
+  let writeErr: string | null = null;
   for (let i = 0; i < lost.length; i += CHUNK) {
-    await admin.from("document_related_resources")
+    const { data, error } = await admin.from("document_related_resources")
       .update({ evidence_lost_at: stamp })
-      .in("id", lost.slice(i, i + CHUNK));
+      .in("id", lost.slice(i, i + CHUNK))
+      .select("id");
+    if (error) { writeErr ??= error.message; continue; }
+    marked += ((data as unknown[] | null) ?? []).length;
   }
-  return lost.length;
+  if (writeErr) errors.push(`Marking system links whose evidence was lost failed (${writeErr}) — ${lost.length - marked} of ${lost.length} were not marked.`);
+  return marked;
 }
 
 export type { ProposalDraft };

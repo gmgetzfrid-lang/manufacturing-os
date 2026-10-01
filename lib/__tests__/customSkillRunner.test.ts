@@ -16,17 +16,22 @@
 //     results it already sent, so a 1.5 s block of this thread mid-run
 //     terminates nothing and every page is found; a real hang is still
 //     stopped (one extra ceiling after a host stall).
+//   * fix pass 4 — worker start-up has its own allowance: a skill whose
+//     share is a few ms still waits for the worker (bounded by what is left
+//     of the run), a share that runs out while it loads is that skill's
+//     spent budget (`startPending`) — never an error that ends the run —
+//     and the worker keeps loading for the next skill.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { workerSkillMatcher, SKILL_DOC_HARD_MS } from "@/lib/customSkillRunner";
+import { workerSkillMatcher, SKILL_DOC_HARD_MS, WORKER_START_MS } from "@/lib/customSkillRunner";
 import {
   patternSafetyIssue, compileSkillPatterns, proposeCustomReferences, customSkillDrafts, runCustomSkill,
   MAX_MATCHES_PER_TEXT, type TextOccurrence,
 } from "@/lib/linkProposalLogic";
 
-const limits = (over: Partial<{ softDocMs: number; budgetMs: number; maxMatches: number }> = {}) =>
+const limits = (over: Partial<{ softDocMs: number; budgetMs: number; maxMatches: number; runLeftMs: number }> = {}) =>
   ({ softDocMs: 50, budgetMs: 15_000, maxMatches: MAX_MATCHES_PER_TEXT, ...over });
 
 // Inside the subset, and cubic on a long run of letters (≈1 s at 800
@@ -245,5 +250,53 @@ describe("LNK-6 — under budget the worker's matches make the in-thread drafts"
       new Map([["wo10003", ["d2"]]]), { budgetMs: 40, now: () => (clock += 10) });
     expect(res.skipped).toEqual([]);
     expect(res.drafts).toHaveLength(1);
+  });
+});
+
+describe("fix pass 4 — LNK-6: worker start-up is not one skill's share", () => {
+  // 2,400 pages of indexed text, as a full pass sends a cold worker.
+  const pages = Array.from({ length: 2_400 }, (_, i) => `Page ${i}. ${"lorem ipsum ".repeat(150)} see WO-${String(10_000 + i).padStart(5, "0")}`);
+  const keys = pages.map((_, i) => `d${i % 60}`);
+
+  it("a 1 ms share (60 skills, late in a run) still waits for a cold worker within the run's budget — no start error", async () => {
+    const m = workerSkillMatcher()(pages, keys);
+    try {
+      const res = await m.match(["\\bWO-\\d{5}\\b"], limits({ budgetMs: 1, runLeftMs: 15_000 }));
+      expect(res.error).toBeNull();
+      expect(res.startPending).toBeFalsy();
+      // the worker is up: the next skill reads every page
+      const next = await m.match(["\\bWO-\\d{5}\\b"], limits({ runLeftMs: 15_000 }));
+      expect(next.error).toBeNull();
+      expect(next.found.filter(Array.isArray)).toHaveLength(pages.length);
+    } finally {
+      await m.close();
+    }
+  }, 30_000);
+
+  it("a run whose time runs out while the worker loads: that skill's budget is spent (startPending), the worker keeps loading, the next skill runs", async () => {
+    const m = workerSkillMatcher()(pages, keys);
+    try {
+      const res = await m.match(["\\bWO-\\d{5}\\b"], limits({ budgetMs: 1, runLeftMs: 1 }));
+      expect(res).toMatchObject({ error: null, budgetSpent: true, startPending: true, terminated: null });
+      expect(res.found).toEqual([]);
+      const next = await m.match(["\\bWO-\\d{5}\\b"], limits({ runLeftMs: 15_000 }));
+      expect(next.error).toBeNull();
+      expect(next.found.filter(Array.isArray)).toHaveLength(pages.length);
+    } finally {
+      await m.close();
+    }
+  }, 30_000);
+
+  it("only a worker that has not started within WORKER_START_MS is given up on, and the message names that limit", () => {
+    const src = readFileSync(join(process.cwd(), "lib/customSkillRunner.ts"), "utf8");
+    expect(WORKER_START_MS).toBe(10_000);
+    expect(src).toContain("timer = setTimeout(() => done(`the custom-skill worker did not start within ${WORKER_START_MS / 1000} s`), WORKER_START_MS);");
+    expect(src).not.toMatch(/Math\.min\(WORKER_START_MS, deadline - Date\.now\(\)\)/);
+    // the skill's share runs from when the worker is ready, within the run's budget
+    expect(src).toContain("const deadline = Math.min(Date.now() + Math.max(0, limits.budgetMs), runDeadline);");
+    // the engine hands the run's remainder over and treats a pending start as that skill's spent budget
+    const engine = readFileSync(join(process.cwd(), "lib/linkProposerServer.ts"), "utf8");
+    expect(engine).toContain("softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: share, runLeftMs: left, maxMatches: MAX_MATCHES_PER_TEXT,");
+    expect(engine).toMatch(/if \(res\.startPending\) \{[\s\S]*?continue;\s*\}/);
   });
 });

@@ -780,6 +780,32 @@ describe("LNK-13 / LNK-9 — an approved link reads the same from both documents
     const panel = repo("components/documents/RelatedPanel.tsx");
     expect(panel).toMatch(/\{r\.other_document_id \? "restricted document" : "missing document"\}/);
   });
+  it("fix pass 4 (LNK-4 / LNK-13): the inbound read fetches only which document carries a link — what an unreadable carrier's link says is never read", async () => {
+    t("document_related_resources").push(
+      { id: "in-hidden", org_id: ORG, document_id: "hidden", target_document_id: "aa", kind: "document", origin: "system",
+        label: "secret", evidence: { summary: "Off-page connector 44-098 continues onto 44-PID-013" }, sort_order: 0, created_at: "1" },
+      { id: "in-zz", org_id: ORG, document_id: "zz", target_document_id: "aa", kind: "document", origin: "proposed",
+        evidence: { summary: "Both reference E-1" }, sort_order: 1, created_at: "2" },
+    );
+    const list = await listRelatedResources("aa");
+    expect(list.map((r) => r.id)).toEqual(["in-zz"]);
+    expect(list[0]).toMatchObject({ direction: "in", other_document_id: "zz", evidence: { summary: "Both reference E-1" } });
+    const reads = db.ref.calls.filter((c) => c.table === "document_related_resources");
+    const selects = reads.filter((c) => c.method === "select").map((c) => String(c.args[0]));
+    expect(selects).not.toContain("*");
+    // the inbound key read names no label, no evidence
+    const keyRead = selects.find((x) => !x.includes("label"))!;
+    expect(keyRead).toBe("id, document_id, kind, target_document_id, sort_order, created_at");
+    expect(keyRead).not.toMatch(/evidence|label|proposer|created_by_name/);
+    // the full read is only for carriers the viewer's documents read returned
+    const full = reads.filter((c) => c.method === "in").map((c) => c.args[1] as string[]);
+    expect(full).toEqual([["in-zz"]]);
+    // and the source says so: no `*` on this table in the Related read
+    const src = repo("lib/relatedResources.ts");
+    const fn = src.slice(src.indexOf("export async function listRelatedResources"), src.indexOf("const REFUSED"));
+    expect(fn).not.toContain('select("*")');
+    expect(fn).not.toContain(".or(");
+  });
   it("an unreadable inbound carrier no longer hides the outbound row to the same document", async () => {
     t("document_related_resources").push(
       { id: "in", org_id: ORG, document_id: "hidden", target_document_id: "aa", kind: "document", sort_order: 0, created_at: "1" },
@@ -1177,5 +1203,168 @@ describe("fix pass 3 — LNK-5: proposals a private skill queued before this rou
   });
   it("the proposer key the migration joins on is the one the engine writes", () => {
     expect(repo("lib/linkProposalLogic.ts")).toMatch(/proposer: `rule:\$\{rule\.id\}`/);
+  });
+});
+
+// ── fix pass 4 ────────────────────────────────────────────────────────────
+describe("fix pass 4 — LNK-5: a skill unshared after 20261126 takes its pending proposals with it", () => {
+  const setup = () => {
+    t("documents").push(docRow("a", "DOC-A"), docRow("b", "WO-10023"));
+    t("link_rules").push(
+      { id: "r1", org_id: ORG, builtin_key: null, name: "Permit refs (draft)", kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: true, visibility: "org", created_by: "u1" },
+      { id: "r2", org_id: ORG, builtin_key: null, name: "Still shared", kind: "reference", config: { patterns: ["\\bPTW-\\d{4}\\b"] }, enabled: true, visibility: "org", created_by: "u1" },
+    );
+    mirror("a", { text: "Repairs per WO-10023 completed." });
+  };
+  it("a controller unshares the skill: its 40 pending proposals are retired to stale on the next run; another skill's and a deleted skill's stay; sharing again re-derives", async () => {
+    setup();
+    const run1 = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher() });
+    expect(run1.errors).toEqual([]);
+    expect(t("proposed_links").filter((r) => r.proposer === "rule:r1" && r.status === "pending")).toHaveLength(1);
+    for (let i = 0; i < 39; i++) {
+      t("proposed_links").push({ id: `old-${i}`, org_id: ORG, document_id: `x${i}`, target_document_id: `y${i}`, proposer: "rule:r1", tier: "strong", confidence: 0.7, status: "pending", evidence: { rule: "Permit refs (draft)" } });
+    }
+    t("proposed_links").push(
+      { id: "other", org_id: ORG, document_id: "x", target_document_id: "y", proposer: "rule:r2", tier: "strong", confidence: 0.7, status: "pending", evidence: {} },
+      { id: "gone", org_id: ORG, document_id: "x", target_document_id: "z", proposer: "rule:deleted", tier: "strong", confidence: 0.7, status: "pending", evidence: {} },
+    );
+    t("link_rules").find((r) => r.id === "r1")!.visibility = "private";
+    const run2 = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher() });
+    expect(run2.errors).toEqual([]);
+    expect(t("proposed_links").filter((r) => r.proposer === "rule:r1").map((r) => r.status)).toEqual(Array(40).fill("stale"));
+    expect(t("proposed_links").find((r) => r.id === "other")!.status).toBe("pending");
+    expect(t("proposed_links").find((r) => r.id === "gone")!.status).toBe("pending");
+    expect(run2.notes.join(" ")).toMatch(/40 pending proposals from connection skills that are no longer org-wide were retired — they come back if a controller shares the skill again\./);
+    // only the org's non-org custom skills are read, and only pending rows are touched
+    expect(db.ref.calls.some((c) => c.table === "link_rules" && c.method === "neq" && c.args[0] === "visibility" && c.args[1] === "org")).toBe(true);
+    // shared again: the next run re-derives what it finds
+    t("link_rules").find((r) => r.id === "r1")!.visibility = "org";
+    const run3 = await runLinkProposers(admin(), ORG, { matcher: workerSkillMatcher() });
+    expect(run3.errors).toEqual([]);
+    expect(t("proposed_links").find((r) => r.proposer === "rule:r1" && r.document_id === "a")!.status).toBe("pending");
+  });
+  it("a retirement the database refuses is an error on the run; a failed read is a note", async () => {
+    setup();
+    t("link_rules").find((r) => r.id === "r1")!.visibility = "private";
+    t("proposed_links").push({ id: "q", org_id: ORG, document_id: "x", target_document_id: "y", proposer: "rule:r1", tier: "strong", confidence: 0.7, status: "pending", evidence: {} });
+    const fake = makeFakeSupabase(db.ref);
+    const failing = (what: "read" | "write") => ({
+      from: (table: string) => {
+        const b = fake.from(table) as unknown as Record<string, (...a: unknown[]) => unknown>;
+        let staleWrite = false;
+        let idRead = false;
+        const w: unknown = new Proxy(b, { get: (target, q: string) => {
+          if (q === "then") {
+            if ((what === "write" && staleWrite) || (what === "read" && idRead)) {
+              return (res: (x: unknown) => void) => res({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+            }
+            return target.then;
+          }
+          return (...a: unknown[]) => {
+            if (table === "proposed_links" && q === "update" && (a[0] as { status?: string }).status === "stale") staleWrite = true;
+            if (table === "link_rules" && q === "neq" && a[0] === "visibility") idRead = true;
+            target[q](...a); return w;
+          };
+        } });
+        return w;
+      },
+    }) as unknown as SupabaseClient;
+    const write = await runLinkProposers(failing("write"), ORG, { matcher: workerSkillMatcher() });
+    expect(write.errors.join(" ")).toMatch(/Proposals from connection skills that are no longer org-wide could not be retired \(canceling statement due to statement timeout\)/);
+    expect(write.more).toBe(false);
+    const read = await runLinkProposers(failing("read"), ORG, { matcher: workerSkillMatcher() });
+    expect(read.notes.join(" ")).toMatch(/Proposals from private connection skills could not be checked/);
+    expect(t("proposed_links").find((r) => r.id === "q")!.status).toBe("pending");
+  });
+});
+
+describe("fix pass 4 — LNK-2: the evidence audit reports a failed read and counts only the links it actually marked", () => {
+  const setup = () => {
+    t("documents").push(docRow("a", "DOC-A"), docRow("b", "DOC-B"));
+    shareTags(["a"], ["E-1"]);
+    shareTags(["b"], ["E-2"]);
+    t("document_related_resources").push(
+      { id: "s1", org_id: ORG, document_id: "a", target_document_id: "b", kind: "document", origin: "system", evidence: { tags: ["E-9"] }, evidence_lost_at: null },
+    );
+  };
+  const wrap = (fail: "read" | "write" | "silent") => {
+    const fake = makeFakeSupabase(db.ref);
+    return {
+      from: (table: string) => {
+        const b = fake.from(table) as unknown as Record<string, (...a: unknown[]) => unknown>;
+        let audit = false;
+        let mark = false;
+        const w: unknown = new Proxy(b, { get: (target, q: string) => {
+          if (q === "then") {
+            if (fail === "read" && audit && !mark) return (res: (x: unknown) => void) => res({ data: null, error: { code: "57014", message: "statement timeout" } });
+            if (fail === "write" && mark) return (res: (x: unknown) => void) => res({ data: null, error: { code: "57014", message: "statement timeout" } });
+            if (fail === "silent" && mark) return (res: (x: unknown) => void) => res({ data: [], error: null });
+            return target.then;
+          }
+          return (...a: unknown[]) => {
+            if (table === "document_related_resources" && q === "select" && String(a[0]).includes("evidence_lost_at")) audit = true;
+            if (table === "document_related_resources" && q === "update" && "evidence_lost_at" in (a[0] as object)) mark = true;
+            target[q](...a); return w;
+          };
+        } });
+        return w;
+      },
+    } as unknown as SupabaseClient;
+  };
+  it("marks a system link whose evidence is gone and reports the rows actually marked", async () => {
+    setup();
+    const run = await runLinkProposers(admin(), ORG);
+    expect(run.evidenceLost).toBe(1);
+    expect(t("document_related_resources")[0].evidence_lost_at).toBeTruthy();
+    // a checked write: the mark returns the rows it changed
+    const at = db.ref.calls.findIndex((c) => c.table === "document_related_resources" && c.method === "update");
+    expect(db.ref.calls.slice(at).some((c) => c.table === "document_related_resources" && c.method === "select" && c.args[0] === "id")).toBe(true);
+  });
+  it("a failed audit read is a note — never a quiet zero", async () => {
+    setup();
+    const run = await runLinkProposers(wrap("read"), ORG);
+    expect(run.evidenceLost).toBe(0);
+    expect(run.notes.join(" ")).toMatch(/The evidence audit could not read the system-applied links \(statement timeout\) — no link was checked for lost evidence this pass\./);
+  });
+  it("a failed mark is an error and is not counted as marked", async () => {
+    setup();
+    const run = await runLinkProposers(wrap("write"), ORG);
+    expect(run.evidenceLost).toBe(0);
+    expect(run.errors.join(" ")).toMatch(/Marking system links whose evidence was lost failed \(statement timeout\) — 1 of 1 were not marked\./);
+    expect(run.more).toBe(false);
+  });
+  it("a mark that affects no row (RLS, a concurrent change) is not reported as marked", async () => {
+    setup();
+    const run = await runLinkProposers(wrap("silent"), ORG);
+    expect(run.evidenceLost).toBe(0);
+  });
+});
+
+describe("fix pass 4 — LNK-6: a worker still loading is one skill's spent budget, never the end of the run", () => {
+  it("the first skill's time runs out while the worker loads: it is named as not run, and the next skill runs with the run's remainder handed over", async () => {
+    t("documents").push(docRow("a", "DOC-A"), docRow("b", "WO-10023"), docRow("c", "PTW-1234"));
+    t("link_rules").push(
+      { id: "r1", org_id: ORG, builtin_key: null, name: "Work orders", kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: true, visibility: "org", created_by: "u1" },
+      { id: "r2", org_id: ORG, builtin_key: null, name: "Permits", kind: "reference", config: { patterns: ["\\bPTW-\\d{4}\\b"] }, enabled: true, visibility: "org", created_by: "u1" },
+    );
+    mirror("a", { text: "Repairs per WO-10023 under PTW-1234." });
+    const seen: Array<{ budgetMs: number; runLeftMs?: number }> = [];
+    let calls = 0;
+    const loading: SkillMatcherFactory = () => ({
+      match: async (_src, limits) => {
+        seen.push({ budgetMs: limits.budgetMs, runLeftMs: limits.runLeftMs });
+        calls += 1;
+        return calls === 1
+          ? { found: [], terminated: null, skipped: [], budgetSpent: true, startPending: true, error: null }
+          : { found: [["PTW-1234"]], terminated: null, skipped: [], budgetSpent: false, error: null };
+      },
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: loading, now: () => 0 });
+    expect(seen).toEqual([{ budgetMs: 7_500, runLeftMs: 15_000 }, { budgetMs: 15_000, runLeftMs: 15_000 }]);
+    expect(run.notes.join(" ")).toMatch(/Skill “Work orders” did not run this pass — the custom-skill worker was still loading the indexed text when this pass's 15 s ran out\./);
+    expect(run.notes.join(" ")).not.toMatch(/Custom skills did not run to the end/);
+    expect(pending().map((r) => r.proposer)).toContain("rule:r2");
+    expect(run.errors).toEqual([]);
   });
 });

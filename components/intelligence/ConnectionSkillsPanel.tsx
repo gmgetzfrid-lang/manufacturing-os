@@ -28,7 +28,7 @@ import SkillStudio from "@/components/intelligence/SkillStudio";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  listLinkRules, seedBuiltinRules, setLinkRuleEnabled, setLinkRuleVisibility,
+  listLinkRules, seedBuiltinRules, setLinkRuleEnabled, setLinkRuleVisibility, approveLinkRuleShare,
   setLinkRuleShareRequest, deleteLinkRule, refusedSkillPatterns, type LinkRule,
 } from "@/lib/linkRules";
 import { isSkillController, skillControls, type SkillControls, type SkillRowLike } from "@/lib/skillAuthority";
@@ -43,8 +43,9 @@ const KIND_META: Record<string, { label: string; icon: typeof FileSearch; hue: s
  *  controller — the share requests waiting on them. A controller READS
  *  every skill (they govern the org's prompts), but a member's private
  *  draft is not listed on their shelf unless it was offered. The database
- *  applies the same filter to the read (skillShelfFilter); this keeps the
- *  shelf honest about anything else it is handed. */
+ *  applies the same filter to the read (readSkillShelf: skillShelfFilter
+ *  plus the requests); this keeps the shelf honest about anything else it
+ *  is handed. */
 export function listedSkills<T extends SkillRowLike>(rows: T[], uid: string | null): T[] {
   return rows.filter((r) => r.visibility === "org" || (uid !== null && r.created_by === uid) || !!r.share_requested);
 }
@@ -52,11 +53,13 @@ export function listedSkills<T extends SkillRowLike>(rows: T[], uid: string | nu
 export interface SkillOps {
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   setVisibility: (id: string, visibility: "org" | "private") => Promise<void>;
+  /** Approve a member's open request, for the version shown (its updated_at). */
+  approveShare: (id: string, reviewedAt: string | null | undefined) => Promise<void>;
   setShareRequest: (id: string, requested: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
 }
 
-type ActionRow = SkillRowLike & { id: string; name: string; enabled: boolean };
+type ActionRow = SkillRowLike & { id: string; name: string; enabled: boolean; updated_at?: string | null };
 
 /** Badges: built-in, org-wide / private, and a pending share request. */
 export function SkillBadges({ row, kindLabel }: { row: ActionRow; kindLabel: string }) {
@@ -112,16 +115,19 @@ export function SkillActions({ row, controls, ops, busy, run }: {
     if (!ok) return;
     await run(row.id, () => ops.remove(row.id));
   };
-  const requested = !!row.share_requested;
   return (
     <div className="flex items-center gap-1 shrink-0">
       {controls.share && (
         <button type="button" disabled={busy} onClick={() => void run(row.id, () => ops.setVisibility(row.id, "org"))}
-          title={requested ? "Approve — share it org-wide" : "Share org-wide"}
-          className={requested
-            ? "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50"
-            : quiet}>
-          {requested ? <><Check className="w-3 h-3" /> Approve</> : <Users className={icon} />}
+          title="Share org-wide" className={quiet}>
+          <Users className={icon} />
+        </button>
+      )}
+      {controls.approveShare && (
+        <button type="button" disabled={busy} onClick={() => void run(row.id, () => ops.approveShare(row.id, row.updated_at))}
+          title="Approve — share it org-wide, as shown here"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50">
+          <Check className="w-3 h-3" /> Approve
         </button>
       )}
       {controls.declineShare && (
@@ -173,6 +179,7 @@ export function SkillActions({ row, controls, ops, busy, run }: {
 const LINK_OPS: SkillOps = {
   setEnabled: setLinkRuleEnabled,
   setVisibility: setLinkRuleVisibility,
+  approveShare: approveLinkRuleShare,
   setShareRequest: setLinkRuleShareRequest,
   remove: deleteLinkRule,
 };
@@ -193,12 +200,14 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A shelf ceiling reached (HUB-8 fix pass 4) — said, never silent. */
+  const [shelfNotes, setShelfNotes] = useState<string[]>([]);
   const loadedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try {
-      const next = await listLinkRules(activeOrgId, uid ?? null);
+      const next = await listLinkRules(activeOrgId, uid ?? null, setShelfNotes);
       loadedRef.current = true;
       setRules(next); onRulesChange?.(next); setError(null);
     } catch (e) {
@@ -229,10 +238,12 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
     return () => { alive = false; };
   }, [activeOrgId, uid, isController, refresh]);
 
+  // A refused or stale decision re-reads the shelf too, so the card the
+  // controller reviews again is the skill as it now stands.
   const run = async (id: string, fn: () => Promise<void>) => {
     setBusyId(id);
     try { await fn(); await refresh(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { const message = (e as Error).message; await refresh(); setError(message); }
     finally { setBusyId(null); }
   };
 
@@ -242,9 +253,18 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
 
   if (rules === undefined) return null;
 
-  const errorBox = error && (
-    <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
-      <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
+  const errorBox = (error || shelfNotes.length > 0) && (
+    <div className="space-y-1.5">
+      {error && (
+        <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
+        </div>
+      )}
+      {shelfNotes.map((n) => (
+        <div key={n} className="flex items-start gap-2 text-[11px] text-amber-700">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {n}
+        </div>
+      ))}
     </div>
   );
 

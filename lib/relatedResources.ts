@@ -60,32 +60,50 @@ export interface RelatedResource {
   target?: { document_number: string | null; title: string | null; library_id: string } | null;
 }
 
+/** The columns the Related panel renders — never `*` (LNK-4 / LNK-13 fix
+ *  pass 4). */
+const RELATED_COLS = "id, document_id, kind, target_document_id, url, label, sort_order, created_by_name, origin, proposer, evidence, approved_by_name, evidence_lost_at, created_at";
+/** An inbound row before its carrier is known to be readable: which
+ *  document carries it, and nothing the link says (no label, no evidence). */
+const INBOUND_KEY_COLS = "id, document_id, kind, target_document_id, sort_order, created_at";
+
+type ReadError = { code?: string; message: string } | null;
+const missingTable = (e: ReadError) => !!e && (e.code === "42P01" || /does not exist/i.test(e.message));
+
 /** Every curated link on a document — the ones it carries AND the document
  *  links carried by the other end (LNK-13): an approved connection is
  *  carried by one of its two documents, and both documents' Related panels
  *  show it with the same provenance and evidence. A link CARRIED by a
  *  document the viewer cannot read is not listed (as listBacklinks never
  *  listed it): its evidence and its unpin control belong to that document.
- *  A link this document carries to a document the viewer cannot read stays
- *  listed with no `target` (the panel says "restricted document"). */
+ *  So the inbound read fetches only which document carries each link; its
+ *  label and evidence are read afterwards, for the carriers the viewer's
+ *  own documents read returns (fix pass 4 — the browser never receives
+ *  what an unreadable carrier says). A link this document carries to a
+ *  document the viewer cannot read stays listed with no `target` (the panel
+ *  says "restricted document"). The table's own read policy still admits
+ *  every active member (20260806) — IRLS-15. */
 export async function listRelatedResources(documentId: string): Promise<RelatedResource[]> {
-  const { data, error } = await supabase
-    .from("document_related_resources").select("*")
-    .or(`document_id.eq.${documentId},target_document_id.eq.${documentId}`)
-    .order("sort_order").order("created_at");
-  if (error) {
-    if (error.code === "42P01" || /does not exist/i.test(error.message)) return [];
-    throw new Error(error.message);
+  const [outRes, inRes] = await Promise.all([
+    supabase.from("document_related_resources").select(RELATED_COLS)
+      .eq("document_id", documentId).order("sort_order").order("created_at"),
+    supabase.from("document_related_resources").select(INBOUND_KEY_COLS)
+      .eq("target_document_id", documentId).eq("kind", "document").order("sort_order").order("created_at"),
+  ]);
+  for (const res of [outRes, inRes]) {
+    if (res.error) {
+      if (missingTable(res.error)) return [];
+      throw new Error(res.error.message);
+    }
   }
-  const candidates: RelatedResource[] = [];
-  for (const r of (data as RelatedResource[]) ?? []) {
-    const out = r.document_id === documentId;
-    if (!out && r.kind !== "document") continue;
-    const other = out ? r.target_document_id : r.document_id;
-    candidates.push({ ...r, direction: out ? "out" : "in", other_document_id: r.kind === "document" ? other : null });
-  }
-  const ids = [...new Set(candidates.filter((r) => r.kind === "document" && r.other_document_id)
-    .map((r) => r.other_document_id as string))];
+  const outbound = ((outRes.data as unknown as RelatedResource[]) ?? [])
+    .map((r) => ({ ...r, direction: "out" as const, other_document_id: r.kind === "document" ? r.target_document_id : null }));
+  const inbound = ((inRes.data as unknown as RelatedResource[]) ?? [])
+    .filter((r) => r.document_id !== documentId);
+  const ids = [...new Set([
+    ...outbound.filter((r) => r.kind === "document" && r.other_document_id).map((r) => r.other_document_id as string),
+    ...inbound.map((r) => r.document_id),
+  ])];
   const byId = new Map<string, { document_number: string | null; title: string | null; library_id: string }>();
   if (ids.length > 0) {
     // Read through the viewer's own documents RLS: what does not come back
@@ -96,12 +114,23 @@ export async function listRelatedResources(documentId: string): Promise<RelatedR
       byId.set((d as { id: string }).id, d as { document_number: string | null; title: string | null; library_id: string });
     }
   }
+  // An inbound link from a document the viewer cannot read: not theirs to
+  // see — so its words are never read. The rest are read in full.
+  const readableIn = inbound.filter((r) => byId.has(r.document_id)).map((r) => r.id);
+  let inboundFull: RelatedResource[] = [];
+  if (readableIn.length > 0) {
+    const { data, error } = await supabase.from("document_related_resources").select(RELATED_COLS).in("id", readableIn);
+    if (error) throw new Error(error.message);
+    inboundFull = ((data as unknown as RelatedResource[]) ?? [])
+      .map((r) => ({ ...r, direction: "in" as const, other_document_id: r.document_id }));
+  }
+  const candidates: RelatedResource[] = [...outbound, ...inboundFull].sort((a, b) =>
+    (a.sort_order ?? 0) - (b.sort_order ?? 0)
+    || String((a as { created_at?: string }).created_at ?? "").localeCompare(String((b as { created_at?: string }).created_at ?? "")));
   const rows: RelatedResource[] = [];
   const seen = new Set<string>();
   for (const r of candidates) {
     if (r.other_document_id) r.target = byId.get(r.other_document_id) ?? null;
-    // An inbound link from a document the viewer cannot read: not theirs to see.
-    if (r.direction === "in" && !r.target) continue;
     // One entry per other document: a pair linked both ways (a manual pin
     // made before the carrier rule) is still one relationship.
     if (r.kind === "document" && r.other_document_id) {

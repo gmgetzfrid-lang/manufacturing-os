@@ -25,6 +25,13 @@
 // host stall: the worker gets one more ceiling before it is judged.
 // A terminated worker is replaced on the next skill (the texts are sent
 // again); a skill that only skipped documents keeps the worker.
+// Start-up has its own allowance (fix pass 4): loading the texts into a
+// cold worker may take up to WORKER_START_MS, bounded by what is left of
+// the RUN's budget — never by one skill's share of it, which may be a few
+// hundred ms. A skill whose time ran out while the worker was still loading
+// read nothing (its budget is spent, `startPending`); the worker keeps
+// loading for the next skill. Only a worker that has not started within
+// WORKER_START_MS is given up on, and that is said with that limit.
 //
 // Server-only (node:worker_threads). The engine (lib/linkProposerServer.ts)
 // is also reachable from browser bundles through the publish pipeline, so it
@@ -36,13 +43,17 @@ import { Worker, MessageChannel, receiveMessageOnPort, type MessagePort } from "
  *  terminated — the ceiling on a single match that never returns. */
 export const SKILL_DOC_HARD_MS = 1_000;
 /** A worker that has not loaded the texts within this long is given up on. */
-const WORKER_START_MS = 10_000;
+export const WORKER_START_MS = 10_000;
 
 export interface SkillMatchLimits {
   /** Per-text budget, read between matches inside the worker. */
   softDocMs: number;
-  /** What this skill may spend, from now (its share of the run's budget). */
+  /** What this skill may spend once the worker is ready (its share of the
+   *  run's budget). */
   budgetMs: number;
+  /** What is left of the RUN's budget, from now: it bounds the wait for a
+   *  starting worker and this skill's own deadline. Defaults to budgetMs. */
+  runLeftMs?: number;
   /** Matches kept per pattern per text. */
   maxMatches: number;
 }
@@ -61,6 +72,9 @@ export interface SkillMatchOutcome {
   skipped: Array<{ index: number; ms: number }>;
   /** The skill's budget ran out while it was running. */
   budgetSpent: boolean;
+  /** Its time ran out while the worker was still loading the texts: nothing
+   *  was read for this skill (budgetSpent is set too). */
+  startPending?: boolean;
   /** The worker could not run the skill at all (start-up failure, crash). */
   error: string | null;
 }
@@ -150,8 +164,10 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
       if (w) void w.terminate().catch(() => { /* already gone */ });
     };
 
-    /** A loaded worker, or the reason there is none. */
-    const start = (deadline: number): Promise<string | null> => {
+    /** A loaded worker, or the reason there is none. The wait is the
+     *  worker's own allowance (WORKER_START_MS), shared by every skill that
+     *  asks while it loads. */
+    const start = (): Promise<string | null> => {
       if (worker && ready) return ready;
       let w: Worker;
       try {
@@ -183,8 +199,7 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
         w.on("message", onMessage);
         w.on("error", onError);
         w.on("exit", onExit);
-        timer = setTimeout(() => done(`the custom-skill worker did not start within ${WORKER_START_MS / 1000} s`),
-          Math.max(0, Math.min(WORKER_START_MS, deadline - Date.now())));
+        timer = setTimeout(() => done(`the custom-skill worker did not start within ${WORKER_START_MS / 1000} s`), WORKER_START_MS);
         w.postMessage({ t: "load", texts: [...texts], keys: [...keys], port: channel.port2, progress: shared }, [channel.port2]);
       });
       return ready;
@@ -192,14 +207,27 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
 
     return {
       async match(sources, limits) {
-        const deadline = Date.now() + Math.max(0, limits.budgetMs);
+        const runDeadline = Date.now() + Math.max(0, limits.runLeftMs ?? limits.budgetMs);
         const found: string[][] = [];
         const skipped: SkillMatchOutcome["skipped"] = [];
         const empty = (over: Partial<SkillMatchOutcome>): SkillMatchOutcome =>
           ({ found, terminated: null, skipped, budgetSpent: false, error: null, ...over });
-        if (Date.now() >= deadline) return empty({ budgetSpent: true });
-        const startError = await start(deadline);
+        if (Date.now() >= runDeadline || limits.budgetMs <= 0) return empty({ budgetSpent: true });
+        // Wait for the worker no longer than the run has left; a worker still
+        // loading then is this skill's spent budget, not the run's end.
+        const STILL_LOADING = Symbol("loading");
+        let waitTimer: ReturnType<typeof setTimeout> | null = null;
+        const startError = await Promise.race([
+          start(),
+          new Promise<typeof STILL_LOADING>((resolve) => {
+            waitTimer = setTimeout(() => resolve(STILL_LOADING), Math.max(0, runDeadline - Date.now()));
+          }),
+        ]);
+        if (waitTimer) clearTimeout(waitTimer);
+        if (startError === STILL_LOADING) return empty({ budgetSpent: true, startPending: true });
         if (startError) return empty({ error: startError });
+        // The skill's share runs from when the worker is ready, within the run's.
+        const deadline = Math.min(Date.now() + Math.max(0, limits.budgetMs), runDeadline);
         if (Date.now() >= deadline) return empty({ budgetSpent: true });
         const w = worker as Worker;
         const results = port as MessagePort;
