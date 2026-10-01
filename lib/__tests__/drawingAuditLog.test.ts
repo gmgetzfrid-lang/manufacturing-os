@@ -8,7 +8,8 @@ import { describe, it, expect } from "vitest";
 import {
   verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity,
   seriesHeldBySet, seriesNotJudged, missingWithinHeldSeries, mayReplaceStored, AUDIT_SET_LIST_MAX,
-  indexFingerprint, digest, verdictBasis, type AuditSheet, type AuditFindings,
+  indexFingerprint, digest, verdictBasis, replaceDecision, mergeVerdictsByKey, storedProvisional,
+  type AuditSheet, type AuditFindings, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 import { sheetIdentities } from "@/lib/drawingText";
 
@@ -52,6 +53,12 @@ describe("verdictsForSheets", () => {
     });
     expect(v.status).toBe("broken_connectors");
     expect(v.details.brokenConnectors[0]).toContain("PID-44-013");
+  });
+
+  it("flags a missing sheet against EVERY sheet the caller names — eight referencers, eight flagged (review fix pass 5)", () => {
+    const eight = Array.from({ length: 8 }, (_, i) => sheet({ documentId: `k-${i}`, name: `025-PID-010${i + 1}.pdf`, sheetNumber: `025-PID-010${i + 1}` }));
+    const vs = verdictsForSheets(eight, { ...NOTHING, missingInSeries: [{ ref: "025-PID-0199", referencedBy: eight.map((s) => s.name) }] });
+    expect(vs.map((v) => v.status)).toEqual(Array(8).fill("flagged"));
   });
 
   it("flags a missing sheet against everyone who pointed at it", () => {
@@ -296,6 +303,137 @@ describe("a check that needed a sheet nobody read whole is unchecked — never b
 });
 
 const SCOPE = { libraryId: "kl-1", sheets: ["PID-44-012", "PID-44-013"] };
+
+// Review fix pass 5. Fix pass 4 filed what was not found on a parked,
+// failed or in-flight neighbour as an unchecked finding — true when filed —
+// and the never-lower rule then kept it for good: a verified `passed`,
+// re-judged while its neighbour waited on AI vision, became `flagged` at
+// that revision and stayed there after the neighbour was read.
+describe("a finding that waits on a sheet not read whole FOR NOW is provisional — never settled (review fix pass 5)", () => {
+  const waiting = ["025-PID-0105.pdf (page(s) 2 never read)"];
+
+  it("verdictsForSheets marks it provisional, with what it waits on and what is settled without it", () => {
+    const [v] = verdictsForSheets([sheet()], {
+      ...NOTHING,
+      unpairedConnectors: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", box: "14", unread: "page(s) 2 never read", waitsOn: waiting }],
+      oneWayUnread: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", unread: "page(s) 2 never read", waitsOn: waiting }],
+    });
+    expect(v.status).toBe("flagged");
+    expect(v.provisional).toEqual({ waitingOn: waiting, settledStatus: "passed" });
+    // A real finding beside it is settled: the settled status says so.
+    const [w] = verdictsForSheets([sheet()], {
+      ...NOTHING,
+      connectorsWithNoTarget: [{ sheet: "PID-44-012.pdf", box: "15" }],
+      oneWayUnread: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", unread: "page(s) 2 never read", waitsOn: waiting }],
+    });
+    expect(w).toMatchObject({ status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } });
+    // Unchecked against an accepted partial index (no waitsOn): settled.
+    const [x] = verdictsForSheets([sheet()], {
+      ...NOTHING,
+      oneWayUnread: [{ from: "PID-44-012.pdf", to: "025-PID-0105.pdf", unread: "page(s) 2 never read" }],
+    });
+    expect(x.status).toBe("flagged");
+    expect(x.provisional).toBeUndefined();
+    // A sheet nothing was read from is skipped — never provisional.
+    const [y] = verdictsForSheets([sheet({ indexed: false })], {
+      ...NOTHING, oneWayUnread: [{ from: "PID-44-012.pdf", to: "B.pdf", unread: "its indexing failed", waitsOn: ["B.pdf (its indexing failed)"] }],
+    });
+    expect(y.status).toBe("skipped");
+    expect(y.provisional).toBeUndefined();
+  });
+
+  it("replaceDecision: a parked neighbour never turns a settled `passed` into `flagged`; the next settled computation heals a provisional row", () => {
+    const passedC = { revision_code: "C", status: "passed" };
+    const provisionalFlagged = { status: "flagged" as const, provisional: { settledStatus: "passed" as const } };
+    // The reviewer's probe: passed@C, neighbour parked → wait, row untouched.
+    expect(replaceDecision(passedC, provisionalFlagged)).toBe("wait");
+    // …and once the neighbour is read whole, passed is written (re-stamped).
+    expect(replaceDecision(passedC, { status: "passed" })).toBe("write");
+    // A first record while the neighbour is parked writes the provisional
+    // verdict; the next settled computation replaces it down to what it
+    // settled — never below.
+    expect(replaceDecision(null, provisionalFlagged)).toBe("write");
+    const storedProv = { revision_code: "C", status: "flagged", provisional: { settledStatus: "passed" } };
+    expect(replaceDecision(storedProv, { status: "passed" })).toBe("write");
+    expect(replaceDecision(storedProv, { status: "skipped" })).toBe("keep");
+    expect(replaceDecision({ ...storedProv, provisional: { settledStatus: "flagged" } }, { status: "passed" })).toBe("keep");
+    // A real finding in a provisional verdict is written over a settled row.
+    expect(replaceDecision(passedC, { status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } })).toBe("write");
+    // What a settled row settled is never lowered, provisional or not.
+    expect(replaceDecision({ revision_code: "C", status: "flagged" }, provisionalFlagged)).toBe("wait");
+    expect(replaceDecision({ revision_code: "C", status: "flagged" }, { status: "passed" })).toBe("keep");
+    // A provisional row takes a newer provisional verdict that settles no less.
+    expect(replaceDecision(storedProv, provisionalFlagged)).toBe("write");
+    expect(replaceDecision({ ...storedProv, provisional: { settledStatus: "flagged" } }, provisionalFlagged)).toBe("wait");
+    // Unknown revision: the latest computation, as before; never a skip.
+    expect(replaceDecision({ revision_code: "", status: "passed" }, provisionalFlagged)).toBe("write");
+    expect(replaceDecision({ revision_code: "", status: "passed" }, { status: "skipped" })).toBe("keep");
+    // Another library's row on the org-wide key: never lowered, whatever its revision.
+    expect(replaceDecision({ revision_code: "", status: "flagged" }, { status: "passed" }, { neverLower: true })).toBe("keep");
+    // mayReplaceStored is the settled-over-settled case.
+    expect(mayReplaceStored(passedC, "flagged")).toBe(true);
+    expect(mayReplaceStored({ revision_code: "C", status: "flagged" }, "passed")).toBe(false);
+  });
+
+  it("storedProvisional reads the marker defensively", () => {
+    expect(storedProvisional({ provisional: { waitingOn: waiting, settledStatus: "passed" } })).toEqual({ settledStatus: "passed" });
+    expect(storedProvisional({ provisional: true })).toBeNull();
+    expect(storedProvisional(null)).toBeNull();
+    expect(storedProvisional({})).toBeNull();
+  });
+
+  it("mergeVerdictsByKey: one row per key, the severer verdict, every document it covers, provisional when any member is", () => {
+    const v = (documentId: string, status: SheetVerdict["status"], provisional?: SheetVerdict["provisional"]): SheetVerdict => ({
+      documentId, controlledDocumentId: null, sheetNumber: "2002-D-2001", revision: "0", status,
+      details: { brokenConnectors: [], missingReferences: [], oneWay: [], unreadableConnectors: [], unpairedConnectors: [], uncheckedReferences: [], unreadPages: [] },
+      ...(provisional ? { provisional } : {}),
+    });
+    const [m] = mergeVerdictsByKey([v("s-1", "passed"), v("s-2", "flagged", { waitingOn: waiting, settledStatus: "passed" }), v("s-3", "skipped")],
+      (id) => `basis-${id}`);
+    expect(m).toMatchObject({ documentId: "s-2", status: "flagged", provisional: { waitingOn: waiting, settledStatus: "passed" } });
+    expect(m.coverage).toEqual({ "s-1": "basis-s-1", "s-2": "basis-s-2" });
+    // A settled member's status is settled.
+    const [n] = mergeVerdictsByKey([v("s-1", "flagged"), v("s-2", "flagged", { waitingOn: waiting, settledStatus: "passed" })], (id) => id);
+    expect(n.provisional).toEqual({ waitingOn: waiting, settledStatus: "flagged" });
+    const [o] = mergeVerdictsByKey([v("s-1", "passed")], (id) => id);
+    expect(o.provisional).toBeUndefined();
+    expect(mergeVerdictsByKey([v("s-1", "passed"), { ...v("s-9", "passed"), sheetNumber: "X" }], (id) => id)).toHaveLength(2);
+  });
+
+  it("verdictRows writes the marker; a settled verdict carries none", () => {
+    const [prov] = verdictsForSheets([sheet()], {
+      ...NOTHING, oneWayUnread: [{ from: "PID-44-012.pdf", to: "B.pdf", unread: "its indexing failed", waitsOn: ["B.pdf (its indexing failed)"] }],
+    });
+    const [settled] = verdictsForSheets([sheet()], NOTHING);
+    const rows = verdictRows("o1", [prov, settled], "u1", { libraryId: "kl-1", sheets: ["PID-44-012"] });
+    expect(rows[0].audit_details).toMatchObject({ provisional: { waitingOn: ["B.pdf (its indexing failed)"], settledStatus: "passed" } });
+    expect(rows[1].audit_details).not.toHaveProperty("provisional");
+  });
+});
+
+describe("a box on a page whose box numbers were never read is unpaired, with which page (review fix pass 5)", () => {
+  it("files the page-level reason, flagged — never broken", () => {
+    const [v] = verdictsForSheets([sheet()], {
+      ...NOTHING,
+      unpairedConnectors: [{ from: "PID-44-012.pdf", to: "combined.pdf", box: "14", why: "page 1 of it is the sheet named, and no box numbers were read there" }],
+    });
+    expect(v.status).toBe("flagged");
+    expect(v.provisional).toBeUndefined();
+    expect(v.details.unpairedConnectors).toEqual([
+      "Connector 14 continues to combined.pdf: page 1 of it is the sheet named, and no box numbers were read there — the pairing was not checked; check the box on that sheet",
+    ]);
+  });
+
+  it("indexFingerprint changes when a declared number moves to another page — the sheet a box pairs on", () => {
+    const base = { opc: [], unreadPages: [] };
+    const a = indexFingerprint({ ...base, rows: [{ kind: "self", tag: "025-PID-0105", occurrences: 1, pages: [1] }] });
+    const b = indexFingerprint({ ...base, rows: [{ kind: "self", tag: "025-PID-0105", occurrences: 1, pages: [2] }] });
+    expect(a).not.toBe(b);
+    // Other kinds count occurrences, as before.
+    expect(indexFingerprint({ ...base, rows: [{ kind: "equipment", tag: "V-1", occurrences: 2, pages: [1] }] }))
+      .toBe(indexFingerprint({ ...base, rows: [{ kind: "equipment", tag: "V-1", occurrences: 2, pages: [3] }] }));
+  });
+});
 
 describe("verdictRows", () => {
   it("shapes rows for the unique (org, library, sheet, revision) key — 20261124", () => {

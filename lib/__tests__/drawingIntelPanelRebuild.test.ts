@@ -123,18 +123,53 @@ describe("the lens and the record name what they did not judge (review fix pass 
     await pressRecord();
     expect(host.textContent).toMatch(/this library holds no more than one drawing number of\s*that series/);
     expect(host.textContent).not.toMatch(/holds only one sheet of/);
-    // A success never claims a sheet was being indexed: then nothing is
-    // recorded at all (review fix pass 4).
-    expect(host.textContent).not.toMatch(/being indexed right now/);
+    // Nothing was kept or left waiting: nothing is said about it.
+    expect(host.textContent).not.toMatch(/stored verdict\(s\) kept|waiting on a sheet not read whole/);
   });
 
-  it("while a sheet is being indexed the record is refused: the route's message is the toast, and nothing is shown as recorded (review fix pass 4)", async () => {
-    const message = "1 sheet(s) are being indexed right now (025-PID-0105.pdf) — nothing was recorded: a verdict judged " +
-      "against a half-built index would be filed for good. Record the audit once indexing finishes.";
-    ui.recordDrawingAudit.mockRejectedValue(Object.assign(new Error(message), { indexingNow: ["025-PID-0105.pdf"] }));
+  it("a refused record (a partial index) is the toast, and nothing is shown as recorded", async () => {
+    const message = "This library's index holds more rows than one pass can read whole, so nothing was recorded — an audit " +
+      "computed from part of the set would file gaps that are not there.";
+    ui.recordDrawingAudit.mockRejectedValue(new Error(message));
     await render();
     await pressRecord();
     expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual({ type: "error", title: message });
     expect(host.textContent).not.toMatch(/Audit recorded/);
+  });
+
+  // Review fix pass 5: the route said a stored verdict was kept (keptStored),
+  // or left waiting on a sheet not read whole (waitingOn), only in its JSON.
+  it("a stored verdict kept, or left waiting, is shown with what was computed now — and the toast counts both (review fix pass 5)", async () => {
+    ui.recordDrawingAudit.mockResolvedValue({
+      recorded: 1, counts: { passed: 1 }, sheets: [], alreadyRecorded: [], notRecorded: [], seriesNotJudged: [],
+      keptStored: [{ sheetNumber: "025-PID-0104", revision: "C", stored: "flagged", computed: "passed" }],
+      waitingOn: [{
+        sheetNumber: "025-PID-0106", revision: "B", stored: "passed", computed: "flagged",
+        waitingOn: ["025-PID-0105.pdf (page(s) 2 never read)"],
+      }],
+    });
+    await render();
+    await pressRecord();
+    expect(host.textContent).toMatch(/1 stored verdict\(s\) kept — a verdict at a known revision is never lowered:\s*025-PID-0104 rev C: kept flagged — computed passed now/);
+    expect(host.textContent).toMatch(/1 left as stored, waiting on a sheet not read whole yet:\s*025-PID-0106 rev B: kept passed — computed flagged now, waiting on 025-PID-0105\.pdf \(page\(s\) 2 never read\) — judged again once it is\./);
+    expect(ui.showToast.mock.calls.map((c) => c[0])).toContainEqual(expect.objectContaining({
+      type: "success",
+      title: "Audit recorded for 1 sheet(s) — 1 stored verdict(s) kept, differing from what was computed now — 1 waiting on a sheet not read whole yet.",
+    }));
+  });
+
+  it("an unpaired box on a page whose box numbers were never read says which page (review fix pass 5)", async () => {
+    ui.getDrawingIntel.mockResolvedValue({
+      ...INTEL,
+      opcUnpaired: [{
+        box: "14", from: "025-PID-0104.pdf", to: "combined.pdf", line: "OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402",
+        why: "page 1 of it is the sheet named, and no box numbers were read there",
+      }],
+    });
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("connector box(es) not paired"));
+    expect(toggle).toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    expect(host.textContent).toMatch(/combined\.pdf \(page 1 of it is the sheet named, and no box numbers were read there\)/);
   });
 });

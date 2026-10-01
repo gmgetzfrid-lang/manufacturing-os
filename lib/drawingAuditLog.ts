@@ -29,7 +29,9 @@ export type AuditStatus = "passed" | "broken_connectors" | "flagged" | "skipped"
  *  at the same key (DWG-6): a re-index in progress (`skipped`) must not
  *  erase a recorded `broken_connectors`. Exported for every writer of
  *  drawing_audit_logs — the drawing route here, and the orchestrator's
- *  log_audit_completion. */
+ *  log_audit_completion. A row whose audit_details carries `provisional`
+ *  settled only its `provisional.settledStatus`: that, not its status, is
+ *  what is never lowered (replaceDecision — review fix pass 5). */
 export const RANK: Readonly<Record<AuditStatus, number>> = {
   skipped: 0, passed: 1, flagged: 2, broken_connectors: 3,
 };
@@ -78,16 +80,18 @@ export interface AuditFindings {
   /** Connectors whose box could not be paired: the sheet they continue on
    *  has no box numbers read (a text layer, or a sheet read before connector
    *  boxes were transcribed), or was not read whole and the box is not on
-   *  what was read of it (`unread` says why — review fix pass 4). Absence of
-   *  evidence — never broken (DWG-4). */
-  unpairedConnectors?: Array<{ from: string; to: string; box: string; unread?: string }>;
+   *  what was read of it (`unread` says why — review fix pass 4), or is a
+   *  page of a document read whole on which no box numbers were read (`why`
+   *  says which — review fix pass 5). Absence of evidence — never broken
+   *  (DWG-4). */
+  unpairedConnectors?: Array<{ from: string; to: string; box: string; unread?: string; why?: string; waitsOn?: readonly string[] }>;
   /** References whose check needed a sheet that was not read whole: the
    *  target was not found to reference back on what was read of it
    *  (`to`), or a sheet in scope was not found and may be in such a
    *  document (`ref`, `maybeIn`). Unchecked — never one-way, never a gap
    *  (review fix pass 4). */
-  oneWayUnread?: Array<{ from: string; to: string; unread: string }>;
-  missingUnread?: Array<{ ref: string; referencedBy: string[]; maybeIn: readonly string[] }>;
+  oneWayUnread?: Array<{ from: string; to: string; unread: string; waitsOn?: readonly string[] }>;
+  missingUnread?: Array<{ ref: string; referencedBy: string[]; maybeIn: readonly string[]; waitsOn?: readonly string[] }>;
   /** Pages AI vision never read: nothing on them — connectors included —
    *  was audited. `why` says whose decision left them unread: "partial index
    *  accepted" (the default) only for a controller's accepted partial index;
@@ -120,6 +124,16 @@ export interface SheetVerdict {
    *  from (verdictBasis: its own index, its neighbours', the set) — set by
    *  the writer when verdicts sharing one key are merged (DWG-13). */
   coverage?: Readonly<Record<string, string>>;
+  /** Set when a finding of this verdict waits on a document that is only
+   *  for now not read whole — parked on AI vision, failed, or still being
+   *  indexed (an accepted partial index never changes, so it is never
+   *  "for now"). `waitingOn` names those documents, with why;
+   *  `settledStatus` is the verdict without those findings: what the sheet
+   *  is known to be whatever they turn out to be. A provisional verdict
+   *  never overwrites a settled one for what is unsettled in it, and the
+   *  next computation may replace it down to its settled status
+   *  (replaceDecision — review fix pass 5). */
+  provisional?: { waitingOn: readonly string[]; settledStatus: AuditStatus };
 }
 
 /**
@@ -137,10 +151,18 @@ export function verdictsForSheets(
   const missing = new Map<string, string[]>();
   const oneWay = new Map<string, string[]>();
 
-  const push = (map: Map<string, string[]>, key: string, value: string) => {
+  // Which findings are settled (true whatever a document not read whole
+  // turns out to hold), and which documents the others wait on.
+  const settled = new Map<string, Set<string>>();
+  const waiting = new Map<string, Set<string>>();
+  const push = (map: Map<string, string[]>, key: string, value: string, waitsOn?: readonly string[]) => {
     const list = map.get(key) ?? [];
     if (!list.includes(value)) list.push(value);
     map.set(key, list);
+    const into = waitsOn && waitsOn.length > 0 ? waiting : settled;
+    const set = into.get(key) ?? new Set<string>();
+    for (const x of into === waiting ? waitsOn! : [value]) set.add(x);
+    into.set(key, set);
   };
 
   for (const c of findings.connectorsWithNoTarget) {
@@ -151,7 +173,8 @@ export function verdictsForSheets(
   }
   for (const m of findings.missingInSeries) {
     // A missing sheet is a finding against every sheet that pointed at it —
-    // that's who has to chase it.
+    // that's who has to chase it. The caller passes EVERY referencer, never
+    // a display cut (review fix pass 5).
     for (const by of m.referencedBy) push(missing, by, `References ${m.ref}, which isn't in the set`);
   }
   for (const o of findings.oneWay) {
@@ -166,17 +189,21 @@ export function verdictsForSheets(
   for (const c of findings.unpairedConnectors ?? []) {
     push(unpaired, c.from, c.unread
       ? `Connector ${c.box} continues to ${c.to}, which was not read whole (${c.unread}) — the box is not on what was read of it, so the pairing was not checked; check the box on that sheet`
-      : `Connector ${c.box} continues to ${c.to}, whose box numbers were never read — the pairing was not checked; check the box on that sheet`);
+      : c.why
+        ? `Connector ${c.box} continues to ${c.to}: ${c.why} — the pairing was not checked; check the box on that sheet`
+        : `Connector ${c.box} continues to ${c.to}, whose box numbers were never read — the pairing was not checked; check the box on that sheet`,
+    c.waitsOn);
   }
   const unchecked = new Map<string, string[]>();
   for (const o of findings.oneWayUnread ?? []) {
     push(unchecked, o.from,
-      `References ${o.to}, which was not read whole (${o.unread}) — whether it references back was not checked`);
+      `References ${o.to}, which was not read whole (${o.unread}) — whether it references back was not checked`, o.waitsOn);
   }
   for (const m of findings.missingUnread ?? []) {
     for (const by of m.referencedBy) {
       push(unchecked, by,
-        `References ${m.ref}, which was not found in what was read of the set — it may be in ${m.maybeIn.join("; ")}, not read whole`);
+        `References ${m.ref}, which was not found in what was read of the set — it may be in ${m.maybeIn.join("; ")}, not read whole`,
+        m.waitsOn);
     }
   }
   const unreadPages = new Map<string, string[]>();
@@ -198,11 +225,15 @@ export function verdictsForSheets(
     // whose check needed a sheet nobody read whole, or a page nobody read, is
     // absence of evidence: it keeps a sheet from "passing", and never makes
     // it "broken".
-    const status: AuditStatus = !s.indexed
+    const statusOf = (keep: (x: string) => boolean): AuditStatus => !s.indexed
       ? "skipped"
-      : b.length > 0 ? "broken_connectors"
-      : (m.length > 0 || w.length > 0 || u.length > 0 || q.length > 0 || c.length > 0 || p.length > 0) ? "flagged"
+      : b.some(keep) ? "broken_connectors"
+      : [m, w, u, q, c, p].some((list) => list.some(keep)) ? "flagged"
       : "passed";
+    const status = statusOf(() => true);
+    // What is known whatever the documents it waits on turn out to hold.
+    const known = settled.get(s.name) ?? new Set<string>();
+    const waitsOn = s.indexed ? [...(waiting.get(s.name) ?? [])].sort() : [];
     return {
       documentId: s.documentId,
       controlledDocumentId: s.controlledDocumentId ?? null,
@@ -213,6 +244,7 @@ export function verdictsForSheets(
         brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u, unpairedConnectors: q,
         uncheckedReferences: c, unreadPages: p,
       },
+      ...(waitsOn.length > 0 ? { provisional: { waitingOn: waitsOn, settledStatus: statusOf((x) => known.has(x)) } } : {}),
     };
   });
 }
@@ -305,17 +337,19 @@ export function digest(text: string): string {
 }
 
 /** What one document's index held when a verdict was computed from it
- *  (DWG-13): every roll-up row (kind, tag, occurrences), every connector
- *  line, and the pages AI vision never read — in a fixed order, digested. A
- *  rebuild that changes what was extracted (a vision re-read that now
- *  transcribes connector boxes) changes it; one that extracts the same rows
- *  does not. */
+ *  (DWG-13): every roll-up row (kind, tag, occurrences — and, for a title
+ *  block's own number, the pages it is declared on: box pairing reads the
+ *  sheet by its page, review fix pass 5), every connector line, and the
+ *  pages AI vision never read — in a fixed order, digested. A rebuild that
+ *  changes what was extracted (a vision re-read that now transcribes
+ *  connector boxes) changes it; one that extracts the same rows does not. */
 export function indexFingerprint(index: {
-  rows: ReadonlyArray<{ kind: string; tag: string; occurrences: number }>;
+  rows: ReadonlyArray<{ kind: string; tag: string; occurrences: number; pages?: readonly number[] }>;
   opc: ReadonlyArray<{ tag: string; page: number; raw?: string | null }>;
   unreadPages?: readonly number[];
 }): string {
-  const rows = index.rows.map((r) => `${r.kind}\u0001${r.tag}\u0001${r.occurrences}`).sort();
+  const rows = index.rows.map((r) => `${r.kind}\u0001${r.tag}\u0001${r.occurrences}` +
+    (r.kind === "self" && r.pages ? `\u0001${[...r.pages].sort((a, b) => a - b).join(",")}` : "")).sort();
   const opc = index.opc.map((o) => `${o.tag}\u0001${o.page}\u0001${o.raw ?? ""}`).sort();
   const unread = [...(index.unreadPages ?? [])].sort((a, b) => a - b).join(",");
   return digest(`${rows.join("\n")}\u0002${opc.join("\n")}\u0002${unread}`);
@@ -326,11 +360,12 @@ export function indexFingerprint(index: {
  *  document its connectors and references resolve to (`neighbours`, each
  *  "<id>:<indexFingerprint>") — whether a box comes back, or a reference is
  *  returned, is read off THAT sheet — and the set it was judged against
- *  (`set`, a digest of every number the library's sheets answer to: what is
- *  missing, and which series are held). Written as
- *  "<own>+<neighbourhood digest>"; compared whole. Nothing is recorded while
- *  a sheet of the library is being indexed (the route refuses — review fix
- *  pass 4), so no basis is ever taken from a half-built neighbour. */
+ *  (`set`, a digest of every number the library's sheets answer to, and of
+ *  which documents are not read whole: what is missing, which series are
+ *  held). Written as "<own>+<neighbourhood digest>"; compared whole. A
+ *  verdict taken from a neighbour that is only for now not read whole is
+ *  provisional (SheetVerdict.provisional), and its basis changes once that
+ *  neighbour is read whole, so it is judged again then (review fix pass 5). */
 export function verdictBasis(own: string, neighbours: readonly string[], set: string): string {
   return `${own}+${digest(`${[...neighbours].sort().join("\n")}\u0002${set}`)}`;
 }
@@ -348,7 +383,7 @@ export function verdictBasis(own: string, neighbours: readonly string[], set: st
  * be established for a sheet whose revision nobody knows — a library-only
  * PDF replaced by a corrected drawing, or a set widened since, still reads
  * "". Such a sheet is audited every time, and its row takes the latest
- * verdict (mayReplaceStored).
+ * verdict (mayReplaceStored / replaceDecision).
  *
  * And a row counts as done only for what it COVERED (DWG-13): every
  * document filed under its key must be in the row's `coverage`, with the
@@ -364,12 +399,13 @@ export function verdictBasis(own: string, neighbours: readonly string[], set: st
  * A row with no coverage (written before this rule, or by another writer)
  * is not done: it is audited once more, never lowered.
  *
- * The caller never asks while a sheet of the library is being indexed: a
- * half-built index would decide verdicts — its own, or one that points at
- * it — that a known revision could never lower again, so the route refuses
- * to record until indexing finishes (review fix pass 4; fix pass 3's
- * own-index-only comparison still let a sheet re-audited for any other
- * reason be judged against the half-built one).
+ * A sheet whose verdict waits on a document that is only for now not read
+ * whole (parked, failed, still being indexed) is judged like any other, and
+ * its verdict is provisional: it never overwrites a settled row for what is
+ * unsettled in it (replaceDecision), and its basis changes once that
+ * document is read whole, so it is judged again then (review fix pass 5 —
+ * fix pass 4 refused to record at all while a sheet was being indexed, and
+ * let a parked or failed neighbour raise a settled `passed` for good).
  */
 export function sheetsNeedingAudit(
   sheets: readonly AuditSheet[],
@@ -405,13 +441,95 @@ export function sheetsNeedingAudit(
  *  known revision's verdict (RANK). A row under an unknown revision ("")
  *  takes the latest computation — it can't be told apart from the drawing
  *  that replaced it — except `skipped`, which only says the sheet could not
- *  be read right now and never erases a verdict. */
+ *  be read right now and never erases a verdict. For a settled verdict over
+ *  a settled row; replaceDecision is the whole rule. */
 export function mayReplaceStored(
   stored: { revision_code: string; status: string } | null | undefined, next: AuditStatus,
 ): boolean {
-  if (!stored) return true;
-  if (stored.revision_code === "") return next !== "skipped" || stored.status === "skipped";
-  return !wouldLowerSeverity(stored.status, next);
+  return replaceDecision(stored, { status: next }) === "write";
+}
+
+/** The provisional marker a stored row carries (audit_details.provisional),
+ *  read defensively: anything else is no marker. */
+export function storedProvisional(details: unknown): { settledStatus: string } | null {
+  const p = (details as { provisional?: unknown } | null)?.provisional as { settledStatus?: unknown } | undefined;
+  return p && typeof p === "object" && typeof p.settledStatus === "string" ? { settledStatus: p.settledStatus } : null;
+}
+
+/**
+ * What to do with the row stored at a verdict's key (review fix pass 5):
+ *   "write" — replace it;
+ *   "keep"  — leave it: `next` would lower what it settled (RANK);
+ *   "wait"  — leave it, and its coverage, untouched: `next` differs from it
+ *             only in findings that wait on a document that is for now not
+ *             read whole. Once that document is read whole the sheet's basis
+ *             changes and it is judged again.
+ *
+ * A stored row's floor is what it SETTLED: its status, or — for a row
+ * written provisional — its settled status. A known revision's floor is
+ * never lowered. A provisional `next` changes a settled row only when what
+ * it settled is more severe than the row (a real finding); otherwise it
+ * waits — a parked neighbour never turns a verified `passed` into `flagged`
+ * (the reviewer's probe, fix pass 4: and never-lower then kept it). It
+ * replaces a provisional row whenever it settles no less. A settled `next`
+ * replaces a provisional row down to that row's settled status: what was
+ * filed while a neighbour was unread heals once it is read.
+ *
+ * Under an unknown revision ("") the latest computation is written, as
+ * before — except `skipped`, which never erases a verdict. `neverLower`
+ * applies the known-revision rule whatever the revision (a row another
+ * library filed on the org-wide key, before 20261124).
+ */
+export function replaceDecision(
+  stored: { revision_code: string; status: string; provisional?: { settledStatus: string } | null } | null | undefined,
+  next: { status: AuditStatus; provisional?: { settledStatus: AuditStatus } | null },
+  opts: { neverLower?: boolean } = {},
+): "write" | "keep" | "wait" {
+  if (!stored) return "write";
+  if (stored.revision_code === "" && !opts.neverLower) {
+    return next.status !== "skipped" || stored.status === "skipped" ? "write" : "keep";
+  }
+  const floor = stored.provisional ? stored.provisional.settledStatus : stored.status;
+  if (next.provisional) {
+    const settledNow = next.provisional.settledStatus;
+    if (stored.provisional) return wouldLowerSeverity(floor, settledNow) ? "wait" : "write";
+    return !wouldLowerSeverity(floor, settledNow) && floor !== settledNow ? "write" : "wait";
+  }
+  return wouldLowerSeverity(floor, next.status) ? "keep" : "write";
+}
+
+/**
+ * One row per key (sheet number @ revision): two documents of one set can
+ * declare the same number, and the unique index would reject the batch
+ * outright. The more severe verdict is kept — a clean sheet must never mask
+ * a broken one filed under the same number — with every document it covers
+ * (each that was read, with the basis it was computed from: `basisOf`; a
+ * `skipped` sheet covers nothing). Provisional when any member is: waiting
+ * on every document a member waits on, settled at the most severe settled
+ * status among them (a settled member's status is settled).
+ */
+export function mergeVerdictsByKey(
+  verdicts: readonly SheetVerdict[], basisOf: (documentId: string) => string,
+): SheetVerdict[] {
+  const groups = new Map<string, SheetVerdict[]>();
+  for (const v of verdicts) {
+    const key = `${v.sheetNumber}@${v.revision}`;
+    groups.set(key, [...(groups.get(key) ?? []), v]);
+  }
+  return [...groups.values()].map((group) => {
+    let best = group[0];
+    for (const v of group) if (RANK[v.status] > RANK[best.status]) best = v;
+    const coverage: Record<string, string> = {};
+    for (const v of group) if (v.status !== "skipped") coverage[v.documentId] = basisOf(v.documentId);
+    const waitingOn = [...new Set(group.flatMap((v) => v.provisional?.waitingOn ?? []))].sort();
+    let settled: AuditStatus = "skipped";
+    for (const v of group) {
+      const s = v.provisional?.settledStatus ?? v.status;
+      if (RANK[s] > RANK[settled]) settled = s;
+    }
+    const { provisional: _p, ...rest } = best;
+    return { ...rest, coverage, ...(waitingOn.length > 0 ? { provisional: { waitingOn, settledStatus: settled } } : {}) };
+  });
 }
 
 /** The set a verdict was computed against (DWG-6): which library, and
@@ -466,6 +584,10 @@ export function verdictRows(
       libraryId: scope.libraryId,
       set: i === 0 ? { ...set, sheets: sheets.slice(0, AUDIT_SET_LIST_MAX) } : set,
       ...(v.coverage ? { coverage: { ...v.coverage } } : {}),
+      // A verdict with findings that wait on a document not read whole yet:
+      // which, and what is settled without them (replaceDecision).
+      ...(v.provisional
+        ? { provisional: { waitingOn: [...v.provisional.waitingOn], settledStatus: v.provisional.settledStatus } } : {}),
     },
   }));
 }

@@ -733,8 +733,11 @@ export interface RefAudit {
   /** Series present in the library — the audit's SCOPE. */
   seriesInScope: string[];
   /** IN SCOPE and absent: same drawing series, sheet not loaded. These are
-   *  the ones worth chasing — a gap in the set. */
-  missingInSeries: Array<{ ref: string; referencedBy: string[]; count: number }>;
+   *  the ones worth chasing — a gap in the set. `referencedBy` is the first
+   *  six referencing sheets, for display; `referencedByAll` is every one of
+   *  them — the record files the finding against each (review fix pass 5:
+   *  the seventh referencer was recorded `passed`). */
+  missingInSeries: Array<{ ref: string; referencedBy: string[]; referencedByAll: string[]; count: number }>;
   /** OUT OF SCOPE: references into other units/series. Entirely expected on
    *  any real unit's P&IDs and NEVER evidence of a broken connector — you
    *  simply weren't given those drawings. Grouped by series so the ask is
@@ -752,13 +755,18 @@ export interface RefAudit {
    *  read, a document still being indexed, or one whose indexing failed),
    *  and no reference back stands on what was read of it. Whether it
    *  references back was not checked: absence of evidence, never one-way
-   *  (review fix pass 4). `unread` says why. */
-  oneWayUnread: Array<{ from: string; to: string; count: number; unread: string }>;
+   *  (review fix pass 4). `unread` says why; `toId` is the target's
+   *  document id. */
+  oneWayUnread: Array<{ from: string; to: string; toId: string; count: number; unread: string }>;
   /** In scope and not found — but a sheet of the library that was not read
    *  whole may hold it (it is a sheet of that document's drawing, or that
    *  document's own number was never read). Not a gap until that document
-   *  is read whole; `maybeIn` names it, with why (review fix pass 4). */
-  missingUnread: Array<{ ref: string; referencedBy: string[]; count: number; maybeIn: string[] }>;
+   *  is read whole; `maybeIn` names it, with why, and `maybeInIds` gives its
+   *  document id (review fix pass 4). `referencedByAll` as for
+   *  missingInSeries. */
+  missingUnread: Array<{
+    ref: string; referencedBy: string[]; referencedByAll: string[]; count: number; maybeIn: string[]; maybeInIds: string[];
+  }>;
 }
 
 /** Every number a sheet answers to: what its title block declared (kind
@@ -923,31 +931,47 @@ export function auditDrawingRefs(
     if (links.has(`${link.to}→${link.from}`)) continue;
     const entry = { from: nameById.get(link.from) ?? "Sheet", to: nameById.get(link.to) ?? "Sheet", count: link.count };
     const unread = incomplete?.get(link.to);
-    if (unread) oneWayUnread.push({ ...entry, unread });
+    if (unread) oneWayUnread.push({ from: entry.from, to: entry.to, toId: link.to, count: entry.count, unread });
     else oneWay.push(entry);
   }
 
-  // A missing sheet may yet be in a document that was not read whole: a
-  // sheet of that document's own drawing (its page was never read), or
-  // anything at all when that document's number was never read (no title
-  // block declared, none in its filename).
+  // A missing sheet may yet be in a document that was not read whole, on a
+  // page nobody read: a sheet of that document's own drawing, a drawing of a
+  // series it declares a number of (a combined PDF of the series — and a
+  // document still being indexed has declared only the pages read so far),
+  // or anything at all when that document's number was never read (no title
+  // block declared, none in its filename). Review fix pass 5 added the
+  // series: fix pass 4 counted only the document's own drawing, so a sheet a
+  // combined PDF had yet to read was filed as a gap — and a gap at a known
+  // revision is never lowered once the page is read.
   const bareSheet = (r: string) => r.replace(/-SH\d+$/, "");
   const partly = docs.filter((d) => incomplete?.has(d.id));
-  const mayHold = (ref: string): string[] => partly
+  const mayHold = (ref: string) => partly
     .filter((d) => {
       const numbered = (selfTagsByDoc?.get(d.id) ?? []).length > 0 || extractDrawingRefs(d.name).length > 0;
-      return !numbered || (identityByDoc.get(d.id) ?? []).some((t) => seriesMatch(bareSheet(t), bareSheet(ref)));
-    })
-    .map((d) => `${d.name} (${incomplete!.get(d.id)})`);
+      return !numbered || (identityByDoc.get(d.id) ?? []).some((t) =>
+        seriesMatch(bareSheet(t), bareSheet(ref)) || seriesMatch(refSeries(bareSheet(t)), refSeries(bareSheet(ref))));
+    });
+  // `referencedBy` is cut for display; the record needs every referencer —
+  // a missing sheet is a finding against each sheet that points at it
+  // (review fix pass 5).
   const missingAll = [...missingMap.entries()]
-    .map(([ref, v]) => ({ ref, referencedBy: [...v.referencedBy].sort().slice(0, 6), count: v.count, maybeIn: mayHold(ref) }))
+    .map(([ref, v]) => {
+      const all = [...v.referencedBy].sort();
+      const holders = mayHold(ref);
+      return {
+        ref, referencedBy: all.slice(0, 6), referencedByAll: all, count: v.count,
+        maybeIn: holders.map((d) => `${d.name} (${incomplete!.get(d.id)})`), maybeInIds: holders.map((d) => d.id),
+      };
+    })
     .sort((a, b) => b.count - a.count);
 
   return {
     resolved,
     totalRefs,
     seriesInScope: scope,
-    missingInSeries: missingAll.filter((m) => m.maybeIn.length === 0).map(({ maybeIn: _maybeIn, ...m }) => m),
+    missingInSeries: missingAll.filter((m) => m.maybeIn.length === 0)
+      .map(({ maybeIn: _maybeIn, maybeInIds: _maybeInIds, ...m }) => m),
     missingUnread: missingAll.filter((m) => m.maybeIn.length > 0),
     outOfScope: [...outMap.entries()]
       .map(([series, v]) => {
@@ -1146,8 +1170,11 @@ export interface OpcEntity {
 
 export interface OpcAudit {
   boxCount: number;
-  /** Box leaves a sheet naming a loaded destination that was read whole and
-   *  whose box numbers WERE read, and none of them is this box. */
+  /** Box leaves a sheet naming a loaded destination SHEET — the page(s) of
+   *  a document whose title block declares the number the connector names —
+   *  in a document read whole, where box numbers WERE read on that sheet,
+   *  and none of them is this box (review fix pass 5: per sheet, not per
+   *  document). */
   unreturned: Array<{ box: string; from: string; to: string; line: string }>;
   /** Box leaves a sheet naming a loaded destination whose box numbers were
    *  never read — a text layer (which prints a pennant, not a box token), a
@@ -1155,10 +1182,15 @@ export interface OpcAudit {
    *  same-drawing connector whose source declared no drawing number — or a
    *  destination that was not read whole, where this box is not among the
    *  boxes read (`unread` says why: pages AI vision never read, a document
-   *  still indexing or failed). The pairing could not be checked: absence of
+   *  still indexing or failed) — or a destination document read whole whose
+   *  box numbers were read on other pages but not on the sheet named (`why`
+   *  says which page: box numbers are read page by page, by AI vision, so a
+   *  combined PDF partly read by it has some pages' boxes and not others' —
+   *  review fix pass 5). The pairing could not be checked: absence of
    *  evidence, so it keeps the sheet from passing and never makes it broken
-   *  (DWG-4 / DWG-8; review fix pass 4). */
-  unpaired: Array<{ box: string; from: string; to: string; line: string; unread?: string }>;
+   *  (DWG-4 / DWG-8; review fix pass 4). `toId` is the destination's
+   *  document, when one was resolved. */
+  unpaired: Array<{ box: string; from: string; to: string; toId?: string; line: string; unread?: string; why?: string }>;
   /** Box names no destination at all — broken by definition, since nothing
    *  on the sheet tells the reader where to continue. Only POSITIVE evidence
    *  can say that: a contract line whose destination reads NONE or is empty
@@ -1185,13 +1217,32 @@ export function auditOpcBoxes(
    *  2 never read", "its indexing failed"). A box missing from what was read
    *  of such a sheet may stand on a page nobody read (review fix pass 4). */
   incomplete?: ReadonlyMap<string, string>,
+  /** By document id, by each identity its title block declared: the pages
+   *  it is declared on (the roll-up's `pages` for kind 'self'). A box pairs
+   *  on the SHEET its destination names — in a combined PDF, one page of
+   *  many — and box numbers are read page by page (AI vision reads only the
+   *  pages that need it; a text layer prints a pennant, never a box token),
+   *  so one page's box numbers say nothing about another's. Without it,
+   *  which page is the sheet is not known, and nothing is `unreturned`
+   *  (review fix pass 5). */
+  selfPages?: ReadonlyMap<string, ReadonlyMap<string, readonly number[]>>,
 ): OpcAudit {
-  const opcByDoc = new Map<string, Set<string>>();
+  // Box numbers by document AND page: the sheet, not the file (review fix
+  // pass 5 — pooled per document, a page vision read made a page it never
+  // read look box-complete, and a correct connector into it was filed
+  // `unreturned`, which records `broken_connectors`).
+  const boxesByPage = new Map<string, Map<number, Set<string>>>();
   for (const o of opcRows) {
-    const set = opcByDoc.get(o.document_id) ?? new Set<string>();
+    const pages = boxesByPage.get(o.document_id) ?? new Map<number, Set<string>>();
+    const set = pages.get(o.page) ?? new Set<string>();
     set.add(o.tag);
-    opcByDoc.set(o.document_id, set);
+    pages.set(o.page, set);
+    boxesByPage.set(o.document_id, pages);
   }
+  /** Pages of a document whose title block declared any number at all. */
+  const declaredPages = (docId: string): Set<number> =>
+    new Set([...(selfPages?.get(docId)?.values() ?? [])].flatMap((ps) => [...ps]));
+  const byNumber = (a: number, b: number) => a - b;
   const identityIndex = new Map<string, Set<string>>();
   for (const [docId, tags] of selfByDoc) {
     for (const t of tags) {
@@ -1261,31 +1312,60 @@ export function auditOpcBoxes(
       else unpaired.push({ box: o.tag, from, to: `sheet ${contract.sheet} of its own drawing (whose number was not read)`, line: raw });
     }
 
-    // Box pairing: the box must reappear on the sheet it names.
-    const targets = new Set<string>();
+    // Box pairing: the box must reappear on the sheet it names — the
+    // page(s) of the target whose title block declares the number matched.
+    const matched = new Map<string, Set<string>>();
     for (const ref of lookups) {
       const owners = identityIndex.get(ref);
       // An ambiguous number identifies a multi-sheet set, not one sheet —
       // never guess which one and report the guess as a defect.
       if (!owners || owners.size !== 1) continue;
-      targets.add([...owners][0]);
+      const owner = [...owners][0];
+      matched.set(owner, new Set([...(matched.get(owner) ?? []), ref]));
     }
-    for (const target of targets) {
+    for (const [target, forms] of matched) {
       if (target === o.document_id) continue;
       const paired = targetsByDoc.get(o.document_id) ?? [];
       if (!paired.includes(target)) paired.push(target);
       targetsByDoc.set(o.document_id, paired);
-      const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", line: raw };
-      const boxes = opcByDoc.get(target);
+      const entry = { box: o.tag, from, to: nameById.get(target) ?? "Sheet", toId: target, line: raw };
+      const pages = boxesByPage.get(target);
+      const sheetPages = [...new Set([...forms].flatMap((f) => [...(selfPages?.get(target)?.get(f) ?? [])]))].sort(byNumber);
+      if (sheetPages.some((p) => pages?.get(p)?.has(o.tag))) continue;
+      // A target that was not read whole cannot say whether the box comes
+      // back: it may stand on a page nobody read, and filing it `unreturned`
+      // would record `broken_connectors` — never lowered at that revision —
+      // against a sheet that carries it (review fix pass 4).
       const unread = incomplete?.get(target);
-      // A target with no box numbers read cannot say whether the box comes
-      // back — never evidence that it does not. Nor can a target that was
-      // not read whole: the box may stand on a page nobody read, and filing
-      // it `unreturned` would record `broken_connectors` — never lowered at
-      // that revision — against a sheet that carries it (review fix pass 4).
-      if (boxes?.has(o.tag)) continue;
-      if (!boxes || unread) unpaired.push(unread ? { ...entry, unread } : entry);
-      else unreturned.push(entry);
+      if (unread) { unpaired.push({ ...entry, unread }); continue; }
+      // Nor can a target with no box numbers read anywhere (a text layer, a
+      // sheet read before connector boxes were transcribed).
+      if (!pages || pages.size === 0) { unpaired.push(entry); continue; }
+      // …nor one whose box numbers were read on OTHER pages, but not on the
+      // sheet named (review fix pass 5): a combined PDF whose text-layer
+      // page declares the number, beside a page AI vision read.
+      if (sheetPages.length === 0) {
+        unpaired.push({ ...entry, why: "which of its pages is the sheet named is not known" });
+        continue;
+      }
+      const declared = declaredPages(target);
+      const undeclared = [...pages].filter(([p, boxes]) => boxes.has(o.tag) && !declared.has(p)).map(([p]) => p).sort(byNumber);
+      if (undeclared.length > 0) {
+        unpaired.push({
+          ...entry,
+          why: `box ${o.tag} stands on page ${undeclared.join(", ")} of it, whose drawing number was not read, and that page may be the sheet named`,
+        });
+        continue;
+      }
+      const noBoxes = sheetPages.filter((p) => (pages.get(p)?.size ?? 0) === 0);
+      if (noBoxes.length > 0) {
+        unpaired.push({ ...entry, why: `page ${noBoxes.join(", ")} of it is the sheet named, and no box numbers were read there` });
+        continue;
+      }
+      // The sheet named was read, in a document read whole, and its box
+      // numbers were read: the box does not come back.
+      const { toId: _toId, ...said } = entry;
+      unreturned.push(said);
     }
   }
 

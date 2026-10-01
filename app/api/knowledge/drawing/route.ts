@@ -20,9 +20,10 @@
 //                                           re-audited — the response lists
 //                                           it as already recorded (DWG-13);
 //                                           one whose revision is unknown
-//                                           ("") always is. Refused (409)
-//                                           while any sheet of the library
-//                                           is being indexed
+//                                           ("") always is. A verdict that
+//                                           waits on a sheet not read whole
+//                                           for now is provisional, and never
+//                                           overwrites a settled one
 //   POST { orgId, libraryId, action:"rebuild", cursor? }
 //                                         → re-extract everything through
 //                                           the ONE reset of a document's
@@ -61,8 +62,8 @@ import {
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
   verdictsForSheets, verdictRows, sheetsNeedingAudit, seriesHeldBySet, seriesNotJudged,
-  missingWithinHeldSeries, mayReplaceStored, wouldLowerSeverity, indexFingerprint, verdictBasis, digest, RANK,
-  type AuditSheet, type SheetVerdict,
+  missingWithinHeldSeries, replaceDecision, storedProvisional, mergeVerdictsByKey, indexFingerprint, verdictBasis, digest,
+  type AuditSheet,
 } from "@/lib/drawingAuditLog";
 
 export const runtime = "nodejs";
@@ -363,14 +364,27 @@ function notReadWhole(docs: readonly DocRow[]): Map<string, string> {
   return out;
 }
 
-/** Sheets being indexed right now: queued or mid-read. A parked sheet waits
- *  with what it has, and a failed one is finished; neither is in flight. */
-const indexingNowOf = (docs: readonly DocRow[]) =>
-  docs.filter((d) => d.status !== "ready" && d.status !== "error" && !isParked(d));
+/** A controller's accepted partial index: finished, with its unread pages
+ *  listed — it never changes, so what it lacks is settled. */
+const isAcceptedPartial = (d: DocRow) => !!d.vision_partial_accepted && d.status === "ready" && !isParked(d);
+
+/** The documents not read whole only FOR NOW — parked on AI vision, failed,
+ *  or still being indexed (every one notReadWhole names but an accepted
+ *  partial index). A finding that waits on one is provisional: it never
+ *  overwrites a settled verdict, and is judged again once the document is
+ *  read whole (review fix pass 5 — fix pass 4 let a parked or failed
+ *  neighbour raise a verified `passed` for good, and refused to record at
+ *  all while any sheet was in flight). */
+function forNowIncomplete(docs: readonly DocRow[], incomplete: ReadonlyMap<string, string>): Set<string> {
+  return new Set(docs.filter((d) => incomplete.has(d.id) && !isAcceptedPartial(d)).map((d) => d.id));
+}
 
 /** Index maps the census, audit and readout share. */
 function indexMaps(index: IndexRead) {
   const selfByDoc = new Map<string, string[]>();
+  /** By document, by declared number: the pages it is declared on — the
+   *  sheet a connector's box pairs on (review fix pass 5). */
+  const selfPages = new Map<string, Map<string, number[]>>();
   const refsByDoc = new Map<string, string[]>();
   const equipment: EntityRollupRow[] = [];
   for (const r of index.rollup) {
@@ -379,6 +393,9 @@ function indexMaps(index: IndexRead) {
       const list = selfByDoc.get(r.document_id) ?? [];
       if (!list.includes(r.tag)) list.push(r.tag);
       selfByDoc.set(r.document_id, list);
+      const pages = selfPages.get(r.document_id) ?? new Map<string, number[]>();
+      pages.set(r.tag, [...new Set([...(pages.get(r.tag) ?? []), ...(r.pages && r.pages.length > 0 ? r.pages : [r.first_page])])].sort((a, b) => a - b));
+      selfPages.set(r.document_id, pages);
     } else if (r.kind === "ref") {
       // The audit counts every occurrence of a reference.
       const list = refsByDoc.get(r.document_id) ?? [];
@@ -386,7 +403,7 @@ function indexMaps(index: IndexRead) {
       refsByDoc.set(r.document_id, list);
     }
   }
-  return { selfByDoc, refsByDoc, equipment };
+  return { selfByDoc, selfPages, refsByDoc, equipment };
 }
 
 export async function GET(req: NextRequest) {
@@ -408,7 +425,7 @@ export async function GET(req: NextRequest) {
   if (index.error) return bad(index.error, 500);
 
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
-  const { selfByDoc, refsByDoc, equipment } = indexMaps(index);
+  const { selfByDoc, selfPages, refsByDoc, equipment } = indexMaps(index);
 
   // Site decoder: the library's own AI-setup decoder, or (when it has none)
   // the org's Site Codebook — unit names AND tag-prefix meanings.
@@ -454,14 +471,20 @@ export async function GET(req: NextRequest) {
   const identities = new Map(docs.map((d) => [d.id, sheetIdentities(d.name, selfByDoc.get(d.id) ?? [])]));
   const notJudged = seriesNotJudged(identities);
   const held = seriesHeldBySet(identities);
+  // The referencing sheets are listed to six on screen; the record takes
+  // every one (review fix pass 5), and the lens never ships the whole list.
   const audit = {
     ...refAudit,
-    missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, held),
-    missingUnread: missingWithinHeldSeries(refAudit.missingUnread, held),
+    missingInSeries: missingWithinHeldSeries(refAudit.missingInSeries, held)
+      .map(({ referencedByAll: _all, ...m }) => m),
+    missingUnread: missingWithinHeldSeries(refAudit.missingUnread, held)
+      .map(({ referencedByAll: _all, ...m }) => m),
   };
 
   // ── OPC box pairing (best-effort) ──────────────────────────────────────
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete);
+  // Paired on the SHEET a connector names — the page whose title block
+  // declares it — never on another page's boxes (review fix pass 5).
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages);
   const {
     boxCount: opcBoxCount, unreturned: opcUnreturned, unpaired: opcUnpaired, noRef: opcNoRef, unknown: opcUnknown,
   } = opc;
@@ -576,7 +599,7 @@ export async function GET(req: NextRequest) {
     const failedPages = [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b);
     // A controller's accepted partial index is finished, with its unread
     // pages still listed — not waiting on anything.
-    const accepted = !!d.vision_partial_accepted && d.status === "ready" && !parked;
+    const accepted = isAcceptedPartial(d);
     return {
       id: d.id,
       name: d.name,
@@ -711,9 +734,9 @@ export async function GET(req: NextRequest) {
   if (opcUnpaired.length > 0) {
     suggestions.push(
       `${opcUnpaired.length} connector box(es) could not be paired: the sheet each continues on has no box ` +
-      "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed), or was " +
-      "not read whole and the box is not on what was read of it. They are NOT counted as broken — check those " +
-      "boxes on the sheet (listed below).",
+      "numbers read (a text layer, or a sheet read by AI vision before connector boxes were transcribed — in a " +
+      "combined PDF, the page that is that sheet), or was not read whole and the box is not on what was read of " +
+      "it. They are NOT counted as broken — check those boxes on the sheet (listed below).",
     );
   }
   // References whose check needs a sheet that was not read whole (review
@@ -991,20 +1014,26 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     does a change in a sheet it points at, or in the set. A sheet whose
  *     revision is unknown ("") always is audited: "unrevised" cannot be
  *     established for it, and its row takes the latest verdict.
- *   * Nothing is recorded while any sheet of the library is being indexed
- *     (queued or mid-read): 409, naming them (review fix pass 4). A half-
- *     built index has lost its rows — references to it no longer resolve,
- *     its boxes are gone — and any sheet judged against it (re-audited for
- *     its own change, or new) would file a one-way, a gap or a box that is
- *     not there, which a known revision could never lower again.
  *   * A sheet that is not read whole (pages AI vision never read: parked,
- *     an accepted partial index, a failed run; or a failed document) is
- *     no evidence: a box, or a reference back, not found on what was read
- *     of it is unchecked — `unpaired`, never `unreturned`, never one-way —
- *     and a sheet of its drawing that is not found is no gap (review fix
- *     pass 4). Broken stays exactly what the sheet itself shows.
+ *     an accepted partial index, a failed run; a failed document; one still
+ *     being indexed) is no evidence: a box, or a reference back, not found
+ *     on what was read of it is unchecked — `unpaired`, never `unreturned`,
+ *     never one-way — and a sheet of its drawing that is not found is no gap
+ *     (review fix pass 4). A box is paired on the SHEET its connector names
+ *     (the page whose title block declares it), so a page whose box numbers
+ *     were never read is never box-complete because another page's were
+ *     (review fix pass 5). Broken stays exactly what the sheet itself shows.
+ *   * A verdict with a finding that waits on a document not read whole only
+ *     FOR NOW (parked, failed, still being indexed — not an accepted partial
+ *     index) is provisional: it never overwrites a settled verdict for what
+ *     is unsettled in it — the row and its coverage are left untouched and
+ *     the sheet is reported under `waitingOn` — and the next computation may
+ *     replace it down to what it settled (replaceDecision; review fix pass
+ *     5). So nothing is refused while a sheet is being indexed: fix pass 4's
+ *     409 for the whole library is gone.
  *   * A stored verdict under a known revision is never replaced by a less
- *     severe one (RANK — mayReplaceStored).
+ *     severe one (RANK — replaceDecision): what a row SETTLED is never
+ *     lowered.
  *   * A gap ("isn't in the set") is judged only inside a series the library
  *     holds — two or more different numbers of it (seriesHeldBySet). A
  *     sheet in a series the library does not hold is recorded for what is
@@ -1013,6 +1042,8 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
  *     record.
  *   * Pages AI vision never read (an accepted partial index) keep a sheet
  *     from passing; the finding says why they are unread.
+ *   * A missing sheet is filed against EVERY sheet that references it, not
+ *     only the six the lens lists (review fix pass 5).
  *   * A sheet that is not ready and declares no drawing number has no key
  *     yet: it is reported under notRecorded, never filed under its filename
  *     (review fix pass 4).
@@ -1028,27 +1059,14 @@ const sameRev = (a: string, b: string) => a.trim().toUpperCase() === b.trim().to
 async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const { docs, error: docErr } = await loadVisibleDocs(orgId, userId, libraryId);
   if (docErr) return bad(docErr, docErr === "Not a member of this workspace" ? 403 : 500);
-  if (docs.length === 0) return NextResponse.json({ recorded: 0, counts: {}, sheets: [], alreadyRecorded: [], notRecorded: [] });
-
-  // Nothing is recorded while a sheet of the library is being indexed (DWG-
-  // 13, review fix pass 4). Its index is half-built: references to it no
-  // longer resolve, its boxes and its references back are gone. Any sheet
-  // judged against it — re-audited for its own change, or new — would file
-  // a one-way, a gap or a box that is not there, and a verdict at a known
-  // revision is never lowered (RANK), so the false finding would stand for
-  // good. Comparing only each sheet's own index (fix pass 3) did not stop
-  // that: it chose which sheets are re-audited, not what they are judged on.
-  const indexingNow = indexingNowOf(docs);
-  if (indexingNow.length > 0) {
-    const names = indexingNow.map((d) => d.name);
-    return NextResponse.json({
-      error: `${names.length} sheet(s) are being indexed right now (${names.slice(0, 4).join(", ")}${names.length > 4 ? ", …" : ""}) ` +
-        "— nothing was recorded: a verdict judged against a half-built index would be filed for good. Record the " +
-        "audit once indexing finishes.",
-      indexingNow: names,
-    }, { status: 409 });
+  if (docs.length === 0) {
+    return NextResponse.json({ recorded: 0, counts: {}, sheets: [], alreadyRecorded: [], notRecorded: [], keptStored: [], waitingOn: [] });
   }
 
+  // A sheet being indexed right now (queued or mid-read) is not refused for
+  // the whole library (review fix pass 5): it is not read whole, so what is
+  // not found on it is unchecked, and a verdict that waits on it is
+  // provisional — never overwriting a settled one (replaceDecision).
   const index = await loadEntityIndex(docs.map((d) => d.id));
   if (index.error === "migration-missing") {
     return bad("Drawing intelligence needs migration 20260921 — run it, then rebuild the index.", 424);
@@ -1090,13 +1108,19 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   }
 
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
-  const { selfByDoc, refsByDoc } = indexMaps(index);
+  const { selfByDoc, selfPages, refsByDoc } = indexMaps(index);
   // A sheet not read whole is no evidence of what it lacks (review fix pass
   // 4): what is not found on it is unchecked, never a defect of the sheet
   // that points at it.
   const incomplete = notReadWhole(docs);
   const audit = auditDrawingRefs(docs.map((d) => ({ id: d.id, name: d.name })), refsByDoc, selfByDoc, null, incomplete);
-  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete);
+  const opc = auditOpcBoxes(index.opc, selfByDoc, nameById, incomplete, selfPages);
+  // The documents an unchecked finding waits on, when they are not read
+  // whole only for now: such a finding is provisional (review fix pass 5).
+  const forNow = forNowIncomplete(docs, incomplete);
+  const waitsOn = (ids: readonly (string | undefined)[]): string[] => [...new Set(ids)]
+    .filter((id): id is string => !!id && forNow.has(id))
+    .map((id) => `${nameById.get(id) ?? "Sheet"} (${incomplete.get(id)})`);
 
   // The set's scope (DWG-6): the series this library holds. A sheet in a
   // series it does not hold is still recorded; gaps in that series are not
@@ -1215,16 +1239,22 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const verdicts = verdictsForSheets(sheets.filter((s) => needing.has(s.documentId)), {
     connectorsWithNoTarget: opc.noRef.map((n) => ({ sheet: n.sheet, box: n.box })),
     unreturnedConnectors: opc.unreturned.map((u) => ({ from: u.from, to: u.to, box: u.box })),
+    // Every referencing sheet — never the lens's six (review fix pass 5).
     missingInSeries: missingWithinHeldSeries(audit.missingInSeries, heldSeries)
-      .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy })),
+      .map((m) => ({ ref: m.ref, referencedBy: m.referencedByAll })),
     oneWay: audit.oneWay.map((o) => ({ from: o.from, to: o.to })),
     unreadableConnectors: opc.unknown.map((u) => ({ sheet: u.sheet, box: u.box })),
-    unpairedConnectors: opc.unpaired.map((u) => ({ from: u.from, to: u.to, box: u.box, unread: u.unread })),
+    // A box the pairing could not check on a target not read whole waits on
+    // it while that is only for now; one on a page whose box numbers were
+    // never read does not.
+    unpairedConnectors: opc.unpaired.map((u) => ({
+      from: u.from, to: u.to, box: u.box, unread: u.unread, why: u.why, waitsOn: u.unread ? waitsOn([u.toId]) : [],
+    })),
     // Checks that needed a sheet nobody read whole: unchecked, never one-way
     // and never a gap (review fix pass 4).
-    oneWayUnread: audit.oneWayUnread.map((o) => ({ from: o.from, to: o.to, unread: o.unread })),
+    oneWayUnread: audit.oneWayUnread.map((o) => ({ from: o.from, to: o.to, unread: o.unread, waitsOn: waitsOn([o.toId]) })),
     missingUnread: missingWithinHeldSeries(audit.missingUnread, heldSeries)
-      .map((m) => ({ ref: m.ref, referencedBy: m.referencedBy, maybeIn: m.maybeIn })),
+      .map((m) => ({ ref: m.ref, referencedBy: m.referencedByAll, maybeIn: m.maybeIn, waitsOn: waitsOn(m.maybeInIds) })),
     // The pages nobody read are not a clean bill — and the finding says
     // whose decision left them unread: only a controller's accepted partial
     // index is "accepted" (review fix pass 4).
@@ -1233,45 +1263,45 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
       .map((d) => ({
         sheet: d.name,
         pages: [...(d.vision_failed_pages ?? [])].sort((a, b) => a - b),
-        why: d.vision_partial_accepted && d.status === "ready" && !isParked(d) ? "partial index accepted"
+        why: isAcceptedPartial(d) ? "partial index accepted"
           : d.status === "error" ? "its indexing failed"
           : "waiting on AI vision",
       })),
   });
 
   // Two sheets of one set can declare the same number; the unique index would
-  // reject the batch outright. Keep the more severe verdict — a clean sheet
-  // must never mask a broken one filed under the same number — and record
-  // every document it covers: each one that was read, with its index's
-  // fingerprint (a `skipped` sheet is covered by nothing).
-  const bestByKey = new Map<string, SheetVerdict>();
-  const coverageByKey = new Map<string, Record<string, string>>();
-  for (const v of verdicts) {
-    const key = `${v.sheetNumber}@${v.revision}`;
-    const was = bestByKey.get(key);
-    if (!was || RANK[v.status] > RANK[was.status]) bestByKey.set(key, v);
-    const covered = coverageByKey.get(key) ?? {};
-    if (v.status !== "skipped") covered[v.documentId] = fingerprints.get(v.documentId) ?? "";
-    coverageByKey.set(key, covered);
-  }
-  for (const [key, v] of bestByKey) bestByKey.set(key, { ...v, coverage: coverageByKey.get(key) ?? {} });
-  // …and never replace a stored verdict with a less severe one (DWG-6) —
-  // except under an unknown revision, where the latest verdict is the only
-  // one that can be about the drawing in front of us. On the org-wide key
-  // (before 20261124) a row may be ANOTHER library's verdict, computed over
-  // another set: that exception is for this library's own row, and a row
-  // filed by another library (or by a writer that never said which) is
-  // never lowered, whatever its revision.
+  // reject the batch outright. One row per key: the more severe verdict, with
+  // every document it covers and the basis each was computed from
+  // (mergeVerdictsByKey).
+  const merged = mergeVerdictsByKey(verdicts, (id) => fingerprints.get(id) ?? "");
+  // …and never replace what a stored verdict SETTLED with something less
+  // severe (DWG-6), nor a settled verdict with a provisional one for what is
+  // unsettled in it (review fix pass 5) — except under an unknown revision,
+  // where the latest verdict is the only one that can be about the drawing
+  // in front of us. On the org-wide key (before 20261124) a row may be
+  // ANOTHER library's verdict, computed over another set: that exception is
+  // for this library's own row, and a row filed by another library (or by a
+  // writer that never said which) is never lowered, whatever its revision.
   const libraryOf = (details: unknown) => (details as { libraryId?: unknown } | null)?.libraryId;
   const keptStored: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }> = [];
-  const deduped = [...bestByKey.values()].filter((v) => {
+  const waitingOn: Array<{ sheetNumber: string; revision: string; stored: string; computed: string; waitingOn: string[] }> = [];
+  const deduped = merged.filter((v) => {
     const stored = priorRows.find((r) => r.sheet_number === v.sheetNumber && r.revision_code === v.revision);
-    const foreign = legacyKey && !!stored && libraryOf(stored.audit_details) !== libraryId;
-    if (stored && (foreign ? wouldLowerSeverity(stored.status, v.status) : !mayReplaceStored(stored, v.status))) {
+    if (!stored) return true;
+    const foreign = legacyKey && libraryOf(stored.audit_details) !== libraryId;
+    const decision = replaceDecision(
+      { revision_code: stored.revision_code, status: stored.status, provisional: storedProvisional(stored.audit_details) },
+      v, { neverLower: foreign },
+    );
+    if (decision === "keep") {
       keptStored.push({ sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status });
-      return false;
+    } else if (decision === "wait") {
+      waitingOn.push({
+        sheetNumber: v.sheetNumber, revision: v.revision, stored: stored.status, computed: v.status,
+        waitingOn: [...(v.provisional?.waitingOn ?? [])],
+      });
     }
-    return true;
+    return decision === "write";
   });
 
   if (deduped.length > 0) {
@@ -1316,11 +1346,17 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
         ...v.details.unreadableConnectors, ...v.details.unpairedConnectors, ...v.details.uncheckedReferences,
         ...v.details.unreadPages,
       ],
+      // Recorded provisional: what it waits on, and what is settled.
+      ...(v.provisional ? { waitingOn: [...v.provisional.waitingOn], settledStatus: v.provisional.settledStatus } : {}),
     })),
     // DWG-13: what was NOT re-audited, and why.
     alreadyRecorded,
     notRecorded,
+    // Stored verdicts left as they are: one a computation would lower
+    // (keptStored), and one a computation differs from only in what waits
+    // on a sheet not read whole yet (waitingOn — judged again once it is).
     keptStored,
+    waitingOn,
     // DWG-6: series the library holds no more than one number of — gaps in
     // them not judged.
     seriesNotJudged: notJudged,

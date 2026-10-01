@@ -40,8 +40,10 @@ type Intel = DrawingIntel & {
   notCounted?: string[];
   opcUnknown?: Array<{ box: string; sheet: string; page: number; line: string }>;
   /** Boxes whose continuation sheet has no box numbers read (DWG-4), or
-   *  was not read whole (`unread` says why — review fix pass 4). */
-  opcUnpaired?: Array<{ box: string; from: string; to: string; line: string; unread?: string }>;
+   *  was not read whole (`unread` says why — review fix pass 4), or is a page
+   *  on which no box numbers were read (`why` says which — review fix pass
+   *  5). */
+  opcUnpaired?: Array<{ box: string; from: string; to: string; line: string; unread?: string; why?: string }>;
   opcPairing?: "ok" | "no-boxes";
   /** "counts": before 20261124, chunks counted but never read (DWG-11). */
   textStats?: "measured" | "counts";
@@ -57,6 +59,12 @@ type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
   seriesNotJudged?: string[];
   /** Before 20261124: recorded on the org-wide key, and why that matters. */
   notice?: string;
+  /** Stored verdicts left as they are: one a computation now would lower
+   *  (never lowered at a known revision)… */
+  keptStored?: Array<{ sheetNumber: string; revision: string; stored: string; computed: string }>;
+  /** …and one a computation now differs from only in what waits on a sheet
+   *  not read whole yet — judged again once it is (review fix pass 5). */
+  waitingOn?: Array<{ sheetNumber: string; revision: string; stored: string; computed: string; waitingOn: string[] }>;
 };
 type RebuildResult = {
   ok: boolean; docs: number; busy: string[]; errors: string[]; remaining: number; cursor: string | null; error?: string;
@@ -116,6 +124,8 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     counts: Partial<Record<RecordedAuditSheet["status"], number>>;
     alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
     notRecorded: NonNullable<RecordResult["notRecorded"]>;
+    keptStored: NonNullable<RecordResult["keptStored"]>;
+    waitingOn: NonNullable<RecordResult["waitingOn"]>;
     seriesNotJudged: string[];
     notice: string | null;
   } | null>(null);
@@ -207,23 +217,30 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
 
   // Commit the audit. The value isn't the verdict on screen — that's already
   // here — it's the RECORD: next time somebody asks whether this sheet was
-  // checked at this revision, there's an answer instead of a re-read. While
-  // a sheet of the library is being indexed the route refuses (409) and
-  // records nothing; its message, naming the sheets, is the toast.
+  // checked at this revision, there's an answer instead of a re-read. A
+  // refusal (a partial index, a missing migration) records nothing; its
+  // message is the toast. A stored verdict the route left as it is — kept,
+  // or waiting on a sheet not read whole yet — is said, never only in the
+  // JSON (review fix pass 5).
   const record = async () => {
     setBusy("record");
     try {
       const res = (await recordDrawingAudit(orgId, libraryId)) as RecordResult;
+      const kept = res.keptStored ?? [];
+      const waiting = res.waitingOn ?? [];
       setRecorded({
         recorded: res.recorded, counts: res.counts,
         alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
+        keptStored: kept, waitingOn: waiting,
         seriesNotJudged: res.seriesNotJudged ?? [],
         notice: res.notice ?? null,
       });
       showToast({
         type: "success",
         title: `Audit recorded for ${res.recorded} sheet(s)` +
-          ((res.alreadyRecorded?.length ?? 0) > 0 ? ` — ${res.alreadyRecorded!.length} already recorded at this revision.` : "."),
+          ((res.alreadyRecorded?.length ?? 0) > 0 ? ` — ${res.alreadyRecorded!.length} already recorded at this revision` : "") +
+          (kept.length > 0 ? ` — ${kept.length} stored verdict(s) kept, differing from what was computed now` : "") +
+          (waiting.length > 0 ? ` — ${waiting.length} waiting on a sheet not read whole yet` : "") + ".",
       });
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -314,6 +331,22 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               <b>{recorded.notRecorded.length}</b> not recorded (skipped):{" "}
               {recorded.notRecorded.slice(0, 3).map((n) => `${n.name} — ${n.reason}`).join("; ")}
               {recorded.notRecorded.length > 3 ? "…" : ""}
+            </div>
+          )}
+          {recorded.keptStored.length > 0 && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300">
+              <b>{recorded.keptStored.length}</b> stored verdict(s) kept — a verdict at a known revision is never lowered:{" "}
+              {recorded.keptStored.slice(0, 4).map((k) =>
+                `${k.sheetNumber} rev ${k.revision || "—"}: kept ${k.stored.replace(/_/g, " ")} — computed ${k.computed.replace(/_/g, " ")} now`).join("; ")}
+              {recorded.keptStored.length > 4 ? "…" : ""}
+            </div>
+          )}
+          {recorded.waitingOn.length > 0 && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300">
+              <b>{recorded.waitingOn.length}</b> left as stored, waiting on a sheet not read whole yet:{" "}
+              {recorded.waitingOn.slice(0, 4).map((w) =>
+                `${w.sheetNumber} rev ${w.revision || "—"}: kept ${w.stored.replace(/_/g, " ")} — computed ${w.computed.replace(/_/g, " ")} now, waiting on ${w.waitingOn.slice(0, 2).join("; ")}${w.waitingOn.length > 2 ? "…" : ""}`).join("; ")}
+              {recorded.waitingOn.length > 4 ? "…" : ""} — judged again once it is.
             </div>
           )}
           <div className="mt-0.5 opacity-80">
@@ -510,8 +543,9 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
               <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
                 The sheet each of these continues on carries no box numbers in the index — a text layer prints a
                 pennant, not a box number, and a sheet read by AI vision before connector boxes were transcribed has
-                none either — or was not read whole, and the box is not on what was read of it. Whether the box comes
-                back could not be checked: <b>not counted as broken</b>, worth a look on that sheet.
+                none either (in a combined PDF, the page that is that sheet) — or was not read whole, and the box is not
+                on what was read of it. Whether the box comes back could not be checked: <b>not counted as broken</b>,
+                worth a look on that sheet.
               </p>
               <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
                 {intel.opcUnpaired!.map((o, i) => (
@@ -522,6 +556,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       {" → "}
                       <span className="font-bold text-[var(--color-text)]">{o.to}</span>
                       {o.unread && <> (not read whole: {o.unread})</>}
+                      {o.why && <> ({o.why})</>}
                       <span className="block truncate" title={o.line}>{o.line}</span>
                     </span>
                   </li>
