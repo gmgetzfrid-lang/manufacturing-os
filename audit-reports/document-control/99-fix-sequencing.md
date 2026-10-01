@@ -353,9 +353,14 @@ one-paste migrations, independent of one another (any order among them):
   never calls `finalize_reviewed_promote`, and the app after it falls back
   to its three checked writes on a database without the function. After
   the paste a controller passes an active hold only through
-  `publish_revision`'s recorded force (`REV_HOLD_OVERRIDDEN`), never with a
-  bare pointer-and-issue write or an unstamped Archived / Void
-  retirement's exit. An unstamped Superseded source still comes back over a
+  `publish_revision`'s recorded force, or the review promote's own
+  (`finalize_reviewed_promote`'s `p_force_hold`, offered in the inspector
+  after the hold refuses — P14 final review), each recorded
+  (`REV_HOLD_OVERRIDDEN`), never with a bare pointer-and-issue write or an
+  unstamped Archived / Void retirement's exit. An app deployed before P14
+  (a three-step promote with no force) has its controller's review promote
+  of a held Draft / In Review document refused after the paste until the
+  hold is released or the app carrying P14 is deployed. An unstamped Superseded source still comes back over a
   carried hold — the legacy reversal of a split / merge recorded before
   `20261144` (P14 review fix; its inventory counts them); that bare
   un-supersede, and a controller's bare pointer move on a held document
