@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
-  canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp,
+  canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -229,6 +229,13 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
     // every source was superseded. Refused here, before anything is written.
     if (firstIssue.retired) {
       throw new Error(`${describeRetiredRevUp(targetLabel, firstIssue.status)} Nothing was merged.`);
+    }
+    // P13 final review fix: a first issue only a controller can make (the
+    // chain requires sign-off, the target's own policy is 'none') — "submit
+    // it for review first" would open a review with no reviewers. Refused
+    // here, before anything is written.
+    if (firstIssue.controllerOnly) {
+      throw new Error(`${describeControllerOnlyFirstIssue(target.target.documentNumber ?? "the merge target")} Nothing was merged.`);
     }
     if (mode === "require") {
       throw new Error(firstIssue.mustReview

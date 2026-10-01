@@ -986,13 +986,23 @@ export async function createDocumentWithFile(input: {
  *  set and nothing else is asked. A review of it could never be published
  *  (finalizeReviewedRevision refuses a retired document, REV-5) and a direct
  *  publish would bring it back to life as Issued, so every door refuses it
- *  up front with describeRetiredRevUp — restore it first. */
+ *  up front with describeRetiredRevUp — restore it first.
+ *
+ *  `controllerOnly` (P13 final review fix): the chain requires sign-off and
+ *  the document's OWN policy is 'none'. DEC-44 (P13) does not honour that
+ *  'none' for a first issue, but submitForReview opens the roster from the
+ *  policy that resolves for the document — its own 'none', so NO reviewers —
+ *  and the in-review draft could never be published. So for a non-controller
+ *  (never for a controller, who issues it directly) every door refuses it up
+ *  front with describeControllerOnlyFirstIssue instead of routing it to a
+ *  review that cannot complete; `mustReview` stays true (the actor still may
+ *  not publish it unreviewed). */
 export async function firstIssueGateForRevUp(opts: {
   doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
   libraryId: string;
   actor: { orgId: string; actorUserId: string; actorRole?: string };
   live?: { current: string | null; status: string | null; reviewControl?: ReviewControl | null };
-}): Promise<{ firstIssue: boolean; retired: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean }> {
+}): Promise<{ firstIssue: boolean; retired: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean; controllerOnly: boolean }> {
   let live = opts.live;
   if (!live) {
     const { data, error } = await supabase
@@ -1006,7 +1016,7 @@ export async function firstIssueGateForRevUp(opts: {
       }
       : { current: opts.doc.currentVersionId ?? null, status: opts.doc.status ?? null };
   }
-  const seen = { hasCurrentRevision: !!live.current, status: live.status, retired: false };
+  const seen = { hasCurrentRevision: !!live.current, status: live.status, retired: false, controllerOnly: false };
   if (isRetiredStatus(live.status)) return { ...seen, retired: true, firstIssue: false, requiresSignOff: false, mustReview: false };
   if (live.current && isControlledIssueStatus(live.status)) return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
   const chain = await effectiveReviewControlForDocument({
@@ -1017,7 +1027,11 @@ export async function firstIssueGateForRevUp(opts: {
   const principal: Principal = await resolveActorPrincipal({
     uid: opts.actor.actorUserId, orgId: opts.actor.orgId, headlineRole: opts.actor.actorRole,
   });
-  return { ...seen, firstIssue: true, requiresSignOff: true, mustReview: !isControllerPrincipal(principal) };
+  const controller = isControllerPrincipal(principal);
+  return {
+    ...seen, firstIssue: true, requiresSignOff: true, mustReview: !controller,
+    controllerOnly: !controller && chain.mode === "require" && own?.mode === "none",
+  };
 }
 
 /** REV-18 (P13 second review fix): the refusal of a rev-up of a RETIRED
@@ -1027,6 +1041,16 @@ export async function firstIssueGateForRevUp(opts: {
 export function describeRetiredRevUp(label: string, status: string | null): string {
   return `${label} is ${(status ?? "").trim() || "retired"}, and a retired document isn't revised — a review of it could never be published, and publishing onto it would bring it back as Issued. ` +
     "Restore it first (un-archive it, or ask Document Control to un-void it or reverse the supersession), then publish the revision.";
+}
+
+/** REV-18 (P13 final review fix): the refusal of a first issue only a
+ *  controller can make (firstIssueGateForRevUp's `controllerOnly`), in one
+ *  sentence every door uses (revUpDocument, RevUpModal, setLevelRevUp,
+ *  mergeDocuments' gate) — never "submit it for review", which would open a
+ *  review with no reviewers. */
+export function describeControllerOnlyFirstIssue(label: string): string {
+  return `Only Document Control can issue ${label}: this library requires reviewer sign-off for its first issue, but its own review policy is none, so a review would have no reviewers and could never be published. ` +
+    "Ask Document Control to issue it, or to change its review policy.";
 }
 
 /** REV-18: why a rev-up is a first issue, in one clause (the refusals of
@@ -1106,9 +1130,16 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //     screen — no orphaned object in storage per conflict. The RPC still
   //     re-checks transactionally (this is an optimization, not the guard).
   if (!input.asBranch) {
-    const { data: freshDoc } = await supabase
+    const label = doc.documentNumber || doc.title || "this document";
+    // P13 final review fix: this read feeds the first-issue and retired
+    // refusals below, so it fails CLOSED like the gate's own read — an error,
+    // or no row (deleted, or no longer visible), refuses before anything is
+    // uploaded; never the caller's cached row.
+    const { data: freshDoc, error: freshErr } = await supabase
       .from("documents").select("current_version_id, status, review_control").eq("id", doc.id).maybeSingle();
-    const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
+    if (freshErr) throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${freshErr.message}`);
+    if (!freshDoc) throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: the document was not found.`);
+    const liveCurrent = (freshDoc.current_version_id as string | null) ?? null;
     // REV-18 (addendum 1): a rev-up that makes the document a controlled
     // issue for the FIRST time — its first file (no current revision: a
     // register row, e.g. a CSV import) or the publish of a document whose
@@ -1118,14 +1149,12 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     // creation gate is asked here, before anything is uploaded, so the
     // refusal comes in this flow's words (the database refuses the same
     // write: 20261139 for a first pointer, 20261144 for an issue).
-    const live = freshDoc
-      ? {
-        current: liveCurrent,
-        status: (freshDoc.status as string | null) ?? null,
-        reviewControl: (freshDoc.review_control as ReviewControl | null) ?? null,
-      }
-      : { current: doc.currentVersionId ?? null, status: doc.status ?? null };
-    if (freshDoc && liveCurrent !== expectedBase) {
+    const live = {
+      current: liveCurrent,
+      status: (freshDoc.status as string | null) ?? null,
+      reviewControl: (freshDoc.review_control as ReviewControl | null) ?? null,
+    };
+    if (liveCurrent !== expectedBase) {
       const { data: cur } = liveCurrent
         ? await supabase.from("document_versions")
             .select("id, revision_label, created_by, created_by_name, created_at, change_log")
@@ -1141,7 +1170,6 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
         currentChangeLog: (c?.change_log as string | null) ?? null,
       });
     }
-    const label = doc.documentNumber || doc.title || "this document";
     let gate: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
     try {
       gate = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole }, live });
@@ -1151,6 +1179,8 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
     firstIssue = gate;
     // P13 second review fix: a retired document is not revised (restore it first).
     if (gate.retired) throw new Error(`${describeRetiredRevUp(label, gate.status)} Nothing was uploaded.`);
+    // P13 final review fix: a review of it would have no reviewers.
+    if (gate.controllerOnly) throw new Error(`${describeControllerOnlyFirstIssue(label)} Nothing was uploaded.`);
     if (gate.mustReview) {
       throw new Error(
         `This library requires reviewer sign-off, and ${describeFirstIssue(label, gate, revisionLabel)} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +

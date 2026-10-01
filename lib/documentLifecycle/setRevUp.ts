@@ -10,7 +10,7 @@
 // by the caller because each sheet's file is different.
 
 import { logRevisionEvent } from "@/lib/audit";
-import { revUpDocument, submitForReview, firstIssueGateForRevUp, describeRetiredRevUp } from "@/lib/revisions";
+import { revUpDocument, submitForReview, firstIssueGateForRevUp, describeRetiredRevUp, describeControllerOnlyFirstIssue } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
@@ -73,6 +73,7 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
       // (fresh versions have no roster, so the DB guard never fires either).
       let willReview = false;
       let retiredRefusal: string | null = null;
+      let controllerOnlyRefusal: string | null = null;
       try {
         const control = await effectiveReviewControlForDocument({
           reviewControl: sheet.doc.reviewControl ?? null,
@@ -95,6 +96,13 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         if (firstIssue.retired) {
           retiredRefusal = describeRetiredRevUp(sheet.doc.documentNumber ?? sheet.doc.id ?? "This sheet", firstIssue.status);
         }
+        // P13 final review fix: a first issue only a controller can make
+        // (the chain requires sign-off, the sheet's own policy is 'none') is
+        // never sent to a review that would have no reviewers. It lands in
+        // `failed` with what to do.
+        if (firstIssue.controllerOnly) {
+          controllerOnlyRefusal = describeControllerOnlyFirstIssue(sheet.doc.documentNumber ?? sheet.doc.id ?? "this sheet");
+        }
         // Batch bumps have no per-sheet "route through review?" checkbox, so
         // publisher_choice defaults to the safe side: through review.
         willReview = effectiveModeForRevUp({ control, changeType, firstIssueMustReview: firstIssue.mustReview }) !== "none";
@@ -106,6 +114,7 @@ export async function setLevelRevUp(input: SetRevUpInput): Promise<SetRevUpResul
         throw new Error(`Couldn't verify the pre-publish review policy for ${sheet.doc.documentNumber ?? sheet.doc.id ?? "this sheet"} — it was not published: ${(e as Error).message}`);
       }
       if (retiredRefusal) throw new Error(`${retiredRefusal} It was not published or submitted.`);
+      if (controllerOnlyRefusal) throw new Error(`${controllerOnlyRefusal} It was not published or submitted.`);
 
       if (willReview) {
         await submitForReview(common);

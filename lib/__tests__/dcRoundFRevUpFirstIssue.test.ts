@@ -35,6 +35,9 @@ const state = vi.hoisted(() => ({
   uid: "u1" as string | null,
   /** a table whose reads answer this error (a column the database lacks) */
   readError: null as null | { table: string; error: { code: string; message: string } },
+  /** ONE read — a table and its exact select list — answers this (the live
+   *  read revUpDocument makes before it uploads, not every read of the table) */
+  selectAnswer: null as null | { table: string; columns: string; answer: { data: unknown; error: unknown } },
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -49,6 +52,23 @@ vi.mock("@/lib/supabase", () => ({
         chain.maybeSingle = async () => answer;
         chain.single = async () => answer;
         return chain;
+      }
+      const sa = state.selectAnswer;
+      if (sa && sa.table === t) {
+        const real = base.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
+        return new Proxy(real, {
+          get(target, prop: string) {
+            if (prop !== "select") return target[prop];
+            return (cols: unknown, ...rest: unknown[]) => {
+              if (cols !== sa.columns) return target.select(cols, ...rest);
+              const chain: Record<string, unknown> = {};
+              for (const m of ["eq", "in", "is", "order", "limit"]) chain[m] = () => chain;
+              chain.maybeSingle = async () => sa.answer;
+              chain.single = async () => sa.answer;
+              return chain;
+            };
+          },
+        });
       }
       return base.from(t);
     };
@@ -103,7 +123,7 @@ vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () 
 
 import {
   revUpDocument, unarchiveDocument, archiveDocument, supersedeDocument, firstIssueGateForRevUp,
-  submitForReview, describeFirstIssue, describeRetiredRevUp, unarchiveRestoreDefault,
+  submitForReview, describeFirstIssue, describeRetiredRevUp, unarchiveRestoreDefault, describeControllerOnlyFirstIssue,
 } from "@/lib/revisions";
 import { RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
 import { finalizeReviewedRevision, effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
@@ -200,6 +220,7 @@ beforeEach(() => {
   state.isOwner = true;
   state.uid = ME;
   state.readError = null;
+  state.selectAnswer = null;
 });
 
 // ─── Addendum 1: the rev-up's first issue ──────────────────────────────────
@@ -788,5 +809,122 @@ describe("P13 third review fix — unarchiveDocument is a checked write", () => 
     await unarchiveDocument({ doc: asRecord(docRow("rc3")), reason: "", orgId: ORG, actorUserId: ME });
     expect(docRow("rc3").status).toBe("Issued");
     expect(unarchiveEvents()[1].details).toMatchObject({ restoredStatus: "Issued", reason: "Restored from archive" });
+  });
+});
+
+// ─── P13 final review fix ───────────────────────────────────────────────────
+describe("P13 final review fix — a first issue only a controller can make is refused up front by every door, never sent to a review with no reviewers", () => {
+  // The chain requires sign-off; the document's OWN policy is 'none'. DEC-44
+  // (P13): that 'none' is not honoured for a first issue — but submitForReview
+  // opens the roster from the policy that resolves for the document (its own
+  // 'none' wins: no reviewers), so the in-review draft could never be published.
+  const OWN_NONE = { review_control: { mode: "none" } };
+  const CONTROLLER_ONLY = /Only Document Control can issue (\S+): this library requires reviewer sign-off for its first issue, but its own review policy is none, so a review would have no reviewers and could never be published\. Ask Document Control to issue it, or to change its review policy\./;
+  beforeEach(() => { state.reviewMode = "require"; });
+
+  it("firstIssueGateForRevUp answers controllerOnly for a non-controller only — and only where the document's own 'none' meets a chain that requires sign-off", async () => {
+    const actor = { orgId: ORG, actorUserId: ME };
+    seedDoc("co1", OWN_NONE); // a Draft
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co1")), libraryId: LIB, actor }))
+      .toMatchObject({ firstIssue: true, requiresSignOff: true, mustReview: true, controllerOnly: true });
+    seedDoc("co2", { ...OWN_NONE, current_version_id: null, status: "Issued" }); // a register row's first file
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co2")), libraryId: LIB, actor })).toMatchObject({ controllerOnly: true });
+    // a controller issues it directly (DEC-63 §2) — never controller-only
+    state.roles = ["Manager", "DocCtrl"];
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co1")), libraryId: LIB, actor }))
+      .toMatchObject({ firstIssue: true, requiresSignOff: true, mustReview: false, controllerOnly: false });
+    state.roles = ["Engineer"];
+    // no own policy (the chain's roster), the document's own 'require' in a 'none' library, an issued document, a retired one: not controller-only
+    seedDoc("co3");
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co3")), libraryId: LIB, actor })).toMatchObject({ mustReview: true, controllerOnly: false });
+    seedDoc("co4", { ...OWN_NONE, status: "Issued" });
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co4")), libraryId: LIB, actor })).toMatchObject({ firstIssue: false, controllerOnly: false });
+    seedDoc("co5", { ...OWN_NONE, status: "Void" });
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co5")), libraryId: LIB, actor })).toMatchObject({ retired: true, controllerOnly: false });
+    state.reviewMode = "none";
+    seedDoc("co6", { review_control: { mode: "require" } });
+    expect(await firstIssueGateForRevUp({ doc: asRecord(docRow("co6")), libraryId: LIB, actor })).toMatchObject({ mustReview: true, controllerOnly: false });
+    expect(describeControllerOnlyFirstIssue("P-1")).toMatch(CONTROLLER_ONLY);
+  });
+
+  it("revUpDocument refuses it in the shared sentence, before anything is uploaded — never \"submit it for review\"; a controller publishes it", async () => {
+    published();
+    const d = seedDoc("cr1", OWN_NONE);
+    const e = (await revUp(d, "Major").catch((err) => err)) as Error;
+    expect(e.message).toMatch(CONTROLLER_ONLY);
+    expect(e.message).toMatch(/^Only Document Control can issue CR1: [\s\S]* Nothing was uploaded\.$/);
+    expect(e.message).not.toMatch(/submit it for review/i);
+    expect(uploadToPath).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
+    state.roles = ["Admin"];
+    await expect(revUp(d, "Major")).resolves.toBeTruthy();
+    expect(state.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("setLevelRevUp puts such a sheet in `failed` with the sentence — no in-review draft is opened for it; the other sheets proceed", async () => {
+    state.canControl = true;
+    published();
+    const issued = seedDoc("cs1", { status: "Issued" });
+    const draft = seedDoc("cs2", OWN_NONE);
+    const r = await setLevelRevUp({
+      setId: "set-co", sheets: [issued, draft].map((d) => ({ doc: asRecord(d), file: pdf(`${d.id}.pdf`), revisionLabel: "1" })),
+      libraryId: LIB, sharedChangeLog: "bump", changeType: "Minor" as never, orgId: ORG, actorUserId: ME,
+    });
+    expect(r).toMatchObject({ succeeded: 1, sentForReview: 0 });
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0]).toMatchObject({ documentId: "cs2" });
+    expect(r.failed[0].error).toMatch(CONTROLLER_ONLY);
+    expect(r.failed[0].error).toMatch(/It was not published or submitted\.$/);
+    expect(docRow("cs2").pending_version_id).toBeNull(); // before the fix: an in-review draft that could never be published
+    expect(T("document_versions").filter((v) => v.record_id === "cs2")).toHaveLength(1);
+  });
+
+  it("mergeDocuments refuses such a target in its gate — not \"submit the merged revision for review first\" — before any source is superseded", async () => {
+    state.canControl = true;
+    published();
+    const t = seedDoc("cm1", OWN_NONE);
+    const a = seedDoc("cm2", { status: "Issued" });
+    const e = (await mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp: { file: pdf("m.pdf"), revisionLabel: "1", changeLog: "merged", changeType: "Major" as never }, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    }).catch((err) => err)) as Error;
+    expect(e.message).toMatch(CONTROLLER_ONLY);
+    expect(e.message).toMatch(/Nothing was merged\.$/);
+    expect(e.message).not.toMatch(/Submit the merged revision for review/);
+    expect(docRow("cm2").status).toBe("Issued");
+    expect(T("document_supersessions")).toHaveLength(0);
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("P13 final review fix — revUpDocument's live read fails closed (it feeds the first-issue and retired refusals)", () => {
+  const LIVE = "current_version_id, status, review_control";
+
+  it("a read error refuses before anything is uploaded, in the gate's words — never the caller's cached row (which here says Issued over a live Draft in a require library)", async () => {
+    state.reviewMode = "require";
+    published();
+    const d = seedDoc("lr1"); // live: a Draft — a first issue the engineer may not publish
+    const cached = { ...asRecord(d), status: "Issued" } as DocumentRecord;
+    state.selectAnswer = { table: "documents", columns: LIVE, answer: { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } } };
+    await expect(revUpDocument({
+      doc: cached, libraryId: LIB, file: pdf("x.pdf"), revisionLabel: "1", changeLog: "narrative", changeType: "Minor" as never,
+      orgId: ORG, actorUserId: ME, expectedBaseVersionId: "lr1-v0",
+    })).rejects.toThrow("Couldn't verify the review policy for LR1 — nothing was uploaded or published: canceling statement due to statement timeout");
+    expect(uploadToPath).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+
+  it("no row (deleted, or no longer visible) is not found — refused, never a publish decided on the cached row", async () => {
+    published();
+    const d = seedDoc("lr2", { status: "Issued" });
+    state.selectAnswer = { table: "documents", columns: LIVE, answer: { data: null, error: null } };
+    await expect(revUp(d, "Minor")).rejects.toThrow("Couldn't verify the review policy for LR2 — nothing was uploaded or published: the document was not found.");
+    expect(uploadToPath).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
+    // the same document, read: published as before
+    state.selectAnswer = null;
+    await expect(revUp(d, "Minor")).resolves.toBeTruthy();
+    expect(state.rpc).toHaveBeenCalledTimes(1);
   });
 });

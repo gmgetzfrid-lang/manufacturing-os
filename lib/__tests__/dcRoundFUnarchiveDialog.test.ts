@@ -15,6 +15,12 @@
 // default every un-archive had before — Issued, decided by the database —
 // never a silent Draft.
 //
+// Final review fix: the Draft restore is offered only where it would land —
+// after the require limb's sentence, and after the new-door hold's only for
+// a controller. The publisher tier's refusals (OWN-15: no authority, a hold)
+// refuse a Draft restore the same way, so the dialog says to release the
+// hold first or ask Document Control instead.
+//
 // Driven as rendered (jsdom); the data layer is mocked (its behaviour is
 // driven end to end in dcRoundFRevUpFirstIssue.test.ts).
 
@@ -28,6 +34,9 @@ const s = vi.hoisted(() => ({
   gate: null as null | Promise<void>,
   unarchiveDocument: vi.fn(),
   archiveDocument: vi.fn(),
+  /** the actor's role collection, as the membership row holds it */
+  roles: ["Engineer"] as string[],
+  resolveActorPrincipal: vi.fn(),
 }));
 
 vi.mock("@/lib/revisions", () => ({
@@ -36,6 +45,9 @@ vi.mock("@/lib/revisions", () => ({
   unarchiveDocument: (...a: unknown[]) => s.unarchiveDocument(...a),
   archiveDocument: (...a: unknown[]) => s.archiveDocument(...a),
 }));
+vi.mock("@/lib/principal", () => ({
+  resolveActorPrincipal: (...a: unknown[]) => s.resolveActorPrincipal(...a),
+}));
 
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import type { DocumentRecord } from "@/types/schema";
@@ -43,6 +55,12 @@ import type { DocumentRecord } from "@/types/schema";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const UNREVIEWED = "This library requires reviewer sign-off, so a revision that was not reviewed can't be made a controlled issue; submit it for review, or ask Document Control.";
+const HOLD_ISSUE = "Document has an active hold; release the hold before issuing it.";
+const NO_AUTHORITY = "You do not have authority to publish revisions in this library.";
+const HOLD_PUBLISH = "Document has an active hold; release the hold before publishing a new revision.";
+/** unarchiveDocument's wrapping of the guard's sentence (lib/revisions.ts) */
+const refused = (sentence: string) => new Error(`The document was NOT restored (${sentence}) — nothing was changed.`);
+const DRAFT_HINT = "You can restore it as a Draft instead";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -51,6 +69,10 @@ beforeEach(() => {
   s.archiveDocument.mockReset().mockResolvedValue(undefined);
   s.defaultAnswer = { status: "Issued", basis: "unknown" };
   s.gate = null;
+  s.roles = ["Engineer"];
+  s.resolveActorPrincipal.mockReset().mockImplementation(async (i: { uid: string; orgId?: string; headlineRole?: string }) => ({
+    uid: i.uid, orgId: i.orgId, role: (i.headlineRole ?? s.roles[0]), roles: s.roles,
+  }));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -75,12 +97,12 @@ function choose(value: string) {
 }
 
 const doc = { id: "d1", documentNumber: "P-101", title: "P-101", status: "Archived", currentVersionId: "v1" } as unknown as DocumentRecord;
-async function open(mode: "archive" | "unarchive") {
+async function open(mode: "archive" | "unarchive", actorRole?: string) {
   const onSuccess = vi.fn();
   const onClose = vi.fn();
   await act(async () => {
     root.render(React.createElement(ArchiveConfirmModal, {
-      isOpen: true, onClose, doc, mode, orgId: "o1", actorUserId: "u1", onSuccess,
+      isOpen: true, onClose, doc, mode, orgId: "o1", actorUserId: "u1", actorRole, onSuccess,
     }));
   });
   return { onSuccess, onClose };
@@ -180,5 +202,56 @@ describe("REV-18 (P13 second review fix) — the un-archive dialog asks what the
     await click(button("Archive Document"));
     expect(s.archiveDocument).toHaveBeenCalledTimes(1);
     expect(onSuccess).toHaveBeenCalledWith();
+  });
+});
+
+describe("REV-18 (P13 final review fix) — the Draft restore is offered only where it would land", () => {
+  async function refuseIssued(sentence: string, actorRole?: string) {
+    const { onSuccess, onClose } = await open("unarchive", actorRole);
+    await tick();
+    expect(select()!.value).toBe("Issued");
+    s.unarchiveDocument.mockRejectedValueOnce(refused(sentence));
+    await click(button("Restore Document"));
+    expect(host.textContent).toContain(sentence); // the guard's own sentence is always shown
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  }
+
+  it("the publisher tier's refusals (OWN-15) refuse a Draft restore the same way: no authority -> ask Document Control; the publish hold -> release the hold first — never the Draft hint", async () => {
+    await refuseIssued(NO_AUTHORITY);
+    expect(host.textContent).not.toContain(DRAFT_HINT);
+    expect(host.textContent).toContain("Restoring it as a Draft needs the same authority — ask Document Control to restore it.");
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    await refuseIssued(HOLD_PUBLISH);
+    expect(host.textContent).not.toContain(DRAFT_HINT);
+    expect(host.textContent).toContain("Restoring it as a Draft is refused the same way: the hold must be released first (or ask Document Control).");
+    // neither asks who the actor is: the publisher tier binds everyone short of a controller, and a controller never meets it
+    expect(s.resolveActorPrincipal).not.toHaveBeenCalled();
+  });
+
+  it("the new-door hold refuses only the issue: a controller (read from the role collection, not the headline) is offered the Draft restore; anyone else is told to release the hold first", async () => {
+    await refuseIssued(HOLD_ISSUE, "Engineer");
+    expect(host.textContent).not.toContain(DRAFT_HINT);
+    expect(host.textContent).toContain("the hold must be released first (or ask Document Control)");
+    expect(s.resolveActorPrincipal).toHaveBeenCalledWith({ uid: "u1", orgId: "o1", headlineRole: "Engineer" });
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    s.roles = ["Manager", "DocCtrl"]; // an additively-held DocCtrl under a Manager headline is a controller (OWN-3)
+    await refuseIssued(HOLD_ISSUE, "Manager");
+    expect(host.textContent).toContain(`${DRAFT_HINT} (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released.`);
+    expect(host.textContent).not.toContain("the hold must be released first");
+    // …and the Draft restore it offers is the one that lands
+    await choose("Draft");
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls.at(-1)![0]).toMatchObject({ restoreStatus: "Draft" });
+  });
+
+  it("the require limb's sentence keeps the Draft hint (a Draft restore is never decided by it), and asks nothing more", async () => {
+    await refuseIssued(UNREVIEWED);
+    expect(host.textContent).toContain(`nothing was changed. ${DRAFT_HINT} (choose Draft above), then submit its revision for review.`);
+    expect(s.resolveActorPrincipal).not.toHaveBeenCalled();
   });
 });

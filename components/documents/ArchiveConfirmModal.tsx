@@ -9,19 +9,48 @@
 // controlled issue the database decides (20261144): a Draft archived after
 // that migration (the guard stamped it 'not-issued') comes back a Draft by
 // default, and a refused restore to Issued says the Draft restore is still
-// open — never a dead end. Anything the stamp does not record keeps the
-// default every un-archive had before (Issued — third review fix): Draft is
-// pre-selected only on the guard's evidence, never by default.
+// open — never a dead end — where it would land, and otherwise what to do
+// (final review fix: afterIssueRefusal). Anything the stamp does not record
+// keeps the default every un-archive had before (Issued — third review fix):
+// Draft is pre-selected only on the guard's evidence, never by default.
 
 import React, { useEffect, useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore } from "lucide-react";
 import {
   archiveDocument, unarchiveDocument, unarchiveRestoreDefault, UNARCHIVE_RESTORE_STATUSES,
 } from "@/lib/revisions";
-import { isIssueRefusal } from "@/lib/issueStatus";
+import { isIssueRefusal, ISSUE_REFUSAL } from "@/lib/issueStatus";
+import { resolveActorPrincipal } from "@/lib/principal";
+import { isControllerPrincipal } from "@/lib/permissions";
 import type { DocumentRecord } from "@/types/schema";
 
 type RestoreStatus = (typeof UNARCHIVE_RESTORE_STATUSES)[number];
+
+/** REV-18 (P13 final review fix): what is still open after the guard refused
+ *  a restore to Issued. The Draft restore is offered only where it would
+ *  land: the require limb (an unreviewed revision) never decides a Draft, and
+ *  the new-door hold refuses only the issue, so a controller's Draft restore
+ *  passes. For anyone short of a controller the publisher tier (OWN-15)
+ *  refuses an un-archive in ANY status over a hold or without the authority,
+ *  so a Draft is no way round those: release the hold, or ask Document
+ *  Control. The controller tier is read as the guard reads it (the role
+ *  collection, not the headline). */
+async function afterIssueRefusal(
+  message: string, actor: { orgId: string; actorUserId: string; actorRole?: string },
+): Promise<string> {
+  if (message.includes(ISSUE_REFUSAL.unreviewed)) {
+    return "You can restore it as a Draft instead (choose Draft above), then submit its revision for review.";
+  }
+  const holdFirst = "Restoring it as a Draft is refused the same way: the hold must be released first (or ask Document Control).";
+  if (message.includes(ISSUE_REFUSAL.newDoorHold)) {
+    const principal = await resolveActorPrincipal({ uid: actor.actorUserId, orgId: actor.orgId, headlineRole: actor.actorRole });
+    return isControllerPrincipal(principal)
+      ? "You can restore it as a Draft instead (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released."
+      : holdFirst;
+  }
+  if (message.includes(ISSUE_REFUSAL.publishHold)) return holdFirst;
+  return "Restoring it as a Draft needs the same authority — ask Document Control to restore it.";
+}
 
 interface ArchiveConfirmModalProps {
   isOpen: boolean;
@@ -83,10 +112,10 @@ export default function ArchiveConfirmModal({
       onClose();
     } catch (e) {
       const message = (e as Error).message || `Failed to ${mode}`;
-      // REV-18: a refused restore to Issued is the issue rule — the Draft
-      // restore is still open (then submit the revision for review).
+      // REV-18: a refused restore to Issued is the issue rule — the dialog
+      // says what is still open (the Draft restore only where it would land).
       setError(!isArchive && restoreStatus === "Issued" && isIssueRefusal(message)
-        ? `${message} You can restore it as a Draft instead (choose Draft above), then submit its revision for review.`
+        ? `${message} ${await afterIssueRefusal(message, { orgId, actorUserId, actorRole })}`
         : message);
     } finally {
       setBusy(false);

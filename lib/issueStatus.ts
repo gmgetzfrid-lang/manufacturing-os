@@ -64,14 +64,28 @@ export function isIssueTransition(input: {
   return input.hasCurrentRevision && !isControlledIssueStatus(input.fromStatus) && isControlledIssueStatus(input.toStatus);
 }
 
+/** REV-18 (P13 final review fix): the guard's refusals by name — which one
+ *  refused decides what is still open (the un-archive dialog offers the Draft
+ *  restore only where it would land). `newDoorHold` and `unreviewed` are
+ *  20261144's issue block (the new-door hold binds a controller too; the
+ *  require limb never does); `noAuthority` and `publishHold` are the
+ *  publisher tier's (OWN-15), which refuses any un-archive — a Draft restore
+ *  included — for anyone short of a controller. */
+export const ISSUE_REFUSAL = {
+  newDoorHold: "release the hold before issuing it",
+  unreviewed: "a revision that was not reviewed can't be made a controlled issue",
+  noAuthority: "You do not have authority to publish revisions in this library",
+  publishHold: "release the hold before publishing a new revision",
+} as const;
+
 /** REV-18: the sentences the publish guard refuses an issue with (20261144),
  *  and the ones it already refused the same write with for a non-publisher
  *  (OWN-15) — what a status editor recognises as "the issue rule said no". */
 export const ISSUE_REFUSAL_SENTENCES = [
-  "release the hold before issuing it",
-  "a revision that was not reviewed can't be made a controlled issue",
-  "You do not have authority to publish revisions in this library",
-  "release the hold before publishing a new revision",
+  ISSUE_REFUSAL.newDoorHold,
+  ISSUE_REFUSAL.unreviewed,
+  ISSUE_REFUSAL.noAuthority,
+  ISSUE_REFUSAL.publishHold,
 ] as const;
 
 /** REV-18: is this error text the publish guard refusing a status change? */

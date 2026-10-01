@@ -8,6 +8,11 @@
 // mode is the policy's after the hatch, as before P13. REV-7 still binds it
 // (a branch can't skip a review the CHANGE needs).
 //
+// Final review fix: a first issue only a controller can make (the gate's
+// `controllerOnly` — the chain requires sign-off, the document's own policy
+// is 'none', so a review would have no reviewers) is refused up front, never
+// submitted for review.
+//
 // effectiveModeForRevUp is the real one (lib/reviewControl.ts); RevUpModal is
 // driven as rendered (jsdom) with the data layer mocked.
 
@@ -16,7 +21,9 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const s = vi.hoisted(() => ({
-  gate: { firstIssue: false, retired: false, hasCurrentRevision: true, status: "Issued" as string | null, requiresSignOff: false, mustReview: false },
+  gate: { firstIssue: false, retired: false, hasCurrentRevision: true, status: "Issued", requiresSignOff: false, mustReview: false } as {
+    firstIssue: boolean; retired: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean; controllerOnly?: boolean;
+  },
   revUpDocument: vi.fn(),
   submitForReview: vi.fn(),
   logAuditAction: vi.fn(),
@@ -37,6 +44,7 @@ vi.mock("@/lib/revisions", () => {
     listVersions: vi.fn(async () => []),
     firstIssueGateForRevUp: vi.fn(async () => s.gate),
     describeRetiredRevUp: () => "retired",
+    describeControllerOnlyFirstIssue: (label: string) => `Only Document Control can issue ${label}: its own review policy is none, so a review would have no reviewers.`,
   };
 });
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
@@ -140,5 +148,30 @@ describe("RevUpModal — a Minor branch after a stale base is not refused by the
     expect(host.textContent).not.toContain("a branch can't skip it");
     // RG-11: the branch took the Minor hatch in a gated library — recorded, judged by the branch's own mode
     expect(s.logAuditAction).toHaveBeenCalledWith(expect.objectContaining({ action: "REVIEW_GATE_SKIPPED", details: expect.objectContaining({ branched: true }) }));
+  });
+});
+
+describe("RevUpModal — a first issue only a controller can make is refused up front (P13 final review fix)", () => {
+  it("the gate answers controllerOnly: the refusal is shown, publishing is disabled, and nothing is submitted for review (a review would have no reviewers)", async () => {
+    s.gate = { firstIssue: true, retired: false, hasCurrentRevision: true, status: "Draft", requiresSignOff: true, mustReview: true, controllerOnly: true };
+    await render({ ...baseDoc, status: "Draft" } as DocumentRecord);
+    await tick();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Only Document Control can issue P-101: its own review policy is none, so a review would have no reviewers.");
+    expect(host.textContent).not.toContain("will be submitted as an");
+    const go = button("Submit for Review");
+    expect(go.disabled).toBe(true); // before the fix: enabled, and it opened an in-review draft no one could sign
+    await click(go);
+    expect(s.submitForReview).not.toHaveBeenCalled();
+    expect(s.revUpDocument).not.toHaveBeenCalled();
+  });
+
+  it("without controllerOnly the same first issue still goes to review, as before", async () => {
+    s.gate = { firstIssue: true, retired: false, hasCurrentRevision: true, status: "Draft", requiresSignOff: true, mustReview: true, controllerOnly: false };
+    await render({ ...baseDoc, status: "Draft" } as DocumentRecord);
+    await tick();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    s.submitForReview.mockResolvedValueOnce({ versionId: "v2A", revisionLabel: "2A" });
+    await click(button("Submit for Review"));
+    expect(s.submitForReview).toHaveBeenCalledTimes(1);
   });
 });

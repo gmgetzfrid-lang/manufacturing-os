@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import {
   revUpDocument, submitForReview, suggestNextRevisionLabel, listVersions,
-  StaleBaseError, DuplicateLabelError, type StaleBaseInfo, firstIssueGateForRevUp, describeRetiredRevUp,
+  StaleBaseError, DuplicateLabelError, type StaleBaseInfo, firstIssueGateForRevUp, describeRetiredRevUp, describeControllerOnlyFirstIssue,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
@@ -130,7 +130,11 @@ export default function RevUpModal({
   const [firstIssueMustReview, setFirstIssueMustReview] = useState(false);
   // REV-18 (P13 second review fix): a RETIRED document (Superseded / Void /
   // Archived) is not revised — a review of it could never be published and a
-  // direct publish would bring it back as Issued. Refused up front.
+  // direct publish would bring it back as Issued. Refused up front. The same
+  // up-front refusal carries a first issue only a controller can make (P13
+  // final review fix, the gate's `controllerOnly`: the chain requires
+  // sign-off, the document's own policy is 'none', so a review of it would
+  // have no reviewers) — never sent to that review.
   const [retiredRefusal, setRetiredRefusal] = useState<string | null>(null);
   const [routeThroughReview, setRouteThroughReview] = useState(true);
   const [showMore, setShowMore] = useState(false);
@@ -242,7 +246,8 @@ export default function RevUpModal({
         });
         if (alive) {
           setReviewControl(c); setFirstIssueMustReview(first.mustReview);
-          setRetiredRefusal(first.retired ? describeRetiredRevUp(doc.documentNumber || doc.title || "This document", first.status) : null);
+          setRetiredRefusal(first.retired ? describeRetiredRevUp(doc.documentNumber || doc.title || "This document", first.status)
+            : first.controllerOnly ? describeControllerOnlyFirstIssue(doc.documentNumber || doc.title || "this document") : null);
           setReviewPolicyStatus("resolved");
         }
       } catch (e) {
