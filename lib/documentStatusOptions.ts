@@ -24,10 +24,14 @@
 // each offered status is either in force at both the print gate and the
 // verify allow-list, or refused by both.
 //
-// Second review fix: the spreadsheet import (components/documents/
-// CsvImportModal.tsx) writes each row's status cell, so it was a door the
-// editors' lists did not close — "IFC" (or any string) still landed. It now
-// imports only a status the gates recognise (importStatusRefusal).
+// The spreadsheet import (components/documents/CsvImportModal.tsx) writes
+// each row's status cell. It is a carrier of a register's own data, not an
+// editor offering a choice, so (third review fix) it imports every row it
+// imported before: a case or spacing variant of a recognised status is
+// imported in the register's spelling, and any other value — "IFC", a
+// library's own status — is imported as written with a per-row warning that
+// it reads STATUS NOT RECOGNISED and is not printed (importStatusFor). The
+// second review fix refused such rows, which broke imports that work today.
 //
 // Pure: it imports only the shared status predicates (lib/issueStatus,
 // lib/verifyVerdict, lib/aiBoundary's status set — all I/O-free); the client
@@ -52,28 +56,42 @@ export const METADATA_EDITOR_STATUS_OPTIONS: readonly string[] = ["Draft", "Issu
  *  (its `statusOptions` default). */
 export const STAGING_STATUS_OPTIONS: readonly string[] = ["Draft", "In Review", "Issued", "Superseded"];
 
-/** components/documents/CsvImportModal.tsx — the statuses a row may be
- *  IMPORTED with (second review fix): exactly the statuses the verify page
- *  recognises (isRecognisedStatus) — the work-in-progress pair, the in-force
- *  pair and the shared not-current set. A blank cell imports as Draft. */
+/** components/documents/CsvImportModal.tsx — the register's own spelling of
+ *  every status the verify page recognises (isRecognisedStatus): the
+ *  work-in-progress pair, the in-force pair and the shared not-current set.
+ *  A row in one of these (or blank — Draft) imports with no note; a case or
+ *  spacing variant of one is imported in this spelling (importStatusFor). */
 export const IMPORT_STATUSES: readonly string[] = ["Draft", "In Review", ...IN_FORCE_STATUSES, ...NOT_CURRENT_STATUSES];
 
-/** Why one imported row's status is refused — null when it may be imported
- *  (a recognised status, or blank, which imports as Draft). "IFC" (a status
- *  no editor offers — DEC-44 (P15)) and any other value no gate recognises
- *  would scan STATUS NOT RECOGNISED and never print into a pack, so the row
- *  is not imported and the import's report says why; a case or spacing
- *  variant of a recognised status is named. Compared as the gates compare
- *  (exactly, after the import's own trim). */
-export function importStatusRefusal(status: string | null | undefined): string | null {
-  const s = (status ?? "").trim();
-  if (!s || isRecognisedStatus(s)) return null;
-  const use = `Use one of: ${IMPORT_STATUSES.join(", ")} (a blank status imports as Draft).`;
-  if (RETIRED_STATUS_OPTIONS.has(s)) {
-    return `Status "${s}" is not imported: it is not an issued status — the field pack does not print it and the verify page reads it as STATUS NOT RECOGNISED. ${use}`;
+/** How one imported row's status cell is written, and what the import's
+ *  report says about it (null: nothing to say). */
+export interface ImportStatusReading { status: string; note: string | null }
+
+const spellingKey = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
+
+/** VFY-20 / DEC-44 (P15) §1 (third review fix): the status an imported row
+ *  is written with. Every row that imported before still imports:
+ *   * blank → Draft; a recognised status → as written (no note);
+ *   * a case or spacing variant of a recognised status ("issued", "DRAFT",
+ *     "In  Review") → the register's spelling, and the report says so — the
+ *     gates compare exactly, so the variant would scan STATUS NOT RECOGNISED;
+ *   * anything else ("IFC", a library's own "Approved" / "IFA") → as
+ *     written (trimmed, as before), with a warning that the verify page
+ *     reads it STATUS NOT RECOGNISED and the field pack does not print it;
+ *     IFC's warning names DEC-44 (P15) — refusing it instead is the user's
+ *     to ratify. Never canonicalised to an in-force status it was not. */
+export function importStatusFor(cell: string | null | undefined): ImportStatusReading {
+  const s = (cell ?? "").trim();
+  if (!s) return { status: "Draft", note: null };
+  if (isRecognisedStatus(s)) return { status: s, note: null };
+  const key = spellingKey(s);
+  const canonical = IMPORT_STATUSES.find((x) => spellingKey(x) === key);
+  if (canonical) return { status: canonical, note: `Status "${s}" was imported as "${canonical}", the register's spelling.` };
+  const use = `To change that, set one of: ${IMPORT_STATUSES.join(", ")}.`;
+  if ([...RETIRED_STATUS_OPTIONS].some((r) => spellingKey(r) === key)) {
+    return { status: s, note: `Status "${s}" was imported as written, but it is not an issued status (DEC-44 (P15) — no editor offers it): the verify page reads it as STATUS NOT RECOGNISED and the field pack does not print it. To put the document in force, set it to Issued in the metadata editor once its revision is reviewed.` };
   }
-  const near = IMPORT_STATUSES.find((x) => x.toLowerCase() === s.toLowerCase().replace(/\s+/g, " "));
-  return `Status "${s}" is not one the register recognises${near ? ` — did you mean "${near}"?` : ""}. ${use}`;
+  return { status: s, note: `Status "${s}" was imported as written, but it is not one the register recognises: the verify page reads it as STATUS NOT RECOGNISED and the field pack does not print it. ${use}` };
 }
 
 /** One option of a status <select>. `current` marks the record's own value

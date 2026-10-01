@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
-import { importStatusRefusal } from "@/lib/documentStatusOptions";
+import { importStatusFor } from "@/lib/documentStatusOptions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import type { LibraryConfig } from "@/types/schema";
 
@@ -52,6 +52,9 @@ type Step = "paste" | "map" | "preview" | "done";
 interface ImportResult {
   ok: number;
   failed: Array<{ row: number; reason: string }>;
+  /** VFY-20 / DEC-44 (P15): imported rows whose status cell was respelled,
+   *  or is one no gate recognises (imported as written, with a warning). */
+  statusNotes: Array<{ row: number; note: string }>;
   /** GAP-314: the imported rows' unit decode (null: nothing to decode). */
   unitCodes?: { decoded: number; undecoded: number; note: string | null } | null;
 }
@@ -142,6 +145,7 @@ export default function CsvImportModal({
   const commit = async () => {
     setBusy(true); setError(null);
     const failed: Array<{ row: number; reason: string }> = [];
+    const statusNotes: Array<{ row: number; note: string }> = [];
     let ok = 0;
     // GAP-314 (P13 third review fix): the ids the inserts returned; a number
     // only for a row whose insert returned no id (the read-back fallback).
@@ -166,15 +170,11 @@ export default function CsvImportModal({
           continue;
         }
         const rev = pick("rev")?.trim() || "0";
-        const status = pick("status")?.trim() || "Draft";
-        // VFY-20 / DEC-44 (P15): a status no gate recognises ("IFC", a
-        // misspelling) is not imported — the row is refused and the report
-        // says why, as the editors no longer offer it.
-        const statusRefusal = importStatusRefusal(status);
-        if (statusRefusal) {
-          failed.push({ row: rIdx + 2, reason: statusRefusal });
-          continue;
-        }
+        // VFY-20 / DEC-44 (P15): every row that imported before still
+        // imports — a case or spacing variant in the register's spelling, a
+        // status no gate recognises ("IFC", a library's own) as written, each
+        // with a note in the report (blank is Draft, as before).
+        const { status, note: statusNote } = importStatusFor(pick("status"));
         const metadata: Record<string, unknown> = {};
         for (const c of customColumns) {
           const v = pick(c.key);
@@ -202,6 +202,7 @@ export default function CsvImportModal({
         }).select("id");
         if (insertErr) throw insertErr;
         ok += 1;
+        if (statusNote) statusNotes.push({ row: rIdx + 2, note: statusNote });
         const insertedId = ((inserted ?? []) as Array<{ id?: unknown }>)[0]?.id;
         if (insertedId) importedIds.push(String(insertedId));
         else importedNumbers.push(documentNumber);
@@ -234,7 +235,7 @@ export default function CsvImportModal({
           .filter(Boolean).join(" ") || null,
       };
     }
-    setResult({ ok, failed, unitCodes });
+    setResult({ ok, failed, statusNotes, unitCodes });
     setStep("done");
     setBusy(false);
     if (ok > 0) {
@@ -346,6 +347,18 @@ export default function CsvImportModal({
                       <li key={i}>Row {f.row}: {f.reason}</li>
                     ))}
                     {result.failed.length > 8 && <li className="italic">+{result.failed.length - 8} more</li>}
+                  </ul>
+                </div>
+              )}
+              {result.statusNotes.length > 0 && (
+                // VFY-20 / DEC-44 (P15): imported, with what the status reads as.
+                <div data-testid="csv-status-notes" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {result.statusNotes.length} imported with a status note</div>
+                  <ul className="ml-5 list-disc space-y-0.5">
+                    {result.statusNotes.slice(0, 8).map((n, i) => (
+                      <li key={i}>Row {n.row}: {n.note}</li>
+                    ))}
+                    {result.statusNotes.length > 8 && <li className="italic">+{result.statusNotes.length - 8} more</li>}
                   </ul>
                 </div>
               )}
