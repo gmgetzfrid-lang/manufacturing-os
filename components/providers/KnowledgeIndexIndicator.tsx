@@ -24,12 +24,19 @@
 //   - Parked documents are left alone (ING-6 / ING-8, intelligence Round G
 //     I-02b). A document whose back-off is in force (`vision_retry_after` in
 //     the future: a failed batch's, or a refused vision retry's) is not even
-//     read — the engine would answer 409 and do nothing. A document that
-//     carries a reason (`error`) or a lapsed stamp is tried ONCE per state
-//     per tab: on its row the message promises another try "while an Admin
-//     or Doc Control member has the app open", and this is that try. If the
-//     row is unchanged on the next poll (a keyless park answers 409 and writes
-//     nothing), it is not POSTed again until something moves it.
+//     read — the engine would answer 409 and do nothing. Every back-off the
+//     engine holds carries its reason in `error`, so a future stamp with no
+//     reason (a row the drawing rebuild reset, which nulls `error` and keeps
+//     the stamp) holds nothing back and IS read. A document that carries a
+//     reason (`error`) or a lapsed stamp is tried once per state per tab: on
+//     its row the message promises another try "while an Admin or Doc
+//     Control member has the app open", and this is that try. If the row is
+//     unchanged on the next poll (a keyless park answers 409 and writes
+//     nothing), it is not POSTed again until something moves it. That try
+//     can itself move the row — the engine re-stamps a keyless park whose
+//     stamp is half an hour old — so a parked row is POSTed at most twice
+//     per tab per state change, and every other open tab sees the re-stamp
+//     as a new state and tries it once more.
 //   - The card shows only when a batch made progress — never just because a
 //     document was attempted, so a dismissed card stays dismissed while the
 //     queue holds only parked or busy documents. It never passes `retryNow`:
@@ -91,8 +98,9 @@ export default function KnowledgeIndexIndicator() {
     if (!activeOrgId || !isController) return;
     let alive = true;
 
-    // A back-off in force is left out by the query itself, and work with no
-    // stamp comes first (as the cron drain orders it).
+    // A back-off in force (a future stamp WITH its reason) is left out by the
+    // query itself, and work with no stamp comes first (as the cron drain
+    // orders it).
     const readQueue = async (): Promise<QueuedRow[]> => {
       const nowIso = new Date().toISOString();
       const { data, error } = await supabase
@@ -100,7 +108,7 @@ export default function KnowledgeIndexIndicator() {
         .select("id, name, status, pages_indexed, page_count, error, vision_retry_after")
         .eq("org_id", activeOrgId)
         .in("status", ["pending", "stale", "indexing"])
-        .or(`vision_retry_after.is.null,vision_retry_after.lte.${nowIso}`)
+        .or(`vision_retry_after.is.null,vision_retry_after.lte.${nowIso},error.is.null`)
         .order("vision_retry_after", { ascending: true, nullsFirst: true })
         .order("created_at", { ascending: true })
         .limit(50);

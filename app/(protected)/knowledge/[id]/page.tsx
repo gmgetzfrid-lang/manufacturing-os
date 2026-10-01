@@ -87,6 +87,28 @@ const canAcceptPartial = (d: KnowledgeDocument) =>
   d.status !== "ready" && !d.visionPartialAccepted && d.visionFailedPages.length > 0
   && d.pageCount != null && d.pagesIndexed >= d.pageCount;
 
+/** The per-row counters (ING-6 / ING-11), only where the CURRENT index
+ *  stands behind them. A reset row ("Re-index all" — the drawing rebuild —
+ *  writes status, pages_indexed 0, page_count null and error, nothing else)
+ *  keeps the last generation's vision_pages, empty_pages and vision-failed
+ *  list until its first new batch commits and the engine restarts them
+ *  (ING-12), which can be days for a vision library on the nightly run: no
+ *  counter is shown on a row with no pages indexed. vision_pages already
+ *  inflated past the page count (ING-12) is clamped to the pages indexed,
+ *  and an empty-page count larger than the pages it is counted against is
+ *  left out rather than shown as "34 of 0". */
+function docRowCounters(d: KnowledgeDocument): {
+  visionPages: number; failedPages: number[]; emptyPages: number | null; emptyOf: number;
+} | null {
+  if (!(d.pagesIndexed > 0)) return null;
+  const visionPages = Math.max(0, Math.min(d.visionPages, d.pagesIndexed, d.pageCount ?? d.pagesIndexed));
+  const emptyOf = d.status === "ready" ? (d.pageCount ?? d.pagesIndexed) : d.pagesIndexed;
+  const emptyPages = d.emptyPages > 0 && d.emptyPages <= emptyOf ? d.emptyPages : null;
+  const failedPages = d.visionFailedPages;
+  if (visionPages === 0 && failedPages.length === 0 && emptyPages === null) return null;
+  return { visionPages, failedPages, emptyPages, emptyOf };
+}
+
 // ── Instant proof ───────────────────────────────────────────────────────────
 //
 // The verification moment, WHERE THE READER IS. Clicking a citation used to
@@ -1578,8 +1600,15 @@ export default function KnowledgeLibraryPage() {
   const resumeIndex = async (doc: KnowledgeDocument) => {
     setReindexing(doc.id);
     try {
-      await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); }, { retryNow: true });
-      showToast({ type: "success", title: `${doc.name} indexed.` });
+      const outcome = await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); }, { retryNow: true });
+      // Another loop in this tab (the page's own, or the app-shell
+      // indicator) already owns the document: nothing was sent, so the
+      // person's re-run did not happen — said, never "indexed".
+      if (outcome === "already-active") {
+        showToast({ type: "info", title: `${doc.name} is already being indexed in this tab — try Resume again when it finishes.` });
+      } else {
+        showToast({ type: "success", title: `${doc.name} indexed.` });
+      }
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally {
@@ -1633,7 +1662,15 @@ export default function KnowledgeLibraryPage() {
       });
       if (!ok) return;
       const out = await runTableAwareReindex(libraryId);
-      if (out.errors.length > 0) {
+      if (out.stopped) {
+        // A later call failed: the documents already reset are out of Ask,
+        // waiting to be re-indexed — say how many, and why it stopped.
+        showToast({
+          type: "error",
+          title: `${out.reset} document${out.reset === 1 ? "" : "s"} reset for table-aware chunking, then the run stopped: ${out.stopped}`
+            + (out.remaining > 0 ? ` — ${out.remaining} still to reset; run it again to finish.` : ""),
+        });
+      } else if (out.errors.length > 0) {
         showToast({
           type: "error",
           title: `${out.reset} document${out.reset === 1 ? "" : "s"} reset; ${out.errors.length} could not be: ${out.errors[0]}`,
@@ -1696,7 +1733,10 @@ export default function KnowledgeLibraryPage() {
   const indexingDocs = docs.filter((d) => d.status === "indexing" || d.status === "pending" || d.status === "stale").length;
   // Offered while any indexed document is still on the original chunker —
   // including one a run found busy, which the next run picks up (ING-4).
-  const onLegacyChunker = docs.some((d) => d.pagesIndexed > 0 && chunkerVersionOf(d.chunkVersion) !== CHUNKER_TABLE_AWARE);
+  // Never on a database without 20261122 (no chunk_version column: the row
+  // reads `undefined`), where the action can only answer 424.
+  const onLegacyChunker = docs.some((d) =>
+    d.chunkVersion !== undefined && d.pagesIndexed > 0 && chunkerVersionOf(d.chunkVersion) !== CHUNKER_TABLE_AWARE);
 
   return (
     <PageShell>
@@ -2075,32 +2115,36 @@ export default function KnowledgeLibraryPage() {
                         <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> <span>{doc.error}</span>
                       </div>
                     )}
-                    {(doc.visionPages > 0 || doc.visionFailedPages.length > 0 || doc.emptyPages > 0) && (
-                      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-[var(--color-text-muted)]">
-                        {doc.visionPages > 0 && (
-                          <span className="inline-flex items-center gap-1">
-                            <Eye className="w-3 h-3 text-sky-600 shrink-0" /> {doc.visionPages} page{doc.visionPages === 1 ? "" : "s"} read by AI vision
-                          </span>
-                        )}
-                        {doc.visionFailedPages.length > 0 && (
-                          <span data-vision-failed="true" className="text-amber-700 dark:text-amber-400 font-bold">
-                            {doc.visionFailedPages.length} page{doc.visionFailedPages.length === 1 ? "" : "s"}
-                            {doc.visionPartialAccepted
-                              ? ` accepted unread — AI vision could not read p. ${pageListLabel(doc.visionFailedPages)}`
-                              : ` AI vision could not read yet (p. ${pageListLabel(doc.visionFailedPages)})`}
-                          </span>
-                        )}
-                        {/* ING-11: the running count the engine keeps on the row. */}
-                        {doc.emptyPages > 0 && (
-                          <span data-empty-pages="true"
-                            title="These pages gave no text — not from their text layer, and not from AI vision where it ran — so nothing on them can be found by Ask.">
-                            {doc.status === "ready"
-                              ? `${doc.emptyPages} of ${doc.pageCount ?? doc.pagesIndexed} pages had no extractable text`
-                              : `${doc.emptyPages} of ${doc.pagesIndexed} pages indexed so far had no extractable text`}
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    {(() => {
+                      const c = docRowCounters(doc);
+                      if (!c) return null;
+                      return (
+                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-[var(--color-text-muted)]">
+                          {c.visionPages > 0 && (
+                            <span className="inline-flex items-center gap-1">
+                              <Eye className="w-3 h-3 text-sky-600 shrink-0" /> {c.visionPages} page{c.visionPages === 1 ? "" : "s"} read by AI vision
+                            </span>
+                          )}
+                          {c.failedPages.length > 0 && (
+                            <span data-vision-failed="true" className="text-amber-700 dark:text-amber-400 font-bold">
+                              {c.failedPages.length} page{c.failedPages.length === 1 ? "" : "s"}
+                              {doc.visionPartialAccepted
+                                ? ` accepted unread — AI vision could not read p. ${pageListLabel(c.failedPages)}`
+                                : ` AI vision could not read yet (p. ${pageListLabel(c.failedPages)})`}
+                            </span>
+                          )}
+                          {/* ING-11: the running count the engine keeps on the row. */}
+                          {c.emptyPages !== null && (
+                            <span data-empty-pages="true"
+                              title="These pages gave no text — not from their text layer, and not from AI vision where it ran — so nothing on them can be found by Ask.">
+                              {doc.status === "ready"
+                                ? `${c.emptyPages} of ${c.emptyOf} pages had no extractable text`
+                                : `${c.emptyPages} of ${c.emptyOf} pages indexed so far had no extractable text`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {isController && canAcceptPartial(doc) && (
                       <button onClick={() => void acceptPartial(doc)} disabled={accepting !== null}
                         title="Make the document ready and searchable without the pages AI vision could not read — they stay listed. Recorded in the audit log."

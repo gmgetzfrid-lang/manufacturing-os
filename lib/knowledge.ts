@@ -86,9 +86,10 @@ export interface KnowledgeDocument {
   visionFailedPages: number[];
   /** A controller accepted the index with the unread pages still listed. */
   visionPartialAccepted: boolean;
-  /** The chunker that wrote this document's index (1 or 2), null before its
-   *  first batch or on a database without 20261122 (ING-4). */
-  chunkVersion: number | null;
+  /** The chunker that wrote this document's index (1 or 2); null before its
+   *  first batch; `undefined` on a database without 20261122, which has no
+   *  column to hold it — no library there can choose a chunker (ING-4). */
+  chunkVersion: number | null | undefined;
 }
 
 /** Library answers cite (document, page, verbatim quote); internet answers
@@ -409,7 +410,9 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
     ? (r.vision_failed_pages as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0)
     : [],
   visionPartialAccepted: r.vision_partial_accepted === true,
-  chunkVersion: typeof r.chunk_version === "number" ? r.chunk_version : null,
+  // A missing key is a missing column (the select is "*"), never "chunker 1":
+  // the page offers the table-aware re-index only where it can run.
+  chunkVersion: "chunk_version" in r ? (typeof r.chunk_version === "number" ? r.chunk_version : null) : undefined,
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
@@ -553,23 +556,32 @@ export function isIngestActive(documentId: string): boolean {
   return activeIngests.has(documentId);
 }
 
+/** What a call to ingestKnowledgeDocument did: ran the loop to the end
+ *  (`indexed`), or ran nothing because another loop in this tab already
+ *  owns the document (`already-active`) — the caller's own request, a
+ *  person's `retryNow` included, was not sent. */
+export type IngestRunOutcome = "indexed" | "already-active";
+
 /** `retryNow` marks the run as a PERSON's explicit re-run — the library
- *  page's Resume button and nothing else (ING-8, DEC-58 item 3). Every POST
- *  of the run carries it, so a first answer that only met `busy` does not
- *  drop it; the route records it (KNOWLEDGE_DOC_RETRY_NOW) only for the
- *  batch the engine lets past a failed batch's back-off and performs. The
- *  page's automatic loop and the app-shell indicator never pass it. */
+ *  page's Resume button and nothing else (ING-8, DEC-58 item 3). The run
+ *  carries it until its first answer that is not `busy` (see ingestLoop);
+ *  the route records it (KNOWLEDGE_DOC_RETRY_NOW) only for the batch the
+ *  engine lets past a failed batch's back-off and performs. The page's
+ *  automatic loop and the app-shell indicator never pass it. */
 export async function ingestKnowledgeDocument(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
   opts: { retryNow?: boolean } = {},
-): Promise<void> {
+): Promise<IngestRunOutcome> {
   // Another loop in this tab already owns the document — let it finish.
   // Progress lives on the row, so the caller's refreshes still see movement.
-  if (activeIngests.has(documentId)) return;
+  // Said, not swallowed: a person's Resume must not report a re-run that
+  // never left the tab.
+  if (activeIngests.has(documentId)) return "already-active";
   activeIngests.add(documentId);
   try {
     await ingestLoop(documentId, onIndex, opts.retryNow === true);
+    return "indexed";
   } finally {
     activeIngests.delete(documentId);
   }
@@ -608,6 +620,18 @@ async function ingestLoop(
   // moved them to the back of the queue, the next batch tries the pages
   // behind, and the batch that completes the round answers 409 with the
   // real reason — never a false "stalled" (ING-6).
+  //
+  // A person's `retryNow` (ING-8) rides every POST until the first answer
+  // that is not `busy`: a busy POST never reached the back-off gate (the
+  // engine records a re-run only under the claim), so the intent is kept;
+  // any other answer — a batch performed, a 409/502 refusal — settles it.
+  // So does a transient failure: an invocation the platform killed may
+  // already have let the re-run through and recorded it, and resending the
+  // flag on every re-POST would let one click skip the back-off (audited,
+  // re-billing up to a batch of AI-vision pages) up to five times. If that
+  // invocation died before the gate, the next POST meets the back-off's 409
+  // and the loop stops on its reason — Resume again re-runs it.
+  let sendRetryNow = retryNow;
   let visionPages = 0;
   let lastIndexed = -1;
   let lastFailed: number | null = null;
@@ -623,14 +647,16 @@ async function ingestLoop(
       visionFailedPages?: number[]; pagesReadable?: number; visionRetryAttempts?: number;
     };
     try {
-      out = await apiPost("/api/knowledge/ingest", retryNow ? { documentId, retryNow: true } : { documentId });
+      out = await apiPost("/api/knowledge/ingest", sendRetryNow ? { documentId, retryNow: true } : { documentId });
       transientFailures = 0;
     } catch (e) {
+      sendRetryNow = false;
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
       // Back off and pick up where the last committed batch stopped.
       await new Promise((r) => setTimeout(r, 1500 * transientFailures));
       continue;
     }
+    if (!out.busy) sendRetryNow = false;
     visionPages += out.visionPages ?? 0;
     onIndex?.(out.pagesIndexed, out.pageCount, {
       indexed: out.pagesIndexed, total: out.pageCount,
@@ -702,24 +728,44 @@ export async function planTableAwareReindex(libraryId: string): Promise<TableAwa
  *  while documents remain AND the last call reset something — a call that
  *  reset nothing means what is left is busy (mid-batch elsewhere) or failed,
  *  and running it again later picks those up. Every call is audited by the
- *  route before it resets anything. */
+ *  route before it resets anything.
+ *
+ *  A document that fails in one call is tried again by the next, so its
+ *  errors are kept once per document (the route names each `${id}: …`), the
+ *  latest message winning. (One that a later call did reset stays listed:
+ *  the route counts what it reset, it does not name it.) The first call's refusal is thrown as is (nothing
+ *  was reset). A later call that fails does NOT throw away what the calls
+ *  before it did: documents they reset are already out of Ask, waiting to
+ *  be re-indexed, so the result carries them with `stopped` — the reason
+ *  the run stopped — and the `remaining` the last answer counted. */
 export async function runTableAwareReindex(libraryId: string): Promise<{
-  reset: number; busy: number; errors: string[]; remaining: number;
+  reset: number; busy: number; errors: string[]; remaining: number; stopped: string | null;
 }> {
   let reset = 0;
   let last = { busy: 0, remaining: 0 };
-  const errors: string[] = [];
+  const errorsByDoc = new Map<string, string>();
+  let stopped: string | null = null;
   for (let round = 0; round < 200; round++) {
-    const out = await apiPost<{ reset?: unknown; busy?: unknown; errors?: unknown; remaining?: unknown }>(
-      "/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2 },
-    );
+    let out: { reset?: unknown; busy?: unknown; errors?: unknown; remaining?: unknown };
+    try {
+      out = await apiPost<typeof out>("/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2 });
+    } catch (e) {
+      if (round === 0) throw e;
+      stopped = (e as Error).message;
+      break;
+    }
     const did = Number(out.reset ?? 0);
     reset += did;
     last = { busy: Number(out.busy ?? 0), remaining: Number(out.remaining ?? 0) };
-    if (Array.isArray(out.errors)) errors.push(...out.errors.map(String));
+    if (Array.isArray(out.errors)) {
+      for (const msg of out.errors.map(String)) {
+        const sep = msg.indexOf(": ");
+        errorsByDoc.set(sep > 0 ? msg.slice(0, sep) : msg, msg);
+      }
+    }
     if (last.remaining <= 0 || did === 0) break;
   }
-  return { reset, busy: last.busy, errors: errors.slice(0, 20), remaining: last.remaining };
+  return { reset, busy: last.busy, errors: [...errorsByDoc.values()].slice(0, 20), remaining: last.remaining, stopped };
 }
 
 /** The confirmation before a table-aware re-index: what the dry run counts

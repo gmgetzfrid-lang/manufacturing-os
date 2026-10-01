@@ -17,6 +17,14 @@
 //   * ING-9 — the browser refuses a renamed spreadsheet before anything is
 //     uploaded, naming where it belongs.
 //   * ING-11 — "N of M pages had no extractable text".
+//
+// Review fix pass (2026-10-01): the per-row counters show only where the
+// current index stands behind them — never on a row "Re-index all" reset,
+// which keeps the last generation's counts until its first batch commits —
+// and an inflated vision count is clamped; a Resume another loop in the tab
+// already owns is said, not reported "indexed"; a re-index that stops
+// part-way says what it already reset; a database without 20261122 is never
+// offered the table-aware re-index.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -130,7 +138,7 @@ beforeEach(() => {
   lib.getKnowledgeLibrary.mockResolvedValue(library);
   lib.listKnowledgeQuestions.mockResolvedValue({ questions: [], withheld: 0 });
   lib.listLibraryLinks.mockResolvedValue([]);
-  lib.ingestKnowledgeDocument.mockResolvedValue(undefined);
+  lib.ingestKnowledgeDocument.mockResolvedValue("indexed");
   window.sessionStorage.clear();
 });
 afterEach(() => {
@@ -220,6 +228,51 @@ describe("ING-6 / ING-8 — a document still indexing shows its reason; the part
     await flush();
     const resumed = lib.ingestKnowledgeDocument.mock.calls.find((c) => c[0] === "failed") as unknown[];
     expect(resumed?.[2]).toEqual({ retryNow: true });
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "success", title: "spec.pdf indexed." });
+  });
+
+  it("a Resume on a document another loop in this tab already owns says so — never 'indexed'", async () => {
+    setRole(true);
+    await mount();
+    lib.ingestKnowledgeDocument.mockResolvedValue("already-active");
+    toast.showToast.mockClear();
+    await act(async () => { (rowOf("spec.pdf").querySelector('button[title="Resume indexing"]') as HTMLElement).click(); });
+    await flush();
+    expect(toast.showToast).toHaveBeenCalledWith({
+      type: "info", title: "spec.pdf is already being indexed in this tab — try Resume again when it finishes.",
+    });
+    expect(toast.showToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "success" }));
+  });
+});
+
+describe("the per-row counters show only what the current index stands behind", () => {
+  it("a row 'Re-index all' reset (the rebuild's exact fields) shows no counter from the last generation", async () => {
+    setRole(true);
+    // app/api/knowledge/drawing/route.ts writes status 'stale', pages_indexed
+    // 0, page_count null, last_section null, error null — nothing else.
+    await mount([doc({
+      id: "reset", name: "rebuilt.pdf", status: "stale", pagesIndexed: 0, pageCount: null, error: null,
+      visionPages: 1240, emptyPages: 34, visionFailedPages: [5, 9], visionPartialAccepted: true,
+    })]);
+    const row = rowOf("rebuilt.pdf");
+    expect(row.textContent).toMatch(/New revision published — waiting to re-index/);
+    expect(row.textContent).not.toMatch(/read by AI vision/);
+    expect(row.querySelector('[data-vision-failed="true"]')).toBeNull();
+    expect(row.querySelector('[data-empty-pages="true"]')).toBeNull();
+    expect(row.textContent).not.toMatch(/1240|34 of|accepted unread/);
+    expect(byText("button", /Accept partial index/, row)).toBeUndefined();
+  });
+
+  it("a vision count inflated past the page count is clamped; an empty count larger than the pages behind it is left out", async () => {
+    setRole(false);
+    await mount([
+      doc({ id: "inflated", name: "API-650.pdf", status: "ready", pageCount: 900, pagesIndexed: 900, visionPages: 1240 }),
+      doc({ id: "early", name: "early.pdf", status: "indexing", pageCount: 900, pagesIndexed: 10, emptyPages: 34, visionPages: 3 }),
+    ]);
+    expect(rowOf("API-650.pdf").textContent).toMatch(/900 pages read by AI vision/);
+    expect(rowOf("API-650.pdf").textContent).not.toMatch(/1240/);
+    expect(rowOf("early.pdf").querySelector('[data-empty-pages="true"]')).toBeNull();
+    expect(rowOf("early.pdf").textContent).toMatch(/3 pages read by AI vision/);
   });
 });
 
@@ -245,7 +298,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], remaining: 0 });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 4, busy: 0, errors: [], remaining: 0, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
@@ -274,7 +327,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 3, busy: 1, errors: [], remaining: 1 });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 3, busy: 1, errors: [], remaining: 1, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
@@ -288,7 +341,7 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     setRole(true);
     await mount();
     lib.planTableAwareReindex.mockResolvedValue(plan);
-    lib.runTableAwareReindex.mockResolvedValue({ reset: 0, busy: 4, errors: [], remaining: 4 });
+    lib.runTableAwareReindex.mockResolvedValue({ reset: 0, busy: 4, errors: [], remaining: 4, stopped: null });
     dlg.appConfirm.mockResolvedValue(true);
     await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
     await flush();
@@ -306,6 +359,30 @@ describe("ING-4 / ING-7 — Re-index with table-aware chunking", () => {
     await flush();
     expect(dlg.appConfirm).not.toHaveBeenCalled();
     expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: expect.stringMatching(/needs migration 20261122/) });
+  });
+
+  it("a run that stops part-way says how many it already reset, and why it stopped", async () => {
+    setRole(true);
+    await mount();
+    lib.planTableAwareReindex.mockResolvedValue(plan);
+    lib.runTableAwareReindex.mockResolvedValue({
+      reset: 3, busy: 0, errors: [], remaining: 1,
+      stopped: "The re-index could not be recorded, so nothing was changed: insert failed",
+    });
+    dlg.appConfirm.mockResolvedValue(true);
+    await act(async () => { byText("button", /Re-index with table-aware chunking/)!.click(); });
+    await flush();
+    expect(toast.showToast).toHaveBeenCalledWith({
+      type: "error",
+      title: "3 documents reset for table-aware chunking, then the run stopped: The re-index could not be recorded, so nothing was changed: insert failed — 1 still to reset; run it again to finish.",
+    });
+  });
+
+  it("never offered on a database without 20261122 (no chunk_version column), where it could only answer 424", async () => {
+    setRole(true);
+    await mount([doc({ id: "a", name: "a.pdf", chunkVersion: undefined }), doc({ id: "b", name: "b.pdf", chunkVersion: undefined })]);
+    expect(byText("button", /Re-index with table-aware chunking/)).toBeUndefined();
+    expect(byText("button", /Re-index all/)).toBeTruthy();
   });
 
   it("not offered once every indexed document is on table-aware chunking", async () => {

@@ -7,7 +7,9 @@
 // batch was POSTed again (≈8 queries, a 409), and the card was re-shown —
 // "Indexing <doc>", then "caught up — 0 documents indexed" — even after the
 // user dismissed it. Now:
-//   * a back-off in force is left out by the query itself;
+//   * a back-off in force (a future stamp WITH its reason in `error`) is left
+//     out by the query itself — a future stamp with no reason (a row the
+//     drawing rebuild reset) holds nothing back and is read (review fix);
 //   * a parked row (a reason or a lapsed stamp) is tried once per state per
 //     tab — the try its message promises while a controller has the app
 //     open — and not POSTed again while it is unchanged;
@@ -100,15 +102,27 @@ async function mount() {
 }
 
 describe("the queue leaves out a back-off in force", () => {
-  it("the query filters out vision_retry_after in the future and orders unstamped work first", async () => {
+  it("the query filters out vision_retry_after in the future — unless the row carries no reason — and orders unstamped work first", async () => {
     answer([]);
     await mount();
     const q = db.queries[0];
     const or = q.find((c) => c.method === "or");
-    expect(String(or?.args[0])).toMatch(/^vision_retry_after\.is\.null,vision_retry_after\.lte\.\d{4}-\d{2}-\d{2}T/);
+    expect(String(or?.args[0])).toMatch(/^vision_retry_after\.is\.null,vision_retry_after\.lte\.\d{4}-\d{2}-\d{2}T[^,]+,error\.is\.null$/);
     expect(q.find((c) => c.method === "order")?.args).toEqual(["vision_retry_after", { ascending: true, nullsFirst: true }]);
     expect(String(q.find((c) => c.method === "select")?.args[0])).toContain("vision_retry_after");
     expect(ing.ingestKnowledgeDocument).not.toHaveBeenCalled();
+  });
+
+  it("a row the drawing rebuild reset (error nulled, a future stamp kept) is driven — the engine holds it back for nothing", async () => {
+    // The engine holds a failed batch only while `error` names the attempt,
+    // and a vision retry only past a finished main pass; the rebuild nulls
+    // `error` and resets the row to page 0. The query lets it through
+    // (error.is.null), and the indicator drives it like any queued row.
+    answer([fresh({ id: "rebuilt", status: "stale", error: null, vision_retry_after: "2099-01-01T00:00:00.000Z" })]);
+    ing.ingestKnowledgeDocument.mockImplementation(progresses(4, 40));
+    await mount();
+    expect(ing.ingestKnowledgeDocument.mock.calls.map((c) => c[0])).toEqual(["rebuilt"]);
+    expect(host.textContent).toMatch(/1 document indexed\./);
   });
 
   it("a database without 20261122 (no stamp column) falls back to the plain queue", async () => {
