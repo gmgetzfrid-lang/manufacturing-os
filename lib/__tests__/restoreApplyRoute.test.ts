@@ -28,6 +28,8 @@ const db = vi.hoisted(() => ({
   writeError: null as null | ((table: string, op: string, rows: Array<Record<string, unknown>>) => { code: string; message: string } | null),
   readError: {} as Record<string, string>,
   writes: [] as Array<{ table: string; op: string; n: number }>,
+  /** Every write statement attempted, successful or not. */
+  attempts: [] as Array<{ table: string; op: string }>,
   /** Simulate a PostgREST that returns no count. */
   countless: false,
 }));
@@ -44,6 +46,7 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
   }
   if (op === "insert" || op === "upsert") {
     const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
+    db.attempts.push({ table, op });
     const injected = db.writeError?.(table, op, rows);
     if (injected) return { data: null, error: injected, count: null };
     const keys = keysOf(table);
@@ -132,6 +135,7 @@ beforeEach(() => {
   db.writeError = null;
   db.readError = {};
   db.writes = [];
+  db.attempts = [];
   db.countless = false;
 });
 
@@ -300,5 +304,46 @@ describe("ALOG-8 (restore/apply site) — the DATA_RESTORE audit row is a checke
     expect(status).toBe(500);
     expect(String(body.error)).toMatch(/restore audit row failed: null value/);
     expect(body.totalInserted).toBe(1);
+  });
+});
+
+describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is reported, never re-sent", () => {
+  const KEYS: Record<string, string[][]> = {
+    codebook_config: [["org_id"]],
+    document_equipment_suggestions: [["org_id", "document_id"]],
+    recently_viewed_docs: [["user_id", "document_id"]],
+    library_numbering: [["library_id"]],
+  };
+  const rowsFor: Record<string, Row[]> = {
+    codebook_config: [{ org_id: "backup-org", drawing_number: { segments: [] } }],
+    document_equipment_suggestions: [{ org_id: "backup-org", document_id: "d1", status: "pending" }],
+    recently_viewed_docs: [{ org_id: "backup-org", user_id: "u1", document_id: "d1" }],
+    library_numbering: [{ org_id: "backup-org", library_id: "lib-1", pattern: "P-{seq}" }],
+  };
+
+  it("restoring the same backup twice: the second run skips what exists — zero failed tables, on both routes", async () => {
+    db.keys = { ...KEYS };
+    for (const table of Object.keys(KEYS)) {
+      const first = await chunk(table, rowsFor[table]);
+      expect(first.status, table).toBe(200);
+      expect(first.body.inserted, table).toBe(1);
+      const again = await chunk(table, rowsFor[table]);
+      expect(again.status, `${table} re-run`).toBe(200);
+      expect(again.body.inserted, `${table} re-run`).toBe(0);
+    }
+    // the single-shot route, into a workspace that already has every row
+    const { status, body } = await single({ manifest: { orgId: "backup-org" }, tables: rowsFor });
+    expect(status).toBe(200);
+    expect(body.failedTables).toEqual([]);
+    expect(rowsOf("codebook_config")).toHaveLength(1);
+  });
+
+  it("an upsert the database rejects is reported with ITS error — no plain-insert retry of the same chunk", async () => {
+    db.writeError = (table, op) => (table === "notes" && op === "upsert" ? { code: "23505", message: 'duplicate key value violates unique constraint "notes_slug_key"' } : null);
+    const r = await chunk("notes", [{ id: "n1", body: "x" }]);
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ error: 'duplicate key value violates unique constraint "notes_slug_key"', code: "23505", inserted: 0 });
+    expect(db.attempts.filter((a) => a.table === "notes").map((a) => a.op)).toEqual(["upsert"]);
+    expect(rowsOf("notes")).toEqual([]);
   });
 });

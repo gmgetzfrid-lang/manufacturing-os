@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, type RestoreEnvelopeLike, type CurrentOrgContext } from "@/lib/dataRestore";
+import {
+  planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, type RestoreEnvelopeLike, type CurrentOrgContext,
+  CONFLICT_TARGETS, conflictTargetFor, RESTORE_CONTRACT_TABLES, isSkippedTable,
+} from "@/lib/dataRestore";
+import { censusSchema } from "./helpers/schemaKeys";
 
 function env(overrides: Partial<RestoreEnvelopeLike> = {}): RestoreEnvelopeLike {
   return {
@@ -154,5 +158,46 @@ describe("mergeNewUserUids", () => {
     const merged = mergeNewUserUids(base, { b: "B" });
     expect(merged.uid).toEqual({ a: "A", b: "B" });
     expect(base.uid).toEqual({ a: "A" }); // untouched
+  });
+});
+
+// BKP-12 (admin-and-org Round G): the conflict-target tripwire. Every table a
+// restore writes upserts ON CONFLICT (<target>) DO NOTHING; a target that is
+// not one of the table's PRIMARY KEY / UNIQUE keys makes Postgres refuse the
+// whole chunk (42703 / 42P10), so a re-run of the "additive and safe" restore
+// fails that table. The census reads supabase/ (schema.sql + migrations).
+describe("BKP-12 — every restorable table's conflict target is a real key", () => {
+  const schema = censusSchema();
+
+  it("the census sees keys (sanity): composite PK, single-column PK, table UNIQUE, unique index", () => {
+    expect(schema.get("recently_viewed_docs")?.keys).toContainEqual(["user_id", "document_id"]);
+    expect(schema.get("codebook_config")?.keys).toContainEqual(["org_id"]);
+    expect(schema.get("project_members")?.keys).toContainEqual(["project_id", "user_id"]);
+    expect(schema.get("documents")?.keys).toContainEqual(["id"]);
+  });
+
+  it("the four id-less tables the finding names have their real key as target", () => {
+    expect(conflictTargetFor("codebook_config")).toBe("org_id");
+    expect(conflictTargetFor("document_equipment_suggestions")).toBe("org_id,document_id");
+    expect(conflictTargetFor("recently_viewed_docs")).toBe("user_id,document_id");
+    expect(conflictTargetFor("library_numbering")).toBe("library_id");
+  });
+
+  it("for EVERY restorable contract table, conflictTargetFor names a PRIMARY KEY or UNIQUE key of that table", () => {
+    const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((c) => b.includes(c));
+    const bad: string[] = [];
+    for (const table of [...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)).sort()) {
+      const target = conflictTargetFor(table).split(",").map((c) => c.trim());
+      const keys = schema.get(table)?.keys ?? [];
+      if (!keys.some((k) => sameSet(k, target))) bad.push(`${table} (target ${target.join(",")}; keys ${JSON.stringify(keys)})`);
+    }
+    expect(bad, `conflict targets that are not a key — add the real key to CONFLICT_TARGETS: ${bad.join("; ")}`).toEqual([]);
+  });
+
+  it("every CONFLICT_TARGETS entry names a contract table, and its target is a real key there too", () => {
+    const stale = Object.keys(CONFLICT_TARGETS).filter((t) => !RESTORE_CONTRACT_TABLES.has(t));
+    expect(stale).toEqual([]);
+    // org_configurations is append-only to the restore (SURF-8) but keeps its documented key
+    expect(schema.get("org_configurations")?.keys).toContainEqual(["org_id", "key"]);
   });
 });

@@ -515,6 +515,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
 // Conflict target per table for the additive upsert. Most tables have a plain
 // `id` primary key; the ones listed here use composite (or differently-named)
 // keys — upserting them on "id" errors and breaks re-runnability.
+// BKP-12: lib/__tests__/dataRestore.test.ts censuses supabase/ and fails when
+// a restorable table's target is not one of its PRIMARY KEY / UNIQUE keys.
 export const CONFLICT_TARGETS: Record<string, string> = {
   document_favorites: "user_id,document_id",
   curated_collection_items: "collection_id,document_id",
@@ -522,6 +524,10 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   ticket_number_counters: "org_id,year",
   archive_settings: "org_id",
   org_configurations: "org_id,key",
+  codebook_config: "org_id",                          // one row per org (20260928)
+  document_equipment_suggestions: "org_id,document_id", // 20260928
+  recently_viewed_docs: "user_id,document_id",        // 20260806
+  library_numbering: "library_id",                    // 20260806
 };
 
 /** The ON CONFLICT target to use when additively restoring `table`. */
@@ -566,7 +572,10 @@ export interface RestoreChunkResult {
   ok: boolean;
   /** When !ok: the HTTP status to answer (400 contract refusal, 500 database failure). */
   status?: number;
+  /** The database's own message (BKP-12: the underlying error, never a retry's). */
   error?: string;
+  /** Its SQLSTATE, when the database gave one. */
+  code?: string;
   /** Rows written. Earlier sub-chunks stay written when a later one fails. */
   inserted: number;
   /** Rows not written, each with its reason (a database refusal of that single
@@ -604,8 +613,8 @@ export async function applyRestoreChunk(
 ): Promise<RestoreChunkResult> {
   const { orgId, table, idRemap } = params;
   const refused: RestoreRowRefusal[] = [];
-  const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0): RestoreChunkResult =>
-    ({ ok: false, status, error, inserted, refused, rowsAfterFilters });
+  const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, refused, rowsAfterFilters });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal);
@@ -655,29 +664,27 @@ export async function applyRestoreChunk(
     });
   }
 
+  // BKP-12: the upsert's own refusal is the answer. There is no plain-insert
+  // retry of a chunk the upsert already rejected — every conflict target is a
+  // real key (census test), so a rejection is a data or schema fact, and
+  // re-sending the same rows could only fail again (or, on a table whose
+  // target was wrong, land rows the next re-run then collides with).
   let inserted = 0;
   for (let i = 0; i < mapped.length; i += 500) {
     const chunk = mapped.slice(i, i + 500);
     const up = await sb.from(table).upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-    if (up.error) {
-      const ins = await sb.from(table).insert(chunk, { count: "exact" });
-      if (ins.error) {
-        if (!(ROW_REFUSAL_TABLES.has(table) && ROW_REFUSAL_CODES.has(String(ins.error.code ?? "")))) {
-          return fail(500, ins.error.message, inserted, rowsAfterFilters);
-        }
-        for (const row of chunk) {
-          const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-          if (!one.error) { inserted += one.count ?? 1; continue; }
-          if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
-            return fail(500, one.error.message, inserted, rowsAfterFilters);
-          }
-          refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
-        }
-        continue;
+    if (!up.error) { inserted += up.count ?? chunk.length; continue; }
+    if (!(ROW_REFUSAL_TABLES.has(table) && ROW_REFUSAL_CODES.has(String(up.error.code ?? "")))) {
+      return fail(500, up.error.message, inserted, rowsAfterFilters, up.error.code);
+    }
+    // HLD-9: one refused hold must not sink its chunk — retry row by row.
+    for (const row of chunk) {
+      const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
+      if (!one.error) { inserted += one.count ?? 1; continue; }
+      if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
+        return fail(500, one.error.message, inserted, rowsAfterFilters, one.error.code);
       }
-      inserted += ins.count ?? chunk.length;
-    } else {
-      inserted += up.count ?? chunk.length;
+      refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
     }
   }
   return { ok: true, inserted, refused, rowsAfterFilters };

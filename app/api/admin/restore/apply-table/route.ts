@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   const { inserted, refused } = result;
   if (!result.ok) {
     return NextResponse.json(
-      { error: result.error, inserted, ...(refused.length ? { refused } : {}) },
+      { error: result.error, ...(result.code ? { code: result.code } : {}), inserted, ...(refused.length ? { refused } : {}) },
       { status: result.status ?? 500 },
     );
   }
