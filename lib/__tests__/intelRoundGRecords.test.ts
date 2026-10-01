@@ -472,7 +472,7 @@ describe("DACL-2 criterion 1 (→ document-control retention rail): the hold ref
       seedHeld(hold);
       expect(await attempt(RENDERED)).toBe("423");
     });
-    it.fails(`a document held by ${hold}: its native source file is refused 423 like its rendered file, and nothing is deleted`, async () => {
+    it(`a document held by ${hold}: its native source file is refused 423 like its rendered file, and nothing is deleted`, async () => {
       seedHeld(hold);
       expect(await attempt(SOURCE)).toBe("423");
     });
