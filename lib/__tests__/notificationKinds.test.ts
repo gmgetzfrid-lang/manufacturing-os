@@ -195,9 +195,13 @@ const BELL_ONLY = [
   "orchestrator_message", "security_export", "member_revoked", "library_unowned",
   "storage_alert", "storage_platform_r2", "storage_platform_db", "ai_cap_changed", "transmittal_unstampable",
 ];
-// actionRequired: TODAY_ACTION plus the PSM obligations (DEC-44 (N2) §2,
-// TRAIL-5 — so the Documents badge can turn red for one).
-const ACTION_ADDED = [
+// actionRequired: exactly TODAY_ACTION — no departure (DEC-44 (N2) §2). The
+// plan's default would add the PSM obligations, but an action row stays red,
+// pulsing and in the Action count until it is read, and nothing marks a PSM
+// row read when the obligation is met; they flip with the change that clears
+// them on discharge. Pinned FYI here so the flip is deliberate.
+const ACTION_ADDED: string[] = [];
+const PSM_OBLIGATIONS_FYI_UNTIL_CLEARED = [
   "ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "effective_now",
 ];
 // icon / tone / group departures from the predecessors.
@@ -309,57 +313,85 @@ const isNotificationsInsert = (call: ts.CallExpression): boolean => {
     else return false;
   }
 };
-let censusCache: Payload[] | null = null;
-function census(): Payload[] {
+/** A `.from("notifications")` call (any client, any quote style). */
+const isNotificationsFrom = (n: ts.Node): n is ts.CallExpression =>
+  ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "from"
+  && !!n.arguments[0] && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "notifications";
+/** One raw `.from("notifications").insert(…)` CALL — counted for itself, not
+ *  through the payloads it carries: an insert whose rows come from a
+ *  parameter or another file creates no payload here, and must still count
+ *  (and fail `covered`). */
+type InsertCall = { file: string; line: number; covered: boolean; arg: string };
+/** A notifications builder that leaves its chain (`const t = sb.from(
+ *  "notifications")`, or passed as an argument): an insert through it would
+ *  be invisible to the census, so none may exist. */
+type EscapedBuilder = { file: string; line: number };
+let censusCache: { payloads: Payload[]; inserts: InsertCall[]; escaped: EscapedBuilder[] } | null = null;
+function scan() {
   if (censusCache) return censusCache;
   const out: Payload[] = [];
+  const inserts: InsertCall[] = [];
+  const escaped: EscapedBuilder[] = [];
   for (const abs of sourceFiles()) {
     const file = relative(ROOT, abs);
     if (NOT_NOTIFICATIONS[file]) continue;
     const text = readFileSync(abs, "utf8");
-    if (!text.includes("kind")) continue;
+    if (!text.includes("kind") && !text.includes("notifications")) continue;
     const sf = parse(abs);
-    // raw sites: payloads inside a notifications insert, directly or via a
-    // variable the insert is given
-    const rawNodes = new Set<ts.Node>();
-    const rawVars = new Set<string>();
+    const lineOf = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+    // raw sites: each insert call, with the nodes its payloads may sit in —
+    // its arguments, and the initializer of a variable an argument names
+    const calls: Array<{ call: ts.CallExpression; nodes: Set<ts.Node>; vars: Set<string>; covered: boolean }> = [];
     const findRaw = (n: ts.Node) => {
       if (ts.isCallExpression(n) && isNotificationsInsert(n)) {
-        for (const a of n.arguments) { rawNodes.add(a); if (ts.isIdentifier(a)) rawVars.add(a.text); }
+        const nodes = new Set<ts.Node>(), vars = new Set<string>();
+        for (const a of n.arguments) { nodes.add(a); if (ts.isIdentifier(a)) vars.add(a.text); }
+        calls.push({ call: n, nodes, vars, covered: false });
       }
+      if (isNotificationsFrom(n) && !ts.isPropertyAccessExpression(n.parent)) escaped.push({ file, line: lineOf(n) });
       n.forEachChild(findRaw);
     };
     findRaw(sf);
     const markVars = (n: ts.Node) => {
-      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && rawVars.has(n.name.text) && n.initializer) rawNodes.add(n.initializer);
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        for (const c of calls) if (c.vars.has(n.name.text)) c.nodes.add(n.initializer);
+      }
       n.forEachChild(markVars);
     };
     markVars(sf);
-    const insideRaw = (n: ts.Node) => { for (let c: ts.Node | undefined = n; c; c = c.parent) if (rawNodes.has(c)) return true; return false; };
+    const within = (n: ts.Node, nodes: Set<ts.Node>) => { for (let c: ts.Node | undefined = n; c; c = c.parent) if (nodes.has(c)) return true; return false; };
     const visit = (n: ts.Node) => {
       if (ts.isObjectLiteralExpression(n)) {
         const names = new Set(n.properties.map((p) => propName(p, sf)));
         if (names.has("kind") && names.has("title") && (names.has("orgId") || names.has("org_id"))) {
           const kp = n.properties.find((p) => propName(p, sf) === "kind")!;
           const expr = ts.isShorthandPropertyAssignment(kp) ? kp.name : (kp as ts.PropertyAssignment).initializer;
-          const raw = insideRaw(n);
+          const owners = calls.filter((c) => within(n, c.nodes));
+          const raw = owners.length > 0;
           let kinds: string[] | "typed" | null = evalKind(expr, sf);
           if (!kinds && raw) kinds = RAW_RESOLVED[`${file}|${expr.getText(sf)}`]?.kinds ?? null;
           if (!kinds && !raw) kinds = "typed"; // a typed sink (notify / notifyMany / emit): the compiler checks it
-          out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, raw, kinds: kinds ?? ["<unresolvable: " + expr.getText(sf) + ">"] });
+          // the insert this payload rides is covered: its kind was evaluated
+          if (raw && kinds !== null) for (const c of owners) c.covered = true;
+          out.push({ file, line: lineOf(n), raw, kinds: kinds ?? ["<unresolvable: " + expr.getText(sf) + ">"] });
         }
       }
       n.forEachChild(visit);
     };
     visit(sf);
+    for (const c of calls) inserts.push({ file, line: lineOf(c.call), covered: c.covered, arg: c.call.arguments.map((a) => a.getText(sf).slice(0, 60)).join(", ") });
   }
-  censusCache = out;
-  return out;
+  censusCache = { payloads: out, inserts, escaped };
+  return censusCache;
 }
-// The raw notifications inserts left outside notify(), by file — each in a
-// file another package owns (DEC-31: a pointer, not an edit). A NEW raw insert
-// fails here: route it through notify() / notifyMany() / emit(). N5's
-// notification_kinds allowlist backs this up in the database.
+const census = (): Payload[] => scan().payloads;
+// The raw `.from("notifications").insert(` CALLS left outside notify(), by
+// file — each in a file another package owns (DEC-31: a pointer, not an
+// edit). A NEW raw insert call fails here, whatever its rows are: route it
+// through notify() / notifyMany() / emit(). This is a ratchet on the eleven,
+// not the ban NEDGE-13 dw3 asks for — that is met when they move to notify()
+// with their owners (TAX-11). N5's notification_kinds allowlist backs the
+// kind check up in the database.
 const RAW_SITES: Record<string, number> = {
   "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence
   "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC
@@ -513,8 +545,23 @@ describe("sections — every kind where it was, except the kinds the records nam
 });
 
 describe("action, compliance, icon, tone, group — the other classifiers, in one table", () => {
-  it("actionRequired: the conflict class as before, plus the PSM obligations (DEC-44 (N2) §2)", () => {
+  it("actionRequired: exactly the conflict class, as before (DEC-44 (N2) §2)", () => {
     for (const k of unionKinds()) expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(expectedAction(k));
+    expect(unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].actionRequired).sort()).toEqual([...TODAY_ACTION].sort());
+  });
+
+  it("the PSM obligations stay FYI until their rows clear on discharge — a met obligation must not keep the rail red", () => {
+    // ack_overdue / review_overdue are escalation copies to the owner and
+    // controllers: FYI by the registry's own rule as well.
+    for (const k of PSM_OBLIGATIONS_FYI_UNTIL_CLEARED) {
+      expect(isNotificationKind(k), k).toBe(true);
+      expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(false);
+    }
+    // nothing outside the hook's ticket reconcile marks these rows read: the
+    // producers never write read_at (if one starts to, revisit DEC-44 (N2) §2)
+    for (const f of ["lib/acknowledgments.ts", "lib/reviewControl.ts", "lib/effectiveDate.ts", "lib/accessRecert.ts"]) {
+      expect(src(f), f).not.toMatch(/read_at/);
+    }
   });
 
   it("compliance is the cron's COMPLIANCE_KINDS, unchanged", () => {
@@ -551,6 +598,28 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
       expect(isNotificationKind(k), k).toBe(true);
       expect(KIND_META[k as keyof typeof KIND_META].icon, k).toBe(icon);
     }
+  });
+
+  it("OS-7 dw3 as a ratchet: a kind outside the named gap list draws its KIND_META icon in the bell, never the fallback", () => {
+    // The kinds the bell has no entry for today (they draw the fallback Bell
+    // there; their feed icon is KIND_META's). N3 derives KIND_ICON from
+    // KIND_META and empties this list; until then a NEW kind — the nudge's
+    // (N12) included — must get a bell entry, or be added here on purpose.
+    const BELL_ICON_GAPS = [
+      "library_doc_added", "library_doc_revised", "review_due", "owner_assigned", "owner_behind", "deletion_requested",
+      "ack_requested", "ack_complete", "ack_overdue", "ack_unsatisfiable", "review_requested", "review_signed",
+      "review_invalidated", "review_complete", "review_overdue", "review_alternate_activated", "effective_now",
+      "retention_eligible", "legal_hold_placed", "legal_hold_released", "access_recert_due", "security_export",
+      "member_revoked", "library_unowned", "ai_cap_changed", "transmittal_unstampable",
+    ];
+    const bell = bellIconMap();
+    const missing: string[] = [];
+    for (const k of NOTIFICATION_KINDS) {
+      if (BELL_ICON_GAPS.includes(k)) continue;
+      if (bell[k] !== KIND_META[k].icon) missing.push(`${k}: bell ${bell[k] ?? "(fallback Bell)"} vs KIND_META ${KIND_META[k].icon}`);
+    }
+    expect(missing).toEqual([]);
+    for (const k of BELL_ICON_GAPS) expect(isNotificationKind(k), k).toBe(true);
   });
 
   it("the feed's predicates are still the verbatim copies (N3 derives them from KIND_META next)", () => {
@@ -607,15 +676,16 @@ describe("the hook — one row of every kind written on b9cdfdc", () => {
       documents: { total: total("documents"), actionRequired: action("documents") },
       projects: { total: total("projects"), actionRequired: action("projects") },
     });
-    // TODAY: requests 5, documents 12, projects 2 — the same plus the named moves
+    // TODAY: requests 5, documents 12, projects 2 — the same plus the named
+    // moves; the four conflict rows are now red on Documents (TRAIL-5)
     expect(r.sectionCounts.requests).toEqual({ total: 5, actionRequired: 0 });
-    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22, actionRequired: 4 + 7 });
+    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22, actionRequired: 4 });
     expect(r.sectionCounts.projects).toEqual({ total: 2 + 1, actionRequired: 0 });
   });
 
   it("TAX-7 / TRAIL-13: counts are computed once — action + activity = all — and actionRequiredCount is counts.action", async () => {
     const r = await mount(kinds.map((k, i) => row(k, i)));
-    expect(r.counts).toEqual({ all: kinds.length, action: 11, activity: kinds.length - 11 });
+    expect(r.counts).toEqual({ all: kinds.length, action: 4, activity: kinds.length - 4, notifications: kinds.length });
     expect(r.actionRequiredCount).toBe(r.counts.action);
     expect(r.unreadCount).toBe(r.counts.activity);
     expect("totalNotifications" in r).toBe(false);
@@ -639,7 +709,7 @@ describe("the hook — one row of every kind written on b9cdfdc", () => {
     expect(r.items.map((i) => i.key).sort()).toEqual(["notif:n1", "notif:n2", "ticket:t1"]);
     const ticketItem = r.items.find((i) => i.key === "ticket:t1")!;
     expect(ticketItem.actionRequired).toBe(false); // an unread ticket the requester need not act on
-    expect(r.counts).toEqual({ all: 3, action: 1, activity: 2 });
+    expect(r.counts).toEqual({ all: 3, action: 1, activity: 2, notifications: 2 });
     expect(r.actionRequiredCount).toBe(r.items.filter((i) => i.actionRequired).length);
     expect(r.sectionCounts.requests).toEqual({ total: 1, actionRequired: 0 });
     expect(r.sectionCounts.documents).toEqual({ total: 2, actionRequired: 1 });
@@ -653,6 +723,31 @@ describe("the surfaces read the hook's counts (TAX-7)", () => {
     expect(feed).toContain('{ key: "activity", label: "Activity", n: counts.activity },');
     expect(feed).toContain("counts: AttentionCounts;");
     expect(feed).not.toMatch(/key: "unread"|counts\.unread/);
+  });
+
+  it("'Mark all read' is offered whenever the feed holds a notification row — an action-only feed included, on any filter (the bell's rule)", async () => {
+    const { AttentionFeed } = await import("@/components/cockpit/AttentionFeed");
+    const markAllShown = (props: Parameters<typeof AttentionFeed>[0]) => {
+      act(() => { root.render(React.createElement(AttentionFeed, props)); });
+      return !!host.querySelector('button[title="Mark all notifications read"]');
+    };
+    const base = { filter: "all" as const, onFilter: () => {}, onMarkRead: () => {}, onMarkAll: () => {}, markingAll: false };
+    // only action rows (on b9cdfdc's rule, counts.unread was 0 here and the
+    // button was hidden while markAllRead would have cleared them)
+    const actionOnly = await mount([row("checkout_conflict", 1), row("branch_open", 2)]);
+    expect(actionOnly.counts).toEqual({ all: 2, action: 2, activity: 0, notifications: 2 });
+    expect(markAllShown({ ...base, items: actionOnly.items, counts: actionOnly.counts })).toBe(true);
+    // a filter showing none of them does not hide it: Mark all read clears them all
+    expect(markAllShown({ ...base, filter: "activity", items: [], counts: actionOnly.counts })).toBe(true);
+    // nothing it could clear (only an unread ticket — tickets.unread_by is not a notification row): not offered
+    const ticket = {
+      id: "t9", org_id: "o1", ticket_id: "DR-9", title: "Valve", status: "PENDING_ASSIGNMENT", requester_id: "u1",
+      unread_by: ["u1"], created_at: "2026-10-01T00:00:00Z", last_modified: "2026-10-01T00:00:00Z",
+    };
+    const ticketOnly = await mount([], [ticket]);
+    expect(ticketOnly.counts).toEqual({ all: 1, action: 0, activity: 1, notifications: 0 });
+    expect(markAllShown({ ...base, items: ticketOnly.items, counts: ticketOnly.counts })).toBe(false);
+    expect(src("components/cockpit/AttentionFeed.tsx")).toContain("{counts.notifications > 0 && (");
   });
 
   it("the Center, the cockpit and the widget take counts from the hook and recount nothing", () => {
@@ -675,14 +770,39 @@ describe("the producer census — every written kind is declared and classified"
     expect(bad).toEqual([]);
   });
 
-  it("no new raw notifications insert: the ones left are pinned, by file, each in a file another package owns", () => {
+  it("no new raw notifications insert: the insert CALLS left are pinned, by file, each in a file another package owns", () => {
+    const { inserts, escaped } = scan();
     const byFile: Record<string, number> = {};
-    for (const p of census()) if (p.raw) byFile[p.file] = (byFile[p.file] ?? 0) + 1;
+    for (const c of inserts) byFile[c.file] = (byFile[c.file] ?? 0) + 1;
     expect(byFile).toEqual(RAW_SITES);
     expect(byFile["lib/storageAlerts.ts"]).toBeUndefined();
     expect(byFile["lib/storageUsage.ts"]).toBeUndefined();
+    // every pinned call's rows are a payload the census evaluated — an
+    // insert(rows) whose rows come from a parameter or another file fails here
+    expect(inserts.filter((c) => !c.covered).map((c) => `${c.file}:${c.line} insert(${c.arg})`)).toEqual([]);
+    // and no notifications builder leaves its chain, where an insert would hide
+    expect(escaped.map((e) => `${e.file}:${e.line}`)).toEqual([]);
     for (const p of census()) if (p.raw) expect(p.kinds, `${p.file}:${p.line}`).not.toBe("typed");
     for (const { proof: [file, text] } of Object.values(RAW_RESOLVED)) expect(src(file), file).toContain(text);
+  });
+
+  it("the census counts an insert call whose rows it cannot see — the drift it exists to stop (probe)", () => {
+    // the reviewer's case: rows built in another file and handed to a helper
+    const probe = ts.createSourceFile("probe.ts", [
+      "async function bell(db: any, rows: unknown[]) { await db.from('notifications').insert(rows); }",
+      "const t = sb.from(\"notifications\"); void t;",
+    ].join("\n"), ts.ScriptTarget.Latest, true);
+    const calls: ts.CallExpression[] = [];
+    const builders: ts.CallExpression[] = [];
+    const walk = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && isNotificationsInsert(n)) calls.push(n);
+      if (isNotificationsFrom(n) && !ts.isPropertyAccessExpression(n.parent)) builders.push(n);
+      n.forEachChild(walk);
+    };
+    walk(probe);
+    expect(calls).toHaveLength(1);    // counted as a site: RAW_SITES would no longer match
+    expect(ts.isIdentifier(calls[0].arguments[0]) && calls[0].arguments[0].text).toBe("rows"); // a parameter: no payload covers it
+    expect(builders).toHaveLength(1); // the escaped builder is caught
   });
 
   it("the census sees through constants, parameters and branches (spot checks)", () => {

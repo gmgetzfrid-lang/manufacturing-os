@@ -19,7 +19,8 @@ vi.mock("@/lib/r2", () => ({
 
 import { runStorageAlerts } from "@/lib/storageAlerts";
 import { runPlatformStorageAlerts } from "@/lib/storageUsage";
-import { supabase } from "@/lib/supabase";
+import { supabase, __setServerSupabaseClient, __resetServerSupabaseClient } from "@/lib/supabase";
+import { runWithServerClient } from "@/lib/serverClientScope";
 import { isNotificationKind, KIND_META } from "@/lib/notificationKinds";
 
 type Call = { table: string; op: string; args: unknown[] };
@@ -39,12 +40,16 @@ beforeEach(() => {
   r2State.bytes = 0;
 });
 
+/** Marks every builder the double hands out, so a probe can tell whether
+ *  the shared client resolved to the double or to the anonymous client. */
+const DOUBLE = Symbol("service-role double");
+
 /** A service-role client double: a chainable builder per table. */
 function fakeServiceClient(): SupabaseClient {
   const from = (table: string) => {
     const filters: Array<[string, unknown]> = [];
     let op = "select";
-    const q: Record<string, unknown> = {};
+    const q: Record<PropertyKey, unknown> = { [DOUBLE]: true };
     const result = () => {
       if (table === "notifications" && op === "insert") return { data: null, error: world.insertError };
       if (table === "notifications") {
@@ -111,14 +116,23 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
     warn.mockRestore();
   });
 
-  it("the binding is for the write only: afterwards the shared client is not the watchdog's", async () => {
+  it("the binding is for the write only: afterwards the shared client resolves to the anonymous client, not the watchdog's", async () => {
+    const resolvesToDouble = () => (supabase.from("notifications") as unknown as Record<PropertyKey, unknown>)[DOUBLE] === true;
     world.tableBytes = 95;
     const sb = fakeServiceClient();
-    await runStorageAlerts(sb);
-    expect(supabase.from).not.toBe(sb.from);
-    const before = world.inserts.length;
-    void supabase.from("notifications"); // the anonymous client's builder — not recorded by the double
-    expect(world.inserts.length).toBe(before);
+    // the probe can see a binding: inside the scope, and under a module-wide
+    // swap (the shape that WOULD outlive the write), it resolves to the double
+    expect(await runWithServerClient(sb, async () => resolvesToDouble())).toBe(true);
+    __setServerSupabaseClient(sb);
+    try { expect(resolvesToDouble()).toBe(true); } finally { __resetServerSupabaseClient(); }
+    expect(resolvesToDouble()).toBe(false);
+    // the watchdog binds for its writes (the rows reached the double through
+    // the SHARED client notify() uses) …
+    const r = await runStorageAlerts(sb);
+    expect(r.alerts).toBe(2);
+    expect(world.inserts.filter((i) => i.table === "notifications")).toHaveLength(2);
+    // … and leaves nothing bound once it returns
+    expect(resolvesToDouble()).toBe(false);
   });
 });
 

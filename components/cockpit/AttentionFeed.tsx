@@ -120,7 +120,10 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
               </button>
             ))}
           </div>
-          {counts.activity > 0 && (
+          {/* Offered whenever the feed holds a notification row — what
+              markAllRead clears, action rows included — whichever filter is
+              showing: the header bell's rule. */}
+          {counts.notifications > 0 && (
             <button
               onClick={onMarkAll}
               disabled={markingAll}

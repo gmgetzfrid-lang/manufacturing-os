@@ -60,14 +60,21 @@ export interface KindMeta {
   pushWorthy?: boolean;
 }
 
-// actionRequired (DEC-44 (N2) §2). The conflict class (checkout_conflict,
-// checkout_released, overlap_advisory, branch_open) was the feed's actionKinds
-// on b9cdfdc. The PSM obligations join it so the Documents badge can turn red
-// for one (TRAIL-5): ack_requested, review_requested, review_invalidated,
-// ack_overdue, review_overdue, access_recert_due, effective_now. An FYI —
-// someone else's sign-off, a completion, an escalation copy — stays false.
-// A notification row stops counting when it is read (TRAIL-4 marks it read on
-// arrival — N11).
+// actionRequired (DEC-44 (N2) §2) — true for exactly the conflict class
+// (checkout_conflict, checkout_released, overlap_advisory, branch_open): the
+// feed's actionKinds on b9cdfdc, which now also turn the Documents badge red
+// (TRAIL-5). Everything else is false, as it was on b9cdfdc — an FYI (someone
+// else's sign-off, a completion, an escalation copy to the owner and
+// controllers) and, for now, the PSM obligations too (ack_requested,
+// review_requested, review_invalidated, access_recert_due, …). Deliberately:
+// an action notification stays red, pulsing and in the Action count until
+// its row is read, and nothing marks a PSM row read when the person
+// acknowledges or signs (lib/acknowledgments.ts, lib/reviewControl.ts,
+// lib/effectiveDate.ts never touch notifications.read_at; the hook reconciles
+// ticket workflow rows only). Flipping an obligation to true is one line
+// here, and lands with the change that clears its row once the obligation is
+// discharged (the TRAIL-9 class) and after the badge's reduced-motion /
+// accessible-name work (NEDGE-5) — DEC-44 (N2) §2.
 
 export const KIND_META = {
   // ── Drafting requests (the 'requests' row) ────────────────────────────────
@@ -107,23 +114,29 @@ export const KIND_META = {
   owner_behind:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
   deletion_requested:       { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "other" },
   // the acknowledgment family — read & acknowledge an issued revision
-  ack_requested:            { section: "documents", actionRequired: true, compliance: true, icon: "Briefcase", tone: "orange", group: "documents" },
+  ack_requested:            { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "documents" },
   ack_complete:             { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents" },
-  ack_overdue:              { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
+  ack_overdue:              { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   ack_unsatisfiable:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   // the review family — periodic review and the pre-publish sign-off
   review_due:               { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_requested:         { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
+  // review_requested is overloaded: besides a document's sign-off request, the
+  // contractor-intake folded digest writes it (lib/intakeRateLimit.ts
+  // foldedDigestKind — doc_superseded when a revision was published) with
+  // resource_type 'project' and a /projects/<id> link, so that digest badges
+  // Documents too. Recorded for ratification (DEC-44 (N2) §3); the digest's
+  // own kind (section 'projects') belongs to that file's owner.
+  review_requested:         { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
   review_signed:            { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_invalidated:       { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
+  review_invalidated:       { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
   review_complete:          { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_overdue:           { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
+  review_overdue:           { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
   review_alternate_activated: { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  effective_now:            { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
+  effective_now:            { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   retention_eligible:       { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   legal_hold_placed:        { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks" },
   legal_hold_released:      { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks" },
-  access_recert_due:        { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "other" },
+  access_recert_due:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
 
   // ── Projects (the 'projects' row) ─────────────────────────────────────────
   // Unchanged: project_member, project_status.

@@ -126,10 +126,13 @@ export interface AttentionItem {
 export interface SectionCount { total: number; actionRequired: number; }
 export type SectionCounts = Record<AttentionSection, SectionCount>;
 
-/** The feed's three counts, computed once here and read by every surface
- *  (the Center, the cockpit, the dashboard widget, the Command Deck): `all`
- *  items, `action` items, and `activity` (the rest). See VOCABULARY above. */
-export interface AttentionCounts { all: number; action: number; activity: number; }
+/** The feed's counts, computed once here and read by every surface (the
+ *  Center, the cockpit, the dashboard widget, the Command Deck): `all` items,
+ *  `action` items, and `activity` (the rest) — see VOCABULARY above — plus
+ *  `notifications`, the items that are notification rows: what "Mark all
+ *  read" clears, so a surface offers it exactly when there is one (the header
+ *  bell's rule), whichever filter is showing. */
+export interface AttentionCounts { all: number; action: number; activity: number; notifications: number; }
 
 /** One bucket per section a sidebar row renders — and no other. */
 function emptySectionCounts(): SectionCounts {
@@ -327,8 +330,8 @@ export function useTicketNotifications() {
       if (n.resourceId && ticketIds.has(n.resourceId)) continue;
       const section = sectionForKind(n.kind);
       // KIND_META decides what is an action: the conflict class (a stale-base
-      // branch, a lost checkout, an edit overlap) and the PSM obligations. A
-      // legacy kind no union declares is FYI.
+      // branch, a lost checkout, an edit overlap). A legacy kind no union
+      // declares is FYI.
       const actionRequired = kindMeta(n.kind)?.actionRequired ?? false;
       out.push({
         key: `notif:${n.id}`,
@@ -353,7 +356,8 @@ export function useTicketNotifications() {
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
     const action = out.filter((i) => i.actionRequired).length;
-    const counts: AttentionCounts = { all: out.length, action, activity: out.length - action };
+    const notifications = out.filter((i) => i.source === 'notification').length;
+    const counts: AttentionCounts = { all: out.length, action, activity: out.length - action, notifications };
     return { items: out, counts, sectionCounts };
   }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
 
@@ -362,7 +366,8 @@ export function useTicketNotifications() {
     items,
     /** The single count every surface badges (the header bell + Home). */
     count: items.length,
-    /** { all, action, activity } — the one place the feed is counted (TAX-7). */
+    /** { all, action, activity, notifications } — the one place the feed is
+     *  counted (TAX-7). */
     counts,
     /** = counts.action: every action item, tickets AND notifications (TRAIL-13
      *  — it used to count tickets only, so the Command Deck's Action stat
