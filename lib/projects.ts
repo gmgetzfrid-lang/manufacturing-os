@@ -284,12 +284,14 @@ export async function getProject(projectId: string): Promise<Project | null> {
 /** PERF-8: the project row once, with the wizard field the page needs
  *  (job_kind — not on the typed Project) read from the SAME row rather than
  *  a second round trip for one column. A refused read throws. */
-export async function getProjectForPage(projectId: string): Promise<{ project: Project; jobKind: string | null } | null> {
+export async function getProjectForPage(projectId: string): Promise<{ project: Project; jobKind: string | null; row: Record<string, unknown> } | null> {
   const { data, error } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
   if (error) throw new Error(userFacingReadError(error, "projects"));
   if (!data) return null;
   const r = data as Record<string, unknown>;
-  return { project: rowToProject(r), jobKind: (r.job_kind as string | null | undefined) ?? null };
+  // `row` is the row as read — the page hands it to the coach so the health
+  // snapshot does not read the project a second time (PERF-8).
+  return { project: rowToProject(r), jobKind: (r.job_kind as string | null | undefined) ?? null, row: r };
 }
 
 /** SEC-15: which of these users are ACTIVE members of the org — ownership can

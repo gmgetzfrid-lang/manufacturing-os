@@ -25,6 +25,7 @@
 // WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
@@ -46,8 +47,13 @@ import { buildProgressIndex, overallPercent } from "@/lib/scheduleProgress";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import { useScheduleNow } from "@/components/projects/useScheduleNow";
-import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
-import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
+// PERF-9: the task panel and the calendar are separate chunks, loaded when a
+// task is opened or the calendar is chosen.
+const TaskDetailPanel = dynamic(() => import("@/components/projects/TaskDetailPanel"), { ssr: false });
+const ScheduleCalendarTileView = dynamic(() => import("@/components/projects/ScheduleCalendarTileView"), {
+  ssr: false,
+  loading: () => <div role="status" className="py-10 text-center text-xs text-[var(--color-text-muted)]">Loading the calendar…</div>,
+});
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
@@ -1541,7 +1547,9 @@ function Bar({
 
 // ─── Axis + gridlines ──────────────────────────────────────────
 
-function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
+// PERF-5 (J12): the axis and the gridlines depend on the domain and the zoom
+// only — memo'd, a drag (which changes neither) does not rebuild them.
+const Axis = React.memo(function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
   // Choose a tick step that keeps labels legible at the current zoom.
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const ticks: Array<{ x: number; label: string }> = [];
@@ -1549,9 +1557,7 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
     const date = addDaysUTC(domain.start, d);
     ticks.push({
       x: d * pxPerDay,
-      label: step >= 28
-        ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
-        : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
+      label: step >= 28 ? fmtMonthUTC(date) : fmtDayUTC(date),
     });
   }
   return (
@@ -1564,9 +1570,9 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
       ))}
     </div>
   );
-}
+});
 
-function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
+const Gridlines = React.memo(function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const lines: React.ReactNode[] = [];
   for (let d = 0; d < domain.totalDays; d += step) {
@@ -1579,7 +1585,7 @@ function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; tota
     );
   }
   return <div className="absolute pointer-events-none" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
-}
+});
 
 // ─── Dependency arrows (finish-to-start connectors) ─────────────
 
@@ -1897,9 +1903,22 @@ function rangeLabel(m: Milestone): string {
 // human labels in UTC too, so the date printed under a task matches both the
 // axis tick it sits on and the value in the source file. Formatting in local
 // time instead makes every date read a day early for any viewer west of UTC.
+// PERF-5 (projects Round G J12): ONE formatter per shape, built on first
+// use — `toLocaleDateString(…, options)` builds a new Intl formatter on every
+// call, and the axis labels and every bar's tooltip called it on each drag
+// frame (measured: most of a throttled drag frame). Same output.
+let dayFmt: Intl.DateTimeFormat | null = null;
+let dateFmt: Intl.DateTimeFormat | null = null;
+let monthFmt: Intl.DateTimeFormat | null = null;
 function fmtDayUTC(d: Date): string {
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  dayFmt ??= new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  return dayFmt.format(d);
 }
 function fmtDateUTC(d: Date): string {
-  return d.toLocaleDateString(undefined, { timeZone: "UTC" });
+  dateFmt ??= new Intl.DateTimeFormat(undefined, { timeZone: "UTC" });
+  return dateFmt.format(d);
+}
+function fmtMonthUTC(d: Date): string {
+  monthFmt ??= new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit", timeZone: "UTC" });
+  return monthFmt.format(d);
 }

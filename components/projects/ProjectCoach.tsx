@@ -20,15 +20,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronRight, Sparkles, ArrowRight, AlertTriangle } from "lucide-react";
-import { gatherProjectSnapshot, snapshotRekeyMayShare } from "@/lib/projectSnapshot";
+import { gatherProjectSnapshot, snapshotRekeyMayShare, type SnapshotPreRead } from "@/lib/projectSnapshot";
 import { computeProjectHealth, buildCoachItems, type ProjectHealth, type CoachItem } from "@/lib/projectHealth";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 
-export default function ProjectCoach({ orgId, projectId, refreshKey }: {
+export default function ProjectCoach({ orgId, projectId, refreshKey, preRead }: {
   orgId: string;
   projectId: string;
   /** Bump to re-gather (e.g. after the page refreshes its own data). */
   refreshKey?: number;
+  /** PERF-8: the project row and roster the page already read in this load
+   *  — the gather does not read them again. */
+  preRead?: SnapshotPreRead;
 }) {
   const [health, setHealth] = useState<ProjectHealth | null>(null);
   const [items, setItems] = useState<CoachItem[]>([]);
@@ -42,6 +45,10 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
   // every later change must not be served from a round whose queries were
   // issued before a write.
   const keys = useRef<{ initial: number | undefined; prev: number | undefined }>({ initial: refreshKey, prev: refreshKey });
+  // The latest pre-read, for the gather below (declared first, so it is
+  // current when that effect runs in the same commit).
+  const pre = useRef<SnapshotPreRead | undefined>(preRead);
+  useEffect(() => { pre.current = preRead; }, [preRead]);
 
   useEffect(() => {
     // Abort on unmount / re-key: in-flight requests are cancelled (once no
@@ -52,7 +59,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
     keys.current.prev = refreshKey;
     void (async () => {
       try {
-        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal, share });
+        const snap = await gatherProjectSnapshot(orgId, projectId, { signal: controller.signal, share, pre: pre.current });
         if (controller.signal.aborted) return;
         setHealth(computeProjectHealth(snap));
         setItems(buildCoachItems(snap, projectId));
