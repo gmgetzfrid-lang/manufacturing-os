@@ -34,7 +34,7 @@ import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
-import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
 export type CostDocKind = "quote" | "invoice" | "po";
 export type CostDocStatus = "draft" | "parsed" | "awarded" | "declined" | "posted" | "void";
@@ -274,7 +274,7 @@ async function revertDocTransition(docId: string, backTo: CostDocStatus, from: C
 /** The message for a claim whose money failed AND whose revert failed —
  *  names the state and the id so the row can be found and repaired. */
 function stuckMessage(docId: string, claimedAs: CostDocStatus, postErr: string, revertErr: string): string {
-  return `The money did not post (${postErr}) AND the document could not be put back (${revertErr}) — it is stuck as ${claimedAs} with no cost entry. Document ${docId}: use "Repair" on the Costs tab to re-post or revert it.`;
+  return `The money did not post (${asClause(postErr)}) AND the document could not be put back (${asClause(revertErr)}) — it is stuck as ${claimedAs} with no cost entry. Document ${docId}: use "Repair" on the Costs tab to re-post or revert it.`;
 }
 
 /** A stored currency as an ISO-4217-shaped code, or null when unstated or
@@ -510,7 +510,7 @@ export async function awardQuote(input: {
     const mismatch = await currencyMismatch(f, input.costAccountId);
     if (mismatch) return mismatch;
     const behind = await companyBehind(f, raw);
-    if (behind.error) return `Couldn't check the company registry (${behind.error}) — try again; an award is not made without that check.`;
+    if (behind.error) return `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`;
     company = behind.company;
     flagged = !!company && (company.status === "do_not_use" || company.status === "inactive");
     if (company && flagged && !override) {
@@ -587,7 +587,7 @@ export async function awardQuote(input: {
       .select("id");
     declined = hit?.length ?? 0;
     if (error || declined < rivals.length) {
-      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${userFacingError(error, { context: "declineRivals", embed: true })})` : ""} — refresh and decline them by hand.`);
+      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${userFacingError(error, { context: "declineRivals", clause: true })})` : ""} — refresh and decline them by hand.`);
     }
   }
   if (ungroupedOpen.length > 0) {

@@ -184,27 +184,40 @@ export interface UserFacingOptions {
    *  (a partial success: "X was saved, but Y was not: …") — the reason
    *  alone, never "nothing was changed". */
   embed?: boolean;
+  /** The text sits INSIDE a sentence the caller finishes — in parentheses,
+   *  "Could not delete “X” (<reason>) — nothing was changed." — so it is
+   *  the reason alone (as `embed`, or the read wording for a read) with no
+   *  closing full stop: never "….)" and never the caller's own tail twice. */
+  clause?: boolean;
+}
+
+/** A finished sentence made a clause: its closing full stop dropped, for
+ *  text already translated (a library's `error` field) that the caller
+ *  places inside its own sentence. */
+export function asClause(text: string): string {
+  return text.trim().replace(/\.+$/, "");
 }
 
 /**
  * The sentence a user reads for `err` — a database / PostgREST error object,
  * an Error, or a string. `action: "read"` words the sentence for a failed
  * load (no "nothing was changed"); `embed: true` gives the reason alone, for
- * a lead-in that reports a write which landed. `context` labels the console
- * line. When the text is replaced, the raw detail is logged with
- * console.error.
+ * a lead-in that reports a write which landed; `clause: true` gives the
+ * reason alone without its full stop, for text placed inside the caller's
+ * own sentence. `context` labels the console line. When the text is
+ * replaced, the raw detail is logged with console.error.
  */
 export function userFacingError(err: unknown, opts: UserFacingOptions = {}): string {
   const kind = classifyDbError(err);
   const e = normalize(err);
-  if (kind === "passthrough") return (e.message ?? "").trim();
-  const text = (opts.action === "read" ? READ : opts.embed ? REASON : WRITE)[kind];
+  if (kind === "passthrough") return opts.clause ? asClause(e.message ?? "") : (e.message ?? "").trim();
+  const text = (opts.action === "read" ? READ : opts.embed || opts.clause ? REASON : WRITE)[kind];
   try {
     console.error(`[userFacingError]${opts.context ? ` ${opts.context}:` : ""} ${kind}`, {
       code: e.code ?? null, message: e.message ?? null, details: e.details ?? null, hint: e.hint ?? null,
     });
   } catch { /* logging must never break the refusal */ }
-  return text;
+  return opts.clause ? asClause(text) : text;
 }
 
 /** For a failed load: the read-worded sentence. */
@@ -245,6 +258,8 @@ function driverFragmentAt(msg: string): number {
  * as userFacingError logs it.
  */
 export function userFacingCaughtError(err: unknown, opts: UserFacingOptions = {}): string {
+  // A clause is the reason alone (as embed) without its closing full stop.
+  if (opts.clause) return asClause(userFacingCaughtError(err, { ...opts, clause: false, embed: true }));
   const kind = classifyDbError(err);
   const e = normalize(err);
   const msg = (e.message ?? "").trim();

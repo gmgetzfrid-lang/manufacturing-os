@@ -49,7 +49,7 @@ import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
-import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { isControllerPrincipal } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
@@ -614,7 +614,7 @@ export async function setChecklistStatus(input: {
     // decision — DEC-16).
     if (input.checklist.createdBy && input.checklist.createdBy === input.actor.uid) {
       const authority = await loadSignoffAuthority(input.orgId, input.projectId, input.actor);
-      if (authority.error) return { ok: false, error: `Couldn't check who else can sign this checklist off (${authority.error}) — it stays open.` };
+      if (authority.error) return { ok: false, error: `Couldn't check who else can sign this checklist off (${asClause(authority.error)}) — it stays open.` };
       const sod = signoffSeparation(input.checklist.createdBy, input.actor.uid, authority.otherSigners, "checklist");
       if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person signs this checklist off." };
       singleSigner = sod.singleSigner;
@@ -863,7 +863,7 @@ export async function runProjectEvidenceSweep(input: {
   try {
     const { data, error } = await supabase.from("project_checklists").select("id")
       .eq("project_id", input.projectId).eq("status", "open").limit(50);
-    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${userFacingReadError(error, "runProjectEvidenceSweep")})` };
+    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${userFacingError(error, { action: "read", context: "runProjectEvidenceSweep", clause: true })})` };
     const ids = ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id));
     if (ids.length === 0) return { ...EMPTY_PROJECT_SWEEP };
     const state = await gatherProjectEvidenceState(input.orgId, input.projectId);
@@ -911,7 +911,7 @@ export async function sweepEvidenceForDocument(input: {
       out.retracted += r.retracted; out.refused += r.refused; out.failed += r.failed;
       if (r.error && !out.error) out.error = r.error;
     }
-    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${userFacingReadError(failedRead, "sweepEvidenceForDocument")})`;
+    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${userFacingError(failedRead, { action: "read", context: "sweepEvidenceForDocument", clause: true })})`;
     return out;
   } catch (e) {
     return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: userFacingCaughtError(e, { context: "evidence sweep" }) };

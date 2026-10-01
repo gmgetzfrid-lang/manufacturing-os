@@ -10,7 +10,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
@@ -245,7 +245,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Purpose, goals &amp; scope</div>
             {fieldsLoadError && (
               <div role="status" className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                These fields could not be read ({fieldsLoadError}) — they are left untouched by this save.
+                These fields could not be read ({asClause(fieldsLoadError)}) — they are left untouched by this save.
               </div>
             )}
           </div>

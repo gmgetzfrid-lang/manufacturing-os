@@ -82,7 +82,7 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
     errSpy.mockRestore();
     const alert = host.querySelector('[role="alert"]');
     // REL-3: driver text that reached the panel is translated at the screen; the lead-in stays
-    expect(alert?.textContent).toMatch(/Couldn't load the change orders \(Couldn't read the change orders' cost entries: The database took too long to answer — try again\.\)/);
+    expect(alert?.textContent).toMatch(/Couldn't load the change orders \(Couldn't read the change orders' cost entries: The database took too long to answer — try again\) — the approved-change figures are not shown\./);
     expect(host.textContent).not.toMatch(/No change orders/);
     // Retry reloads
     co.listChangeOrders.mockResolvedValueOnce([]);
@@ -123,7 +123,8 @@ describe("ChangeOrdersPanel — a failed read is said out loud (REL-2), never an
       root = createRoot(host);
       await renderPanel();
       const alert = host.querySelector('[role="alert"]');
-      expect(alert?.textContent).toMatch(/Couldn't load the change orders \(You don't have permission to see this\.\)/);
+      // J10 third fix: the reason in the parentheses has no full stop of its own
+      expect(alert?.textContent).toMatch(/Couldn't load the change orders \(You don't have permission to see this\) — the approved-change figures are not shown\./);
       expect(alert?.textContent).not.toMatch(/change_orders|permission denied for/);
     } finally {
       errSpy.mockRestore();

@@ -247,8 +247,8 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           .eq("id", doc.id).eq("org_id", orgId).select("id");
         const undone = !revertErr && !!reverted && (reverted as unknown[]).length > 0;
         setErr(undone
-          ? `The override could not be recorded (${userFacingError(auditErr)}) — the link was put back.`
-          : `The link changed but its override record failed (${userFacingError(auditErr, { embed: true })}) and it could not be undone (${revertErr ? userFacingError(revertErr, { embed: true }) : "no row was updated"}) — relink it by hand.`);
+          ? `The override could not be recorded (${userFacingError(auditErr, { clause: true })}) — the link was put back.`
+          : `The link changed but its override record failed (${userFacingError(auditErr, { clause: true })}) and it could not be undone (${revertErr ? userFacingError(revertErr, { clause: true }) : "no row was updated"}) — relink it by hand.`);
         if (!undone) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
         return;
       }
@@ -672,7 +672,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
-      if (error) { setErr(`The override could not be recorded (${userFacingError(error)}) — award stopped.`); return false; }
+      if (error) { setErr(`The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.`); return false; }
       return true;
     };
     let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;

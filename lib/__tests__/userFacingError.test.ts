@@ -26,7 +26,7 @@ vi.mock("@/lib/supabase", () => {
 });
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
 
-import { userFacingError, userFacingReadError, userFacingCaughtError, classifyDbError, type UserFacingKind, type DbErrorLike } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, classifyDbError, asClause, type UserFacingKind, type DbErrorLike } from "@/lib/userFacingError";
 import { describeWriteError } from "@/lib/checkedWrite";
 import { saveCompany, listCompanies, addCompanyEvent } from "@/lib/companies";
 import { saveParty, listParties, addEntry } from "@/lib/costs";
@@ -241,7 +241,7 @@ describe("REL-3 (fix pass) — a read is worded as a read, and a partial success
         if (!/\bbut\b/i.test(line)) return;
         for (const c of calls(line)) {
           seen++;
-          if (!/embed: true/.test(c)) offenders.push(`${f}:${i + 1}: ${c}`);
+          if (!/embed: true|clause: true/.test(c)) offenders.push(`${f}:${i + 1}: ${c}`);
         }
       });
     }
@@ -260,11 +260,95 @@ describe("REL-3 (fix pass) — a read is worded as a read, and a partial success
     expect(projects).toContain('if (error) throw new Error(`${label}: ${userFacingReadError(error, "projects")}`);');
     const ms = at("lib/milestones.ts");
     for (const s of ["breadcrumbs: ${userFacingError(noteErr, { context: \"milestones\", embed: true })}", "audit: ${userFacingError(auditRes.error, { context: \"milestones\", embed: true })}",
-      "moved up a level (${userFacingError(upErr, { context: \"milestones\", embed: true })})", "could not be removed (${userFacingError(linkErr, { context: \"milestones\", embed: true })})"]) {
+      "moved up a level (${userFacingError(upErr, { context: \"milestones\", clause: true })})", "could not be removed (${userFacingError(linkErr, { context: \"milestones\", clause: true })})"]) {
       expect(ms).toContain(s);
     }
     expect(at("lib/intakeLinks.ts")).toContain('auditError: userFacingError(auditErr, { context: "intakeLinks", embed: true })');
     expect(at("components/projects/cost/QuotesPanel.tsx")).toContain("return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };");
+  });
+});
+
+describe("REL-3 (J10 third fix) — a reason placed inside the caller's own sentence is a clause: no '….)', and never the caller's tail twice", () => {
+  it("clause: true is the reason alone with no closing full stop, for every kind — read-worded for a read, never 'nothing was changed'", () => {
+    for (const k of KINDS) {
+      for (const out of [userFacingError(SAMPLE[k], { clause: true }), userFacingError(SAMPLE[k], { action: "read", clause: true })]) {
+        expect(out, k).not.toMatch(/[.]$/);
+        expect(out, k).not.toMatch(NOTHING_CHANGED);
+        expect(out, k).not.toMatch(INTERNALS);
+        expect(out.length, k).toBeGreaterThan(10);
+      }
+      expect(userFacingError(SAMPLE[k], { action: "read", clause: true }), k).toBe(asClause(userFacingReadError(SAMPLE[k])));
+      expect(userFacingError(SAMPLE[k], { clause: true }), k).toBe(asClause(userFacingError(SAMPLE[k], { embed: true })));
+    }
+    // a rail's own sentence passes through, its full stop dropped
+    expect(userFacingError({ code: "P0001", message: "This project is closed." }, { clause: true })).toBe("This project is closed");
+    // a caught error: the clause too, with its lead-in kept
+    expect(userFacingCaughtError(new Error('Link created, but its audit record failed: new row violates row-level security policy for table "audit_logs"'), { clause: true }))
+      .toBe("Link created, but its audit record failed: You don't have permission to do this");
+    expect(userFacingCaughtError({ message: "canceling statement due to statement timeout", code: "57014" }, { clause: true })).toBe("The database took too long to answer — try again");
+    expect(asClause("Done.")).toBe("Done");
+    expect(asClause("Done")).toBe("Done");
+  });
+
+  const AREA = ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+    "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts",
+    "lib/checkedWrite.ts", "lib/projectWizardWrites.ts", "lib/evidencePack.ts", "lib/projectHealth.ts",
+    "components/projects/EditProjectModal.tsx", "components/projects/IntakePanel.tsx", "components/projects/cost/QuotesPanel.tsx",
+    "components/projects/cost/ChangeOrdersPanel.tsx", "components/projects/QualityTab.tsx", "components/projects/CostsTab.tsx",
+    "app/(protected)/projects/[id]/page.tsx", "app/(protected)/projects/page.tsx"];
+  /** Every `(${…})` interpolation on a line — and, in JSX text, every
+   *  `({…})` — the expression inside. */
+  const parenthesised = (line: string): string[] => {
+    const out: string[] = [];
+    for (const open of ["(${", "({"]) {
+      for (let at = line.indexOf(open); at >= 0; at = line.indexOf(open, at + 1)) {
+        // JSX text — "read ({loadErr}) —" — never a call's object literal: `fn({ a: b })`
+        if (open === "({" && (line[at - 1] !== " " || /\s/.test(line[at + 2] ?? " "))) continue;
+        let depth = 1, i = at + open.length;
+        for (; i < line.length && depth > 0; i++) { if (line[i] === "{") depth++; else if (line[i] === "}") depth--; }
+        if (line[i] === ")") out.push(line.slice(at + open.length, i - 1));
+      }
+    }
+    return out;
+  };
+  it("source census (mutation-checked): every translator call — and every already-translated error — placed inside parentheses is a clause", () => {
+    const offenders: string[] = [];
+    let translator = 0, translated = 0;
+    const check = (f: string, text: string) => {
+      text.split("\n").forEach((line, i) => {
+        for (const expr of parenthesised(line)) {
+          if (/userFacing(Read|Caught)?Error\(/.test(expr)) {
+            translator++;
+            if (!/clause: true|\.replace\(\/\\\.\$\/, ""\)/.test(expr)) offenders.push(`${f}:${i + 1}: ${expr}`);
+          } else if (/^[\w.?]*(?:\berror|Error|Err)$/.test(expr.trim())) {
+            // a library's `error` field / a variable holding translated text
+            translated++;
+            offenders.push(`${f}:${i + 1}: ${expr} (wrap it in asClause)`);
+          } else if (/^asClause\(/.test(expr.trim())) translated++;
+        }
+      });
+    };
+    for (const f of AREA) check(f, readFileSync(join(process.cwd(), f), "utf8"));
+    expect(offenders).toEqual([]);
+    expect(translator).toBeGreaterThanOrEqual(17);
+    expect(translated).toBeGreaterThanOrEqual(10);
+    // mutation check: the census catches each shape it exists for
+    const before = offenders.length;
+    check("mutant", "throw new Error(`Could not delete (${userFacingError(err, { context: \"x\" })}) — nothing was changed.`);");
+    check("mutant", "return `Couldn't check (${userFacingReadError(error, \"x\")}). Nothing was grouped.`;");
+    check("mutant", "error: `Couldn't check who else can sign (${authority.error}) — it stays open.`");
+    check("mutant", "<span>Couldn&apos;t load the change orders ({loadErr}) — the figures are not shown.</span>");
+    expect(offenders.length - before).toBe(4);
+  });
+
+  it("the sites the review named read as one sentence", () => {
+    const at = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const ms = at("lib/milestones.ts");
+    expect(ms).toContain("throw new Error(`Could not delete “${m.name}” (${userFacingError(rpcErr, { context: \"milestones\", clause: true })}) — nothing was changed.`);");
+    expect(ms).toContain("throw new Error(`Could not delete “${m.name}” (${userFacingError(delErr, { context: \"milestones\", clause: true })}) — nothing was changed.`);");
+    expect(ms).toContain("return `Couldn't check the grouping for loops (${userFacingError(error, { action: \"read\", context: \"milestones\", clause: true })}). Nothing was grouped.`;");
+    expect(at("lib/checklists.ts")).toContain("`Couldn't check who else can sign this checklist off (${asClause(authority.error)}) — it stays open.`");
+    expect(at("lib/turnover.ts")).toContain("`Couldn't check who else can accept or waive this item (${asClause(authority.error)}) — nothing was changed.`");
   });
 });
 

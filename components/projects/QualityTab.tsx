@@ -47,7 +47,7 @@ import {
   ListChecks, Ban, Wand2, Info, CheckCircle2, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { listParties, type Actor, type CostParty } from "@/lib/costs";
 import {
   type Checklist, type ChecklistItem, type ChecklistKind, type AssessmentProposal, CHECKLIST_KIND_LABEL,
@@ -152,7 +152,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const signoff: SignoffContext = {
     otherSigners: authority && !authority.error ? authority.otherSigners : null,
     pendingReason: authority?.error
-      ? `You created this record, so whether a second person must sign it off depends on who else can — and that couldn't be read (${authority.error}). Reload to try again.`
+      ? `You created this record, so whether a second person must sign it off depends on who else can — and that couldn't be read (${asClause(authority.error)}). Reload to try again.`
       : "Checking who else on this project can sign this off — you created it, so that decides whether a second person must.",
     signerName: (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user",
   };
@@ -209,7 +209,7 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   return (
     <div className="space-y-4">
       {authority?.error && (
-        <Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
+        <Notice notice={info(`Couldn't read who may sign off on this project (${asClause(authority.error)}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />
       )}
       <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />

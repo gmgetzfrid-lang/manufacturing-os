@@ -14,7 +14,7 @@ import {
   GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Undo2, UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
@@ -159,7 +159,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       {loadErr ? (
         <div role="alert" className="px-4 py-4 flex items-center gap-2 text-xs font-bold text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>Couldn&apos;t load the change orders ({loadErr}) — the approved-change figures are not shown.</span>
+          <span>Couldn&apos;t load the change orders ({asClause(loadErr)}) — the approved-change figures are not shown.</span>
           <button onClick={() => void refresh()}
             className="ml-auto px-2 py-0.5 rounded-md border border-rose-500/40 text-[11px] hover:bg-rose-500/[0.08]">Retry</button>
         </div>

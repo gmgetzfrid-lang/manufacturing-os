@@ -369,7 +369,8 @@ describe("awardQuote — the award as a checked transaction (MON-1 / MON-10 / MO
     db.fail["cost_documents:update"] = [null, { message: 'new row violates row-level security policy for table "cost_documents"', code: "42501" }];
     const res = await awardQuote({ doc: doc(), siblings: [doc(), doc({ id: "r1" })], costAccountId: "a1", actor });
     expect(res.ok).toBe(true);
-    expect(res.warning).toMatch(/^Awarded, but 1 of 1 competing bid\(s\) could not be marked not-selected \(You don't have permission to do this\.\) — refresh and decline them by hand\./);
+    expect(res.warning).toMatch(/^Awarded, but 1 of 1 competing bid\(s\) could not be marked not-selected \(You don't have permission to do this\) — refresh and decline them by hand\./);
+    expect(res.warning).not.toContain(".)");
     expect(res.warning).not.toMatch(/nothing was changed|row-level|cost_documents/);
   });
 
@@ -567,7 +568,7 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     db.tables.change_orders = [coRow({ id: "co3", co_number: "CO-003" })];
     db.fail["change_orders:update"] = [null, { message: 'new row violates row-level security policy for table "change_orders"', code: "42501" }];
     const out = await decideChangeOrder({ co: co({ id: "co3", coNumber: "CO-003" }), decision: "approved", shownAmount: 500, shownAccountId: "a1", actorId: "u-owner" });
-    expect(out.warning).toBe('CO-003 was approved and its money posted, but the link to its cost entry could not be saved (You don\'t have permission to do this.) — it is listed under "Ledger needs attention" on the Costs tab until repaired.');
+    expect(out.warning).toBe('CO-003 was approved and its money posted, but the link to its cost entry could not be saved (You don\'t have permission to do this) — it is listed under "Ledger needs attention" on the Costs tab until repaired.');
     expect(out.warning).not.toMatch(/nothing was changed/);
   });
 
@@ -988,7 +989,7 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     db.fail["project_parties:select"] = [{ message: "statement timeout" }];
     const res = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check the company registry \(The database took too long to answer — try again\.\)/);
+    expect(res.error).toMatch(/Couldn't check the company registry \(The database took too long to answer — try again\) — try again; an award is not made without that check\./);
     expect(db.tables.cost_documents[0].status).toBe("parsed");
     db.fail["companies:select"] = [{ message: "timeout" }];
     const byName = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });

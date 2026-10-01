@@ -34,7 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
-import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
 /** org_configurations key: `{ "amount": <number> }`. */
 export const CO_APPROVAL_THRESHOLD_KEY = "change_order_approval_threshold";
@@ -343,7 +343,7 @@ export async function decideChangeOrder(input: {
   let selfDecided = false;
   if (input.decision !== "void" && co.createdBy && co.createdBy === input.actorId) {
     const others = await otherEligibleDeciders(co.orgId, co.projectId, input.actorId);
-    if (others.error) throw new Error(`Couldn't check who else can decide this change order (${others.error}) — a second person has to decide a change order you proposed.`);
+    if (others.error) throw new Error(`Couldn't check who else can decide this change order (${asClause(others.error)}) — a second person has to decide a change order you proposed.`);
     if (others.count > 0) {
       throw new Error(`You proposed ${co.coNumber} — a second person has to decide it (${others.count} other eligible decider${others.count === 1 ? "" : "s"} in this org).`);
     }
@@ -399,7 +399,7 @@ export async function decideChangeOrder(input: {
       const postErr = posted.error ?? "Couldn't post the change order to the budget line.";
       const back = await revertDecision(co.id);
       if (!back.ok) {
-        throw new Error(`${postErr} AND the change order could not be put back (${back.error}) — ${co.coNumber} is stuck as approved with no cost entry. It is listed under "Ledger needs attention" on the Costs tab.`);
+        throw new Error(`${asClause(postErr)} AND the change order could not be put back (${asClause(back.error ?? "the change order was not in the approved state any more")}) — ${co.coNumber} is stuck as approved with no cost entry. It is listed under "Ledger needs attention" on the Costs tab.`);
       }
       throw new Error(postErr);
     }
@@ -410,7 +410,7 @@ export async function decideChangeOrder(input: {
       const { data: linked, error: linkErr } = await supabase.from("change_orders")
         .update({ posted_entry_id: posted.entryId }).eq("id", co.id).select("id");
       if (linkErr || !linked || linked.length === 0) {
-        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${userFacingError(linkErr, { context: "decideChangeOrder link", embed: true })})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
+        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${userFacingError(linkErr, { context: "decideChangeOrder link", clause: true })})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
       }
     }
   }
@@ -550,7 +550,7 @@ export async function unwindChangeOrder(input: {
     if (cur?.status === "approved" && cur.posted_entry_id && cur.posted_entry_id !== entryId) {
       throw new Error(`${co.coNumber} was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one. Refresh, and Reverse it again if it should go.`);
     }
-    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${userFacingError(error, { context: "voidChangeOrder", embed: true })})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
+    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${userFacingError(error, { context: "voidChangeOrder", clause: true })})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
   }
 
   await logAuditAction({

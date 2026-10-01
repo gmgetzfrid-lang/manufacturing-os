@@ -17,7 +17,7 @@
 // as a separate enhancement.
 
 import { supabase } from "@/lib/supabase";
-import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
@@ -336,7 +336,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
       for (let from = 0; ; from += 1000) {
         const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on, parent_id")
           .eq("project_id", projectId).order("id").range(from, from + 999);
-        if (allErr) throw new Error(`Could not check the new link for loops (${userFacingReadError(allErr, "milestones")}) — nothing was saved.`);
+        if (allErr) throw new Error(`Could not check the new link for loops (${userFacingError(allErr, { action: "read", context: "milestones", clause: true })}) — nothing was saved.`);
         const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }>;
         rows.push(...got);
         if (got.length < 1000) break;
@@ -518,7 +518,7 @@ export async function applyMilestoneMoves(input: {
   // check below and a move without its own lock value depend on. Without it
   // the batch is refused — nothing is moved (PT SCH-13).
   if (readError) {
-    throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
+    throw new Error(`Could not read the tasks before moving them (${asClause(readError)}) — nothing was moved. Try again.`);
   }
   // All or nothing for a stale view (PT SCH-7): a row that already differs
   // from the lock its move carries (or is gone) would be skipped by the RPC
@@ -975,7 +975,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   if (rpcErr && !rpcMissing) {
     // The RPC runs in one transaction: whatever it refused, nothing changed.
     if (rpcErr.code === "42501") throw new MilestoneDeleteRefusedError(m.name);
-    throw new Error(`Could not delete “${m.name}” (${userFacingError(rpcErr, { context: "milestones" })}) — nothing was changed.`);
+    throw new Error(`Could not delete “${m.name}” (${userFacingError(rpcErr, { context: "milestones", clause: true })}) — nothing was changed.`);
   }
   if (!rpcErr) {
     const out = rpcData as null | {
@@ -996,7 +996,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   // the hierarchy (20260703) or the links (20260715) has no children /
   // dependents to look after — the column is simply absent.
   const { data: kidRows, error: kidErr } = await supabase.from("milestones").select("id, name").eq("parent_id", id);
-  if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${userFacingReadError(kidErr, "milestones")}) — nothing was deleted.`);
+  if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${userFacingError(kidErr, { action: "read", context: "milestones", clause: true })}) — nothing was deleted.`);
   const children = (kidErr ? [] : (kidRows ?? [])) as Array<{ id: string; name: string }>;
   // depends_on is JSONB (20260715): the containment value goes as JSON text.
   // An array would be sent as a Postgres array literal (cs.{uuid}), which is
@@ -1004,13 +1004,13 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   let depQ = supabase.from("milestones").select("id, name, depends_on").contains("depends_on", JSON.stringify([id]));
   depQ = m.projectId ? depQ.eq("project_id", m.projectId) : depQ.eq("org_id", m.orgId);
   const { data: depRows, error: depErr } = await depQ;
-  if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${userFacingReadError(depErr, "milestones")}) — nothing was deleted.`);
+  if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${userFacingError(depErr, { action: "read", context: "milestones", clause: true })}) — nothing was deleted.`);
   const dependents = ((depErr ? [] : (depRows ?? [])) as Array<{ id: string; name: string; depends_on: string[] | null }>)
     .filter((r) => r.id !== id)
     .map((r) => ({ id: r.id, name: r.name, depends_on: [...(r.depends_on ?? [])] }));
 
   const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
-  if (delErr) throw new Error(`Could not delete “${m.name}” (${userFacingError(delErr, { context: "milestones" })}) — nothing was changed.`);
+  if (delErr) throw new Error(`Could not delete “${m.name}” (${userFacingError(delErr, { context: "milestones", clause: true })}) — nothing was changed.`);
   if (!Array.isArray(gone) || gone.length === 0) throw new MilestoneDeleteRefusedError(m.name);
 
   // The row is gone. Its children were detached by ON DELETE SET NULL: move
@@ -1024,7 +1024,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ parent_id: newParent, updated_at: now, updated_by: actorUserId })
       .in("id", children.map((c) => c.id))
       .select("id");
-    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${userFacingError(upErr, { context: "milestones", embed: true })}) — they are at the top level now`);
+    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${userFacingError(upErr, { context: "milestones", clause: true })}) — they are at the top level now`);
     else if (!Array.isArray(moved) || moved.length < children.length) {
       const n = children.length - (Array.isArray(moved) ? moved.length : 0);
       incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
@@ -1040,7 +1040,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
       .eq("id", d.id)
       .select("id");
-    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${userFacingError(linkErr, { context: "milestones", embed: true })}) — it still names the deleted task; remove it in that task's links`);
+    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${userFacingError(linkErr, { context: "milestones", clause: true })}) — it still names the deleted task; remove it in that task's links`);
     else if (!Array.isArray(linkRows) || linkRows.length === 0) incomplete.push(`the link from “${d.name}” was not removed (the task could not be changed, or is gone) — if it is still there it names the deleted task; remove it in that task's links`);
     else unlinked.push(d);
   }
@@ -2261,7 +2261,7 @@ async function groupingLoopRefusal(projectId: string, parentId: string, parentNa
   for (let from = 0; ; from += 1000) {
     const { data: page, error } = await supabase.from("milestones").select("id, name, parent_id, depends_on")
       .eq("project_id", projectId).order("id").range(from, from + 999);
-    if (error) return `Couldn't check the grouping for loops (${userFacingReadError(error, "milestones")}). Nothing was grouped.`;
+    if (error) return `Couldn't check the grouping for loops (${userFacingError(error, { action: "read", context: "milestones", clause: true })}). Nothing was grouped.`;
     const got = (page ?? []) as typeof rows;
     rows.push(...got);
     if (got.length < 1000) break;

@@ -18,7 +18,7 @@ import {
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
   listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty, linkPartyToCompany,
@@ -850,7 +850,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
       </p>
       {registry.state === "failed" && (
         <p role="alert" className="text-[10px] font-bold text-amber-800 dark:text-amber-300">
-          The Known Companies list couldn&apos;t be loaded ({registry.error}) — contractors are added unlinked; link them once it loads.
+          The Known Companies list couldn&apos;t be loaded ({asClause(registry.error)}) — contractors are added unlinked; link them once it loads.
         </p>
       )}
       {parties.length > 0 && (

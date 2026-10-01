@@ -41,7 +41,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
-import { userFacingCaughtError, userFacingReadError } from "@/lib/userFacingError";
+import { userFacingCaughtError, userFacingReadError, asClause } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
@@ -395,7 +395,7 @@ export async function reviewTurnoverItem(input: {
     // could (fail closed — DEC-16).
     if (item.createdBy && item.createdBy === input.actor.uid) {
       const authority = await loadSignoffAuthority(item.orgId, item.projectId, input.actor);
-      if (authority.error) return { ok: false, error: `Couldn't check who else can accept or waive this item (${authority.error}) — nothing was changed.` };
+      if (authority.error) return { ok: false, error: `Couldn't check who else can accept or waive this item (${asClause(authority.error)}) — nothing was changed.` };
       const sod = signoffSeparation(item.createdBy, input.actor.uid, authority.otherSigners, "turnover");
       if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person accepts or waives this item." };
       singleSigner = sod.singleSigner;

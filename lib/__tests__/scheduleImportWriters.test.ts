@@ -906,11 +906,12 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     seed();
     db.failSelect = (t) => (t === "milestones" ? "permission denied for table milestones" : null);
     db.rpcImpl = () => ({ data: { count: 2, matched: ["a", "b"], unmatched: [] }, error: null });
-    await expect(applyMilestoneMoves({ ...actor, moves })).rejects.toThrow(/Could not read the tasks before moving them \(You don.t have permission to see this\.\) — nothing was moved/);
+    // J10 third fix: the reason inside the parentheses has no full stop of its own
+    await expect(applyMilestoneMoves({ ...actor, moves })).rejects.toThrow(/^Could not read the tasks before moving them \(You don.t have permission to see this\) — nothing was moved\. Try again\.$/);
     expect(db.rpcCalls).toEqual([]);
 
     const locked = moves.map((m) => ({ ...m, expectedUpdatedAt: "2026-05-01T00:00:00+00:00" }));
-    await expect(applyMilestoneMoves({ ...actor, moves: locked })).rejects.toThrow(/Could not read the tasks before moving them \(You don.t have permission to see this\.\) — nothing was moved/);
+    await expect(applyMilestoneMoves({ ...actor, moves: locked })).rejects.toThrow(/^Could not read the tasks before moving them \(You don.t have permission to see this\) — nothing was moved\. Try again\.$/);
     expect(db.rpcCalls).toEqual([]);
   });
 });
