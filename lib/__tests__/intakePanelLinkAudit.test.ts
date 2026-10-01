@@ -140,7 +140,8 @@ describe("INTK-12 dw4 — IntakePanel's revoke", () => {
 
   it("writes revoked_at and audits INTAKE_LINK_REVOKED by the link id; a failed audit insert is shown", async () => {
     db.byOp["project_intake_links.select"] = { data: [live], error: null };
-    db.byOp["project_intake_links.update"] = { data: null, error: null };
+    // the update changed the link's row (a zero-row revoke is INTK-17's case, not pinned here)
+    db.byOp["project_intake_links.update"] = { data: [{ id: "L1" }], error: null };
     db.byOp["audit_logs.insert"] = { data: null, error: { message: "audit denied" } };
     dlg.appConfirm.mockResolvedValue(true);
     await render();

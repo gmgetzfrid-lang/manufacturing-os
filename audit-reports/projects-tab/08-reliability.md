@@ -320,9 +320,10 @@ zero tests above lib/, so a broken auth check on a route shipped green."*
   - "MON-12: a failed company lookup REFUSES the award instead of passing it" (:957).
 - ✓ `gatherProjectSnapshot`'s error case is distinguishable from empty, and tested: `lib/__tests__/projectSnapshot.test.ts` "names the table it could not read instead of presenting zeros as the truth" (:170). Exit 0 (36 passed). Package J7, `PERF-3`.
 
-**Scope / residual.** Remediation items 4 and 6-7 were never done-whens, and they are covered now anyway:
+**Scope / residual.** Remediation items 4 and 6-7 were never done-whens. *Corrected by the integrator at the J13 merge (final review):* this said they were "covered now anyway"; that holds for item 4 and item 7, and for one third of item 6:
 - item 4, a populated `gatherCompanyProfile` fixture: `companiesRegistry.test.ts`, 18 passed;
-- items 6-7: `checklists.test.ts` "a count-only call (no confirmed ids) writes NOTHING and audits nothing" (:139), 39 passed; `turnover.test.ts` "reports accepted and waived separately; pct still counts both as met" (:193), 23 passed.
+- item 7, `applyAssessment` never overwrites a manual note: `checklists.test.ts` "…a human-decided one is left alone" (:148);
+- item 6: only `computeTurnoverProgress` is tested (`turnover.test.ts` "reports accepted and waived separately; pct still counts both as met", :193). `computeChecklistProgress` (`lib/checklists.ts:945`) and `seedsForJobKind` (`lib/turnover.ts:141`) still have no test.
 
 The money and quality rails carry migration shape tests (`moneyRailsMigration.test.ts`, `qualityRailsMigration.test.ts`). No test runs a live Postgres, which is this area's stated limit.
 
