@@ -180,3 +180,102 @@ export async function revokeProjectIntakeLinks(input: {
   }
   return { ok: true, revoked };
 }
+
+// ── SEC-19: the credential is stored as its SHA-256, never read back ───────
+// 20261141 keeps no usable token in project_intake_links: a token written by
+// any writer is hashed into token_hash (sha256 hex) and token_prefix (its
+// first six characters) by trg_project_intake_links_hash_token, and the
+// `token` column is held NULL by a CHECK. Both public routes look a link up
+// by the hash. So the screens that mint a link show its address ONCE, at
+// creation, and a lost address is RE-ISSUED (a new token on the same link),
+// never read back. Before 20261141 is applied the plain column still exists
+// and is read — every reader below falls back on a missing column.
+
+/** How many leading characters of a token the lists show (20261141). */
+export const INTAKE_TOKEN_PREFIX_LEN = 6;
+
+/** A fresh link token: 40 characters from two random UUIDs (the format both
+ *  mint screens always used; INTAKE_TOKEN_RE accepts it). */
+export function newIntakeToken(): string {
+  return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+}
+
+/** The portal path a token opens. */
+export function intakePortalPath(token: string): string {
+  return `/submit/${token}`;
+}
+
+type PgErr = { message?: string | null; code?: string | null; details?: string | null } | null | undefined;
+
+/** A database that has not received a column yet (PostgREST / Postgres). */
+export function isMissingColumnError(e: PgErr, col?: string): boolean {
+  if (!e) return false;
+  const msg = `${e.message ?? ""} ${e.details ?? ""}`;
+  const missing = /^(42703|PGRST204)$/.test(String(e.code ?? "")) || /does not exist|could not find/i.test(msg);
+  return missing && (!col || msg.includes(col));
+}
+
+/** What a list may show of a link's credential: the full token only where
+ *  the database still stores it (before 20261141), otherwise its prefix. */
+export function linkCredentialView(row: Record<string, unknown>): { token: string | null; prefix: string | null } {
+  const token = typeof row.token === "string" && row.token ? row.token : null;
+  const stored = typeof row.token_prefix === "string" && row.token_prefix ? row.token_prefix : null;
+  return { token, prefix: stored ?? (token ? token.slice(0, INTAKE_TOKEN_PREFIX_LEN) : null) };
+}
+
+/** Run each read in turn and keep the first that is not refused for a
+ *  missing column (a later read is the pre-migration column list). */
+export async function firstReadWithColumns<T>(
+  reads: Array<() => PromiseLike<{ data: T | null; error: PgErr }>>,
+): Promise<{ data: T | null; error: PgErr }> {
+  let last: { data: T | null; error: PgErr } = { data: null, error: null };
+  for (const read of reads) {
+    last = await read();
+    if (!last.error || !isMissingColumnError(last.error)) return last;
+  }
+  return last;
+}
+
+/** The link a presented token names — looked up by its SHA-256 (the caller
+ *  hashes: lib/intakeRateLimit sha256Hex, server side). Before 20261141 the
+ *  hash column does not exist and the plain column is read instead. */
+export async function readIntakeLinkByToken(client: LinkClient, input: {
+  token: string; tokenHash: string; columns: string;
+}): Promise<{ data: Record<string, unknown> | null; error: PgErr }> {
+  const byHash = await client.from("project_intake_links").select(input.columns)
+    .eq("token_hash", input.tokenHash).maybeSingle();
+  if (!byHash.error) return { data: (byHash.data as Record<string, unknown> | null) ?? null, error: null };
+  if (!isMissingColumnError(byHash.error, "token_hash")) return { data: null, error: byHash.error };
+  const byToken = await client.from("project_intake_links").select(input.columns)
+    .eq("token", input.token).maybeSingle();
+  return { data: (byToken.data as Record<string, unknown> | null) ?? null, error: byToken.error ?? null };
+}
+
+/**
+ * Re-issue a link (SEC-19): a NEW token on the same link — its id, its
+ * authorship of the documents it created, its history, expiry and budget stay;
+ * the address the contractor holds stops working. The database hashes the
+ * token (20261141); the caller shows the returned token ONCE. Only a live
+ * (unrevoked) link is re-issued; zero rows is a refusal, never a success.
+ * The audit row names the link — never token material.
+ */
+export async function reissueIntakeLink(input: {
+  linkId: string; orgId: string; projectId: string; company: string;
+  actorId: string; actorEmail?: string | null; client?: LinkClient;
+}): Promise<{ ok: true; token: string; auditError?: string } | { ok: false; error: string }> {
+  const client = input.client ?? supabase;
+  const token = newIntakeToken();
+  const { data, error } = await client.from("project_intake_links")
+    .update({ token }).eq("id", input.linkId).is("revoked_at", null).select("id");
+  if (error) return { ok: false, error: `Couldn't re-issue the link: ${error.message}` };
+  if (((data ?? []) as unknown[]).length === 0) {
+    return { ok: false, error: `${input.company}'s link was not re-issued — it may have been revoked, or you may not have permission. Refresh to see its state.` };
+  }
+  const { error: auditErr } = await client.from("audit_logs").insert({
+    action: "INTAKE_LINK_REISSUED",
+    resource_type: "project_intake_link", resource_id: input.linkId,
+    org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,
+    details: { company: input.company, projectId: input.projectId },
+  });
+  return auditErr ? { ok: true, token, auditError: auditErr.message } : { ok: true, token };
+}

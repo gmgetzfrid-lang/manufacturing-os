@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { createHash } from "node:crypto";
 
 type Row = Record<string, unknown>;
 type Filter = [string, string, unknown];
@@ -185,7 +186,7 @@ beforeEach(() => {
   db.concurrentSawAdmin = null; db.pipelineEntered = null; db.pipelineRelease = null;
   db.tables.project_intake_links = [{
     id: "lnk1", org_id: "o1", project_id: "p1", company_name: "Vendor Co", contact_email: null, allow_auto_supersede: true,
-    expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "creator1", token: TOKEN, purpose: "documents",
+    expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "creator1", token: null, token_hash: createHash("sha256").update(TOKEN).digest("hex"), purpose: "documents",
     submission_count: 0, max_submissions: 500, bytes_received: 0, max_total_bytes: 10 ** 9,
   }];
   db.tables.projects = [{ id: "p1", org_id: "o1", status: "active", name: "Unit 4", owner_user_id: "owner1", intake_library_id: "lib1", intake_collection_id: "col1" }];

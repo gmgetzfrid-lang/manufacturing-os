@@ -56,10 +56,31 @@
 // (new revision of an own/assigned document), ticketId (redlines for a
 // collision ticket that names this link), or title [+ number] (brand-new
 // document). Optional revLabel, changeNote.
+//
+// INTK-15 — the direct door (the portal's path): the bytes never travel
+// through this function's request body, so the 100 MB limit is the
+// storage's, not the platform's body cap.
+//   POST ?step=begin    {fileName, size, contentType}  — every credential,
+//        project and budget check above, the rate window counted; answers a
+//        presigned PUT (10 minutes, its Content-Length SIGNED to the declared
+//        size) for a fresh STAGING key under the link's own prefix.
+//   (the portal PUTs the bytes straight to storage)
+//   POST ?step=finalize {uploadKey, fileName, contentType, fields} — the
+//        same credential checks (the begin counted the attempt), then the
+//        staged object: its key must be the link's, its stored size within
+//        the limit and the budget; a RANGED read of its first bytes is
+//        sniffed (lib/fileSniff.ts) before anything else is read, and only
+//        then the whole object — and from there the request is exactly the
+//        multipart one: the same hash, idempotency, collision scan, storage
+//        under the sniffed type, review / publish contract, post-publish
+//        pipeline, notices and audit. The staged object is deleted when the
+//        request ends, whatever it answered.
+// The multipart POST above stays (a portal tab opened before this change).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { runWithServerClient } from "@/lib/serverClientScope";
@@ -69,7 +90,7 @@ import { validateIntakeFile, type IntakeBranch } from "@/lib/fileSniff";
 import {
   INTAKE_TOKEN_RE, intakeTokenFromRequest, CLOSED_PROJECT_STATUSES,
   LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE, INTAKE_NOTE_MAX, validateIntakeText,
-  completeUniquenessKey, INTAKE_SUPPLIED_KEY_PARTS,
+  completeUniquenessKey, INTAKE_SUPPLIED_KEY_PARTS, readIntakeLinkByToken,
 } from "@/lib/intakeLinks";
 import {
   intakeLimits, sha256Hex, clientIp, checkIntakeRate, recordIntakeAttempt,
@@ -85,6 +106,13 @@ const MULTIPART_SLACK = 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A retry of the same bytes inside this window returns the original. */
 const IDEMPOTENCY_WINDOW_MS = 24 * 3600 * 1000;
+/** INTK-15: how long a direct upload's presigned PUT lives. */
+const DIRECT_PUT_SECONDS = 600;
+/** INTK-15: a JSON step body (begin / finalize) is small — refused unread above this. */
+const DIRECT_BODY_MAX = 16 * 1024;
+/** INTK-15: the form fields a finalize may carry (the multipart names). */
+const DIRECT_FIELDS: readonly string[] = ["docId", "ticketId", "title", "number", "revLabel", "changeNote"];
+const STAGED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 type PgError = { message?: string; code?: string; details?: string | null } | null | undefined;
 
@@ -151,6 +179,40 @@ function kickDrain(req: NextRequest): void {
   void fetch(`${req.nextUrl.origin}/api/notifications/send-queued`, {
     method: "POST", headers: { Authorization: `Bearer ${cronSecret}` },
   }).catch(() => undefined);
+}
+
+/** INTK-15: the staging prefix a link's direct uploads land under — the
+ *  link's own; a finalize names nothing outside it. */
+function stagingPrefix(orgId: string, projectId: string, linkId: string): string {
+  return `orgs/${orgId}/project-intake/${projectId}/staging/${linkId}/`;
+}
+
+/** INTK-15: the step a JSON request is (?step=begin | finalize), or null
+ *  for the multipart door. */
+function directStep(req: NextRequest): "begin" | "finalize" | null {
+  const s = req.nextUrl.searchParams.get("step");
+  return s === "begin" || s === "finalize" ? s : null;
+}
+
+/** INTK-15: a staged object's stored size, or null when it is not there. */
+async function stagedSize(key: string): Promise<number | null | { error: string }> {
+  try {
+    const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key })) as { ContentLength?: number };
+    return typeof head.ContentLength === "number" ? head.ContentLength : { error: "staged object has no length" };
+  } catch (e) {
+    const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404 || (e as Error).name === "NotFound" || (e as Error).name === "NoSuchKey") return null;
+    return { error: `staged object head: ${(e as Error).message}` };
+  }
+}
+
+/** INTK-15: read a staged object — a byte range (the sniff's head) or all of it. */
+async function readStaged(key: string, range?: string): Promise<Uint8Array> {
+  const out = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key, ...(range ? { Range: range } : {}) })) as {
+    Body?: { transformToByteArray?: () => Promise<Uint8Array> };
+  };
+  if (!out.Body?.transformToByteArray) throw new Error("staged object has no body");
+  return out.Body.transformToByteArray();
 }
 
 async function putObject(key: string, bytes: Uint8Array, contentType: string): Promise<boolean> {
@@ -381,9 +443,38 @@ async function restoreDisplaced(ref: string, input: {
   });
 }
 
+/** What a request carries, however it arrived: the multipart body, or a
+ *  finalize naming a staged object (INTK-15). `head` is read before
+ *  anything else is (the sniff); `bytes` only once the sniff passed. */
+interface DoorUpload {
+  name: string;
+  size: number;
+  type: string;
+  field: (k: string) => string | null;
+  head: () => Promise<Uint8Array>;
+  bytes: () => Promise<Uint8Array>;
+}
+
 export async function POST(req: NextRequest) {
   const ref = crypto.randomUUID().slice(0, 8);
+  // INTK-15: a finalize's staged object is removed when the request ends,
+  // whatever it answered — stored under its own key, refused, or a retry
+  // answered with the original.
+  const staged: { key: string | null } = { key: null };
+  try {
+    return await door(req, ref, staged);
+  } finally {
+    if (staged.key) await deleteObject(ref, staged.key);
+  }
+}
+
+async function door(req: NextRequest, ref: string, staged: { key: string | null }): Promise<NextResponse> {
   const fail = refuser(ref);
+  // INTK-15: a direct-upload step. A begin is the upload's attempt — rate
+  // limited and recorded exactly as a multipart POST is; a finalize
+  // completes one (bounded by the staged object only a begin's PUT can
+  // create) and is not counted again.
+  const step = directStep(req);
 
   // ── 1. The credential, before any body is read ─────────────────────────
   const token = intakeTokenFromRequest(req);
@@ -393,17 +484,20 @@ export async function POST(req: NextRequest) {
   const tokenHash = sha256Hex(token);
   const ip = clientIp(req);
   const limits = intakeLimits();
-  const rate = await checkIntakeRate(supabaseAdmin, { tokenHash, ip, limits });
-  if (rate.limited) {
-    return NextResponse.json({ error: rate.message, ref, code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+  if (step !== "finalize") {
+    const rate = await checkIntakeRate(supabaseAdmin, { tokenHash, ip, limits });
+    if (rate.limited) {
+      return NextResponse.json({ error: rate.message, ref, code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    }
+    await recordIntakeAttempt(supabaseAdmin, { tokenHash, ip, outcome: ATTEMPT_OUTCOME.attempt });
   }
-  await recordIntakeAttempt(supabaseAdmin, { tokenHash, ip, outcome: ATTEMPT_OUTCOME.attempt });
 
-  const { data: link, error: linkErr } = await supabaseAdmin
-    .from("project_intake_links")
-    .select("id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids, created_by")
-    .eq("token", token)
-    .maybeSingle();
+  // SEC-19: looked up by the token's SHA-256 (the hash the rate window
+  // already keys on) — the table keeps no usable token (20261141).
+  const { data: link, error: linkErr } = await readIntakeLinkByToken(supabaseAdmin, {
+    token, tokenHash,
+    columns: "id, org_id, project_id, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, assigned_doc_ids, created_by",
+  });
   if (linkErr) return fail("This link could not be checked right now — try again shortly.", 503, `link read: ${linkErr.message}`);
   if (!link) return fail(LINK_INVALID_MESSAGE, 404, undefined, { code: "notfound" });
   if (link.revoked_at) return fail("This link has been revoked.", 410, undefined, { code: "revoked" });
@@ -436,11 +530,73 @@ export async function POST(req: NextRequest) {
   if (spent) return fail(spent, 429, undefined, { code: "link_budget" });
 
   // ── 3. Only now: the body ──────────────────────────────────────────────
-  let form: FormData;
-  try { form = await req.formData(); } catch { return fail("Expected multipart form data", 400); }
-  const file = form.get("file");
-  if (!(file instanceof File) || file.size === 0) return fail("A file is required.", 400);
-  if (file.size > MAX_BYTES) return fail("File exceeds the 100 MB limit.", 413);
+  let file: DoorUpload;
+  if (step) {
+    // INTK-15: a JSON step — small, and refused unread when it is not.
+    if (Number.isFinite(declaredLength) && declaredLength > DIRECT_BODY_MAX) return fail("Expected a small JSON request.", 413);
+    let body: Record<string, unknown> | null;
+    try { body = (await req.json()) as Record<string, unknown> | null; } catch { return fail("Expected a JSON request.", 400); }
+    if (!body || typeof body !== "object") return fail("Expected a JSON request.", 400);
+    const prefix = stagingPrefix(orgId, projectId, linkId);
+    if (step === "begin") {
+      const size = Number(body.size);
+      if (!Number.isInteger(size) || size <= 0) return fail("A file is required.", 400);
+      if (size > MAX_BYTES) return fail("File exceeds the 100 MB limit.", 413);
+      const overBudgetAtBegin = linkBudgetRefusal(budget, size);
+      if (overBudgetAtBegin) return fail(overBudgetAtBegin, 429, undefined, { code: "link_budget" });
+      // A FRESH key under the link's own staging prefix; the PUT's
+      // Content-Length is signed, so the stored size is the declared one.
+      const uploadKey = `${prefix}${crypto.randomUUID()}`;
+      let uploadUrl: string;
+      try {
+        uploadUrl = await getSignedUrl(r2, new PutObjectCommand({
+          Bucket: R2_BUCKET, Key: uploadKey, ContentLength: size, ContentType: "application/octet-stream",
+        }), { expiresIn: 600, signableHeaders: new Set(["content-length", "content-type"]) });   // DIRECT_PUT_SECONDS (a literal: the lifetime census)
+      } catch (e) {
+        return fail("The upload could not be prepared — try again shortly.", 503, `presign: ${(e as Error).message}`, { code: "direct_unavailable" });
+      }
+      return NextResponse.json(
+        { ok: true, step: "begin", uploadKey, uploadUrl, contentType: "application/octet-stream", expiresIn: DIRECT_PUT_SECONDS },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    // finalize: the staged object must be this link's, and a fresh key.
+    const uploadKey = String(body.uploadKey ?? "");
+    if (!uploadKey.startsWith(prefix) || !STAGED_ID_RE.test(uploadKey.slice(prefix.length))) {
+      return fail("That upload does not belong to this link — send the file again.", 400, `finalize key outside the link's staging prefix: ${uploadKey.slice(0, 200)}`);
+    }
+    const size = await stagedSize(uploadKey);
+    if (size !== null && typeof size === "object") return fail("The upload could not be checked right now — try again shortly.", 503, size.error);
+    if (size === null) return fail("The uploaded file could not be found — it may have expired. Send the file again.", 404, undefined, { code: "upload_missing" });
+    staged.key = uploadKey;   // deleted when this request ends
+    if (size === 0) return fail("A file is required.", 400);
+    if (size > MAX_BYTES) return fail("File exceeds the 100 MB limit.", 413);
+    const fields = (body.fields && typeof body.fields === "object" ? body.fields : {}) as Record<string, unknown>;
+    file = {
+      name: String(body.fileName ?? "").slice(0, 255) || "file",
+      size,
+      type: typeof body.contentType === "string" ? body.contentType.slice(0, 200) : "",
+      field: (k) => (DIRECT_FIELDS.includes(k) && typeof fields[k] === "string" ? (fields[k] as string) : null),
+      // The sniff reads the STORED bytes' head — a ranged read, before the
+      // rest of the object is read at all.
+      head: () => readStaged(uploadKey, "bytes=0-63"),
+      bytes: () => readStaged(uploadKey),
+    };
+  } else {
+    let form: FormData;
+    try { form = await req.formData(); } catch { return fail("Expected multipart form data", 400); }
+    const part = form.get("file");
+    if (!(part instanceof File) || part.size === 0) return fail("A file is required.", 400);
+    if (part.size > MAX_BYTES) return fail("File exceeds the 100 MB limit.", 413);
+    let whole: Uint8Array | null = null;
+    const all = async () => (whole ??= new Uint8Array(await part.arrayBuffer()));
+    file = {
+      name: part.name, size: part.size, type: part.type,
+      field: (k) => { const v = form.get(k); return v == null ? null : String(v); },
+      head: async () => (await all()).subarray(0, 64),
+      bytes: all,
+    };
+  }
   const overBudget = linkBudgetRefusal(budget, file.size);
   if (overBudget) return fail(overBudget, 429, undefined, { code: "link_budget" });
 
@@ -457,20 +613,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const docId = String(form.get("docId") ?? "").trim() || null;
-  const ticketId = String(form.get("ticketId") ?? "").trim() || null;
+  const docId = String(file.field("docId") ?? "").trim() || null;
+  const ticketId = String(file.field("ticketId") ?? "").trim() || null;
   const branch: IntakeBranch = purpose === "quote" ? "quote" : ticketId ? "redline" : "document";
 
   // ── 5. What the bytes are (never what the upload claims) ──────────────
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const verdict = validateIntakeFile({ branch, fileName: file.name, declaredType: file.type, head: bytes.subarray(0, 64) });
+  let head: Uint8Array;
+  try { head = await file.head(); } catch (e) { return fail("The uploaded file could not be read — try again shortly.", 503, `head read: ${(e as Error).message}`); }
+  const verdict = validateIntakeFile({ branch, fileName: file.name, declaredType: file.type, head: head.subarray(0, 64) });
   if (!verdict.ok) return fail(verdict.message, 415, undefined, { code: "file_type" });
+  let bytes: Uint8Array;
+  try { bytes = await file.bytes(); } catch (e) { return fail("The uploaded file could not be read — try again shortly.", 503, `body read: ${(e as Error).message}`); }
+  if (bytes.byteLength !== file.size) return fail("The uploaded file changed while it was being checked — send it again.", 409, `size ${bytes.byteLength} differs from ${file.size}`);
   const contentType = verdict.contentType;
   const fileHash = sha256Hex(bytes);
   const session = await appSessionOf(req);
   const nowIso = new Date().toISOString();
   const since = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS).toISOString();
-  const noteRaw = String(form.get("changeNote") ?? "").trim();
+  const noteRaw = String(file.field("changeNote") ?? "").trim();
   if (noteRaw.length > INTAKE_NOTE_MAX) return fail(`The note is limited to ${INTAKE_NOTE_MAX} characters.`, 400);
   const changeNote = noteRaw || null;
 
@@ -707,9 +867,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Document branch ─────────────────────────────────────────────────────
-  const title = String(form.get("title") ?? "").trim() || null;
-  const number = String(form.get("number") ?? "").trim() || null;
-  const revLabel = String(form.get("revLabel") ?? "").trim() || (docId ? "" : "A");
+  const title = String(file.field("title") ?? "").trim() || null;
+  const number = String(file.field("number") ?? "").trim() || null;
+  const revLabel = String(file.field("revLabel") ?? "").trim() || (docId ? "" : "A");
   if (!docId && !title) return fail("A title is required for a new document.", 400);
   if (docId && !revLabel) return fail("A revision label is required.", 400);
   const textErr = validateIntakeText({ title, number, revLabel });

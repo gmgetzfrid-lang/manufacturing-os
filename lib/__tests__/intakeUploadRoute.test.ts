@@ -45,6 +45,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import ts from "typescript";
 import { NextRequest } from "next/server";
@@ -59,6 +60,10 @@ const db = vi.hoisted(() => ({
   rpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: unknown }>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   r2Puts: [] as Array<Record<string, unknown>>,
+  /** INTK-15: objects a direct upload staged (key → bytes) and the reads of them. */
+  r2Objects: new Map<string, Uint8Array>(),
+  r2Reads: [] as Array<{ op: string; key: string; range?: string }>,
+  presigns: [] as Array<{ input: Record<string, unknown>; opts: Record<string, unknown> }>,
   r2Deletes: [] as Array<Record<string, unknown>>,
   emits: [] as Array<Record<string, unknown>>,
   pipeline: [] as Array<{ input: Record<string, unknown>; boundToServiceRole: boolean }>,
@@ -195,13 +200,48 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 vi.mock("@/lib/supabase", () => ({
-  supabase: { from: (t: string) => chain(t), rpc: async () => ({ data: null, error: null }) },
+  // INTK-16: adopt_intake_document answers as a database before 20261141, so
+  // the adoption cases below exercise the direct-update path (the database
+  // path is lib/__tests__/transitionIn.test.ts's and the scratch cluster's).
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: async (fn: string) => (fn === "adopt_intake_document"
+      ? { data: null, error: { message: `Could not find the function public.${fn}`, code: "PGRST202" } }
+      : { data: null, error: null }),
+  },
   __registerScopedServerClient: vi.fn((read: () => unknown) => { db.scopeRead = read; }),
 }));
-vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async (cmd: { input: Row; op: string }) => { (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input); }) }, R2_BUCKET: "bucket" }));
+vi.mock("@/lib/r2", () => ({
+  r2: {
+    send: vi.fn(async (cmd: { input: Row; op: string }) => {
+      // INTK-15: a staged object answers HEAD and (ranged) GET.
+      if (cmd.op === "head" || cmd.op === "get") {
+        const key = String(cmd.input.Key);
+        db.r2Reads.push({ op: cmd.op, key, ...(cmd.input.Range ? { range: String(cmd.input.Range) } : {}) });
+        const obj = db.r2Objects.get(key);
+        if (!obj) throw Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
+        if (cmd.op === "head") return { ContentLength: obj.byteLength };
+        const m = /^bytes=(\d+)-(\d+)$/.exec(String(cmd.input.Range ?? ""));
+        const part = m ? obj.subarray(Number(m[1]), Number(m[2]) + 1) : obj;
+        return { Body: { transformToByteArray: async () => new Uint8Array(part) } };
+      }
+      (cmd.op === "delete" ? db.r2Deletes : db.r2Puts).push(cmd.input);
+      if (cmd.op === "delete") db.r2Objects.delete(String(cmd.input.Key));
+    }),
+  },
+  R2_BUCKET: "bucket",
+}));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({
+  getSignedUrl: vi.fn(async (_client: unknown, cmd: { input: Row }, opts: Row) => {
+    db.presigns.push({ input: cmd.input, opts });
+    return `https://r2.test/${String(cmd.input.Key)}?X-Amz-Expires=${String(opts.expiresIn)}`;
+  }),
+}));
 vi.mock("@aws-sdk/client-s3", () => ({
   PutObjectCommand: class { op = "put"; constructor(public input: unknown) {} },
   DeleteObjectCommand: class { op = "delete"; constructor(public input: unknown) {} },
+  GetObjectCommand: class { op = "get"; constructor(public input: unknown) {} },
+  HeadObjectCommand: class { op = "head"; constructor(public input: unknown) {} },
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { db.emits.push({ ...e, boundToServiceRole: scopedToAdmin() }); }) }));
 vi.mock("@/lib/postPublish", () => ({
@@ -223,7 +263,8 @@ function link(over: Row = {}): Row {
   return {
     id: LINK, org_id: ORG, project_id: "p1", company_name: "Vendor Co", contact_email: "v@vendor.test",
     allow_auto_supersede: true, expires_at: null, revoked_at: null, assigned_doc_ids: [], created_by: "creator1",
-    token: TOKEN, purpose: "documents", rfq_group: null,
+    // SEC-19 (20261141): the link is found by the token's SHA-256.
+    token: null, token_hash: createHash("sha256").update(TOKEN).digest("hex"), purpose: "documents", rfq_group: null,
     submission_count: 0, max_submissions: 500, bytes_received: 0, max_total_bytes: 5 * 1024 ** 3, ...over,
   };
 }
@@ -255,6 +296,7 @@ const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.tab
 
 beforeEach(() => {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
+  db.r2Objects = new Map(); db.r2Reads = []; db.presigns = [];
   db.seq = 0; db.user = null;
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
@@ -1220,7 +1262,9 @@ describe("census — every writer of current_version_id runs the post-publish pi
   // entry when its function runs the pipeline (or stops writing the pointer).
   const EXEMPT: Record<string, { reason: string; via?: string; wrapper?: boolean }> = {
     "lib/revisions.ts:callPublishRevisionRpc": { reason: "the one wrapper of rpc('publish_revision') in lib/revisions.ts — every call of it is censused as a writer in its caller", wrapper: true },
-    "app/api/intake/upload/route.ts:publishThroughContract": { reason: "the intake door's trusted promote — POST runs the pipeline after it returns a published outcome", via: "app/api/intake/upload/route.ts:POST" },
+    // INTK-15 (J11): POST is a thin wrapper that removes a direct upload's
+    // staged object when the request ends; the door's body is `door`.
+    "app/api/intake/upload/route.ts:publishThroughContract": { reason: "the intake door's trusted promote — door (POST's body) runs the pipeline after it returns a published outcome", via: "app/api/intake/upload/route.ts:door" },
     "lib/revisions.ts:createDocumentWithFile": { reason: "first-version seed of a brand-new document — nothing is superseded; the review clock and ack roster are seeded inline" },
     "lib/documentLifecycle/common.ts:createNewDocWithFirstVersion": { reason: "first-version seed of a split / merge sheet — nothing is superseded by the pointer write itself; the review clock and ack roster it does NOT start are open finding document-control REV-15 (unassigned)" },
     "app/(protected)/documents/[libraryId]/page.tsx:uploadOne": { reason: "first-version seed of a bulk upload — the review clock and ack roster it does NOT start are open finding document-control REV-15 (unassigned; the library page's half)" },
@@ -1493,3 +1537,195 @@ describe("the Intake tab, the transition-in panel and the portal", () => {
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });
 });
+
+// ── INTK-15 (projects Round G J11): the direct door ─────────────────────────
+// The portal sends the bytes straight to storage on a PUT the door presigned
+// for the link's own staging key; finalize sniffs the STORED bytes (a ranged
+// read first) and from there runs exactly the multipart pipeline. Every J1
+// guarantee is asserted through the finalize step.
+describe("INTK-15 — the direct door: begin presigns, finalize checks the stored bytes", () => {
+  const STAGING = "orgs/o1/project-intake/p1/staging/lnk1/";
+  const json = (step: "begin" | "finalize", payload: Row, headers: Record<string, string> = {}) => POST(new NextRequest(
+    `http://x/api/intake/upload?step=${step}`,
+    { method: "POST", body: JSON.stringify(payload), headers: { "x-intake-token": TOKEN, "content-type": "application/json", ...headers } },
+  ));
+  /** begin, then "PUT" the bytes to the staged key the door chose. */
+  const stage = async (bytes: Uint8Array, name = "sheet.pdf", type = "application/pdf") => {
+    const res = await json("begin", { fileName: name, size: bytes.byteLength, contentType: type });
+    const body = await res.json() as { ok: boolean; uploadKey: string; uploadUrl: string; contentType: string; expiresIn: number };
+    db.r2Objects.set(body.uploadKey, bytes);
+    return { res, body };
+  };
+  const finalize = (uploadKey: string, fields: Record<string, string>, name = "sheet.pdf", type = "application/pdf") =>
+    json("finalize", { uploadKey, fileName: name, contentType: type, fields });
+
+  it("begin: the credential first; a PUT presigned for a FRESH key under the link's own staging prefix, Content-Length signed to the declared size, 10 minutes, never cached — nothing stored, nothing filed", async () => {
+    seed({ doc: null });
+    const { res, body } = await stage(PDF);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(body.uploadKey.startsWith(STAGING)).toBe(true);
+    expect(body.uploadKey.slice(STAGING.length)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(db.presigns).toHaveLength(1);
+    expect(db.presigns[0].input).toMatchObject({ Key: body.uploadKey, ContentLength: PDF.byteLength, ContentType: "application/octet-stream" });
+    expect([...(db.presigns[0].opts.signableHeaders as Set<string>)].sort()).toEqual(["content-length", "content-type"]);
+    expect(db.presigns[0].opts.expiresIn).toBe(600);
+    expect(body.contentType).toBe("application/octet-stream");
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    // a second begin is a different key
+    const again = await stage(PDF);
+    expect(again.body.uploadKey).not.toBe(body.uploadKey);
+  });
+
+  it("begin refuses what the door refuses — a bad token, a revoked link, a closed project, a size over the limit or the budget — and presigns nothing", async () => {
+    seed({ doc: null });
+    expect((await json("begin", { size: 10 }, { "x-intake-token": "short" })).status).toBe(400);
+    seed({ doc: null, link: { revoked_at: "2026-09-01T00:00:00Z" } });
+    expect((await json("begin", { size: 10 })).status).toBe(410);
+    seed({ doc: null });
+    db.tables.projects[0].status = "completed";
+    expect((await json("begin", { size: 10 })).status).toBe(410);
+    seed({ doc: null });
+    expect((await json("begin", { size: 100 * 1024 * 1024 + 1 })).status).toBe(413);
+    expect((await json("begin", { size: 0 })).status).toBe(400);
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 10 } });
+    const over = await json("begin", { size: 1000 });
+    expect(over.status).toBe(429);
+    expect((await over.json()).code).toBe("link_budget");
+    expect(db.presigns).toEqual([]);
+  });
+
+  it("begin is the upload's attempt: it is rate-limited and recorded; finalize is not counted again", async () => {
+    seed({ doc: null });
+    const { sha256Hex } = await import("@/lib/intakeRateLimit");
+    const { body } = await stage(PDF);
+    const attempts = () => (db.tables.intake_attempts ?? []).filter((a) => a.outcome === "attempt").length;
+    expect(attempts()).toBe(1);
+    const res = await finalize(body.uploadKey, { title: "Skid GA" });
+    expect(res.status).toBe(200);
+    expect(attempts()).toBe(1);
+    // a full window refuses the BEGIN
+    db.tables.intake_attempts = Array.from({ length: 30 }, () => ({ token_hash: sha256Hex(TOKEN), ip: "unknown", outcome: "attempt", created_at: new Date().toISOString() }));
+    expect((await json("begin", { size: 10 })).status).toBe(429);
+  });
+
+  it("finalize files a new document exactly as the multipart door does — sniffed type, the link's authorship, review — from the STORED bytes; the staged object is removed", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF, "skid.pdf", "application/octet-stream");
+    const res = await finalize(body.uploadKey, { title: "Skid GA", number: "V-300" }, "skid.pdf", "application/octet-stream");
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.status).toBe("in_review");
+    // the sniff read a RANGE of the stored object before the whole of it
+    expect(db.r2Reads.map((r) => `${r.op}${r.range ? ` ${r.range}` : ""}`)).toEqual(["head", "get bytes=0-63", "get"]);
+    // stored under the door's own key with the SNIFFED type — never the staged key
+    expect(db.r2Puts).toHaveLength(1);
+    expect(db.r2Puts[0]).toMatchObject({ ContentType: "application/pdf" });
+    expect(String(db.r2Puts[0].Key)).toMatch(/^orgs\/o1\/project-intake\/p1\/[0-9a-f-]{36}-skid\.pdf$/);
+    expect(db.tables.documents.find((d) => d.id === out.documentId)).toMatchObject({ authored_by_link_id: LINK, uniqueness_key: "v-300" });
+    expect(db.r2Deletes.map((d) => d.Key)).toContain(body.uploadKey);
+    expect(db.r2Objects.has(body.uploadKey)).toBe(false);
+  });
+
+  it("finalize refuses (and deletes) a disallowed type sniffed from the STORED bytes — an HTML file named .pdf never reaches storage under a door key", async () => {
+    seed({ doc: null });
+    const html = enc("<!doctype html><script>alert(1)</script>");
+    const { body } = await stage(html, "drawing.pdf", "application/pdf");
+    const res = await finalize(body.uploadKey, { title: "Skid GA" }, "drawing.pdf", "application/pdf");
+    expect(res.status).toBe(415);
+    expect((await res.json()).code).toBe("file_type");
+    // only the head was read — the rest of the object never was
+    expect(db.r2Reads.filter((r) => r.op === "get").map((r) => r.range)).toEqual(["bytes=0-63"]);
+    expect(db.r2Puts).toEqual([]);
+    expect(docWrites()).toEqual([]);
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual([body.uploadKey]);
+  });
+
+  it("finalize runs the trusted publish contract and the post-publish pipeline under the service role, as the multipart door does", async () => {
+    seed();
+    const { body } = await stage(DWG, "skid.dwg", "application/acad");
+    const res = await finalize(body.uploadKey, { docId: D1, revLabel: "C" }, "skid.dwg", "application/acad");
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("published");
+    expect(published()?.args).toMatchObject({ p_doc: D1, p_actor: "creator1" });
+    expect(db.pipeline).toHaveLength(1);
+    expect(db.pipeline[0].boundToServiceRole).toBe(true);
+  });
+
+  it("a retry of the same bytes through finalize answers with the original, and the second staged copy is removed", async () => {
+    seed({ doc: null });
+    const first = await stage(PDF);
+    const a = await (await finalize(first.body.uploadKey, { title: "Skid GA" })).json();
+    const second = await stage(PDF);
+    const res = await finalize(second.body.uploadKey, { title: "Skid GA" });
+    const b = await res.json();
+    expect(b).toMatchObject({ ok: true, duplicate: true, documentId: a.documentId });
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual(expect.arrayContaining([first.body.uploadKey, second.body.uploadKey]));
+  });
+
+  it("finalize names only the link's own staged objects: another link's key, a door key or a path is refused before storage is read; a missing object is a sentence", async () => {
+    seed({ doc: null });
+    for (const key of [
+      "orgs/o1/project-intake/p1/staging/OTHERLINK/00000000-0000-4000-8000-000000000000",
+      "orgs/o1/project-intake/p1/00000000-0000-4000-8000-000000000000-skid.pdf",
+      `${STAGING}../../../libraries/x.pdf`,
+      `${STAGING}00000000-0000-4000-8000-000000000000/extra`,
+    ]) {
+      const res = await finalize(key, { title: "x" });
+      expect(res.status, key).toBe(400);
+    }
+    expect(db.r2Reads).toEqual([]);
+    const missing = await finalize(`${STAGING}00000000-0000-4000-8000-000000000000`, { title: "x" });
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).code).toBe("upload_missing");
+    expect(db.r2Deletes).toEqual([]);
+  });
+
+  it("finalize re-checks the link: a link revoked between begin and finalize files nothing, and the staged object is removed", async () => {
+    seed({ doc: null });
+    const { body } = await stage(PDF);
+    db.tables.project_intake_links[0].revoked_at = new Date().toISOString();
+    const res = await finalize(body.uploadKey, { title: "Skid GA" });
+    expect(res.status).toBe(410);
+    expect(docWrites()).toEqual([]);
+    // (the key is only known valid once the link is — a revoked link's
+    // staged object is left to the orphan sweep, never read)
+    expect(db.r2Reads).toEqual([]);
+  });
+
+  it("finalize holds the stored size to the limit and the budget; only the six form fields are read from its body", async () => {
+    seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 5 } });
+    const key = `${STAGING}00000000-0000-4000-8000-0000000000aa`;
+    db.r2Objects.set(key, PDF);
+    const over = await finalize(key, { title: "Skid GA" });
+    expect(over.status).toBe(429);
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual([key]);
+    seed({ doc: null });
+    db.r2Objects.set(key, PDF);
+    const res = await json("finalize", { uploadKey: key, fileName: "a.pdf", contentType: "application/pdf", fields: { title: "Skid GA", token: "x", file: "y", orgId: "evil" } });
+    expect(res.status).toBe(200);
+    const ins = db.writes.find((w) => w.table === "documents" && w.method === "insert")!;
+    expect(ins.args[0]).toMatchObject({ org_id: ORG, title: "Skid GA" });
+  });
+
+  it("a JSON step body is small: a large declared one is refused unread", async () => {
+    seed({ doc: null });
+    const res = await POST(new NextRequest("http://x/api/intake/upload?step=begin", {
+      method: "POST", body: "{}", headers: { "x-intake-token": TOKEN, "content-type": "application/json", "content-length": String(64 * 1024) },
+    }));
+    expect(res.status).toBe(413);
+  });
+
+  it("the portal uses the direct door (begin → PUT → finalize) and falls back to the multipart POST only when the door cannot presign or the browser cannot reach storage", () => {
+    const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const p = read("app/submit/[token]/page.tsx");
+    expect(p).toContain('fetch(`/api/intake/upload?step=${step}`');
+    expect(p).toContain("await putWithXhr(b.uploadUrl, file, b.contentType ?? \"application/octet-stream\");");
+    expect(p).toContain('const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });');
+    expect(p).toContain('if (b?.code === "direct_unavailable" || !b) return multipart();');
+    expect((p.match(/await sendToDoor\(token, /g) ?? []).length).toBe(3);
+    expect(read("lib/storage.ts")).toMatch(/export function putWithXhr\(/);
+  });
+});
+

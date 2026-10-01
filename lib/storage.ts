@@ -410,7 +410,10 @@ const PART_RETRIES = 3;
  *  slow); what's never legitimate is bytes ceasing to move. */
 const STALL_MS = 90_000;
 
-function putWithXhr(
+// Exported for the contractor portal's direct upload (projects-and-cost
+// INTK-15): the intake door presigns a PUT for a staging key and the portal
+// sends the bytes straight to storage with the same stall detection.
+export function putWithXhr(
   url: string,
   body: Blob,
   contentType: string,

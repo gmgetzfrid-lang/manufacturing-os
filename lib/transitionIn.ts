@@ -501,16 +501,15 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     ? `${label} was adopted without a uniqueness key: that library identifies a document by ${tupleText}, and the sheet carries no ${missing.map(keyPartName).join(" or ")}. Set it in the document's properties — the key is written when they are saved.`
     : undefined;
 
-  const patch: Record<string, unknown> = {
-    library_id: input.libraryId,
-    collection_id: input.collectionId,
-    uniqueness_key: uniquenessKey,
-    updated_at: nowIso,
+  const auditDetails: Record<string, unknown> = {
+    projectId: input.projectId,
+    linkedAssetTags: input.linkAssets.map((a) => a.tag),
+    unverifiable: impact.unverifiable,
+    ...(missing.length > 0 ? { uniquenessKeyNotSet: missing } : {}),
   };
-  if (newNumber) patch.document_number = newNumber;
-  const { data: moved, error } = await supabase.from("documents").update(patch).eq("id", input.docId).select("id");
-  if (error) {
-    if (String(error.code ?? "") === "23505") {
+  const refused = (error: { message?: string | null; code?: string | null }): { ok: false; error: string } => {
+    const code = String(error.code ?? "");
+    if (code === "23505") {
       return {
         ok: false,
         error: numberDecides
@@ -518,13 +517,43 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
           : `Another live document in that library already carries the same ${tupleText} — change the sheet's ${tupleText} before adopting it.`,
       };
     }
-    if (/requires Admin or Document Control/i.test(error.message ?? "")) {
+    if (/requires Admin or Document Control|needs Admin or Document Control/i.test(error.message ?? "") || code === "42501") {
       return { ok: false, error: "Adopting into the controlled register moves the document between folders, which needs Admin or Document Control." };
     }
+    // INTK-16: the database's own refusal (the cross-library number rule, a
+    // sheet still in review, a destination outside the org) is a sentence.
+    if (code === "23514" && error.message) return { ok: false, error: error.message };
     return { ok: false, error: `Couldn't adopt ${label} — try again, or ask Document Control.` };
-  }
-  if (!moved || (moved as unknown[]).length === 0) {
-    return { ok: false, error: `${label} was not adopted — you may not have permission to move it. Ask Document Control.` };
+  };
+
+  // INTK-16 (20261141): the move runs IN THE DATABASE — adopt_intake_document
+  // re-checks the caller's tier, computes the destination's uniqueness key and
+  // writes the move and its TRANSITION_IN audit row, and
+  // trg_documents_intake_adoption_guard applies the cross-library number rule
+  // (SAF-12) to it and to any direct update of an intake sheet's library,
+  // folder or number. The checks above stay for the operator's sentences; the
+  // database is the authority. Before 20261141 the function does not exist
+  // and the move is the direct update (the move guard and the unique index
+  // still bind).
+  const rpc = await supabase.rpc("adopt_intake_document", {
+    p_doc: input.docId, p_library: input.libraryId, p_collection: input.collectionId,
+    p_new_number: newNumber, p_details: auditDetails,
+  });
+  const viaDatabase = !rpc.error;
+  if (rpc.error && !missingAdoptFunction(rpc.error)) return refused(rpc.error);
+  if (!viaDatabase) {
+    const patch: Record<string, unknown> = {
+      library_id: input.libraryId,
+      collection_id: input.collectionId,
+      uniqueness_key: uniquenessKey,
+      updated_at: nowIso,
+    };
+    if (newNumber) patch.document_number = newNumber;
+    const { data: moved, error } = await supabase.from("documents").update(patch).eq("id", input.docId).select("id");
+    if (error) return refused(error);
+    if (!moved || (moved as unknown[]).length === 0) {
+      return { ok: false, error: `${label} was not adopted — you may not have permission to move it. Ask Document Control.` };
+    }
   }
 
   // Keep the project tracking the document after it leaves the intake folder.
@@ -548,21 +577,27 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
       .then(() => undefined, () => undefined);
   }
 
-  await supabase.from("audit_logs").insert({
-    action: "TRANSITION_IN",
-    resource_type: "document", resource_id: input.docId,
-    org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail,
-    details: {
-      projectId: input.projectId,
-      before: { number: before.document_number, libraryId: before.library_id, collectionId: before.collection_id },
-      after: { number: newNumber ?? before.document_number, libraryId: input.libraryId, collectionId: input.collectionId },
-      linkedAssetTags: input.linkAssets.map((a) => a.tag),
-      unverifiable: impact.unverifiable,
-      ...(missing.length > 0 ? { uniquenessKeyNotSet: missing } : {}),
-    },
-  }).then(() => undefined, () => undefined);
+  // adopt_intake_document wrote the audit row with the move (the same
+  // details, its before / after its own); the pre-20261141 path writes it here.
+  if (!viaDatabase) {
+    await supabase.from("audit_logs").insert({
+      action: "TRANSITION_IN",
+      resource_type: "document", resource_id: input.docId,
+      org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail,
+      details: {
+        ...auditDetails,
+        before: { number: before.document_number, libraryId: before.library_id, collectionId: before.collection_id },
+        after: { number: newNumber ?? before.document_number, libraryId: input.libraryId, collectionId: input.collectionId },
+      },
+    }).then(() => undefined, () => undefined);
+  }
 
   return note ? { ok: true, note } : { ok: true };
+}
+
+/** adopt_intake_document is not in the database yet (before 20261141). */
+function missingAdoptFunction(e: { message?: string | null; code?: string | null }): boolean {
+  return /^(PGRST202|42883)$/.test(String(e.code ?? "")) || /could not find the function|function .*adopt_intake_document.* does not exist/i.test(e.message ?? "");
 }
 
 /** A uniqueness-tuple part as the operator reads it. */
