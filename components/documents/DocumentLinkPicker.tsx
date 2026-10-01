@@ -224,7 +224,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                 <option value="Issued">Issued — a controlled Rev 0 (needs publish authority in this library)</option>
               </select>
               {fileAs === "Issued" && (
-                <p className="text-[10px] text-[var(--color-text-muted)]">Issuing starts its review cycle and read-&amp;-understood roster. A library that requires reviewer sign-off refuses an unreviewed issue — file it as a Draft and submit it for review instead.</p>
+                <p className="text-[10px] text-[var(--color-text-muted)]">Issuing starts its review cycle and read-&amp;-understood roster. A library that requires reviewer sign-off refuses an unreviewed issue — file it as a Draft and submit it for review instead (Document Control may issue it, and is recorded doing so).</p>
               )}
             </div>
 

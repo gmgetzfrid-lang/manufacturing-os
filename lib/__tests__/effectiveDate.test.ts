@@ -77,15 +77,32 @@ describe("REV-9 — one definition of 'today' for the badge, the watermark, the 
     expect(effectiveStatusFor("2026-08-22", houstonNextMorning)).toBe("effective");
   });
 
-  it("unset, or not a zone Intl knows, the calendar falls back to UTC — consistent with the server paths, but early west of UTC (why REV-9 stays open until the zone is named)", () => {
+  it("unset, or not a zone Intl knows, the calendar falls back to UTC-12 — the LATEST calendar, never UTC: the reviewer's Houston evening keeps its badge pending and its announcement", () => {
     expect(effectiveDateTimeZone()).toBe(EFFECTIVE_DATE_FALLBACK_TIME_ZONE);
-    expect(EFFECTIVE_DATE_FALLBACK_TIME_ZONE).toBe("UTC");
-    expect(effectiveTodayISO(houstonEvening)).toBe("2026-08-22");
+    expect(EFFECTIVE_DATE_FALLBACK_TIME_ZONE).toBe("Etc/GMT+12");
+    expect(effectiveTodayISO(houstonEvening)).toBe("2026-08-21");
+    // the finding's own scenario, with NO zone configured: pending that evening, not pre-stamped
+    expect(effectiveStatusFor("2026-08-22", houstonEvening)).toBe("pending");
+    expect("2026-08-22" <= effectiveTodayISO(houstonEvening)).toBe(false);
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "Mars/Olympus_Mons";
-    expect(effectiveDateTimeZone()).toBe("UTC");
+    expect(effectiveDateTimeZone()).toBe("Etc/GMT+12");
     expect(err).toHaveBeenCalledTimes(1);
     err.mockRestore();
+  });
+
+  it("with no zone named, a date is NEVER in force early in any facility's calendar (UTC-14 … UTC+14), at any instant — at worst it is late", () => {
+    const zones = ["Pacific/Kiritimati", "Asia/Tokyo", "Europe/London", "UTC", "America/Chicago", "America/Los_Angeles", "Pacific/Honolulu", "Pacific/Pago_Pago"];
+    const start = Date.parse("2026-08-20T00:00:00Z");
+    for (let t = start; t < start + 3 * DAY; t += 30 * 60_000) {
+      const now = new Date(t);
+      const fallbackToday = effectiveTodayISO(now); // unset → UTC-12
+      for (const zone of zones) {
+        const facilityToday = effectiveTodayISO(now, zone);
+        // "in force under the fallback" implies "in force at the facility"
+        expect(fallbackToday <= facilityToday).toBe(true);
+      }
+    }
   });
 
   it("the badge and the watermark agree at every instant: exactly one of 'suppressed' and 'pending' holds for every date, in any facility zone", () => {
@@ -104,11 +121,11 @@ describe("REV-9 — one definition of 'today' for the badge, the watermark, the 
     for (const tz of ["America/Chicago", "Asia/Tokyo", "UTC", "Pacific/Kiritimati"]) {
       process.env.TZ = tz;
       delete process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE;
-      expect(effectiveTodayISO(houstonEvening)).toBe("2026-08-22");
-      expect(effectiveStatusFor("2026-08-22", houstonEvening)).toBe("effective");
-      expect(effectiveStatusFor("2026-08-23", houstonEvening)).toBe("pending");
-      expect(daysUntilEffective("2026-08-25", houstonEvening)).toBe(3);
-      expect(daysUntilEffective("2026-08-20", houstonEvening)).toBe(-2);
+      expect(effectiveTodayISO(houstonEvening)).toBe("2026-08-21");
+      expect(effectiveStatusFor("2026-08-21", houstonEvening)).toBe("effective");
+      expect(effectiveStatusFor("2026-08-22", houstonEvening)).toBe("pending");
+      expect(daysUntilEffective("2026-08-25", houstonEvening)).toBe(4);
+      expect(daysUntilEffective("2026-08-20", houstonEvening)).toBe(-1);
       process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE = "America/Chicago";
       expect(effectiveTodayISO(houstonEvening)).toBe("2026-08-21");
       expect(effectiveStatusFor("2026-08-22", houstonEvening)).toBe("pending");

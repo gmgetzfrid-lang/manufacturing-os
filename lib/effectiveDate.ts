@@ -28,15 +28,22 @@ export type EffectiveStatus = "none" | "pending" | "effective";
 // zone nor UTC is right on its own: UTC flips a date early for every site
 // west of it (a Houston publisher's 22 Aug is already "today" at 19:00 on
 // 21 Aug), the browser's zone differs between a remote reviewer and the
-// floor. Unset (or not a zone Intl knows), the calendar falls back to UTC,
-// the one the server paths already used — consistent, but early west of UTC,
-// which is why REV-9 stays open until every deployment names its zone (or an
-// org / library zone setting lands, which changes effectiveDateTimeZone()
-// and nothing else). Dates are compared as YYYY-MM-DD strings, never by
-// parsing a bare datetime (which JS reads in the local zone).
+// floor. Unset (or not a zone Intl knows), the calendar falls back to the
+// LATEST calendar on Earth — UTC-12 — never UTC: a day begins there only
+// after it has begun in every facility's calendar, so with no zone named a
+// date is never shown, stamped or announced as in force EARLY anywhere; it
+// is late, by the facility's offset plus twelve hours at most (Houston: the
+// badge flips at 07:00 instead of midnight). Late is the safe side of a
+// procedure that must not be in force before the training. REV-9 stays open
+// until every deployment names its zone (or an org / library zone setting
+// lands, which changes effectiveDateTimeZone() and nothing else). Dates are
+// compared as YYYY-MM-DD strings, never by parsing a bare datetime (which JS
+// reads in the local zone).
 
-/** The calendar used when the deployment names no (valid) facility zone. */
-export const EFFECTIVE_DATE_FALLBACK_TIME_ZONE = "UTC";
+/** The calendar used when the deployment names no (valid) facility zone:
+ *  UTC-12. IANA spells it "Etc/GMT+12" — the POSIX sign is inverted, so
+ *  this is twelve hours BEHIND UTC, the last place any date begins. */
+export const EFFECTIVE_DATE_FALLBACK_TIME_ZONE = "Etc/GMT+12";
 
 let warnedZone: string | null = null;
 
@@ -44,7 +51,8 @@ let warnedZone: string | null = null;
  *  deployment's facility zone, read at call time — the literal
  *  `process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE` reference is what Next
  *  inlines into the browser bundle, and the cron scan reads the same name
- *  on the server — else UTC. */
+ *  on the server — else the latest calendar (UTC-12), which can only be
+ *  late, never early. */
 export function effectiveDateTimeZone(): string {
   const raw = (process.env.NEXT_PUBLIC_FACILITY_TIME_ZONE ?? "").trim();
   if (!raw) return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
@@ -54,7 +62,7 @@ export function effectiveDateTimeZone(): string {
   } catch {
     if (warnedZone !== raw) {
       warnedZone = raw;
-      console.error(`[effectiveDate] NEXT_PUBLIC_FACILITY_TIME_ZONE="${raw}" is not a time zone this runtime knows — effective dates are decided in ${EFFECTIVE_DATE_FALLBACK_TIME_ZONE}.`);
+      console.error(`[effectiveDate] NEXT_PUBLIC_FACILITY_TIME_ZONE="${raw}" is not a time zone this runtime knows — effective dates are decided in ${EFFECTIVE_DATE_FALLBACK_TIME_ZONE} (UTC-12: never early, up to a day late) until it is fixed.`);
     }
     return EFFECTIVE_DATE_FALLBACK_TIME_ZONE;
   }

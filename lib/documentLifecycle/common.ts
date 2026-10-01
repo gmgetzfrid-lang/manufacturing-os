@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent, logHoldEvent } from "@/lib/audit";
 import {
-  voidPendingDraft,
+  voidPendingDraftAfterPublish,
   revokeLiveSharesForDocument,
   writeSupersessionLineage,
   type CreationStatus,
@@ -99,28 +99,41 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
   if (error) throw new Error(error.message);
 }
 
+/** The supersession fields a source held before a lifecycle operation
+ *  retired it — what a rollback puts back (a re-run on a document that was
+ *  already Superseded keeps its first supersession). */
+export interface PriorSupersessionFields {
+  superseded_at?: unknown;
+  superseded_by_user?: unknown;
+  supersession_reason?: unknown;
+  supersession_moc?: unknown;
+}
+
 /** Compensation: restore a source doc that was marked Superseded back to its
- *  prior status, and drop the supersession join rows created for this op.
- *  Checked (REV-12 / DRLS-13): a refused restore or a lineage row that could
- *  not be removed THROWS, so withCompensation reports it for manual cleanup
- *  instead of calling the rollback clean. Lineage DELETE is Document
- *  Control / Admin only at the database (20261131) — for any other actor the
- *  leftover rows are named in the error. */
+ *  prior status (and, when given, its prior supersession fields), and drop
+ *  the supersession join rows created for this op. Checked (REV-12 /
+ *  DRLS-13): a refused restore, a lineage row that could not be removed, or
+ *  a removal that could not be CONFIRMED (the read-back failed) THROWS, so
+ *  withCompensation reports it for manual cleanup instead of calling the
+ *  rollback clean. Lineage DELETE is Document Control / Admin only at the
+ *  database (20261131) — for any other actor the leftover rows are named in
+ *  the error. */
 export async function restoreSupersededSource(
   sourceDocId: string,
   priorStatus: string,
   replacementDocIds: string[],
   actor: ActorContext,
+  prior: PriorSupersessionFields = {},
 ): Promise<void> {
   const now = new Date().toISOString();
   const { data: restored, error: restoreErr } = await supabase
     .from("documents")
     .update({
       status: priorStatus,
-      superseded_at: null,
-      superseded_by_user: null,
-      supersession_reason: null,
-      supersession_moc: null,
+      superseded_at: prior.superseded_at ?? null,
+      superseded_by_user: prior.superseded_by_user ?? null,
+      supersession_reason: prior.supersession_reason ?? null,
+      supersession_moc: prior.supersession_moc ?? null,
       updated_at: now,
       updated_by: actor.actorUserId,
     })
@@ -135,9 +148,12 @@ export async function restoreSupersededSource(
       .delete()
       .eq("superseded_doc_id", sourceDocId)
       .in("replacement_doc_id", replacementDocIds);
-    const { data: left } = await supabase
+    const { data: left, error: leftErr } = await supabase
       .from("document_supersessions").select("replacement_doc_id")
       .eq("superseded_doc_id", sourceDocId).in("replacement_doc_id", replacementDocIds);
+    if (leftErr) {
+      throw new Error(`the removal of up to ${replacementDocIds.length} supersession link(s) from ${sourceDocId} could not be confirmed (${leftErr.message})${delErr ? `; the delete answered: ${delErr.message}` : ""} — Document Control must check them`);
+    }
     const remaining = ((left as unknown[] | null) ?? []).length;
     if (delErr || remaining > 0) {
       throw new Error(`${remaining || replacementDocIds.length} supersession link(s) from ${sourceDocId} could not be removed${delErr ? ` (${delErr.message})` : ""} — Document Control must delete them`);
@@ -302,45 +318,88 @@ export async function createNewDocWithFirstVersion(input: {
   return { documentId: newDocId, versionId, fileUrl: uploadResult.url };
 }
 
+/** What a lifecycle operation retired, for the step that finishes the
+ *  retirement once nothing can roll back (completeSourceRetirement). */
+export interface SupersededSource {
+  sourceDocId: string;
+  /** REV-12: the status the source held, read fresh. */
+  priorStatus: string;
+  /** REV-12: the operation's instant, recorded as `auditAt`. */
+  auditAt: string;
+}
+
 /** Mark a document as superseded and link its replacements via the
- *  document_supersessions join table. Idempotent on the join rows.
+ *  document_supersessions join table — the part of a split / merge
+ *  retirement that CAN still be rolled back. Idempotent on the join rows.
  *
  *  Round F (P3 LIFECYCLE), in order:
- *   · REV-12 — the status the source held is read FRESH from the database
- *     (never the caller's possibly-stale record) and written onto the audit
- *     event as `priorStatus`, with the operation's own timestamp as
- *     `auditAt`, so a reversal restores what was there and counts only work
- *     done after it. Returned so the caller's compensation restores the same
- *     value.
- *   · REV-6 — the source's in-flight review draft is voided BEFORE the
- *     status flips (a refusal stops the operation with nothing retired).
+ *   · REV-12 — the status the source held (and its supersession fields) are
+ *     read FRESH from the database, never the caller's possibly-stale
+ *     record; the status goes onto the audit event as `priorStatus`, with
+ *     the operation's own timestamp as `auditAt`, so a reversal restores
+ *     what was there and counts only work done after it.
+ *   · REV-14 — the source's restore is REGISTERED with the caller's saga
+ *     BEFORE anything is written, so a failure at ANY later point — this
+ *     call's own status flip or lineage write included — puts it back: the
+ *     prior status and supersession fields, and only the lineage pairs this
+ *     attempt added. It runs only if the flip landed (a flip that never
+ *     landed has nothing to undo). A document is never left Superseded with
+ *     fewer links than were named while its replacements are archived.
  *   · REV-14 / DRLS-13 — the lineage write is a checked upsert on the pair.
- *   · REV-10 — the source's live share links are revoked, durably; the
- *     count (and any refusal) rides on the audit event. */
+ *
+ *  What cannot be undone — voiding the source's in-flight review (REV-6:
+ *  a voided sign-off never returns, 20261070) and revoking its share links
+ *  (REV-10: revoked_at is frozen, 20261080) — is NOT done here: the caller
+ *  runs completeSourceRetirement after its last step that can still roll
+ *  back. Until then the source is retired at the database, so finalize
+ *  refuses its draft (REV-5) and the share routes refuse its status (P1). */
 export async function markSupersededAndLink(input: {
   sourceDocId: string;
   replacementDocIds: string[];
   reason: string;
   mocReference?: string;
   actor: ActorContext;
-  /** Audit action recorded on the SOURCE document. DOC_SPLIT for
-   *  splits, DOC_MERGED for merges, SUPERSEDE_DOC for plain
-   *  supersessions. */
-  sourceAuditAction: "DOC_SPLIT" | "DOC_MERGED" | "SUPERSEDE_DOC";
-  /** Extra detail to record in the audit row. */
-  details?: Record<string, unknown>;
-}): Promise<{ priorStatus: string }> {
-  const { sourceDocId, replacementDocIds, reason, mocReference, actor } = input;
+  /** The caller's compensation register (withCompensation). */
+  register: (c: Compensation) => void;
+  /** How the source is named in a compensation failure. */
+  label: string;
+}): Promise<SupersededSource> {
+  const { sourceDocId, replacementDocIds, reason, mocReference, actor, register, label } = input;
   const now = new Date().toISOString();
 
   const { data: cur, error: curErr } = await supabase
-    .from("documents").select("status").eq("id", sourceDocId).maybeSingle();
+    .from("documents")
+    .select("status, superseded_at, superseded_by_user, supersession_reason, supersession_moc")
+    .eq("id", sourceDocId).maybeSingle();
   if (curErr || !cur) throw new Error(`Couldn't read the source document's status (${curErr?.message ?? "not found"}) — nothing was retired.`);
-  const priorStatus = String((cur as { status?: string | null }).status ?? "Issued");
+  // A copy, taken now: what the rollback puts back is the state BEFORE the flip.
+  const prior: PriorSupersessionFields & { status?: string | null } = { ...(cur as PriorSupersessionFields & { status?: string | null }) };
+  const priorStatus = String(prior.status ?? "Issued");
 
-  const voidedDraft = await voidPendingDraft(sourceDocId);
+  // The pairs that already exist are not this attempt's to remove.
+  let preExisting = new Set<string>();
+  if (replacementDocIds.length > 0) {
+    const { data: pairs, error: pairsErr } = await supabase
+      .from("document_supersessions").select("replacement_doc_id")
+      .eq("superseded_doc_id", sourceDocId).in("replacement_doc_id", replacementDocIds);
+    if (pairsErr) throw new Error(`Couldn't read ${label}'s existing replacement links (${pairsErr.message}) — nothing was retired.`);
+    preExisting = new Set(((pairs as Array<{ replacement_doc_id: string }> | null) ?? []).map((r) => r.replacement_doc_id));
+  }
+  const addedPairs = replacementDocIds.filter((id) => !preExisting.has(id));
 
-  const { data: flipped, error: updErr } = await supabase
+  let flipped = false;
+  register({
+    describe: `restore ${label} from Superseded`,
+    run: async () => {
+      if (!flipped) return; // the flip never landed — nothing to put back
+      await restoreSupersededSource(sourceDocId, priorStatus, addedPairs, actor, {
+        superseded_at: prior.superseded_at, superseded_by_user: prior.superseded_by_user,
+        supersession_reason: prior.supersession_reason, supersession_moc: prior.supersession_moc,
+      });
+    },
+  });
+
+  const { data: flippedRows, error: updErr } = await supabase
     .from("documents")
     .update({
       status: "Superseded",
@@ -354,9 +413,10 @@ export async function markSupersededAndLink(input: {
     .eq("id", sourceDocId)
     .select("id");
   if (updErr) throw new Error(updErr.message);
-  if (((flipped as unknown[] | null) ?? []).length === 0) {
+  if (((flippedRows as unknown[] | null) ?? []).length === 0) {
     throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
   }
+  flipped = true;
 
   if (replacementDocIds.length > 0) {
     const rows = replacementDocIds.map((rid) => ({
@@ -370,13 +430,39 @@ export async function markSupersededAndLink(input: {
     await writeSupersessionLineage(rows, sourceDocId, replacementDocIds);
   }
 
-  const shares = await revokeLiveSharesForDocument(sourceDocId, actor.actorUserId);
+  return { sourceDocId, priorStatus, auditAt: now };
+}
+
+/** The retirement's irreversible half, run by split / merge only AFTER their
+ *  last step that can still roll back: void the source's in-flight review
+ *  draft (REV-6) and revoke its live share links (REV-10) — neither can be
+ *  undone — then write the source's audit event carrying both outcomes and
+ *  the REV-12 `priorStatus` / `auditAt`. Never throws: the retirement has
+ *  committed, so a refused void or revocation is put on the record
+ *  (`pendingDraftVoidProblem`, `shareRevokeError`) — finalize refuses a
+ *  retired document (REV-5) and the share routes refuse a retired status
+ *  (P1) meanwhile — as archive does. */
+export async function completeSourceRetirement(input: {
+  source: SupersededSource;
+  replacementDocIds: string[];
+  reason: string;
+  mocReference?: string;
+  actor: ActorContext;
+  /** Audit action recorded on the SOURCE document. DOC_SPLIT for
+   *  splits, DOC_MERGED for merges. */
+  sourceAuditAction: "DOC_SPLIT" | "DOC_MERGED";
+  /** Extra detail to record in the audit row. */
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  const { source, replacementDocIds, reason, mocReference, actor } = input;
+  const draftVoid = await voidPendingDraftAfterPublish(source.sourceDocId, actor.actorUserId);
+  const shares = await revokeLiveSharesForDocument(source.sourceDocId, actor.actorUserId);
 
   // Empty version id on the audit log — supersession is a document-
   // level state change, not a version creation.
   await logRevisionEvent({
     orgId: actor.orgId,
-    documentId: sourceDocId,
+    documentId: source.sourceDocId,
     versionId: "",
     userId: actor.actorUserId,
     userEmail: actor.actorEmail ?? "",
@@ -387,14 +473,14 @@ export async function markSupersededAndLink(input: {
       mocReference: mocReference?.trim() || null,
       replacementDocIds,
       ...(input.details ?? {}),
-      priorStatus,
-      auditAt: now,
-      pendingDraftVoided: voidedDraft,
+      priorStatus: source.priorStatus,
+      auditAt: source.auditAt,
+      pendingDraftVoided: draftVoid.voidedVersionId,
+      pendingDraftVoidProblem: draftVoid.problem,
       revokedShareLinks: shares.revoked,
       shareRevokeError: shares.error,
     },
   });
-  return { priorStatus };
 }
 
 /** Copy any ACTIVE holds from the source document onto the target,

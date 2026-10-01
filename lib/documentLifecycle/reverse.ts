@@ -32,8 +32,10 @@
 //   their act, checked here before anything moves.
 //
 //   reverseRenumber(renumberAuditId)
+//     → the SAME gate as renumberDocument (OWN-19 authority, HLD-1 hold) —
+//       an undo is a renumber, not a way round its rules
 //     → set documents.document_number back to the previous value
-//       (carried in the original audit's details)
+//       (carried in the original audit's details), checked for the row
 //     → write DOC_RENUMBER_REVERSED
 //
 // We deliberately scope reversal to a single audit event so that
@@ -44,7 +46,10 @@ import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
-import { voidPendingDraft, revokeLiveSharesForDocument } from "@/lib/revisions";
+import { resolveCanControlLibrary } from "@/lib/documentGuards";
+import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
+import { assertNotOnHold } from "@/lib/holdGate";
+import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument } from "@/lib/revisions";
 
 export interface ReverseResult {
   reversedDocIds: string[];
@@ -93,6 +98,25 @@ export class PriorStatusUnknownError extends Error {
   }
 }
 
+/** REV-16: does reversing this event need the caller to NAME the status to
+ *  restore? True for a split / merge recorded before prior statuses were
+ *  captured (no `priorStatus` on a DOC_SPLIT; a DOC_MERGED whose
+ *  `priorStatuses` does not cover every sibling). Pure — the reverse dialog
+ *  asks it to decide whether to show its status picker; the reversal itself
+ *  still prefers whatever IS recorded. */
+export function reversalNeedsLegacyStatus(action: string, details: Record<string, unknown> | null | undefined): boolean {
+  const d = details ?? {};
+  const has = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  if (action === "DOC_SPLIT") return !has(d.priorStatus);
+  if (action === "DOC_MERGED") {
+    const recorded = (d.priorStatuses && typeof d.priorStatuses === "object" ? d.priorStatuses : {}) as Record<string, unknown>;
+    const siblings = ((d.mergeSiblings as string[] | undefined) ?? []).filter(Boolean);
+    if (siblings.length === 0) return !has(d.priorStatus);
+    return !siblings.every((id) => has(recorded[id]));
+  }
+  return false;
+}
+
 /** REV-12: the status to restore — recorded on the event, else the caller's
  *  explicit (validated) choice for a legacy event, else refuse. */
 function statusToRestore(recorded: unknown, explicit: string | undefined, label: string): string {
@@ -115,10 +139,13 @@ async function assertReversalAuthority(orgId: string, actorUserId: string, actor
   }
 }
 
-/** Park a document a reversal retires: void its in-flight review draft
- *  (REV-6), mark it Superseded (checked), revoke its share links (REV-10). */
-async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string): Promise<{ revokedShareLinks: number; shareRevokeError: string | null; voidedDraft: string | null }> {
-  const voidedDraft = await voidPendingDraft(docId);
+/** Park a document a reversal retires: mark it Superseded (checked), THEN
+ *  void its in-flight review draft (REV-6) and revoke its share links
+ *  (REV-10). The two irreversible steps run only once the park itself has
+ *  landed — a refused park changes nothing and destroys no signature — and
+ *  never throw: a failure is returned for the reversal's record (finalize
+ *  refuses a retired document, REV-5; the share routes refuse its status). */
+async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string): Promise<{ revokedShareLinks: number; shareRevokeError: string | null; voidedDraft: string | null; voidProblem: string | null }> {
   const { data, error } = await supabase.from("documents").update({
     status: "Superseded",
     superseded_at: now,
@@ -130,8 +157,9 @@ async function parkAsSuperseded(docId: string, supersessionReason: string, actor
   if (error || ((data as unknown[] | null) ?? []).length === 0) {
     throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
   }
+  const draftVoid = await voidPendingDraftAfterPublish(docId, actorUserId);
   const shares = await revokeLiveSharesForDocument(docId, actorUserId);
-  return { revokedShareLinks: shares.revoked, shareRevokeError: shares.error, voidedDraft };
+  return { revokedShareLinks: shares.revoked, shareRevokeError: shares.error, voidedDraft: draftVoid.voidedVersionId, voidProblem: draftVoid.problem };
 }
 
 /** Un-supersede one document to the status it held (checked). */
@@ -151,17 +179,21 @@ async function restoreStatus(docId: string, status: string, actorUserId: string,
 }
 
 /** Delete this operation's supersession rows (checked — a row left behind
- *  would keep asserting a replacement the reversal undid). */
+ *  would keep asserting a replacement the reversal undid; a removal whose
+ *  read-back fails is UNCONFIRMED, never reported clean). */
 async function deleteLineage(filter: { supersededIds: string[]; replacementIds: string[] }): Promise<void> {
   const { error } = await supabase
     .from("document_supersessions")
     .delete()
     .in("superseded_doc_id", filter.supersededIds)
     .in("replacement_doc_id", filter.replacementIds);
-  const { data: left } = await supabase
+  const { data: left, error: leftErr } = await supabase
     .from("document_supersessions").select("id")
     .in("superseded_doc_id", filter.supersededIds)
     .in("replacement_doc_id", filter.replacementIds);
+  if (leftErr) {
+    throw new Error(`The documents were restored, but whether this operation's supersession links were removed could not be confirmed (${leftErr.message})${error ? `; the delete answered: ${error.message}` : ""} — some may remain; Document Control must check them.`);
+  }
   const remaining = ((left as unknown[] | null) ?? []).length;
   if (error || remaining > 0) {
     throw new Error(`The documents were restored, but ${remaining || "the"} supersession link(s) could not be removed${error ? ` (${error.message})` : ""} — Document Control must delete them.`);
@@ -225,12 +257,14 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   let revokedShareLinks = 0;
   const shareRevokeErrors: string[] = [];
   const voidedDrafts: string[] = [];
+  const draftVoidProblems: string[] = [];
   for (const newId of replacementIds) {
     const r = await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now);
     parked++;
     revokedShareLinks += r.revokedShareLinks;
     if (r.shareRevokeError) shareRevokeErrors.push(r.shareRevokeError);
     if (r.voidedDraft) voidedDrafts.push(r.voidedDraft);
+    if (r.voidProblem) draftVoidProblems.push(`${newId}: ${r.voidProblem}`);
   }
 
   // Un-supersede the source — to the status it actually held (REV-12).
@@ -258,6 +292,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       revokedShareLinks,
       shareRevokeErrors,
       pendingDraftsVoided: voidedDrafts,
+      pendingDraftVoidProblems: draftVoidProblems,
     },
   });
 
@@ -333,17 +368,20 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   let revokedShareLinks = 0;
   let shareRevokeError: string | null = null;
   let voidedDraft: string | null = null;
+  let voidProblem: string | null = null;
 
   // Park the target FIRST, if newly created — reverseSplit's order. Parking
-  // can refuse (its draft void, the checked status write); refused here,
-  // nothing has moved. Restoring the sources first left them AND the merged
-  // sheet controlled at once, with the lineage gone, when it refused.
+  // can refuse (the checked status write); refused here, nothing has moved —
+  // and nothing was voided (the draft void follows the park). Restoring the
+  // sources first left them AND the merged sheet controlled at once, with
+  // the lineage gone, when it refused.
   if (targetWasNewlyCreated) {
     const r = await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now);
     parked = 1;
     revokedShareLinks = r.revokedShareLinks;
     shareRevokeError = r.shareRevokeError;
     voidedDraft = r.voidedDraft;
+    voidProblem = r.voidProblem;
     if (inferredFromLegacyHeuristic) {
       warnings.unshift("This merge predates explicit intent tracking — whether the target was newly created was inferred. It has been parked as Superseded; verify this was the merge-created document and not a pre-existing one before relying on the reversal.");
     }
@@ -379,6 +417,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       revokedShareLinks,
       shareRevokeError,
       pendingDraftVoided: voidedDraft,
+      pendingDraftVoidProblem: voidProblem,
     },
   });
 
@@ -407,14 +446,27 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
   // Make sure the doc still has the renumbered value before we swap
   // it back, otherwise something else changed it in between and we
   // shouldn't blindly overwrite.
-  const { data: cur } = await supabase
+  const { data: cur, error: curErr } = await supabase
     .from("documents")
     .select("document_number, library_id")
     .eq("id", docId)
     .maybeSingle();
-  const curRow = cur as { document_number: string | null; library_id: string | null } | null;
-  const live = curRow?.document_number ?? null;
-  const libraryId = curRow?.library_id ?? null;
+  if (curErr || !cur) throw new Error(`Couldn't read the document (${curErr?.message ?? "not found"}) — nothing was changed.`);
+  const curRow = cur as { document_number: string | null; library_id: string | null };
+  const live = curRow.document_number ?? null;
+  const libraryId = curRow.library_id ?? null;
+
+  // The undo of a renumber IS a renumber: renumberDocument's own gate —
+  // OWN-19 authority (per-library control, or effective ownership of this
+  // document) and HLD-1 (a held document keeps the number its hold cards
+  // were printed with; fails closed) — before anything is written.
+  const principal = await resolveActorPrincipal({ uid: input.actorUserId, orgId: input.orgId, headlineRole: input.actorRole });
+  let authorized = libraryId ? await resolveCanControlLibrary(libraryId, principal) : false;
+  if (!authorized) authorized = await isEffectiveOwnerOfDocument(docId, input.actorUserId);
+  if (!authorized) {
+    throw new Error("You don't have authority to renumber this document, so you can't reverse its renumber either. Ask an Admin or Doc Control.");
+  }
+  await assertNotOnHold(docId, { action: "reversing its renumber" });
   const warnings: string[] = [];
   if (current && live !== current) {
     warnings.push(`Document number is now "${live}", not the "${current}" that this renumber set. Another change happened since. Reverse only if you're sure.`);
@@ -443,11 +495,11 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
   }
 
   const now = new Date().toISOString();
-  const { error: swapErr } = await supabase.from("documents").update({
+  const { data: swapped, error: swapErr } = await supabase.from("documents").update({
     document_number: previous,
     updated_at: now,
     updated_by: input.actorUserId,
-  }).eq("id", docId);
+  }).eq("id", docId).select("id");
   if (swapErr) {
     // Last-resort guard if a concurrent write slipped in between the check
     // and the swap.
@@ -455,6 +507,9 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
       `Couldn't restore document number "${previous}": ${swapErr.message}. ` +
       `It may have just been taken by another document.`,
     );
+  }
+  if (((swapped as unknown[] | null) ?? []).length === 0) {
+    throw new Error(`Couldn't restore document number "${previous}" — the write was refused. Nothing was changed.`);
   }
 
   await logRevisionEvent({

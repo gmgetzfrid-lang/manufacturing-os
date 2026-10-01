@@ -8,17 +8,19 @@
 // version row, and document_supersessions captures the lineage.
 
 import { supabase } from "@/lib/supabase";
-import { authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate } from "@/lib/revisions";
+import {
+  authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
+} from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import {
   type ActorContext,
   createNewDocWithFirstVersion,
   markSupersededAndLink,
+  completeSourceRetirement,
   copyActiveHoldsToDoc,
   copyProjectMembershipToDoc,
   withCompensation,
   archiveRolledBackDoc,
-  restoreSupersededSource,
   releaseCarriedHolds,
 } from "./common";
 
@@ -109,22 +111,39 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   // and the hold (only a controller's explicit force passes it).
   const preState = await authorizePublish({
     documentId: sourceId, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason ?? reason, force: input.force,
+    overrideReason: input.overrideReason ?? reason, force: input.force, operation: "split",
   });
+  // REV-11: sheets landing in ANOTHER library than the source's take
+  // authority there too — they are born owned by the actor, so the
+  // database's publish guard would admit them on that alone.
+  const sourceLibraryId = source.libraryId || libraryId;
+  if (sourceLibraryId !== libraryId) {
+    const ok = await canPutFirstRevisionInContainer({
+      orgId, libraryId, collectionId: inheritCollectionAndSet ? (source.collectionId ?? null) : null, actorUserId, actorRole,
+    });
+    if (!ok) {
+      throw new Error("You don't have authority to issue documents in the library the split sheets would land in — nothing was split. Ask an Admin or Doc Control.");
+    }
+  }
   const sourceHeld = preState.activeHolds.length > 0;
   if (sourceHeld && !copyHolds) {
     throw new Error(`${sourceLabel} has an active hold — a split must carry it onto every new sheet. Turn "carry over holds" back on, or release the hold first.`);
   }
   // REV-11: the new sheets are controlled first issues that REPLACE a
   // controlled drawing — the governing review policy is resolved for the
-  // folder / library they land in; one that requires sign-off refuses.
+  // folder / library they land in; one that requires sign-off refuses
+  // anyone but a controller, whose decision is recorded on every sheet.
   const review = await resolveCreationReviewGate({
     libraryId,
     collectionId: inheritCollectionAndSet ? (source.collectionId ?? null) : null,
     what: `the sheets split from ${sourceLabel}`,
+    actor: { orgId, actorUserId, actorRole },
   });
 
-  return withCompensation(async (register) => {
+  // Steps 1-3 can still roll back: every durable change registers its undo
+  // BEFORE it is made, and a failure anywhere runs them all. Nothing
+  // irreversible happens inside — see step 4.
+  const done = await withCompensation(async (register) => {
   // 1. Materialize each new doc with its first revision.
   const newDocumentIds: string[] = [];
   for (const t of targets) {
@@ -186,10 +205,29 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   }
 
   // 3. Mark the source as Superseded and write the supersessions join rows.
-  //    REV-12: the status the source actually held is read fresh and put on
-  //    the DOC_SPLIT record; the compensation restores that same value.
-  const { priorStatus } = await markSupersededAndLink({
+  //    REV-12: the status the source actually held is read fresh; REV-14:
+  //    its restore is registered BEFORE the flip, so a refused flip or
+  //    lineage write puts the source back instead of leaving it Superseded
+  //    with its replacements archived.
+  const retired = await markSupersededAndLink({
     sourceDocId: sourceId,
+    replacementDocIds: newDocumentIds,
+    reason: reason.trim(),
+    mocReference,
+    actor,
+    register,
+    label: `source ${source.documentNumber ?? source.id}`,
+  });
+  return { newDocumentIds, holdsCopied, retired };
+  });
+  const { newDocumentIds, holdsCopied, retired } = done;
+
+  // 4. Nothing below rolls back. NOW the irreversible half of the
+  //    retirement: the source's in-flight review is voided (REV-6) and its
+  //    share links revoked (REV-10), each outcome on the DOC_SPLIT record
+  //    with the REV-12 prior status and instant.
+  await completeSourceRetirement({
+    source: retired,
     replacementDocIds: newDocumentIds,
     reason: reason.trim(),
     mocReference,
@@ -201,13 +239,8 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
       holdsCarried: holdsCopied,
     },
   });
-  // If a later step fails, restore the source to its prior status on rollback.
-  register({
-    describe: `restore source ${source.documentNumber ?? source.id} from Superseded`,
-    run: () => restoreSupersededSource(sourceId, priorStatus, newDocumentIds, actor),
-  });
 
-  // 4. Project memberships are a SECONDARY effect: the split itself (new
+  // 5. Project memberships are a SECONDARY effect: the split itself (new
   //    docs + carried holds + supersession) is durable and correct above; a
   //    membership hiccup is reported via an honest count, never a rollback.
   let projectsCopied = 0;
@@ -221,7 +254,7 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     }
   }
 
-  // 5. Bump set's sheet_count if appropriate.
+  // 6. Bump set's sheet_count if appropriate.
   if (inheritCollectionAndSet && source.setId) {
     // Source still exists in the set (as Superseded) and we added N new.
     // We touch updated_at to signal change; the SetManager UI is the
@@ -243,5 +276,4 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
   };
-  });
 }

@@ -230,8 +230,23 @@ export function suggestNextRevisionLabel(currentRev?: string | null): string {
 
 /** DCK-8: the shortest reason that may accompany a publish over another
  *  user's checkout. publish_revision (20261130) refuses a shorter one at the
- *  database; the app says so before anything is uploaded. */
+ *  database; the app says so before anything is uploaded. It binds only the
+ *  callers that publish through that function (rev-up, revert): supersede,
+ *  split, merge and a review submission reuse the same gate, where the
+ *  reason is the message the holder is shown and any non-blank one serves. */
 export const OVERRIDE_REASON_MIN = 5;
+
+/** What the caller of authorizePublish is doing — it words the refusal, and
+ *  only "publish" (a publish_revision call) carries OVERRIDE_REASON_MIN. */
+export type GuardedOperation = "publish" | "supersede" | "split" | "merge" | "submit for review";
+
+function overrideReasonVerb(op: GuardedOperation): string {
+  switch (op) {
+    case "publish": return "publish over another user's checkout";
+    case "submit for review": return "submit a revision for review while another user has the document checked out";
+    default: return `${op} a document another user has checked out`;
+  }
+}
 
 /**
  * Authorize a publish on `libraryId` and evaluate the lock/hold guard, returning
@@ -255,6 +270,10 @@ export async function authorizePublish(opts: {
   overrideReason?: string;
   /** Controller's explicit emergency force (bypasses lock AND hold). */
   force?: boolean;
+  /** What the caller does with the gate (default "publish"). Only a publish
+   *  holds the override reason to OVERRIDE_REASON_MIN — the database's rule
+   *  for publish_revision; the others need a non-blank reason. */
+  operation?: GuardedOperation;
 }): Promise<PublishGuardState> {
   // OWN-3 / OWN-6: the principal carries the actor's full role collection
   // and team memberships — resolved from the same rows the DB guard reads —
@@ -280,10 +299,11 @@ export async function authorizePublish(opts: {
   // reason (the RPC re-derives the controller tier from org_members); every
   // other override states why, and the database records it.
   const controllerForce = opts.force === true && isControllerPrincipal(principal);
+  const operation: GuardedOperation = opts.operation ?? "publish";
   if (lockedByOther && !controllerForce && !opts.overrideReason?.trim()) {
-    throw new Error("A reason is required to publish over another user's checkout.");
+    throw new Error(`A reason is required to ${overrideReasonVerb(operation)}.`);
   }
-  if (lockedByOther && !controllerForce && (opts.overrideReason?.trim().length ?? 0) < OVERRIDE_REASON_MIN) {
+  if (operation === "publish" && lockedByOther && !controllerForce && (opts.overrideReason?.trim().length ?? 0) < OVERRIDE_REASON_MIN) {
     throw new Error(`Say why you're publishing over another user's checkout (at least ${OVERRIDE_REASON_MIN} characters) — they are shown this reason.`);
   }
   // The override-with-reason passes the LOCK check only. Holds are evaluated
@@ -399,7 +419,11 @@ export async function notifyHolderOfRetirement(opts: {
 // Exactly one path used to retire a stale draft (a direct rev-up, best-effort
 // and unchecked). Every path that changes or retires the controlled copy —
 // revert, supersede, archive, split, merge, and the reversal that parks a
-// split/merge's sheets — now runs the same routine, checked at every step.
+// split/merge's sheets — now runs the same routine, checked at every step,
+// and runs it only AFTER the change it belongs to has landed and nothing can
+// roll that change back: a voided sign-off never returns to pending or
+// signed (20261070), so a void ahead of a step that can still fail would
+// destroy a review the operation then claims to have left untouched.
 // Order matters: the roster is voided and the draft retired BEFORE the
 // pointer is released, so a failure part-way leaves the draft still pointed
 // at but unsignable (never a live roster nobody can find), and a retry
@@ -465,7 +489,13 @@ export async function voidPendingDraft(documentId: string): Promise<string | nul
     .eq("id", documentId).eq("pending_version_id", draftId).select("id");
   if (ptrErr) throw new PendingDraftVoidError(`The in-review draft is retired but the document still points at it (${ptrErr.message}).`);
   if (((released as unknown[] | null) ?? []).length === 0) {
-    const { data: again } = await supabase.from("documents").select("pending_version_id").eq("id", documentId).maybeSingle();
+    // A zero-row answer is either a refusal or a pointer someone else already
+    // moved — only a successful re-read can tell which (an unreadable answer
+    // is never "released").
+    const { data: again, error: againErr } = await supabase.from("documents").select("pending_version_id").eq("id", documentId).maybeSingle();
+    if (againErr) {
+      throw new PendingDraftVoidError(`The in-review draft is retired, but whether the document still points at it could not be confirmed (${againErr.message}).`);
+    }
     if (((again as { pending_version_id?: string | null } | null)?.pending_version_id ?? null) === draftId) {
       throw new PendingDraftVoidError("The in-review draft is retired but the document still points at it (the write was refused).");
     }
@@ -474,8 +504,10 @@ export async function voidPendingDraft(documentId: string): Promise<string | nul
 }
 
 /** After a publish or retirement that already committed (rev-up, revert,
- *  archive): void the draft and report — never throw, never swallow. */
-async function voidPendingDraftAfterPublish(documentId: string, actorUserId: string): Promise<PendingDraftVoid> {
+ *  archive, supersede, split, merge, a reversal's parking): void the draft
+ *  and report — never throw, never swallow. Exported for the lifecycle
+ *  operations, which run it only once nothing can roll back (REV-6). */
+export async function voidPendingDraftAfterPublish(documentId: string, actorUserId: string): Promise<PendingDraftVoid> {
   try {
     return { voidedVersionId: await voidPendingDraft(documentId), problem: null };
   } catch (e) {
@@ -519,12 +551,21 @@ export type CreationStatus = (typeof CREATION_STATUSES)[number];
 /** REV-11: the review policy that governs a NEW controlled document in this
  *  folder / library, and whether it may be issued without reviewers. The
  *  first issue of a document is outside the database's revision gate (RG-7),
- *  so creation paths that issue content decide here: a policy that REQUIRES
- *  sign-off refuses an unreviewed issue; anything else issues and the
- *  decision is recorded with the creation. An unreadable policy refuses
- *  (RG-6: "couldn't read" is never "no policy"). */
+ *  so creation paths that issue content decide here, and the decision is
+ *  recorded with the creation (`recorded`, onto CREATED_FROM_SPLIT /
+ *  CREATED_FROM_MERGE `reviewPolicy`, or returned to the caller):
+ *   - `publisher_choice` / `none` issue;
+ *   - `require` issues only for a CONTROLLER (Doc Control / Admin — the
+ *     people who own the policy), and the record names them and says the
+ *     required sign-off was not collected; anyone else is refused, with how
+ *     to proceed (DEC-44 (P3 LIFECYCLE) §2) — that refusal is the finding's
+ *     own bypass closed (an owner splitting past a mandatory review);
+ *   - an unreadable policy refuses (RG-6: "couldn't read" is never "no
+ *     policy"). */
 export async function resolveCreationReviewGate(target: {
   libraryId: string; collectionId?: string | null; what: string;
+  /** Who is issuing — asked only when the policy requires sign-off. */
+  actor: { orgId: string; actorUserId: string; actorRole?: string };
 }): Promise<{ mode: string; recorded: string }> {
   let control;
   try {
@@ -534,10 +575,21 @@ export async function resolveCreationReviewGate(target: {
   }
   const mode = control?.mode ?? "none";
   if (mode === "require") {
-    throw new Error(
-      `This library requires reviewer sign-off, so ${target.what} can't be issued unreviewed. ` +
-      "Create it as a Draft and submit it for review, then retire the old document once it is approved.",
-    );
+    const principal: Principal = await resolveActorPrincipal({
+      uid: target.actor.actorUserId, orgId: target.actor.orgId, headlineRole: target.actor.actorRole,
+    });
+    if (!isControllerPrincipal(principal)) {
+      throw new Error(
+        `This library requires reviewer sign-off, so ${target.what} can't be issued unreviewed. ` +
+        "Create it as a Draft and submit it for review, then retire the old document once it is approved — or ask Document Control, who may issue it and is recorded doing so.",
+      );
+    }
+    return {
+      mode,
+      recorded:
+        `require — issued WITHOUT the sign-off the policy requires, by controller ${target.actor.actorUserId} ` +
+        "(Doc Control / Admin decision; a first issue is outside the database's revision gate, RG-7)",
+    };
   }
   return {
     mode,
@@ -545,6 +597,24 @@ export async function resolveCreationReviewGate(target: {
       ? "publisher_choice — the publisher chose to issue directly by running this operation"
       : "none — the governing policy does not require sign-off",
   };
+}
+
+/** REV-11: may this actor put a NEW document's first revision into this
+ *  folder / library? The population the publish guard reads on the first
+ *  pointer write (NULL → version, an advancing write for every status) when
+ *  the document has no owner of its own: a controller, a publisher on the
+ *  library, or the folder / library's effective owner (asked of the
+ *  database's own user_is_effective_owner with no document owner). An
+ *  unreadable answer is "no". */
+export async function canPutFirstRevisionInContainer(opts: {
+  orgId: string; libraryId: string; collectionId?: string | null; actorUserId: string; actorRole?: string;
+}): Promise<boolean> {
+  const principal: Principal = await resolveActorPrincipal({ uid: opts.actorUserId, orgId: opts.orgId, headlineRole: opts.actorRole });
+  if (await resolveCanControlLibrary(opts.libraryId, principal)) return true;
+  const { data: owns, error: ownErr } = await supabase.rpc("user_is_effective_owner", {
+    p_doc_owner: null, p_collection: opts.collectionId ?? null, p_library: opts.libraryId, p_uid: opts.actorUserId,
+  });
+  return !ownErr && owns === true;
 }
 
 /**
@@ -556,10 +626,13 @@ export async function resolveCreationReviewGate(target: {
  *
  * REV-11: the initial status is REQUIRED — "Draft" (filed for reference, not
  * a controlled copy; no compliance clocks) or "Issued" (a controlled first
- * revision). Issuing carries the same per-library publish authority as a
- * rev-up and resolves the governing review policy first; the clocks start
- * only for an issued document. The database's publish guard still checks
- * the first pointer write (NULL → version) for every status.
+ * revision). Issuing resolves the governing review policy first; the clocks
+ * start only for an issued document. EVERY creation — a Draft too — is
+ * checked for the authority the database's publish guard reads on the first
+ * pointer write (NULL → version is advancing for every status): a controller,
+ * a library publisher, or the folder / library owner. Asked BEFORE anything
+ * is inserted, so a member without it is refused cleanly instead of leaving
+ * a document row with no file that only a controller can delete.
  */
 export async function createDocumentWithFile(input: {
   orgId: string;
@@ -582,25 +655,25 @@ export async function createDocumentWithFile(input: {
   }
   const title = input.title?.trim() || docNum;
 
+  // Same authority population as a rev-up of a document in this library:
+  // library publish authority, or effective ownership — which, for a
+  // document with no owner of its own yet, is the folder / library owner
+  // cascade (the rung the publish guard reads on the first pointer write).
+  const authorized = await canPutFirstRevisionInContainer({
+    orgId: input.orgId, libraryId: input.libraryId, collectionId: input.collectionId ?? null,
+    actorUserId: input.actorUserId, actorRole: input.actorRole,
+  });
+  if (!authorized) {
+    throw new Error(input.status === "Issued"
+      ? "You don't have authority to issue controlled documents in this library — ask an Admin or Doc Control, or a publisher on this library."
+      : "You don't have authority to add documents to this library (attaching a new document's file takes publish authority here, or ownership of the folder / library) — ask an Admin or Doc Control. Nothing was created.");
+  }
   let reviewPolicy: string | null = null;
   if (input.status === "Issued") {
-    // Same authority population as a rev-up of a document in this library:
-    // library publish authority, or effective ownership — which, for a
-    // document with no owner of its own yet, is the folder / library owner
-    // cascade (asked of the database's own user_is_effective_owner, the rung
-    // the publish guard will read on the first pointer write).
-    const principal: Principal = await resolveActorPrincipal({ uid: input.actorUserId, orgId: input.orgId, headlineRole: input.actorRole });
-    let authorized = await resolveCanControlLibrary(input.libraryId, principal);
-    if (!authorized) {
-      const { data: owns, error: ownErr } = await supabase.rpc("user_is_effective_owner", {
-        p_doc_owner: null, p_collection: input.collectionId ?? null, p_library: input.libraryId, p_uid: input.actorUserId,
-      });
-      authorized = !ownErr && owns === true;
-    }
-    if (!authorized) {
-      throw new Error("You don't have authority to issue controlled documents in this library — create it as a Draft, or ask an Admin or Doc Control.");
-    }
-    reviewPolicy = (await resolveCreationReviewGate({ libraryId: input.libraryId, collectionId: input.collectionId ?? null, what: `${docNum}` })).recorded;
+    reviewPolicy = (await resolveCreationReviewGate({
+      libraryId: input.libraryId, collectionId: input.collectionId ?? null, what: `${docNum}`,
+      actor: { orgId: input.orgId, actorUserId: input.actorUserId, actorRole: input.actorRole },
+    })).recorded;
   }
 
   const { data: docRow, error: docErr } = await supabase
@@ -1044,7 +1117,7 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
 
   // Same authority as a publish — you can't open a controlled review unless you
   // could publish here (an effective owner qualifies).
-  await authorizePublish({ documentId: doc.id, libraryId, orgId, actorUserId, actorRole, overrideReason: input.overrideReason });
+  await authorizePublish({ documentId: doc.id, libraryId, orgId, actorUserId, actorRole, overrideReason: input.overrideReason, operation: "submit for review" });
 
   // Base numeric target + letter label. If a draft is already in review, bump its
   // letter (2A -> 2B).
@@ -1744,13 +1817,14 @@ export async function writeSupersessionLineage(
  *  this attempt added removed — so the document is never left Superseded
  *  with fewer successors than were named (and the Inspector, which offers
  *  Supersede only on a live document, can run it again). Checked: what could
- *  not be undone is named in the thrown error. */
+ *  not be undone is named in the thrown error. Nothing irreversible has
+ *  happened yet: the in-review draft is voided and the share links revoked
+ *  only after the lineage confirms (REV-6 / REV-10). */
 async function undoFailedSupersede(opts: {
   docId: string;
   prior: Record<string, unknown>;
   addedPairs: string[];
   failure: SupersessionLineageError;
-  voidedDraft: string | null;
   actorUserId: string;
 }): Promise<never> {
   const { docId, prior, failure } = opts;
@@ -1787,7 +1861,6 @@ async function undoFailedSupersede(opts: {
   throw new Error(
     `Nothing was superseded: ${failure.message} The document is back to ${priorStatus}.` +
     (leftover > 0 ? ` ${leftover} replacement link(s) this attempt wrote could not be removed — ask Doc Control to delete them.` : "") +
-    (opts.voidedDraft ? " Its in-review draft had already been voided; resubmit it if the document stays in use." : "") +
     " Fix the cause and supersede it again.",
   );
 }
@@ -1825,7 +1898,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   // actively editing it.
   const preState = await authorizePublish({
     documentId: doc.id, libraryId, orgId, actorUserId, actorRole,
-    overrideReason: input.overrideReason, force: input.force,
+    overrideReason: input.overrideReason, force: input.force, operation: "supersede",
   });
 
   const now = new Date().toISOString();
@@ -1880,11 +1953,10 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
     preExistingPairs = new Set(((pairs as Array<{ replacement_doc_id: string }> | null) ?? []).map((r) => r.replacement_doc_id));
   }
 
-  // REV-6: the retired record's in-flight review draft is voided FIRST — a
-  // refusal stops the supersede before anything is retired.
-  const voidedDraft = await voidPendingDraft(doc.id);
-
-  // Mark the original document as Superseded with full metadata.
+  // Mark the original document as Superseded with full metadata. REV-6: the
+  // in-flight review draft is NOT voided yet — a voided sign-off never
+  // returns (20261070), and the status write or the lineage below can still
+  // be refused and undone; the void runs once both have landed.
   const { data: superseded, error: updErr } = await supabase
     .from("documents")
     .update({
@@ -1926,14 +1998,21 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       await undoFailedSupersede({
         docId: doc.id, prior: priorState,
         addedPairs: resolved.filter((id) => !preExistingPairs.has(id)),
-        failure: e, voidedDraft, actorUserId,
+        failure: e, actorUserId,
       });
     }
   }
 
+  // REV-6: nothing below can be rolled back, so the retired record's
+  // in-flight review draft is voided now — a failure is on the SUPERSEDE_DOC
+  // record (pendingDraftVoidProblem), never swallowed; the draft cannot
+  // publish meanwhile, because finalize refuses a retired document (REV-5).
+  const draftVoid = await voidPendingDraftAfterPublish(doc.id, actorUserId);
+
   // DIST-1: a public share link must stop serving a retired drawing. Revoke
   // what this actor may revoke (RLS can leave another creator's links to a
-  // controller — the count on the audit record keeps that honest).
+  // controller — the count on the audit record keeps that honest). Also
+  // irreversible (20261080), so also only now.
   const shares = await revokeLiveSharesForDocument(doc.id, actorUserId);
   const revokedShareLinks = shares.revoked;
 
@@ -1953,7 +2032,8 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       unresolvedDocNumbers: unresolved,
       revokedShareLinks,
       shareRevokeError: shares.error,
-      pendingDraftVoided: voidedDraft,
+      pendingDraftVoided: draftVoid.voidedVersionId,
+      pendingDraftVoidProblem: draftVoid.problem,
     },
   });
 

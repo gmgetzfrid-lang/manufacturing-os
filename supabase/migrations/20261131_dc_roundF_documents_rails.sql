@@ -102,10 +102,13 @@
 -- move reconciles), duplicate supersession pairs
 -- (REV-14), orphaned evidence (the NOT VALID world), Superseded documents
 -- with no lineage row (REV-14's visible-warning population).
--- PREREQUISITES (document-control 99-fix-sequencing.md): the library page's
--- metadata save stops sending a changed rev and surfaces refusals (DRLS-15),
--- and its delete flow stops clearing the pointer before deleting versions
--- (DRLS-17) — or both break, silently / part-way, from this paste on.
+-- ⚠ NOT PASTEABLE YET — PREREQUISITES (document-control 99-fix-sequencing.md):
+-- do not paste this until BOTH library-page fixes are DEPLOYED: the metadata
+-- save stops sending a changed rev and surfaces refusals (DRLS-15), and the
+-- delete flow stops clearing the pointer before deleting versions
+-- (DRLS-17). Pasted earlier, both break from this paste on — every edit in
+-- a save that touches Rev is silently lost, and a delete stops part-way
+-- leaving a live document with no current file.
 -- HOW TO APPLY: after 20261130. Single paste: temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.

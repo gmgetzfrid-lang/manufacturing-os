@@ -22,6 +22,15 @@
 //           BEFORE the supersession and a failed carry rolls back
 //   DCK-8   the override reason is required (>= 5) and travels to the RPC
 //   HLD-1   correctRevisionLabel / renumberDocument refuse a held document
+//
+// Review fix 2: the split / merge / supersede saga — a source's restore is
+// registered BEFORE its flip (a refused flip or lineage write puts it back);
+// nothing irreversible (the review void, the share revocation) runs before
+// the last step that can still roll back; an extended merge target's rev-up
+// runs last and the target is never superseded; a controller may issue in a
+// require-mode library (recorded); the facility-less calendar is UTC-12; a
+// legacy reversal is named in the dialog; reverseRenumber takes renumber's
+// gate; unconfirmed read-backs never read as clean.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -36,12 +45,44 @@ const state = vi.hoisted(() => ({
   roles: ["Engineer"] as string[],
   reviewMode: "none" as string,
   reviewThrows: false,
+  /** table → true when THIS plain read (a select, not a write's returning)
+   *  must answer with an error — evaluated when the read is awaited. */
+  failRead: null as null | ((table: string) => boolean),
 }));
+
+/** Wrap a fake builder so a plain read can be made to fail (a PostgREST
+ *  error on the select); writes and their returning selects pass through. */
+function readFailable(table: string, inner: Record<string, (...a: unknown[]) => unknown>): unknown {
+  let op = "select";
+  const failed = () => ({ data: null, error: { message: `${table} read failed` } });
+  const wrapper: unknown = new Proxy({}, {
+    get(_t, prop: string) {
+      if (prop === "then") {
+        if (op === "select" && state.failRead?.(table)) return (resolve: (v: unknown) => void) => resolve(failed());
+        return (resolve: (v: unknown) => void, reject?: (e: unknown) => void) => (inner.then as unknown as (a: unknown, b: unknown) => void)(resolve, reject);
+      }
+      return (...args: unknown[]) => {
+        if (["update", "delete", "insert", "upsert"].includes(prop)) op = prop;
+        if (prop === "maybeSingle" || prop === "single") {
+          if (op === "select" && state.failRead?.(table)) return Promise.resolve(failed());
+          return inner[prop](...args);
+        }
+        inner[prop](...args);
+        return wrapper;
+      };
+    },
+  });
+  return wrapper;
+}
 
 vi.mock("@/lib/supabase", () => ({
   get supabase() {
     const base = makeFakeSupabase(state.db);
-    return { ...base, rpc: (...a: unknown[]) => state.rpc(...a) };
+    return {
+      ...base,
+      from: (t: string) => readFailable(t, base.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>),
+      rpc: (...a: unknown[]) => state.rpc(...a),
+    };
   },
 }));
 vi.mock("@/lib/storage", () => ({
@@ -94,14 +135,20 @@ import {
   archiveDocument, supersedeDocument, revertToVersion, revUpDocument, createDocumentWithFile,
   correctRevisionLabel, authorizePublish, voidPendingDraft, UnresolvedReplacementsError,
   PublishContractUnavailableError, PUBLISH_RPC_RETRY_MS, OVERRIDE_REASON_MIN, CREATION_STATUSES,
+  PendingDraftVoidError,
 } from "@/lib/revisions";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { splitDocument } from "@/lib/documentLifecycle/split";
 import { mergeDocuments } from "@/lib/documentLifecycle/merge";
-import { reverseSplit, reverseMerge, operationInstant, PriorStatusUnknownError } from "@/lib/documentLifecycle/reverse";
-import { markSupersededAndLink, restoreSupersededSource, copyActiveHoldsToDoc, createNewDocWithFirstVersion } from "@/lib/documentLifecycle/common";
+import {
+  reverseSplit, reverseMerge, reverseRenumber, operationInstant, PriorStatusUnknownError, reversalNeedsLegacyStatus,
+} from "@/lib/documentLifecycle/reverse";
+import {
+  markSupersededAndLink, completeSourceRetirement, restoreSupersededSource, copyActiveHoldsToDoc, createNewDocWithFirstVersion,
+  withCompensation, type Compensation,
+} from "@/lib/documentLifecycle/common";
 import { renumberDocument } from "@/lib/documentLifecycle/renumber";
 import { isHoldBlockedError } from "@/lib/holdGate";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
@@ -154,8 +201,21 @@ beforeEach(() => {
   state.roles = ["Engineer"];
   state.reviewMode = "none";
   state.reviewThrows = false;
+  state.failRead = null;
   PUBLISH_RPC_RETRY_MS.value = 0;
 });
+
+/** Fail the nth plain read of `table` (1-based), counted from now. */
+function failNthRead(table: string, nth: number) {
+  let n = 0;
+  state.failRead = (t) => t === table && ++n === nth;
+}
+const ACTOR = { orgId: ORG, actorUserId: ME };
+const reviewUntouched = (id: string) => {
+  expect(docRow(id).pending_version_id).toBe(`${id}-v4A`);
+  expect(T("document_versions").find((v) => v.id === `${id}-v4A`)!.superseded_at).toBeNull();
+  expect(T("document_review_signoffs").filter((x) => x.document_id === id).map((x) => x.status).sort()).toEqual(["pending", "signed"]);
+};
 
 // ─── REV-6 ────────────────────────────────────────────────────────────────
 describe("REV-6 — retirement voids the in-flight review draft; a later last signature cannot publish it", () => {
@@ -174,18 +234,25 @@ describe("REV-6 — retirement voids the in-flight review draft; a later last si
     expect(docRow("p101").current_version_id).toBe("p101-v3");
   });
 
-  it("supersede and split (markSupersededAndLink) void the draft the same way before the status flips", async () => {
+  it("supersede and split void the draft the same way — but only AFTER the retirement (status and lineage) has landed", async () => {
     const a = seedDoc("a"); seedDraft("a");
     seedDoc("b");
     await supersedeDocument({ doc: asRecord(a), replacementDocNumbers: ["B"], libraryId: LIB, reason: "replaced", orgId: ORG, actorUserId: ME });
     expect(docRow("a").pending_version_id).toBeNull();
-    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ pendingDraftVoided: "a-v4A" });
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ pendingDraftVoided: "a-v4A", pendingDraftVoidProblem: null });
+    // order: the status flip and the lineage upsert BEFORE the roster void
+    const order = state.db.calls
+      .filter((c) => (c.table === "documents" && c.method === "update") || (c.table === "document_supersessions" && c.method === "upsert") || (c.table === "document_review_signoffs" && c.method === "update"))
+      .map((c) => c.table === "document_review_signoffs" ? "void" : c.table === "document_supersessions" ? "lineage" : ((c.args[0] as Row).status === "Superseded" ? "flip" : "other"));
+    expect(order.indexOf("flip")).toBeLessThan(order.indexOf("void"));
+    expect(order.indexOf("lineage")).toBeLessThan(order.indexOf("void"));
 
-    const c = seedDoc("c"); seedDraft("c"); void c;
-    seedDoc("c1");
-    await markSupersededAndLink({ sourceDocId: "c", replacementDocIds: ["c1"], reason: "split", actor: { orgId: ORG, actorUserId: ME }, sourceAuditAction: "DOC_SPLIT" });
+    const c = seedDoc("c"); seedDraft("c");
+    const t = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+    await splitDocument({ source: asRecord(c), libraryId: LIB, targets: [t("C1"), t("C2")], reason: "declutter", orgId: ORG, actorUserId: ME });
     expect(docRow("c").pending_version_id).toBeNull();
     expect(T("document_versions").find((v) => v.id === "c-v4A")!.superseded_at).toBeTruthy();
+    expect(audit("DOC_SPLIT")[0].details).toMatchObject({ pendingDraftVoided: "c-v4A", pendingDraftVoidProblem: null, priorStatus: "Issued" });
     const fin = await finalizeReviewedRevision({ orgId: ORG, documentId: "c", actorId: "r2" });
     expect(fin.published).toBe(false);
     expect(docRow("c").status).toBe("Superseded");
@@ -353,17 +420,25 @@ describe("REV-10 (lifecycle half) — archive / split / merge revoke live share 
     expect(T("document_shares").find((s) => s.id === "sh3")!.revoked_by).toBeUndefined();
     expect(audit("ARCHIVE_DOC")[0].details).toMatchObject({ revokedShareLinks: 2, shareRevokeError: null });
   });
-  it("split / merge (markSupersededAndLink) revoke the source's links; a refusal is on the record, not swallowed", async () => {
-    seedDoc("s2"); seedDoc("s2a"); seedShare("s2", "shx");
-    await markSupersededAndLink({ sourceDocId: "s2", replacementDocIds: ["s2a"], reason: "split", actor: { orgId: ORG, actorUserId: ME }, sourceAuditAction: "DOC_SPLIT" });
+  it("split / merge revoke the source's links once the retirement has landed; a refusal is on the record, not swallowed", async () => {
+    const s2 = seedDoc("s2"); seedShare("s2", "shx");
+    const t = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+    await splitDocument({ source: asRecord(s2), libraryId: LIB, targets: [t("S2A"), t("S2B")], reason: "split", orgId: ORG, actorUserId: ME });
     expect(T("document_shares")[0].revoked_at).toBeTruthy();
-    expect(audit("DOC_SPLIT")[0].details).toMatchObject({ revokedShareLinks: 1 });
+    expect(audit("DOC_SPLIT")[0].details).toMatchObject({ revokedShareLinks: 1, shareRevokeError: null });
+
+    seedDoc("s3"); seedShare("s3", "shy");
+    const retired = await withCompensation(async (register) => markSupersededAndLink({ sourceDocId: "s3", replacementDocIds: ["s2"], reason: "x", actor: ACTOR, register, label: "s3" }));
+    expect(T("document_shares").find((x) => x.id === "shy")!.revoked_at).toBeNull(); // not before completion
+    state.db.refuseWrites.add("document_shares");
+    await completeSourceRetirement({ source: retired, replacementDocIds: ["s2"], reason: "x", actor: ACTOR, sourceAuditAction: "DOC_SPLIT" });
+    expect(audit("DOC_SPLIT")[1].details).toMatchObject({ revokedShareLinks: 0 });
   });
   it("supersede re-points DIST-1's revoke at the same shared helper", () => {
     const r = src("lib/revisions.ts");
     const sup = r.slice(r.indexOf("export async function supersedeDocument("));
     expect(sup).toMatch(/const shares = await revokeLiveSharesForDocument\(doc\.id, actorUserId\);/);
-    expect(src("lib/documentLifecycle/common.ts")).toMatch(/revokeLiveSharesForDocument\(sourceDocId, actor\.actorUserId\)/);
+    expect(src("lib/documentLifecycle/common.ts")).toMatch(/revokeLiveSharesForDocument\(source\.sourceDocId, actor\.actorUserId\)/);
   });
 });
 
@@ -430,11 +505,14 @@ describe("REV-14 / DRLS-13 — lineage is a checked upsert on the pair", () => {
 describe("REV-12 — reversal restores the status the source actually held", () => {
   it("the DOC_SPLIT event records the FRESH prior status and the operation's instant", async () => {
     seedDoc("v1", { status: "Void" }); seedDoc("v1a");
-    const { priorStatus } = await markSupersededAndLink({ sourceDocId: "v1", replacementDocIds: ["v1a"], reason: "s", actor: { orgId: ORG, actorUserId: ME }, sourceAuditAction: "DOC_SPLIT" });
-    expect(priorStatus).toBe("Void");
+    const comps: Compensation[] = [];
+    const retired = await markSupersededAndLink({ sourceDocId: "v1", replacementDocIds: ["v1a"], reason: "s", actor: ACTOR, register: (c) => comps.push(c), label: "v1" });
+    expect(retired.priorStatus).toBe("Void");
+    expect(comps).toHaveLength(1); // its restore, registered before the flip
+    await completeSourceRetirement({ source: retired, replacementDocIds: ["v1a"], reason: "s", actor: ACTOR, sourceAuditAction: "DOC_SPLIT" });
     const det = audit("DOC_SPLIT")[0].details as Record<string, unknown>;
     expect(det.priorStatus).toBe("Void");
-    expect(typeof det.auditAt).toBe("string");
+    expect(det.auditAt).toBe(retired.auditAt);
   });
   it("reverseSplit puts a Void source back to Void (never Issued) and counts work from the split's instant", async () => {
     state.roles = ["DocCtrl"];
@@ -469,17 +547,32 @@ describe("REV-12 — reversal restores the status the source actually held", () 
     expect(docRow("m2").status).toBe("Void");
     expect(docRow("mt").status).toBe("Superseded");
   });
-  it("reverseMerge parks the merged target FIRST: a refused park leaves every source Superseded and the lineage intact (never sources and target live at once)", async () => {
+  it("reverseMerge parks the merged target FIRST: a refused park leaves every source Superseded and the lineage intact (never sources and target live at once) — and destroys no signature on it", async () => {
     state.roles = ["Admin"];
     seedDoc("m3", { status: "Superseded" }); seedDoc("m4", { status: "Superseded" }); seedDoc("mt2"); seedDraft("mt2");
     T("document_supersessions").push({ id: "lm3", superseded_doc_id: "m3", replacement_doc_id: "mt2" }, { id: "lm4", superseded_doc_id: "m4", replacement_doc_id: "mt2" });
     (state.db.tables.audit_logs ??= []).push({ id: "ev5", action: "DOC_MERGED", resource_id: "m3", timestamp: "2026-09-03T00:00:00Z", details: { mergedIntoDocumentId: "mt2", mergeSiblings: ["m3", "m4"], targetWasNewlyCreated: true, priorStatuses: { m3: "Issued", m4: "Issued" }, auditAt: "2026-09-03T00:00:00Z" } });
-    state.db.refuseWrites.add("document_review_signoffs"); // the target's draft void is refused
-    await expect(reverseMerge({ mergeAuditEventId: "ev5", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/could be voided|could not be voided/);
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "mt2" && next.status === "Superseded") throw { code: "23514", message: "park refused" };
+      return next;
+    };
+    await expect(reverseMerge({ mergeAuditEventId: "ev5", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/could not be parked as Superseded \(park refused\)/);
     expect(docRow("m3").status).toBe("Superseded");
     expect(docRow("m4").status).toBe("Superseded");
     expect(docRow("mt2").status).toBe("Issued");
     expect(T("document_supersessions")).toHaveLength(2);
+    reviewUntouched("mt2");
+  });
+  it("a parked sheet's review is voided only AFTER the park lands; a void refused then is on the reversal's record", async () => {
+    state.roles = ["DocCtrl"];
+    seedDoc("v5", { status: "Superseded" }); seedDoc("v5a"); seedDraft("v5a");
+    T("document_supersessions").push({ id: "l5", superseded_doc_id: "v5", replacement_doc_id: "v5a" });
+    (state.db.tables.audit_logs ??= []).push({ id: "ev6", action: "DOC_SPLIT", resource_id: "v5", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["v5a"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    state.db.refuseWrites.add("document_review_signoffs");
+    await reverseSplit({ splitAuditEventId: "ev6", reason: "r", orgId: ORG, actorUserId: ME });
+    expect(docRow("v5a").status).toBe("Superseded");
+    expect(docRow("v5").status).toBe("Issued");
+    expect(audit("DOC_SPLIT_REVERSED")[0].details).toMatchObject({ pendingDraftVoidProblems: [expect.stringMatching(/^v5a: .*(could be voided|could not be voided)/)] });
   });
   it("reversal is a Document Control / Admin act (it deletes supersession rows the database reserves to them)", async () => {
     seedDoc("v4", { status: "Superseded" }); seedDoc("v4a");
@@ -692,5 +785,381 @@ describe("HLD-1 — correctRevisionLabel and renumberDocument call the shared ho
     const e = await renumberDocument({ doc: asRecord(d), newDocumentNumber: "X-2B", reason: "typo", orgId: ORG, actorUserId: ME }).catch((err) => err);
     expect(isHoldBlockedError(e)).toBe(true);
     expect(docRow("x2").document_number).toBe("X2");
+  });
+});
+
+// ─── Review fix 2: the saga ────────────────────────────────────────────────
+describe("REV-14 / REV-6 / HLD-2 — a split / merge that rolls back leaves NOTHING behind: the source is back, its review and links untouched", () => {
+  const sheet = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  const newDocs = (except: string[]) => T("documents").filter((d) => !except.includes(d.id as string));
+
+  it("the reviewer's blocker: split, lineage write REFUSED → the source is back to its prior status (not Superseded), its replacements archived, no DOC_SPLIT, the review and share links untouched", async () => {
+    const s = seedDoc("b1", { status: "Draft" }); seedDraft("b1"); seedShare("b1", "shb1");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("B1A"), sheet("B1B")], reason: "declutter", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/replacement links could not be recorded[\s\S]*rolled back/);
+    expect(docRow("b1")).toMatchObject({ status: "Draft", superseded_at: null, supersession_reason: null });
+    expect(newDocs(["b1"]).every((d) => d.status === "Archived")).toBe(true);
+    expect(audit("DOC_SPLIT")).toHaveLength(0);
+    reviewUntouched("b1");
+    expect(T("document_shares").find((x) => x.id === "shb1")!.revoked_at).toBeNull();
+  });
+
+  it("split, lineage INCOMPLETE (one pair silently dropped) → rolled back the same way, the pair it did write removed", async () => {
+    state.roles = ["DocCtrl"]; // lineage DELETE is Document Control's at the database
+    const s = seedDoc("b2"); seedDraft("b2");
+    let n = 0;
+    state.db.beforeInsert!.document_supersessions = (row) => (++n === 2 ? null : row);
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("B2A"), sheet("B2B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/1 of 2 replacement link\(s\) were not recorded[\s\S]*rolled back/);
+    expect(docRow("b2").status).toBe("Issued");
+    expect(T("document_supersessions")).toHaveLength(0);
+    reviewUntouched("b2");
+  });
+
+  it("split whose SOURCE FLIP is refused → nothing to restore (the flip never landed), sheets archived, review untouched", async () => {
+    const s = seedDoc("b3"); seedDraft("b3");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "b3" && next.status === "Superseded") throw { code: "23514", message: "guard said no" };
+      return next;
+    };
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("B3A"), sheet("B3B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/guard said no[\s\S]*rolled back — no partial changes were kept/);
+    expect(docRow("b3").status).toBe("Issued");
+    reviewUntouched("b3");
+  });
+
+  it("merge: the SECOND source's flip is refused → the first source is restored to the status it held, its review and links untouched, the target archived, no DOC_MERGED", async () => {
+    const a = seedDoc("c1", { status: "Draft" }); seedDraft("c1"); seedShare("c1", "shc1");
+    const b = seedDoc("c2");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "c2" && next.status === "Superseded") throw { code: "23514", message: "second refused" };
+      return next;
+    };
+    await expect(mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "C-NEW", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/second refused[\s\S]*rolled back/);
+    expect(docRow("c1")).toMatchObject({ status: "Draft", superseded_at: null });
+    expect(docRow("c2").status).toBe("Issued");
+    expect(T("documents").find((d) => d.document_number === "C-NEW")!.status).toBe("Archived");
+    expect(audit("DOC_MERGED")).toHaveLength(0);
+    reviewUntouched("c1");
+    expect(T("document_shares").find((x) => x.id === "shc1")!.revoked_at).toBeNull();
+  });
+
+  it("merge: the second source's LINEAGE is refused → BOTH sources restored (the failing one too — its restore was registered before its flip)", async () => {
+    state.roles = ["DocCtrl"];
+    const a = seedDoc("c3"); const b = seedDoc("c4"); seedDraft("c4");
+    state.db.beforeInsert!.document_supersessions = (row) => {
+      if (row.superseded_doc_id === "c4") throw { code: "42501", message: "lineage refused" };
+      return row;
+    };
+    await expect(mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "C-NEW2", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/lineage refused/);
+    expect(docRow("c3").status).toBe("Issued");
+    expect(docRow("c4").status).toBe("Issued");
+    expect(T("document_supersessions")).toHaveLength(0);
+    reviewUntouched("c4");
+  });
+
+  it("a compensation that could not put a source back is NAMED (never 'no partial changes were kept')", async () => {
+    const s = seedDoc("b4");
+    state.db.refuseWrites.add("document_supersessions");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "b4" && old.status === "Superseded" && next.status === "Issued") throw { code: "23514", message: "restore refused" };
+      return next;
+    };
+    const e = (await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("B4A"), sheet("B4B")], reason: "x", orgId: ORG, actorUserId: ME }).catch((err) => err)) as Error;
+    expect(e.message).toMatch(/some cleanup steps failed/);
+    expect(e.message).toMatch(/restore source B4 from Superseded: source b4 is still Superseded — restore it to Issued \(restore refused\)/);
+    expect(e.message).not.toMatch(/no partial changes were kept/);
+  });
+});
+
+describe("Merge into an EXISTING target — the target is kept (never superseded), its rev-up runs LAST, and a failure before or in it publishes nothing", () => {
+  const revUp = { file: pdf("merged.pdf"), revisionLabel: "4", changeLog: "merged content" };
+
+  it("the wizard lists the target among the sources: it is KEPT — the others are superseded into it, it stays Issued with no self-link, and the DOC_MERGED records name only the absorbed sources", async () => {
+    const t = seedDoc("t1"); const a = seedDoc("a1"); const b = seedDoc("b1x");
+    state.rpc.mockImplementation(async () => {
+      state.db.calls.push({ table: "rpc", method: "publish_revision", args: [] });
+      return { data: { status: "published", version: { id: "t1-v4", record_id: "t1", revision_label: "4" } }, error: null };
+    });
+    const r = await mergeDocuments({
+      sources: [asRecord(t), asRecord(a), asRecord(b)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    expect(docRow("t1").status).toBe("Issued");
+    expect(docRow("a1").status).toBe("Superseded");
+    expect(docRow("b1x").status).toBe("Superseded");
+    expect(T("document_supersessions").some((l) => l.superseded_doc_id === "t1")).toBe(false);
+    expect(r.supersededSourceIds.sort()).toEqual(["a1", "b1x"]);
+    expect(audit("DOC_MERGED").map((e) => e.resource_id).sort()).toEqual(["a1", "b1x"]);
+    for (const ev of audit("DOC_MERGED")) expect((ev.details as Record<string, unknown>).mergeSiblings).toEqual(["a1", "b1x"]);
+    expect(state.rpc).toHaveBeenCalledTimes(1);
+    expect((state.rpc.mock.calls[0][1] as Record<string, unknown>).p_doc).toBe("t1");
+    // the rev-up ran LAST: after every source flip and lineage write
+    const idx = (pred: (c: { table: string; method: string; args: unknown[] }) => boolean) => state.db.calls.map((c, i) => (pred(c) ? i : -1)).filter((i) => i >= 0);
+    const publishAt = idx((c) => c.table === "rpc")[0];
+    const flips = idx((c) => c.table === "documents" && c.method === "update" && (c.args[0] as Row).status === "Superseded");
+    const lineage = idx((c) => c.table === "document_supersessions" && c.method === "upsert");
+    expect(Math.max(...flips, ...lineage)).toBeLessThan(publishAt);
+  });
+
+  it("the reviewer's case: a source's lineage is refused BEFORE the rev-up → nothing was published (the contract is never called), the sources are back", async () => {
+    state.roles = ["DocCtrl"];
+    const t = seedDoc("t2"); const a = seedDoc("a2");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/rolled back/);
+    expect(state.rpc).not.toHaveBeenCalled();
+    expect(docRow("t2").current_version_id).toBe("t2-v3");
+    expect(docRow("a2").status).toBe("Issued");
+  });
+
+  it("the rev-up itself is refused (last step) → the sources are restored and the carried holds released; nothing was published", async () => {
+    state.roles = ["DocCtrl"];
+    const t = seedDoc("t3"); const a = seedDoc("a3"); seedHold("a3");
+    state.rpc.mockResolvedValue({ data: null, error: { code: "P0001", message: "contract refused" } });
+    await expect(mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    })).rejects.toThrow(/contract refused[\s\S]*rolled back/);
+    expect(docRow("a3").status).toBe("Issued");
+    expect(docRow("t3")).toMatchObject({ status: "Issued", current_version_id: "t3-v3" });
+    expect(T("document_holds").filter((h) => h.document_id === "t3").every((h) => h.released_at)).toBe(true);
+    expect(audit("DOC_MERGED")).toHaveLength(0);
+  });
+
+  it("holds carried by a controller's forced merge do not block the target's rev-up (the force rides along only then); without carried holds it is never forced", async () => {
+    state.roles = ["DocCtrl"];
+    const t = seedDoc("t4"); const a = seedDoc("a4"); seedHold("a4");
+    state.rpc.mockResolvedValue({ data: { status: "published", version: { id: "t4-v4", record_id: "t4", revision_label: "4" } }, error: null });
+    await mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    });
+    expect((state.rpc.mock.calls[0][1] as Record<string, unknown>).p_force).toBe(true);
+    expect(docRow("a4").status).toBe("Superseded");
+
+    state.rpc.mockClear();
+    const t5 = seedDoc("t5"); const a5 = seedDoc("a5");
+    state.rpc.mockResolvedValue({ data: { status: "published", version: { id: "t5-v4", record_id: "t5", revision_label: "4" } }, error: null });
+    await mergeDocuments({
+      sources: [asRecord(t5), asRecord(a5)],
+      target: { kind: "extend_existing", target: asRecord(t5), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    });
+    expect((state.rpc.mock.calls[0][1] as Record<string, unknown>).p_force).toBe(false);
+  });
+
+  it("the target's own gate is asked BEFORE anything is written: a held target refuses the rev-up merge with nothing changed", async () => {
+    state.roles = ["DocCtrl"];
+    const t = seedDoc("t6"); const a = seedDoc("a6"); seedHold("t6");
+    await expect(mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    })).rejects.toThrow(/active hold/);
+    expect(docRow("a6").status).toBe("Issued");
+    expect(state.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("REV-6 — supersede voids the review only once the supersession has landed", () => {
+  it("a refused lineage write puts the document back AND leaves its review and share links untouched", async () => {
+    const d = seedDoc("sv1"); seedDoc("sv1a"); seedDraft("sv1"); seedShare("sv1", "shs1");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(supersedeDocument({ doc: asRecord(d), replacementDocNumbers: ["SV1A"], libraryId: LIB, reason: "r", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/^Nothing was superseded: .*back to Issued\. Fix the cause and supersede it again\.$/);
+    expect(docRow("sv1").status).toBe("Issued");
+    reviewUntouched("sv1");
+    expect(T("document_shares").find((x) => x.id === "shs1")!.revoked_at).toBeNull();
+  });
+  it("a refused status write voids nothing", async () => {
+    const d = seedDoc("sv2"); seedDraft("sv2");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "sv2" && next.status === "Superseded") throw { code: "23514", message: "no" };
+      return next;
+    };
+    await expect(supersedeDocument({ doc: asRecord(d), replacementDocNumbers: [], libraryId: LIB, reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/no/);
+    reviewUntouched("sv2");
+  });
+  it("a void refused after the supersession landed is on the SUPERSEDE_DOC record, and the draft still cannot publish", async () => {
+    const d = seedDoc("sv3"); seedDraft("sv3");
+    state.db.refuseWrites.add("document_review_signoffs");
+    await supersedeDocument({ doc: asRecord(d), replacementDocNumbers: [], libraryId: LIB, reason: "r", orgId: ORG, actorUserId: ME });
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ pendingDraftVoided: null, pendingDraftVoidProblem: expect.stringMatching(/voided/) });
+    const fin = await finalizeReviewedRevision({ orgId: ORG, documentId: "sv3", actorId: "r2" });
+    expect(fin.published).toBe(false);
+  });
+});
+
+describe("REV-11 (review fix 2) — a controller may issue in a require-mode library, recorded; authority on every first revision and every target library", () => {
+  const sheet = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  it("split in a require-mode library: refused for a publisher who is not a controller; Doc Control proceeds and every sheet records the decision and who made it", async () => {
+    state.reviewMode = "require";
+    const s = seedDoc("rq1");
+    await expect(splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("RQ1A"), sheet("RQ1B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/requires reviewer sign-off[\s\S]*ask Document Control/);
+    state.roles = ["Manager", "DocCtrl"];
+    await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [sheet("RQ1A"), sheet("RQ1B")], reason: "x", orgId: ORG, actorUserId: ME });
+    const created = audit("CREATED_FROM_SPLIT");
+    expect(created).toHaveLength(2);
+    for (const c of created) expect((c.details as Record<string, unknown>).reviewPolicy).toBe(`require — issued WITHOUT the sign-off the policy requires, by controller ${ME} (Doc Control / Admin decision; a first issue is outside the database's revision gate, RG-7)`);
+  });
+  it("createDocumentWithFile: an Admin issues in a require-mode library and gets the recorded decision back", async () => {
+    state.reviewMode = "require"; state.roles = ["Admin"];
+    const r = await createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "RQ-2", file: pdf("l.pdf"), status: "Issued", actorUserId: ME });
+    expect(r.reviewPolicy).toMatch(/^require — issued WITHOUT the sign-off the policy requires, by controller u1/);
+  });
+  it("a DRAFT creation is checked for the first-pointer authority too: refused before any insert, never a document row with no file", async () => {
+    state.canControl = false;
+    state.rpc.mockResolvedValue({ data: false, error: null });
+    await expect(createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "DR-1", file: pdf("l.pdf"), status: "Draft", actorUserId: ME }))
+      .rejects.toThrow(/don't have authority to add documents to this library[\s\S]*Nothing was created/);
+    expect(T("documents")).toHaveLength(0);
+    expect(T("document_versions")).toHaveLength(0);
+    // the folder / library owner may file one
+    state.rpc.mockResolvedValue({ data: true, error: null });
+    const ok = await createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "DR-2", file: pdf("l.pdf"), status: "Draft", actorUserId: ME });
+    expect(docRow(ok.documentId).status).toBe("Draft");
+  });
+  it("a create_new merge into ANOTHER library takes authority there (the new document is born owned by the actor, so the database would admit it); within the sources' library the sources' gate stands", async () => {
+    state.canControl = false; state.isOwner = true; // owner of the sources, no library authority
+    state.rpc.mockResolvedValue({ data: false, error: null });
+    const a = seedDoc("x1"); const b = seedDoc("x2");
+    await expect(mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "X-NEW", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: "lib2" },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    })).rejects.toThrow(/authority to issue documents in the library X-NEW would be created in/);
+    expect(T("documents").some((d) => d.document_number === "X-NEW")).toBe(false);
+    expect(state.rpc).toHaveBeenCalledWith("user_is_effective_owner", { p_doc_owner: null, p_collection: null, p_library: "lib2", p_uid: ME });
+    await mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "X-SAME", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME,
+    });
+    expect(docRow("x1").status).toBe("Superseded");
+  });
+  it("split sheets landing in another library than the source's take authority there too", async () => {
+    state.canControl = false; state.isOwner = true;
+    state.rpc.mockResolvedValue({ data: false, error: null });
+    const s = seedDoc("x3");
+    await expect(splitDocument({ source: asRecord(s), libraryId: "lib2", targets: [sheet("X3A"), sheet("X3B")], reason: "x", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/library the split sheets would land in/);
+    expect(T("documents")).toHaveLength(1);
+  });
+});
+
+describe("DCK-8 (review fix 2) — the 5-character override minimum binds publish_revision callers only", () => {
+  it("a split over a foreign checkout with a short reason passes the gate (the reason is the message the holder is shown); a blank one is refused in the operation's own words", async () => {
+    const s = seedDoc("o1", { checked_out_by: "someone", checked_out_by_name: "Sam" });
+    await expect(authorizePublish({ documentId: "o1", libraryId: LIB, orgId: ORG, actorUserId: ME, overrideReason: "dup", operation: "split" })).resolves.toBeTruthy();
+    await expect(authorizePublish({ documentId: "o1", libraryId: LIB, orgId: ORG, actorUserId: ME, overrideReason: " ", operation: "merge" }))
+      .rejects.toThrow("A reason is required to merge a document another user has checked out.");
+    await expect(authorizePublish({ documentId: "o1", libraryId: LIB, orgId: ORG, actorUserId: ME, overrideReason: "dup" }))
+      .rejects.toThrow(new RegExp(`at least ${OVERRIDE_REASON_MIN} characters`));
+    const t = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+    await splitDocument({ source: asRecord(s), libraryId: LIB, targets: [t("O1A"), t("O1B")], reason: "dup", orgId: ORG, actorUserId: ME });
+    expect(docRow("o1").status).toBe("Superseded");
+  });
+});
+
+describe("Unconfirmed read-backs never read as clean", () => {
+  it("voidPendingDraft: a refused pointer release whose re-read FAILS throws (it used to report the draft voided)", async () => {
+    seedDoc("rb1"); seedDraft("rb1");
+    state.db.refuseWrites.add("documents"); // the pointer release answers zero rows
+    failNthRead("documents", 2); // 1 = the initial pointer read, 2 = the confirmation re-read
+    await expect(voidPendingDraft("rb1")).rejects.toBeInstanceOf(PendingDraftVoidError);
+    state.failRead = null;
+    await expect(voidPendingDraft("rb1")).rejects.toThrow(/still points at it \(the write was refused\)/);
+  });
+  it("restoreSupersededSource: a lineage removal whose read-back fails is UNCONFIRMED, never a clean rollback", async () => {
+    seedDoc("rb2", { status: "Superseded" });
+    T("document_supersessions").push({ id: "lrb2", superseded_doc_id: "rb2", replacement_doc_id: "rb2a" });
+    state.db.refuseWrites.add("document_supersessions"); // the DELETE answers with no error and removes nothing
+    failNthRead("document_supersessions", 1);
+    await expect(restoreSupersededSource("rb2", "Issued", ["rb2a"], ACTOR)).rejects.toThrow(/could not be confirmed \(document_supersessions read failed\)/);
+  });
+  it("a reversal's lineage removal whose read-back fails throws with the rows possibly left", async () => {
+    state.roles = ["DocCtrl"];
+    seedDoc("rb3", { status: "Superseded" }); seedDoc("rb3a");
+    T("document_supersessions").push({ id: "lrb3", superseded_doc_id: "rb3", replacement_doc_id: "rb3a" });
+    (state.db.tables.audit_logs ??= []).push({ id: "evrb", action: "DOC_SPLIT", resource_id: "rb3", timestamp: "t", details: { replacementDocIds: ["rb3a"], priorStatus: "Issued", auditAt: "t" } });
+    state.db.refuseWrites.add("document_supersessions");
+    failNthRead("document_supersessions", 1);
+    await expect(reverseSplit({ splitAuditEventId: "evrb", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/could not be confirmed[\s\S]*some may remain/);
+  });
+});
+
+describe("reverseRenumber takes renumberDocument's gate (OWN-19 authority, HLD-1 hold) and checks its write", () => {
+  const seedRenumber = (id: string) => {
+    seedDoc(id, { document_number: `${id.toUpperCase()}-NEW` });
+    (state.db.tables.audit_logs ??= []).push({ id: `ev-${id}`, action: "DOC_RENUMBERED", resource_id: id, timestamp: "t", details: { previousDocumentNumber: `${id.toUpperCase()}-OLD`, newDocumentNumber: `${id.toUpperCase()}-NEW` } });
+  };
+  it("a held document's renumber is not reversed — refused before any write", async () => {
+    seedRenumber("rn1"); seedHold("rn1");
+    const e = await reverseRenumber({ renumberAuditEventId: "ev-rn1", reason: "r", orgId: ORG, actorUserId: ME }).catch((err) => err);
+    expect(isHoldBlockedError(e)).toBe(true);
+    expect(docRow("rn1").document_number).toBe("RN1-NEW");
+    expect(audit("DOC_RENUMBER_REVERSED")).toHaveLength(0);
+  });
+  it("without authority (and not the owner) it is refused", async () => {
+    seedRenumber("rn2");
+    state.canControl = false; state.isOwner = false;
+    await expect(reverseRenumber({ renumberAuditEventId: "ev-rn2", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/authority to renumber/);
+    expect(docRow("rn2").document_number).toBe("RN2-NEW");
+  });
+  it("a zero-row answer is a refusal, never DOC_RENUMBER_REVERSED", async () => {
+    seedRenumber("rn3");
+    state.db.refuseWrites.add("documents");
+    await expect(reverseRenumber({ renumberAuditEventId: "ev-rn3", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/the write was refused/);
+    expect(audit("DOC_RENUMBER_REVERSED")).toHaveLength(0);
+  });
+  it("with authority and no hold it reverses", async () => {
+    seedRenumber("rn4");
+    await reverseRenumber({ renumberAuditEventId: "ev-rn4", reason: "r", orgId: ORG, actorUserId: ME });
+    expect(docRow("rn4").document_number).toBe("RN4-OLD");
+    expect(audit("DOC_RENUMBER_REVERSED")).toHaveLength(1);
+  });
+});
+
+describe("REV-16 — a legacy split / merge is reversible from the dialog with an explicitly named status", () => {
+  it("reversalNeedsLegacyStatus: true only where the event recorded no prior status", () => {
+    expect(reversalNeedsLegacyStatus("DOC_SPLIT", { replacementDocIds: ["a"] })).toBe(true);
+    expect(reversalNeedsLegacyStatus("DOC_SPLIT", { priorStatus: "Issued" })).toBe(false);
+    expect(reversalNeedsLegacyStatus("DOC_MERGED", { mergeSiblings: ["a", "b"] })).toBe(true);
+    expect(reversalNeedsLegacyStatus("DOC_MERGED", { mergeSiblings: ["a", "b"], priorStatuses: { a: "Issued" } })).toBe(true);
+    expect(reversalNeedsLegacyStatus("DOC_MERGED", { mergeSiblings: ["a", "b"], priorStatuses: { a: "Issued", b: "Void" } })).toBe(false);
+    expect(reversalNeedsLegacyStatus("DOC_MERGED", { priorStatus: "Issued" })).toBe(false);
+    expect(reversalNeedsLegacyStatus("DOC_RENUMBERED", {})).toBe(false);
+    expect(reversalNeedsLegacyStatus("DOC_SPLIT", null)).toBe(true);
+  });
+  it("the dialog shows the validated picker (nothing pre-selected), requires a choice, and passes it as legacyRestoreStatus; it no longer promises 'Issued'", () => {
+    const m = src("components/documents/lifecycle/ReverseConfirmModal.tsx");
+    expect(m).toMatch(/const needsLegacyStatus = reversalNeedsLegacyStatus\(event\.action, event\.details \?\? null\);/);
+    expect(m).toMatch(/const valid = reason\.trim\(\)\.length > 0 && \(!needsLegacyStatus \|\| legacyStatus !== ""\);/);
+    expect(m).toMatch(/LEGACY_RESTORE_STATUSES\.map\(/);
+    expect(m).toMatch(/<option value="">Choose the status it held before the/);
+    expect((m.match(/actorRole, legacyRestoreStatus,/g) ?? []).length).toBe(2);
+    expect(m).not.toMatch(/will return to "Issued" status/);
+  });
+  it("the reverse affordance is offered only to the population the reversal admits (Admin / DocCtrl)", () => {
+    const h = src("components/documents/HistoryDrawer.tsx");
+    expect(h).toMatch(/const isReverseAuthorized = hasAnyRole\(\["Admin", "DocCtrl"\]\);/);
+    expect(h).toMatch(/onReverseRequest=\{isReverseAuthorized \? /);
   });
 });
