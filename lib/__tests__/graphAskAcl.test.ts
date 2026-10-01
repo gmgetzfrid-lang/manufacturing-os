@@ -20,7 +20,9 @@
 //     when the knowledge document it came from is upload-origin;
 //   * fails CLOSED: when the mirror lookup cannot be read every hit is
 //     withheld; when the asker's principal or readable set cannot be built,
-//     every source-linked hit is withheld and upload-origin hits stay;
+//     every source-linked hit is withheld and upload-origin hits stay — and a
+//     FAILED check is said as one (503 "couldn't check document access", or
+//     a partial-answer note), never as "nothing matches";
 //   * the contract is evidence-only (IEDGE-11).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -167,13 +169,37 @@ describe("GPV-1 / IEDGE-1 — the graph's Ask box reads only what the asker may 
     expect(hitDocs((await ask("eng", "settlement terms")).body)).toEqual(["k-legal"]);
   });
 
-  it("fails CLOSED: when the mirror lookup cannot be read, no hit is returned (which hits are mirrors is unknown)", async () => {
+  it("fails CLOSED: when the mirror lookup cannot be read, no hit is returned (which hits are mirrors is unknown) — and it says the check failed, not that nothing matches", async () => {
     net.graphAsk = [HIT.legal, HIT.ops, HIT.up];
     db.hooks.push((op) => (op.table === "knowledge_documents" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
     const { status, body } = await ask("dc", "support");
-    expect(status).toBe(200);
-    expect(body.hits).toEqual([]);
-    expect(body.nodeIds).toEqual([]);
+    expect(status).toBe(503);
+    expect(body.error).toMatch(/couldn't check document access right now/);
+    expect(body).not.toHaveProperty("hits");
+    expect(body).not.toHaveProperty("nodeIds");
+    expect(JSON.stringify(body)).not.toMatch(/Nothing in the indexed libraries matches/);
+    expect(JSON.stringify(body)).not.toMatch(/settlement|support spacing|site note/i);
+  });
+
+  it("a principal that cannot be built when EVERY hit is a mirror is a 503 too — a failed check is never shown as 'nothing matches'", async () => {
+    net.graphAsk = [HIT.legal, HIT.ops];
+    db.hooks.push((op) => (op.table === "org_members" && op.kind === "select" && Array.isArray(op.columns) && op.columns.includes("roles")
+      ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    const { status, body } = await ask("dc", "support");
+    expect(status).toBe(503);
+    expect(body.error).toMatch(/couldn't check document access/);
+    expect(JSON.stringify(body)).not.toMatch(/settlement|support spacing/i);
+  });
+
+  it("a genuine empty result, and an ACL-filtered one, still read 'nothing matches' (200)", async () => {
+    net.graphAsk = [];
+    const none = await ask("viewer", "unobtainium");
+    expect(none.status).toBe(200);
+    expect(none.body.note).toMatch(/Nothing in the indexed libraries matches that/);
+    net.graphAsk = [HIT.legal];
+    const denied = await ask("viewer", "settlement terms");
+    expect(denied.status).toBe(200);
+    expect(denied.body.note).toMatch(/Nothing in the indexed libraries matches that/);
   });
 
   it("fails CLOSED: when the asker's readable set cannot be built, every source-linked hit is withheld and upload-origin hits stay", async () => {
@@ -182,8 +208,12 @@ describe("GPV-1 / IEDGE-1 — the graph's Ask box reads only what the asker may 
     // different read (`uid`) and still admits the asker.
     db.hooks.push((op) => (op.table === "org_members" && op.kind === "select" && Array.isArray(op.columns) && op.columns.includes("roles")
       ? { error: { code: "57014", message: "statement timeout" } } : undefined));
-    const { body } = await ask("dc", "support");
+    const { status, body } = await ask("dc", "support");
+    expect(status).toBe(200);
     expect(hitDocs(body)).toEqual(["k-up"]);
+    // The answer says it is partial — the linked documents' hits were withheld
+    // because the check failed, not because nothing else matched.
+    expect(body.note).toMatch(/could not be checked for document access right now and were left out/);
     expect((body.nodeIds as string[])).not.toContain("doc:d-ops");
     expect((body.nodeIds as string[])).not.toContain("doc:d-legal");
     // The upload-origin mention row that names a controlled document directly

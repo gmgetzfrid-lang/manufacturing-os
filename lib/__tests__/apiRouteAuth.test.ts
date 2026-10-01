@@ -177,17 +177,18 @@ describe("POST /api/orchestrator/execute", () => {
   });
 
   // ORCH-4: the route runs only a STORED proposal, by id — never a tool and
-  // parameters taken from the request body.
+  // parameters taken from the request body. A proposal id is its row's UUID.
+  const P1 = "11111111-1111-4111-8111-111111111111";
   const stored = (tool: string, parameters: Record<string, unknown>) => {
     mockState.single["orchestrator_proposals"] = {
       data: {
-        id: "p1", org_id: "o1", user_id: "u1", tool, parameters,
+        id: P1, org_id: "o1", user_id: "u1", tool, parameters,
         fingerprint: `${tool}(${Object.keys(parameters).sort().map((k) => `${k}=${String(parameters[k])}`).join("&")})`,
         summary: "s", created_at: new Date().toISOString(),
         expires_at: new Date(Date.now() + 600_000).toISOString(), executed_at: null, dismissed_at: null,
       },
     };
-    mockState.tables["orchestrator_proposals"] = { data: [{ id: "p1" }] };
+    mockState.tables["orchestrator_proposals"] = { data: [{ id: P1 }] };
   };
 
   it("a body carrying a tool and parameters (no stored proposal) is refused — 409, nothing runs", async () => {
@@ -213,7 +214,7 @@ describe("POST /api/orchestrator/execute", () => {
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+      body: JSON.stringify({ orgId: "o1", proposalId: P1 }),
     }));
     expect(res.status).toBe(409);
     expect(mockState.calls.some((c) => c.table === "audit_logs")).toBe(false);
@@ -227,7 +228,7 @@ describe("POST /api/orchestrator/execute", () => {
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+      body: JSON.stringify({ orgId: "o1", proposalId: P1 }),
     }));
     expect(res.status).toBe(409);
     const body = await res.json();
@@ -243,7 +244,7 @@ describe("POST /api/orchestrator/execute", () => {
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+      body: JSON.stringify({ orgId: "o1", proposalId: P1 }),
     }));
     expect(res.status).toBe(403);
     expect(String((await res.json()).error)).toMatch(/Only Admin or Document Control/);
@@ -258,12 +259,31 @@ describe("POST /api/orchestrator/execute", () => {
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+      body: JSON.stringify({ orgId: "o1", proposalId: P1 }),
     }));
     expect(res.status).toBe(403);
   });
 
-  it("executes a stored proposal end-to-end (audit record logged first)", async () => {
+  it("an id that is not a UUID names no proposal: 409 'doesn't match', never a 503 'try again' — nothing is read or run", async () => {
+    mockState.user = { id: "u1" };
+    mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
+    stored("log_audit_completion", { sheet_number: "P-101", revision: "C", status: "passed" });
+    const { POST } = await load();
+    for (const decision of [undefined, "dismiss"]) {
+      mockState.calls = [];
+      const res = await POST(req("http://test/api/orchestrator/execute", {
+        method: "POST",
+        headers: { authorization: "Bearer tok" },
+        body: JSON.stringify({ orgId: "o1", proposalId: "abc", ...(decision ? { decision } : {}) }),
+      }));
+      expect(res.status).toBe(409);
+      expect(String((await res.json()).error)).toMatch(/doesn't match a proposal/);
+      expect(mockState.calls.some((c) => c.table === "orchestrator_proposals")).toBe(false);
+      expect(mockState.calls.some((c) => c.table === "audit_logs" || c.table === "drawing_audit_logs")).toBe(false);
+    }
+  });
+
+  it("executes a stored proposal end-to-end (AI_ACTION_ATTEMPTED before the write, AI_ACTION_EXECUTED after it)", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
     mockState.tables["drawing_audit_logs"] = { error: null };
@@ -272,17 +292,19 @@ describe("POST /api/orchestrator/execute", () => {
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
+      body: JSON.stringify({ orgId: "o1", proposalId: P1 }),
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.result.status).toBe("logged");
     const upsertAt = mockState.calls.findIndex((c) => c.table === "drawing_audit_logs" && c.method === "upsert");
-    const auditAt = mockState.calls.findIndex((c) => c.table === "audit_logs" && c.method === "insert");
+    const auditAt = (action: string) => mockState.calls.findIndex((c) => c.table === "audit_logs" && c.method === "insert"
+      && (c.args[0] as { action?: string }).action === action);
     expect(upsertAt).toBeGreaterThan(-1);
-    expect(auditAt).toBeGreaterThan(-1);
-    expect(auditAt).toBeLessThan(upsertAt);
+    expect(auditAt("AI_ACTION_ATTEMPTED")).toBeGreaterThan(-1);
+    expect(auditAt("AI_ACTION_ATTEMPTED")).toBeLessThan(upsertAt);
+    expect(auditAt("AI_ACTION_EXECUTED")).toBeGreaterThan(upsertAt);
   });
 });
 

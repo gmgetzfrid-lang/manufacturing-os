@@ -29,8 +29,12 @@
 // way, so a hidden document cannot leak through nodeIds or an asset snippet.
 // Fails CLOSED: if the mirror lookup cannot be read, no hit is returned; if
 // the readable set cannot be computed, every source-linked hit is withheld.
-// A withheld hit is never counted or named — the answer reads exactly as if
-// nothing had matched.
+// A hit the ACL withholds is never counted or named — the answer reads
+// exactly as if nothing had matched. A hit withheld because the access check
+// itself FAILED is different, and the answer says so instead of claiming
+// absence: when nothing can be shown it is a 503 "couldn't check document
+// access — try again"; when upload-origin hits survive, they come with a
+// note that some results could not be checked.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -57,11 +61,13 @@ const IN_SLICE = 200;
  * controlled document; `hidden` is the mirrors this asker may not read.
  * `known` is false when the mirror lookup itself failed — then nobody can
  * say which hits are mirrors, and the caller withholds them all. A principal
- * or readable set that cannot be built hides every mirror (fail closed);
- * upload-origin documents are never hidden here.
+ * or readable set that cannot be built hides every mirror (fail closed) and
+ * sets `unchecked` — those mirrors were withheld because the check failed,
+ * not because the ACL said no. Upload-origin documents are never hidden here.
  */
 async function askerView(orgId: string, uid: string, kdocIds: string[]): Promise<{
   known: boolean;
+  unchecked: boolean;
   sourceOf: Map<string, string>;
   hidden: Set<string>;
   readable: Set<string>;
@@ -73,13 +79,14 @@ async function askerView(orgId: string, uid: string, kdocIds: string[]): Promise
       .from("knowledge_documents").select("id, source_document_id")
       .eq("org_id", orgId).in("id", kdocIds.slice(i, i + IN_SLICE))
       .not("source_document_id", "is", null);
-    if (error) return { known: false, sourceOf, hidden: new Set(kdocIds), readable: new Set(), principal: null };
+    if (error) return { known: false, unchecked: true, sourceOf, hidden: new Set(kdocIds), readable: new Set(), principal: null };
     for (const r of (data ?? []) as Array<{ id: string; source_document_id: string | null }>) {
       if (r.source_document_id) sourceOf.set(r.id, r.source_document_id);
     }
   }
   let principal: KnowledgePrincipal | null = null;
   let readable = new Set<string>();
+  let failed = false;
   try {
     principal = await loadPrincipal(orgId, uid);
     if (principal && sourceOf.size > 0) {
@@ -88,10 +95,18 @@ async function askerView(orgId: string, uid: string, kdocIds: string[]): Promise
   } catch {
     principal = null;
     readable = new Set();
+    failed = true;
   }
+  // The route's own membership read admitted this asker, so a principal that
+  // did not load is a failed read (loadPrincipal reads the member again and
+  // returns null on an error), not a verdict.
+  const unchecked = sourceOf.size > 0 && (failed || !principal);
   const hidden = new Set([...sourceOf].filter(([, src]) => !principal || !readable.has(src)).map(([k]) => k));
-  return { known: true, sourceOf, hidden, readable, principal };
+  return { known: true, unchecked, sourceOf, hidden, readable, principal };
 }
+
+/** Said when the access check itself failed — never "nothing matches". */
+const ACCESS_UNCHECKED = "Search couldn't check document access right now, so it can't say what matches — try again.";
 
 export interface GraphAskHit {
   knowledgeDocumentId: string;
@@ -164,11 +179,14 @@ export async function POST(req: NextRequest) {
   // ── Per-asker ACL, before ranking (GPV-1 / IEDGE-1) ──────────────────────
   // The RPC returned every org passage. Drop the mirrors of controlled
   // documents this asker may not read; if the mirror lookup failed, nothing
-  // can be shown safely.
+  // can be shown safely — and the answer says the check failed, not that
+  // nothing matched (a failed check is not an absence).
   const view = allHits.length > 0
     ? await askerView(orgId, user.id, [...new Set(allHits.map((h) => h.knowledgeDocumentId))])
     : null;
-  const hits = view?.known ? allHits.filter((h) => !view.hidden.has(h.knowledgeDocumentId)) : [];
+  if (view && !view.known) return bad(ACCESS_UNCHECKED, 503);
+  const hits = view ? allHits.filter((h) => !view.hidden.has(h.knowledgeDocumentId)) : [];
+  if (view?.unchecked && hits.length === 0) return bad(ACCESS_UNCHECKED, 503);
 
   if (!view || hits.length === 0) {
     return NextResponse.json<GraphAskResponse>({
@@ -260,6 +278,12 @@ export async function POST(req: NextRequest) {
 
   if (payload.nodeIds.length === 0) {
     payload.note = "Found passages, but none of these documents are linked to equipment yet — run the mention indexer to place them on the map.";
+  }
+  if (view.unchecked) {
+    // Upload-origin passages survived; linked documents' could not be
+    // checked. Say the answer is partial rather than let it read as whole.
+    payload.note = "Some results could not be checked for document access right now and were left out — try again for the full answer."
+      + (payload.note ? ` ${payload.note}` : "");
   }
 
   return NextResponse.json(payload);

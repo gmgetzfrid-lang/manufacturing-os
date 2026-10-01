@@ -95,14 +95,23 @@ describe("PR-2 — the bottom line is reconciled against its own priced lines; a
     expect(unpriced).not.toHaveProperty("totalCheck");
   });
 
-  it("recomputed from the stored extraction — a stored row and a fresh read agree; a human-corrected total keeps the extraction's flag", () => {
+  it("recomputed from the stored extraction — a stored row and a fresh read agree; totalCheck describes the EXTRACTION only, so a human-corrected total is reconciled afresh, never shown the extraction's note", () => {
     const fresh = validateParsedQuote(BASE_BID, "d1");
     const stored = validateParsedQuote(JSON.parse(JSON.stringify(fresh)), "d1");
     expect(stored.totalCheck).toEqual(fresh.totalCheck);
     const corrected = withHumanTotal(fresh, 1820000);
     expect(corrected.total).toBe(1820000);
     expect(corrected.extractedTotal).toBe(182000);
+    expect(corrected.totalSource).toBe("human");
+    // The stored flag still describes what the AI READ (182,000 vs its lines)…
     expect(corrected.totalCheck?.mismatch).toBe(true);
+    expect(corrected.totalCheck?.note).toMatch(/not the quoted total of 182,000/);
+    // …so a consumer showing the corrected total must not show that note
+    // beside it (the handoff conditions it on totalSource !== "human") and
+    // reconciles the number on screen instead — which here agrees.
+    const onScreen = reconcileQuoteTotal(corrected.total, corrected.lineItems);
+    expect(onScreen).toMatchObject({ mismatch: false, note: null });
+    expect(reconcileQuoteTotal(1900000, corrected.lineItems)).toMatchObject({ mismatch: true });
   });
 });
 

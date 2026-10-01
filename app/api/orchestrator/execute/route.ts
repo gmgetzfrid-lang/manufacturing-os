@@ -14,17 +14,28 @@
 // everything it checks in a run — membership, readability, the controller
 // tier where the tool needs it. This route confirms; it grants no authority.
 //
-// Every write goes through here and is audited (ORCH-10): AI_ACTION_EXECUTED
-// is written BEFORE the tool runs — no write can land without its row — and
-// if that row cannot be written nothing runs. A tool that then refuses or
-// fails writes AI_ACTION_FAILED for the same proposal, and the claim is
-// given back so the person can try again before it expires.
+// Every write goes through here and is audited (ORCH-10), and the log says
+// what happened, not what was hoped — each row names the proposal:
+//   AI_ACTION_ATTEMPTED  written BEFORE the tool runs (tool, parameters,
+//                        proposal id, fingerprint, sentence). No write can
+//                        land without it: if it cannot be written nothing
+//                        runs (503) and the claim is given back.
+//   AI_ACTION_EXECUTED   written AFTER the tool completed the write, with the
+//                        same details. If this one insert fails it is
+//                        logged; the ATTEMPTED row still covers the write.
+//   AI_ACTION_FAILED     the tool refused or failed — it reported no
+//                        completed write; the claim is given back so the
+//                        person can try again before it expires.
+// An ATTEMPTED row followed by neither outcome is an attempt whose result was
+// never reported (the function was cut off mid-action): read it as "may have
+// run". Its proposal stays spent.
 //
 // POST { orgId, proposalId, fingerprint? }            → { ok, result }
 // POST { orgId, proposalId, decision: "dismiss" }     → { ok, dismissed }
 // Anything else — a body carrying a tool and parameters from a page opened
-// before this change, an unknown / expired / spent / dismissed / someone
-// else's proposal — is a 409 that says so. Nothing runs.
+// before this change, an id that is not a proposal's (not even a UUID), an
+// unknown / expired / spent / dismissed / someone else's proposal — is a 409
+// that says so. Nothing runs.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -80,15 +91,18 @@ export async function POST(req: NextRequest) {
   if (!claim.ok) return bad(claim.error, claim.status);
   const { proposal, claimedAt } = claim;
 
+  // One audit row shape for the three outcomes; every row names the proposal.
+  const auditRow = (action: "AI_ACTION_ATTEMPTED" | "AI_ACTION_EXECUTED" | "AI_ACTION_FAILED", details: Record<string, unknown>) => ({
+    action,
+    resource_type: "orchestrator", resource_id: orgId,
+    org_id: orgId, user_id: user.id,
+    details: { tool: proposal.tool, proposalId: proposal.id, fingerprint: proposal.fingerprint, ...details },
+  });
+
   // Every outcome below that did NOT run the write hands the claim back.
   const refuse = async (msg: string, status: number, failed?: { error: string }) => {
     if (failed) {
-      const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
-        action: "AI_ACTION_FAILED",
-        resource_type: "orchestrator", resource_id: orgId,
-        org_id: orgId, user_id: user.id,
-        details: { tool: proposal.tool, proposalId: proposal.id, error: failed.error },
-      });
+      const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("AI_ACTION_FAILED", { error: failed.error }));
       if (auditErr) console.error("[orchestrator/execute] AI_ACTION_FAILED not recorded:", auditErr.message);
     }
     await releaseProposal(proposal.id, claimedAt);
@@ -99,19 +113,13 @@ export async function POST(req: NextRequest) {
   if (!def || !def.writes) return refuse("That isn't an executable action.", 409);
   const checked = validateParams(proposal.parameters ?? {}, def.params);
   if (!checked.ok) return refuse(checked.error, 409);
+  const ran = { parameters: checked.values, summary: proposal.summary };
 
-  // Audit FIRST (ORCH-10): no write may complete without its row, so a row
-  // that cannot be written stops the action before it starts.
-  const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
-    action: "AI_ACTION_EXECUTED",
-    resource_type: "orchestrator", resource_id: orgId,
-    org_id: orgId, user_id: user.id,
-    details: {
-      tool: def.name, parameters: checked.values,
-      proposalId: proposal.id, fingerprint: proposal.fingerprint, summary: proposal.summary,
-    },
-  });
-  if (auditErr) {
+  // Audit FIRST (ORCH-10): no write may complete without a row naming it, so
+  // a row that cannot be written stops the action before it starts. The row
+  // says ATTEMPTED — it is written before anyone knows the outcome.
+  const { error: attemptErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("AI_ACTION_ATTEMPTED", ran));
+  if (attemptErr) {
     return refuse("The action could not be recorded in the audit log, so it was not run. Try again.", 503);
   }
 
@@ -144,6 +152,12 @@ export async function POST(req: NextRequest) {
   const result = (out.data ?? {}) as Record<string, unknown>;
   if (typeof result.error === "string" && result.error) {
     return refuse(result.error, result.forbidden === true ? 403 : 409, { error: result.error });
+  }
+
+  // The write completed: say so. The claim is kept (the proposal is spent).
+  const { error: executedErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("AI_ACTION_EXECUTED", ran));
+  if (executedErr) {
+    console.error("[orchestrator/execute] AI_ACTION_EXECUTED not recorded (the AI_ACTION_ATTEMPTED row covers the write):", executedErr.message);
   }
 
   return NextResponse.json({ ok: true, result });

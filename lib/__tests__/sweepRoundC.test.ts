@@ -138,6 +138,23 @@ describe("SURF-7 / EGRESS-3 — check_permissions evaluates the caller's real AC
     // …while a controller is never denied by the index (the guard's own bypass).
     expect((await run("check_permissions", { document_id: "d1" }, ctxFor(["DocCtrl"]))).data).toMatchObject({ editable: true });
   });
+  it("ORCH-8: a read-only role binds the controller tier too — [DocCtrl, Viewer] is read-only (lib/roleHeld: deny-if-any, no controller escape)", async () => {
+    state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: null };
+    state.readable.add("d1");
+    for (const roles of [["DocCtrl", "Viewer"], ["Admin", "Auditor"], ["Viewer", "DocCtrl"]]) {
+      expect((await run("check_permissions", { document_id: "d1" }, ctxFor(roles))).data, roles.join("+")).toMatchObject({ readable: true, editable: false });
+    }
+    // The same answer every app edit surface gives (holdsReadOnlyRole), and
+    // the database is not asked — a read-only role is a "no" before any ACL.
+    expect(state.rpcCalls).toHaveLength(0);
+    state.single.documents = { id: "d1", document_number: "P-1", title: "A", library_id: "L", checked_out_by: null, checked_out_by_name: null, acl_index: null };
+    expect((await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["DocCtrl", "Viewer"]))).data).toMatchObject({ forbidden: true });
+    // Remove the read-only role and the controller tier applies again.
+    expect((await run("checkout_document", { document_id: "d1", reason: "markup" }, ctxFor(["DocCtrl"]))).pending?.href).toBe("/documents/L?doc=d1");
+    const src = readFileSync(join(process.cwd(), "lib/orchestrator/tools.ts"), "utf8");
+    const body = src.slice(src.indexOf("async function mayEdit("));
+    expect(body.indexOf("holdsReadOnlyRole(")).toBeLessThan(body.indexOf("holdsControllerTier(ctx)"));
+  });
   it("ORCH-8: an ACL index the database cannot evaluate is a 'no' (fail closed)", async () => {
     state.single.documents = { id: "d1", document_number: "P-1", status: "Issued", org_id: "o1", acl_index: { deny: {} } };
     state.readable.add("d1");

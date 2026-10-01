@@ -189,7 +189,7 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   push_subscriptions:
     "per-device Web Push credentials (endpoint, p256dh, auth) — secrets never leave the database, and a push registration is machine-specific and never restored; each device re-subscribes",
   orchestrator_proposals:
-    "the assistant's pending write proposals (tool, parameters, fingerprint; 20261147) — confirmable for 15 minutes, service-role only, pruned a week after expiry; the permanent record of what ran is audit_logs (AI_ACTION_EXECUTED), which is exported. A restored proposal must never become runnable again",
+    "the assistant's pending write proposals (tool, parameters, fingerprint; 20261147) — confirmable for 15 minutes, service-role only, pruned once a week past expiry (daily cron and each store); the permanent record is audit_logs (AI_ACTION_ATTEMPTED before an action runs, then AI_ACTION_EXECUTED or AI_ACTION_FAILED), which is exported. A restored proposal must never become runnable again",
   document_share_accesses:
     "per-access IP / user-agent trail behind a share link's counter (P1 SHARE, 20261081) — service-role written, controller-readable; the exported distribution record of what LEFT is download_audits; a restored share is revoked (DEC-45) so its access trail has nothing to attach to",
 };

@@ -88,9 +88,11 @@ function holdsControllerTier(ctx: ToolContext): boolean {
 /**
  * ORCH-8: may the caller EDIT this document (check it out, revise it)? The
  * answer the real door gives, not a role list:
- *   - the controller tier always may;
  *   - a read-only role (Viewer / Auditor, held anywhere — lib/roleHeld,
- *     deny-if-any) never does;
+ *     deny-if-any, with NO controller escape) never does: a member holding
+ *     [DocCtrl, Viewer] is read-only on every app edit surface
+ *     (holdsReadOnlyRole) until Viewer is removed, so they are told so here;
+ *   - otherwise the controller tier always may;
  *   - anyone else may unless the document's ACL index (the merged library →
  *     folder → document chain) denies them `write` or `editMetadata` — the
  *     predicate documents_deny_write_guard (20260901) applies, evaluated by
@@ -98,8 +100,8 @@ function holdsControllerTier(ctx: ToolContext): boolean {
  * Fails closed: an index that cannot be evaluated is a "no".
  */
 async function mayEdit(ctx: ToolContext, aclIndex: unknown): Promise<boolean> {
-  if (holdsControllerTier(ctx)) return true;
   if (holdsReadOnlyRole(ctx.principal.roles)) return false;
+  if (holdsControllerTier(ctx)) return true;
   if (!aclIndex) return true;
   for (const action of ["write", "editMetadata"]) {
     const { data, error } = await supabaseAdmin.rpc("acl_index_denies", {
@@ -379,11 +381,18 @@ const checkAuditHistory: ToolDef = {
     { name: "revision", type: "string", description: "Revision code, if known." },
   ],
   async run(args, ctx) {
-    let q = supabaseAdmin.from("drawing_audit_logs")
-      .select("sheet_number, revision_code, status, audited_at, audit_details")
-      .eq("org_id", ctx.orgId).eq("sheet_number", String(args.sheet_number));
-    if (args.revision) q = q.eq("revision_code", String(args.revision));
-    const { data, error } = await q.order("audited_at", { ascending: false }).limit(10);
+    // The row's scope comes from its library_id column (20261124) — which
+    // 20261124 also backfilled onto rows whose details never named a
+    // library — and from audit_details.libraryId before that column exists.
+    const read = (columns: string) => {
+      let q = supabaseAdmin.from("drawing_audit_logs")
+        .select(columns)
+        .eq("org_id", ctx.orgId).eq("sheet_number", String(args.sheet_number));
+      if (args.revision) q = q.eq("revision_code", String(args.revision));
+      return q.order("audited_at", { ascending: false }).limit(10);
+    };
+    let { data, error } = await read("sheet_number, revision_code, status, audited_at, audit_details, library_id");
+    if (isMissingColumn(error)) ({ data, error } = await read("sheet_number, revision_code, status, audited_at, audit_details"));
     if (error) {
       return isMissingTable(error)
         ? { data: { audited: false, note: "Audit memory isn't installed yet." } }
@@ -395,12 +404,12 @@ const checkAuditHistory: ToolDef = {
     // is still waiting on a document that is not read whole; a `skipped` row
     // says only that the sheet could not be read; a verdict under an unknown
     // revision ("") is never "already recorded" (DWG-13).
-    const history = ((data ?? []) as Array<{ revision_code: string; status: string; audited_at: string; audit_details: unknown }>).map((r) => {
+    const history = ((data ?? []) as unknown as Array<{ revision_code: string; status: string; audited_at: string; audit_details: unknown; library_id?: string | null }>).map((r) => {
       const d = (r.audit_details ?? {}) as { note?: unknown; provisional?: { waitingOn?: unknown } };
       const provisional = storedProvisional(r.audit_details);
       return {
         revision: r.revision_code, status: r.status, audited_at: r.audited_at,
-        scope: libraryOf(r.audit_details) ? "library" : "org-wide",
+        scope: (typeof r.library_id === "string" && r.library_id) || libraryOf(r.audit_details) ? "library" : "org-wide",
         ...(typeof d.note === "string" && d.note ? { note: d.note.slice(0, 300) } : {}),
         ...(provisional ? {
           provisional: true,
@@ -678,16 +687,23 @@ const notifyPersonnel: ToolDef = {
     );
     if (gate) return gate;
 
+    // A send that fails is reported as a failure — never "sent". /execute
+    // then records AI_ACTION_FAILED and gives the claim back, so the person
+    // can try again while the proposal is live.
     const { emit } = await import("@/lib/notify/dispatch");
-    await emit({
-      orgId: ctx.orgId, category: "watched", kind: "orchestrator_message",
-      title: `About ${d.document_number}`,
-      body: String(args.message),
-      link: `/documents/${d.library_id}?doc=${args.document_id}`,
-      resource: { type: "document", id: String(args.document_id) },
-      actorUserId: ctx.userId, actorName: ctx.actorName,
-      audience: { involved: [String(args.user_id)] },
-    }).catch(() => undefined);
+    try {
+      await emit({
+        orgId: ctx.orgId, category: "watched", kind: "orchestrator_message",
+        title: `About ${d.document_number}`,
+        body: String(args.message),
+        link: `/documents/${d.library_id}?doc=${args.document_id}`,
+        resource: { type: "document", id: String(args.document_id) },
+        actorUserId: ctx.userId, actorName: ctx.actorName,
+        audience: { involved: [String(args.user_id)] },
+      });
+    } catch {
+      return { data: { error: "The notification could not be sent — it may not have reached them. Try again." } };
+    }
     return { data: { status: "sent" } };
   },
 };
@@ -823,9 +839,12 @@ const logAuditCompletion: ToolDef = {
     if (gate) return gate;
 
     // An ORG-WIDE row (library_id NULL) on 20261124's key; before 20261124,
-    // the org-wide key that database has.
+    // the org-wide key that database has. document_id is sent only when it
+    // resolved: an upsert over an existing row then keeps the document that
+    // row already names instead of overwriting it with NULL (ORCH-11).
     const row = {
-      org_id: ctx.orgId, document_id: documentId, sheet_number: sheet,
+      org_id: ctx.orgId, sheet_number: sheet,
+      ...(documentId ? { document_id: documentId } : {}),
       revision_code: revision, status,
       audited_at: new Date().toISOString(),
       audit_details: { note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator" },

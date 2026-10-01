@@ -16,15 +16,20 @@
 //
 // orchestrator_proposals (20261147) is RLS-on with no policies and no grants
 // to anon / authenticated: only this service-role code reads or writes it.
-// The permanent record of what ran is audit_logs (AI_ACTION_EXECUTED); a
-// proposal row is pruned a week after it expires.
+// The permanent record is audit_logs: AI_ACTION_ATTEMPTED before a stored
+// action runs, then AI_ACTION_EXECUTED (it completed) or AI_ACTION_FAILED
+// (it was refused or failed). A proposal row is pruned once it is a week
+// past its expiry — by the daily maintenance cron and on every store, so at
+// the next of those after that week, not to the minute.
 
+import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { PendingAction } from "@/lib/orchestrator/tools";
 
 /** How long a proposal can be confirmed (plan default, DEC-44 (I-04)). */
 export const PROPOSAL_TTL_MS = 15 * 60_000;
-/** How long after expiry a proposal row is kept before the prune drops it. */
+/** How long after expiry a proposal row is kept before the prune drops it
+ *  (it goes at the next prune after that: the maintenance cron, or a store). */
 export const PROPOSAL_KEEP_AFTER_EXPIRY_MS = 7 * 24 * 60 * 60_000;
 export const PROPOSALS_MIGRATION = "20261147_intel_roundG_orchestrator_proposals.sql";
 
@@ -59,6 +64,11 @@ type DbError = { code?: string; message?: string } | null | undefined;
 
 const isMissingTable = (e: DbError) =>
   !!e && (e.code === "42P01" || e.code === "PGRST205" || /relation .* does not exist|could not find the table/i.test(e.message ?? ""));
+
+/** A proposal id is its row's UUID. Anything else names no proposal: it is
+ *  refused as unknown (409) before the database is asked, where a non-UUID
+ *  would raise 22P02 and read as "try again". */
+export const PROPOSAL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const NOT_INSTALLED =
   `Confirming an assistant action needs migration ${PROPOSALS_MIGRATION} — ask an admin to run it. Nothing was done.`;
@@ -99,6 +109,9 @@ export async function storeProposals(
   const { data, error } = await supabaseAdmin
     .from("orchestrator_proposals")
     .insert(executable.map((p) => ({
+      // The id is minted here (the column's default is the same kind of
+      // value), so the card's id is a UUID whichever side assigns it.
+      id: randomUUID(),
       run_id: runId, org_id: orgId, user_id: userId,
       fingerprint: p.fingerprint, tool: p.tool,
       parameters: p.parameters, summary: p.summary,
@@ -127,6 +140,7 @@ export async function storeProposals(
 async function readForCaller(
   orgId: string, userId: string, proposalId: string, fingerprint: string | null, now: number,
 ): Promise<{ ok: true; proposal: StoredProposal } | ProposalRefusal> {
+  if (!PROPOSAL_ID_RE.test(proposalId)) return { ok: false, status: 409, error: REFUSAL.unknown, reason: "unknown" };
   const { data, error } = await supabaseAdmin
     .from("orchestrator_proposals")
     .select("id, run_id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at")
@@ -210,9 +224,12 @@ export async function dismissProposal(
   return { ok: true };
 }
 
-/** Drop proposal rows a week past their expiry. Exported so a scheduled
- *  step can call it too; the write path runs it on every store, so no cron
- *  entry is needed. Returns the number of rows removed (0 before 20261147). */
+/** Drop proposal rows a week past their expiry. The maintenance cron runs
+ *  it daily (its knowledge block — no cron entry of its own), and the store
+ *  path runs it too, so an org that stops proposing still has its expired
+ *  messages and findings removed. Returns the number of rows removed: 0
+ *  before 20261147 (no table, nothing to prune); any other failure THROWS,
+ *  so the cron reports it (the store path ignores it). */
 export async function pruneOrchestratorProposals(now: number = Date.now()): Promise<number> {
   const cutoff = new Date(now - PROPOSAL_KEEP_AFTER_EXPIRY_MS).toISOString();
   const { data, error } = await supabaseAdmin
@@ -220,6 +237,9 @@ export async function pruneOrchestratorProposals(now: number = Date.now()): Prom
     .delete()
     .lt("expires_at", cutoff)
     .select("id");
-  if (error) return 0;
+  if (error) {
+    if (isMissingTable(error)) return 0;
+    throw new Error(`orchestrator_proposals prune failed: ${error.message ?? "unknown error"}`);
+  }
   return ((data ?? []) as unknown[]).length;
 }

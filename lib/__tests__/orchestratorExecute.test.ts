@@ -25,6 +25,8 @@ const net = vi.hoisted(() => ({
   systems: [] as string[],
   users: { dc: "u-dc", viewer: "u-viewer", other: "u-other" } as Record<string, string>,
   emitted: [] as Array<Record<string, unknown>>,
+  /** When set, the notifier throws (an in-app / email queue failure). */
+  emitFails: false,
   rpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: unknown }>,
 }));
 
@@ -61,7 +63,12 @@ vi.mock("@/lib/ai/usageServer", () => ({
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (ev: Record<string, unknown>) => { net.emitted.push(ev); }) }));
+vi.mock("@/lib/notify/dispatch", () => ({
+  emit: vi.fn(async (ev: Record<string, unknown>) => {
+    if (net.emitFails) throw new Error("notifications insert failed");
+    net.emitted.push(ev);
+  }),
+}));
 // lib/ownership (pulled in by lib/knowledgeAccess) imports these at load.
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
@@ -69,7 +76,7 @@ vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisi
 
 import { POST as runPOST } from "@/app/api/orchestrator/route";
 import { POST as executePOST } from "@/app/api/orchestrator/execute/route";
-import { REFUSAL, NOT_INSTALLED, PROPOSAL_TTL_MS } from "@/lib/orchestrator/proposals";
+import { REFUSAL, NOT_INSTALLED, PROPOSAL_TTL_MS, PROPOSAL_KEEP_AFTER_EXPIRY_MS, pruneOrchestratorProposals } from "@/lib/orchestrator/proposals";
 import { toolByName, fingerprint, type ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 
@@ -137,13 +144,13 @@ async function proposeAudit(token = "dc"): Promise<Pending> {
 
 beforeEach(() => {
   seed();
-  net.script = []; net.prompts = []; net.systems = []; net.emitted = []; net.rpc = {};
+  net.script = []; net.prompts = []; net.systems = []; net.emitted = []; net.rpc = {}; net.emitFails = false;
 });
 
 describe("ORCH-4 — the legitimate flow keeps working: propose → confirm → execute ONCE", () => {
   it("a run stores its proposal server-side and the card carries the id; confirming runs the stored action once", async () => {
     const card = await proposeAudit();
-    expect(card.proposalId).toEqual(expect.any(String));
+    expect(card.proposalId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(card.unavailable).toBeUndefined();
     expect(Date.parse(card.expiresAt!) - Date.now()).toBeGreaterThan(PROPOSAL_TTL_MS - 60_000);
     const stored = rowsOf("orchestrator_proposals");
@@ -159,14 +166,29 @@ describe("ORCH-4 — the legitimate flow keeps working: propose → confirm → 
     expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
     expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "broken_connectors" });
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toEqual(expect.any(String));
+    // The log says what happened: ATTEMPTED before the write, EXECUTED after it.
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
-    expect(auditRows("AI_ACTION_EXECUTED")[0]).toMatchObject({ org_id: ORG, user_id: "u-dc", details: expect.objectContaining({ tool: "log_audit_completion", proposalId: card.proposalId }) });
+    expect(auditRows("AI_ACTION_FAILED")).toHaveLength(0);
+    for (const action of ["AI_ACTION_ATTEMPTED", "AI_ACTION_EXECUTED"]) {
+      expect(auditRows(action)[0]).toMatchObject({ org_id: ORG, user_id: "u-dc", details: expect.objectContaining({ tool: "log_audit_completion", proposalId: card.proposalId, fingerprint: card.fingerprint }) });
+    }
+    const order = rowsOf("audit_logs").map((r) => r.action);
+    expect(order).toEqual(["AI_ACTION_ATTEMPTED", "AI_ACTION_EXECUTED"]);
+    const opIndex = (pred: (o: typeof db.ops[number]) => boolean) => db.ops.findIndex(pred);
+    const attemptedAt = opIndex((o) => o.table === "audit_logs" && o.kind === "insert" && (o.payload as Row).action === "AI_ACTION_ATTEMPTED");
+    const writeAt = opIndex((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+    const executedAt = opIndex((o) => o.table === "audit_logs" && o.kind === "insert" && (o.payload as Row).action === "AI_ACTION_EXECUTED");
+    expect(attemptedAt).toBeGreaterThan(-1);
+    expect(attemptedAt).toBeLessThan(writeAt);
+    expect(executedAt).toBeGreaterThan(writeAt);
 
     // Once.
     const again = await execute("dc", { proposalId: card.proposalId, fingerprint: card.fingerprint });
     expect(again.status).toBe(409);
     expect(again.body.error).toBe(REFUSAL.executed);
     expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
   });
 
@@ -177,6 +199,7 @@ describe("ORCH-4 — the legitimate flow keeps working: propose → confirm → 
       execute("dc", { proposalId: card.proposalId }),
     ]);
     expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
   });
 });
@@ -207,6 +230,16 @@ describe("ORCH-4 — /execute refuses everything that is not a live stored propo
     const unknown = await execute("dc", { proposalId: "00000000-0000-0000-0000-000000000000" });
     expect(unknown.status).toBe(409);
     expect(unknown.body.error).toBe(REFUSAL.unknown);
+    // An id that is not even a UUID names no proposal: the same 409 — never
+    // a 503 "try again" (Postgres would raise 22P02 on it) — run or dismiss,
+    // and the database is not asked.
+    const before = db.ops.length;
+    for (const body of [{ proposalId: "abc" }, { proposalId: "abc", decision: "dismiss" }, { proposalId: `${card.proposalId}x` }]) {
+      const garbled = await execute("dc", body);
+      expect(garbled.status).toBe(409);
+      expect(garbled.body.error).toBe(REFUSAL.unknown);
+    }
+    expect(db.ops.slice(before).some((o) => o.table === "orchestrator_proposals")).toBe(false);
     const someoneElse = await execute("other", { proposalId: card.proposalId });
     expect(someoneElse.status).toBe(409);
     expect(someoneElse.body.error).toBe(REFUSAL.unknown);
@@ -249,10 +282,27 @@ describe("ORCH-4 / ORCH-10 — an action that does not run gives its claim back 
     const res = await execute("dc", { proposalId: card.proposalId });
     expect(res.status).toBe(503);
     expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
+    expect(rowsOf("audit_logs")).toHaveLength(0);
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
     db.hooks = [];
     expect((await execute("dc", { proposalId: card.proposalId })).status).toBe(200);
     expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
+  });
+
+  it("the write completed but its EXECUTED row could not be written → still 200 (it ran), the ATTEMPTED row covers it, the failure is logged", async () => {
+    const card = await proposeAudit();
+    db.hooks.push((op) => (op.table === "audit_logs" && op.kind === "insert" && (op.payload as Row).action === "AI_ACTION_EXECUTED"
+      ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(200);
+    expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(1);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(0);
+    expect(logged.mock.calls.some((c) => /AI_ACTION_EXECUTED not recorded/.test(String(c[0])))).toBe(true);
+    logged.mockRestore();
+    // The proposal is spent — it ran.
+    expect(rowsOf("orchestrator_proposals")[0].executed_at).toEqual(expect.any(String));
   });
 
   it("the tool refuses at execute time (the caller lost the controller tier) → nothing written, AI_ACTION_FAILED, claim released", async () => {
@@ -264,7 +314,28 @@ describe("ORCH-4 / ORCH-10 — an action that does not run gives its claim back 
     expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
     expect(auditRows("AI_ACTION_FAILED")).toHaveLength(1);
     expect(auditRows("AI_ACTION_FAILED")[0].details).toMatchObject({ proposalId: card.proposalId });
+    // The log never says "executed" for an action that did not run.
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(1);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(0);
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
+  });
+
+  it("notify_personnel: a send that fails is a failure, not 'sent' — 409, AI_ACTION_FAILED, the claim released; the person can retry", async () => {
+    net.script = [JSON.stringify({ tool_name: "notify_personnel", parameters: { user_id: "u-dc", document_id: "d-1", message: "Rev C is out" } }), "Proposed."];
+    const [card] = pendingOf((await ask("viewer", "tell Dana rev C is out")).body);
+    net.emitFails = true;
+    const res = await execute("viewer", { proposalId: card.proposalId });
+    expect(res.status).toBe(409);
+    expect(String(res.body.error)).toMatch(/could not be sent/);
+    expect(res.body).not.toHaveProperty("result");
+    expect(auditRows("AI_ACTION_FAILED")).toHaveLength(1);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(0);
+    expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
+    // The notifier recovers: the same proposal runs, once.
+    net.emitFails = false;
+    expect(await execute("viewer", { proposalId: card.proposalId })).toMatchObject({ status: 200, body: { ok: true, result: { status: "sent" } } });
+    expect(net.emitted).toHaveLength(1);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(1);
   });
 });
 
@@ -278,7 +349,7 @@ describe("ORCH-4 — before 20261147 is applied the write path fails CLOSED", ()
     const [card] = pendingOf(body);
     expect(card.proposalId).toBeUndefined();
     expect(card.unavailable).toBe(NOT_INSTALLED);
-    const res = await execute("dc", { proposalId: "anything" });
+    const res = await execute("dc", { proposalId: "22222222-2222-4222-8222-222222222222" });
     expect(res.status).toBe(503);
     expect(res.body.error).toBe(NOT_INSTALLED);
     expect(rowsOf("drawing_audit_logs")).toHaveLength(0);
@@ -336,17 +407,39 @@ describe("20261147 — orchestrator_proposals: one paste, service role only, pro
     expect(EXPORT_EXCLUDED_TABLES.orchestrator_proposals).toMatch(/never become runnable again/);
   });
 
-  it("no vercel.json cron entry: the prune is a lib DELETE on the store path", () => {
+  it("no vercel.json cron entry: the prune rides the maintenance cron's knowledge block (and the store path) through lib", () => {
     expect(readFileSync(join(process.cwd(), "vercel.json"), "utf8")).not.toMatch(/orchestrator/);
     const lib = readFileSync(join(process.cwd(), "lib/orchestrator/proposals.ts"), "utf8");
     expect(lib).toMatch(/await pruneOrchestratorProposals\(now\)/);
+    const cron = readFileSync(join(process.cwd(), "app/api/cron/maintenance/route.ts"), "utf8");
+    expect(cron).toMatch(/import \{ pruneOrchestratorProposals \} from "@\/lib\/orchestrator\/proposals";/);
+    const knowledge = cron.slice(cron.indexOf("// 8. KNOWLEDGE SOURCES"), cron.indexOf("// 9. PLATFORM STORAGE WATCHDOG"));
+    expect(knowledge).toMatch(/result\.orchestratorProposalsPruned = await pruneOrchestratorProposals\(\);/);
+    expect(knowledge).toMatch(/result\.errors\.push\(`orchestrator-proposals: /);
+  });
+
+  it("the prune drops only rows a week past expiry; before 20261147 it is a no-op; any other failure throws (the cron reports it)", async () => {
+    const now = Date.now();
+    const at = (ms: number) => new Date(now + ms).toISOString();
+    db.tables.orchestrator_proposals.push(
+      { id: "old", expires_at: at(-PROPOSAL_KEEP_AFTER_EXPIRY_MS - 60_000) },
+      { id: "recent", expires_at: at(-PROPOSAL_KEEP_AFTER_EXPIRY_MS + 60_000) },
+      { id: "live", expires_at: at(PROPOSAL_TTL_MS) },
+    );
+    expect(await pruneOrchestratorProposals(now)).toBe(1);
+    expect(rowsOf("orchestrator_proposals").map((r) => r.id).sort()).toEqual(["live", "recent"]);
+    db.missingTables.push("orchestrator_proposals");
+    expect(await pruneOrchestratorProposals(now)).toBe(0);
+    db.missingTables = [];
+    db.hooks.push((op) => (op.table === "orchestrator_proposals" ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    await expect(pruneOrchestratorProposals(now)).rejects.toThrow(/prune failed: statement timeout/);
   });
 });
 
 /** A stored proposal row, as a run would have written it. */
 function storedProposal(over: Partial<Row> & { tool: string; parameters: Record<string, unknown>; user_id: string }): string {
   const params = over.parameters;
-  const id = `p-${rowsOf("orchestrator_proposals").length + 1}`;
+  const id = `00000000-0000-4000-8000-${String(rowsOf("orchestrator_proposals").length + 1).padStart(12, "0")}`;
   db.tables.orchestrator_proposals.push({
     id, org_id: ORG, fingerprint: `${over.tool}(${Object.keys(params).sort().map((k) => `${k}=${String(params[k])}`).join("&")})`,
     summary: "s", created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -419,6 +512,12 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     expect(rowsOf("drawing_audit_logs")).toHaveLength(1);
     expect(rowsOf("drawing_audit_logs")[0].status).toBe("broken_connectors");
     expect(rowsOf("orchestrator_proposals")[0].executed_at).toBeNull();
+    // The person retries twice: three attempts, three refusals — and the log
+    // never says the action executed (it did not).
+    for (let i = 0; i < 2; i++) expect((await execute("dc", { proposalId: card.proposalId })).status).toBe(409);
+    expect(auditRows("AI_ACTION_ATTEMPTED")).toHaveLength(3);
+    expect(auditRows("AI_ACTION_FAILED")).toHaveLength(3);
+    expect(auditRows("AI_ACTION_EXECUTED")).toHaveLength(0);
   });
 
   it("a more severe verdict replaces a less severe one on the org-wide row; a library's row at the same key is untouched", async () => {
@@ -433,6 +532,21 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.library_id === null)).toMatchObject({ status: "flagged", audit_details: expect.objectContaining({ source: "orchestrator", by: "u-dc" }) });
     expect(rows.find((r) => r.library_id === "KL-1")).toMatchObject({ status: "passed" });
+  });
+
+  it("ORCH-11: an upsert whose document does not resolve keeps the document the stored row already names (never overwrites it with NULL)", async () => {
+    db.tables.drawing_audit_logs.push(verdict({ status: "passed", document_id: "d-1" }));
+    // A second document numbered 025-PID-0103 makes the number ambiguous.
+    db.tables.documents.push({ id: "d-dup", org_id: ORG, library_id: "L-ops", collection_id: null, document_number: "025-PID-0103", acl: null, visibility: "normal", is_private: false, scope: null, created_by: "u-dc", owner_user_id: null });
+    const ctx = await ctxOf("u-dc");
+    const params = { sheet_number: "025-PID-0103", revision: "C", status: "flagged" };
+    const fp = fingerprint("log_audit_completion", params);
+    const out = await toolByName("log_audit_completion")!.run(params, { ...ctx, approved: new Set([fp]) });
+    expect(out.data).toMatchObject({ status: "logged" });
+    const [row] = rowsOf("drawing_audit_logs");
+    expect(row).toMatchObject({ status: "flagged", document_id: "d-1" });
+    const write = db.ops.find((o) => o.table === "drawing_audit_logs" && o.kind === "upsert")!;
+    expect(Object.keys(write.payload as Row)).not.toContain("document_id");
   });
 
   it("a PROVISIONAL row's floor is what it settled: below it is refused, at it is written", async () => {
@@ -494,6 +608,21 @@ describe("DEC-68 handoff — check_audit_history never answers 'already audited'
     expect(h.recommendation).toMatch(/Already audited at this revision \(broken_connectors\)/);
   });
 
+  it("scope comes from the library_id column first (20261124 backfilled it onto rows whose details never named a library), the details second", async () => {
+    db.tables.drawing_audit_logs.push(row({ status: "passed", library_id: "KL-1", audit_details: {} }));
+    expect((await history("C")).history[0]).toMatchObject({ scope: "library" });
+    db.tables.drawing_audit_logs = [row({ status: "passed", library_id: null, audit_details: {} })];
+    expect((await history("C")).history[0]).toMatchObject({ scope: "org-wide" });
+    // Before 20261124 there is no column: the read falls back, and the details decide.
+    db.missingColumns.drawing_audit_logs = ["library_id"];
+    db.tables.drawing_audit_logs = [
+      { id: "v1", org_id: ORG, sheet_number: "025-PID-0103", revision_code: "C", status: "passed", audited_at: "2026-09-01T00:00:00Z", audit_details: { libraryId: "KL-1" } },
+    ];
+    const h = await history("C");
+    expect(h.history[0]).toMatchObject({ scope: "library", status: "passed" });
+    expect(h.audited).toBe(true);
+  });
+
   it("a read that fails is an error, never 'never audited'", async () => {
     db.hooks.push((op) => (op.table === "drawing_audit_logs" ? { error: { code: "57014", message: "timeout" } } : undefined));
     const h = await history("C") as unknown as { error?: string; recommendation?: string };
@@ -522,8 +651,15 @@ describe("ORCH-10 — one write path, audited: a run never executes a write", ()
     const exec = readFileSync(join(process.cwd(), "app/api/orchestrator/execute/route.ts"), "utf8");
     expect(exec).toMatch(/approved: new Set\(\[proposal\.fingerprint\]\)/);
     expect(exec).not.toMatch(/fingerprint\(def\.name/);
-    // The audit insert is checked, and comes before the tool runs.
-    expect(exec.indexOf('action: "AI_ACTION_EXECUTED"')).toBeLessThan(exec.indexOf("def.run(checked.values, ctx)"));
+    // The ATTEMPTED insert is checked and comes before the tool runs; the
+    // EXECUTED insert comes only after the tool reported a completed write.
+    const attempted = exec.indexOf('auditRow("AI_ACTION_ATTEMPTED", ran)');
+    const runAt = exec.indexOf("def.run(checked.values, ctx)");
+    const executed = exec.indexOf('auditRow("AI_ACTION_EXECUTED", ran)');
+    expect(attempted).toBeGreaterThan(-1);
+    expect(runAt).toBeGreaterThan(attempted);
+    expect(executed).toBeGreaterThan(runAt);
+    expect(exec.slice(attempted, runAt)).toMatch(/if \(attemptErr\) \{\s*return refuse\(/);
     expect(exec).not.toMatch(/\.then\(\(\) => undefined, \(\) => undefined\)/);
     const client = readFileSync(join(process.cwd(), "lib/orchestratorClient.ts"), "utf8");
     expect(client).not.toMatch(/approved/);

@@ -25,9 +25,12 @@
 --   RLS ON with NO policies, and every table privilege revoked from anon and
 --   authenticated: SERVICE ROLE ONLY (the intake_attempts shape, 20261105).
 --   No function is created. The prune (rows a week past expiry) is a
---   service-role DELETE in lib/orchestrator/proposals.ts, run on every
---   store — no cron entry, no vercel.json change. The permanent record of
---   what ran is audit_logs (AI_ACTION_EXECUTED / AI_ACTION_FAILED).
+--   service-role DELETE in lib/orchestrator/proposals.ts, run by the daily
+--   maintenance cron's knowledge block and on every store — no cron entry
+--   of its own, no vercel.json change; a row goes at the first of those
+--   after its week, not to the minute. The permanent record is audit_logs:
+--   AI_ACTION_ATTEMPTED before a stored action runs, then
+--   AI_ACTION_EXECUTED (it completed) or AI_ACTION_FAILED (refused/failed).
 --   Indexed on (expires_at) for the prune and on (org_id, user_id,
 --   created_at) for a person's recent proposals.
 --
@@ -35,8 +38,15 @@
 -- nothing existing is re-created or altered (no earlier migration defines
 -- orchestrator_proposals). The before-apply inventory says whether this
 -- paste is a first apply or a re-run, and counts the AI_ACTION_EXECUTED rows
--- written so far (the writes the old execute path ran); it is dropped and
--- re-captured on every paste.
+-- written so far (each one the execute path recorded as completed — before
+-- this round, best effort after the write); it is dropped and re-captured on
+-- every paste.
+--
+-- WHEN TO PASTE: BEFORE or WITH the deploy that carries intelligence I-04 —
+-- not after it. It is purely additive (one new service-role-only table) and
+-- the code running before that deploy never reads it, so pasting first is
+-- safe; pasting after leaves a window in which every write card the new
+-- assistant proposes says the migration is needed and cannot be confirmed.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
 -- Supabase SQL editor. The editor shows only the LAST result set — the one
@@ -58,7 +68,7 @@ UNION ALL
 SELECT 'inventory: policies on orchestrator_proposals before this paste (must be 0 — service role only)',
        COUNT(*)::text FROM pg_policies WHERE schemaname = 'public' AND tablename = 'orchestrator_proposals'
 UNION ALL
-SELECT 'inventory: AI_ACTION_EXECUTED audit rows before this paste (writes the assistant ran so far)',
+SELECT 'inventory: AI_ACTION_EXECUTED audit rows before this paste (assistant writes recorded as completed so far)',
        COUNT(*)::text FROM audit_logs WHERE action = 'AI_ACTION_EXECUTED';
 
 BEGIN;
@@ -86,7 +96,7 @@ ALTER TABLE orchestrator_proposals ENABLE ROW LEVEL SECURITY;
 -- gives new tables are withdrawn too, so RLS is not the only wall.
 REVOKE ALL ON TABLE orchestrator_proposals FROM anon, authenticated;
 COMMENT ON TABLE orchestrator_proposals IS
-  'ORCH-4: what the assistant proposed (tool, parameters, fingerprint) for one person in one org, confirmable once within 15 minutes through /api/orchestrator/execute by its id. Service role only; rows a week past expiry are pruned by lib/orchestrator/proposals.ts. The permanent record of what ran is audit_logs (AI_ACTION_EXECUTED).';
+  'ORCH-4: what the assistant proposed (tool, parameters, fingerprint) for one person in one org, confirmable once within 15 minutes through /api/orchestrator/execute by its id. Service role only; rows a week past expiry are pruned (lib/orchestrator/proposals.ts, by the daily maintenance cron and on each store). The permanent record is audit_logs: AI_ACTION_ATTEMPTED before the action runs, then AI_ACTION_EXECUTED (completed) or AI_ACTION_FAILED (refused or failed).';
 
 COMMIT;
 

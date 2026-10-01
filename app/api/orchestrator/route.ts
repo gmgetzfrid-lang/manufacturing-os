@@ -11,9 +11,10 @@
 //
 // A run never executes a write (ORCH-10). Write tools only PROPOSE; each
 // proposal is stored server-side for this person (ORCH-4) and runs, once,
-// only through /api/orchestrator/execute, which writes AI_ACTION_EXECUTED
-// before the tool acts. There is no in-run approval: an `approved` field in
-// the body is ignored, and the tools run with an empty approval set.
+// only through /api/orchestrator/execute, which writes AI_ACTION_ATTEMPTED
+// before the tool acts and AI_ACTION_EXECUTED / AI_ACTION_FAILED after it.
+// There is no in-run approval: an `approved` field in the body is ignored,
+// and the tools run with an empty approval set.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
