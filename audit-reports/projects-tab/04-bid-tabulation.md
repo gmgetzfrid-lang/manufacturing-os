@@ -463,7 +463,7 @@ Voiding must go through a status-guarded update (see `MON-3`).
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** projects-joint J12 SERVER REMAINDERS (`quoteGroups`, `lib/costDocs.ts`, keys case-sensitively and feeds `projectSnapshot` → `projectHealth`) — by the integrator, 2026-10-01 (at the J13 merge: the record reconcile left this remainder open; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / process
 - **Locations:**
@@ -495,6 +495,17 @@ selected from a dropdown, created explicitly.
 - Awarding declines rivals across the case variants — ✓ for awards made from this screen (the only award path today); **not done here**: the server-side key (`lib/costDocs.ts:157`, `:250-251` `lower(trim)`) is P3 / J3's one-line limb — the finding stays open until it lands.
 
 **Scope / residual.** The intake route writes `rfq_group` from the link, which is snapped at link creation.
+
+**Partial (2026-10-01, projects Round G).** Record reconcile by package J13 RECORDS RECONCILE: no application code, test or migration changed here. This record is NOT flipped, because one of the two server-side limbs the 2026-09-29 Partial named has not landed. Verified against HEAD `4dd0df7`:
+- **Holds: done-when 2, server side.** The award's rival filter compares by key. `lib/costDocs.ts` `rfqKey` (:345-347; case-folded and whitespace-collapsed, the rule of `lib/bidTab.ts` `rfqGroupKey`, :573-575) decides which rivals `awardQuote` declines (:577-579). It landed with J3 MONEY-LEDGER's review fix pass 2 (commit `d80536f`, merge `9b4c5f4`). Test: `costDocs.test.ts` "MON-10: the award compares RFQ groups by key — 'Piping' declines the open 'piping ' bid the table shows beside it" (:1002), exit 0 (63 passed). The bid tab also hands the lib the merged field under one spelling (`QuotesPanel.tsx:663`, `alignGroupSpelling`). Test: `quotesPanelRender.test.ts` "hands the award every case variant of the merged field under one spelling" (:219), exit 0 (31 passed).
+- **Holds: done-when 1 on the bid tab.** `QuotesPanel.tsx:193` (`mergeQuoteGroups(quoteGroups(docs))`) tabulates case and whitespace variants as one field. Test: `quotesPanel.test.ts` "case-variant groups tabulate as one, under the first-seen spelling" (:118), exit 0 (13 passed).
+- **Does NOT hold: the grouping key.** This is the other limb the Partial named, cited there as `lib/costDocs.ts:157`. `quoteGroups` (now `lib/costDocs.ts:200-208`) still keys by `d.rfqGroup?.trim()` (:204), which is case-sensitive. Its one other consumer, `lib/projectSnapshot.ts:336-343`, counts `unawardedRfqGroups` over the unmerged groups. `lib/projectHealth.ts:330-335` turns that count into the coach's "Pick a winner in the bid comparison". So "Unit 300 Repipe" and "unit 300 repipe" are still two bid fields there:
+  - before an award, the count is 2 where the bid tab shows 1;
+  - after one, the variant whose bids the award declined still counts as a field with no award, so the coach keeps asking for a winner the bid tab shows was picked.
+
+What is owed: key `quoteGroups` by `rfqKey` / `rfqGroupKey` (keeping a typed spelling as the label), or have `lib/projectSnapshot.ts` merge its groups the way the panel does. Either is about one line, plus a snapshot test that two case variants count as one field. `lib/costDocs.ts` and `lib/projectSnapshot.ts` are outside this records-only package. The record stays OPEN.
+
+The comment above the bid tab's grouping (`components/projects/cost/QuotesPanel.tsx:189-192`) is stale. It says `lib/costDocs` keys the award's rival-decline on the exact string, and calls the server-side key P3's pending limb. That limb has landed (`rfqKey`, above). Whoever owns the grouping-key fix should correct the comment in the same change.
 
 ---
 

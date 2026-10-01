@@ -9,17 +9,17 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 75,
+    "findings": 76,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
       "MEDIUM": 39,
-      "LOW": 12
+      "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 62,
-      "OPEN": 13
+      "RESOLVED": 64,
+      "OPEN": 12
     }
   },
   "status_vocabulary": [
@@ -863,7 +863,7 @@
       "id": "COST-10",
       "title": "Financial rows are deletable: no DELETE guard on cost_entries, change_orders, or cost_documents, contradicting the code's stated never-delete invariant",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1084,7 +1084,7 @@
       "id": "INTK-12",
       "title": "Quote links are permanent bearer credentials: no expiry offered, no revoke control in the Costs tab, and their creation audit row writes a fragment of the secret token as the resource id",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1880,6 +1880,33 @@
       ],
       "refuted": false,
       "summary": "Anyone who can reach the PostgREST endpoint calls bumpintakeuse in a loop with a guessed or observed link UUID. submissioncount and lastusedat are the org's only at-a-glance record of contractor portal activity — they are rendered directly in the Intake tab (IntakePanel.tsx:348) and the Costs tab (QuotesPanel.tsx:551), and feed the vendor responsiveness view (lib/companies.ts:252 selects submissio",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/05-intake-door.md"
+    },
+    {
+      "id": "INTK-17",
+      "title": "The Intake tab's Revoke audits a revocation that changed no row, and re-stamps a link that was already revoked",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "audit integrity",
+      "related": [
+        "INTK-12",
+        "SAF-3",
+        "GAP-402"
+      ],
+      "locations": [
+        "components/projects/IntakePanel.tsx:247-262",
+        "components/projects/cost/QuotesPanel.tsx:1282-1300"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Two controllers have the Intake tab open. One revokes Gulf Mechanical's link at 09:00. The other, on a list that still shows the link live, clicks Revoke at 11:30. The update re-stamps revokedat to 11:30, and a second INTAKELINKREVOKED row is written. The register now records the revocation two and a half hours late, which matters when a submission lands between the two times. Separately, if the r",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
     },

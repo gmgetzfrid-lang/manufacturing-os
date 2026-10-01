@@ -23,8 +23,8 @@
       "LOW": 4
     },
     "by_status": {
-      "OPEN": 38,
-      "RESOLVED": 99,
+      "OPEN": 36,
+      "RESOLVED": 101,
       "REFUTED": 2
     }
   },
@@ -914,7 +914,7 @@
       "id": "REL-6",
       "title": "Nothing tests any data layer, any new route's authorization, or any policy",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "regression risk",
@@ -2424,7 +2424,7 @@
       "id": "MON-8",
       "title": "An unmapped document status throws inside the award path, hanging the button forever",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "availability",

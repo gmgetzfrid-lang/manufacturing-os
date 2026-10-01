@@ -447,7 +447,7 @@ the contractor's permanent scorecard."
 ## MON-8 · An unmapped document status throws inside the award path, hanging the button forever
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** availability
@@ -488,6 +488,16 @@ never runs, and the Award button spins indefinitely.
 4. ✓ A test covers the unmapped-status path.
 
 **Scope / residual.** Open until J4 lands the call-site wrap. `REL-4`'s money-table half rides here.
+
+**Resolution (2026-10-01, projects Round G).** Record reconcile by package J13 RECORDS RECONCILE: no application code or migration changed here. The package's review fix pass added the render test that pins done-when 2, which no earlier package had committed. Done-whens 1, 3 and 4 landed with joint package J3 MONEY-LEDGER (commit `ff3c1a8`, migration `20261093`; merge `9b4c5f4`). The limb left open was the `try / catch / finally { setBusy(null) }` around the award call. It landed with J4 BIDTAB's fix pass (commit `5f8e114`, merge `0a8cc63`) and kept its shape through the J3 × J4 integration in `9b4c5f4`. The record was never flipped. Verified against HEAD `4dd0df7`.
+
+**Done-when.**
+1. ✓ An unmapped status produces a readable error, not a hang. `lib/costDocs.ts:113-115` `costDocStatusLabel` (`COST_DOC_STATUS_LABEL[status] ?? status`) is used on the award path by `claimDocTransition` (:235), and by `setManualTotal` (:738) and `repairCostDoc` (:853). Test: `costDocs.test.ts` "costDocStatusLabel is total; the award path names the odd status instead of hanging" (:241), exit 0 (63 passed).
+2. ✓ The Award button always clears its busy state. In `components/projects/cost/QuotesPanel.tsx:665-689`, every await between `setBusy(doc.id)` (:665, :683) and the end runs inside `try { … } catch { failure = … } finally { setBusy(null); }`; an early `return` inside the `try` still runs the `finally`. The button is `disabled={busy || …}` and shows a spinner while busy (:1092-1094). Test: `lib/__tests__/quotesPanelAwardAndQuoteLinks.test.ts`, a jsdom render of the bid tab, exit 0 (4 passed). "awardQuote THROWS: the error is surfaced and Award is enabled again, with no spinner" (:124). "the lib asks for an override and the retry THROWS: busy still clears, and the recorded override is closed as abandoned" (:138) covers the `needsOverride` retry, which re-sets busy inside the `try`. With the `finally` removed (a mutation check, reverted), both cases fail.
+3. ✓ The database rejects an unmapped status or kind: `supabase/migrations/20261093_prj_roundG_money_rails.sql:218-227` (`cost_documents_status_check`, `cost_documents_kind_check`, NOT VALID and duplicate-guarded; probed at :310). These are the only definitions. Test: `moneyRailsMigration.test.ts` "CHECK constraints on cost_documents.status and kind are NOT VALID and duplicate-guarded (20260908's shape)" (:151), exit 0 (24 passed).
+4. ✓ A test covers the unmapped-status path: done-when 1's test.
+
+**Scope / residual.** Pending migration: `20261093` (DEC-30). NOT VALID binds new writes at once, and the inventory counts the existing rows outside the sets. `StatusChip` (`QuotesPanel.tsx:962-972`) still indexes `COST_DOC_STATUS_LABEL[status]` directly, so an unmapped status renders a blank chip there: no throw and no hang, and impossible once the CHECK binds. `REL-4`'s money-table half is done-when 3 here; `REL-4` stays its own record.
 
 ---
 
@@ -690,7 +700,7 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-5 | MEDIUM | RESOLVED |
 | MON-6 | HIGH | RESOLVED |
 | MON-7 | MEDIUM | OPEN |
-| MON-8 | MEDIUM | OPEN |
+| MON-8 | MEDIUM | RESOLVED |
 | MON-9 | LOW | RESOLVED |
 | MON-10 | MEDIUM | OPEN |
 | MON-11 | MEDIUM | OPEN |

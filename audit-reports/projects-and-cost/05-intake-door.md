@@ -1,6 +1,6 @@
 # 05 · External intake & the contractor door
 
-**16 findings** — 1 CRITICAL · 6 HIGH · 8 MEDIUM · 1 LOW (severities as recorded on each finding; `INTK-15` and `INTK-16` opened by projects Round G, 2026-09-30).
+**17 findings** — 1 CRITICAL · 6 HIGH · 8 MEDIUM · 2 LOW (severities as recorded on each finding; `INTK-15` and `INTK-16` opened by projects Round G, 2026-09-30; `INTK-17` opened by projects Round G package J13, 2026-10-01).
 
 The tokened portal, and whether promoted content enters document control through the guard or around it.
 
@@ -520,7 +520,7 @@ upload/route.ts:45-46 — the complete file validation. :270 `ContentType: file.
 ## INTK-12 · Quote links are permanent bearer credentials: no expiry offered, no revoke control in the Costs tab, and their creation audit row writes a fragment of the secret token as the resource id
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/cost/QuotesPanel.tsx:536-548`, `components/projects/cost/QuotesPanel.tsx:613-635`, `components/projects/IntakePanel.tsx:62-64,354-359`
@@ -559,6 +559,20 @@ QuotesPanel.tsx:539-544 — the insert object, no `expires_at`. :613-634 — the
 
 
 *IntakePanel limb landed 2026-09-30 (projects Round G, J1): `components/projects/IntakePanel.tsx` lists DOCUMENT links only (`.eq("purpose", "documents")`, tolerant of a database without the column) — a quote link is managed on the Costs tab and is no longer shown here with an "Assign docs" control; the link insert reads back `.select("id").single()`, `INTAKE_LINK_CREATED`'s `resource_id` is the link id (no longer the project id, never token material) and its `{ error }` — and `INTAKE_LINK_REVOKED`'s — is checked and surfaced. With J4's QuotesPanel half this meets Done-when 2–4; Done-when 1 was J4's. This finding stays with its owner (PC-8) to close.*
+
+**Resolution (2026-10-01, projects Round G).** Record reconcile by package J13 RECORDS RECONCILE: no application code or migration changed here. The Costs-tab half landed with J4 BIDTAB (commit `44119df`, merge `0a8cc63`). The IntakePanel half landed with J1 INTAKE-DOOR (commit `ee68448`, merge `29777d1`). J1's landed note above already said the two halves meet done-whens 2-4, but the Status stayed OPEN. Neither package committed a test that drives the link writes, so the package's review fix pass added two jsdom render tests that drive both panels:
+- `lib/__tests__/quotesPanelAwardAndQuoteLinks.test.ts` (the Costs tab), exit 0 (4 passed);
+- `lib/__tests__/intakePanelLinkAudit.test.ts` (the Intake tab), exit 0 (4 passed).
+
+Each limb they pin was mutation-checked: with the past-date refusal, the `.is("revoked_at", null)` guard, either QuotesPanel `if (auditErr)` branch, either IntakePanel audit-error branch, or IntakePanel's link-id `resource_id` removed in turn (each reverted), the matching case fails. A token fragment written into either creation audit row's `details` (the leading 6 characters, the trailing 6, or 6 from the middle; six mutations, each reverted) fails the matching create case too. Verified against HEAD `4dd0df7`.
+
+**Done-when.**
+- ✓ The quote-link form offers an expiry, and the list carries a revoke button that writes `revoked_at`. In `components/projects/cost/QuotesPanel.tsx`, the expiry input (:1384) defaults to 90 days (:1212). A blank or past date is refused (:1249-1252), and `expires_at` is written (:1262). Revoke (:1425-1428) writes `revoked_at` under `.eq("id").eq("project_id").is("revoked_at", null).select("id")` (:1286-1287). A zero-row result is reported, not audited (:1291). A pre-Round-G link shows "no expiry" in amber (:1403). Tests: `quotesPanelAwardAndQuoteLinks.test.ts` "create: a blank or past expiry inserts nothing and says why; a future expiry is written; …" (:176) and "revoke: writes only revoked_at, scoped and read back; audits by link id; a failed audit is surfaced; zero rows audits nothing" (:216). The second asserts the update's exact chain and arguments. `quotesPanelRender.test.ts` "the expired row shows 'expired' and Revoke only; …" (:532), exit 0 (31 passed), pins the Revoke control on each row.
+- ✓ IntakePanel lists DOCUMENT links only: `components/projects/IntakePanel.tsx:104-105` (`.eq("purpose", "documents")`). The unfiltered read at :106-107 runs only on a database without the `purpose` column, where no quote link can exist. Test: `intakeUploadRoute.test.ts` "IntakePanel links: document links only, an expiry always, the audit row names the link (SEC-5 / INTK-12 limb)" (:1499), exit 0 (117 passed). That test reads the source: the purpose filter, the expiry, the `.select("id").single()` and the link-id `resource_id`. It does not exercise the audit-error branches; done-when 4's tests do.
+- ✓ Both link-creation inserts read back `.select("id").single()`, and the audit row's `resource_id` is that id. QuotesPanel: the insert at :1258-1264 and the audit row at :1268-1272. IntakePanel: the insert at :202-208 and the audit row at :212-217. No token material reaches `audit_logs`, and the re-issue path's row is ids only too (`lib/intakeLinks.ts:283-289`). Tests: the QuotesPanel create case above (:176) and `intakePanelLinkAudit.test.ts` "the insert reads back its id; INTAKE_LINK_CREATED names that id, not the project and no token; …" (:104). Both assert the chain `insert → select → single` and the returned id as `resource_id`. Both also assert that no 6-character window of the token appears anywhere in the serialised audit row. Six is `INTAKE_TOKEN_PREFIX_LEN` (`lib/intakeLinks.ts:200`), the prefix the link lists show, so the leading prefix and every other 6-character fragment are covered.
+- ✓ Both audit inserts check `{ error }` and surface it. QuotesPanel: create at :1268-1273, revoke at :1292-1297. IntakePanel: create at :212-224, revoke at :253-259. Tests: the QuotesPanel create (:176) and revoke (:216) cases each fail the audit insert and assert the message. `intakePanelLinkAudit.test.ts` covers the IntakePanel half: create with a failed audit (:104), create with a clean audit, which reports no failure (:125), revoke with a failed audit (:141), and a refused revoke update, which audits nothing (:156).
+
+**Scope / residual.** IntakePanel's revoke (`IntakePanel.tsx:251`) still updates by `.eq("id")` alone. It has no `.is("revoked_at", null)` guard and reads back no row count, so a revoke that changed no row is audited as `INTAKE_LINK_REVOKED`, and an already-revoked link gets a second `revoked_at` stamp. QuotesPanel's revoke has the guard (:1286-1291). This is not one of this record's done-whens (done-when 1 is the Costs tab's revoke). It is opened as [`INTK-17`](#intk-17), and the new IntakePanel test deliberately does not pin the unguarded chain. Quote links minted before Round G keep no expiry until `20261096`'s commented backfill is run (projects-tab `SEC-5`).
 
 ---
 
@@ -742,5 +756,36 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 - the service pass: never judged.
 
 `lib/__tests__/prjRoundGJ11Migrations.test.ts` pins the exit's position.
+
+---
+
+<a id="intk-17"></a>
+
+## INTK-17 · The Intake tab's Revoke audits a revocation that changed no row, and re-stamps a link that was already revoked
+
+*Numbered INTK-17 on this branch (opened by projects Round G J13's review fix pass). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Severity rationale:** The link itself is not left live by mistake. The panel refreshes after a revoke, and a link that was not revoked still shows as live. What is false is the audit trail: an `INTAKE_LINK_REVOKED` row for a revocation that did not happen, or a second one that moves the recorded revocation time. This is the `SAF-3` / `GAP-402` class of defect (projects-tab), on a smaller surface.
+- **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (`components/projects/IntakePanel.tsx`: the revoke guarded by `.is("revoked_at", null)` with a row read-back, no audit on zero rows) — by the integrator, 2026-10-01 (at the J13 merge: the record reconcile left this remainder open; fleet plan `audit-reports/fleet-plans/`).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** audit integrity
+- **Locations:**
+  - `components/projects/IntakePanel.tsx:247-262`: `revoke`. The update at :251 is `.update({ revoked_at: new Date().toISOString() }).eq("id", l.id)`, with no `.is("revoked_at", null)`, no project scope and no `.select("id")`. `{ error }` is checked at :252. The `INTAKE_LINK_REVOKED` insert follows at :253-258 whatever the row count.
+  - `components/projects/cost/QuotesPanel.tsx:1282-1300`: the Costs tab's twin, which already does it right. The update is `.eq("id").eq("project_id").is("revoked_at", null).select("id")` (:1286-1287), and zero rows is reported, not audited (:1291).
+- **Related:** `INTK-12` (its Scope / residual names this), projects-tab `SAF-3`, projects-tab `GAP-402`
+- **Independently verified:** — (`author`: opened by projects Round G J13's review fix pass from the reviewer's minor on `INTK-12`, per `DEC-31`; not yet challenged)
+
+**Mechanism.** A PostgREST `UPDATE` that matches no row the caller may write returns no error and an empty result. IntakePanel's revoke checks only `{ error }`, so it cannot tell "revoked" from "nothing changed", and it writes the audit row either way. The update is also not limited to a still-unrevoked row, so a link that is already revoked gets a new `revoked_at`.
+
+**Failure scenario.** Two controllers have the Intake tab open. One revokes Gulf Mechanical's link at 09:00. The other, on a list that still shows the link live, clicks Revoke at 11:30. The update re-stamps `revoked_at` to 11:30, and a second `INTAKE_LINK_REVOKED` row is written. The register now records the revocation two and a half hours late, which matters when a submission lands between the two times. Separately, if the row is not writable by the caller (RLS filters the `UPDATE`, or the link was deleted), the update returns no error and zero rows. `INTAKE_LINK_REVOKED` is still written, for a revocation that did not happen.
+
+**Remediation.** Mirror `QuotesPanel.tsx:1286-1291`. Update with `.eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id")`. On zero rows, write no audit row: tell the user the link was not revoked (it may already be revoked, or they may not have permission) and refresh.
+
+**Done when.**
+- IntakePanel's revoke updates only a still-unrevoked link of this project and reads back the rows it changed.
+- A revoke that changed no row writes no `INTAKE_LINK_REVOKED` row and says so. A second click on an already-revoked link does not move its `revoked_at`.
+- A render test drives both cases. The harness is `lib/__tests__/intakePanelLinkAudit.test.ts`; QuotesPanel's twin is pinned in `lib/__tests__/quotesPanelAwardAndQuoteLinks.test.ts` (:216).
 
 ---
