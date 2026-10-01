@@ -14,8 +14,12 @@
 // what the person could actually do): every member may DRAFT; issuing,
 // voiding, revoking the portal link and recording a receipt are the
 // `transmittal.issue` capability's, read from the capability policy per item
-// library (DEC-13) — never a role list on the page (DEC-35). Editing and
-// deleting a draft are its author's or a Document Controller's.
+// library (DEC-13) — never a role list on the page (DEC-35). Editing a draft
+// is its author's, a Document Controller's or a transmit authority's;
+// deleting one is what BOTH delete policies admit together — its author, or
+// a Document Controller who is also an Admin / Manager or manages the
+// draft's project (the permissive 20261133 policy AND the RESTRICTIVE
+// 20260818 transmittals_delete_guard).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -39,7 +43,7 @@ import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
-  transmittalPortalUrl, portalOriginConfigured, portalLinkState, mayTransmit, itemIssueBlocker,
+  transmittalPortalUrl, portalOriginConfigured, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
   legalHoldNotice, PORTAL_LINK_DAYS,
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome,
 } from "@/lib/transmittals";
@@ -111,7 +115,34 @@ export default function TransmittalsPage() {
   const canTransmit = useCallback((t: Transmittal) =>
     policy !== null && mayTransmit(policy, principal, t.items.map((i) => libOf.get(i.documentId) ?? null)), [policy, principal, libOf]);
   const canEditDraft = (t: Transmittal) => isController || (!!uid && t.createdBy === uid) || (policy !== null && mayTransmit(policy, principal, []));
-  const canDeleteDraft = (t: Transmittal) => isController || (!!uid && t.createdBy === uid);
+  // TRX-7: Delete is drawn from the COMBINED rule (mayDeleteDraft): the
+  // permissive policy admits the author or a controller; the RESTRICTIVE
+  // transmittals_delete_guard (20260818, unchanged) also requires an Admin /
+  // Manager, the author, or someone who manages the draft's project — so a
+  // controller's project arm needs the projects they manage (owner, or an
+  // owner / collaborator on the roster).
+  const [managedProjects, setManagedProjects] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setManagedProjects(new Set());
+    if (!activeOrgId || !uid || !isController) return;
+    let alive = true;
+    void (async () => {
+      const [owned, rostered] = await Promise.all([
+        supabase.from("projects").select("id").eq("org_id", activeOrgId).eq("owner_user_id", uid),
+        supabase.from("project_members").select("project_id, role").eq("user_id", uid),
+      ]);
+      if (!alive) return;
+      const ids = new Set<string>();
+      for (const p of ((owned.data ?? []) as Array<{ id: string }>)) ids.add(String(p.id));
+      for (const m of ((rostered.data ?? []) as Array<{ project_id: string; role: string | null }>)) {
+        const r = m.role ?? "collaborator";
+        if (r === "owner" || r === "collaborator") ids.add(String(m.project_id));
+      }
+      setManagedProjects(ids);
+    })().catch(() => { /* unreadable: the project arm stays closed; the other arms still decide */ });
+    return () => { alive = false; };
+  }, [activeOrgId, uid, isController]);
+  const canDeleteDraft = (t: Transmittal) => mayDeleteDraft(t, principal, managedProjects);
 
   const actor = useMemo(() => ({
     orgId: activeOrgId ?? "",
@@ -555,12 +586,23 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     setFacts(null);
     (async () => {
       const [docsRes, holdsRes] = await Promise.all([
-        supabase.from("documents").select("id, status, archived_at, current_version_id, legal_hold, library_id").eq("org_id", orgId).in("id", ids),
+        supabase.from("documents").select("id, status, archived_at, current_version_id, legal_hold, library_id, rev").eq("org_id", orgId).in("id", ids),
         supabase.from("document_holds").select("document_id, reason").in("document_id", ids).is("released_at", null),
       ]);
       if (!alive) return;
       const docs = (docsRes.data as Array<Record<string, unknown>> | null) ?? [];
       const holdRows = (holdsRes.data as Array<Record<string, unknown>> | null) ?? [];
+      // Status truth: the label of each document's CURRENT file, so a pin to
+      // a superseded revision, or a Rev field that drifted from the file, is
+      // named here instead of refused by the database at issue. Unreadable =
+      // unknown (the database still decides).
+      const currentIds = [...new Set(docs.map((d) => d.current_version_id as string | null).filter((v): v is string => !!v))];
+      const labelOf = new Map<string, string | null>();
+      if (currentIds.length > 0) {
+        const versRes = await supabase.from("document_versions").select("id, revision_label").eq("org_id", orgId).in("id", currentIds);
+        if (!alive) return;
+        if (!versRes.error) for (const v of ((versRes.data ?? []) as Array<Record<string, unknown>>)) labelOf.set(String(v.id), (v.revision_label as string | null) ?? null);
+      }
       const out = new Map<string, IssueFacts & { libraryId?: string | null }>();
       for (const id of ids) {
         const d = docs.find((x) => String(x.id) === id);
@@ -570,6 +612,8 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
           status: (d.status as string) ?? null,
           archivedAt: (d.archived_at as string) ?? null,
           currentVersionId: (d.current_version_id as string) ?? null,
+          rev: (d.rev as string) ?? null,
+          currentRevisionLabel: d.current_version_id && labelOf.has(String(d.current_version_id)) ? labelOf.get(String(d.current_version_id)) : undefined,
           legalHold: !!d.legal_hold,
           libraryId: (d.library_id as string) ?? null,
           holds: holdsRes.error ? null : holdRows.filter((h) => String(h.document_id) === id).map((h) => String(h.reason ?? "hold")),

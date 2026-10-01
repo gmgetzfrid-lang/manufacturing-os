@@ -2,7 +2,8 @@
 -- document-control Round F wave 2 — P7 TRANSMITTALS (2 of 2): the transmittal
 -- rails. APPLY AFTER 20261132 (this file's trigger asks the evaluator for
 -- 'transmittal.issue'; without 20261132 the evaluator answers '[]' and nobody
--- could issue — the first probe below says which world you are in).
+-- could issue). The first statement inside the transaction checks it and
+-- RAISES — rolling the whole file back — when 20261132 is not live.
 --
 --   TRX-1  A member session INSERTs a DRAFT only (transmittals_insert:
 --          status = 'draft' AND portal_token IS NULL), so issuing is always
@@ -27,14 +28,26 @@
 --   TRX-3  The issue transition refuses an item whose document is withdrawn
 --          (Superseded / Void / Archived, or archived), is under an active
 --          document hold (HLD-1 — the shared hold gate's rule), or is not in
---          this workspace.
+--          this workspace — and an item pinned to a revision that is no
+--          longer the document's CURRENT one (it was added before a rev-up):
+--          what goes out is the current revision, so the status written as
+--          sent is the status of the revision actually sent.
 --   TRX-8  At issue the database writes the as-sent snapshot onto each item:
 --   TRX-12 the pinned version (an unpinned item is pinned to the current
 --          revision, only when that IS the revision it names), the version's
---          file hash, the document's status and the revision's effective date
---          — a published revision of THAT document, with a stored file, never
---          a branch or an unreviewed submission. The browser cannot author
---          the snapshot; the issue time is the database's clock.
+--          file hash and size, the document's status and the revision's
+--          effective date — the CURRENT, published revision of THAT document,
+--          with a stored file, never a branch, an unreviewed submission or a
+--          superseded revision. The browser cannot author the snapshot; the
+--          issue time is the database's clock. A Rev mismatch names its cause
+--          (the document's own Rev field drifted from its file, or the item
+--          is stale).
+--   DEC-45 A service-role INSERT born 'issued' is a restore from a backup
+--          that predates the portal token column: it lands VOIDED with the
+--          DEC-45 note, keeps its recorded issue date, mints no token and
+--          skips the issue gate (which would re-date it, give it a live link
+--          nobody chose to issue, or abort the restore on a document the
+--          backup lists as withdrawn).
 --   TRX-4  The portal link gets its own lifecycle, separate from the record:
 --          portal_expires_at (issue + 90 days, set on the issue transition),
 --          portal_revoked_at / portal_revoked_by (revoke without voiding;
@@ -63,8 +76,9 @@
 -- transaction — the issued transmittals with unpinned items (the portal's
 -- label-fallback population, split by what the new fallback rule does with
 -- each item), the issued and draft rows whose creator is no longer an active
--- member, the live links that carry no expiry — and returned with the probes
--- in ONE result set.
+-- member, the drafts pinned to a revision that is no longer current, the
+-- live links that carry no expiry — and returned with the probes in ONE
+-- result set.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +130,14 @@ SELECT 'BEFORE (TRX-6): drafts whose creator is no longer an active member (a co
            AND (t.created_by IS NULL
                 OR NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.created_by AND m.status = 'active')))::text
 UNION ALL
+SELECT 'BEFORE (TRX-3): drafts carrying an item pinned to a revision that is no longer the document''s current one (refused at issue until the item is re-added)',
+       (SELECT COUNT(DISTINCT t.id) FROM transmittals t
+          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.items) = 'array' THEN t.items ELSE '[]'::jsonb END) it
+          JOIN documents d ON d.id::text = NULLIF(it->>'documentId', '') AND d.org_id = t.org_id
+         WHERE t.status = 'draft'
+           AND NULLIF(COALESCE(it->>'versionId', it->>'version_id', ''), '') IS NOT NULL
+           AND COALESCE(it->>'versionId', it->>'version_id') IS DISTINCT FROM d.current_version_id::text)::text
+UNION ALL
 SELECT 'BEFORE (TRX-2): issued / acknowledged / voided transmittals (never deletable from now on)',
        (SELECT COUNT(*) FROM transmittals WHERE status <> 'draft')::text
 UNION ALL
@@ -132,6 +154,21 @@ SELECT 'BEFORE: stored policies carrying a transmittal.issue entry (non-zero = t
          WHERE key = 'capability_policy' AND COALESCE(data->'caps', data) ? 'transmittal.issue')::text;
 
 BEGIN;
+
+-- ── 0. Apply order: 20261132 must already be live ───────────────────────────
+-- Without its CASE row the evaluator answers '[]' for transmittal.issue, and
+-- once this file commits nobody could issue, void or revoke. Refuse instead:
+-- the RAISE rolls the whole transaction back and the editor shows why.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc
+     WHERE proname = 'org_capability_allows_for' AND pronargs = 4
+       AND prosrc LIKE '%transmittal.issue%'
+  ) THEN
+    RAISE EXCEPTION 'Apply 20261132_dc_roundF_transmit_capability.sql first: org_capability_allows_for does not know transmittal.issue yet, so this file would leave nobody able to issue, void or revoke a transmittal. Nothing was changed.';
+  END IF;
+END $$;
 
 -- ── 1. TRX-4: the portal link's own lifecycle ───────────────────────────────
 ALTER TABLE transmittals ADD COLUMN IF NOT EXISTS portal_expires_at TIMESTAMPTZ;
@@ -172,6 +209,10 @@ DECLARE
   v_review text;
   v_key text;
   v_shed timestamptz;
+  v_doc_rev text;
+  v_cur_label text;
+  v_size bigint;
+  v_superseded timestamptz;
 BEGIN
   -- ── TRX-2: an issued transmittal never leaves the register ───────────────
   -- Only a draft is deleted — for EVERY caller, the service role included
@@ -212,6 +253,19 @@ BEGIN
       NEW.portal_last_used_at := NULL;
       NEW.portal_open_count := 0;
       NEW.portal_download_count := 0;
+    ELSIF NEW.status = 'issued' THEN
+      -- ── DEC-45: a service-role INSERT born issued is a restore ──────────
+      -- (no app path inserts with the service role). Its backup predates the
+      -- portal_token column, so the restore's scrub could not void it: it
+      -- lands voided here instead — the register keeps the record and its
+      -- issue date, no live link is minted, and the issue gate is not run
+      -- (it would re-date the record, or abort the whole restore on a
+      -- document the backup lists as withdrawn).
+      NEW.status := 'voided';
+      NEW.portal_token := NULL;
+      NEW.notes := concat_ws(E'\n\n', NULLIF(btrim(COALESCE(NEW.notes, '')), ''),
+        'Restored from a backup: the portal link was not restored (DEC-45). Issue a new transmittal to send these documents again.');
+      v_issue := false;
     END IF;
   ELSE
     -- ── TRX-6: identity is fixed at creation ────────────────────────────────
@@ -337,12 +391,15 @@ BEGIN
 
   -- ── TRX-3 / TRX-8 / TRX-12: the issue gate, and the as-sent snapshot ─────
   -- On the issue transition every item must name a current, unheld document
-  -- of this workspace and a published revision OF that document with a
-  -- stored file. An unpinned item is pinned here — to the current revision,
-  -- and only when that is the revision the item names. The database then
-  -- writes what was sent onto the item (the version, its file hash, the
-  -- document's status and the revision's effective date), stamps the issue
-  -- time with its own clock and gives the portal link its lifetime.
+  -- of this workspace and that document's CURRENT revision — published, not
+  -- superseded, with a stored file. An unpinned item is pinned here — to the
+  -- current revision, and only when that is the revision the item names; a
+  -- pinned item must still BE the current revision (status truth: the
+  -- document's status is written as the status of what was sent). The
+  -- database then writes what was sent onto the item (the version, its file
+  -- hash and size, the document's status and the revision's effective date),
+  -- stamps the issue time with its own clock and gives the portal link its
+  -- lifetime.
   IF v_issue THEN
     IF NEW.items IS NULL OR jsonb_typeof(NEW.items) <> 'array' OR jsonb_array_length(NEW.items) = 0 THEN
       RAISE EXCEPTION 'A transmittal needs at least one document to be issued. (TRX-3, 20261133)'
@@ -360,9 +417,9 @@ BEGIN
         RAISE EXCEPTION 'Every item on a transmittal must name a document. (TRX-3, 20261133)'
           USING ERRCODE = 'check_violation';
       END IF;
-      v_status := NULL; v_archived := NULL; v_current := NULL;
-      SELECT d.status, d.archived_at, d.current_version_id
-        INTO v_status, v_archived, v_current
+      v_status := NULL; v_archived := NULL; v_current := NULL; v_doc_rev := NULL; v_cur_label := NULL;
+      SELECT d.status, d.archived_at, d.current_version_id, d.rev
+        INTO v_status, v_archived, v_current, v_doc_rev
         FROM documents d WHERE d.id = v_doc AND d.org_id = NEW.org_id;
       IF NOT FOUND THEN
         RAISE EXCEPTION 'transmittal item names a document outside this workspace';
@@ -375,22 +432,36 @@ BEGIN
         RAISE EXCEPTION '% is under an active hold — release the hold before issuing it on a transmittal. (HLD-1 / TRX-3, 20261133)', COALESCE(it->>'number', v_doc::text)
           USING ERRCODE = 'check_violation';
       END IF;
+      SELECT v.revision_label INTO v_cur_label FROM document_versions v
+       WHERE v.id = v_current AND v.org_id = NEW.org_id;
+      IF v_current IS NULL OR v_cur_label IS NULL THEN
+        RAISE EXCEPTION '% has no published file to send. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text)
+          USING ERRCODE = 'check_violation';
+      END IF;
+      -- Status truth: a pin to an older revision (added before a rev-up) is
+      -- refused, naming the revision that replaced it.
       v_ver := NULLIF(it->>'versionId', '')::uuid;
-      IF v_ver IS NULL THEN
-        v_label := NULL;
-        SELECT v.revision_label INTO v_label FROM document_versions v
-         WHERE v.id = v_current AND v.org_id = NEW.org_id;
-        IF v_current IS NULL OR v_label IS NULL
-           OR (NULLIF(btrim(COALESCE(it->>'rev', '')), '') IS NOT NULL AND btrim(v_label) IS DISTINCT FROM btrim(it->>'rev')) THEN
-          RAISE EXCEPTION '% has no published file at Rev % to pin — remove it and add it again. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), COALESCE(it->>'rev', '?')
+      IF v_ver IS NOT NULL AND v_ver IS DISTINCT FROM v_current THEN
+        RAISE EXCEPTION '% Rev % has been superseded by Rev % — remove % and add it again to send the current revision. (TRX-3 / TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), COALESCE(NULLIF(btrim(COALESCE(it->>'rev', '')), ''), '?'), btrim(v_cur_label), COALESCE(it->>'number', v_doc::text)
+          USING ERRCODE = 'check_violation';
+      END IF;
+      -- A Rev that is not the current file's label: either the document's own
+      -- Rev field drifted from its file (re-adding cannot help — correct the
+      -- document), or the item is stale (re-add it).
+      IF NULLIF(btrim(COALESCE(it->>'rev', '')), '') IS NOT NULL AND btrim(v_cur_label) IS DISTINCT FROM btrim(it->>'rev') THEN
+        IF btrim(COALESCE(v_doc_rev, '')) = btrim(it->>'rev') THEN
+          RAISE EXCEPTION '%: the document''s Rev field (%) does not match its current file (Rev %) — correct the document''s revision, then issue. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), btrim(v_doc_rev), btrim(v_cur_label)
             USING ERRCODE = 'check_violation';
         END IF;
-        v_ver := v_current;
+        RAISE EXCEPTION '% is listed at Rev %, but its current file is Rev % — remove % and add it again. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), btrim(it->>'rev'), btrim(v_cur_label), COALESCE(it->>'number', v_doc::text)
+          USING ERRCODE = 'check_violation';
       END IF;
+      v_ver := v_current;
       v_record := NULL; v_label := NULL; v_hash := NULL; v_eff := NULL;
       v_branch := NULL; v_review := NULL; v_key := NULL; v_shed := NULL;
-      SELECT v.record_id, v.revision_label, v.file_hash, v.effective_date, v.is_branch, v.review_state, v.file_url, v.archived_at
-        INTO v_record, v_label, v_hash, v_eff, v_branch, v_review, v_key, v_shed
+      v_size := NULL; v_superseded := NULL;
+      SELECT v.record_id, v.revision_label, v.file_hash, v.effective_date, v.is_branch, v.review_state, v.file_url, v.archived_at, v.size, v.superseded_at
+        INTO v_record, v_label, v_hash, v_eff, v_branch, v_review, v_key, v_shed, v_size, v_superseded
         FROM document_versions v WHERE v.id = v_ver AND v.org_id = NEW.org_id;
       IF NOT FOUND THEN
         RAISE EXCEPTION 'transmittal item names a version outside this workspace';
@@ -399,12 +470,12 @@ BEGIN
         RAISE EXCEPTION 'The revision pinned for % belongs to another document. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text)
           USING ERRCODE = 'check_violation';
       END IF;
-      IF NULLIF(btrim(COALESCE(it->>'rev', '')), '') IS NOT NULL AND btrim(v_label) IS DISTINCT FROM btrim(it->>'rev') THEN
-        RAISE EXCEPTION 'The revision pinned for % is labelled %, but the item says Rev % — remove it and add it again. (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), v_label, it->>'rev'
-          USING ERRCODE = 'check_violation';
-      END IF;
       IF COALESCE(v_branch, false) OR v_review IN ('in_review', 'rejected') THEN
         RAISE EXCEPTION '% Rev % is not a published revision (an unreconciled branch or an unreviewed submission). (TRX-12, 20261133)', COALESCE(it->>'number', v_doc::text), v_label
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF v_superseded IS NOT NULL THEN
+        RAISE EXCEPTION '% Rev % is marked superseded (%) and cannot be issued. (TRX-3, 20261133)', COALESCE(it->>'number', v_doc::text), v_label, v_superseded
           USING ERRCODE = 'check_violation';
       END IF;
       IF v_key IS NULL OR v_shed IS NOT NULL THEN
@@ -416,6 +487,7 @@ BEGIN
           'versionId', v_ver::text,
           'rev', COALESCE(NULLIF(btrim(COALESCE(it->>'rev', '')), ''), btrim(v_label)),
           'fileHash', v_hash,
+          'fileSize', v_size,
           'statusAsSent', v_status,
           'effectiveDate', v_eff));
     END LOOP;
@@ -551,10 +623,13 @@ SELECT 'transmittals_guard keeps the 20261027 item rail and token mint',
           FROM pg_proc WHERE proname = 'transmittals_guard' AND pronargs = 0),
        NULL::text
 UNION ALL
-SELECT 'transmittals_guard carries the 20261133 rules (authority per library, hold gate, snapshot, delete arm) with search_path pinned',
+SELECT 'transmittals_guard carries the 20261133 rules (authority per library, hold gate, current-revision pin, snapshot with size, restore arm, delete arm) with search_path pinned',
        (SELECT prosrc LIKE '%org_capability_allows_for(NEW.org_id, ''transmittal.issue'', v_uid%'
               AND prosrc LIKE '%FROM document_holds h WHERE h.document_id = v_doc AND h.released_at IS NULL%'
               AND prosrc LIKE '%''fileHash'', v_hash%'
+              AND prosrc LIKE '%''fileSize'', v_size%'
+              AND prosrc LIKE '%IF v_ver IS NOT NULL AND v_ver IS DISTINCT FROM v_current THEN%'
+              AND prosrc LIKE '%Restored from a backup: the portal link was not restored (DEC-45)%'
               AND prosrc LIKE '%''statusAsSent'', v_status%'
               AND prosrc LIKE '%IF TG_OP = ''DELETE'' THEN%'
               AND prosrc LIKE '%NEW.portal_expires_at := now() + interval ''90 days''%'

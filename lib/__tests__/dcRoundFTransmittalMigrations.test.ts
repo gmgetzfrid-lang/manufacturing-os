@@ -11,16 +11,28 @@
 //             UPDATE OR DELETE; the three write policies; the usage RPC; and
 //             the DEC-30 one-paste shape (inventory TEMP TABLE before BEGIN,
 //             one final SELECT of probes + aggregate counts).
+//   fix pass  the issue gate admits only the document's CURRENT revision (a
+//             pin to a superseded one is refused, naming the replacement), a
+//             Rev mismatch names its cause, the snapshot carries the file
+//             size, a service-role INSERT born issued (a restore) lands
+//             voided with the DEC-45 note, and the file refuses to apply
+//             before 20261132.
 //
 // The SQL was also exercised end to end against a scratch PostgreSQL 16
 // cluster (stub schema, real 20260717 / 20260910 / 20261027 / 20261132 /
-// 20261133, every scenario of the records' Resolution blocks); these pins keep
-// the files from drifting from what was run.
+// 20261133, every scenario of the records' Resolution blocks — and, for the
+// fix pass: 20261133 pasted before 20261132 raises and changes nothing; a
+// superseded pin, a drifted Rev field and a stale item are each refused with
+// their own message; a clean issue snapshots the size; a service-role INSERT
+// born issued lands voided with the note and keeps its issue date; a DocCtrl
+// who is not Admin / Manager cannot delete another's draft, one who manages
+// its project can); these pins keep the files from drifting from what was run.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
+import { RESTORED_TRANSMITTAL_NOTE } from "@/lib/dataRestore";
 
 const dir = join(process.cwd(), "supabase", "migrations");
 const read = (f: string) => readFileSync(join(dir, f), "utf8");
@@ -179,10 +191,52 @@ describe("20261133 — transmittals_guard extended from 20261027, verbatim and c
     expect(gate).toContain("IF COALESCE(v_branch, false) OR v_review IN ('in_review', 'rejected') THEN");
     expect(gate).toContain("IF v_key IS NULL OR v_shed IS NOT NULL THEN");
     expect(gate).toContain("v_ver := v_current;");
-    expect(gate).toMatch(/'fileHash', v_hash,\s*\n\s*'statusAsSent', v_status,\s*\n\s*'effectiveDate', v_eff\)\);/);
+    expect(gate).toMatch(/'fileHash', v_hash,\s*\n\s*'fileSize', v_size,\s*\n\s*'statusAsSent', v_status,\s*\n\s*'effectiveDate', v_eff\)\);/);
     expect(gate).toContain("NEW.items := v_items;");
     expect(gate).toContain("NEW.issued_at := now();");
     expect(gate).toContain("NEW.portal_expires_at := now() + interval '90 days';");
+  });
+  it("status truth: only the CURRENT revision goes out — a superseded pin is refused naming its replacement; a superseded version row too", () => {
+    const gate = between(next, "  IF v_issue THEN", "  -- A write that leaves the items as they were");
+    expect(gate).toContain("SELECT d.status, d.archived_at, d.current_version_id, d.rev\n        INTO v_status, v_archived, v_current, v_doc_rev");
+    expect(gate).toContain("IF v_ver IS NOT NULL AND v_ver IS DISTINCT FROM v_current THEN");
+    expect(gate).toContain("RAISE EXCEPTION '% Rev % has been superseded by Rev % — remove % and add it again to send the current revision.");
+    // the snapshot is always taken from the current version, so statusAsSent describes what was sent
+    const pinAt = gate.indexOf("IF v_ver IS NOT NULL AND v_ver IS DISTINCT FROM v_current THEN");
+    const assignAt = gate.indexOf("v_ver := v_current;");
+    expect(assignAt).toBeGreaterThan(pinAt);
+    expect(gate.indexOf("'statusAsSent', v_status")).toBeGreaterThan(assignAt);
+    expect(gate).toContain("v.size, v.superseded_at\n        INTO v_record, v_label, v_hash, v_eff, v_branch, v_review, v_key, v_shed, v_size, v_superseded");
+    expect(gate).toContain("IF v_superseded IS NOT NULL THEN");
+    // the old pinned-label message (whose advice could not fix a drifted Rev field) is gone
+    expect(gate).not.toContain("The revision pinned for % is labelled %");
+  });
+  it("a Rev mismatch names its cause: the document's Rev field drifted (correct the document) vs a stale item (re-add it)", () => {
+    const gate = between(next, "  IF v_issue THEN", "  -- A write that leaves the items as they were");
+    expect(gate).toMatch(/IF btrim\(COALESCE\(v_doc_rev, ''\)\) = btrim\(it->>'rev'\) THEN\s*\n\s*RAISE EXCEPTION '%: the document''s Rev field \(%\) does not match its current file \(Rev %\) — correct the document''s revision, then issue\./);
+    expect(gate).toContain("RAISE EXCEPTION '% is listed at Rev %, but its current file is Rev % — remove % and add it again.");
+  });
+  it("DEC-45: a service-role INSERT born issued (a restore) lands voided with the restore note, mints nothing and skips the gate", () => {
+    const ins = between(next, "IF TG_OP = 'INSERT' THEN", "  ELSE\n");
+    const arm = ins.slice(ins.indexOf("    ELSIF NEW.status = 'issued' THEN"));
+    expect(arm).toContain("NEW.status := 'voided';");
+    expect(arm).toContain("NEW.portal_token := NULL;");
+    expect(arm).toContain("v_issue := false;");
+    // the same sentence lib/dataRestore.ts appends when it can void the row itself
+    expect(arm).toContain(`'${RESTORED_TRANSMITTAL_NOTE.replace(/'/g, "''")}'`);
+    expect(arm).toContain("concat_ws(E'\\n\\n', NULLIF(btrim(COALESCE(NEW.notes, '')), ''),");
+    // the arm sits AFTER the member-session branch — only the service role (no auth.uid()) reaches it
+    expect(ins.indexOf("IF v_uid IS NOT NULL THEN")).toBeLessThan(ins.indexOf("ELSIF NEW.status = 'issued' THEN"));
+  });
+  it("apply order: a DO block right after BEGIN raises (rolling everything back) when 20261132 is not live", () => {
+    const begin = m133.indexOf("\nBEGIN;");
+    const doAt = m133.indexOf("DO $$", begin);
+    expect(doAt).toBeGreaterThan(begin);
+    expect(doAt).toBeLessThan(m133.indexOf("ALTER TABLE transmittals ADD COLUMN IF NOT EXISTS portal_expires_at"));
+    const block = between(m133.slice(begin), "DO $$", "END $$;");
+    expect(block).toContain("WHERE proname = 'org_capability_allows_for' AND pronargs = 4");
+    expect(block).toContain("AND prosrc LIKE '%transmittal.issue%'");
+    expect(block).toContain("RAISE EXCEPTION 'Apply 20261132_dc_roundF_transmit_capability.sql first:");
   });
   it("ONE trigger, BEFORE INSERT OR UPDATE OR DELETE", () => {
     expect(m133).toContain("DROP TRIGGER IF EXISTS trg_transmittals_guard ON transmittals;\nCREATE TRIGGER trg_transmittals_guard\nBEFORE INSERT OR UPDATE OR DELETE ON transmittals\nFOR EACH ROW EXECUTE FUNCTION transmittals_guard();");
@@ -246,6 +300,11 @@ describe("20261133 — DEC-30: the inventory before the apply, one paste, one re
     expect(inv).toContain("(SELECT COUNT(*) FROM cand WHERE n = 0)::text");
     expect(inv).toContain("(SELECT COUNT(*) FROM cand WHERE n > 1)::text");
   });
+  it("TRX-3: drafts pinned to a revision that is no longer current are counted (they are refused at issue until re-added)", () => {
+    expect(inv).toContain("'BEFORE (TRX-3): drafts carrying an item pinned to a revision that is no longer the document''s current one");
+    expect(inv).toContain("CROSS JOIN LATERAL jsonb_array_elements(");
+    expect(inv).toContain("AND COALESCE(it->>'versionId', it->>'version_id') IS DISTINCT FROM d.current_version_id::text)::text");
+  });
   it("TRX-6: issued rows (and drafts) whose creator is no longer an active member", () => {
     expect(inv).toContain("'BEFORE (TRX-6): issued / acknowledged transmittals whose creator is no longer an active member");
     expect(inv).toContain("'BEFORE (TRX-6): drafts whose creator is no longer an active member");
@@ -263,5 +322,9 @@ describe("20261133 — DEC-30: the inventory before the apply, one paste, one re
     // prosrc is verbatim: the mint's literals are written with doubled quotes
     expect(tail).toContain("prosrc LIKE '%NEW.portal_token := replace(gen_random_uuid()::text, ''-'', '''')%'");
     expect(tail).not.toMatch(/SELECT data\b|SELECT uid|SELECT email|portal_token FROM/);
+    // the rules probe also confirms the fix pass's current-revision pin, size and restore arm
+    expect(tail).toContain("AND prosrc LIKE '%''fileSize'', v_size%'");
+    expect(tail).toContain("AND prosrc LIKE '%IF v_ver IS NOT NULL AND v_ver IS DISTINCT FROM v_current THEN%'");
+    expect(tail).toContain("AND prosrc LIKE '%Restored from a backup: the portal link was not restored (DEC-45)%'");
   });
 });

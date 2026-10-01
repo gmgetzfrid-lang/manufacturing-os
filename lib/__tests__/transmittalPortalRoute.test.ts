@@ -19,6 +19,11 @@
 //   TRX-12         the unpinned label fallback admits published rows created
 //                  by the issue time and refuses when ambiguous.
 //   TRX-11         a key under another workspace's prefix is never read.
+//   fix pass       the response is a STREAMED body (never one buffered body —
+//                  the platform caps a buffered response at ~4.5 MB); a file
+//                  over the stamping bound is hashed chunk by chunk, re-read
+//                  pinned to the verified ETag (If-Match) and piped through
+//                  unstamped, recorded with the reason.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -41,6 +46,14 @@ const state = vi.hoisted(() => ({
   contentType: "application/pdf" as string | null,
   stamps: [] as Array<Record<string, unknown>>,
   order: [] as string[],
+  // the object store: a claimed ContentLength (null = the real length), its
+  // ETag, every GET's input, a failure for the pinned second read, and
+  // whether a piped body was released
+  contentLength: null as number | null,
+  etag: '"etag-1"' as string | null,
+  getInputs: [] as Array<Record<string, unknown>>,
+  secondGetError: null as Error | null,
+  destroyed: 0,
 }));
 
 function chain(table: string) {
@@ -101,9 +114,23 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 vi.mock("@/lib/r2", () => ({
   r2: {
-    send: vi.fn(async (cmd: { input: { Key: string } }) => {
+    send: vi.fn(async (cmd: { input: { Key: string; IfMatch?: string } }) => {
       state.fetchedKeys.push(cmd.input.Key);
-      return { Body: { transformToByteArray: async () => state.bytes }, ContentType: state.contentType };
+      state.getInputs.push({ ...cmd.input });
+      if (cmd.input.IfMatch !== undefined && state.secondGetError) throw state.secondGetError;
+      const bytes = state.bytes;
+      return {
+        Body: {
+          transformToByteArray: async () => bytes,
+          // a Node SDK body is async-iterable — small chunks, so the PDF sniff spans chunks
+          async *[Symbol.asyncIterator]() { for (let i = 0; i < bytes.length; i += 3) yield bytes.subarray(i, i + 3); },
+          transformToWebStream: () => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes); c.close(); } }),
+          destroy: () => { state.destroyed += 1; },
+        },
+        ContentType: state.contentType,
+        ContentLength: state.contentLength ?? bytes.length,
+        ETag: state.etag ?? undefined,
+      };
     }),
   },
   R2_BUCKET: "b",
@@ -161,6 +188,11 @@ beforeEach(async () => {
   state.contentType = "application/pdf";
   state.stamps = [];
   state.order = [];
+  state.contentLength = null;
+  state.etag = '"etag-1"';
+  state.getInputs = [];
+  state.secondGetError = null;
+  state.destroyed = 0;
 });
 
 describe("GET /api/transmittal file resolver (EGR-1)", () => {
@@ -201,6 +233,7 @@ describe("TRX-5 / EGR-8 — streamed through the route and stamped, never a pres
     expect(res.headers.get("content-type")).toBe("application/pdf");
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="P-101_Rev3.pdf"');
     expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-transmittal-stamped")).toBe("1");
     const body = new Uint8Array(await res.arrayBuffer());
     expect(String.fromCharCode(...body.slice(0, 4))).toBe("%PDF");
     expect(state.stamps).toHaveLength(1);
@@ -220,6 +253,9 @@ describe("TRX-5 / EGR-8 — streamed through the route and stamped, never a pres
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="P-101_Rev3.dwg"');
     expect(state.stamps).toHaveLength(0);
     expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+    expect(res.headers.get("x-transmittal-stamped")).toBe("0");
+    const a = state.audits.find((x) => x.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
+    expect((a.details as Record<string, unknown>).unstampedReason).toBe("not_pdf");
   });
 
   it("the route source signs nothing and returns no URL", async () => {
@@ -227,6 +263,94 @@ describe("TRX-5 / EGR-8 — streamed through the route and stamped, never a pres
     const src = readFileSync("app/api/transmittal/route.ts", "utf8");
     expect(src).not.toMatch(/getSignedUrl/);
     expect(src).not.toMatch(/NextResponse\.json\(\{ url/);
+  });
+});
+
+describe("size — a streamed body, never one buffered response; a large file is verified, pinned and piped", () => {
+  beforeEach(() => {
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.dwg`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+  });
+
+  it("a 5 MB file (over the ~4.5 MB buffered-response cap) comes back whole, as a stream read in several chunks", async () => {
+    const big = new Uint8Array(5 * 1024 * 1024 + 123);
+    for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 0xff;
+    state.bytes = big;
+    state.contentType = "application/acad";
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(big);
+    const res = await get(DOC);
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const parts: Uint8Array[] = [];
+    for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); }
+    expect(parts.length).toBeGreaterThanOrEqual(5); // 1 MiB chunks — not one buffered body
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    expect(total).toBe(big.length);
+    const joined = new Uint8Array(total);
+    let o = 0; for (const p of parts) { joined.set(p, o); o += p.length; }
+    expect(sha(joined)).toBe(sha(big));
+    expect(state.downloads).toHaveLength(1);
+    expect(state.getInputs).toHaveLength(1); // held once, read once
+  });
+
+  it("a PDF over the stamping bound is hashed chunk by chunk, re-read pinned to the verified ETag, piped through unstamped and recorded with the reason", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1; // claimed by the store; the bytes stay small in the test
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = sha(state.bytes);
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+    const res = await get(DOC);
+    expect(res.status).toBe(200);
+    expect(state.stamps).toHaveLength(0);
+    expect(state.getInputs).toEqual([
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf` },
+      { Bucket: "b", Key: `orgs/orgA/d/${DOC}.pdf`, IfMatch: '"etag-1"' },
+    ]);
+    expect(res.headers.get("x-transmittal-stamped")).toBe("0");
+    expect(res.headers.get("content-type")).toBe("application/pdf"); // the object's own type
+    expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes));
+    expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+    const a = state.audits.find((x) => x.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!;
+    expect(a.details).toMatchObject({ stamped: false, unstampedReason: "oversize", servedSha256: sha(state.bytes), hashVerified: true });
+  });
+
+  it("a large file whose digest does not match releases nothing and is never re-read", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileHash = "deadbeef";
+    const res = await get(DOC);
+    expect(res.status).toBe(409);
+    expect(state.getInputs).toHaveLength(1);
+    expect(state.downloads).toHaveLength(0);
+  });
+
+  it("a large object replaced between the check and the send (If-Match refused) records nothing (502)", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    state.secondGetError = Object.assign(new Error("At least one of the pre-conditions you specified did not hold"), { name: "PreconditionFailed" });
+    const res = await get(DOC);
+    expect(res.status).toBe(502);
+    expect(state.downloads).toHaveLength(0);
+  });
+
+  it("a large object with no ETag cannot be pinned, so it is not sent (502)", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    state.etag = null;
+    expect((await get(DOC)).status).toBe(502);
+    expect(state.downloads).toHaveLength(0);
+  });
+
+  it("a refused record releases the opened second read (503, the body destroyed)", async () => {
+    state.contentLength = 64 * 1024 * 1024 + 1;
+    state.downloadErrors = [{ code: "42501", message: "permission denied" }];
+    const res = await get(DOC);
+    expect(res.status).toBe(503);
+    expect(state.destroyed).toBe(1);
+  });
+
+  it("the route streams (no buffered Buffer body) and has the budget to drain a large download", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/api/transmittal/route.ts", "utf8");
+    expect(src).not.toMatch(/new NextResponse\(Buffer\.from\(/);
+    expect(src).toContain("return new NextResponse(piped ? piped.stream : chunkedStream(outBytes ?? new Uint8Array()), {");
+    expect(src).toContain("export const maxDuration = 300;");
+    expect(src).toContain("const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;");
+    expect(src).toContain("new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.key, IfMatch: etag ?? undefined })");
   });
 });
 
@@ -336,9 +460,15 @@ describe("TRX-4 — the link has its own lifecycle", () => {
     const body = await res.json() as Record<string, unknown>;
     expect(body.portalExpiresAt).toBe("2099-01-01T00:00:00Z");
     expect((body.items as Array<Record<string, unknown>>)[0]).toEqual({
-      documentId: DOC, number: "P-101", title: null, rev: "3", statusAsSent: "Issued", effectiveDate: "2026-11-01", fileHash: "abc123",
+      documentId: DOC, number: "P-101", title: null, rev: "3", statusAsSent: "Issued", effectiveDate: "2026-11-01", fileHash: "abc123", fileSize: null,
     });
-    expect(state.rpcs).toEqual([{ fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } }]);
+    (state.transmittal!.items as Array<Record<string, unknown>>)[0].fileSize = 2516582;
+    const again = await (await get()).json() as Record<string, unknown>;
+    expect((again.items as Array<Record<string, unknown>>)[0].fileSize).toBe(2516582);
+    expect(state.rpcs).toEqual([
+      { fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } },
+      { fn: "bump_transmittal_portal_use", args: { p_id: "t1", p_kind: "open" } },
+    ]);
   });
 
   it("a portal receipt records the server-side evidence and is a checked write", async () => {

@@ -184,12 +184,15 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   const trRows = data.transmittals.map((t) => {
     const items = Array.isArray(t.items) ? (t.items as Array<Record<string, unknown>>) : [];
     // TRX-8 / TRX-3: each document as sent — its revision, its status at
-    // issue and a short prefix of the issued file's SHA-256, so the paper
-    // record identifies the exact bytes.
+    // issue, a short prefix of the issued file's SHA-256 and its size, so the
+    // paper record identifies the exact bytes.
     const docList = items.map((i) => {
       const hash = typeof i.fileHash === "string" && i.fileHash ? ` #${esc(i.fileHash.slice(0, 12))}` : "";
+      const size = typeof i.fileSize === "number" && Number.isFinite(i.fileSize) && i.fileSize >= 0
+        ? ` ${i.fileSize < 1048576 ? `${Math.max(1, Math.round(i.fileSize / 1024))} KB` : `${(i.fileSize / 1048576).toFixed(1)} MB`}`
+        : "";
       const state = typeof i.statusAsSent === "string" && i.statusAsSent ? ` (${esc(i.statusAsSent)})` : "";
-      return `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}${state}${hash}`;
+      return `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}${state}${hash}${size}`;
     }).join(", ");
     // TRX-13: the receipt with its evidence — what the server saw on a portal
     // receipt (source address, the recipient's note), who recorded a manual one.

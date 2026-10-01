@@ -15,6 +15,10 @@
 //   TRX-13  the receipt evidence (IP, note, recorder) is mapped and rendered.
 //   TRX-14 / XEDGE-5  the portal URL is built on the public origin and is
 //           null (never hostless) on a server with no NEXT_PUBLIC_SITE_URL.
+//   fix pass  status truth (only the CURRENT revision is issuable; a Rev
+//           mismatch names its cause), the issued file's size on paper, the
+//           combined delete rule (permissive AND the 20260818 restrictive
+//           guard), the Inspector pill's unknown issued count.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -69,7 +73,8 @@ import {
   revokeTransmittalLink, listTransmittalsForDocument, acknowledgeTransmittal, sendTransmittalEmail,
   itemIssueBlocker, isTransmittalIssuable, legalHoldNotice, mayTransmit, portalLinkState, portalRowRefusal,
   portalKeyAllowed, hashPrefix, itemAsSentLabel, receiptEvidence, renderTransmittalSheet, rowToTransmittal,
-  transmittalPortalUrl, portalOriginConfigured, TRANSMIT_CAPABILITY, type Transmittal,
+  transmittalPortalUrl, portalOriginConfigured, TRANSMIT_CAPABILITY, mayDeleteDraft, fileSizeLabel,
+  DRAFT_DELETE_GUARD_ROLES, assertItemsIssuable, type Transmittal,
 } from "@/lib/transmittals";
 import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
 
@@ -144,7 +149,7 @@ describe("TRX-1 — transmit authority is a capability, default the controller p
 describe("TRX-3 — withdrawn, held or file-less items cannot be issued", () => {
   const it1 = { documentId: "d1", number: "P-1", versionId: "v1" };
   it("itemIssueBlocker names the reason; an unreadable hold set blocks (fail closed)", () => {
-    expect(itemIssueBlocker(it1, { found: true, status: "Issued", holds: [] })).toBeNull();
+    expect(itemIssueBlocker(it1, { found: true, status: "Issued", holds: [], currentVersionId: "v1" })).toBeNull();
     expect(itemIssueBlocker(it1, { found: true, status: "Superseded", holds: [] })).toMatch(/withdrawn \(superseded\)/);
     expect(itemIssueBlocker(it1, { found: true, status: "Void", holds: [] })).toMatch(/withdrawn \(void\)/);
     expect(itemIssueBlocker(it1, { found: true, status: "Issued", archivedAt: "2026-01-01", holds: [] })).toMatch(/withdrawn \(archived\)/);
@@ -153,17 +158,17 @@ describe("TRX-3 — withdrawn, held or file-less items cannot be issued", () => 
     expect(itemIssueBlocker(it1, { found: false })).toMatch(/could not be read/);
     expect(itemIssueBlocker({ documentId: "d2", number: "P-2" }, { found: true, status: "Issued", holds: [], currentVersionId: null })).toMatch(/no published file/);
     // a Draft may go out (for review / approval); its status is recorded as sent
-    expect(itemIssueBlocker(it1, { found: true, status: "Draft", holds: [] })).toBeNull();
+    expect(itemIssueBlocker(it1, { found: true, status: "Draft", holds: [], currentVersionId: "v1" })).toBeNull();
   });
   it("isTransmittalIssuable honours the facts when given, and keeps its two-field rule without them", () => {
     const t = { items: [it1], recipientName: "Acme" };
     expect(isTransmittalIssuable(t)).toBe(true);
-    expect(isTransmittalIssuable(t, new Map([["d1", { found: true, status: "Issued", holds: [] }]]))).toBe(true);
+    expect(isTransmittalIssuable(t, new Map([["d1", { found: true, status: "Issued", holds: [], currentVersionId: "v1" }]]))).toBe(true);
     expect(isTransmittalIssuable(t, new Map([["d1", { found: true, status: "Issued", holds: ["X"] }]]))).toBe(false);
     expect(isTransmittalIssuable(t, new Map())).toBe(false); // facts not loaded for the item → not yet
   });
   it("a legal hold asks for confirmation rather than blocking", () => {
-    const facts = new Map([["d1", { found: true, status: "Issued", holds: [], legalHold: true }]]);
+    const facts = new Map([["d1", { found: true, status: "Issued", holds: [], legalHold: true, currentVersionId: "v1" }]]);
     expect(itemIssueBlocker(it1, facts.get("d1"))).toBeNull();
     expect(legalHoldNotice([it1], facts)).toMatch(/P-1 is under a legal hold/);
     expect(legalHoldNotice([it1], new Map([["d1", { found: true, holds: [] }]]))).toBeNull();
@@ -183,6 +188,49 @@ describe("TRX-3 — withdrawn, held or file-less items cannot be issued", () => 
     db.handlers["browser:documents"] = () => ({ data: [{ id: "d1", status: "Superseded", archived_at: null, current_version_id: "v1" }], error: null });
     await expect(issueTransmittal("t1", actor)).rejects.toThrow(/withdrawn \(superseded\)/);
     expect(db.calls.some((c) => c.table === "transmittals" && has(c.ops, "update"))).toBe(false);
+  });
+  it("status truth: an item pinned to a revision that is no longer current is refused, naming the revision that superseded it", () => {
+    const stale = { documentId: "d1", number: "P-200-001", rev: "C", versionId: "vC" };
+    const facts = { found: true, status: "Issued", holds: [], currentVersionId: "vD", rev: "D", currentRevisionLabel: "D" };
+    expect(itemIssueBlocker(stale, facts)).toBe("P-200-001 Rev C has been superseded by Rev D — remove P-200-001 and add it again to send the current revision.");
+    // re-added at the current revision it is issuable
+    expect(itemIssueBlocker({ ...stale, rev: "D", versionId: "vD" }, facts)).toBeNull();
+    // the label of the current file unread → still refused (the pin is not current), the label just unnamed
+    expect(itemIssueBlocker(stale, { ...facts, currentRevisionLabel: undefined })).toMatch(/superseded by Rev a newer revision/);
+    // a pin on a document with no current file at all
+    expect(itemIssueBlocker(stale, { ...facts, currentVersionId: null })).toMatch(/no published file to send/);
+  });
+  it("a Rev mismatch names its cause: the document's Rev field drifted from its file (correct the document) vs a stale item (re-add it)", () => {
+    const facts = { found: true, status: "Issued", holds: [], currentVersionId: "vA", rev: "B", currentRevisionLabel: "A" };
+    // the composer built the item from documents.rev (B) and the current version (labelled A): re-adding cannot help
+    expect(itemIssueBlocker({ documentId: "d2", number: "P-300", rev: "B", versionId: "vA" }, facts))
+      .toBe("P-300: the document's Rev field (B) does not match its current file (Rev A) — correct the document's revision before issuing it.");
+    // an item whose rev matches neither is stale
+    expect(itemIssueBlocker({ documentId: "d2", number: "P-300", rev: "X" }, { ...facts, rev: "A" }))
+      .toBe("P-300 is listed at Rev X, but its current file is Rev A — remove P-300 and add it again.");
+    // labels compared trimmed; an unread label leaves it to the database
+    expect(itemIssueBlocker({ documentId: "d2", number: "P-300", rev: " A ", versionId: "vA" }, { ...facts, rev: "A" })).toBeNull();
+    expect(itemIssueBlocker({ documentId: "d2", number: "P-300", rev: "B", versionId: "vA" }, { ...facts, currentRevisionLabel: undefined })).toBeNull();
+  });
+  it("assertItemsIssuable reads the current files' labels and refuses a superseded pin before any write", async () => {
+    db.handlers["browser:documents"] = () => ({ data: [{ id: "d1", status: "Issued", archived_at: null, current_version_id: "vD", rev: "D" }], error: null });
+    db.handlers["browser:document_versions"] = () => ({ data: [{ id: "vD", revision_label: "D" }], error: null });
+    db.handlers["browser:document_holds"] = () => ({ data: [], error: null });
+    await expect(assertItemsIssuable(ORG, [{ documentId: "d1", number: "P-200-001", rev: "C", versionId: "vC" }]))
+      .rejects.toThrow("P-200-001 Rev C has been superseded by Rev D");
+    const docRead = db.calls.find((c) => c.table === "documents")!;
+    expect(String(arg(docRead.ops, "select")![0])).toContain("rev");
+    const verRead = db.calls.find((c) => c.table === "document_versions")!;
+    expect(arg(verRead.ops, "in", "id")).toEqual(["id", ["vD"]]);
+    expect(arg(verRead.ops, "eq", "org_id")).toEqual(["org_id", ORG]);
+    // the current pin passes
+    await expect(assertItemsIssuable(ORG, [{ documentId: "d1", number: "P-200-001", rev: "D", versionId: "vD" }])).resolves.toBeUndefined();
+  });
+  it("the composer reads the current file's label and the document's Rev field into its facts", () => {
+    const page = src("app/(protected)/transmittals/page.tsx");
+    expect(page).toContain('select("id, status, archived_at, current_version_id, legal_hold, library_id, rev")');
+    expect(page).toContain('supabase.from("document_versions").select("id, revision_label").eq("org_id", orgId).in("id", currentIds)');
+    expect(page).toMatch(/currentRevisionLabel: d\.current_version_id && labelOf\.has\(String\(d\.current_version_id\)\) \? labelOf\.get\(String\(d\.current_version_id\)\) : undefined,/);
   });
   it("the composer's picker excludes the shared not-current set and archived documents; a withdrawn deep link is not pre-loaded", () => {
     const page = src("app/(protected)/transmittals/page.tsx");
@@ -254,6 +302,33 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     expect(db.audits.map((a) => a.action)).toEqual(["TRANSMITTAL_VOIDED", "TRANSMITTAL_LINK_REVOKED"]);
   });
 
+  it("Delete is drawn from BOTH delete policies: the author; otherwise a controller who is also Admin / Manager or manages the draft's project", () => {
+    const draft = { status: "draft" as const, createdBy: "u-eng", projectId: "p1" };
+    // the author, whatever their roles
+    expect(mayDeleteDraft(draft, { role: "Engineer-1", roles: ["Engineer-1"], uid: "u-eng" })).toBe(true);
+    // a DocCtrl who is not Admin / Manager: the RESTRICTIVE 20260818 guard refuses — not shown
+    expect(mayDeleteDraft(draft, { role: "DocCtrl", roles: ["DocCtrl"], uid: "u-dc" })).toBe(false);
+    // ... unless they manage the draft's project
+    expect(mayDeleteDraft(draft, { role: "DocCtrl", roles: ["DocCtrl"], uid: "u-dc" }, new Set(["p1"]))).toBe(true);
+    expect(mayDeleteDraft({ ...draft, projectId: null }, { role: "DocCtrl", roles: ["DocCtrl"], uid: "u-dc" }, new Set(["p1"]))).toBe(false);
+    // Admin (a controller, and Admin) — and a DocCtrl who also holds Manager (additive)
+    expect(mayDeleteDraft(draft, { role: "Admin", roles: ["Admin"], uid: "u-a" })).toBe(true);
+    expect(mayDeleteDraft(draft, { role: "Manager", roles: ["Manager", "DocCtrl"], uid: "u-m" })).toBe(true);
+    // a Manager who is not a controller: the permissive policy refuses
+    expect(mayDeleteDraft(draft, { role: "Manager", roles: ["Manager"], uid: "u-m" })).toBe(false);
+    // never an issued record
+    expect(mayDeleteDraft({ ...draft, status: "issued" as const }, { role: "Admin", roles: ["Admin"], uid: "u-eng" })).toBe(false);
+    expect(DRAFT_DELETE_GUARD_ROLES).toEqual(["Admin", "Manager"]);
+  });
+  it("the register draws Delete from mayDeleteDraft (with the projects the controller manages), and the refusal names the real rule", async () => {
+    const page = src("app/(protected)/transmittals/page.tsx");
+    expect(page).toContain("const canDeleteDraft = (t: Transmittal) => mayDeleteDraft(t, principal, managedProjects);");
+    expect(page).not.toContain("const canDeleteDraft = (t: Transmittal) => isController || (!!uid && t.createdBy === uid);");
+    expect(page).toContain('supabase.from("project_members").select("project_id, role").eq("user_id", uid)');
+    db.handlers["browser:transmittals"] = () => ({ data: [], error: null });
+    await expect(deleteTransmittal("t1")).rejects.toThrow(/its author can; otherwise a Document Controller who is also an Admin or Manager, or who manages the draft's project/);
+    expect(src("lib/transmittals.ts")).not.toContain("only its author or a Document Controller can delete it");
+  });
   it("void is constrained to issued / acknowledged (TRX-2 dw3); revoke to a live link", async () => {
     db.handlers["browser:transmittals"] = () => ({ data: [{ id: "t1" }], error: null });
     await voidTransmittal("t1", actor);
@@ -421,6 +496,16 @@ describe("TRX-9 — the transmittal trail says when it could not be read", () =>
     db.handlers["browser:transmittals"] = () => ({ data: null, error: { code: "42P01", message: "relation transmittals does not exist" } });
     expect(await listTransmittalsForDocument(ORG, "d1")).toEqual([]);
   });
+  it("the Inspector's distribution pill marks the issued count unknown on a failed read and still shows the acks counts", () => {
+    const panel = src("components/documents/InspectorPanel.tsx");
+    expect(panel).toContain("useState<{ issued: number | null; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null)");
+    // the transmittal read is caught on its own …
+    expect(panel).toMatch(/issuedCapped = list\.length >= 50;\s*\n\s*\} catch \{ issued = null; \}\s*\n\s*try \{\s*\n\s*let ackDone = 0;/);
+    // … and the pill renders the unknown count beside the acks
+    expect(panel).toContain("distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.ackTotal > 0)");
+    expect(panel).toContain('{distSummary.issued === null ? "? issued" :');
+    expect(panel).not.toMatch(/\} catch \{ if \(alive\) setDistSummary\(null\); \}/);
+  });
   it("the Inspector's TransmittalTrail renders the failure instead of an empty trail", () => {
     const panel = src("components/documents/InspectorPanel.tsx");
     const trail = panel.slice(panel.indexOf("function TransmittalTrail("));
@@ -463,7 +548,7 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
     recipientName: "Jane Doe", recipientCompany: "BuildCo",
     acknowledgedByName: "Jane Doe", acknowledgedAt: "2026-10-01T09:00:00Z", acknowledgedVia: "portal",
     acknowledgedMeta: { ip: "203.0.113.9", note: "received, distributing", userAgent: "UA" },
-    items: [{ documentId: "d1", number: "P-101", title: "Plot", rev: "C", versionId: "v1", fileHash: "0123456789abcdef0123", statusAsSent: "Issued", effectiveDate: "2099-01-01" }],
+    items: [{ documentId: "d1", number: "P-101", title: "Plot", rev: "C", versionId: "v1", fileHash: "0123456789abcdef0123", fileSize: 2516582, statusAsSent: "Issued", effectiveDate: "2099-01-01" }],
   };
   it("hashPrefix / itemAsSentLabel", () => {
     expect(hashPrefix("0123456789abcdef")).toBe("0123456789ab");
@@ -478,6 +563,17 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
     expect(html).toContain("SHA-256");
     expect(html).toContain("0123456789ab");
     expect(html).toContain("effective 2099-01-01 (not yet in force)");
+    // TRX-8 dw1: the issued file's size beside the hash prefix
+    expect(html).toContain("SHA-256 · size");
+    expect(html).toContain('0123456789ab<div class="muted">2.4 MB</div>');
+  });
+  it("fileSizeLabel", () => {
+    expect(fileSizeLabel(512)).toBe("512 B");
+    expect(fileSizeLabel(2516582)).toBe("2.4 MB");
+    expect(fileSizeLabel(39845888)).toBe("38.0 MB");
+    expect(fileSizeLabel(150 * 1024 * 1024)).toBe("150 MB");
+    expect(fileSizeLabel(null)).toBeNull();
+    expect(fileSizeLabel(Number.NaN)).toBeNull();
   });
   it("the sheet's receipt block shows the portal-side evidence (time, source address, the recipient's note)", () => {
     const html = renderTransmittalSheet(t);
@@ -492,13 +588,13 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
       id: "t", org_id: "o", seq: 1, number: "TR-0001", status: "acknowledged",
       acknowledged_meta: { ip: "1.2.3.4", note: "ok", userAgent: "UA" },
       portal_expires_at: "2026-12-30", portal_revoked_at: null, portal_open_count: 3, portal_download_count: 2, portal_last_used_at: "2026-10-01",
-      items: [{ documentId: "d1", number: "P", rev: "A", versionId: "v", fileHash: "h", statusAsSent: "Issued", effectiveDate: "2026-11-01" }],
+      items: [{ documentId: "d1", number: "P", rev: "A", versionId: "v", fileHash: "h", fileSize: 1234, statusAsSent: "Issued", effectiveDate: "2026-11-01" }],
     });
     expect(r.acknowledgedMeta).toMatchObject({ ip: "1.2.3.4", note: "ok", userAgent: "UA" });
     expect(r.portalExpiresAt).toBe("2026-12-30");
     expect(r.portalOpenCount).toBe(3);
     expect(r.portalDownloadCount).toBe(2);
-    expect(r.items[0]).toMatchObject({ fileHash: "h", statusAsSent: "Issued", effectiveDate: "2026-11-01" });
+    expect(r.items[0]).toMatchObject({ fileHash: "h", fileSize: 1234, statusAsSent: "Issued", effectiveDate: "2026-11-01" });
     // a database without 20261133 has no usage trail — it reads as unknown, never as "not opened"
     const legacy = rowToTransmittal({ id: "t", org_id: "o", seq: 1, number: "TR-0001", status: "issued" });
     expect(legacy.portalOpenCount).toBeNull();
@@ -512,17 +608,20 @@ describe("TRX-8 / TRX-3 / TRX-13 — the cover sheet and evidence carry the as-s
       transmittals: [{
         number: "TR-0007", status: "acknowledged", acknowledged_by_name: "Jane", acknowledged_at: "2026-10-01T09:00:00Z",
         acknowledged_via: "portal", acknowledged_meta: { ip: "203.0.113.9", note: "<b>ok</b>" },
-        items: [{ number: "P-101", rev: "C", fileHash: "0123456789abcdef", statusAsSent: "Issued" }],
+        items: [{ number: "P-101", rev: "C", fileHash: "0123456789abcdef", fileSize: 2516582, statusAsSent: "Issued" }],
       }],
     });
-    expect(html).toContain("P-101 RC (Issued) #0123456789ab");
+    expect(html).toContain("P-101 RC (Issued) #0123456789ab 2.4 MB");
     expect(html).toContain("portal · from 203.0.113.9 · note: “&lt;b&gt;ok&lt;/b&gt;”");
   });
   it("the portal page discloses what the receipt records and renders the as-sent fields", () => {
     const portal = src("app/transmittal/[token]/page.tsx");
     expect(portal).toMatch(/the network address you confirm from are recorded/);
     expect(portal).toMatch(/i\.statusAsSent && <span/);
-    expect(portal).toMatch(/SHA-256 \{i\.fileHash\.slice\(0, 12\)\}/);
+    expect(portal).toContain("`SHA-256 ${i.fileHash.slice(0, 12)}…`");
+    expect(portal).toContain("{sizeLabel(i.fileSize) ?? \"\"}");
+    // a file released without the UNCONTROLLED marking is said to be so
+    expect(portal).toContain('if (res.headers.get("x-transmittal-stamped") === "0") {');
     expect(portal).toMatch(/state === "revoked" \?/);
     expect(portal).toMatch(/state === "expired" \?/);
     expect(portal).not.toMatch(/window\.open\(body\.url/);

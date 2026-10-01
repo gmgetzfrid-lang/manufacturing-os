@@ -19,6 +19,18 @@
 // same audience). A file that cannot be stamped still goes out through this
 // route, recorded as unstamped.
 //
+// Size: the response is a STREAMED body handed out in 1 MiB chunks, never one
+// buffered body — the platform caps a buffered function response at ~4.5 MB
+// (app/api/admin/restore/begin/route.ts), and a multi-sheet drawing set is
+// routinely larger. A file up to PORTAL_STAMP_MAX_BYTES is held once in
+// memory, verified, stamped (a PDF) and streamed. A larger one is never held
+// whole: a first read hashes it chunk by chunk, and only when the digest
+// matches is a second read — pinned to the verified object by If-Match on its
+// ETag, so the bytes cannot change between the check and the send — piped
+// through to the recipient. It goes out unstamped (stamping would need the
+// whole document in memory twice) and its distribution row says so, with the
+// reason, exactly like a PDF that cannot be stamped.
+//
 // TRX-9: every portal pull is a download_audits row BEFORE the bytes leave —
 // user_id NULL, transmittal_id set, the served version_id, source
 // "transmittal_portal" (DEC-44 §1) — so stale-copy recall sees the external
@@ -37,7 +49,52 @@ import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// The download is streamed through the function, so the function lives while
+// the recipient's connection drains it (the same budget the repo's other
+// long transfers take).
+export const maxDuration = 300;
+
+/** Above this the portal does not stamp (and never holds the file whole):
+ *  pdf-lib keeps the parsed document and writes a second copy, and a drawing
+ *  set beyond this would spend the function's memory and time stamping
+ *  instead of delivering. Stated bound (DEC-60 §5). */
+const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;
+/** The streamed body's chunk size. */
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+
+/** A streamed body over bytes already in memory — handed out a chunk at a
+ *  time, so the response is never one buffered body. */
+function chunkedStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  let offset = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= bytes.length) { controller.close(); return; }
+      const end = Math.min(offset + STREAM_CHUNK_BYTES, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+}
+
+/** SHA-256 of an object body read chunk by chunk (constant memory), plus its
+ *  first bytes (to tell a PDF from anything else). */
+async function hashBody(body: unknown): Promise<{ sha256: string; head: Uint8Array }> {
+  const h = createHash("sha256");
+  let head = new Uint8Array();
+  for await (const chunk of body as AsyncIterable<Uint8Array>) {
+    if (head.length < 4) {
+      const take = chunk.subarray(0, 4 - head.length);
+      const next = new Uint8Array(head.length + take.length);
+      next.set(head);
+      next.set(take, head.length);
+      head = next;
+    }
+    h.update(chunk);
+  }
+  return { sha256: h.digest("hex"), head };
+}
+
+const looksLikePdf = (b: Uint8Array) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -56,7 +113,7 @@ async function loadByToken(token: string) {
 type Item = {
   documentId?: string; number?: string; title?: string | null; rev?: string | null;
   versionId?: string | null; version_id?: string | null;
-  fileHash?: string | null; statusAsSent?: string | null; effectiveDate?: string | null;
+  fileHash?: string | null; fileSize?: number | null; statusAsSent?: string | null; effectiveDate?: string | null;
 };
 
 type Resolved =
@@ -146,15 +203,29 @@ export async function GET(req: NextRequest) {
       return bad("The as-sent file for this document isn't available — contact the issuer.", 404);
     }
 
-    // Pull the bytes server-side (no presigned URL leaves this route).
-    let source: Uint8Array;
+    // Pull the bytes server-side (no presigned URL leaves this route). A file
+    // up to the stamping bound is held once in memory; a larger one is only
+    // ever hashed chunk by chunk here, then re-read, pinned, for the send.
+    let source: Uint8Array | null = null;
     let objectType: string | null = null;
+    let etag: string | null = null;
+    let servedSha256: string;
+    let head: Uint8Array;
     try {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.key }));
-      const bytes = await obj.Body?.transformToByteArray();
-      if (!bytes) throw new Error("empty object body");
-      source = bytes;
       objectType = (obj.ContentType as string | undefined) ?? null;
+      const size = typeof obj.ContentLength === "number" ? obj.ContentLength : null;
+      if (size !== null && size > PORTAL_STAMP_MAX_BYTES) {
+        etag = (obj.ETag as string | undefined) ?? null;
+        if (!obj.Body || !etag) throw new Error("large object without a body or an ETag");
+        ({ sha256: servedSha256, head } = await hashBody(obj.Body));
+      } else {
+        const bytes = await obj.Body?.transformToByteArray();
+        if (!bytes) throw new Error("empty object body");
+        source = bytes;
+        servedSha256 = createHash("sha256").update(source).digest("hex");
+        head = source.subarray(0, 4);
+      }
     } catch (e) {
       console.warn("[transmittal portal] file fetch failed", (e as Error).message);
       return bad("The file couldn't be fetched right now — try again shortly.", 502);
@@ -163,7 +234,6 @@ export async function GET(req: NextRequest) {
     // TRX-8: the bytes must be the bytes that were issued — the hash the
     // database wrote onto the item at issue, or (an item issued before
     // 20261133) the hash on the version row it resolved to.
-    const servedSha256 = createHash("sha256").update(source).digest("hex");
     const recorded = (item.fileHash || file.fileHash || "").trim().toLowerCase();
     if (recorded && recorded !== servedSha256) {
       console.error("[transmittal portal] file hash mismatch — refused", { transmittal: t.id, document: fileDoc, version: file.versionId });
@@ -184,10 +254,11 @@ export async function GET(req: NextRequest) {
     const origin = publicOrigin();
     const verifyUrl = origin ? `${origin}/verify/${fileDoc}?v=${file.versionId}` : undefined;
     const issuedOn = t.issued_at ? new Date(String(t.issued_at)).toISOString().slice(0, 10) : null;
-    const isPdf = source.length > 4 && source[0] === 0x25 && source[1] === 0x50 && source[2] === 0x44 && source[3] === 0x46;
-    let outBytes: Uint8Array = source;
+    const isPdf = looksLikePdf(head);
+    let outBytes: Uint8Array | null = source;
     let stamped = false;
-    if (isPdf) {
+    let unstampedReason: "not_pdf" | "stamp_failed" | "oversize" | null = !isPdf ? "not_pdf" : source ? null : "oversize";
+    if (isPdf && source) {
       try {
         const pdfDoc = await PDFDocument.load(source);
         await applyStampToPdfDoc(pdfDoc, {
@@ -199,8 +270,28 @@ export async function GET(req: NextRequest) {
         });
         outBytes = await pdfDoc.save();
         stamped = true;
+        unstampedReason = null;
       } catch (e) {
+        unstampedReason = "stamp_failed";
         console.warn("[transmittal portal] stamping failed — delivering unstamped", (e as Error).message);
+      }
+    }
+
+    // A large file goes out as a second read of the SAME object: If-Match on
+    // the ETag just verified, so a replaced object is refused (412) instead of
+    // being sent under the verified digest. Opened BEFORE the record is
+    // written, so a failure here records nothing.
+    let piped: { stream: ReadableStream<Uint8Array>; release: () => void } | null = null;
+    if (!outBytes) {
+      try {
+        const again = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.key, IfMatch: etag ?? undefined }));
+        const body = again.Body as ({ transformToWebStream?: () => ReadableStream<Uint8Array>; destroy?: () => void } | undefined);
+        const stream = body?.transformToWebStream?.();
+        if (!stream) throw new Error("no streamable body");
+        piped = { stream, release: () => { try { body?.destroy?.(); } catch { /* already closed */ } } };
+      } catch (e) {
+        console.warn("[transmittal portal] verified large file could not be re-read for the send", (e as Error).message);
+        return bad("The file couldn't be fetched right now — try again shortly.", 502);
       }
     }
 
@@ -227,6 +318,7 @@ export async function GET(req: NextRequest) {
       ({ error: recordError } = await supabaseAdmin.from("download_audits").insert({ ...base, user_id: t.created_by }));
     }
     if (recordError) {
+      piped?.release();
       console.error("[transmittal portal] download_audits insert failed — portal download refused, nothing left the building", {
         transmittal: t.id, document: fileDoc, version: file.versionId, message: recordError.message,
       });
@@ -242,7 +334,7 @@ export async function GET(req: NextRequest) {
       user_email: (t.recipient_email as string | null) ?? null,
       details: {
         number: t.number, documentId: fileDoc, docNumber: item.number, rev, versionId: file.versionId,
-        issuedBy: t.created_by ?? null, stamped, servedSha256, hashVerified: !!recorded,
+        issuedBy: t.created_by ?? null, stamped, unstampedReason, servedSha256, hashVerified: !!recorded,
       },
     }).then(() => undefined, () => undefined);
     await bumpUse(String(t.id), "download");
@@ -250,11 +342,14 @@ export async function GET(req: NextRequest) {
     const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
     const ext = stamped ? ".pdf" : (file.key.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? "");
     const filename = `${safe(label)}_Rev${safe(rev ?? "0")}${ext}`;
-    return new NextResponse(Buffer.from(outBytes), {
+    // A streamed body either way — never one buffered response.
+    return new NextResponse(piped ? piped.stream : chunkedStream(outBytes ?? new Uint8Array()), {
       headers: {
         "Content-Type": stamped ? "application/pdf" : (objectType || "application/octet-stream"),
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
+        // The recipient's page can say a file arrived without the stamp.
+        "X-Transmittal-Stamped": stamped ? "1" : "0",
       },
     });
   }
@@ -280,6 +375,7 @@ export async function GET(req: NextRequest) {
       documentId: i.documentId, number: i.number, title: i.title ?? null, rev: i.rev ?? null,
       // TRX-3 / TRX-8: what was sent, as the database recorded it at issue.
       statusAsSent: i.statusAsSent ?? null, effectiveDate: i.effectiveDate ?? null, fileHash: i.fileHash ?? null,
+      fileSize: typeof i.fileSize === "number" ? i.fileSize : null,
     })),
   });
 }

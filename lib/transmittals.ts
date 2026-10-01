@@ -9,9 +9,10 @@
 // document number/title/rev as-sent, so the record stays truthful even after
 // the documents rev forward (or get deleted). Items live in a JSONB column.
 // At the ISSUE transition the database (trg_transmittals_guard, 20261133)
-// completes the snapshot itself — the pinned version, its file hash, the
-// document's status and the revision's effective date as sent (TRX-3 /
-// TRX-8 / TRX-12) — so the browser cannot author them.
+// completes the snapshot itself — the pinned version (always the document's
+// CURRENT revision), its file hash and size, the document's status and the
+// revision's effective date as sent (TRX-3 / TRX-8 / TRX-12) — so the browser
+// cannot author them.
 //
 // Who may do what (TRX-1 / TRX-2 / TRX-6, enforced at the database):
 //   * every active member may DRAFT, and edit / delete their own drafts;
@@ -37,6 +38,9 @@ import { assertNotOnHold, type HoldGateClient } from "@/lib/holdGate";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { orgKeyPrefix } from "@/lib/shedKeyGuard";
 import { loadCapabilityPolicyStrict, policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { memberHoldsAny } from "@/lib/roleHeld";
+import type { Role } from "@/types/schema";
 
 export type TransmittalStatus = "draft" | "issued" | "acknowledged" | "voided";
 
@@ -67,6 +71,8 @@ export interface TransmittalItem {
   versionId?: string | null;
   /** As-sent snapshot, written by the database at issue (20261133). */
   fileHash?: string | null;
+  /** Bytes of the file issued (document_versions.size at issue). */
+  fileSize?: number | null;
   statusAsSent?: string | null;
   effectiveDate?: string | null;
 }
@@ -140,6 +146,12 @@ export interface IssueFacts {
   status?: string | null;
   archivedAt?: string | null;
   currentVersionId?: string | null;
+  /** The document's Rev field (documents.rev). */
+  rev?: string | null;
+  /** The revision label of the document's CURRENT file (the current
+   *  version's revision_label). `undefined` = not read; the database still
+   *  decides at issue. */
+  currentRevisionLabel?: string | null;
   legalHold?: boolean | null;
   /** Active operational holds (reasons). `null` = the hold read FAILED. */
   holds?: string[] | null;
@@ -151,8 +163,15 @@ export interface IssueFacts {
  *  database applies the same rule at the issue transition (20261133); this
  *  is the composer's copy, so the button says why before a round-trip. An
  *  unreadable hold set BLOCKS (fail closed, the lib/holdGate.ts stance). A
- *  legal hold does not block — it asks for confirmation (legalHoldNotice). */
-export function itemIssueBlocker(item: Pick<TransmittalItem, "number"> & Partial<Pick<TransmittalItem, "documentId" | "versionId">>, facts: IssueFacts | undefined): string | null {
+ *  legal hold does not block — it asks for confirmation (legalHoldNotice).
+ *
+ *  Status truth: what goes out is the document's CURRENT revision. An item
+ *  pinned to an older version (it was added before the document revved up)
+ *  is refused with the revision that superseded it, and an item whose Rev
+ *  does not match the current file's label is refused with the cause — the
+ *  document's own Rev field drifted from its file (correct the document), or
+ *  the item is stale (remove it and add it again). */
+export function itemIssueBlocker(item: Pick<TransmittalItem, "number"> & Partial<Pick<TransmittalItem, "documentId" | "versionId" | "rev">>, facts: IssueFacts | undefined): string | null {
   const label = item.number || "This document";
   if (!facts || facts.found === false) return `${label} could not be read — it may have been deleted or you can't see it.`;
   if (facts.archivedAt || NOT_CURRENT_STATUSES.has(facts.status ?? "")) {
@@ -161,7 +180,19 @@ export function itemIssueBlocker(item: Pick<TransmittalItem, "number"> & Partial
   }
   if (facts.holds === null) return `Couldn't confirm ${label} is free of holds — it is treated as held.`;
   if ((facts.holds?.length ?? 0) > 0) return `${label} is under an active hold (${facts.holds!.join(", ")}) — release it before issuing.`;
-  if (!item.versionId && !facts.currentVersionId) return `${label} has no published file to send.`;
+  if (!facts.currentVersionId) return `${label} has no published file to send.`;
+  const current = typeof facts.currentRevisionLabel === "string" ? facts.currentRevisionLabel.trim() : null;
+  if (item.versionId && item.versionId !== facts.currentVersionId) {
+    return `${label} Rev ${item.rev?.trim() || "?"} has been superseded by Rev ${current || "a newer revision"} — remove ${label} and add it again to send the current revision.`;
+  }
+  const itemRev = item.rev?.trim() || null;
+  if (current && itemRev && current !== itemRev) {
+    const docRev = facts.rev?.trim() || null;
+    if (docRev === itemRev) {
+      return `${label}: the document's Rev field (${docRev}) does not match its current file (Rev ${current}) — correct the document's revision before issuing it.`;
+    }
+    return `${label} is listed at Rev ${itemRev}, but its current file is Rev ${current} — remove ${label} and add it again.`;
+  }
   return null;
 }
 
@@ -201,6 +232,31 @@ export function mayTransmit(
       libraryId ? { libraryId } : null);
   if (libraryIds.length === 0) return check(null);
   return libraryIds.every((lib) => check(lib ?? null));
+}
+
+/** TRX-7: the roles the RESTRICTIVE `transmittals_delete_guard` (20260818,
+ *  unchanged) admits through `is_org_admin_or_manager` — its mirror here,
+ *  the way `isControllerPrincipal` mirrors `is_org_controller`. */
+export const DRAFT_DELETE_GUARD_ROLES: readonly string[] = ["Admin", "Manager"];
+
+/** TRX-7: may this principal delete this draft? The database ANDs two
+ *  policies: the permissive `transmittals_delete` (20261133 — a draft, by a
+ *  controller or its active author) and the RESTRICTIVE
+ *  `transmittals_delete_guard` (20260818 — an Admin / Manager, the author,
+ *  or someone who can manage the draft's project). Together: the author;
+ *  otherwise a controller who is ALSO an Admin / Manager or manages the
+ *  draft's project (`managedProjectIds`: projects the principal owns or is
+ *  an owner / collaborator on — can_manage_project's other arms). */
+export function mayDeleteDraft(
+  t: Pick<Transmittal, "status" | "createdBy" | "projectId">,
+  principal: { role?: string | null; roles?: string[] | null; uid?: string | null },
+  managedProjectIds: ReadonlySet<string> = new Set(),
+): boolean {
+  if (t.status !== "draft") return false;
+  if (principal.uid && t.createdBy === principal.uid) return true;
+  const member = { role: principal.role ?? null, roles: principal.roles ?? [] };
+  if (!isControllerPrincipal({ role: (member.role ?? "Viewer") as Role, roles: member.roles as Role[] })) return false;
+  return memberHoldsAny(member, DRAFT_DELETE_GUARD_ROLES) || (!!t.projectId && managedProjectIds.has(t.projectId));
 }
 
 /** TRX-4: the state of the portal LINK, independent of the record's status. */
@@ -244,6 +300,18 @@ export function portalKeyAllowed(key: string, orgId: string): boolean {
 export function hashPrefix(hash: string | null | undefined, n = 12): string | null {
   const h = (hash ?? "").trim();
   return h ? h.slice(0, n) : null;
+}
+
+/** TRX-8: the issued file's size as a paper record prints it ("2.4 MB"), or
+ *  null when the snapshot carries none. */
+export function fileSizeLabel(bytes: number | null | undefined): string | null {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[u]}`;
 }
 
 /** TRX-3: the as-sent state line for one item ("Issued · effective 2026-11-01
@@ -292,7 +360,7 @@ export function receiptEvidence(t: Pick<Transmittal, "acknowledgedByName" | "ack
  * fully-formed Transmittal and returns a self-contained HTML document.
  */
 export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: string | null; qrDataUrl?: string | null }): string {
-  const showAsSent = (t.items ?? []).some((it) => it.statusAsSent || it.effectiveDate || it.fileHash);
+  const showAsSent = (t.items ?? []).some((it) => it.statusAsSent || it.effectiveDate || it.fileHash || it.fileSize != null);
   const itemRows = (t.items ?? []).map((it, i) => `
     <tr>
       <td class="muted">${i + 1}</td>
@@ -300,7 +368,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
       <td>${esc(it.title || "—")}</td>
       <td class="mono">${esc(it.rev || "—")}</td>${showAsSent ? `
       <td>${esc(itemAsSentLabel(it) || "—")}</td>
-      <td class="mono">${esc(hashPrefix(it.fileHash) || "—")}</td>` : ""}
+      <td class="mono">${esc(hashPrefix(it.fileHash) || "—")}${fileSizeLabel(it.fileSize) ? `<div class="muted">${esc(fileSizeLabel(it.fileSize))}</div>` : ""}</td>` : ""}
     </tr>`).join("");
 
   const meta = (label: string, value: string) =>
@@ -370,7 +438,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   ${(t.items?.length ?? 0) === 0
     ? '<div class="muted" style="font-style:italic;padding:8px 0">No documents on this transmittal.</div>'
     : `<table>
-        <thead><tr><th style="width:32px">#</th><th>Number</th><th>Title</th><th style="width:80px">Rev</th>${showAsSent ? '<th>Status as sent</th><th style="width:110px">SHA-256</th>' : ""}</tr></thead>
+        <thead><tr><th style="width:32px">#</th><th>Number</th><th>Title</th><th style="width:80px">Rev</th>${showAsSent ? '<th>Status as sent</th><th style="width:110px">SHA-256 · size</th>' : ""}</tr></thead>
         <tbody>${itemRows}</tbody>
       </table>`}
 
@@ -388,7 +456,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
     </div>
   </div>` : ""}
 
-  <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.${showAsSent ? " Each SHA-256 prefix identifies the exact file issued." : ""}</div>
+  <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.${showAsSent ? " Each SHA-256 prefix (and size) identifies the exact file issued." : ""}</div>
 </body></html>`;
 }
 
@@ -545,6 +613,7 @@ function toItem(it: Record<string, unknown>): TransmittalItem {
   };
   // The as-sent snapshot keys exist only on items issued after 20261133.
   if (typeof it.fileHash === "string" && it.fileHash) out.fileHash = it.fileHash;
+  if (typeof it.fileSize === "number" && Number.isFinite(it.fileSize)) out.fileSize = it.fileSize;
   if (typeof it.statusAsSent === "string" && it.statusAsSent) out.statusAsSent = it.statusAsSent;
   if (typeof it.effectiveDate === "string" && it.effectiveDate) out.effectiveDate = it.effectiveDate;
   return out;
@@ -766,11 +835,12 @@ export interface TransmittalActor {
   actorRole?: string;
 }
 
-/** TRX-3 / HLD-1: the app-side issue gate. Reads each item's document and
- *  refuses a withdrawn, unreadable or file-less one, then asks the shared
- *  hold gate (lib/holdGate.ts — fail-closed) for every document. The
- *  database re-applies the rule at the issue transition (20261133); this
- *  copy names the document before the round-trip. */
+/** TRX-3 / HLD-1: the app-side issue gate. Reads each item's document (and
+ *  the revision label of its current file) and refuses a withdrawn,
+ *  unreadable, file-less, superseded-pin or Rev-mismatched one, then asks
+ *  the shared hold gate (lib/holdGate.ts — fail-closed) for every document.
+ *  The database re-applies the rule at the issue transition (20261133);
+ *  this copy names the document and the cause before the round-trip. */
 export async function assertItemsIssuable(
   orgId: string,
   items: TransmittalItem[],
@@ -780,15 +850,34 @@ export async function assertItemsIssuable(
   const ids = [...new Set(items.map((i) => i.documentId).filter(Boolean))];
   const { data, error } = await client
     .from("documents")
-    .select("id, status, archived_at, current_version_id")
+    .select("id, status, archived_at, current_version_id, rev")
     .eq("org_id", orgId)
     .in("id", ids);
   if (error) throw new Error(`Couldn't check the documents before issuing: ${error.message}`);
-  const byId = new Map(((data as Array<Record<string, unknown>> | null) ?? []).map((d) => [String(d.id), d]));
+  const docs = (data as Array<Record<string, unknown>> | null) ?? [];
+  const byId = new Map(docs.map((d) => [String(d.id), d]));
+  // The current files' labels: an unreadable label leaves the label checks to
+  // the database (it refuses with the same cause at issue).
+  const currentIds = [...new Set(docs.map((d) => d.current_version_id as string | null).filter((v): v is string => !!v))];
+  const labelOf = new Map<string, string | null>();
+  if (currentIds.length > 0) {
+    const { data: vers, error: vErr } = await client
+      .from("document_versions")
+      .select("id, revision_label")
+      .eq("org_id", orgId)
+      .in("id", currentIds);
+    if (!vErr) for (const v of (vers as Array<Record<string, unknown>> | null) ?? []) labelOf.set(String(v.id), (v.revision_label as string | null) ?? null);
+  }
   for (const it of items) {
     const d = byId.get(it.documentId);
+    const cur = d ? ((d.current_version_id as string) ?? null) : null;
     const blocker = itemIssueBlocker(it, d
-      ? { found: true, status: (d.status as string) ?? null, archivedAt: (d.archived_at as string) ?? null, currentVersionId: (d.current_version_id as string) ?? null, holds: [] }
+      ? {
+          found: true, status: (d.status as string) ?? null, archivedAt: (d.archived_at as string) ?? null,
+          currentVersionId: cur, rev: (d.rev as string) ?? null,
+          currentRevisionLabel: cur && labelOf.has(cur) ? labelOf.get(cur) : undefined,
+          holds: [],
+        }
       : { found: false });
     if (blocker) throw new Error(blocker);
   }
@@ -924,7 +1013,7 @@ export async function deleteTransmittal(id: string): Promise<void> {
   const { data, error } = await supabase.from("transmittals").delete().eq("id", id).eq("status", "draft").select("id");
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   if (!data || data.length === 0) {
-    throw new Error("The draft was not deleted — it is no longer a draft, or only its author or a Document Controller can delete it.");
+    throw new Error("The draft was not deleted — it is no longer a draft, or you can't delete it (its author can; otherwise a Document Controller who is also an Admin or Manager, or who manages the draft's project).");
   }
 }
 

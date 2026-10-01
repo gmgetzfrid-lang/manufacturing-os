@@ -192,7 +192,9 @@ export default function InspectorPanel({
   // ("3 issued · 8/12 confirmed") without opening them.
   const [activeHoldCount, setActiveHoldCount] = useState(0);
   const [staleHolderCount, setStaleHolderCount] = useState(0);
-  const [distSummary, setDistSummary] = useState<{ issued: number; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null);
+  // `issued` is null when the transmittal trail could not be READ (TRX-9) —
+  // unknown, never zero; the read-and-understood counts still show.
+  const [distSummary, setDistSummary] = useState<{ issued: number | null; issuedCapped: boolean; ackDone: number; ackTotal: number } | null>(null);
   const [holdsRefresh, setHoldsRefresh] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -214,12 +216,19 @@ export default function InspectorPanel({
         const { holders } = await getDocumentRecall(selectedDoc.id, selectedDoc.currentVersionId ?? null);
         if (alive) setStaleHolderCount(holders.filter((h) => !h.hasCurrent).length);
       } catch { if (alive) setStaleHolderCount(0); }
+      // TRX-9: the transmittal read throws on a real error. It is caught on its
+      // own, so an unreadable trail marks the issued count unknown instead of
+      // hiding the read-and-understood progress the acks counts still give.
+      let issued: number | null = null;
+      let issuedCapped = false;
       try {
         const { listTransmittalsForDocument } = await import("@/lib/transmittals");
         const list = await listTransmittalsForDocument(selectedDoc.orgId, selectedDoc.id);
         // listTransmittalsForDocument caps at 50 rows — an honest pill says so.
-        const issued = list.filter((t) => t.status === "issued" || t.status === "acknowledged").length;
-        const issuedCapped = list.length >= 50;
+        issued = list.filter((t) => t.status === "issued" || t.status === "acknowledged").length;
+        issuedCapped = list.length >= 50;
+      } catch { issued = null; }
+      try {
         let ackDone = 0;
         let ackTotal = 0;
         if (selectedDoc.currentVersionId) {
@@ -237,7 +246,7 @@ export default function InspectorPanel({
           ackDone = done ?? 0;
         }
         if (alive) setDistSummary({ issued, issuedCapped, ackDone, ackTotal });
-      } catch { if (alive) setDistSummary(null); }
+      } catch { if (alive) setDistSummary({ issued, issuedCapped, ackDone: 0, ackTotal: 0 }); }
     })();
     return () => { alive = false; };
   }, [selectedDoc?.id, selectedDoc?.orgId, selectedDoc?.currentVersionId, holdsRefresh]);
@@ -607,10 +616,12 @@ export default function InspectorPanel({
           id="distribution"
           title="Distribution & sharing"
           icon={Send}
-          summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
-            ? <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
-                {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
-                {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
+          summary={distSummary && (distSummary.issued === null || distSummary.issued > 0 || distSummary.ackTotal > 0)
+            ? <span
+                title={distSummary.issued === null ? "The transmittal trail could not be read — how many transmittals carried this document is unknown." : undefined}
+                className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+                {distSummary.issued === null ? "? issued" : distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
+                {(distSummary.issued === null || distSummary.issued > 0) && distSummary.ackTotal > 0 ? " · " : ""}
                 {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
               </span>
             : undefined}

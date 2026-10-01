@@ -9,10 +9,12 @@
 //
 // TRX-5: downloads stream through /api/transmittal, which stamps each PDF
 // UNCONTROLLED with the as-issued revision and a verify QR and records the
-// copy before it is released — this page only saves the bytes it is given.
+// copy before it is released — this page only saves the bytes it is given,
+// and says so when a file arrived WITHOUT the marking (not a PDF, or a PDF
+// too large to mark: the route's X-Transmittal-Stamped header).
 // TRX-3 / TRX-8: each document shows its status and effective date AS SENT
-// and the fingerprint (SHA-256) of the file issued. TRX-4: a revoked or
-// expired link says so, distinctly from a voided transmittal.
+// and the fingerprint (SHA-256) and size of the file issued. TRX-4: a revoked
+// or expired link says so, distinctly from a voided transmittal.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -21,7 +23,7 @@ import {
 
 interface PortalItem {
   documentId: string; number: string; title: string | null; rev: string | null;
-  statusAsSent?: string | null; effectiveDate?: string | null; fileHash?: string | null;
+  statusAsSent?: string | null; effectiveDate?: string | null; fileHash?: string | null; fileSize?: number | null;
 }
 interface PortalData {
   number: string; subject: string | null; purpose: string | null; status: string;
@@ -30,6 +32,17 @@ interface PortalData {
   recipientName: string | null; recipientCompany: string | null;
   portalExpiresAt?: string | null;
   items: PortalItem[];
+}
+
+/** The issued file's size, as the record shows it. */
+function sizeLabel(bytes: number | null | undefined): string | null {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[u]}`;
 }
 
 /** What the route's refusal codes mean to the recipient. */
@@ -89,6 +102,9 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      if (res.headers.get("x-transmittal-stamped") === "0") {
+        setMsg({ tone: "ok", text: `${named || "The file"} was released without the UNCONTROLLED marking (it is not a PDF, or it is too large to mark). It is the file as issued — confirm with the issuer that this revision is still current before you use it.` });
+      }
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setDownloading(null); }
@@ -185,7 +201,11 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
                       Effective {i.effectiveDate.slice(0, 10)}{i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10) ? " — not yet in force" : ""}
                     </div>
                   )}
-                  {i.fileHash && <div className="text-[10px] font-mono text-slate-400" title={`SHA-256 of the file issued: ${i.fileHash}`}>SHA-256 {i.fileHash.slice(0, 12)}…</div>}
+                  {(i.fileHash || sizeLabel(i.fileSize)) && (
+                    <div className="text-[10px] font-mono text-slate-400" title={i.fileHash ? `SHA-256 of the file issued: ${i.fileHash}` : undefined}>
+                      {i.fileHash ? `SHA-256 ${i.fileHash.slice(0, 12)}…` : ""}{i.fileHash && sizeLabel(i.fileSize) ? " · " : ""}{sizeLabel(i.fileSize) ?? ""}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => void download(i.documentId)}
@@ -197,7 +217,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current.{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
+          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers. Each PDF is marked UNCONTROLLED with its revision and a QR to check whether it is still current (a file that cannot be marked — not a PDF, or a very large one — is released as issued, and this page tells you when that happens).{data.portalExpiresAt ? ` This link works until ${new Date(data.portalExpiresAt).toLocaleDateString()}.` : ""}</div>
         </div>
 
         {data.notes && (
