@@ -236,6 +236,15 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 - [ ] publicOrigin() throws (or the caller refuses to print/email) when NEXT_PUBLIC_SITE_URL is unset on the server, instead of returning ""
 - [ ] a test asserts transmittalPortalUrl returns an absolute NEXT_PUBLIC_SITE_URL-rooted URL with window undefined
 
+**Partial (2026-10-01, document-control Round F wave 2).** The transmittal limb is closed (see `TRX-14`): `transmittalPortalUrl` is built on `publicOrigin()` and returns `null` — never a hostless `/transmittal/<token>` — when there is no origin (the server with NEXT_PUBLIC_SITE_URL unset); the email route refuses to email such a link and says why; the cover sheet prints the portal block only with a URL; the issue flow warns when NEXT_PUBLIC_SITE_URL is unset. `ShareLinkModal` already builds on `publicOrigin()` (P1 SHARE). Test: `lib/__tests__/dcRoundFTransmittals.test.ts` ("TRX-14 / XEDGE-5 …": absolute NEXT_PUBLIC_SITE_URL-rooted URL with `window` undefined; `null` when unset).
+
+**Done-when.**
+- ◐ `transmittalPortalUrl` ✓ and `ShareLinkModal` ✓ use `publicOrigin()`. NOT done here: the `/submit` link builders (`components/projects/IntakePanel.tsx:424`, `components/projects/cost/QuotesPanel.tsx:1255,1285`) and the `/d/` copy actions (`app/(protected)/documents/[libraryId]/page.tsx:755,3091`) — files outside this package (projects-and-cost intake / quotes and the document library page owners).
+- ◐ The transmittal callers refuse a hostless link on the server ✓; making `publicOrigin()` itself refuse (throw or return a signal) when NEXT_PUBLIC_SITE_URL is unset on the server is public-surfaces PS-STAMP's (`lib/publicOrigin.ts`), not merged in this base.
+- ✓ A test asserts `transmittalPortalUrl` returns an absolute NEXT_PUBLIC_SITE_URL-rooted URL with `window` undefined.
+
+**Hand-off.** PS-STAMP (publicOrigin server fallback); the owners of IntakePanel / QuotesPanel / the library page for their copy links.
+
 ---
 
 <a id="xedge-6"></a>
