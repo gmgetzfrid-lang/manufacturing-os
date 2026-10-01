@@ -216,7 +216,7 @@ export default function RestorePage() {
         message:
           `Write ${fmtNum(check.wouldInsert)} new record(s) into this workspace. ` +
           (check.existing > 0
-            ? `${fmtNum(check.existing)} record(s) in the backup already exist here and will be KEPT EXACTLY AS THEY ARE — not overwritten, not repaired. `
+            ? `${fmtNum(check.existing)} record(s) in the backup already exist here and will be KEPT EXACTLY AS THEY ARE — not overwritten, not repaired (the one exception, a numbering counter, is described below). `
             : "") +
           (check.heldElsewhere > 0
             ? `${fmtNum(check.heldElsewhere)} record(s) will NOT be restored: ${RESTORE_HELD_ELSEWHERE_NOTE} `
@@ -567,7 +567,7 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
           {result.totalHeldElsewhere > 0 && <> · <b>{fmtNum(result.totalHeldElsewhere)}</b> NOT restored (ids in use by another workspace)</>}
           {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
           {result.totalFiltered > 0 && <> · <b>{fmtNum(result.totalFiltered)}</b> comment(s) on tickets archived since the backup left out</>}
-          {result.totalAdvanced > 0 && <> · <b>{fmtNum(result.totalAdvanced)}</b> numbering counter(s) advanced past the restored numbers</>}
+          {result.totalAdvanced > 0 && <> · <b>{fmtNum(result.totalAdvanced)}</b> numbering counter(s) advanced past the restored numbers (never lowered; a gap, never a repeat, where this workspace&apos;s prefix differs)</>}
           {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
         </div>
         {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}

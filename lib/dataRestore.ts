@@ -844,6 +844,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Teams before libraries: a library's owner_team_id references teams (20261045).
   "teams", "team_members",
   "libraries", "collections", "curated_collections",
+  // A library's document counter before the documents numbered from it (it
+  // references only its library): a counter that cannot be advanced stops
+  // the run before any of them lands (RESTORE_COUNTER_COLUMNS, fix pass 6).
+  "library_numbering",
   "metadata_templates", "watermark_policies",
   "plants", "units", "systems",
   // Codebook before assets/documents: entries carry no FKs beyond org, and
@@ -864,9 +868,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // document may mirror a controlled document (source_document_id), and
   // process_flows / entity_mentions below reference knowledge documents.
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources", "knowledge_documents",
-  // Intelligence layer: instructions/numbering have no doc FKs (early is
-  // fine); related/recents/asks reference documents so they come after.
-  "org_ai_instructions", "library_numbering",
+  // Intelligence layer: instructions have no doc FKs (early is fine);
+  // related/recents/asks reference documents so they come after. The
+  // library numbering counter sits with the libraries, above.
+  "org_ai_instructions",
   "document_related_resources", "recently_viewed_docs",   "project_intake_links",
   // Link discovery: aliases hang off assets, proposals off documents —
   // both already restored above. Connection Skills only reference the org,
@@ -999,7 +1004,8 @@ export interface RestoreChunkResult {
   /** BKP-5: rows NOT written because a row with the same key (the table's
    *  conflict target — usually its id) already exists IN THIS WORKSPACE. That
    *  row is kept exactly as it is: a restore only adds, it never overwrites
-   *  or repairs. */
+   *  or repairs (a numbering counter excepted — raised, never lowered, and
+   *  counted as `advanced`). */
   existing: number;
   /** BKP-5 (fix pass): rows NOT written because their key is held by a row of
    *  ANOTHER workspace on this deployment (ids are preserved, so a backup
@@ -1044,10 +1050,24 @@ export interface RestoreChunkResult {
  *  or change anything else. Both counters are monotonic in the same sense in
  *  the backup and here: next_ticket_number (20260724) stores the last number
  *  issued for (org, year); issue_document_number (20260806) the next one to
- *  issue for the library. */
+ *  issue for the library.
+ *  Fix pass 6 — the trade-off: the raise is unconditional, but the prefix is
+ *  not restored (orgs.ticket_prefix; an existing library_numbering row keeps
+ *  its prefix), so a restore into a workspace whose prefix differs from the
+ *  backup's leaves a GAP in this workspace's sequence (KE-DDRT-26-0006 …
+ *  -0150 never issued). A gap is preferred to a number issued twice. */
 export const RESTORE_COUNTER_COLUMNS: Readonly<Record<string, string>> = {
   ticket_number_counters: "next_seq",
   library_numbering: "next_number",
+};
+
+/** admin-and-org P1 (fix pass 6): the table whose records each counter
+ *  numbers. RESTORE_TABLE_ORDER places every counter before it, so a counter
+ *  that cannot be advanced stops the run before any record numbered from it
+ *  lands (lib/__tests__/restoreApplyRoute.test.ts pins the order). */
+export const RESTORE_COUNTER_NUMBERS: Readonly<Record<string, string>> = {
+  ticket_number_counters: "tickets",
+  library_numbering: "documents",
 };
 
 /** The first uid of `uids` that `value` names (top level or deep inside JSONB), or null. */
@@ -1377,7 +1397,10 @@ export async function applyRestoreChunk(
         message: `${rule.column} ${typeof v === "string" ? v : "(none)"} is not a ${rule.parent} row of this workspace`,
       };
     }
-    return personRefusal.get(r) ?? unmappedRefusal.get(r) ?? null;
+    // Fix pass 6: an unmapped backup member first — the row would name the
+    // raw backup uid, which also has no profile here, and only this refusal
+    // names the right remedy (an address in the backup's org_members).
+    return unmappedRefusal.get(r) ?? personRefusal.get(r) ?? null;
   };
   // To a fixed point: a refused row's id no longer counts as a parent here.
   const refusedRows: Array<{ row: Record<string, unknown>; why: RestoreRowRefusal }> = [];
@@ -1516,7 +1539,10 @@ export async function applyRestoreChunk(
   // to the backup's value when that is higher (RESTORE_COUNTER_COLUMNS) —
   // otherwise the next number issued repeats one a restored record carries.
   // Checked: a counter that cannot be read or advanced fails the chunk, so
-  // the run stops before the records numbered from it.
+  // the run stops before the records numbered from it (fix pass 6: each
+  // counter table sits before its numbered table in RESTORE_TABLE_ORDER —
+  // ticket_number_counters before tickets, library_numbering before
+  // documents; RESTORE_COUNTER_NUMBERS pins it).
   const counter = has(RESTORE_COUNTER_COLUMNS, table) ? RESTORE_COUNTER_COLUMNS[table] : null;
   if (counter && mapped.length) {
     const cols = conflictCols(table);
@@ -1603,10 +1629,15 @@ export async function previewRestoreChunk(
 // `post` — so it runs the same in a test against the real routes as it does
 // in the browser against fetch.
 
-/** DEC-44 (A&O P1) §5 — the sentence the page shows before and after a restore. */
+/** DEC-44 (A&O P1) §5 — the sentence the page shows before and after a restore.
+ *  Fix pass 6: it names the one exception (RESTORE_COUNTER_COLUMNS), so the
+ *  Admin never consents to "kept exactly as it is" for a counter the restore
+ *  then raises. */
 export const RESTORE_ADDITIVE_NOTE =
   "A restore only ADDS records. A record whose id (or key) already exists in this workspace is kept exactly as it is — " +
-  "a restore cannot overwrite, repair or roll back a record that was changed or damaged after the backup.";
+  "a restore cannot overwrite, repair or roll back a record that was changed or damaged after the backup. " +
+  "The one exception is a ticket or document numbering counter, which is raised (never lowered) to the backup's value so no number is issued twice; " +
+  "where this workspace's number prefix differs from the backup's, that leaves a gap in its numbering.";
 
 /** BKP-5 (fix pass) — what the page says about records whose key another workspace holds. */
 export const RESTORE_HELD_ELSEWHERE_NOTE =

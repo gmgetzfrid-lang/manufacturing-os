@@ -80,6 +80,7 @@ import {
   applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore,
   previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, ROW_LEVEL_SQLSTATES,
   RESTORE_BISECT_MAX_STATEMENTS, RESTORE_LINK_MEMBER_STATUSES, restoreTableRefusal, RESTORE_COUNTER_COLUMNS,
+  RESTORE_COUNTER_NUMBERS, RESTORE_TABLE_ORDER, orderTablesForRestore,
   type RestorePost, type RestoreEnvelopeLike, type CurrentMember,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
@@ -1470,6 +1471,11 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
       manifest: { orgId: "backup-org" },
       tables: {
         org_members: [{ uid: "old-ghost", email: null, display_name: "Ghost" }, { uid: "old-ann", email: "ann@acme.com" }],
+        // Fix pass 6: a team membership (RESTORE_USER_REFERENCES) naming the
+        // unmapped member is person_not_mapped, never person_not_restored —
+        // no placeholder exists, and re-inviting would not help.
+        teams: [{ id: "team-1", org_id: "backup-org", name: "Ops" }],
+        team_members: [{ team_id: "team-1", uid: "old-ghost" }],
         documents: [
           { id: "d-ghost", org_id: "backup-org", owner_user_id: "old-ghost" },
           { id: "d-ann", org_id: "backup-org", owner_user_id: "old-ann" },
@@ -1487,6 +1493,8 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
     expect(run.unmappedMembers).toBe(1);
     expect(run.idRemap.unmappedUids).toEqual(["old-ghost"]);
     const refusedOf = (t: string) => run.tables.find((x) => x.name === t)!.refused.map((r) => [r.id, r.code]);
+    expect(refusedOf("team_members")).toEqual([["team-1/old-ghost", "person_not_mapped"]]);
+    expect(run.tables.find((x) => x.name === "team_members")!.refused[0].message).toMatch(/no email address and no membership here/);
     expect(refusedOf("documents")).toEqual([["d-ghost", "person_not_mapped"]]);
     expect(refusedOf("document_versions")).toEqual([["v-ghost", "parent_outside_workspace"]]);
     expect(refusedOf("notes")).toEqual([["n-1", "person_not_mapped"]]); // deep inside JSONB too
@@ -1499,6 +1507,8 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
     expect(status).toBe(200);
     expect(body).toMatchObject({ unmappedMembers: 1 });
     expect(String(body.note)).toMatch(/1 backup member\(s\) with no email address could not be mapped to anyone here/);
+    const tm = (body.tables as Array<{ name: string; refused?: Array<{ id: string; code: string }> }>).find((t) => t.name === "team_members");
+    expect(tm?.refused?.map((r) => [r.id, r.code])).toEqual([["team-1/old-ghost", "person_not_mapped"]]);
     expect(rowsOf("documents").map((d) => d.id)).toEqual(["d-ann"]);
     expect(audits("DATA_RESTORE")[0].details).toMatchObject({ unmappedMembers: 1 });
     expect(records()).not.toMatch(/old-ghost/);
@@ -1609,6 +1619,49 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
     expect(run.notAttempted).toEqual(["tickets"]);
     expect(rowsOf("tickets")).toEqual([]);
     expect(rowsOf("ticket_number_counters")[0].next_seq).toBe(5);
+  });
+
+  it("fix pass 6 — the twin for a library's document counter: the run stops before the documents numbered from it", async () => {
+    db.rows.library_numbering = [{ library_id: "lib-1", org_id: ORG, enabled: true, prefix: "P-", pad: 4, next_number: 3 }];
+    db.writeError = (table, op) => (table === "library_numbering" && op === "update" ? { code: "42501", message: "permission denied" } : null);
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: {
+        documents: [{ id: "d1", org_id: "backup-org", library_id: "lib-1", document_number: "P-0041" }],
+        library_numbering: [{ library_id: "lib-1", org_id: "backup-org", enabled: true, prefix: "P-", pad: 4, next_number: 42 }],
+      },
+    };
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(run.stoppedAt).toMatchObject({ table: "library_numbering", error: expect.stringMatching(/Could not advance the library_numbering numbering counter past the restored numbers: permission denied/) });
+    expect(run.notAttempted).toEqual(["documents"]);
+    expect(rowsOf("documents")).toEqual([]); // P-0041 never lands beside a counter still at 3
+    expect(rowsOf("library_numbering")[0].next_number).toBe(3);
+    // the single-shot route stops there too
+    const { body } = await single(env);
+    expect(body.failedTables).toEqual(["library_numbering", "documents"]);
+    expect(rowsOf("documents")).toEqual([]);
+  });
+
+  it("fix pass 6 — every counter table is restored before the table it numbers (RESTORE_TABLE_ORDER)", () => {
+    expect(Object.keys(RESTORE_COUNTER_NUMBERS).sort()).toEqual(Object.keys(RESTORE_COUNTER_COLUMNS).sort());
+    for (const [counter, numbered] of Object.entries(RESTORE_COUNTER_NUMBERS)) {
+      expect(RESTORE_TABLE_ORDER.indexOf(counter), counter).toBeGreaterThanOrEqual(0);
+      expect(RESTORE_TABLE_ORDER.indexOf(counter), `${counter} before ${numbered}`).toBeLessThan(RESTORE_TABLE_ORDER.indexOf(numbered));
+    }
+    expect(orderTablesForRestore(["documents", "library_numbering", "tickets", "ticket_number_counters", "libraries"]))
+      .toEqual(["libraries", "library_numbering", "documents", "ticket_number_counters", "tickets"]);
+  });
+
+  it("fix pass 6 — what the Admin consents to names the counter exception, and the gap trade-off", () => {
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/kept exactly as it is/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/The one exception is a ticket or document numbering counter, which is raised \(never lowered\) to the backup's value so no number is issued twice/);
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/number prefix differs from the backup's, that leaves a gap/);
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page).toMatch(/KEPT EXACTLY AS THEY ARE — not overwritten, not repaired \(the one exception, a numbering counter, is described below\)\. `/);
+    expect(page.indexOf("${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.")).toBeGreaterThan(page.indexOf("await previewChunkedRestore("));
+    expect(page.indexOf("${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.")).toBeLessThan(page.indexOf("await runChunkedRestore("));
+    const apply = readFileSync(join(process.cwd(), "app/api/admin/restore/apply/route.ts"), "utf8");
+    expect(apply).toMatch(/the one exception is a numbering counter, raised — never lowered — to the backup's value/);
   });
 
   it("the counter tables and columns are the ones the numbering functions write", () => {

@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
     failedTables: failed.map((f) => f.name),
     note:
       "Records restored additively: a row whose key already exists in this workspace was skipped and kept exactly as it is — " +
-      "a restore never overwrites or repairs an existing row. " +
+      "a restore never overwrites or repairs an existing row (the one exception is a numbering counter, raised — never lowered — to the backup's value). " +
       (totalHeldElsewhere > 0
         ? `${totalHeldElsewhere} record(s) were NOT restored: their ids are in use by another workspace on this deployment. `
         : "") +
