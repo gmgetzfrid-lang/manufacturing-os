@@ -2408,6 +2408,8 @@ PDF viewer in sandboxed frames would let the PDF frame take `sandbox=""` too.
 **Risk:** low — every change narrows; the viewers that frame keep working
 through the opt-in.
 
+*Landed 2026-10-01 (projects Round G, J11): the two named exceptions are closed — `/api/storage/resolve` spreads `presignedGetDisposition(path, wantsInline(…))` like `download-url` (attachment by default; `ArchiveAwareOpen`, a new-tab viewer, asks `&inline=1` and is a reviewed inline caller) and `lib/dataExport.ts` signs every per-file URL as an attachment; the census in `presignedDisposition.test.ts` has no known exception left. See projects-tab `SEC-18`.*
+
 <a id="dec-50"></a>
 ## DEC-50 · The money ledger's derived figures and rails
 

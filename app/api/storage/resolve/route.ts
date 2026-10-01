@@ -16,6 +16,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
+import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
 
 export const runtime = "nodejs";
 
@@ -83,9 +84,22 @@ export async function GET(req: NextRequest) {
     await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
     // EGR-4 / DEC-44 §2: the same ceiling as /api/storage/download-url — no
     // issuer is looser than another — and a signed payload is never cacheable.
-    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }), { expiresIn: PRESIGNED_MAX_SECONDS });
+    // SEC-18 (DEC-49): the same disposition as download-url — an ATTACHMENT
+    // unless the caller asks for inline (`?inline=1`, the new-tab opener) AND
+    // the key names a PDF or a raster image, whose type is then pinned — so a
+    // stored HTML / SVG upload never opens as a page.
+    const disposition = presignedGetDisposition(path, wantsInline(req.nextUrl.searchParams.get("inline")));
+    const url = await getSignedUrl(
+      r2,
+      new GetObjectCommand({ Bucket: R2_BUCKET, Key: path, ...disposition.overrides }),
+      { expiresIn: PRESIGNED_MAX_SECONDS },
+    );
     return NextResponse.json(
-      { archived: false, url, expiresIn: PRESIGNED_MAX_SECONDS },
+      {
+        archived: false, url, expiresIn: PRESIGNED_MAX_SECONDS,
+        disposition: disposition.inline ? "inline" : "attachment",
+        contentType: disposition.contentType,
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {

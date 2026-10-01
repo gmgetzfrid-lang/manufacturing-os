@@ -878,7 +878,7 @@ Tests: `projectsRls.test.ts` "SEC-17 / PM-8 — project_documents"; `projectRail
 ## SEC-18 · The archive-aware opener and the data-export envelope sign presigned downloads with no disposition
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** security
@@ -921,6 +921,20 @@ in `lib/__tests__/presignedDisposition.test.ts`.
 - The resolve route's URL carries the attachment disposition by default, and inline only for a PDF or a raster image with its type pinned.
 - Every per-file URL in the data-export envelope carries the attachment disposition.
 - The census in `presignedDisposition.test.ts` (which scans `app/api` and `lib`) has no known exception.
+
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS (assigned by the integrator; the record's earlier owners, drafting-flow DF-P11 and admin-and-org P2, were not built on this base). Reproduced first: at `55e281d` `app/api/storage/resolve/route.ts:86` signed `new GetObjectCommand({ Bucket: R2_BUCKET, Key: path })` and `lib/dataExport.ts:154-157` the same, with no response override — the new test file below fails 5 of its 6 cases against them (the signed URL carries no `response-content-disposition`; the opener asks for no inline). Fixed with DEC-49's helper, no second rule:
+- `app/api/storage/resolve/route.ts` — `presignedGetDisposition(path, wantsInline(req.nextUrl.searchParams.get("inline")))` is spread into the `GetObjectCommand` (the `download-url` line), and the answer carries `disposition` / `contentType` as `download-url`'s does. An ATTACHMENT by default; INLINE only when asked AND the key names a PDF or a raster image, whose Content-Type is then pinned. The ACL, the archive answers, the `PRESIGNED_MAX_SECONDS` ceiling and `no-store` are unchanged.
+- `components/archive/ArchiveAwareOpen.tsx` — the new-tab opener asks `&inline=1` (a reviewed inline caller, source-pinned): a PDF still opens in the browser's viewer, an HTML / SVG upload downloads. The two other callers of the route (`VersionHistoryPanel`'s download, which fetches the bytes, and the restore page's existence probe) ask for nothing and are unaffected — `fetch` ignores the disposition.
+- `lib/dataExport.ts` — every per-file URL in the envelope is signed with `presignedGetDisposition(path, false).overrides` — always an attachment named after its key (the export is a download).
+- `lib/__tests__/presignedDisposition.test.ts` — the census's `KNOWN_UNSIGNED` set is gone; it now requires `download-url`, `resolve` and `dataExport` among the issuers and fails for ANY presigned-GET issuer under `app/api` or `lib` that signs no disposition.
+Tests — new `lib/__tests__/sec18ResolveExportDisposition.test.ts`, signing with the REAL presigner (only the HeadObject `send` is stubbed): "DEFAULT: an attachment named after the key, no type pinned, never cacheable", "a stored HTML / SVG upload is an attachment whatever the caller asks", "inline=1 on a PDF or a raster image: inline, with the type pinned", "the archived answer is unchanged", "the new-tab opener asks for inline — it is a reviewed inline caller", and `runOrgExport` "an intake upload stored as HTML, a PDF and a logo: each URL carries the attachment disposition and no type".
+
+**Done-when.**
+- The resolve route's URL carries the attachment disposition by default, and inline only for a PDF or a raster image with its type pinned — ✓.
+- Every per-file URL in the data-export envelope carries the attachment disposition — ✓.
+- The census in `presignedDisposition.test.ts` (which scans `app/api` and `lib`) has no known exception — ✓.
+
+**Scope / residual.** None for this finding. `DEC-49`'s two named exceptions are closed (a *Landed* line records it). Browser behaviour was not observed (no browser here); the disposition is read off the real signed URL. Serving untrusted uploads from a separate origin stays `GAP-401` item 4.
 
 ---
 
@@ -1024,6 +1038,6 @@ snapshot. Keep the insert policy as it is.
 | SEC-15 | MEDIUM | RESOLVED |
 | SEC-16 | MEDIUM | OPEN |
 | SEC-17 | MEDIUM | RESOLVED |
-| SEC-18 | MEDIUM | OPEN |
+| SEC-18 | MEDIUM | RESOLVED |
 | SEC-19 | LOW | OPEN |
 | SEC-20 | MEDIUM | OPEN |

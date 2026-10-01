@@ -260,15 +260,13 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
       return /\.tsx?$/.test(p) ? [p] : [];
     });
   }
-  // The two known bare issuers, both SEC-18 and both owned elsewhere:
-  // /api/storage/resolve (the archive-aware opener — drafting-flow DF-P11,
-  // which re-checks its ACL after document-control P2) and
-  // lib/dataExport.ts (the data-export envelope's per-file URLs —
-  // admin-and-org P2, the export contract). Each adopts
-  // presignedGetDisposition in its own package. Named here so they stay
-  // visible and nothing joins them.
-  const KNOWN_UNSIGNED = new Set(["app/api/storage/resolve/route.ts", "lib/dataExport.ts"]);
-  it("download-url carries one (the transmittal portal no longer signs — it streams, TRX-5); nothing new signs a bare GetObjectCommand", () => {
+  // No known exception (SEC-18, projects Round G J11): /api/storage/resolve
+  // (the archive-aware opener) and lib/dataExport.ts (the data-export
+  // envelope's per-file URLs) — the two bare issuers DEC-49 named — now
+  // spread presignedGetDisposition's overrides like download-url does
+  // (lib/__tests__/sec18ResolveExportDisposition.test.ts signs through both).
+  const SIGNED_ISSUERS = ["app/api/storage/download-url/route.ts", "app/api/storage/resolve/route.ts", "lib/dataExport.ts"];
+  it("download-url, resolve and the export envelope carry one (the transmittal portal no longer signs — it streams, TRX-5); nothing signs a bare GetObjectCommand", () => {
     const issuers: string[] = [];
     const bare: string[] = [];
     for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
@@ -276,11 +274,9 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
       if (!/getSignedUrl\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
       const rel = file.replace(root + "/", "");
       issuers.push(rel);
-      if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src) && !KNOWN_UNSIGNED.has(rel)) bare.push(rel);
+      if (!/ResponseContentDisposition|\.\.\.disposition\.overrides/.test(src)) bare.push(rel);
     }
-    expect(issuers).toEqual(expect.arrayContaining([
-      "app/api/storage/download-url/route.ts", ...KNOWN_UNSIGNED,
-    ]));
+    expect(issuers).toEqual(expect.arrayContaining(SIGNED_ISSUERS));
     expect(issuers).not.toContain("app/api/transmittal/route.ts");
     expect(bare).toEqual([]);
   });

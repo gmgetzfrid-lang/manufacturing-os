@@ -23,6 +23,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { presignedGetDisposition } from "@/lib/presignedDisposition";
 
 // The table lists live in lib/exportTables.ts (dependency-free) so the
 // coverage tripwire test can import them without pulling in AWS clients.
@@ -151,9 +152,13 @@ export async function runOrgExport(params: {
     // yields a URL; the download itself is the final arbiter of existence.
     let presignedUrl = "";
     try {
+      // SEC-18 (DEC-49): the export is a download — every per-file URL is an
+      // ATTACHMENT named after its key, never inline, so a stored HTML / SVG
+      // upload saves instead of rendering on the storage origin.
+      const disposition = presignedGetDisposition(path, false);
       presignedUrl = await getSignedUrl(
         r2,
-        new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }),
+        new GetObjectCommand({ Bucket: R2_BUCKET, Key: path, ...disposition.overrides }),
         { expiresIn },
       );
     } catch {
