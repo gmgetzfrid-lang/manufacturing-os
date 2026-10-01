@@ -2599,8 +2599,23 @@ export default function LibraryExplorerPage() {
         // below may reject this file: the batch would report a landed
         // document as "did NOT upload" and a re-stage would mint a duplicate
         // controlled document. Each shortfall is a note on the batch instead.
+        // REV-15: an issued first revision starts its review clock and its
+        // read-&-understood roster — the one call createDocumentWithFile makes
+        // — BEFORE the creation record, so the record says what did not start:
+        // a start that threw (caught here, as split / merge catch it) and every
+        // write error the helper reports. The document stands either way.
+        const clockProblems: string[] = [];
+        if (issues) {
+          try {
+            const writeErrors = await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+            clockProblems.push(...writeErrors);
+          } catch (e) {
+            clockProblems.push(`the start failed (${(e as Error)?.message ?? String(e)})`);
+          }
+        }
         // The creation is on the record — with, for an issue, the review
-        // policy decision and who made it (createDocumentWithFile's row).
+        // policy decision and who made it (createDocumentWithFile's row), and
+        // what of the compliance clocks did not start (`complianceClockErrors`).
         const { error: creationAuditError } = await logAuditAction({
           action: "DOCUMENT_CREATED",
           resourceId: newDoc.id,
@@ -2613,19 +2628,12 @@ export default function LibraryExplorerPage() {
             versionId: newVersion.id, documentNumber: docNumber, revisionLabel: item.rev.trim() || "0",
             initialStatus: status, reviewPolicyMode: gate?.mode ?? null, reviewPolicy: gate?.recorded ?? null,
             via: "bulk_upload",
+            complianceClockErrors: clockProblems.length > 0 ? clockProblems : null,
           },
         });
         if (creationAuditError) landedShortfalls.push(`the creation record of ${docNumber} could not be written (${creationAuditError})`);
-        // REV-15: an issued first revision starts its review clock and its
-        // read-&-understood roster — the one call createDocumentWithFile makes.
-        // A failure is caught here, as split / merge catch it
-        // (complianceClockWarnings): the document stands.
-        if (issues) {
-          try {
-            await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
-          } catch (e) {
-            landedShortfalls.push(`the review clock / acknowledgment roster of ${docNumber} did not start (${(e as Error)?.message ?? String(e)}) — Document Control can set it from the document`);
-          }
+        if (clockProblems.length > 0) {
+          landedShortfalls.push(`the review clock / acknowledgment roster of ${docNumber} did not fully start (${clockProblems.join("; ")}) — Document Control can set it from the document`);
         }
       };
 
@@ -2705,11 +2713,15 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; status?: string } }) => {
+  const saveMetadata = async (next: { metadata: Record<string, MetadataValue>; core?: { title?: string; documentNumber?: string; rev?: string; status?: string } }) => {
     if (!selectedDoc?.id) return;
-    // DRLS-15: never `rev` — the label is the current revision's (corrected
+    // DRLS-15: `rev` only for a document with NO current revision (a register
+    // row with no file — its label is its own, and the database's register
+    // rail checks a label against the current revision only when there is
+    // one). Otherwise never: the label is the current revision's (corrected
     // on the revision; the database keeps the document in step and refuses a
     // divergent one, which would sink every other edit in this statement).
+    const revEditable = !selectedDoc.currentVersionId && next.core?.rev !== undefined;
     const payload: Record<string, unknown> = {
       metadata: next.metadata,
       updated_at: new Date().toISOString(),
@@ -2717,13 +2729,14 @@ export default function LibraryExplorerPage() {
     };
     if (next.core?.title !== undefined) payload.title = next.core.title;
     if (next.core?.documentNumber !== undefined) payload.document_number = next.core.documentNumber;
+    if (revEditable) payload.rev = next.core?.rev;
     if (next.core?.status !== undefined) payload.status = next.core.status;
     // Recompute uniqueness_key from the freshest field values so that
     // edits to any uniqueness-contributing field stay consistent.
     payload.uniqueness_key = computeUniquenessKey({
       documentNumber: next.core?.documentNumber ?? selectedDoc.documentNumber,
       title: next.core?.title ?? selectedDoc.title,
-      rev: selectedDoc.rev,
+      rev: revEditable ? next.core?.rev : selectedDoc.rev,
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);

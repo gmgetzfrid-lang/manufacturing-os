@@ -93,8 +93,10 @@ export interface MergeDocumentsResult {
   supersededSourceIds: string[];
   holdsCopied: number;
   projectMembershipsCopied: number;
-  /** REV-15: a newly created target whose review clock / acknowledgment
-   *  roster did not start (the merge stands); empty otherwise. */
+  /** REV-15: a warning when a newly created target's review clock /
+   *  acknowledgment roster did not start (the start threw) or did not fully
+   *  start (a write error the clock helpers reported) — the merge stands;
+   *  empty otherwise. */
   complianceClockWarnings: string[];
 }
 

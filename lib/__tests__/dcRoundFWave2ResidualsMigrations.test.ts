@@ -218,9 +218,9 @@ describe("20261139 — DRLS-9: revision_branches_org_update = 20261061's USING +
     expect(readFileSync(join(process.cwd(), "components/documents/DocControlQueue.tsx"), "utf8")).toMatch(/actorUserId: currentUser\.uid,/);
   });
 
-  it("a merge claim the rail refuses is reported as a refusal by resolveBranch, not as success", () => {
+  it("a merge claim the rail refuses is reported as a refusal by resolveBranch, not as success — in plain words (driven in dcRoundFBranchMergeRefusal.test.ts)", () => {
     const b = readFileSync(join(process.cwd(), "lib/branches.ts"), "utf8");
-    expect(b).toMatch(/if \(error\) throw new Error\(error\.message\);/);
+    expect(b).toMatch(/if \(error\) \{[\s\S]*?if \(error\.code === "42501" && input\.resolution === "merged"\) \{\s*throw new Error\(BRANCH_MERGE_REFUSED\);\s*\}\s*throw new Error\(error\.message\);\s*\}/);
     expect(b).toMatch(/if \(!data\) throw new Error\("Branch was not resolved/);
   });
 });

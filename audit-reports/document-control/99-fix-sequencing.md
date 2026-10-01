@@ -161,7 +161,7 @@ themselves app changes.)*
 **Order.**
 
 0. Paste the `DRLS-16` hotfix now (below) — migration `20261129_dc_hotfix_anon_execute.sql` — independent of everything else.
-1. Deploy the `DRLS-15` and `DRLS-17` page fixes (assigned 2026-10-01 to package P12 WAVE-2 RESIDUALS, which ships them first). *Landed 2026-10-01 in P12's first commit (both RESOLVED in code): the metadata and bulk editors no longer write `rev` and the save is checked; the delete flow is one checked statement on the document row. Step 3 waits only for the app carrying that commit to be deployed.*
+1. Deploy the `DRLS-15` and `DRLS-17` page fixes (assigned 2026-10-01 to package P12 WAVE-2 RESIDUALS, which ships them first). *Landed 2026-10-01 in P12's first commit (both RESOLVED in code): the metadata and bulk editors no longer write `rev` for a document with a current revision (the integration fix keeps it editable on a register row with none, which `20261131`'s rail admits) and the save is checked; the delete flow is one checked statement on the document row. Step 3 waits only for the app carrying that commit to be deployed.*
 2. Paste `20261130` (the override reason inside `publish_revision`).
 3. Paste `20261131` (the documents-table rails) — only now (rule 1).
 4. Deploy the wave-2 app immediately after (rule 2 met), to keep the window
@@ -213,11 +213,14 @@ and to the other:
   **never re-paste `20261105` (or any earlier guard migration) after it**, or
   the first-issue block is dropped. Deploy the app carrying `REV-15`'s bulk
   upload change with or before it, so a refused first issue is asked up
-  front instead of leaving a document with no file. **`REV-17`'s refusal is
-  complete only once `20261131` is live too:** the guard fires BEFORE
+  front instead of leaving a document with no file. **`REV-17`'s INSERT
+  door closes only once `20261131` is live too:** the guard fires BEFORE
   UPDATE, so until `20261131`'s `trg_document_insert_pointer_rail` a member
   can INSERT a document already pointing at a revision and reach the issue as
-  a non-first pointer move (see `REV-17`'s scope). After the paste, a Minor /
+  a non-first pointer move (see `REV-17`'s scope). Even with `20261131` live
+  the refusal is not complete: a Draft first pointer followed by a status
+  change to Issued bypasses it — `REV-18` (assigned to P13
+  STATUS-TRANSITION). After the paste, a Minor /
   Correction rev-up that attaches the FIRST file to a pointerless issued
   register row in a require-mode library is refused with the creation
   sentence (`REV-17` / `REV-18`).
@@ -245,4 +248,8 @@ and intelligence `I-12`, which edit `app/(protected)/documents/[libraryId]/page.
 next).** In `handleStagedUpload`: the `landedShortfalls` declaration right
 before `uploadOne`, and the one `notes.push` that reports it in the batch
 report (after the "not started because you stopped the upload" note). Keep
-both when rebasing; `REV-15`'s tests pin them.
+both when rebasing; `REV-15`'s tests pin them. The P12 integration fix also
+edits `saveMetadata` (one of the three named functions: `rev` only for a
+document with no current revision) and, inside `uploadOne`, starts the
+clocks before the `DOCUMENT_CREATED` record so the record carries
+`complianceClockErrors`.

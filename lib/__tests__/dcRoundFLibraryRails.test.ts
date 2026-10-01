@@ -8,6 +8,9 @@
 //            register rail refuses a divergent one, and with it every other
 //            edit in the statement); saveMetadata checks { error } and the
 //            row count, and the editor stays open on a refusal and says why.
+//            Integration fix: a document with NO current revision (a register
+//            row with no file) keeps its label editable and sent — the rail
+//            checks a label only against a current revision.
 //   DRLS-17  the delete flow never clears the pointer first: ONE statement on
 //            the document row (its revisions and their evidence go with it
 //            through their own cascades), checked, so a refusal leaves the
@@ -21,7 +24,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const s = vi.hoisted(() => ({
@@ -100,17 +103,19 @@ const text = () => host.textContent ?? "";
 
 const DOC = {
   id: "d1", documentNumber: "P-101", title: "Overhead P&ID", rev: "3", status: "Issued",
-  metadata: { unit: "CDU" }, libraryId: "lib",
+  metadata: { unit: "CDU" }, libraryId: "lib", currentVersionId: "d1-v3",
 } as unknown as DocumentRecord;
+/** A register row with no file (a CSV import): no current revision. */
+const POINTERLESS = { ...DOC, id: "d2", documentNumber: "P-102", rev: "A", currentVersionId: undefined } as unknown as DocumentRecord;
 
 // ── DRLS-15 — the metadata editor ───────────────────────────────────────────
-describe("DRLS-15 — the metadata editor never sends the revision label, and a refused save stays open", () => {
-  async function open(onSave: (p: unknown) => Promise<void>, onClose = vi.fn()) {
+describe("DRLS-15 — the metadata editor never sends the revision label of a document with a current revision, and a refused save stays open", () => {
+  async function open(onSave: (p: unknown) => Promise<void>, onClose = vi.fn(), document: DocumentRecord = DOC, userRoles = ["Manager", "DocCtrl"]) {
     await act(async () => {
       root.render(React.createElement(MetadataEditor, {
-        isOpen: true, onClose, document: DOC,
+        isOpen: true, onClose, document,
         columns: [{ key: "unit", label: "Unit", type: "text" }] as never,
-        userRole: "Manager", userRoles: ["Manager", "DocCtrl"], // additive DocCtrl may edit
+        userRole: "Manager", userRoles, // additive DocCtrl may edit
         onSave: onSave as never,
       }));
     });
@@ -146,21 +151,59 @@ describe("DRLS-15 — the metadata editor never sends the revision label, and a 
     expect(button("Save").disabled).toBe(false); // can retry
   });
 
-  it("the save payload type carries no rev (a caller cannot send one)", () => {
+  it("a document with NO current revision (a register row with no file) keeps Revision editable, shows no pointer to a revision it lacks, and sends the label", async () => {
+    const onSave = vi.fn(async () => {});
+    const onClose = await open(onSave, vi.fn(), POINTERLESS);
+    const rev = labelled("Revision") as HTMLInputElement;
+    expect(rev.value).toBe("A");
+    expect(rev.readOnly).toBe(false);
+    expect(rev.disabled).toBe(false);
+    expect(text()).not.toMatch(/Correct it on the revision in the history panel/);
+    await act(async () => setValue(rev, "B"));
+    await click(button("Save"));
+    const payload = (onSave.mock.calls[0] as unknown[])[0] as { core: Record<string, unknown> };
+    expect(Object.keys(payload.core).sort()).toEqual(["documentNumber", "rev", "status", "title"]);
+    expect(payload.core.rev).toBe("B");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("on a pointerless row a member who may not edit sees Revision disabled, like every other core field", async () => {
+    await open(vi.fn(async () => {}), vi.fn(), POINTERLESS, ["Engineer"]);
+    const rev = labelled("Revision") as HTMLInputElement;
+    expect(rev.disabled).toBe(true);
+    expect((labelled("Document Number") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("the save payload's rev is documented and sent for a pointerless document only", () => {
     const ed = src("components/documents/MetadataEditor.tsx");
     const iface = ed.slice(ed.indexOf("export interface MetadataEditorSavePayload"), ed.indexOf("export default function MetadataEditor"));
-    expect(iface).not.toMatch(/\brev\?:/);
-    expect(ed).not.toMatch(/setRev\(/);
+    expect(iface).toMatch(/sent ONLY for a document with no current revision[\s\S]*\brev\?: string;/);
+    expect(ed).toMatch(/const hasCurrentRevision = !!document\.currentVersionId;/);
+    expect(ed).toMatch(/core: hasCurrentRevision \? \{ title, documentNumber, status \} : \{ title, documentNumber, rev, status \},/);
   });
 });
 
 // ── DRLS-15 — saveMetadata on the library page ──────────────────────────────
-describe("DRLS-15 — the page's saveMetadata writes no rev and checks the write", () => {
+describe("DRLS-15 — the page's saveMetadata writes rev only for a document with no current revision, and checks the write", () => {
   const body = handler(PAGE, "saveMetadata");
-  it("never puts rev into the documents UPDATE; the uniqueness key keeps the stored label", () => {
-    expect(body).not.toMatch(/payload\.rev\b/);
-    expect(body).not.toMatch(/core\?:\s*\{[^}]*\brev\?/);
-    expect(body).toMatch(/rev: selectedDoc\.rev,/);
+  it("puts rev into the documents UPDATE only when the document has no current revision; otherwise the uniqueness key keeps the stored label", () => {
+    expect(body).toMatch(/const revEditable = !selectedDoc\.currentVersionId && next\.core\?\.rev !== undefined;/);
+    expect(body.match(/payload\.rev\b/g)).toHaveLength(1);
+    expect(body).toMatch(/if \(revEditable\) payload\.rev = next\.core\?\.rev;/);
+    expect(body).toMatch(/rev: revEditable \? next\.core\?\.rev : selectedDoc\.rev,/);
+    expect(body).not.toMatch(/payload\.revision\b/);
+  });
+  it("20261131's register rail (the newest definition) admits a publisher's label change on a pointerless row: the label check runs only when there IS a current revision", () => {
+    const defs = readdirSync(join(process.cwd(), "supabase/migrations"))
+      .filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_register_rail\(/.test(src(`supabase/migrations/${f}`)));
+    expect(defs).toEqual(["20261131_dc_roundF_documents_rails.sql"]);
+    const rail = src("supabase/migrations/20261131_dc_roundF_documents_rails.sql");
+    const fn = rail.slice(rail.indexOf("CREATE OR REPLACE FUNCTION enforce_document_register_rail()"), rail.indexOf("DROP TRIGGER IF EXISTS trg_document_register_rail"));
+    // a label change by a signed-in caller takes the publisher tier (the editor's canEdit is a controller)…
+    expect(fn).toMatch(/IF \(v_rev_moved\s*\n\s*OR NEW\.document_number IS DISTINCT FROM OLD\.document_number\s*\n\s*OR v_eff_moved\)\s*\n\s*AND NOT is_org_controller\(NEW\.org_id\)/);
+    // …and the label must equal the current revision's ONLY when there is one
+    expect(fn).toMatch(/IF NEW\.current_version_id IS NOT NULL AND \(v_ptr_moved OR v_rev_moved\) THEN/);
+    expect(fn.match(/must match its current revision/g)).toHaveLength(1);
   });
   it("checks { error } and the row count, and throws (the editor shows it) instead of returning as saved", () => {
     expect(body).toMatch(/const \{ data: saved, error: saveErr \} = await supabase\s*\n?\s*\.from\("documents"\)\.update\(payload\)\.eq\("id", selectedDoc\.id\)\.select\("id"\);/);

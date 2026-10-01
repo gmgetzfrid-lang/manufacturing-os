@@ -153,6 +153,11 @@ export async function announceBranchOpened(input: {
   }
 }
 
+/** DRLS-9: what a refused 'merged' resolution means (the database ties a
+ *  merge claim to a later current revision — 20261139). */
+export const BRANCH_MERGE_REFUSED =
+  "A merged resolution needs a later revision to be current — publish it first, or record the branch as withdrawn.";
+
 /** Resolve a branch — the only way it leaves the queue. */
 export async function resolveBranch(input: {
   branchId: string;
@@ -179,7 +184,18 @@ export async function resolveBranch(input: {
     .is("resolved_at", null) // CAS: only resolve a still-open branch
     .select("*")
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) {
+    // DRLS-9 (20261139): the UPDATE's WITH CHECK admits 'merged' only when a
+    // later revision is the document's current one. Its other rules — the
+    // USING's authority, a resolution, a trimmed non-empty note, resolved_by
+    // = the signed-in user (DocControlQueue passes currentUser.uid) — this
+    // write meets, so a WITH CHECK refusal (42501, a raw "new row violates
+    // row-level security policy") on a merge claim is that rule; said plainly.
+    if (error.code === "42501" && input.resolution === "merged") {
+      throw new Error(BRANCH_MERGE_REFUSED);
+    }
+    throw new Error(error.message);
+  }
   // OWN-21 / DEC-11: resolution is a controller-or-effective-owner act at
   // the database (revision_branches_org_update). A refusal is zero rows, the
   // same signal as the CAS losing — say both, never claim someone else did it.

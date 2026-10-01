@@ -82,8 +82,10 @@ export interface SplitDocumentResult {
   newDocumentIds: string[];
   holdsCopied: number;
   projectMembershipsCopied: number;
-  /** REV-15: a new sheet whose review clock / acknowledgment roster did not
-   *  start (the split stands); empty when every sheet's started. */
+  /** REV-15: one warning per new sheet whose review clock / acknowledgment
+   *  roster did not start (the start threw) or did not fully start (a write
+   *  error the clock helpers reported) — the split stands; empty when every
+   *  sheet's writes answered without an error. */
   complianceClockWarnings: string[];
 }
 

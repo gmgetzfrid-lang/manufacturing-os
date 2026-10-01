@@ -707,14 +707,25 @@ export function isControlledIssueStatus(status: string | null | undefined): bool
  *  first revision (createDocumentWithFile, the split / merge sheets once
  *  their operation can no longer roll back, the library's bulk upload) —
  *  never a parallel path. A rev-up starts them through
- *  runPostPublishSideEffects instead. */
+ *  runPostPublishSideEffects instead.
+ *
+ *  It THROWS as onDocumentIssued throws (the review certification event
+ *  could not be written — the roster is then not opened). Otherwise it
+ *  RETURNS the write errors the two helpers report instead of throwing: the
+ *  review-basis reset and the next_review_date write (onDocumentIssued), each
+ *  roster write and a roster recompute that stopped on an error
+ *  (onDocumentIssuedAck). Empty when every write answered without an error.
+ *  A write the database filtered to zero rows answers no error and is not in
+ *  the list. */
 export async function startIssuedDocumentClocks(input: {
   orgId: string; documentId: string; actorUserId: string; actorName?: string | null;
-}): Promise<void> {
+}): Promise<string[]> {
+  const writeErrors: string[] = [];
   // Seed the review clock so a new doc picks up any library/folder review cycle.
-  await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName });
+  await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName, writeErrors });
   // Open the read-&-understood roster if an ack policy covers this new doc.
-  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName });
+  await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName, writeErrors });
+  return writeErrors;
 }
 
 /** REV-11: the review policy that governs a NEW controlled document in this

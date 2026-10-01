@@ -116,12 +116,16 @@ function normalizeValue(value: unknown, type: MetadataFieldDefinition["type"]): 
 // ── Props ─────────────────────────────────────────────────────────────────────
 export interface MetadataEditorSavePayload {
   metadata: Record<string, MetadataValue>;
-  /** No `rev`: the revision label is the current revision's (DRLS-15) — it
-   *  is corrected on the revision (`correctRevisionLabel`, the history
-   *  panel), and the database keeps the document's label in step. */
   core?: {
     title?: string;
     documentNumber?: string;
+    /** DRLS-15: sent ONLY for a document with no current revision (a
+     *  register row with no file, e.g. a CSV import) — its label is the
+     *  register's own, and nothing else in the app corrects it. A document
+     *  with a current revision never sends it: the label is that revision's,
+     *  corrected on the revision (`correctRevisionLabel`, the history panel),
+     *  and the database keeps the document's label in step. */
+    rev?: string;
     status?: string;
   };
 }
@@ -153,6 +157,8 @@ export default function MetadataEditor(props: {
   // ── Core fields state ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
   const [documentNumber, setDocumentNumber] = useState("");
+  // DRLS-15: editable only on a pointerless register row (no current revision).
+  const [rev, setRev] = useState("");
   const [status, setStatus] = useState("");
 
   // ── Custom metadata state ───────────────────────────────────────────────────
@@ -170,12 +176,19 @@ export default function MetadataEditor(props: {
     if (!document) return;
     setTitle(document.title ?? document.name ?? "");
     setDocumentNumber(document.documentNumber ?? "");
+    setRev(document.rev ?? "");
     setStatus(document.status ?? "");
     setDraft((document.metadata ?? {}) as Record<string, MetadataValue>);
     setSaveError(null);
   }, [document, isOpen]);
 
   if (!isOpen || !document) return null;
+
+  // DRLS-15: a document with a current revision shows that revision's label
+  // read-only; one with none (a register row with no file) keeps its label
+  // editable — 20261131's register rail checks the label against the current
+  // revision only when there is one, and admits a publisher's change otherwise.
+  const hasCurrentRevision = !!document.currentVersionId;
 
   const applyIngestion = () => {
     if (!canEdit) return;
@@ -193,10 +206,11 @@ export default function MetadataEditor(props: {
     setSaving(true);
     setSaveError(null);
     try {
-      // DRLS-15: never the revision label — it is not this dialog's to set.
+      // DRLS-15: the revision label only for a document with no current
+      // revision — otherwise it is the revision's, not this dialog's to set.
       await onSave({
         metadata: draft,
-        core: { title, documentNumber, status },
+        core: hasCurrentRevision ? { title, documentNumber, status } : { title, documentNumber, rev, status },
       });
       onClose();
     } catch (e) {
@@ -385,16 +399,29 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Revision</label>
-                {/* DRLS-15: read-only — the label is the current revision's. */}
-                <input
-                  value={document.rev ?? ""}
-                  readOnly
-                  disabled
-                  className={fieldClass}
-                />
-                <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
-                  The current revision&apos;s label. Correct it on the revision in the history panel; the document follows.
-                </p>
+                {hasCurrentRevision ? (
+                  <>
+                    {/* DRLS-15: read-only — the label is the current revision's. */}
+                    <input
+                      value={document.rev ?? ""}
+                      readOnly
+                      disabled
+                      className={fieldClass}
+                    />
+                    <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
+                      The current revision&apos;s label. Correct it on the revision in the history panel; the document follows.
+                    </p>
+                  </>
+                ) : (
+                  // DRLS-15: no current revision — the register's own label, editable here.
+                  <input
+                    value={rev}
+                    onChange={(e) => canEdit && setRev(e.target.value)}
+                    disabled={!canEdit}
+                    className={fieldClass}
+                    placeholder="e.g. A, 0, 1"
+                  />
+                )}
               </div>
               <div>
                 <label className="text-xs font-bold text-[var(--color-text-muted)]">Status</label>

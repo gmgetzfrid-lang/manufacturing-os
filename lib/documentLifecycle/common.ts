@@ -175,14 +175,26 @@ export async function sha256Hex(file: File): Promise<string> {
  *  makes for an issued first revision. The CALLER runs it only after its
  *  saga has committed (the acknowledgment roster notifies people, so it is
  *  never opened for a sheet a rollback would archive) — which is why
- *  createNewDocWithFirstVersion, inside the saga, does not. A clock that
- *  fails to start leaves the operation standing (it is irreversible by then)
- *  and is returned per document for the caller's result — never swallowed. */
+ *  createNewDocWithFirstVersion, inside the saga, does not. Neither outcome
+ *  rolls the operation back (it is irreversible by then); each is one
+ *  warning per document, logged and returned for the caller's result
+ *  (`complianceClockWarnings`): a start that THREW (the review certification
+ *  event could not be written), or the write errors the helper REPORTS (the
+ *  review-basis reset, the next review date, each acknowledgment roster write,
+ *  a roster recompute that stopped on an error). A write the database
+ *  filtered to zero rows answers no error and is not reported. The split /
+ *  merge creation events (CREATED_FROM_SPLIT / CREATED_FROM_MERGE) are written
+ *  inside the saga, before this runs, so they do not carry it. */
 export async function startClocksForIssuedDocuments(documentIds: string[], actor: ActorContext): Promise<string[]> {
   const warnings: string[] = [];
   for (const documentId of documentIds) {
     try {
-      await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null });
+      const writeErrors = await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null });
+      if (writeErrors.length > 0) {
+        const msg = `The review clock / acknowledgment roster of document ${documentId} did not fully start (${writeErrors.join("; ")}); Document Control can set it from the document.`;
+        console.warn(`[documentLifecycle] ${msg}`);
+        warnings.push(msg);
+      }
     } catch (e) {
       const msg = `The review clock / acknowledgment roster of document ${documentId} did not start (${(e as Error).message}); Document Control can set it from the document.`;
       console.warn(`[documentLifecycle] ${msg}`);
