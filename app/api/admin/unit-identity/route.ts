@@ -80,73 +80,25 @@ import { memberHoldsAny, heldRoles } from "@/lib/roleHeld";
 import { isControllerRole } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
 import { adminSurface } from "@/lib/adminSurfaces";
-import { loadCodebookAdmin } from "@/lib/codebookServer";
-import { isMissingColumn, isMissingRelation } from "@/lib/orgGraph";
-import type { CodebookEntry } from "@/lib/codebook";
+import { isMissingColumn } from "@/lib/orgGraph";
 import {
   planUnitIdentity, UNIT_IDENTITY_WRITE_BUDGET as WRITE_BUDGET,
   type UnitIdentityAsset, type UnitIdentityDoc, type UnitMappingRow,
 } from "@/lib/operationalGraph";
+// The reader, the codebook's whole unit list and the guarded document writes
+// live in lib/unitCodeDecode.ts (extracted verbatim — document-control P13,
+// GAP-314 — so the create-time decode uses exactly these).
+import {
+  readAll, loadDecodeBook, documentChunks, applyWrites, slices, WRITE_CHUNK, type Chunk,
+} from "@/lib/unitCodeDecode";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const PAGE = 1000;
-const WRITE_CHUNK = 200;
-/** Document writes carry their numbers too, so fewer ids per request keep
- *  the request line bounded. */
-const DOC_WRITE_CHUNK = 100;
-/** Write chunks in flight at once. */
-const WRITE_WAVE = 4;
 const NOT_APPLIED = "The unit-identity migration (20261138) is not applied yet — apply it, then run the decode.";
 
 const bad = (error: string, status = 400) =>
   NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
-
-type PgErr = { code?: string; message: string };
-
-/** The builder calls the reads and the guarded writes use. */
-interface Narrowable {
-  eq(col: string, v: unknown): Narrowable;
-  in(col: string, v: readonly unknown[]): Narrowable;
-  is(col: string, v: null): Narrowable;
-  gt(col: string, v: unknown): Narrowable;
-  order(col: string, o?: { ascending?: boolean }): Narrowable;
-  limit(n: number): PromiseLike<{ data: unknown; error: PgErr | null }>;
-  select(cols: string): PromiseLike<{ data: unknown[] | null; error: PgErr | null }>;
-}
-
-/** Every row of an org's table, in keyset order (id ascending), in windows
- *  of at most PAGE. It stops only at an EMPTY window, never at a short one:
- *  PostgREST cuts a response at db-max-rows WITHOUT an error, and a project
- *  whose max-rows is set below PAGE returns short windows that are not the
- *  end — stopping there would plan the decode over a cut set and report it
- *  whole. The keyset (id > the last id read) makes the extra request safe. */
-async function readAll<T extends { id: string }>(
-  table: string, select: string, orgId: string, narrow?: (q: Narrowable) => Narrowable,
-): Promise<{ rows: T[]; error: PgErr | null }> {
-  const rows: T[] = [];
-  let last: string | null = null;
-  for (;;) {
-    let q = (supabaseAdmin.from(table).select(select) as unknown as Narrowable).eq("org_id", orgId);
-    if (narrow) q = narrow(q);
-    if (last !== null) q = q.gt("id", last);
-    const { data, error } = await q.order("id", { ascending: true }).limit(PAGE);
-    if (error) return { rows, error: error as PgErr };
-    const batch = ((data ?? []) as unknown) as T[];
-    if (batch.length === 0) return { rows, error: null };
-    rows.push(...batch);
-    last = String(batch[batch.length - 1].id);
-  }
-}
-
-/** One UPDATE: the columns it writes, the rows, the condition the plan was
- *  made on, and (when the database decides the value) which returned rows
- *  landed as planned. */
-type Chunk = {
-  patch: Record<string, unknown>; ids: string[]; guard: (q: Narrowable) => Narrowable;
-  returning?: string; landed?: (row: Record<string, unknown>) => boolean;
-};
 
 /** Take at most `budget` planned rows, in plan order; say how many were left. */
 function takeBudget<V>(writes: Map<V, string[]>, budget: number): { groups: Array<[V, string[]]>; taken: number; left: number } {
@@ -159,39 +111,6 @@ function takeBudget<V>(writes: Map<V, string[]>, budget: number): { groups: Arra
     if (mine.length > 0) groups.push([value, mine]);
   }
   return { groups, taken, left };
-}
-
-const slices = (ids: string[], n: number): string[][] => {
-  const out: string[][] = [];
-  for (let i = 0; i < ids.length; i += n) out.push(ids.slice(i, i + n));
-  return out;
-};
-
-/** A number PostgREST's in-list carries verbatim (postgrest-js quotes `,()`
- *  but not `"` or `\`; padding is not trusted). Any other number is matched
- *  one document at a time with eq. */
-const inListable = (n: string) => n !== "" && n.trim() === n && !/["\\]/.test(n);
-
-/** documents.unit_code writes. Every document planned for one value has a
- *  number that decodes to that value (or, for a clear, to nothing), so the
- *  write lands only while the document's number is still one of those. */
-function documentChunks(groups: Array<[string | null, string[]]>, numberOf: Map<string, string | null>): Chunk[] {
-  const chunks: Chunk[] = [];
-  for (const [value, ids] of groups) {
-    const unnumbered: string[] = [], listed: string[] = [];
-    for (const id of ids) {
-      const n = numberOf.get(id) ?? null;
-      if (n === null) unnumbered.push(id);
-      else if (inListable(n)) listed.push(id);
-      else chunks.push({ patch: { unit_code: value }, ids: [id], guard: (q) => q.eq("document_number", n) });
-    }
-    for (const part of slices(unnumbered, DOC_WRITE_CHUNK)) chunks.push({ patch: { unit_code: value }, ids: part, guard: (q) => q.is("document_number", null) });
-    for (const part of slices(listed, DOC_WRITE_CHUNK)) {
-      const numbers = [...new Set(part.map((id) => numberOf.get(id) as string))];
-      chunks.push({ patch: { unit_code: value }, ids: part, guard: (q) => q.in("document_number", numbers) });
-    }
-  }
-  return chunks;
 }
 
 /** assets.unit_id fills: only while unit_id is still EMPTY and the item is
@@ -219,46 +138,6 @@ function assetChunks(groups: Array<[string, string[]]>, codeOfUnit: Map<string, 
   return { chunks, unplaceable };
 }
 
-/** Apply one table's chunks in bounded parallel waves. `written` landed as
- *  planned; `changed` no longer matched the plan's condition (changed or
- *  deleted since the read) and were left as they are, or the database placed
- *  them by a mapping that changed since the read; `refused` met an error. */
-async function applyWrites(
-  table: "documents" | "assets", orgId: string, chunks: Chunk[],
-): Promise<{ written: number; changed: number; refused: number; firstError: string | null }> {
-  let written = 0, changed = 0, refused = 0;
-  let firstError: string | null = null;
-  for (let w = 0; w < chunks.length; w += WRITE_WAVE) {
-    const wave = chunks.slice(w, w + WRITE_WAVE);
-    const results = await Promise.all(wave.map(({ patch, ids, guard, returning }) => guard(
-      (supabaseAdmin.from(table).update(patch) as unknown as Narrowable).eq("org_id", orgId).in("id", ids),
-    ).select(returning ?? "id")));
-    results.forEach(({ data, error }, i) => {
-      const n = wave[i].ids.length;
-      if (error) { refused += n; firstError ??= error.message; return; }
-      const rows = (data ?? []) as Array<Record<string, unknown>>;
-      const landed = wave[i].landed ? rows.filter(wave[i].landed!).length : rows.length;
-      written += landed;
-      changed += n - landed;
-    });
-  }
-  return { written, changed, refused, firstError };
-}
-
-/** The Site Codebook's unit entries, every one (keyset pages). null: the
- *  codebook tables are not there (pre-migration — no opinion). */
-async function readCodebookUnits(orgId: string): Promise<{ units: CodebookEntry[] | null; error: PgErr | null }> {
-  const r = await readAll<{ id: string; code: string; label: string; meta: CodebookEntry["meta"] | null; sort: number | null; origin: string | null }>(
-    "codebook_entries", "id, kind, code, label, meta, sort, origin", orgId, (q) => q.eq("kind", "unit"));
-  if (r.error) return isMissingRelation(r.error) ? { units: null, error: null } : { units: null, error: r.error };
-  const units = r.rows.map((e): CodebookEntry => ({
-    id: String(e.id), kind: "unit", code: String(e.code), label: String(e.label),
-    meta: e.meta ?? {}, sort: Number(e.sort ?? 0), origin: e.origin === "import" ? "import" : "manual",
-  }));
-  units.sort((a, b) => (a.sort - b.sort) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
-  return { units, error: null };
-}
-
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Not authenticated", 401);
@@ -283,11 +162,10 @@ export async function POST(req: NextRequest) {
   // shown only the numbers of documents every member may read.
   const seesRestricted = heldRoles(member).some((r) => isControllerRole(r as Role));
 
-  const loaded = await loadCodebookAdmin(supabaseAdmin, orgId);
-  // The book's unit list from a whole read, never from the one cut request.
-  const cbUnits = await readCodebookUnits(orgId);
-  if (cbUnits.error) return bad(`The Site Codebook's units could not be read: ${cbUnits.error.message} — nothing was planned.`, 500);
-  const book = cbUnits.units === null ? loaded : { ...loaded, units: cbUnits.units };
+  // The book, its unit list from a whole read (never the one cut request).
+  const whole = await loadDecodeBook(orgId);
+  if (whole.error) return bad(`The Site Codebook's units could not be read: ${whole.error.message} — nothing was planned.`, 500);
+  const book = whole.book;
   const units = await readAll<UnitMappingRow>("units", "id, codebook_code", orgId, (q) => q.eq("archived", false));
   if (units.error) return isMissingColumn(units.error) ? bad(NOT_APPLIED, 409) : bad(`Operational units could not be read: ${units.error.message}`, 500);
   const docs = await readAll<UnitIdentityDoc>("documents", "id, document_number, unit_code, unit_id, visibility", orgId);

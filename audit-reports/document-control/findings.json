@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 157,
+    "findings": 159,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
-      "MEDIUM": 69,
-      "LOW": 15
+      "MEDIUM": 70,
+      "LOW": 16
     },
     "by_status": {
-      "RESOLVED": 136,
+      "RESOLVED": 138,
       "OPEN": 21
     }
   },
@@ -1633,7 +1633,7 @@
       "id": "REV-18",
       "title": "Moving a document from Draft / In Review to Issued is a write no guard sees — any active member issues an unreviewed revision by changing the status, whatever the library's review policy",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the newest guard and the documents policies; the guard half exercised on a throwaway PostgreSQL 16)",
       "blast_radius": null,
@@ -3273,7 +3273,7 @@
       "id": "REV-15",
       "title": "Split / merge sheets and the library page's bulk upload issue controlled first revisions that start no review clock and no read-&-understood roster",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3317,6 +3317,32 @@
       ],
       "refuted": false,
       "summary": "A document owner who is not a controller, in a library whose policy requires sign-off, uses their own session from the browser console to insert a documents row with status Issued, a documentversions row and the first currentversionid write. The guard admits all three as a first issue: an unreviewed controlled Rev 0 lands, with no DOCUMENTCREATED row and no policy decision recorded.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-19",
+      "title": "A status change that makes a document a controlled issue starts no compliance clocks and records no issue event",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code: the status editors' writes, `unarchiveDocument`, and the triggers on `documents` — none audits a status change)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx",
+        "components/documents/BulkEditModal.tsx",
+        "lib/revisions.ts",
+        "supabase/migrations/20261144_dc_roundF_status_issue_transition.sql",
+        "lib/documentLifecycle/common.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After 20261144, Document Control moves a Draft drawing whose revision was reviewed to Issued in the metadata editor, in a library with a two-year periodic-review policy and an operator acknowledgment policy. The register shows it Issued and /api/verify answers CURRENT, but no review cycle is scheduled, no operator is asked to acknowledge it, and the audit trail has no event saying who issued which",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -4068,6 +4094,28 @@
       ],
       "refuted": false,
       "summary": "A split done in August turns out to be wrong. Doc Control opens the reverse dialog and is told the reversal \"can't prove what status the source held\"; there is no way to say \"it was Issued\" from the UI. An owner who clicks the same button is told to ask Document Control.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-20",
+      "title": "A controller's single write that moves the pointer and makes the status an issue passes an active hold unrecorded; so does an unstamped retirement's exit",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (the P13 final review, read from `20261144`'s guard body; the hold limbs were exercised on PostgreSQL 16 by the package)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261144_dc_roundF_status_issue_transition.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Document Controller, through PostgREST (not the app, which goes through publishrevision), PATCHes a held Draft's currentversionid and status to Issued in one request. The hold is passed and no override reason is recorded. Or a drawing archived last month, before the paste, while under a stop-work hold is restored straight to Issued by a controller.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

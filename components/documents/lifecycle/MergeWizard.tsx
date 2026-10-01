@@ -26,6 +26,7 @@ import { listActiveHoldsForDocument, type HoldRecord } from "@/lib/holds";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { useRole } from "@/components/providers/RoleContext";
 import HeldSourceNotice, { holdSetKey } from "@/components/documents/lifecycle/HeldSourceNotice";
+import LifecycleFollowUps from "@/components/documents/lifecycle/LifecycleFollowUps";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { docRowToDocumentRecord } from "@/lib/documentRows";
 import FirstRunHint from "@/components/ui/FirstRunHint";
@@ -95,6 +96,11 @@ export default function MergeWizard(props: MergeWizardProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // REV-15 (P13): what of the operation's follow-up did not complete (the
+  // result's complianceClockWarnings, and a unit decode that did not run —
+  // GAP-314) — shown before the wizard closes.
+  // REV-15 / GAP-314: the clock follow-ups and the unit decode's note, worded apart (P13 third review fix).
+  const [followUps, setFollowUps] = useState<{ items: string[]; unitCodeNote: string | null } | null>(null);
 
   // HLD-2 (review fix 4): the active holds of every source, read when the
   // source list changes and again when the confirm step is reached. Only
@@ -174,7 +180,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             } : undefined,
           };
 
-      await mergeDocuments({
+      const result = await mergeDocuments({
         sources: allSources, target,
         reason, mocReference: mocReference || undefined,
         copyHolds: effectiveCopyHolds, copyProjectMembership: copyProjects,
@@ -182,6 +188,8 @@ export default function MergeWizard(props: MergeWizardProps) {
         force: holdDecision.kind === "acknowledge" && holdAck ? true : undefined,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
+      const outstanding = { items: result?.complianceClockWarnings ?? [], unitCodeNote: result?.unitCodeNote ?? null };
+      if (outstanding.items.length > 0 || outstanding.unitCodeNote) { setFollowUps(outstanding); return; }
       onSuccess();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
@@ -190,6 +198,8 @@ export default function MergeWizard(props: MergeWizardProps) {
       setSubmitting(false);
     }
   };
+
+  if (followUps) return <LifecycleFollowUps operation="merge" items={followUps.items} unitCodeNote={followUps.unitCodeNote} onDone={onSuccess} />;
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start justify-center p-4 overflow-y-auto">

@@ -17,7 +17,7 @@ import { uniqueFilenames } from "@/lib/outputTemplateText";
 
 const state = vi.hoisted(() => ({
   requests: [] as Array<{ documents: Array<{ values: Record<string, string>; filename?: string }>; returnJson?: boolean }>,
-  filed: [] as Array<{ documentNumber: string; fileName: string }>,
+  filed: [] as Array<{ documentNumber: string; fileName: string; decodeUnitCode?: boolean }>,
   downloads: [] as Array<{ name: string; blob: Blob }>,
 }));
 
@@ -26,9 +26,9 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn() }));
 vi.mock("@/lib/revisions", () => ({
-  createDocumentWithFile: vi.fn(async (input: { documentNumber: string; file: File }) => {
-    state.filed.push({ documentNumber: input.documentNumber, fileName: input.file.name });
-    return { id: `doc-${state.filed.length}` };
+  createDocumentWithFile: vi.fn(async (input: { documentNumber: string; file: File; decodeUnitCode?: boolean }) => {
+    state.filed.push({ documentNumber: input.documentNumber, fileName: input.file.name, decodeUnitCode: input.decodeUnitCode });
+    return { id: `doc-${state.filed.length}`, documentId: `doc-${state.filed.length}` };
   }),
 }));
 
@@ -129,5 +129,43 @@ describe("the >25 download and filing paths (XEDGE-11 done-when 1, cross-slice)"
     await renderDocuments({ orgId: "o", templateId: "t", templateName: "RFQ", documents: sixty("RFQ.docx").slice(0, 25) });
     expect(state.requests).toHaveLength(0);
     expect(state.downloads.map((d) => d.name)).toEqual(["RFQ - 25 documents.zip"]);
+  });
+});
+
+describe("GAP-314 (P13 review fix) — a filing run decodes its documents' unit codes in ONE batched call, not one per document", () => {
+  it("60 filed documents: createDocumentWithFile is told not to decode, and the route is asked once, with all 60 ids, after the run", async () => {
+    const decodeCalls: Array<{ documentIds: string[]; via: string }> = [];
+    const render = (globalThis.fetch as unknown as (u: string, i: RequestInit) => Promise<Response>);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url === "/api/documents/unit-code") {
+        const body = JSON.parse(String(init.body)) as { documentIds: string[]; via: string };
+        decodeCalls.push(body);
+        return new Response(JSON.stringify({ results: body.documentIds.map((id) => ({ documentId: id, unitCode: null, outcome: "not_decoded", reason: "no unit segment" })), notes: [] }), { status: 200 });
+      }
+      return render(url, init);
+    }));
+    const res = await fileDocumentsToLibrary({
+      orgId: "o", templateId: "t", templateName: "RFQ", templateKind: "docx",
+      documents: sixty("RFQ.docx"), target: { libraryId: "lib" }, actorUserId: "u",
+    });
+    expect(res).toEqual({ filed: 60, errors: [] });
+    expect(state.filed.every((f) => f.decodeUnitCode === false)).toBe(true);
+    expect(decodeCalls).toHaveLength(1);
+    expect(decodeCalls[0].via).toBe("upload");
+    expect(decodeCalls[0].documentIds).toHaveLength(60);
+  });
+
+  it("a decode that does not run is returned as unitCodeNote; the filing stands", async () => {
+    const render = (globalThis.fetch as unknown as (u: string, i: RequestInit) => Promise<Response>);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) =>
+      url === "/api/documents/unit-code" ? new Response(JSON.stringify({ error: "boom" }), { status: 500 }) : render(url, init)));
+    const res = await fileDocumentsToLibrary({
+      orgId: "o", templateId: "t", templateName: "RFQ", templateKind: "docx",
+      documents: sixty("RFQ.docx").slice(0, 3), target: { libraryId: "lib" }, actorUserId: "u",
+    });
+    expect(res.filed).toBe(3);
+    expect(res.unitCodeNote).toMatch(/The unit code of 3 document\(s\) was not decoded \(boom\)/);
   });
 });

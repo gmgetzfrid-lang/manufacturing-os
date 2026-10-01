@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**157 findings** — 19 CRITICAL, 54 HIGH, 69 MEDIUM, 15 LOW.
+**159 findings** — 19 CRITICAL, 54 HIGH, 70 MEDIUM, 16 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 
@@ -251,7 +251,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Checkout, check-in & the lock](./01-checkout.md) | 14 |  |
-| 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 18 | `REV-15`, `REV-16`, `REV-17` opened at P3 LIFECYCLE, 2026-09-30; `REV-18` (HIGH) opened at P12 WAVE-2 RESIDUALS, 2026-10-01 |
+| 02 | [Revisions, publish & supersession](./02-revisions-publish.md) | 20 | `REV-15`, `REV-16`, `REV-17` opened at P3 LIFECYCLE, 2026-09-30; `REV-18` (HIGH) opened at P12 WAVE-2 RESIDUALS, 2026-10-01; `REV-19` (MEDIUM) opened at P13 STATUS-TRANSITION and `REV-20` (LOW) at its merge, 2026-10-01 |
 | 03 | [The review gate & e-signatures](./03-review-gate.md) | 13 |  |
 | 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
 | 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 15 |  |

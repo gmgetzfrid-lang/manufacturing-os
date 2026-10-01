@@ -604,7 +604,10 @@ describe("every route read pages until an EMPTY window — never planned over a 
     expect(row("assets", "a9").unit_id).toBe("u50");
     expect(db.tables.assets.filter((a) => a.unit_code === "20").every((a) => a.unit_id === "u20")).toBe(true);
     // the reader stops on an empty window, not a short one
-    const src = readFileSync("app/api/admin/unit-identity/route.ts", "utf8");
+    // the reader moved verbatim into lib/unitCodeDecode.ts (document-control
+    // P13, GAP-314), which the route imports — the pin follows it
+    const src = readFileSync("app/api/admin/unit-identity/route.ts", "utf8") + readFileSync("lib/unitCodeDecode.ts", "utf8");
+    expect(src).toContain("readAll, loadDecodeBook, documentChunks, applyWrites");
     expect(src).toContain("if (batch.length === 0) return { rows, error: null };");
     expect(src).not.toContain("if (batch.length < PAGE) return");
   });

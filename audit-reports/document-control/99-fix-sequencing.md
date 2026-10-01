@@ -281,6 +281,43 @@ and to the other:
 Both narrow; their result sets carry the DEC-30 inventories to read back
 into the records.
 
+⚠ **Paste order — P13 STATUS-TRANSITION (2026-10-01).** One one-paste
+migration, `20261144_dc_roundF_status_issue_transition.sql` (`REV-18`):
+after `20261139` (the guard's base — it re-creates
+`enforce_document_publish_guard` from `20261139`'s body, so **never re-paste
+`20261139`, `20261105` or any earlier guard migration after it**, or the issue
+rule is dropped). It is independent of `20261131` (the register rail never
+fires on a status-only write), `20261129`, `20261130` and `20261140`; when
+`20261131` is also pending, paste `20261131` first so `REV-17`'s INSERT door
+is closed by the time this rule binds the status. Narrow; it also adds two
+nullable columns the guard alone writes (`documents.retired_issue_status`,
+`retired_issue_version_id` — the retirement stamp) and a BEFORE INSERT
+trigger that clears them on a signed-in INSERT. Its result set carries the
+DEC-30 inventory (issued-unreviewed documents under a require policy;
+Draft / In Review documents whose next issue now needs a controller;
+Superseded / Void / Archived documents, retired before the paste, whose
+restore of an unreviewed revision now needs a controller; held Draft / In
+Review documents) and a behaviour probe of `is_controlled_issue_status`.
+Deploy the app carrying P13 with or before it, so the rev-up flow, the set
+rev-up, the merge and the two status editors say the rule before the
+database refuses. After the paste, in a require-mode library a
+non-controller cannot issue an unreviewed Draft / In Review revision by any
+door, nor restore to an issue status an unreviewed revision of a document
+retired BEFORE the paste (or retired from a status that was not an issue) —
+Document Control does it. The put-back of an issue retired after the paste
+(a failed supersede / split / merge's compensation, an un-archive) is spared
+the rule (review fix, `REV-18`). A retirement after the paste that took away
+no issue is stamped `not-issued`, and its status-only exit into an issue is
+refused over an active hold for everyone, a controller included (second
+review fix). The script also grants EXECUTE on `is_controlled_issue_status`
+to the guard's own owner when that role cannot already run it (the guard
+runs as its owner) and probes it: a `false` on that row means every
+signed-in issue write would fail with "permission denied" — stop and report
+it. The un-archive dialog (third review fix) pre-selects Issued, as before,
+unless the guard's stamp says the archive took away no issue — so before the
+paste (no stamp columns) and for any legacy or service-role archive it
+restores Issued exactly as it always did, and the database decides.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a

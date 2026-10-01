@@ -76,10 +76,34 @@ export async function effectiveReviewControlForDocument(doc: {
  *  Ticket origin NEVER waives review (DEC-23). Ticket approval is not the
  *  document's reviewer roster, is not bound to the file's content hash, and
  *  produces no e-signature on the version — so `related_ticket_id` is written
- *  for provenance only and must never satisfy a document sign-off. */
+ *  for provenance only and must never satisfy a document sign-off.
+ *
+ *  REV-18: the hatch is for a revision THROUGH the gate. A rev-up that makes
+ *  the document a controlled issue for the first time (no current revision,
+ *  or a status that is not an issue) is a first issue: under a policy that
+ *  requires sign-off — the folder / library chain OR the document's own
+ *  (DEC-71) — only a controller may publish it unreviewed (DEC-63 §2),
+ *  and the database refuses anyone else (20261139 / 20261144). The caller
+ *  asks lib/revisions.ts firstIssueGateForRevUp and passes its `mustReview`:
+ *  true answers 'require' whatever the change type and whatever the
+ *  document's own policy says, so RevUpModal and setLevelRevUp route it to
+ *  review and a merge refuses it before it writes anything.
+ *
+ *  A BRANCH publish (`asBranch`) moves neither the pointer nor the status —
+ *  revUpDocument does not ask the first-issue gate for it — so it is no
+ *  first issue: its mode is the policy's after the hatch, as before REV-18
+ *  (P13 third review fix). REV-7 still binds it: a branch can't skip a
+ *  review the CHANGE needs. */
 export function effectiveModeForRevUp(input: {
   control: ReviewControl; changeType?: string | null;
+  /** REV-18: a first issue this actor may not publish unreviewed
+   *  (firstIssueGateForRevUp's `mustReview`). */
+  firstIssueMustReview?: boolean;
+  /** REV-18 (P13 third review fix): the mode of a BRANCH publish — the
+   *  first-issue rule does not route it. */
+  asBranch?: boolean;
 }): ReviewControlMode {
+  if (input.firstIssueMustReview && !input.asBranch) return "require";
   if (input.control.mode === "none") return "none";
   if (input.changeType === "Minor" || input.changeType === "Correction") return "none";
   return input.control.mode; // 'require' or 'publisher_choice'

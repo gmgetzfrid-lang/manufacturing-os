@@ -11,7 +11,7 @@ This is a read-only reference, compiled 2026-10-01 by the integrator from two so
 - `h:N` = line N of the row's own migration file. `20261130:47` = line 47 of `supabase/migrations/20261130_*.sql`.
 - **(derived)** marks an ordering fact I worked out from which files CREATE the same function, policy or trigger. No record states it.
 
-**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because they are still on unmerged package branches: 20261137 (I-05) and 20261144 (P13). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
+**Keeping this current.** The integrator updates this guide at every merge that adds a migration, and whenever you report a paste. Not listed yet, because it is still on an unmerged package branch: 20261137 (I-05). When you paste a file, send back its result rows; the integrator then marks it **LIVE** here and in the finding records.
 
 ---
 
@@ -244,6 +244,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
 | 106 HOLD | `20261141`: the intake link stored as the SHA-256 of its token (every stored token hashed, the plain column nulled and kept null by a CHECK); intake authorship fixed; `adopt_intake_document` and the adoption number guard | SEC-19, SEC-16, INTK-16 (projects J11) | 20261104, 20261105 (it refuses otherwise) | — | **IRREVERSIBLE — §3A.** Paste only once the J11 build is live AND open browser tabs have reloaded. The file refuses to run until you uncomment its `SET app.j11_deployed = 'yes';` line. | Pending (pt/01-security-access.md SEC-19) |
 | 107 PASTE | `20261142`: a private project's audit rows are read by those who can read the project (`audit_row_project_visible`); `audit_logs_admin_trail` re-created from 20261063 | SEC-20 (projects J11) | 20261063 (LIVE), 20261102 (`project_visible_to_me`) | **(derived)** Never re-paste 20261045 or 20261063 after it (both define `audit_logs_admin_trail`). | — | Pending (pt/01-security-access.md SEC-20) |
 | 108 HOLD | `20261143`: closing or deleting a work package limited to its owner and controllers; deleting a printed package refused through the API; the field-pack budget's MEASURE counts | DRLS-10, PKG-12 (document-control P8) | 20260825 (the work_packages policies it re-creates) | — | **§3A: with the P8 app deploy or just after, never before** (h:66-73) — pasted first, the old page shows a false "Package closed" to a non-owner. | Pending (dc/10-rls.md DRLS-10) |
+| 109 PASTE | `20261144`: a status change that issues a document is a guarded write (`enforce_document_publish_guard` re-created from 20261139; `is_controlled_issue_status`; a retirement stamp) | REV-18 (+ DEC-71) | **20261139** (h:122); after **20261131** when both are pending (h:126) | **Never re-paste 20261139, 20261105 or any earlier guard file after it** — that drops the REV-18 blocks (h:122-124). | — (independent of 20261129 / 20261130 / 20261140) | Pending (dc/02-revisions-publish.md REV-18) |
 
 **Sequence at a glance.**
 1. **20261129**, now.
@@ -254,7 +255,7 @@ All PASTE and HOLD rows read *"Pending migration"* or *"not applied"* in the rec
    - 20261120, 20261121, 20261122, 20261123, 20261125, 20261126, 20261127, 20261128
    - 20261130, 20261132, 20261133, 20261134, 20261136, 20261138, 20261140
 4. Deploy the app build carrying the wave-2 changes (SEQ:167-168).
-5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed. Paste 20261141 once the J11 build is live and open tabs have reloaded; 20261142 any time after 20261102; 20261143 with or just after the P8 deploy.
+5. Paste 20261131 once DRLS-15 and DRLS-17 are deployed, and 20261139 once REV-15 is deployed (either order). Paste 20261124 once intelligence I-04 is deployed. Paste 20261141 once the J11 build is live and open tabs have reloaded; 20261142 any time after 20261102; 20261143 with or just after the P8 deploy; 20261144 after 20261139 (and after 20261131 if that is still pending).
 6. Paste 20261138 again after the first decode run.
 
 No record or header makes 20261132–20261140 depend on 20261131, so holding 20261131 does not block them (derived from the headers above).

@@ -257,7 +257,8 @@ describe("RG-6 — a policy that cannot be read is unknown, never 'none'", () =>
     expect(m).toContain('useState<"loading" | "resolved" | "unknown">("loading")');
     expect(m).toMatch(/catch \(e\) \{\s*\n\s*if \(alive\) \{ setReviewControl\(null\); setReviewPolicyStatus\("unknown"\)/);
     expect(m).toContain('const policyResolved = reviewPolicyStatus === "resolved";');
-    expect(m).toContain("disabled={submitting || !file || !policyResolved}");
+    // (P13 second review fix: a retired document holds it too — REV-18)
+    expect(m).toMatch(/disabled=\{submitting \|\| !file \|\| !policyResolved(?: \|\| !!retiredRefusal)?\}/);
     expect(m).toMatch(/if \(!policyResolved\) \{\s*\n\s*return setError\(/);
     expect(m).toContain("setPolicyAttempt((n) => n + 1)");
     expect(m).not.toMatch(/catch \{ if \(alive\) setReviewControl\(null\); \}/);
@@ -601,7 +602,8 @@ describe("RG-11 — the rev-up form never pre-selects the exemption", () => {
     const block = between(m, 'action: "REVIEW_GATE_SKIPPED"', "if (branched) {");
     expect(block).toContain("declaredReason: effectiveChangeLog.trim()");
     expect(block).toContain("policyMode: reviewControl.mode");
-    expect(m.slice(0, m.indexOf('action: "REVIEW_GATE_SKIPPED"'))).toMatch(/if \(reviewControl && reviewControl\.mode !== "none" && effMode === "none"\) \{\s*\n\s*void logAuditAction\(\{$/m);
+    // P13 third review fix: a branch is judged by its own mode (the first-issue rule does not route a branch)
+    expect(m.slice(0, m.indexOf('action: "REVIEW_GATE_SKIPPED"'))).toMatch(/if \(reviewControl && reviewControl\.mode !== "none" && \(asBranch \? branchEffMode : effMode\) === "none"\) \{\s*\n\s*void logAuditAction\(\{$/m);
   });
 });
 
@@ -609,8 +611,10 @@ describe("RG-11 — the rev-up form never pre-selects the exemption", () => {
 describe("REV-7 — a branch is still a publish", () => {
   it("the branch button and doPublish(true) refuse while review is required; a duplicate label after a conflict suggests past the interloper", () => {
     const m = src("components/documents/RevUpModal.tsx");
-    expect(m).toContain("disabled={submitting || branchReason.trim().length < 5 || willReview || !policyResolved}");
-    expect(m).toMatch(/if \(asBranch && willReview\) \{\s*\n\s*return setError\("This library requires reviewer sign-off/);
+    // P13 third review fix: the branch's own mode (the policy's after the hatch — the first-issue rule does not route a branch)
+    expect(m).toContain("disabled={submitting || branchReason.trim().length < 5 || branchWillReview || !policyResolved}");
+    expect(m).toMatch(/if \(asBranch && branchWillReview\) \{\s*\n\s*return setError\("This library requires reviewer sign-off/);
+    expect(m).toContain('const branchWillReview = branchEffMode === "require" || (branchEffMode === "publisher_choice" && routeThroughReview);');
     expect(m).toContain("setRevisionLabel(suggestNextRevisionLabel(conflict?.currentRev ?? doc.rev));");
   });
   it("20261071 re-creates the active-label unique index WITHOUT the branch exclusion, keeps the old one on failure, and probes existence", () => {

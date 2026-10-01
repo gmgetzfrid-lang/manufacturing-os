@@ -73,6 +73,7 @@ import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold } from "@/lib/holdGate";
 import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument } from "@/lib/revisions";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
   type Compensation, type ActorContext,
@@ -834,6 +835,11 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
       warnings,
     },
   });
+
+  // GAP-314: the restored number's unit decode (the renumber dropped it) —
+  // best-effort; a decode that did not run is one more warning.
+  const unitCode = await requestUnitCodeDecode(input.orgId, [docId], "renumber_reversed");
+  if (unitCode.note) warnings.push(unitCode.note);
 
   return { reversedDocIds: [docId], preservedAsSuperseded: 0, warnings };
 }

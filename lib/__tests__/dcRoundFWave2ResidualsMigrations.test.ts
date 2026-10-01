@@ -106,7 +106,10 @@ describe("20261139 — REV-17: enforce_document_publish_guard = 20261105's body 
   it("20261105 is the newest definition before this one (nothing between re-created the guard)", () => {
     const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const defining = files.filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/.test(stripComments(mig(f))));
-    expect(defining.slice(-2)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
+    // adjacency, not "the last two": a later re-creation (P13's 20261144, REV-18 —
+    // its own lineDiff from THIS body is dcRoundFStatusTransition.test.ts) follows it
+    const at = defining.indexOf("20261139_dc_roundF_first_issue_and_branch_closeout.sql");
+    expect(defining.slice(at - 1, at + 1)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
   });
 
   it("is byte-faithful to 20261105: nothing removed, and the only added code is the REV-17 block", () => {

@@ -11,12 +11,13 @@ import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
 import {
   revUpDocument, authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate,
-  canPutFirstRevisionInContainer,
+  canPutFirstRevisionInContainer, firstIssueGateForRevUp, describeFirstIssue, describeRetiredRevUp, describeControllerOnlyFirstIssue,
   type RevUpInput,
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { PublishGuardState } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   type ActorContext,
   type Compensation,
@@ -98,6 +99,10 @@ export interface MergeDocumentsResult {
    *  start (a write error the clock helpers reported) — the merge stands;
    *  empty otherwise. */
   complianceClockWarnings: string[];
+  /** GAP-314: when the unit decode of the new document(s) did not run, or
+   *  ran and was refused — the operation stands; null otherwise (a number
+   *  that simply does not decode is recorded by the route, with why). */
+  unitCodeNote: string | null;
 }
 
 interface MergeGate {
@@ -195,26 +200,56 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
     // setLevelRevUp resolve. A merge has no "route through review?"
     // checkbox, so a policy that REQUIRES sign-off refuses here (the actor
     // submits the revision for review, then merges without a rev-up).
+    // REV-18 (P13 review fix): revUpDocument also refuses a FIRST issue —
+    // a target with no current revision, or in a status that is not an
+    // issue (a Draft: the rev-up writes Issued) — for anyone but a
+    // controller under a require policy (chain OR document), whatever the
+    // change type. It is asked HERE, from the target's live pointer and
+    // status, so that refusal too comes before any source is superseded.
+    const targetLabel = target.target.documentNumber ?? "The merge target";
     let mode: string;
+    let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
     try {
+      firstIssue = await firstIssueGateForRevUp({
+        doc: target.target, libraryId: target.libraryId, actor: { orgId, actorUserId, actorRole },
+      });
       const control = await effectiveReviewControlForDocument({
         reviewControl: target.target.reviewControl ?? null,
         collectionId: target.target.collectionId ?? null,
         libraryId: target.libraryId,
       });
-      mode = effectiveModeForRevUp({ control, changeType: target.revUp.changeType ?? null });
+      mode = effectiveModeForRevUp({
+        control, changeType: target.revUp.changeType ?? null, firstIssueMustReview: firstIssue.mustReview,
+      });
     } catch (e) {
       throw new Error(`Couldn't verify the review policy for ${target.target.documentNumber ?? "the merge target"} — nothing was merged: ${(e as Error).message}`);
     }
-    if (mode === "require") {
-      throw new Error(
-        `${target.target.documentNumber ?? "The merge target"} requires reviewer sign-off for this revision — a merge can't publish it unreviewed. ` +
-        "Submit the merged revision for review first, then run the merge without a rev-up.",
-      );
+    // P13 second review fix: a RETIRED target (Superseded / Void / Archived)
+    // is not revised — its rev-up would be refused at the LAST step, after
+    // every source was superseded. Refused here, before anything is written.
+    if (firstIssue.retired) {
+      throw new Error(`${describeRetiredRevUp(targetLabel, firstIssue.status)} Nothing was merged.`);
     }
-    reviewPolicy = mode === "publisher_choice"
-      ? "publisher_choice — the publisher chose to publish the merged revision directly by running the merge"
-      : "none — the governing policy does not require sign-off for this revision";
+    // P13 final review fix: a first issue only a controller can make (the
+    // chain requires sign-off, the target's own policy is 'none') — "submit
+    // it for review first" would open a review with no reviewers. Refused
+    // here, before anything is written.
+    if (firstIssue.controllerOnly) {
+      throw new Error(`${describeControllerOnlyFirstIssue(target.target.documentNumber ?? "the merge target")} Nothing was merged.`);
+    }
+    if (mode === "require") {
+      throw new Error(firstIssue.mustReview
+        ? `${targetLabel} requires reviewer sign-off for this revision — a merge can't publish it unreviewed ` +
+          `(${describeFirstIssue(targetLabel, firstIssue, target.revUp.revisionLabel)}; a Minor or Correction change doesn't exempt a first issue). ` +
+          "Nothing was merged. Submit the merged revision for review first, then run the merge without a rev-up — or ask Document Control, who may issue it."
+        : `${targetLabel} requires reviewer sign-off for this revision — a merge can't publish it unreviewed. ` +
+          "Submit the merged revision for review first, then run the merge without a rev-up.");
+    }
+    reviewPolicy = firstIssue.requiresSignOff
+      ? `require — the merged revision is ${targetLabel}'s FIRST issue, published WITHOUT the sign-off the policy requires, by controller ${actorUserId} (DEC-63 §2)`
+      : mode === "publisher_choice"
+        ? "publisher_choice — the publisher chose to publish the merged revision directly by running the merge"
+        : "none — the governing policy does not require sign-off for this revision";
   } else {
     // No rev-up: the kept target takes the absorbed sources' holds and tag
     // union. Its content does not change and neither write advances it at
@@ -444,8 +479,15 @@ async function finishMerge(
   //     rev-up started its own through the post-publish pipeline; without a
   //     rev-up its content did not change.
   const complianceClockWarnings = target.kind === "create_new"
-    ? await startClocksForIssuedDocuments([targetDocumentId], actor)
+    ? await startClocksForIssuedDocuments([targetDocumentId], actor, {
+      event: "CREATED_FROM_MERGE", details: { sourceDocIds: absorbed.map((s) => s.id) },
+    })
     : [];
+  // 6c. GAP-314: a created target's unit code, decoded from its stored number
+  //     (best-effort; an extended target keeps its number, so its code).
+  const unitCodeNote = target.kind === "create_new"
+    ? (await requestUnitCodeDecode(orgId, [targetDocumentId], "merge")).note
+    : null;
 
   // 7. Project memberships from each source — a secondary effect, reported
   //    via an honest count, never cause for a rollback.
@@ -475,6 +517,7 @@ async function finishMerge(
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
     complianceClockWarnings,
+    unitCodeNote,
   };
 }
 

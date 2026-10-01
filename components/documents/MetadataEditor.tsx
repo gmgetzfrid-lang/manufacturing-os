@@ -5,6 +5,8 @@ import { X, Zap, Plus, FileText } from "lucide-react";
 import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/types/schema";
 import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
+import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
 
@@ -189,6 +191,11 @@ export default function MetadataEditor(props: {
   // editable — 20261131's register rail checks the label against the current
   // revision only when there is one, and admits a publisher's change otherwise.
   const hasCurrentRevision = !!document.currentVersionId;
+  // REV-18: saving this status makes the current revision a controlled issue
+  // (out of Draft / In Review / Superseded / Void / Archived into an issue
+  // status) — a guarded write at the database (20261144). Said before the
+  // save; a refusal is shown as the database words it.
+  const issuing = isIssueTransition({ fromStatus: document.status, toStatus: status, hasCurrentRevision });
 
   const applyIngestion = () => {
     if (!canEdit) return;
@@ -212,9 +219,22 @@ export default function MetadataEditor(props: {
         metadata: draft,
         core: hasCurrentRevision ? { title, documentNumber, status } : { title, documentNumber, rev, status },
       });
+      // GAP-314: a renumber here drops the document's unit decode (20261138);
+      // ask the server to decode the stored number now — best-effort, after
+      // the save landed (the route records a number left without a code).
+      if (orgId && document.id && documentNumber.trim() !== (document.documentNumber ?? "").trim()) {
+        void requestUnitCodeDecode(orgId, [document.id], "metadata_edit").then((r) => {
+          if (r.note) console.warn(`[MetadataEditor] ${r.note}`);
+        });
+      }
       onClose();
     } catch (e) {
-      setSaveError((e as Error)?.message || "The save was refused — nothing was saved.");
+      const message = (e as Error)?.message || "The save was refused — nothing was saved.";
+      // REV-18: an issue the database refused names the rule and what to do;
+      // nothing else in the edit was saved either (one statement).
+      setSaveError(issuing && isIssueRefusal(message)
+        ? `${message} The status was not changed to ${status}, and nothing else in this edit was saved — change the status back to save the other fields.`
+        : message);
     } finally {
       setSaving(false);
     }
@@ -436,6 +456,12 @@ export default function MetadataEditor(props: {
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+                {issuing && (
+                  // REV-18: the issue is a guarded write — say so before the save.
+                  <p data-testid="issue-transition-note" className="text-[10px] text-amber-800 mt-1">
+                    Saving issues Rev {document.rev ?? "?"} as a controlled copy. The database refuses it while the document is on hold, and — in a library that requires reviewer sign-off — for anyone but Document Control unless this revision&apos;s review is complete.
+                  </p>
+                )}
               </div>
             </div>
           </div>

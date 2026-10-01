@@ -35,7 +35,7 @@ import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
 import { isControllerPrincipal, type Principal } from "@/lib/permissions";
-import type { DocumentRecord, DocumentVersion } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
@@ -44,7 +44,8 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { isControlledIssueStatus, isRetiredStatus, RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -683,23 +684,11 @@ export async function revokeLiveSharesForDocument(documentId: string, actorUserI
 export const CREATION_STATUSES = ["Draft", "Issued"] as const;
 export type CreationStatus = (typeof CREATION_STATUSES)[number];
 
-/** REV-15 / REV-17: the statuses in which a NEW document is not a controlled
- *  copy — work in progress. With the shared not-current set
- *  (NOT_CURRENT_STATUSES), they are the only statuses a first revision may
- *  be written under without being an ISSUE. */
-export const WORK_IN_PROGRESS_STATUSES: ReadonlySet<string> = new Set(["Draft", "In Review"]);
-
-/** REV-15 / REV-17: does a document born in this status ISSUE its first
- *  revision as a controlled copy? Everything but work in progress and the
- *  not-current statuses does (Issued, IFC, a library's own status). Such a
- *  creation starts the compliance clocks (startIssuedDocumentClocks), and in
- *  a library whose policy requires sign-off only a controller may make it —
- *  the database's publish guard reads the same set (20261139, pinned by
- *  test). */
-export function isControlledIssueStatus(status: string | null | undefined): boolean {
-  const s = (status ?? "").trim();
-  return !WORK_IN_PROGRESS_STATUSES.has(s) && !NOT_CURRENT_STATUSES.has(s);
-}
+/** REV-15 / REV-17 / REV-18: which statuses ISSUE a revision, and which status
+ *  changes make a document a controlled issue — lib/issueStatus.ts (pure, so
+ *  the client status editors can ask it too). Re-exported here, where every
+ *  creation door already imports them. */
+export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition, isRetiredStatus } from "@/lib/issueStatus";
 
 /** REV-15: the compliance clocks a newly ISSUED document starts — the
  *  periodic-review clock and the read-&-understood roster its governing
@@ -833,6 +822,9 @@ export async function createDocumentWithFile(input: {
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
+  /** GAP-314: false when the caller decodes its documents' unit codes itself,
+   *  in one batched call (a door that creates many — the template filing). */
+  decodeUnitCode?: boolean;
 }): Promise<{ documentId: string; status: CreationStatus; reviewPolicy: string | null; creationAuditError: string | null }> {
   const now = new Date().toISOString();
   const docNum = input.documentNumber.trim();
@@ -955,7 +947,121 @@ export async function createDocumentWithFile(input: {
   // Seed retention state so a doc created AFTER a library/folder retention
   // policy exists is not invisible to the retention system.
   try { await recomputeRetention(documentId); } catch { /* best-effort */ }
+  // GAP-314: the unit decode at create time (documents.unit_code, written by
+  // the service role from the stored number) — best-effort, after the
+  // creation is complete, and NOT awaited (P13 review fix): the creation is
+  // done whatever the route does (the call is bounded besides). What it left
+  // undone is logged; the route records a document it left without a code,
+  // with why. A caller filing many documents passes decodeUnitCode: false
+  // and decodes them in one call.
+  if (input.decodeUnitCode !== false) {
+    void requestUnitCodeDecode(input.orgId, [documentId], "upload").then((unitCode) => {
+      if (unitCode.note) console.warn(`[createDocumentWithFile] ${unitCode.note}`);
+    });
+  }
   return { documentId, status: input.status, reviewPolicy, creationAuditError };
+}
+
+/** REV-18 (addendum 1; P13 review fix): would this rev-up ISSUE the document
+ *  for the first time, and may THIS actor publish that issue directly?
+ *  A first issue: the document has no current revision (a register row's
+ *  first file — a CSV import) or its status is not one the app calls an
+ *  issue (a Draft: every direct rev-up writes Issued). Under a policy that
+ *  requires sign-off — read as the database reads it (DEC-71): the
+ *  folder / library chain OR the document's own, so a document-level 'none'
+ *  does not exempt it — only a controller publishes it unreviewed (DEC-63
+ *  §2); anyone else must take it through review (`mustReview`), and the
+ *  Minor / Correction hatch does not open it (effectiveModeForRevUp's
+ *  `firstIssueMustReview`). Every rev-up door asks it BEFORE it writes
+ *  anything: revUpDocument (refuses), RevUpModal and setLevelRevUp (route it
+ *  to review), mergeDocuments' gate (refuses before a source is superseded).
+ *  `requiresSignOff` says the policy requires it (a controller's direct
+ *  first issue is then recorded as made without it). The live pointer,
+ *  status and document policy are read here unless the caller has just read
+ *  them. An unreadable policy THROWS (RG-6) — never
+ *  "no policy". Nothing is written.
+ *
+ *  A RETIRED document (Superseded / Void / Archived — isRetiredStatus) is no
+ *  first issue and no revision either (P13 second review fix): `retired` is
+ *  set and nothing else is asked. A review of it could never be published
+ *  (finalizeReviewedRevision refuses a retired document, REV-5) and a direct
+ *  publish would bring it back to life as Issued, so every door refuses it
+ *  up front with describeRetiredRevUp — restore it first.
+ *
+ *  `controllerOnly` (P13 final review fix): the chain requires sign-off and
+ *  the document's OWN policy is 'none'. DEC-71 does not honour that
+ *  'none' for a first issue, but submitForReview opens the roster from the
+ *  policy that resolves for the document — its own 'none', so NO reviewers —
+ *  and the in-review draft could never be published. So for a non-controller
+ *  (never for a controller, who issues it directly) every door refuses it up
+ *  front with describeControllerOnlyFirstIssue instead of routing it to a
+ *  review that cannot complete; `mustReview` stays true (the actor still may
+ *  not publish it unreviewed). */
+export async function firstIssueGateForRevUp(opts: {
+  doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
+  libraryId: string;
+  actor: { orgId: string; actorUserId: string; actorRole?: string };
+  live?: { current: string | null; status: string | null; reviewControl?: ReviewControl | null };
+}): Promise<{ firstIssue: boolean; retired: boolean; hasCurrentRevision: boolean; status: string | null; requiresSignOff: boolean; mustReview: boolean; controllerOnly: boolean }> {
+  let live = opts.live;
+  if (!live) {
+    const { data, error } = await supabase
+      .from("documents").select("current_version_id, status, review_control").eq("id", opts.doc.id ?? "").maybeSingle();
+    if (error) throw new Error(`Couldn't read the document's current state: ${error.message}`);
+    live = data
+      ? {
+        current: (data.current_version_id as string | null) ?? null,
+        status: (data.status as string | null) ?? null,
+        reviewControl: (data.review_control as ReviewControl | null) ?? null,
+      }
+      : { current: opts.doc.currentVersionId ?? null, status: opts.doc.status ?? null };
+  }
+  const seen = { hasCurrentRevision: !!live.current, status: live.status, retired: false, controllerOnly: false };
+  if (isRetiredStatus(live.status)) return { ...seen, retired: true, firstIssue: false, requiresSignOff: false, mustReview: false };
+  if (live.current && isControlledIssueStatus(live.status)) return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
+  const chain = await effectiveReviewControlForDocument({
+    reviewControl: null, collectionId: opts.doc.collectionId ?? null, libraryId: opts.libraryId,
+  });
+  const own = live.reviewControl !== undefined ? live.reviewControl : (opts.doc.reviewControl ?? null);
+  if (chain.mode !== "require" && own?.mode !== "require") return { ...seen, firstIssue: true, requiresSignOff: false, mustReview: false };
+  const principal: Principal = await resolveActorPrincipal({
+    uid: opts.actor.actorUserId, orgId: opts.actor.orgId, headlineRole: opts.actor.actorRole,
+  });
+  const controller = isControllerPrincipal(principal);
+  return {
+    ...seen, firstIssue: true, requiresSignOff: true, mustReview: !controller,
+    controllerOnly: !controller && chain.mode === "require" && own?.mode === "none",
+  };
+}
+
+/** REV-18 (P13 second review fix): the refusal of a rev-up of a RETIRED
+ *  document, in one sentence every door uses (revUpDocument, submitForReview,
+ *  RevUpModal, setLevelRevUp, mergeDocuments' gate) — never the first-issue
+ *  wording ("is not issued yet"), which would be untrue of it. */
+export function describeRetiredRevUp(label: string, status: string | null): string {
+  return `${label} is ${(status ?? "").trim() || "retired"}, and a retired document isn't revised — a review of it could never be published, and publishing onto it would bring it back as Issued. ` +
+    "Restore it first (un-archive it, or ask Document Control to un-void it or reverse the supersession), then publish the revision.";
+}
+
+/** REV-18 (P13 final review fix): the refusal of a first issue only a
+ *  controller can make (firstIssueGateForRevUp's `controllerOnly`), in one
+ *  sentence every door uses (revUpDocument, RevUpModal, setLevelRevUp,
+ *  mergeDocuments' gate) — never "submit it for review", which would open a
+ *  review with no reviewers. */
+export function describeControllerOnlyFirstIssue(label: string): string {
+  return `Only Document Control can issue ${label}: this library requires reviewer sign-off for its first issue, but its own review policy is none, so a review would have no reviewers and could never be published. ` +
+    "Ask Document Control to issue it, or to change its review policy.";
+}
+
+/** REV-18: why a rev-up is a first issue, in one clause (the refusals of
+ *  revUpDocument and mergeDocuments' gate both say it). */
+export function describeFirstIssue(label: string, gate: { hasCurrentRevision: boolean; status: string | null; retired?: boolean }, revisionLabel?: string): string {
+  const rev = revisionLabel?.trim() ? `Rev ${revisionLabel.trim()}` : "this revision";
+  // a retired document is not "not issued yet" (P13 second review fix)
+  if (gate.retired) return `${label} is ${(gate.status ?? "").trim() || "retired"} (retired), so ${rev} can't be published onto it until it is restored`;
+  return gate.hasCurrentRevision
+    ? `${label} is not issued yet (${gate.status || "Draft"}), so publishing ${rev} makes it a controlled issue for the first time`
+    : `${label} has no current revision, so ${rev} would be its first controlled issue`;
 }
 
 export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
@@ -986,6 +1092,9 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   });
   const lockedByOther =
     !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(actorUserId);
+  // REV-18: the first-issue answer, kept for the REV_UP record (a branch
+  // publish moves neither the pointer nor the status, so it is not asked).
+  let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>> | null = null;
 
   // 1. Resolve the base this work is built on + the provenance class.
   //    session    → actor holds an active checkout session on the doc
@@ -1021,10 +1130,31 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
   //     screen — no orphaned object in storage per conflict. The RPC still
   //     re-checks transactionally (this is an optimization, not the guard).
   if (!input.asBranch) {
-    const { data: freshDoc } = await supabase
-      .from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
-    const liveCurrent = (freshDoc?.current_version_id as string | null) ?? null;
-    if (freshDoc && liveCurrent !== expectedBase) {
+    const label = doc.documentNumber || doc.title || "this document";
+    // P13 final review fix: this read feeds the first-issue and retired
+    // refusals below, so it fails CLOSED like the gate's own read — an error,
+    // or no row (deleted, or no longer visible), refuses before anything is
+    // uploaded; never the caller's cached row.
+    const { data: freshDoc, error: freshErr } = await supabase
+      .from("documents").select("current_version_id, status, review_control").eq("id", doc.id).maybeSingle();
+    if (freshErr) throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${freshErr.message}`);
+    if (!freshDoc) throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: the document was not found.`);
+    const liveCurrent = (freshDoc.current_version_id as string | null) ?? null;
+    // REV-18 (addendum 1): a rev-up that makes the document a controlled
+    // issue for the FIRST time — its first file (no current revision: a
+    // register row, e.g. a CSV import) or the publish of a document whose
+    // status is not an issue (a Draft: this publish writes Issued) — is a
+    // first issue, not a revision through the review gate, so the Minor /
+    // Correction escape hatch (effectiveModeForRevUp) does not open it. The
+    // creation gate is asked here, before anything is uploaded, so the
+    // refusal comes in this flow's words (the database refuses the same
+    // write: 20261139 for a first pointer, 20261144 for an issue).
+    const live = {
+      current: liveCurrent,
+      status: (freshDoc.status as string | null) ?? null,
+      reviewControl: (freshDoc.review_control as ReviewControl | null) ?? null,
+    };
+    if (liveCurrent !== expectedBase) {
       const { data: cur } = liveCurrent
         ? await supabase.from("document_versions")
             .select("id, revision_label, created_by, created_by_name, created_at, change_log")
@@ -1039,6 +1169,23 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
         currentAt: (c?.created_at as string | null) ?? null,
         currentChangeLog: (c?.change_log as string | null) ?? null,
       });
+    }
+    let gate: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
+    try {
+      gate = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole }, live });
+    } catch (e) {
+      throw new Error(`Couldn't verify the review policy for ${label} — nothing was uploaded or published: ${(e as Error).message}`);
+    }
+    firstIssue = gate;
+    // P13 second review fix: a retired document is not revised (restore it first).
+    if (gate.retired) throw new Error(`${describeRetiredRevUp(label, gate.status)} Nothing was uploaded.`);
+    // P13 final review fix: a review of it would have no reviewers.
+    if (gate.controllerOnly) throw new Error(`${describeControllerOnlyFirstIssue(label)} Nothing was uploaded.`);
+    if (gate.mustReview) {
+      throw new Error(
+        `This library requires reviewer sign-off, and ${describeFirstIssue(label, gate, revisionLabel)} — a first issue is not a revision through the review gate, so a Minor or Correction change doesn't exempt it. ` +
+        "Nothing was uploaded. Choose Major and submit it for review, or ask Document Control, who may issue it.",
+      );
     }
   }
 
@@ -1227,6 +1374,16 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       relatedTicketId: input.relatedTicketId ?? null,
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
+      // REV-18 / DEC-63 §2 (P13 second review fix): a controller's direct
+      // FIRST issue under a policy that requires sign-off is admitted — and
+      // recorded as such, as the merge door records it, so it is never read
+      // as an ordinary Minor revision.
+      ...(!branched && firstIssue?.firstIssue && firstIssue.requiresSignOff && !firstIssue.mustReview
+        ? {
+          reviewPolicy: `require — Rev ${revisionLabel.trim()} is ${doc.documentNumber || doc.title || "the document"}'s FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller ${actorUserId} (DEC-63 §2)`,
+          firstIssueWithoutSignOff: true,
+        }
+        : {}),
     },
   });
 
@@ -1330,7 +1487,14 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
 
   // Base numeric target + letter label. If a draft is already in review, bump its
   // letter (2A -> 2B).
-  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id").eq("id", doc.id).maybeSingle();
+  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id, status").eq("id", doc.id).maybeSingle();
+  // REV-18 (P13 second review fix): a review of a RETIRED document could
+  // never be published (finalizeReviewedRevision refuses it, REV-5) — the
+  // draft would be stranded. Refused before anything is uploaded.
+  const liveStatus = docRow ? ((docRow.status as string | null | undefined) ?? null) : (doc.status ?? null);
+  if (isRetiredStatus(liveStatus)) {
+    throw new Error(`${describeRetiredRevUp(doc.documentNumber || doc.title || "This document", liveStatus)} Nothing was uploaded or submitted.`);
+  }
   const existingPendingId = (docRow?.pending_version_id as string | null) ?? null;
   let existingLabel: string | null = null;
   if (existingPendingId) {
@@ -1896,6 +2060,38 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
  *  string (documents.status has no CHECK constraint). */
 export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
 
+/** REV-18 (P13 second review fix; third review fix): which status the
+ *  un-archive dialog offers first, and why. 20261144's retirement stamp
+ *  (written only by the publish guard; read here, never written) says what
+ *  an archived document WAS: an issue whose revision is still current
+ *  (`issued`) comes back Issued — the put-back the rule spares; a retirement
+ *  that took away no issue of the revision that is current now
+ *  (`not-issued`, RETIRED_NOT_ISSUED_STAMP, with a current revision) comes
+ *  back a Draft, so a Draft is never issued by its un-archive — the evidence
+ *  is the guard's own record. Anything else is NOT evidence of a Draft
+ *  (`unknown`) and keeps the default every un-archive had before 20261144:
+ *  Issued — archived before 20261144 or by the service role (no stamp), its
+ *  stamped revision no longer current, no current revision (a register row:
+ *  a 'not-issued' stamp cannot tell an Issued row from a Draft one, and
+ *  restoring it issues no revision), a database without the stamp columns
+ *  (the app running ahead of the paste), an unreadable row. The database
+ *  decides that restore (20261144: the publisher tier, the hold, and under
+ *  require the roster unless it is the stamped put-back), and a refused one
+ *  leaves the Draft restore open. The dialog offers every
+ *  UNARCHIVE_RESTORE_STATUSES either way. Read-only. */
+export async function unarchiveRestoreDefault(documentId: string): Promise<{
+  status: (typeof UNARCHIVE_RESTORE_STATUSES)[number]; basis: "issued" | "not-issued" | "unknown";
+}> {
+  const { data, error } = await supabase.from("documents")
+    .select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();
+  if (error || !data) return { status: "Issued", basis: "unknown" };
+  const current = (data.current_version_id as string | null) ?? null;
+  const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;
+  if (current && stampedVersion === current) return { status: "Issued", basis: "issued" };
+  if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: "Draft", basis: "not-issued" };
+  return { status: "Issued", basis: "unknown" };
+}
+
 export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
   if (!doc.id) throw new Error("Document is missing an id");
@@ -1903,20 +2099,28 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     throw new Error(`Cannot restore to "${restoreStatus}" — choose Issued, Draft or In Review.`);
   }
 
+  const restoredStatus = restoreStatus || "Issued";
   const now = new Date().toISOString();
-  const { error } = await supabase
+  // P13 third review fix: a checked write, as archiveDocument's — a restore
+  // the database filtered to zero rows (no edit access to the row) is a
+  // refusal, never a silent success, and writes no un-archive event.
+  const { data: restored, error } = await supabase
     .from("documents")
     .update({
-      status: restoreStatus || "Issued",
+      status: restoredStatus,
       archived_at: null,
       archived_by: null,
       archive_reason: null,
       updated_at: now,
       updated_by: actorUserId,
     })
-    .eq("id", doc.id);
+    .eq("id", doc.id)
+    .select("id");
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The document was NOT restored (${error.message}) — nothing was changed.`);
+  if (((restored as unknown[] | null) ?? []).length === 0) {
+    throw new Error("The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.");
+  }
 
   await logRevisionEvent({
     orgId,
@@ -1926,7 +2130,7 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     userEmail: actorEmail ?? "",
     userRole: actorRole ?? "",
     type: "ARCHIVE_DOC",
-    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive" },
+    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive", restoredStatus },
   });
 }
 

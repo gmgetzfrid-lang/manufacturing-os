@@ -490,7 +490,9 @@
     "roles-and-permissions GAP-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built. types/schema.ts:209-234 ReviewControl has reviewer/alternate/draftViewer fields and no owner slot. Needs an optional owner-must-approve slot on ReviewControl, with openReviewRoster, reviewCompletionForDraft's \u2026)",
     "roles-and-permissions GAP-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Scope \"In\" also lists \"a staleness state derived from a configurable interval\" (reuse the review-cycle pattern, rendered beside AckPill/ReviewPill/EffectivePill), which is not built (no verification-staleness code exists). The \u2026)",
     "DRLS-10 (added at the P8 merge 2026-10-01: done-when 3's database half \u2014 a trigger on work_package_documents UPDATE OF pinned_version_id recording a direct re-pin by the owner or a controller)",
-    "PKG-9's handed-off residual (added at the P8 merge 2026-10-01; not an open finding): lib/acknowledgments.ts recomputeDocumentAck's effectiveAckPolicyForDocument call reads the folder / library ack_policy unchecked, so a failed read can leave a roster unassigned \u2014 check it like lib/downloads.ts readEffectiveAckPolicy does"
+    "PKG-9's handed-off residual (added at the P8 merge 2026-10-01; not an open finding): lib/acknowledgments.ts recomputeDocumentAck's effectiveAckPolicyForDocument call reads the folder / library ack_policy unchecked, so a failed read can leave a roster unassigned \u2014 check it like lib/downloads.ts readEffectiveAckPolicy does",
+    "REV-19 (opened by P13 2026-10-01: an admitted status-change issue starts the compliance clocks and records the issue \u2014 route it through a lib/revisions.ts function; the library page's saveMetadata call site last, coordinated with identity IS-P1 / intelligence I-12)",
+    "REV-20 (opened at the P13 merge 2026-10-01: a controller's single write moving the pointer and making the status an issue passes an active hold unrecorded \u2014 a transaction-local flag publish_revision's force sets; and an unstamped retirement's exit)"
    ],
    "files": [
     "app/api/storage/delete/route.ts (RET-2's current-revision limb, beside P11's helpers) + lib/__tests__/storageDeleteRoute.test.ts",
@@ -503,7 +505,8 @@
    "migrationsLikely": 3,
    "dependsOn": [
     "P13 STATUS-TRANSITION merged (lib/reviewControl.ts, lib/revisions.ts, the publish guard)",
-    "P8 FIELD merged"
+    "P8 FIELD merged",
+    "P13 merged 2026-10-01 (20261144 is enforce_document_publish_guard's newest body \u2014 re-create from it for REV-20)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): remainders that merged packages (P3, P4, P9, P11, R&P) left Partial with no owner. RET-2 first (HIGH)."
   },
