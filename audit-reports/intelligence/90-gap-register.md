@@ -694,7 +694,7 @@ The org graph is assembled in the browser on every mount — about fourteen requ
 <a id="gap-315"></a>
 ## GAP-315 · Confirmed topology as a reasoning input
 
-**Verdict: BUILD LATER** · Effort: **M** · Depends on: `20261155` applied (`DEC-44 (I-09)`) · Opened 2026-10-01 by intelligence Round G, I-09, from `FLOW-14`'s decision.
+**Verdict: BUILD LATER** · Effort: **M** · Depends on: `20261155` applied · Opened 2026-10-01 by intelligence Round G, I-09, from `FLOW-14`'s decision (`DEC-44 (I-09)` item 2).
 
 Confirmed `process_flows` rows are the plant's human-asserted topology. Since `20261155`, a confirmed row is one the controller tier drew or decided. Yet nothing that reasons reads them. The orchestrator's `trace_pid_lines` builds its edges from page co-occurrence (`lib/orchestrator/tools.ts` `loadLineGraph`), and revision impact never fans out by process.
 
