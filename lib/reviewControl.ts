@@ -863,14 +863,25 @@ export function finalizeReasonMessage(reason: string | undefined): string {
       // REV-20 (P14 review fix): the publish guard refuses a held document's
       // promote — a controller's in the new-door sentence (which also names
       // publish_revision's recorded override: a NEW version's door, not this
-      // reviewed draft's), anyone else's in the publisher tier's. Neither
-      // this finalize nor the review promote has an override, so the person
-      // is told what they can do: release the hold, then publish again.
-      if (reason && (reason.includes(ISSUE_REFUSAL.newDoorHold) || reason.includes(ISSUE_REFUSAL.publishHold))) {
+      // reviewed draft's), anyone else's in the publisher tier's. Where no
+      // force is offered — anyone below a controller, and the intake approve
+      // — the person is told what they can do: release the hold, then
+      // publish again. (P14 final review: a controller in the inspector is
+      // offered the review promote's own recorded force instead —
+      // isFinalizeHoldRefusal, ReviewGateSection.)
+      if (isFinalizeHoldRefusal(reason)) {
         return "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand.";
       }
       return `Couldn't publish: ${reason ?? "unknown"}`;
   }
+}
+
+/** REV-20 (P14 final review): the review promote was refused by an active
+ *  hold — either of the publish guard's hold sentences (a controller's, which
+ *  names the recorded override; the publisher tier's). The inspector offers a
+ *  controller the recorded force on exactly this refusal. */
+export function isFinalizeHoldRefusal(reason: string | undefined): boolean {
+  return !!reason && (reason.includes(ISSUE_REFUSAL.newDoorHold) || reason.includes(ISSUE_REFUSAL.publishHold));
 }
 
 /** Publish an approved in-review draft: promote it to current, drop the letter
@@ -886,6 +897,17 @@ export async function finalizeReviewedRevision(input: {
    *  the review. The DB publish guard still verifies authority + holds, and
    *  its completion gate only binds when roster rows exist. */
   requireRosterComplete?: boolean;
+  /** REV-20 (P14 final review): Document Control's recorded force past an
+   *  active hold. finalize_reviewed_promote (20261151) honours it only for a
+   *  controller while a hold is active, sets the publish guard's
+   *  transaction-local flag around its own promote and records
+   *  REV_HOLD_OVERRIDDEN in the same transaction; anyone else's is ignored
+   *  (the guard refuses them as before). The inspector offers it to a
+   *  controller only after the hold refused the promote. A database without
+   *  the function takes the three-step path, which carries no force. */
+  forceHold?: boolean;
+  /** Recorded with the force (optional, as publish_revision's). */
+  overrideReason?: string | null;
 }): Promise<{ published: boolean; reason?: string; evidenceSweep?: import("@/lib/checklists").ProjectSweepOutcome & { projects: number } }> {
   const { data: docRow } = await supabase.from("documents")
     .select("id, library_id, rev, status, current_version_id, pending_version_id").eq("id", input.documentId).maybeSingle();
@@ -933,10 +955,15 @@ export async function finalizeReviewedRevision(input: {
   // PGRST202 / 42883) takes the three separately checked writes.
   const atomic = await promoteReviewedDraftAtomically({
     documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId ?? null,
+    forceHold: input.forceHold === true, overrideReason: input.overrideReason ?? null,
   });
   if (atomic.outcome === "refused") return { published: false, reason: atomic.reason };
   if (atomic.outcome === "no_match") return await afterZeroRowPromote(input.documentId, pendingId);
   if (atomic.outcome === "unavailable") {
+    // No force on this path (P14 final review): separate PostgREST writes
+    // cannot carry the transaction-local flag or record the override with
+    // the promote. Before the paste the guard has no REV-20 limb, so it
+    // decides this promote as it always has.
     const early = await promoteThreeStep({
       documentId: input.documentId, pendingId, previousVersionId, baseRev, actorId: input.actorId, nowIso,
     });
@@ -1027,6 +1054,7 @@ export async function finalizeReviewedRevision(input: {
  *  rolled back) or answered something unrecognised. */
 async function promoteReviewedDraftAtomically(p: {
   documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId: string | null;
+  forceHold?: boolean; overrideReason?: string | null;
 }): Promise<{ outcome: "promoted" | "no_match" | "unavailable" } | { outcome: "refused"; reason: string }> {
   const { data, error } = await supabase.rpc("finalize_reviewed_promote", {
     p_document_id: p.documentId,
@@ -1034,6 +1062,9 @@ async function promoteReviewedDraftAtomically(p: {
     p_expected_current: p.previousVersionId,
     p_base_rev: p.baseRev,
     p_actor: p.actorId,
+    // REV-20 (P14 final review): sent only with a force, so the call without
+    // one is exactly the five named arguments it always was.
+    ...(p.forceHold ? { p_force_hold: true, p_override_reason: p.overrideReason?.trim() || null } : {}),
   });
   if (error) {
     const code = (error as { code?: string | null }).code ?? "";
