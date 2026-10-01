@@ -101,7 +101,7 @@ import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { splitDocument } from "@/lib/documentLifecycle/split";
 import { mergeDocuments } from "@/lib/documentLifecycle/merge";
 import { reverseSplit, reverseMerge, operationInstant, PriorStatusUnknownError } from "@/lib/documentLifecycle/reverse";
-import { markSupersededAndLink, restoreSupersededSource, copyActiveHoldsToDoc } from "@/lib/documentLifecycle/common";
+import { markSupersededAndLink, restoreSupersededSource, copyActiveHoldsToDoc, createNewDocWithFirstVersion } from "@/lib/documentLifecycle/common";
 import { renumberDocument } from "@/lib/documentLifecycle/renumber";
 import { isHoldBlockedError } from "@/lib/holdGate";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
@@ -191,12 +191,72 @@ describe("REV-6 — retirement voids the in-flight review draft; a later last si
     expect(docRow("c").status).toBe("Superseded");
   });
 
-  it("a refused roster void STOPS the retirement: nothing is retired, the draft stays pointed at (checked, not swallowed)", async () => {
+  it("archive voids the draft only AFTER its own write committed: a roster void refused then is on the ARCHIVE_DOC record (checked, never swallowed) and the draft still cannot publish", async () => {
     const d = seedDoc("p102"); seedDraft("p102");
     state.db.refuseWrites.add("document_review_signoffs");
-    await expect(archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME })).rejects.toThrow(/could be voided|could not be voided/);
-    expect(docRow("p102").status).toBe("Issued");
-    expect(docRow("p102").pending_version_id).toBe("p102-v4A");
+    await archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME });
+    expect(docRow("p102").status).toBe("Archived");
+    expect(audit("ARCHIVE_DOC")[0].details).toMatchObject({
+      pendingDraftVoided: null,
+      pendingDraftVoidProblem: expect.stringMatching(/could be voided|could not be voided/),
+    });
+    const r = await finalizeReviewedRevision({ orgId: ORG, documentId: "p102", actorId: "r2" });
+    expect(r.published).toBe(false);
+    expect(docRow("p102").status).toBe("Archived");
+  });
+
+  // The reviewer's blocker: a REFUSED archive must change nothing — an
+  // in-flight review's signatures cannot be un-voided (20261070).
+  const untouched = (id: string) => {
+    expect(docRow(id).status).toBe("Issued");
+    expect(docRow(id).pending_version_id).toBe(`${id}-v4A`);
+    expect(T("document_versions").find((v) => v.id === `${id}-v4A`)!.superseded_at).toBeNull();
+    expect(T("document_review_signoffs").filter((x) => x.document_id === id).map((x) => x.status).sort()).toEqual(["pending", "signed"]);
+    expect(audit("ARCHIVE_DOC")).toHaveLength(0);
+  };
+  // enforce_document_retention_guard (20261077), transcribed: a legal hold
+  // refuses the archive for everyone, controllers included.
+  const retentionGuard = (next: Row, old: Row) => {
+    if (old.legal_hold && next.status === "Archived" && old.status !== "Archived") {
+      throw { code: "23514", message: "This document is under legal hold and cannot be archived." };
+    }
+    return next;
+  };
+
+  it("archive of a document under LEGAL HOLD with a signed review is refused BEFORE anything — sign-offs, draft and pointer untouched (a controller too)", async () => {
+    state.roles = ["Manager", "DocCtrl"];
+    state.db.beforeUpdate!.documents = retentionGuard;
+    const d = seedDoc("lh1", { legal_hold: true }); seedDraft("lh1");
+    await expect(archiveDocument({ doc: asRecord(d), reason: "records", orgId: ORG, actorUserId: ME })).rejects.toThrow(/under legal hold and cannot be archived/);
+    untouched("lh1");
+  });
+
+  it("archive by a non-controller publisher while an operational hold is open is refused BEFORE anything; a controller may archive through it, as the database allows", async () => {
+    const d = seedDoc("oh1"); seedDraft("oh1"); seedHold("oh1");
+    const e = await archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME }).catch((err) => err);
+    expect(isHoldBlockedError(e)).toBe(true);
+    untouched("oh1");
+    state.roles = ["DocCtrl"];
+    await archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME });
+    expect(docRow("oh1").status).toBe("Archived");
+    expect(docRow("oh1").pending_version_id).toBeNull();
+  });
+
+  it("archive without publish authority (and not the owner) is refused BEFORE anything", async () => {
+    state.canControl = false; state.isOwner = false;
+    const d = seedDoc("na1"); seedDraft("na1");
+    await expect(archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME })).rejects.toThrow(/NOT archived — archiving takes publish authority/);
+    untouched("na1");
+  });
+
+  it("a database refusal the pre-gate could not foresee still destroys nothing: the archive is written first and the review voided only after it lands", async () => {
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (next.status === "Archived" && old.status !== "Archived") throw { code: "23514", message: "some other guard said no" };
+      return next;
+    };
+    const d = seedDoc("db1"); seedDraft("db1");
+    await expect(archiveDocument({ doc: asRecord(d), reason: "x", orgId: ORG, actorUserId: ME })).rejects.toThrow(/NOT archived \(some other guard said no\) — nothing was changed/);
+    untouched("db1");
   });
 
   it("revert (after its publish committed) voids the draft and records it; revUp does the same on the REV_UP record", async () => {
@@ -326,11 +386,36 @@ describe("REV-14 / DRLS-13 — lineage is a checked upsert on the pair", () => {
     expect(docRow("p2").status).toBe("Issued");
     expect(T("document_supersessions")).toHaveLength(0);
   });
-  it("a refused lineage write is an error naming the state and the safe re-run — never a success", async () => {
+  it("a refused lineage write puts the document BACK — nothing superseded, status and supersession fields restored — and says so (never a success, never a Superseded record the Inspector can no longer re-run)", async () => {
     const d = seedDoc("p3"); seedDoc("p3a");
     state.db.refuseWrites.add("document_supersessions");
     await expect(supersedeDocument({ doc: asRecord(d), replacementDocNumbers: ["P3A"], libraryId: LIB, reason: "r", orgId: ORG, actorUserId: ME }))
-      .rejects.toThrow(/now Superseded, but its replacement links could not be recorded.*re-running is safe/);
+      .rejects.toThrow(/^Nothing was superseded: The replacement links could not be recorded \(.*\)\. The document is back to Issued\..*supersede it again\.$/);
+    expect(docRow("p3")).toMatchObject({ status: "Issued", superseded_at: null, supersession_reason: null });
+    expect(audit("SUPERSEDE_DOC")).toHaveLength(0);
+  });
+  it("an INCOMPLETE lineage (a pair silently dropped) is undone too: the pair this attempt did write is removed", async () => {
+    const d = seedDoc("p4"); seedDoc("p4a"); seedDoc("p4b");
+    state.db.beforeInsert!.document_supersessions = (row) => (row.replacement_doc_id === "p4b" ? null : row);
+    await expect(supersedeDocument({ doc: asRecord(d), replacementDocNumbers: ["P4A", "P4B"], libraryId: LIB, reason: "r", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/Nothing was superseded: 1 of 2 replacement link\(s\) were not recorded.*back to Issued/);
+    expect(docRow("p4").status).toBe("Issued");
+    expect(T("document_supersessions")).toHaveLength(0);
+  });
+  it("a re-run on an already-Superseded document whose ADDED link fails keeps its first supersession (fields and existing pair)", async () => {
+    const d = seedDoc("p5"); seedDoc("p5a"); seedDoc("p5b");
+    await supersedeDocument({ doc: asRecord(d), replacementDocNumbers: ["P5A"], libraryId: LIB, reason: "first", orgId: ORG, actorUserId: ME });
+    const first = { ...docRow("p5") };
+    state.db.beforeInsert!.document_supersessions = (row) => (row.replacement_doc_id === "p5b" ? null : row);
+    await expect(supersedeDocument({ doc: asRecord(docRow("p5")), replacementDocNumbers: ["P5A", "P5B"], libraryId: LIB, reason: "second", orgId: ORG, actorUserId: ME }))
+      .rejects.toThrow(/back to Superseded/);
+    expect(docRow("p5")).toMatchObject({ status: "Superseded", superseded_at: first.superseded_at, supersession_reason: "first" });
+    expect(T("document_supersessions").map((r) => `${r.superseded_doc_id}->${r.replacement_doc_id}`)).toEqual(["p5->p5a"]);
+  });
+  it("split / merge get a neutral lineage message (their rollback states the outcome), never the old 're-run' advice", () => {
+    const r = src("lib/revisions.ts");
+    expect(r).not.toMatch(/re-running is safe/);
+    expect(r).toMatch(/export class SupersessionLineageError extends Error/);
   });
   it("the modal warns when no replacement is named, and treats an unresolved number as a refusal", () => {
     const m = src("components/documents/SupersedeModal.tsx");
@@ -383,6 +468,18 @@ describe("REV-12 — reversal restores the status the source actually held", () 
     expect(docRow("m1").status).toBe("Issued");
     expect(docRow("m2").status).toBe("Void");
     expect(docRow("mt").status).toBe("Superseded");
+  });
+  it("reverseMerge parks the merged target FIRST: a refused park leaves every source Superseded and the lineage intact (never sources and target live at once)", async () => {
+    state.roles = ["Admin"];
+    seedDoc("m3", { status: "Superseded" }); seedDoc("m4", { status: "Superseded" }); seedDoc("mt2"); seedDraft("mt2");
+    T("document_supersessions").push({ id: "lm3", superseded_doc_id: "m3", replacement_doc_id: "mt2" }, { id: "lm4", superseded_doc_id: "m4", replacement_doc_id: "mt2" });
+    (state.db.tables.audit_logs ??= []).push({ id: "ev5", action: "DOC_MERGED", resource_id: "m3", timestamp: "2026-09-03T00:00:00Z", details: { mergedIntoDocumentId: "mt2", mergeSiblings: ["m3", "m4"], targetWasNewlyCreated: true, priorStatuses: { m3: "Issued", m4: "Issued" }, auditAt: "2026-09-03T00:00:00Z" } });
+    state.db.refuseWrites.add("document_review_signoffs"); // the target's draft void is refused
+    await expect(reverseMerge({ mergeAuditEventId: "ev5", reason: "r", orgId: ORG, actorUserId: ME })).rejects.toThrow(/could be voided|could not be voided/);
+    expect(docRow("m3").status).toBe("Superseded");
+    expect(docRow("m4").status).toBe("Superseded");
+    expect(docRow("mt2").status).toBe("Issued");
+    expect(T("document_supersessions")).toHaveLength(2);
   });
   it("reversal is a Document Control / Admin act (it deletes supersession rows the database reserves to them)", async () => {
     seedDoc("v4", { status: "Superseded" }); seedDoc("v4a");
@@ -450,6 +547,22 @@ describe("HLD-2 — split / merge run the supersede gate, and holds carry BEFORE
     state.db.beforeInsert!.document_holds = () => { throw { message: "refused" }; };
     await expect(copyActiveHoldsToDoc({ sourceDocId: "h5", targetDocId: "t5", originLabel: "x", actor: { orgId: ORG, actorUserId: ME } })).rejects.toThrow(/could not be carried over/);
     expect(src("lib/documentLifecycle/common.ts")).not.toMatch(/if \(!error && insertedHold\)/);
+  });
+  it("a carry that fails PART-WAY on one target releases the holds it already placed there before throwing (the caller never got their ids)", async () => {
+    seedDoc("h6"); seedHold("h6", "Awaiting Engineering"); seedHold("h6", "Field verification");
+    state.db.beforeInsert!.document_holds = (row) => { if (row.reason === "Field verification") throw { code: "42501", message: "refused" }; return row; };
+    await expect(copyActiveHoldsToDoc({ sourceDocId: "h6", targetDocId: "t6", originLabel: "Sheet 1 (split)", actor: { orgId: ORG, actorUserId: ME } }))
+      .rejects.toThrow(/"Field verification" hold could not be carried over.*The 1 hold\(s\) already carried onto it were released\./);
+    const onTarget = T("document_holds").filter((h) => h.document_id === "t6");
+    expect(onTarget).toHaveLength(1);
+    expect(onTarget[0].released_at).toBeTruthy();
+  });
+  it("…and when that release is refused too, the error names the hold left open", async () => {
+    seedDoc("h7"); seedHold("h7", "A"); seedHold("h7", "B");
+    state.db.beforeInsert!.document_holds = (row) => { if (row.reason === "B") throw { message: "refused" }; return row; };
+    state.db.beforeUpdate!.document_holds = () => { throw { message: "release refused" }; };
+    await expect(copyActiveHoldsToDoc({ sourceDocId: "h7", targetDocId: "t7", originLabel: "x", actor: { orgId: ORG, actorUserId: ME } }))
+      .rejects.toThrow(/carried-over hold\(s\) on a rolled-back document are still open/);
   });
   it("merge gates EVERY source (a held second source refuses the merge before the target is created)", async () => {
     const a = seedDoc("g1"); const b = seedDoc("g2"); seedHold("g2");
@@ -533,6 +646,14 @@ describe("REV-11 — creation status is a deliberate choice; issuing is a publis
     state.db.beforeUpdate!.documents = () => { throw { code: "23514", message: "You do not have authority to publish revisions in this library." }; };
     await expect(createDocumentWithFile({ orgId: ORG, libraryId: LIB, documentNumber: "L-5", file: pdf("l.pdf"), status: "Draft", actorUserId: ME }))
       .rejects.toThrow(/file could not be attached/);
+  });
+  it("a split / merge sheet whose first revision cannot be made current (a zero-row answer) is an error, never a created sheet with no file", async () => {
+    state.db.beforeInsert!.document_versions = (row) => { state.db.refuseWrites.add("documents"); return row; };
+    await expect(createNewDocWithFirstVersion({
+      orgId: ORG, libraryId: LIB, documentNumber: "Z-1", title: "z", initialRevLabel: "0", changeLog: "", assetTags: [], file: pdf("z.pdf"),
+      actor: { orgId: ORG, actorUserId: ME }, initialStatus: "Draft", creationAuditAction: "CREATED_FROM_SPLIT", creationDetails: {},
+    })).rejects.toThrow(/Z-1 was created but its first revision could not be made current/);
+    expect(audit("CREATED_FROM_SPLIT")).toHaveLength(0);
   });
   it("the link picker files a Draft unless the uploader chooses to issue; split / merge pass the status explicitly", () => {
     const p = src("components/documents/DocumentLinkPicker.tsx");

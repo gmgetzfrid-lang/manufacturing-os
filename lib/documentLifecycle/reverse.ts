@@ -18,10 +18,10 @@
 //     → write DOC_SPLIT_REVERSED audit event
 //
 //   reverseMerge(mergeAuditId)
+//     → mark the merge target Superseded FIRST if it was newly created
+//       by the merge (leave alone if it was an extended existing doc)
 //     → un-supersede every source doc, each to the status it held
 //       (DOC_MERGED carries priorStatuses for all siblings)
-//     → mark the merge target Superseded if it was newly created
-//       by the merge (leave alone if it was an extended existing doc)
 //     → write DOC_MERGE_REVERSED
 //
 //   A split or merge recorded before Round F carries no prior status: the
@@ -334,15 +334,10 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   let shareRevokeError: string | null = null;
   let voidedDraft: string | null = null;
 
-  // Un-supersede every source.
-  for (const sId of allSourceIds) {
-    await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now);
-  }
-
-  // Delete the supersession join rows for this merge.
-  await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] });
-
-  // Park the target if newly created.
+  // Park the target FIRST, if newly created — reverseSplit's order. Parking
+  // can refuse (its draft void, the checked status write); refused here,
+  // nothing has moved. Restoring the sources first left them AND the merged
+  // sheet controlled at once, with the lineage gone, when it refused.
   if (targetWasNewlyCreated) {
     const r = await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now);
     parked = 1;
@@ -355,6 +350,14 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   } else {
     warnings.unshift("Target was an existing document extended by the merge — it stays active. Its rev-up (if any) is NOT reverted by this action; use Revert on its version history if needed.");
   }
+
+  // Then un-supersede every source.
+  for (const sId of allSourceIds) {
+    await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now);
+  }
+
+  // Then delete the supersession join rows for this merge.
+  await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] });
 
   await logRevisionEvent({
     orgId: input.orgId,

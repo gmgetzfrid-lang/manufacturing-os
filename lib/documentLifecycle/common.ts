@@ -267,12 +267,19 @@ export async function createNewDocWithFirstVersion(input: {
   if (verErr || !verData) throw new Error(verErr?.message || "Failed to create version row");
   const versionId = (verData as { id: string }).id;
 
-  // 4. Promote the version on the document.
-  const { error: updErr } = await supabase
+  // 4. Promote the version on the document. REV-11: checked for the row
+  // count too, as createDocumentWithFile's first pointer write is — a
+  // zero-row answer (a policy refusing the write) is a refusal, and a sheet
+  // with no current revision must never read as created.
+  const { data: promoted, error: updErr } = await supabase
     .from("documents")
     .update({ current_version_id: versionId, updated_at: now })
-    .eq("id", newDocId);
+    .eq("id", newDocId)
+    .select("id");
   if (updErr) throw new Error(updErr.message);
+  if (((promoted as unknown[] | null) ?? []).length === 0) {
+    throw new Error(`The new document ${input.documentNumber} was created but its first revision could not be made current (the write was refused).`);
+  }
 
   // 5. Audit row.
   await logRevisionEvent({
@@ -432,39 +439,54 @@ export async function copyActiveHoldsToDoc(input: {
 
   let copied = 0;
   const holdIds: string[] = [];
-  for (const h of rows) {
-    if (existingReasons.has(h.reason)) continue;
-    const note = `Carried over from ${originLabel}.${h.notes ? ` Original notes: ${h.notes}` : ""}`;
-    const { data: insertedHold, error } = await supabase
-      .from("document_holds")
-      .insert({
-        org_id: actor.orgId,
-        document_id: targetDocId,
+  try {
+    for (const h of rows) {
+      if (existingReasons.has(h.reason)) continue;
+      const note = `Carried over from ${originLabel}.${h.notes ? ` Original notes: ${h.notes}` : ""}`;
+      const { data: insertedHold, error } = await supabase
+        .from("document_holds")
+        .insert({
+          org_id: actor.orgId,
+          document_id: targetDocId,
+          reason: h.reason,
+          notes: note,
+          expected_release_at: h.expected_release_at,
+          opened_by: actor.actorUserId,
+          opened_by_name: actor.actorEmail ?? null,
+        })
+        .select("id")
+        .single();
+      if (error || !insertedHold) {
+        throw new Error(`The "${h.reason}" hold could not be carried over to the new document (${error?.message ?? "the write was refused"}).`);
+      }
+      copied++;
+      holdIds.push((insertedHold as { id: string }).id);
+      // Mirror the hold audit event so the timeline shows it.
+      await logHoldEvent({
+        orgId: actor.orgId,
+        documentId: targetDocId,
+        holdId: (insertedHold as { id: string }).id,
+        userId: actor.actorUserId,
+        userEmail: actor.actorEmail,
+        userRole: actor.actorRole,
+        type: "HOLD_OPENED",
         reason: h.reason,
-        notes: note,
-        expected_release_at: h.expected_release_at,
-        opened_by: actor.actorUserId,
-        opened_by_name: actor.actorEmail ?? null,
-      })
-      .select("id")
-      .single();
-    if (error || !insertedHold) {
-      throw new Error(`The "${h.reason}" hold could not be carried over to the new document (${error?.message ?? "the write was refused"}).`);
+        details: { carriedOverFrom: sourceDocId, originLabel },
+      });
     }
-    copied++;
-    holdIds.push((insertedHold as { id: string }).id);
-    // Mirror the hold audit event so the timeline shows it.
-    await logHoldEvent({
-      orgId: actor.orgId,
-      documentId: targetDocId,
-      holdId: (insertedHold as { id: string }).id,
-      userId: actor.actorUserId,
-      userEmail: actor.actorEmail,
-      userRole: actor.actorRole,
-      type: "HOLD_OPENED",
-      reason: h.reason,
-      details: { carriedOverFrom: sourceDocId, originLabel },
-    });
+  } catch (e) {
+    // HLD-2: a carry that fails part-way never returns, so the caller has no
+    // ids to register for its rollback — release the holds THIS call already
+    // placed on the target before rethrowing (checked: one left open is
+    // named in the error for the hold queue).
+    const base = (e as Error).message || String(e);
+    if (holdIds.length === 0) throw e;
+    try {
+      await releaseCarriedHolds(holdIds, actor);
+    } catch (relErr) {
+      throw new Error(`${base} ${(relErr as Error).message}.`);
+    }
+    throw new Error(`${base} The ${holdIds.length} hold(s) already carried onto it were released.`);
   }
   return { copied, holdIds };
 }

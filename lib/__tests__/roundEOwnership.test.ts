@@ -438,6 +438,7 @@ describe("OWN-19 — renumber takes publish authority at the mutator (same popul
 describe("OWN-19 — split / merge targets are born owned by the actor, so the rollback archive passes the guard", () => {
   const actor = { orgId: "o1", actorUserId: "u1", actorEmail: "u1@x", actorRole: "Drafter" };
   it("createNewDocWithFirstVersion stamps owner_user_id = actor and owner_name on the documents INSERT", async () => {
+    db.updateResults = [{ data: [{ id: "new-lib" }], error: null }]; // the promote is a checked write (REV-11): one row lands
     const r = await createNewDocWithFirstVersion({
       orgId: "o1", libraryId: "L", documentNumber: "P-100-1", title: "Sheet 1", initialRevLabel: "A", changeLog: "split",
       assetTags: [], file: new File([new Uint8Array([1, 2, 3])], "s1.pdf", { type: "application/pdf" }),
@@ -449,6 +450,7 @@ describe("OWN-19 — split / merge targets are born owned by the actor, so the r
     expect(audited.some((a) => a.action === "CREATED_FROM_SPLIT")).toBe(true);
   });
   it("without a display name the actor's email is the owner-name cache; the version row and promote still land", async () => {
+    db.updateResults = [{ data: [{ id: "new-lib" }], error: null }]; // the promote is a checked write (REV-11): one row lands
     await createNewDocWithFirstVersion({
       orgId: "o1", libraryId: "L", documentNumber: "P-200", title: "Merged", initialRevLabel: "0", changeLog: "merge",
       assetTags: [], file: new File([new Uint8Array([1])], "m.pdf"), actor, initialStatus: "Issued", creationAuditAction: "CREATED_FROM_MERGE", creationDetails: {},

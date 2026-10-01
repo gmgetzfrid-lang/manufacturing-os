@@ -473,8 +473,8 @@ export async function voidPendingDraft(documentId: string): Promise<string | nul
   return draftId;
 }
 
-/** After a publish that already committed (rev-up, revert): void the draft
- *  and report — never throw, never swallow. */
+/** After a publish or retirement that already committed (rev-up, revert,
+ *  archive): void the draft and report — never throw, never swallow. */
 async function voidPendingDraftAfterPublish(documentId: string, actorUserId: string): Promise<PendingDraftVoid> {
   try {
     return { voidedVersionId: await voidPendingDraft(documentId), problem: null };
@@ -1515,14 +1515,52 @@ export type ArchiveInput = {
   actorRole?: string;
 };
 
+/** REV-6: archive's pre-gate — the database's own refusals of an archive,
+ *  asked BEFORE anything is written, so a refusal changes nothing (an
+ *  in-flight review's signatures cannot be un-voided: 20261070's sign-off
+ *  guard never lets a row return to pending or signed). It mirrors the two
+ *  guards an archive meets, tier for tier:
+ *   - enforce_document_publish_guard (20261060, OWN-19): archiving takes the
+ *     publisher tier — a controller, a granted publisher or the document's
+ *     effective owner — and a non-controller is refused while an
+ *     operational hold is open (fail-closed on an unreadable hold set, as
+ *     every HLD-1 door is);
+ *   - enforce_document_retention_guard (20261077): a legal hold refuses the
+ *     archive for EVERYONE, controllers included, and an open hold refuses a
+ *     non-controller.
+ *  The checkout lock is not an archive gate (it never was, at either layer). */
+async function authorizeArchive(opts: {
+  documentId: string; libraryId: string; orgId: string; actorUserId: string; actorRole?: string;
+}): Promise<void> {
+  const principal: Principal = await resolveActorPrincipal({
+    uid: opts.actorUserId, orgId: opts.orgId, headlineRole: opts.actorRole,
+  });
+  if (!isControllerPrincipal(principal)) {
+    let canArchive = await resolveCanControlLibrary(opts.libraryId, principal);
+    if (!canArchive) canArchive = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
+    if (!canArchive) {
+      throw new Error("The document was NOT archived — archiving takes publish authority in this library (Doc Control, a granted publisher or the document's owner). Nothing was changed.");
+    }
+    await assertNotOnHold(opts.documentId, { action: "archiving it" });
+  }
+  const { data, error } = await supabase
+    .from("documents").select("legal_hold").eq("id", opts.documentId).maybeSingle();
+  if (error) {
+    throw new Error(`Couldn't confirm this document is free of a legal hold (${error.message}) — nothing was archived.`);
+  }
+  if ((data as { legal_hold?: boolean | null } | null)?.legal_hold === true) {
+    throw new Error("This document is under legal hold and cannot be archived — a controller must release the legal hold first. Nothing was changed.");
+  }
+}
+
 export async function archiveDocument(input: ArchiveInput): Promise<void> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (!reason.trim()) throw new Error("Archive reason is required");
 
-  // REV-6: an archived record's in-flight review draft is voided FIRST — a
-  // refusal here stops the archive before anything is retired.
-  const voidedDraft = await voidPendingDraft(doc.id);
+  // REV-6: every refusal the database would give an archive is asked first;
+  // nothing has been written yet.
+  await authorizeArchive({ documentId: doc.id, libraryId: doc.libraryId, orgId, actorUserId, actorRole });
 
   const now = new Date().toISOString();
   const { data: archived, error } = await supabase
@@ -1538,10 +1576,18 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
     .eq("id", doc.id)
     .select("id");
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The document was NOT archived (${error.message}) — nothing was changed.`);
   if (((archived as unknown[] | null) ?? []).length === 0) {
-    throw new Error("The document was NOT archived — you don't have authority to archive it.");
+    throw new Error("The document was NOT archived — you don't have authority to archive it. Nothing was changed.");
   }
+
+  // REV-6: the in-flight review draft is voided AFTER the archive committed,
+  // so a refused archive (an authority, hold or legal-hold refusal the
+  // pre-gate could not foresee, a transient error) never destroys the review.
+  // A void that fails here is on the ARCHIVE_DOC record, never swallowed; the
+  // draft cannot publish meanwhile — finalize refuses a retired document
+  // (REV-5) — and a retry of the void is the same checked routine.
+  const draftVoid = await voidPendingDraftAfterPublish(doc.id, actorUserId);
 
   // REV-10: its share links stop durably — an unarchive must not revive them.
   const shares = await revokeLiveSharesForDocument(doc.id, actorUserId);
@@ -1556,7 +1602,8 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
     type: "ARCHIVE_DOC",
     details: {
       reason: reason.trim(), action: "archive",
-      pendingDraftVoided: voidedDraft,
+      pendingDraftVoided: draftVoid.voidedVersionId,
+      pendingDraftVoidProblem: draftVoid.problem,
       revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
     },
   });
@@ -1642,10 +1689,27 @@ export class UnresolvedReplacementsError extends Error {
   }
 }
 
+/** REV-14: the lineage write did not record every named pair. `outcome`
+ *  says what is known about the rows: "refused" — the statement failed, so
+ *  it wrote nothing; "incomplete" — it answered but pairs are missing (an RLS
+ *  refusal answers zero rows); "unconfirmed" — it answered but the read-back
+ *  failed. The message names no outcome for the document: each caller states
+ *  its own (supersede restores the prior status; split / merge roll back). */
+export class SupersessionLineageError extends Error {
+  readonly outcome: "refused" | "incomplete" | "unconfirmed";
+  readonly missing: string[];
+  constructor(outcome: "refused" | "incomplete" | "unconfirmed", message: string, missing: string[] = []) {
+    super(message);
+    this.name = "SupersessionLineageError";
+    this.outcome = outcome;
+    this.missing = missing;
+  }
+}
+
 /** REV-14 / DRLS-13: write supersession lineage rows as an upsert on the
  *  unique pair (ON CONFLICT DO NOTHING) and CHECK it: a refused write, or a
  *  pair that is still missing afterwards (an RLS refusal answers with zero
- *  rows, not an error), throws naming the state it leaves. Shared by
+ *  rows, not an error), throws SupersessionLineageError. Shared by
  *  supersedeDocument and the split / merge lifecycle. */
 export async function writeSupersessionLineage(
   rows: Array<Record<string, unknown>>,
@@ -1655,21 +1719,76 @@ export async function writeSupersessionLineage(
   const { error } = await supabase
     .from("document_supersessions")
     .upsert(rows, { onConflict: "superseded_doc_id,replacement_doc_id", ignoreDuplicates: true });
-  if (!error) {
-    const { data: present, error: readErr } = await supabase
-      .from("document_supersessions").select("replacement_doc_id")
-      .eq("superseded_doc_id", supersededDocId).in("replacement_doc_id", replacementIds);
-    const have = new Set(((present as Array<{ replacement_doc_id: string }> | null) ?? []).map((r) => r.replacement_doc_id));
-    const missing = replacementIds.filter((id) => !have.has(id));
-    if (!readErr && missing.length === 0) return;
-    throw new Error(
-      `The document is now Superseded, but ${readErr ? "its replacement links could not be confirmed" : `${missing.length} of ${replacementIds.length} replacement link(s) were not recorded`}` +
-      `${readErr ? ` (${readErr.message})` : ""}. Re-run the action with the same replacements to record them — re-running is safe.`,
+  if (error) {
+    throw new SupersessionLineageError("refused", `The replacement links could not be recorded (${error.message}).`, replacementIds);
+  }
+  const { data: present, error: readErr } = await supabase
+    .from("document_supersessions").select("replacement_doc_id")
+    .eq("superseded_doc_id", supersededDocId).in("replacement_doc_id", replacementIds);
+  if (readErr) {
+    throw new SupersessionLineageError("unconfirmed", `The replacement links could not be confirmed after they were written (${readErr.message}).`);
+  }
+  const have = new Set(((present as Array<{ replacement_doc_id: string }> | null) ?? []).map((r) => r.replacement_doc_id));
+  const missing = replacementIds.filter((id) => !have.has(id));
+  if (missing.length > 0) {
+    throw new SupersessionLineageError(
+      "incomplete",
+      `${missing.length} of ${replacementIds.length} replacement link(s) were not recorded (the write was refused).`,
+      missing,
     );
   }
+}
+
+/** REV-14: a supersede whose lineage failed AFTER the status flip is put
+ *  back — the prior status and supersession fields restored, and any pair
+ *  this attempt added removed — so the document is never left Superseded
+ *  with fewer successors than were named (and the Inspector, which offers
+ *  Supersede only on a live document, can run it again). Checked: what could
+ *  not be undone is named in the thrown error. */
+async function undoFailedSupersede(opts: {
+  docId: string;
+  prior: Record<string, unknown>;
+  addedPairs: string[];
+  failure: SupersessionLineageError;
+  voidedDraft: string | null;
+  actorUserId: string;
+}): Promise<never> {
+  const { docId, prior, failure } = opts;
+  const priorStatus = String(prior.status ?? "Issued");
+  const { data: restored, error: restoreErr } = await supabase
+    .from("documents")
+    .update({
+      status: priorStatus,
+      superseded_at: prior.superseded_at ?? null,
+      superseded_by_user: prior.superseded_by_user ?? null,
+      supersession_reason: prior.supersession_reason ?? null,
+      supersession_moc: prior.supersession_moc ?? null,
+      updated_at: new Date().toISOString(),
+      updated_by: opts.actorUserId,
+    })
+    .eq("id", docId)
+    .select("id");
+  if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
+    throw new Error(
+      `${failure.message} The document is now Superseded and its previous status could not be restored ` +
+      `(${restoreErr?.message ?? "the write was refused"}) — ask Doc Control to restore it to ${priorStatus} or record the replacement links.`,
+    );
+  }
+  let leftover = 0;
+  if (failure.outcome !== "refused" && opts.addedPairs.length > 0) {
+    const { error: delErr } = await supabase
+      .from("document_supersessions").delete()
+      .eq("superseded_doc_id", docId).in("replacement_doc_id", opts.addedPairs);
+    const { data: left, error: leftErr } = await supabase
+      .from("document_supersessions").select("replacement_doc_id")
+      .eq("superseded_doc_id", docId).in("replacement_doc_id", opts.addedPairs);
+    leftover = delErr || leftErr ? opts.addedPairs.length : ((left as unknown[] | null) ?? []).length;
+  }
   throw new Error(
-    `The document is now Superseded, but its replacement links could not be recorded (${error.message}). ` +
-    "Re-run the action with the same replacements to record them — re-running is safe.",
+    `Nothing was superseded: ${failure.message} The document is back to ${priorStatus}.` +
+    (leftover > 0 ? ` ${leftover} replacement link(s) this attempt wrote could not be removed — ask Doc Control to delete them.` : "") +
+    (opts.voidedDraft ? " Its in-review draft had already been voided; resubmit it if the document stays in use." : "") +
+    " Fix the cause and supersede it again.",
   );
 }
 
@@ -1740,6 +1859,27 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
     throw new UnresolvedReplacementsError(unresolved);
   }
 
+  // REV-14: what a failed lineage write puts back — the status and
+  // supersession fields as they are NOW (a re-run on a Superseded document
+  // keeps its first supersession), and the pairs that already exist (an
+  // undo removes only the ones this attempt added). Read before any write.
+  const { data: priorRow, error: priorErr } = await supabase
+    .from("documents")
+    .select("status, superseded_at, superseded_by_user, supersession_reason, supersession_moc")
+    .eq("id", doc.id).maybeSingle();
+  if (priorErr || !priorRow) {
+    throw new Error(`Couldn't read the document's current status (${priorErr?.message ?? "not found"}) — nothing was superseded.`);
+  }
+  const priorState: Record<string, unknown> = { ...(priorRow as Record<string, unknown>) };
+  let preExistingPairs = new Set<string>();
+  if (resolved.length > 0) {
+    const { data: pairs, error: pairsErr } = await supabase
+      .from("document_supersessions").select("replacement_doc_id")
+      .eq("superseded_doc_id", doc.id).in("replacement_doc_id", resolved);
+    if (pairsErr) throw new Error(`Couldn't read the document's existing replacement links (${pairsErr.message}) — nothing was superseded.`);
+    preExistingPairs = new Set(((pairs as Array<{ replacement_doc_id: string }> | null) ?? []).map((r) => r.replacement_doc_id));
+  }
+
   // REV-6: the retired record's in-flight review draft is voided FIRST — a
   // refusal stops the supersede before anything is retired.
   const voidedDraft = await voidPendingDraft(doc.id);
@@ -1768,7 +1908,8 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   // unique pair (ON CONFLICT DO NOTHING) — re-running a supersede with an
   // added replacement records the new pair instead of losing the whole batch
   // to the one that already exists — and the result is CHECKED: a refused
-  // lineage write is an error naming the state it leaves, never a success.
+  // lineage write puts the document back (undoFailedSupersede) and says so,
+  // never a success and never a Superseded record short of its successors.
   if (resolved.length > 0) {
     const rows = resolved.map((replacementId) => ({
       org_id: orgId,
@@ -1778,7 +1919,16 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       created_by: actorUserId,
       created_at: now,
     }));
-    await writeSupersessionLineage(rows, doc.id, resolved);
+    try {
+      await writeSupersessionLineage(rows, doc.id, resolved);
+    } catch (e) {
+      if (!(e instanceof SupersessionLineageError)) throw e;
+      await undoFailedSupersede({
+        docId: doc.id, prior: priorState,
+        addedPairs: resolved.filter((id) => !preExistingPairs.has(id)),
+        failure: e, voidedDraft, actorUserId,
+      });
+    }
   }
 
   // DIST-1: a public share link must stop serving a retired drawing. Revoke
