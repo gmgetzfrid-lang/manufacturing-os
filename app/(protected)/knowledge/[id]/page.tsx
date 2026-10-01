@@ -629,6 +629,14 @@ function SourceCard({ citation, onOpen, delay }: {
         <span className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
           p.{c.page}
         </span>
+        {/* GOV-9: an AI model transcribed this page image — the quote is its reading, not the document's text. */}
+        {c.source === "vision" && (
+          <span data-citation-source="vision"
+            title="This passage is an AI model's transcription of the page image, not the drawing's own text — check tags and values against the page."
+            className="shrink-0 text-[9px] font-black px-1.5 py-0.5 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300">
+            AI transcription of this page
+          </span>
+        )}
         <ChevronDown className={`ml-auto shrink-0 w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
@@ -885,6 +893,22 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
                 <Search className="w-3 h-3" /> {retrieval.label}
               </span>
             )}
+            {/* PR-9: model arithmetic nothing re-derived is labelled as such. */}
+            {answer.arithmetic === "unverified" && (
+              <span data-arithmetic="unverified"
+                title="The AI worked these numbers itself and nothing in the app re-derived them — check every substitution and unit against the cited pages before you use the result."
+                className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 bg-amber-50/60 dark:bg-amber-950/20">
+                Unverified arithmetic — check every step
+              </span>
+            )}
+            {/* IRLS-13: the Reasoning Skills that shaped this answer. */}
+            {(answer.skills ?? []).length > 0 && (
+              <span data-answer-skills="true"
+                title="Reasoning Skills this workspace (or you) switched on rode along with this question."
+                className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300">
+                Shaped by: {(answer.skills ?? []).map((k) => k.name).join(", ")}
+              </span>
+            )}
             <span className="font-bold ml-auto">{answer.provider} · {answer.model}</span>
             <span>·</span>
             <span>{libraryCitations.length} source{libraryCitations.length === 1 ? "" : "s"} below</span>
@@ -934,6 +958,19 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
       {retrieval?.note && retrieval.emphasize && (
         <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2" data-retrieval-note="true">
           <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span>{retrieval.note}</span>
+        </div>
+      )}
+      {/* SEM-3 / SEM-6: a library whose meaning index could not be searched says why. */}
+      {(answer.meaningSearch?.notes ?? []).length > 0 && (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2" data-meaning-notes="true">
+          <Search className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>Meaning search did not cover every library for this answer: {(answer.meaningSearch?.notes ?? []).join(" ")}</span>
+        </div>
+      )}
+      {/* ASK-11: an answer that could not be saved says so. */}
+      {answer.saved === false && answer.saveError && (
+        <div className="rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50/60 dark:bg-rose-950/20 px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200" data-save-error="true">
+          {answer.saveError}
         </div>
       )}
       {sourceGroups.length > 0 && (
@@ -1890,6 +1927,12 @@ export default function KnowledgeLibraryPage() {
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-1.5">
                     {pa.user_name || "someone"} · {new Date(pa.created_at).toLocaleDateString()}
                   </div>
+                  {/* IEDGE-4: a source revised since — the quotes are the old revision's. */}
+                  {pa.revisedSince && (
+                    <div data-revised-since="true" className="mb-1.5 text-[10px] font-black text-amber-800 dark:text-amber-300">
+                      A document this answer cites has been revised since — its quotes and pages are the old revision&apos;s. Ask fresh for the current one.
+                    </div>
+                  )}
                   <button
                     onClick={() => {
                       const past: KnowledgeAnswer = {
@@ -2084,6 +2127,14 @@ export default function KnowledgeLibraryPage() {
               </>
             )}
           </div>
+          {/* KACL-6 (DEC-44 (I-03)): a knowledge library carries no access list of
+              its own — said plainly where files are added. */}
+          {isController && (
+            <p className="mb-2 text-[10px] text-[var(--color-text-muted)]" data-upload-visibility="true">
+              PDFs added here are readable by every member of this workspace (in answers and on this page).
+              Documents mirrored from Document Control keep their own access rules — keep restricted files there.
+            </p>
+          )}
 
           {uploadState && (
             <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-xs">
@@ -2278,6 +2329,9 @@ export default function KnowledgeLibraryPage() {
                           <span className="block text-[10px] text-[var(--color-text-muted)]">
                             {rows.length > 1 ? `${rows.length} turns · ` : ""}
                             {last.userName ?? "Someone"} · {new Date(last.createdAt).toLocaleString()}
+                            {rows.some((r) => r.revisedSince) && (
+                              <span data-revised-since="true" className="ml-1 font-black text-amber-700 dark:text-amber-400"> · sources revised since</span>
+                            )}
                           </span>
                         </span>
                         <span className="text-[10px] font-black text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">

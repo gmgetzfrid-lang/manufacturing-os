@@ -103,6 +103,11 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                                 <Crosshair className="w-2.5 h-2.5" />
                                 <span className="truncate max-w-[9rem]">{s.documentName.replace(/\.pdf$/i, "")}</span>
                                 <span className="text-orange-600/70">{s.sheetLabel ?? `p.${s.page}`}</span>
+                                {/* PR-4: this sheet's tags were transcribed from the page image by an AI model. */}
+                                {s.viaVision && (
+                                  <span data-via-vision="true" title="Tags on this sheet were transcribed from the page image by an AI model — confirm on the drawing."
+                                    className="text-[9px] font-black text-amber-700 dark:text-amber-300">AI-read</span>
+                                )}
                               </button>
                             ))}
                           </div>

@@ -139,6 +139,22 @@ describe("knowledge_page_entities bulk reads name their kinds", () => {
     expect(caught.map((s) => s.line)).toEqual([2]);
   });
 
+  it("a read that feeds a number the prompt tells the model to trust is COMPLETE: paged to the end or to a stated ceiling, never one capped slab (ASK-2 / ING-10)", () => {
+    // Naming the kinds keeps other kinds from eating the cap; it does not
+    // stop the cap itself from cutting the census. The ask route's DRAWING
+    // FACTS slab — the one the answer prompt marks "TRUST these for counts" —
+    // must page (.range) under readAll with its ceiling, and must not carry
+    // a fixed .limit() that a big library silently overflows.
+    const src = readFileSync(join(ROOT, "app/api/knowledge/ask/route.ts"), "utf8");
+    const slab = statementsIn("ask", src).find((s) => s.text.includes('.select("document_id, page, kind, tag, raw")'));
+    expect(slab, "the census slab is still there").toBeTruthy();
+    expect(slab!.text).toMatch(/\.in\("kind", TAG_ENTITY_KINDS/);
+    expect(slab!.text).toMatch(/\.range\(from, to\), DRAWING_FACTS_ROW_CEILING\)/);
+    expect(slab!.text).not.toMatch(/\.limit\(/);
+    const before = src.slice(Math.max(0, src.indexOf('.select("document_id, page, kind, tag, raw")') - 400), src.indexOf('.select("document_id, page, kind, tag, raw")'));
+    expect(before).toMatch(/await readAll<EntRow>\(/);
+  });
+
   it("the locate route's 'where else' read names its kinds (DWG-12)", () => {
     const src = readFileSync(join(ROOT, "app/api/knowledge/locate/route.ts"), "utf8");
     const elsewhere = statementsIn("locate", src).find((s) => s.text.includes(".eq(\"library_id\""));

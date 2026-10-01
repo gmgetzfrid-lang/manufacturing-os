@@ -127,8 +127,11 @@ either:
 | `not_current` | Superseded, Void, Archived, or `archived_at` set |
 | `no_file` | No current version to read |
 
-Enforced at three points: the knowledge sync (`lib/knowledgeSourceSync.ts`,
-the only door in), the orchestrator's document tools (which run on the
+Enforced at four points: the knowledge sync (`lib/knowledgeSourceSync.ts`,
+the only door in), the knowledge ask route at query time
+(`app/api/knowledge/ask/route.ts` runs `aiReadability` over every mirror's
+controlled document before searching, so a mirror a racing sync left in
+place is never read), the orchestrator's document tools (which run on the
 service-role key, where RLS would not stop them), and
 `POST /api/knowledge/exclusion`, which sets the flag **and deletes the
 indexed copy in the same call**. Chunks, page entities and mentions all
