@@ -27,8 +27,7 @@ import RetentionSection from "@/components/documents/RetentionSection";
 import OriginSection from "@/components/documents/OriginSection";
 import EffectivePill from "@/components/documents/EffectivePill";
 import ReviewPill from "@/components/documents/ReviewPill";
-import VerificationPill from "@/components/documents/VerificationPill";
-import { loadFieldVerification, unknownFieldVerification, type FieldVerification } from "@/lib/reviewCycles";
+import VerificationPill, { useFieldVerification } from "@/components/documents/VerificationPill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
 import CollapsibleSection from "@/components/ui/CollapsibleSection";
@@ -308,22 +307,8 @@ export default function InspectorPanel({
   };
   const [compareOpen, setCompareOpen] = useState(false);
 
-  // GAP-9: field-verification currency (the review-cycle rule on the walkdown
-  // cadence), read CHECKED — a failed read shows "unknown", never "never".
-  const [fieldVerification, setFieldVerification] = useState<FieldVerification | null>(null);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!selectedDoc?.id || !selectedDoc.libraryId) { if (alive) setFieldVerification(null); return; }
-      try {
-        const v = await loadFieldVerification({ id: selectedDoc.id, reviewPolicy: selectedDoc.reviewPolicy ?? null, collectionId: selectedDoc.collectionId ?? null, libraryId: selectedDoc.libraryId });
-        if (alive) setFieldVerification(v);
-      } catch (e) {
-        if (alive) setFieldVerification(unknownFieldVerification((e as Error)?.message ?? "the read failed"));
-      }
-    })();
-    return () => { alive = false; };
-  }, [selectedDoc?.id, selectedDoc?.reviewPolicy, selectedDoc?.collectionId, selectedDoc?.libraryId]);
+  // GAP-9: field-verification currency, read CHECKED (VerificationPill's hook).
+  const fieldVerification = useFieldVerification(selectedDoc);
 
   // Ownership grant (Phase 2): the document's effective owner may manage it —
   // publish/supersede/archive/edit — even without a controller role or library

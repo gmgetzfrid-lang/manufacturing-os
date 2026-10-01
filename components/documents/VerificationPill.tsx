@@ -8,9 +8,42 @@
 // verified with no cadence, or unknown (the register could not be read).
 // Renders nothing when there is nothing to say.
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { CheckCircle2, Clock, AlertTriangle, HelpCircle, MapPin } from "lucide-react";
-import { verificationPillText, verificationPillTitle, type FieldVerification } from "@/lib/reviewCycles";
+import {
+  verificationPillText, verificationPillTitle, loadFieldVerification, unknownFieldVerification,
+  type FieldVerification,
+} from "@/lib/reviewCycles";
+import type { ReviewPolicy } from "@/types/schema";
+
+/** GAP-9: one document's field-verification currency (the review-cycle rule
+ *  on the walkdown cadence), read CHECKED — a failed read is "unknown", never
+ *  "never verified". The inspector's whole GAP-9 read lives here, so its file
+ *  carries one call and one pill (P14 review fix: InspectorPanel is also
+ *  P15's file). */
+export function useFieldVerification(doc: {
+  id?: string | null; libraryId?: string | null; collectionId?: string | null; reviewPolicy?: ReviewPolicy | null;
+} | null | undefined): FieldVerification | null {
+  const [verification, setVerification] = useState<FieldVerification | null>(null);
+  const id = doc?.id ?? null;
+  const libraryId = doc?.libraryId ?? null;
+  const collectionId = doc?.collectionId ?? null;
+  const reviewPolicy = doc?.reviewPolicy ?? null;
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!id || !libraryId) { if (alive) setVerification(null); return; }
+      try {
+        const v = await loadFieldVerification({ id, reviewPolicy, collectionId, libraryId });
+        if (alive) setVerification(v);
+      } catch (e) {
+        if (alive) setVerification(unknownFieldVerification((e as Error)?.message ?? "the read failed"));
+      }
+    })();
+    return () => { alive = false; };
+  }, [id, reviewPolicy, collectionId, libraryId]);
+  return verification;
+}
 
 export default function VerificationPill({ verification, compact = false, className = "" }: {
   verification?: FieldVerification | null;

@@ -21,6 +21,8 @@ import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fa
 const state = vi.hoisted(() => ({
   db: null as unknown as FakeDb,
   failRead: null as null | string,
+  /** Runs as each read of a table is opened (a concurrent writer between pages). */
+  onFrom: null as null | ((table: string) => void),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -29,6 +31,7 @@ vi.mock("@/lib/supabase", () => ({
     return {
       ...base,
       from: (t: string) => {
+        state.onFrom?.(t);
         if (state.failRead === t) {
           const answer = { data: null, error: { message: "statement timeout" } };
           const chain: Record<string, unknown> = {};
@@ -70,6 +73,7 @@ const discrepancy = (at: string, by = "Dee Discrepancy"): FieldOutcomeRow => ({ 
 beforeEach(() => {
   state.db = newFakeDb();
   state.failRead = null;
+  state.onFrom = null;
 });
 
 describe("GAP-9 — the currency is the review-cycle rule applied to the walkdown cadence", () => {
@@ -224,6 +228,45 @@ describe("GAP-9 — the register shows it beside the other pills and hands it to
     expect(state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "range").length).toBe(2);
   });
 
+  it("P14 review fix — a PostgREST whose max-rows is BELOW the page size answers short pages: the read pages on by the rows it got, so a verification past the first short page is still found", async () => {
+    state.db.maxRows = 500;
+    doc("busy");
+    for (let i = 0; i < 600; i++) session(`b${i}`, "busy", "field_verified", daysAgo(1));
+    doc("old"); session("o1", "old", "field_verified", daysAgo(400));
+    const byId = new Map((await loadDocControlRegister(ORG)).rows.map((r) => [r.id, r]));
+    // the first version stopped at the 500-row page (shorter than 1000) and read "old" as never verified
+    expect(byId.get("old")?.fieldVerification).toMatchObject({ status: "current" });
+    const ranges = state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "range").map((c) => c.args);
+    expect(ranges).toEqual([[0, 999], [500, 1499]]);
+    // the exact count rides on every page's select
+    expect(state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "select").every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
+  });
+
+  it("P14 review fix — the read is bounded by the register's OWN documents (chunked), never every walkdown in the org", async () => {
+    for (let i = 0; i < 160; i++) doc(`d${i}`);
+    session("s-in", "d7", "field_verified", daysAgo(10));
+    // a Draft (not in the register) with a walkdown: never asked for
+    doc("draft", { status: "Draft" }); session("s-out", "draft", "field_verified", daysAgo(10));
+    const { rows } = await loadDocControlRegister(ORG);
+    expect(rows.find((r) => r.id === "d7")?.fieldVerification).toMatchObject({ status: "current" });
+    const asked = state.db.calls.filter((c) => c.table === "checkout_sessions" && c.method === "in" && c.args[0] === "document_id").map((c) => c.args[1] as string[]);
+    expect(asked.map((a) => a.length)).toEqual([150, 10]);
+    expect(asked.flat().sort()).toEqual(rows.map((r) => r.id).sort());
+    expect(asked.flat()).not.toContain("draft");
+  });
+
+  it("P14 review fix — fewer rows than the count the first answer reported is a TRUNCATED read: the currency is unknown, never 'never verified'", async () => {
+    state.db.maxRows = 1000;
+    doc("busy");
+    for (let i = 0; i < 1000; i++) session(`b${i}`, "busy", "field_verified", daysAgo(1));
+    doc("old"); session("o1", "old", "field_verified", daysAgo(400));
+    let reads = 0;
+    // between the first and the second page the rows go away: the second page answers nothing
+    state.onFrom = (t) => { if (t === "checkout_sessions" && ++reads === 2) state.db.tables.checkout_sessions = []; };
+    const byId = new Map((await loadDocControlRegister(ORG)).rows.map((r) => [r.id, r]));
+    expect(byId.get("old")?.fieldVerification).toMatchObject({ status: "unknown", unknownReason: expect.stringContaining("answered 1000 of 1001 walkdown outcomes") });
+  });
+
   it("a failed register read or an unreadable inherited policy is UNKNOWN on every affected row — and says so in the CSV", async () => {
     doc("a"); session("s1", "a", "field_verified", daysAgo(20));
     state.failRead = "checkout_sessions";
@@ -258,9 +301,16 @@ describe("GAP-9 — the register shows it beside the other pills and hands it to
 describe("GAP-9 — rendered beside the other pills, set in the review policy, one derivation", () => {
   it("the inspector loads it CHECKED and renders VerificationPill beside ReviewPill; the register renders it beside AckPill", () => {
     const i = src("components/documents/InspectorPanel.tsx");
-    expect(i).toContain("const v = await loadFieldVerification({ id: selectedDoc.id, reviewPolicy: selectedDoc.reviewPolicy ?? null, collectionId: selectedDoc.collectionId ?? null, libraryId: selectedDoc.libraryId });");
+    // P14 review fix: InspectorPanel is also P15's file — its GAP-9 change is one import, one hook call and one pill
+    expect(i).toContain('import VerificationPill, { useFieldVerification } from "@/components/documents/VerificationPill";');
+    expect(i).toContain("  const fieldVerification = useFieldVerification(selectedDoc);");
     expect(i).toMatch(/<ReviewPill nextReviewDate=\{selectedDoc\.nextReviewDate\} compact \/>\s*\n\s*<VerificationPill verification=\{fieldVerification\} compact \/>/);
-    expect(i).toContain("setFieldVerification(unknownFieldVerification(");
+    expect(i).not.toMatch(/loadFieldVerification|unknownFieldVerification/);
+    // the hook reads it CHECKED: a thrown read is "unknown", never "never verified"
+    const pill = src("components/documents/VerificationPill.tsx");
+    expect(pill).toContain("const v = await loadFieldVerification({ id, reviewPolicy, collectionId, libraryId });");
+    expect(pill).toContain("if (alive) setVerification(unknownFieldVerification((e as Error)?.message ?? \"the read failed\"));");
+    expect(pill).toContain("if (!id || !libraryId) { if (alive) setVerification(null); return; }");
     const r = src("app/(protected)/register/page.tsx");
     expect(r).toMatch(/<AckPill summary=\{r\.ack\} compact \/>[^\n]*\n\s*<td className="px-3 py-2">\{r\.fieldVerification \? <VerificationPill verification=\{r\.fieldVerification\} compact \/>/);
   });

@@ -139,8 +139,9 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     // GAP-5 / OWN-12: only ACTIVE members can be effective owners — a departed
     // owner's documents show as UNOWNED here (the actionable signal).
     supabase.from("org_members").select("uid, display_name, email").eq("org_id", orgId).eq("status", "active"),
-    // GAP-9: the check-in register's walkdown outcomes, read CHECKED and paged.
-    loadFieldOutcomes(orgId),
+    // GAP-9: the check-in register's walkdown outcomes of THESE documents,
+    // read CHECKED, chunked and paged.
+    loadFieldOutcomes(orgId, docIds),
   ]);
   const activeUids = new Set((activeRows ?? []).map((r) => (r as { uid: string }).uid));
   // DEL-8: the owner's CURRENT name, never the owner_name snapshot.
@@ -248,30 +249,52 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
 
 const FIELD_OUTCOME_PAGE = 1000;
 const FIELD_OUTCOME_MAX_PAGES = 100;
+/** Document ids per `.in()` — the register's own documents, a URL-safe slice. */
+const FIELD_OUTCOME_IN_CHUNK = 150;
 
-/** GAP-9: every walkdown outcome in the org (field_verified / discrepancy),
- *  grouped by document. CHECKED and PAGED — a failed or truncated read would
- *  show a verified record as never verified, so either answers `error`. */
-async function loadFieldOutcomes(orgId: string): Promise<{ byDoc: Map<string, FieldOutcomeRow[]>; error: string | null }> {
+/** GAP-9: the walkdown outcomes (field_verified / discrepancy) of the
+ *  register's OWN documents, grouped by document. CHECKED — a failed or
+ *  truncated read would show a verified record as never verified, so either
+ *  answers `error`. P14 review fix: the read is bounded by the register's
+ *  documents (chunked `.in("document_id", …)`, never every walkdown in the
+ *  org), and a page shorter than asked is NOT taken as the last page — a
+ *  PostgREST whose max-rows is below the page size answers short pages — so
+ *  each chunk advances by the rows the answer actually carried until the
+ *  exact count its first answer reported is reached (or, without a count, an
+ *  empty page); fewer rows than that count is a truncated read. */
+async function loadFieldOutcomes(orgId: string, docIds: string[]): Promise<{ byDoc: Map<string, FieldOutcomeRow[]>; error: string | null }> {
   const byDoc = new Map<string, FieldOutcomeRow[]>();
-  for (let page = 0; page < FIELD_OUTCOME_MAX_PAGES; page++) {
-    const from = page * FIELD_OUTCOME_PAGE;
-    const { data, error } = await supabase
-      .from("checkout_sessions")
-      .select("id, document_id, outcome, ended_at, user_name, outcome_ref")
-      .eq("org_id", orgId).in("outcome", [...FIELD_OUTCOMES])
-      .order("ended_at", { ascending: false }).order("id", { ascending: true })
-      .range(from, from + FIELD_OUTCOME_PAGE - 1);
-    if (error) return { byDoc, error: error.message };
-    const rows = (data ?? []) as Array<FieldOutcomeRow & { document_id: string }>;
-    for (const r of rows) {
-      const list = byDoc.get(r.document_id) ?? [];
-      list.push(r);
-      byDoc.set(r.document_id, list);
+  for (let c = 0; c < docIds.length; c += FIELD_OUTCOME_IN_CHUNK) {
+    const chunk = docIds.slice(c, c + FIELD_OUTCOME_IN_CHUNK);
+    let from = 0;
+    let total: number | null = null;
+    for (let page = 0; ; page++) {
+      if (page >= FIELD_OUTCOME_MAX_PAGES) {
+        return { byDoc, error: `more than ${FIELD_OUTCOME_MAX_PAGES} pages of walkdown outcomes — read a document's own panel` };
+      }
+      const { data, error, count } = await supabase
+        .from("checkout_sessions")
+        .select("id, document_id, outcome, ended_at, user_name, outcome_ref", { count: "exact" })
+        .eq("org_id", orgId).in("document_id", chunk).in("outcome", [...FIELD_OUTCOMES])
+        .order("ended_at", { ascending: false }).order("id", { ascending: true })
+        .range(from, from + FIELD_OUTCOME_PAGE - 1);
+      if (error) return { byDoc, error: error.message };
+      if (total === null && typeof count === "number") total = count;
+      const rows = (data ?? []) as Array<FieldOutcomeRow & { document_id: string }>;
+      for (const r of rows) {
+        const list = byDoc.get(r.document_id) ?? [];
+        list.push(r);
+        byDoc.set(r.document_id, list);
+      }
+      from += rows.length;
+      if (total !== null && from >= total) break;
+      if (rows.length === 0) {
+        if (total !== null) return { byDoc, error: `the check-in register answered ${from} of ${total} walkdown outcomes` };
+        break;
+      }
     }
-    if (rows.length < FIELD_OUTCOME_PAGE) return { byDoc, error: null };
   }
-  return { byDoc, error: `more than ${FIELD_OUTCOME_PAGE * FIELD_OUTCOME_MAX_PAGES} walkdown outcomes — read a document's own panel` };
+  return { byDoc, error: null };
 }
 
 /** GAP-9: the currency as the CSV states it — the pill's words plus the facts
