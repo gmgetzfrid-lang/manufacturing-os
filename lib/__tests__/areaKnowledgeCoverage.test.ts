@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 //
 // intelligence Round G (I-09) — AREA-8: the area checklist carries COVERAGE,
-// not presence. The knowledge-status route counts the area shelf's readable
-// drawings read for flows (a FLOWS_READ record — a read, flows found or not —
-// or a flow read off it); the panel ticks step 3 only when every one was
+// not presence. The knowledge-status route counts the area shelf's FLOW
+// DRAWINGS (a PFD / P&ID / block diagram by title or doc-control folder, or
+// a document already read) read for flows (a FLOWS_READ record — a read,
+// flows found or not — or a flow read off it), and counts the data sheets
+// and manuals beside them apart; the panel ticks step 3 only when every one was
 // read and step 4 only when every piece of the area's equipment has a linked
 // document, shows "in progress" in between, and never ticks step 1 for a
 // folder that merely carries the area's name.
@@ -17,6 +19,11 @@ type Row = Record<string, unknown>;
 const st = vi.hoisted(() => ({
   rows: {} as Record<string, Row[]>,
   failAudit: false,
+  landscape: { libraries: new Map(), folders: new Map(), teamSupervisors: new Map() } as {
+    libraries: Map<string, { name: string }>;
+    folders: Map<string, { name: string; library_id: string; parent_id: string | null; path_names: string[] }>;
+    teamSupervisors: Map<string, unknown>;
+  },
 }));
 function chain(table: string) {
   const filters: Array<(r: Row) => boolean> = [];
@@ -49,7 +56,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 vi.mock("@/lib/knowledgeAccess", () => ({
   loadPrincipal: vi.fn(async () => ({ uid: "u1", isController: true })),
-  loadDcLandscape: vi.fn(async () => ({ libraries: new Map(), folders: new Map(), teamSupervisors: new Map() })),
+  loadDcLandscape: vi.fn(async () => st.landscape),
   containerReadable: () => true,
 }));
 // The panel's client reads (flows, document links, plot plans).
@@ -85,9 +92,10 @@ import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
 
 const get = () => GET(new NextRequest("http://x/api/area/knowledge-status?orgId=o1&unitCode=20", { headers: { authorization: "Bearer t" } }));
 
-describe("AREA-8 — the route counts the shelf's drawings read for flows", () => {
+describe("AREA-8 — the route counts the shelf's flow drawings read for flows", () => {
   beforeEach(() => {
     st.failAudit = false;
+    st.landscape = { libraries: new Map(), folders: new Map(), teamSupervisors: new Map() };
     st.rows = {
       codebook_entries: [{ org_id: "o1", kind: "unit", code: "20", label: "Crude", meta: { knowledgeLibraryId: "kl1" } }],
       knowledge_libraries: [{ id: "kl1", org_id: "o1", name: "Crude shelf" }],
@@ -108,9 +116,40 @@ describe("AREA-8 — the route counts the shelf's drawings read for flows", () =
     };
   });
 
-  it("2 of the 3 readable drawings were read (one by a flow read off it, one by a read that found nothing); an indexing one is not counted", async () => {
+  it("2 of the 3 flow drawings were read (one by a flow read off it, one by a read that found nothing); an indexing one is not counted", async () => {
     const json = await (await get()).json();
-    expect(json.flowReads).toEqual({ readable: 3, read: 2 });
+    expect(json.flowReads).toEqual({ readable: 3, read: 2, otherDocs: 0 });
+  });
+
+  it("a shelf of 12 PFDs beside 300 data sheets: the 12 PFDs are the denominator — the data sheets are said apart, never owed a paid read", async () => {
+    st.rows.knowledge_documents = [
+      ...Array.from({ length: 12 }, (_, i) => ({ id: `p${i}`, org_id: "o1", library_id: "kl1", name: `Crude PFD-${i}`, status: "ready", source_document_id: null })),
+      ...Array.from({ length: 300 }, (_, i) => ({ id: `s${i}`, org_id: "o1", library_id: "kl1", name: `Data sheet V-${i}`, status: "ready", source_document_id: null })),
+    ];
+    st.rows.audit_logs = Array.from({ length: 12 }, (_, i) => ({ id: `l${i}`, org_id: "o1", action: "FLOWS_READ", resource_id: `p${i}` }));
+    st.rows.process_flows = [];
+    const json = await (await get()).json();
+    expect(json.flowReads).toEqual({ readable: 12, read: 12, otherDocs: 300 });
+  });
+
+  it("a mirror named only by its number counts as a flow drawing when doc control files it under a PFD folder; a document already read always counts", async () => {
+    st.landscape.libraries.set("dl1", { name: "Drawings" });
+    st.landscape.folders.set("fP", { name: "Crude", library_id: "dl1", parent_id: null, path_names: ["PFDs", "Crude"] });
+    st.landscape.folders.set("fM", { name: "Crude", library_id: "dl1", parent_id: null, path_names: ["Manuals", "Crude"] });
+    st.rows.documents = [
+      { id: "dc7", org_id: "o1", collection_id: "fP", library_id: "dl1" },
+      { id: "dc8", org_id: "o1", collection_id: "fM", library_id: "dl1" },
+    ];
+    st.rows.knowledge_documents.push(
+      { id: "k5", org_id: "o1", library_id: "kl1", name: "Data sheet V-101", status: "ready", source_document_id: null },
+      { id: "k6", org_id: "o1", library_id: "kl1", name: "Operating manual", status: "ready", source_document_id: null },
+      { id: "k7", org_id: "o1", library_id: "kl1", name: "20-XX-001 Rev 2", status: "ready", source_document_id: "dc7" },
+      { id: "k8", org_id: "o1", library_id: "kl1", name: "20-MN-004", status: "ready", source_document_id: "dc8" },
+    );
+    st.rows.audit_logs.push({ id: "l9", org_id: "o1", action: "FLOWS_READ", resource_id: "k6" });
+    const json = await (await get()).json();
+    // k1 k2 k3 (named), k6 (read), k7 (PFDs folder) — k5 and k8 are other documents
+    expect(json.flowReads).toEqual({ readable: 5, read: 3, otherDocs: 2 });
   });
 
   it("a read record that cannot be counted is null — 'could not be counted', never 0 of 3", async () => {
@@ -135,7 +174,7 @@ describe("AREA-8 — the panel ticks coverage, not presence", () => {
     counts: { ready: 40, pending: 0 },
     drift: { deadSources: [], movedOut: [], movedOutTotal: 0, newMatches: [] },
     suggestions: [],
-    flowReads: { readable: 40, read: 3 },
+    flowReads: { readable: 40, read: 3, otherDocs: 0 },
     canManage: true,
     ...over,
   });
@@ -160,7 +199,7 @@ describe("AREA-8 — the panel ticks coverage, not presence", () => {
 
   it("one flow and one linked document no longer tick steps 3 and 4: '3 of 40 read' and '1 of 2 equipment' are in progress", async () => {
     await mount(status({}));
-    expect(step(3).textContent).toContain("3 of 40 readable drawings read for flows");
+    expect(step(3).textContent).toContain("3 of 40 flow drawings (PFDs, P&IDs, block diagrams) read for flows");
     expect(step(3).textContent).toContain("in progress");
     expect(step(4).textContent).toContain("1 of 2 equipment items in this area has a linked document");
     expect(step(4).textContent).toContain("in progress");
@@ -169,11 +208,20 @@ describe("AREA-8 — the panel ticks coverage, not presence", () => {
 
   it("every drawing read and every item linked: both ticked", async () => {
     cl.links = [{ document_id: "d1", asset_id: "a1" }, { document_id: "d2", asset_id: "a2" }];
-    await mount(status({ flowReads: { readable: 40, read: 40 } }));
+    await mount(status({ flowReads: { readable: 40, read: 40, otherDocs: 300 } }));
     expect(step(3).textContent).not.toContain("in progress");
     expect(step(4).textContent).not.toContain("in progress");
     expect(step(3).querySelector("span.bg-emerald-500")).not.toBeNull();
     expect(step(4).querySelector("span.bg-emerald-500")).not.toBeNull();
+    // the data sheets beside the drawings are said, and do not hold the tick back
+    expect(step(3).textContent).toContain("300 other documents on the shelf (data sheets, manuals…) not counted");
+  });
+
+  it("a shelf with no flow drawing by title or folder says so — a todo, never a tick on 0 of 0", async () => {
+    await mount(status({ flowReads: { readable: 0, read: 0, otherDocs: 25 } }));
+    expect(step(3).textContent).toContain("no PFD, P&ID or block diagram on the shelf by title or folder");
+    expect(step(3).querySelector("span.bg-emerald-500")).toBeNull();
+    expect(step(3).textContent).not.toContain("in progress");
   });
 
   it("unbound: a folder named like the area is a SUGGESTION, never a ticked step 1", async () => {

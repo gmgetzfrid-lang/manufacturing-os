@@ -7,8 +7,10 @@
 //      knowledge → deep read (flows / equipment / plot) → link equipment
 //      files. Each step shows real state and launches its tool — the user
 //      never has to remember the sequence. A step is done when its COVERAGE
-//      is (AREA-8): every readable drawing on the area's shelf read for
-//      flows, every piece of the area's equipment with a linked document —
+//      is (AREA-8): every flow drawing on the area's shelf (a PFD, P&ID or
+//      block diagram by title or folder — not the data sheets and manuals
+//      beside them) read for flows, every piece of the area's equipment with
+//      a linked document —
 //      one occurrence is "in progress", and a folder that merely carries the
 //      area's name is a suggestion, never a filed drawing.
 //   2. THE SETUP WIZARD: creates (or picks) this unit's knowledge library
@@ -68,8 +70,9 @@ interface AreaStatus {
     newMatches: Array<{ id: string; name: string; libraryName: string; pathNames: string[]; docCount: number }>;
   };
   suggestions: Array<{ id: string; name: string; libraryName: string; pathNames: string[]; docCount: number }>;
-  /** AREA-8: readable documents on the area's shelf, and how many were read for flows. */
-  flowReads?: { readable: number; read: number } | null;
+  /** AREA-8: the flow drawings on the area's shelf, how many were read for
+   *  flows, and the other documents beside them (not counted). */
+  flowReads?: { readable: number; read: number; otherDocs?: number } | null;
   canManage: boolean;
 }
 
@@ -206,7 +209,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   // named like the area is a suggestion, not a filed drawing (AREA-8).
   const drawingsDone = !!status?.boundLibrary && status.counts.ready + status.counts.pending > 0;
   const suggested = !status?.boundLibrary ? (status?.suggestions ?? []).filter((s) => s.docCount > 0) : [];
-  // Step 3: drawings read for flows, over every readable drawing on the shelf.
+  // Step 3: flow drawings read for flows, over every flow drawing on the shelf.
   const reads = status?.flowReads ?? null;
   const readState: "done" | "partial" | "todo" | "loading" = status === null ? "loading"
     : !reads ? "todo"
@@ -377,8 +380,13 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           <span className="inline-flex items-center gap-2 flex-wrap">
             <span>
               {reads
-                ? <><b>{reads.read}</b> of <b>{reads.readable}</b> readable drawing{reads.readable === 1 ? "" : "s"} read for flows</>
+                ? reads.readable > 0
+                  ? <><b>{reads.read}</b> of <b>{reads.readable}</b> flow drawing{reads.readable === 1 ? "" : "s"} (PFDs, P&amp;IDs, block diagrams) read for flows</>
+                  : <>no PFD, P&amp;ID or block diagram on the shelf by title or folder — read one from the flow panel below</>
                 : status?.boundLibrary ? "drawings read for flows could not be counted" : "connect the area's knowledge to measure the deep read"}
+              {reads && (reads.otherDocs ?? 0) > 0 && (
+                <span className="text-[var(--color-text-faint)]"> · {reads.otherDocs} other document{reads.otherDocs === 1 ? "" : "s"} on the shelf (data sheets, manuals…) not counted</span>
+              )}
             </span>
             <span>· <b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
             <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>

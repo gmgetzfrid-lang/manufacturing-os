@@ -104,6 +104,15 @@ describe("listProcessFlowsPaged — FLOW-9: newest first, paged, the cap said", 
     expect(callsOf("process_flows", "range").map((c) => c.args)).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
     expect(callsOf("process_flows", "neq")[0].args).toEqual(["status", "dismissed"]);
   });
+  it("the plant-wide review reads only the proposals, filtered in the database (never the whole confirmed map)", async () => {
+    push("process_flows", { data: [{ id: "p1", status: "proposed" }], error: null });
+    const r = await listProcessFlowsPaged("o1", { status: "proposed" });
+    expect(r?.flows).toEqual([{ id: "p1", status: "proposed" }]);
+    const eqs = callsOf("process_flows", "eq").map((c) => c.args);
+    expect(eqs).toEqual([["org_id", "o1"], ["status", "proposed"]]);
+    expect(callsOf("process_flows", "neq")).toHaveLength(0);
+    expect(callsOf("process_flows", "order").slice(0, 2).map((c) => c.args)).toEqual([["created_at", { ascending: false }], ["id", { ascending: false }]]);
+  });
   it("past the read cap it says so", async () => {
     for (let i = 0; i < FLOW_READ_CAP / FLOW_PAGE; i++) push("process_flows", { data: Array.from({ length: FLOW_PAGE }, (_, j) => ({ id: `${i}-${j}` })), error: null });
     const r = await listProcessFlowsPaged("o1");

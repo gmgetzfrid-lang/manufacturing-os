@@ -428,7 +428,7 @@ What landed (`20261155`):
 
 **Done-when.**
 1. ✓ Orphan rows are detectable: counted in the paste's result set (before and after), and shown as gone on every review surface (`resolveAssetEndpoints`). No new one can be written (the guard) or left by a delete (the cleanup).
-2. ✓ The reader's settled pairs are the decided ones (confirmed, dismissed on the revision read); a pending pair is "awaiting review" (`AREA-3` / `IEDGE-8`).
+2. ✓ — met in effect, not to the letter. The reader's *settled* pairs are the decided ones: confirmed, or dismissed on the revision read. A `proposed` pair is not re-proposed either. It is skipped and reported apart as "awaiting review" (`skippedPending`), never counted as a dismissal or as settled (`AREA-3` / `IEDGE-8`). The literal filter `status IN ('confirmed','dismissed')` would not change what lands. `20261017`'s `UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)` refuses a second row for a pending pair, and a duplicate proposal adds nothing a reviewer can use. What the criterion guarded against — a pending row read as a decision — no longer happens.
 3. ✓ Landed with I-13: `lib/orgGraph.ts` counts a flow edge whose end is not on the map in `truncations` (see `FLOW-6`).
 
 **Scope / residual.** Pending migration `20261155`.

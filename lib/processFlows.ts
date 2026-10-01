@@ -58,21 +58,23 @@ export const FLOW_READ_CAP = 20_000;
 
 export interface FlowListing {
   flows: ProcessFlow[];
-  /** More than FLOW_READ_CAP non-dismissed flows exist; the oldest are not listed. */
+  /** More than FLOW_READ_CAP flows of the listed kind exist; the oldest are not listed. */
   truncated: boolean;
 }
 
 /** Every non-dismissed flow for the org, newest first, paged to completion
  *  (FLOW-9: the old single read kept the 4,000 OLDEST, so the newest
  *  proposals — the ones a reviewer is waiting on — fell off first). Null
- *  pre-migration. */
-export async function listProcessFlowsPaged(orgId: string): Promise<FlowListing | null> {
+ *  pre-migration. `status` narrows the read to one status in the database
+ *  (the plant-wide review reads only the proposals, never the whole map). */
+export async function listProcessFlowsPaged(
+  orgId: string,
+  opts: { status?: "proposed" | "confirmed" } = {},
+): Promise<FlowListing | null> {
   const flows: ProcessFlow[] = [];
   for (let from = 0; from < FLOW_READ_CAP; from += FLOW_PAGE) {
-    const { data, error } = await supabase
-      .from("process_flows").select("*")
-      .eq("org_id", orgId)
-      .neq("status", "dismissed")
+    const base = supabase.from("process_flows").select("*").eq("org_id", orgId);
+    const { data, error } = await (opts.status ? base.eq("status", opts.status) : base.neq("status", "dismissed"))
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .range(from, from + FLOW_PAGE - 1);

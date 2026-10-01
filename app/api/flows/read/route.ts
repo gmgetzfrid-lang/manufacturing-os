@@ -18,6 +18,9 @@
 // is resolved through lib/docFileServer resolveDocumentFile — the download
 // deny binds, a broken folder chain is named, and pages served only because
 // the reader is a controller are recorded (DEC-43, channel "flows_read").
+// The gate is asked last, just before the render: a read the AI gates or
+// the empty registry refuse opens no file and records no restricted read
+// (a 428 → sign → retry is one record, not two).
 //
 // The model call is governed (GOV-11 / PR-12): assertAiGates runs first —
 // own key, allowlist, the signed acceptable-use agreement (428 with the text
@@ -92,7 +95,7 @@ export async function POST(req: NextRequest) {
     return bad("Only admins and document controllers shape the process map.", 403);
   }
 
-  // ── The document, and whose pages they are (SEC-10). ───────────────────
+  // ── The document (whose pages they are is asked before the render). ────
   const { data: kdoc } = await supabaseAdmin
     .from("knowledge_documents").select("id, name, file_key, page_count, source_document_id, source_version_id")
     .eq("org_id", orgId).eq("id", kdocId).maybeSingle();
@@ -101,21 +104,9 @@ export async function POST(req: NextRequest) {
     source_document_id: string | null; source_version_id: string | null;
   } | null;
   if (!doc?.file_key) return bad("That document has no stored file to read.", 404);
-  let fileKey = doc.file_key;
-  let revisionRead: string | null = null;
-  if (doc.source_document_id) {
-    const gate = await resolveDocumentFile(orgId, doc.source_document_id, {
-      uid: userId, email: userData.user.email ?? null, channel: "flows_read",
-    });
-    if (!gate.ok) return bad(gate.error, gate.status);
-    // The pages read are the ones the gate decided on. The mirror's revision
-    // is the one read only when its file IS that file (a mirror a sync has
-    // not caught up with reads the current revision, recorded as unknown).
-    fileKey = gate.file.fileKey;
-    revisionRead = gate.file.fileKey === doc.file_key ? doc.source_version_id : null;
-  }
 
-  // ── The gates, before any render (GOV-11): a refusal costs nothing. ────
+  // ── The gates, before any render (GOV-11): a refusal costs nothing — and
+  // opens no file, so it records no restricted read (DEC-43). ────────────
   try {
     await assertAiGates({ orgId, userId, op: "flowRead" });
   } catch (e) {
@@ -168,6 +159,22 @@ export async function POST(req: NextRequest) {
   }
   const unitLabel = unitCode ? (units.find((u) => u.code === unitCode)?.label || `Unit ${unitCode}`) : null;
   const roster = buildRoster(assets, units, { unitCode, drawingUnit, total: assetsTotal });
+
+  // ── Whose pages they are (SEC-10), asked only now that the read will
+  // happen: the DEC-43 record names pages actually opened for a reader. ──
+  let fileKey = doc.file_key;
+  let revisionRead: string | null = null;
+  if (doc.source_document_id) {
+    const gate = await resolveDocumentFile(orgId, doc.source_document_id, {
+      uid: userId, email: userData.user.email ?? null, channel: "flows_read",
+    });
+    if (!gate.ok) return bad(gate.error, gate.status);
+    // The pages read are the ones the gate decided on. The mirror's revision
+    // is the one read only when its file IS that file (a mirror a sync has
+    // not caught up with reads the current revision, recorded as unknown).
+    fileKey = gate.file.fileKey;
+    revisionRead = gate.file.fileKey === doc.file_key ? doc.source_version_id : null;
+  }
 
   // ── Render the pages. Default: first MAX_PAGES (a PFD is usually short). ──
   const explicit = (body.pages ?? []).filter((p) => Number.isInteger(p) && p >= 1);

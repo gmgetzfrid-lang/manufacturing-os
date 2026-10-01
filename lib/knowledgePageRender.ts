@@ -84,9 +84,16 @@ function releaseSlot(): void {
   if (next) next();
   else inFlight -= 1;
 }
+/** A loader that runs once per process and shares its result — unless it
+ *  FAILS: a rejected load is forgotten, so the next caller tries again
+ *  rather than every later render (the ask route's deep read included)
+ *  failing on one cold-start hiccup until the instance recycles. */
+export function onceUnlessRejected<T>(load: () => Promise<T>): () => Promise<T> {
+  let cached: Promise<T> | null = null;
+  return () => (cached ??= Promise.resolve().then(load).catch((e: unknown) => { cached = null; throw e; }));
+}
 // The PDF engine, loaded once per process and shared by every read.
-let unpdfModule: Promise<typeof import("unpdf")> | null = null;
-const loadUnpdf = () => (unpdfModule ??= import("unpdf"));
+const loadUnpdf = onceUnlessRejected(() => import("unpdf"));
 
 /** For tests: renders holding a slot right now. */
 export function rendersInFlight(): number { return inFlight; }

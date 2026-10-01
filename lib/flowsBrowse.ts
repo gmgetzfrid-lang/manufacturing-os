@@ -309,3 +309,20 @@ export function assembleFlowsBrowse(inputs: FlowsBrowseInputs): FlowsBrowseResul
 
   return { tree, uploads };
 }
+
+/** AREA-5: how many documents the "this area's library" filter would show —
+ *  the mirrors that live in the area's knowledge library, in the tree and
+ *  among direct uploads. A document in the area's folders that is not yet
+ *  mirrored (pending sync, unwatched) carries no library and is NOT counted,
+ *  so a bound shelf that has not synced reads 0 and the reader opens on
+ *  every library instead of an empty list. */
+export function areaShelfDocCount(model: Pick<FlowsBrowseResult, "tree" | "uploads">, areaLibraryId: string): number {
+  let n = 0;
+  const walk = (docs: DcDocRow[], folders: DcFolderNode[]) => {
+    for (const d of docs) if (d.kLibraryId === areaLibraryId) n += 1;
+    for (const f of folders) walk(f.docs, f.folders);
+  };
+  for (const l of model.tree) walk(l.docs, l.folders);
+  for (const g of model.uploads) if (g.knowledgeLibraryId === areaLibraryId) n += g.docs.length;
+  return n;
+}

@@ -121,6 +121,25 @@ describe("20261155 — the guard and the cleanup", () => {
     expect(g).not.toMatch(/'Admin'|'DocCtrl'/);
   });
 
+  it("the fixed-column check lets the foreign key CLEAR the source (deleting a cited knowledge document), and still refuses setting or retargeting it", () => {
+    // 20261017: source_document_id REFERENCES knowledge_documents(id) ON DELETE SET NULL —
+    // the RI action is an UPDATE run under the deleting person's auth.uid().
+    expect(text("20261017_process_flows.sql")).toContain("source_document_id UUID REFERENCES knowledge_documents(id) ON DELETE SET NULL,");
+    const g = fn("process_flows_guard");
+    const fixed = g.slice(g.indexOf("-- UPDATE by a person."), g.indexOf("process_flows_fixed"));
+    expect(fixed).toContain("OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)");
+    // the unconditional form (which refused the SET NULL) is gone
+    expect(fixed).not.toMatch(/OR NEW\.source_document_id IS DISTINCT FROM OLD\.source_document_id/);
+    // every other provenance column stays fixed, a NULLing included
+    for (const col of ["source_page", "source_version_id", "evidence", "origin", "created_by", "created_by_name", "created_at"]) {
+      expect(fixed, col).toContain(`OR NEW.${col} IS DISTINCT FROM OLD.${col}`);
+    }
+    // and the paste's final SELECT checks it live
+    const probes = m.slice(m.indexOf("\nCOMMIT;\n"));
+    expect(probes).toContain("prosrc LIKE '%OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)%'");
+    expect(probes).toContain("c.confrelid = 'knowledge_documents'::regclass AND c.confdeltype = 'n'");
+  });
+
   it("the cleanup deletes only this org's flows that end at the deleted asset", () => {
     const c = fn("assets_process_flows_cleanup");
     expect(c).toContain("WHERE org_id = OLD.org_id");

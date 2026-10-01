@@ -13,7 +13,7 @@
 //       newMatches: [{ id, name, libraryName, pathNames, docCount }],
 //     },
 //     suggestions: [ same shape as newMatches ], // wizard pre-checks these
-//     flowReads: { readable, read } | null,   // AREA-8: drawings read for flows
+//     flowReads: { readable, read, otherDocs } | null, // AREA-8: flow drawings read
 //     canManage: boolean,
 //   }
 //
@@ -29,6 +29,7 @@ import { aiReadability } from "@/lib/aiBoundary";
 import {
   suggestFoldersForUnit, computeAreaDrift, type AreaFolder,
 } from "@/lib/areaKnowledge";
+import { flowReadCoverage } from "@/lib/flowsRead";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -229,11 +230,27 @@ export async function GET(req: NextRequest) {
         inDc: !!at,
       };
     });
-  // AREA-8: how many of the shelf's readable documents have been read for
-  // flows — a FLOWS_READ record (a read, flows found or not) or a flow read
-  // off it. Coverage, not presence: one hand-drawn flow no longer ticks the
-  // deep read for 400 unread drawings. Null when it cannot be counted.
-  const flowReads = await countFlowReads(orgId, kdocs.filter((d) => d.status === "ready").map((d) => d.id));
+  // AREA-8: how many of the shelf's FLOW DRAWINGS have been read for flows
+  // — a FLOWS_READ record (a read, flows found or not) or a flow read off
+  // it. A flow drawing is a ready document whose title or doc-control folder
+  // names it one (PFD, P&ID, block diagram — lib/flowsRead namesFlowDrawing),
+  // or one already read; the data sheets, manuals and standards on the same
+  // shelf are counted apart, not owed a paid read. Coverage, not presence:
+  // one hand-drawn flow no longer ticks the deep read for 400 unread
+  // drawings. Null when it cannot be counted.
+  const readyDocs = kdocs.filter((d) => d.status === "ready");
+  const readIds = await flowReadIds(orgId, new Set(readyDocs.map((d) => d.id)));
+  const folderPathOf = (sourceDocumentId: string | null): string[] => {
+    const at = sourceDocumentId ? dcById.get(sourceDocumentId) : undefined;
+    if (!at) return [];
+    const folder = at.collectionId ? landscape.folders.get(at.collectionId) : undefined;
+    const lib = at.libraryId ? landscape.libraries.get(at.libraryId)?.name : undefined;
+    return [...(lib ? [lib] : []), ...(folder ? (folder.path_names.length > 0 ? folder.path_names : [folder.name]) : [])];
+  };
+  const flowReads = readIds === null ? null : flowReadCoverage(
+    readyDocs.map((d) => ({ id: d.id, name: d.name, folderPath: folderPathOf(d.source_document_id) })),
+    readIds,
+  );
 
   const coveredWithWhole = new Set(coveredFolderIds);
   coveredWithWhole.add("__whole");
@@ -271,9 +288,9 @@ export async function GET(req: NextRequest) {
   });
 }
 
-/** AREA-8: of these knowledge documents, how many have been read for flows. */
-async function countFlowReads(orgId: string, readyIds: string[]): Promise<{ readable: number; read: number } | null> {
-  const ready = new Set(readyIds);
+/** AREA-8: which of these knowledge documents have been read for flows;
+ *  null when that cannot be told. */
+async function flowReadIds(orgId: string, ready: ReadonlySet<string>): Promise<Set<string> | null> {
   const read = new Set<string>();
   for (let from = 0; from < 50_000; from += 1000) {
     const { data, error } = await supabaseAdmin
@@ -300,7 +317,7 @@ async function countFlowReads(orgId: string, readyIds: string[]): Promise<{ read
     }
     if ((data ?? []).length < 1000) break;
   }
-  return { readable: ready.size, read: read.size };
+  return read;
 }
 
 // ── POST: bind (or unbind) the area's knowledge library ─────────────────────

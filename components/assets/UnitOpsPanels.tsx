@@ -21,7 +21,7 @@
 // FlowReviewQueue: every proposal in the plant, whatever unit it touches
 // (FLOW-1) — mounted on the all-equipment view.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -40,7 +40,7 @@ import {
 import { syncKnowledgeSources, addKnowledgeSources, acceptAiAgreement } from "@/lib/knowledge";
 import { formatScopeParam } from "@/lib/scope";
 import { appConfirm } from "@/components/providers/DialogProvider";
-import type { DcLibraryNode, DcFolderNode, DcDocRow, FlowsBrowseUploadGroup } from "@/lib/flowsBrowse";
+import { areaShelfDocCount, type DcLibraryNode, type DcFolderNode, type DcDocRow, type FlowsBrowseUploadGroup } from "@/lib/flowsBrowse";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
 
@@ -234,6 +234,9 @@ export function FlowPanel({ orgId, userId, userName, isController, unitCode, uni
   const [busyId, setBusyId] = useState<string | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // FLOW-1: how many of the last read's proposals touch nothing in this
+  // unit — said with a link to where they are decided.
+  const [outsideUnit, setOutsideUnit] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -313,6 +316,12 @@ export function FlowPanel({ orgId, userId, userName, isController, unitCode, uni
       ) : (
         <>
           {note && <div className="text-[11px] text-[var(--color-text-muted)] mb-2 whitespace-pre-line">{note}</div>}
+          {outsideUnit > 0 && (
+            <div className="text-[11px] text-[var(--color-text-muted)] mb-2">
+              {outsideUnit} of the proposals {outsideUnit === 1 ? "is" : "are"} outside this unit —{" "}
+              <Link href={PLANT_FLOW_REVIEW_HREF} className="font-black text-cyan-700 hover:text-cyan-600 underline">decide {outsideUnit === 1 ? "it" : "them"} under Proposed flows across the plant</Link>.
+            </div>
+          )}
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1.5 mb-2 text-[11px] text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
@@ -375,7 +384,7 @@ export function FlowPanel({ orgId, userId, userName, isController, unitCode, uni
       {readerOpen && (
         <ReadFlowsModal orgId={orgId} unitCode={unitCode}
           onClose={() => setReaderOpen(false)}
-          onDone={(msg) => { setReaderOpen(false); setNote(msg); void refresh(); }} />
+          onDone={(msg, outside) => { setReaderOpen(false); setNote(msg); setOutsideUnit(outside ?? 0); void refresh(); }} />
       )}
     </div>
   );
@@ -392,6 +401,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
   isController: boolean;
 }) {
   const [proposed, setProposed] = useState<ProcessFlow[] | null | undefined>(undefined);
+  const [truncated, setTruncated] = useState(false);
   const [endpoints, setEndpoints] = useState<EndpointMap>(undefined);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -399,10 +409,13 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
 
   const refresh = useCallback(async () => {
     try {
-      const listing = await listProcessFlowsPaged(orgId);
+      // Only the proposals, filtered in the database — the review never
+      // needs the confirmed map.
+      const listing = await listProcessFlowsPaged(orgId, { status: "proposed" });
       if (listing === null) { setProposed(null); return; }
-      const rows = listing.flows.filter((f) => f.status === "proposed");
+      const rows = listing.flows;
       setProposed(rows);
+      setTruncated(listing.truncated);
       const refs: string[] = [];
       for (const f of rows) {
         if (f.from_kind === "asset") refs.push(f.from_ref);
@@ -426,21 +439,34 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
     finally { setBusyId(null); }
   };
 
-  if (!proposed || proposed.length === 0) return null;
+  // Nothing to review — unless the list could not be read: a failed read
+  // is said, never an empty queue a controller would take for "all done".
+  if (proposed === null || proposed === undefined || (proposed.length === 0 && !error)) return null;
+  // The registry tells which unit each equipment end is filed to; when it
+  // could not be read, "no operating area" would be a guess — it is "not
+  // checked", and the filter that depends on it is off.
+  const registryRead = endpoints !== null && endpoints !== undefined;
   const unitOf = (kind: string, ref: string): string | null => {
     if (kind === "unit") return ref;
     const info = endpoints?.get(ref);
     return info && info.state === "ok" ? info.unitCode : null;
   };
   const unfiled = (f: ProcessFlow) => !unitOf(f.from_kind, f.from_ref) && !unitOf(f.to_kind, f.to_ref);
-  const shown = onlyUnfiled ? proposed.filter(unfiled) : proposed;
+  const shown = onlyUnfiled && registryRead ? proposed.filter(unfiled) : proposed;
   const { sure, unsure } = splitByConfidence(shown);
   const rowProps = { endpoints, isController, userId, onDecide: (f: ProcessFlow, a: boolean) => void decide(f, a), onRemove: (f: ProcessFlow) => void remove(f) };
   const where = (f: ProcessFlow) => {
     const units = [...new Set([unitOf(f.from_kind, f.from_ref), unitOf(f.to_kind, f.to_ref)].filter((u): u is string => !!u))];
+    const unchecked = !registryRead && (f.from_kind === "asset" || f.to_kind === "asset");
+    const label = units.length > 0
+      ? `${units.map((u) => `Unit ${u}`).join(" · ")}${unchecked ? " · equipment's unit not checked" : ""}`
+      : endpoints === undefined && unchecked ? "…"
+      : unchecked ? "unit not checked"
+      : "no operating area";
     return (
-      <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0">
-        {units.length > 0 ? units.map((u) => `Unit ${u}`).join(" · ") : "no operating area"}
+      <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] shrink-0"
+        title={unchecked && endpoints === null ? "The registry could not be read, so the unit this equipment is filed to was not checked" : undefined}>
+        {label}
       </span>
     );
   };
@@ -453,14 +479,25 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
         <span className="text-xs font-black text-[var(--color-text)]">Proposed flows across the plant</span>
         <span className="text-[10px] font-bold text-[var(--color-text-faint)]">{proposed.length} awaiting a decision</span>
         <span className="flex-1" />
-        <label className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)]">
-          <input type="checkbox" checked={onlyUnfiled} onChange={(e) => setOnlyUnfiled(e.target.checked)} />
+        <label className={`inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] ${registryRead ? "" : "opacity-50"}`}
+          title={registryRead ? undefined : "The registry could not be read, so which equipment is in no operating area can't be told"}>
+          <input type="checkbox" checked={onlyUnfiled && registryRead} disabled={!registryRead} onChange={(e) => setOnlyUnfiled(e.target.checked)} />
           only equipment in no operating area
         </label>
       </div>
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1.5 mb-2 text-[11px] text-rose-700 dark:text-rose-300">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {proposed.length === 0 ? `The proposed flows could not be read: ${error}` : error}
+        </div>
+      )}
+      {endpoints === null && proposed.length > 0 && (
+        <div className="text-[10px] text-amber-700 dark:text-amber-300 mb-2">
+          The equipment registry could not be read — which operating area each proposal touches was not checked. Reload to try again.
+        </div>
+      )}
+      {truncated && (
+        <div className="text-[10px] text-amber-700 dark:text-amber-300 mb-2">
+          More than {FLOW_READ_CAP.toLocaleString("en-US")} proposals await a decision — the oldest are not listed here.
         </div>
       )}
       {sure.length > 0 && (
@@ -474,7 +511,7 @@ export function FlowReviewQueue({ orgId, userId, userName, isController }: {
           {unsure.map((f) => <ProposalRowView key={f.id} f={f} busy={busyId === f.id} extra={where(f)} {...rowProps} />)}
         </div>
       )}
-      {shown.length === 0 && (
+      {shown.length === 0 && proposed.length > 0 && (
         <div className="text-[11px] text-[var(--color-text-muted)]">Every proposal touches an operating area — open the area to review it, or clear the filter.</div>
       )}
     </div>
@@ -493,7 +530,9 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
    *  heads the roster, and the picker opens on its knowledge library. */
   unitCode?: string;
   onClose: () => void;
-  onDone: (msg: string) => void;
+  /** The read's summary, and how many of its proposals touch nothing in the
+   *  launching unit (FLOW-1 — the panel links them to where they are decided). */
+  onDone: (msg: string, outsideUnit?: number) => void;
 }) {
   const [model, setModel] = useState<{
     tree: DcLibraryNode[];
@@ -516,6 +555,9 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
   const [linking, setLinking] = useState<{ type: "library" | "folder"; id: string; name: string } | null>(null);
   // Which container is mid-link — busy state stays ON that button.
   const [linkingKey, setLinkingKey] = useState<string | null>(null);
+  // The opening filter is chosen once, on the first load — a later reload
+  // (after a sync or a link) never moves the person off what they picked.
+  const filterChosen = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -527,8 +569,14 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
       if (!res.ok) throw new Error(json.error ?? "Couldn't load the libraries.");
       const next = json as NonNullable<typeof model>;
       setModel(next);
-      // AREA-5: open on the area's own knowledge library when it has one.
-      setDcLibFilter((cur) => (cur === "" && next.areaKnowledgeLibrary ? "__area" : cur));
+      // AREA-5: open on the area's own knowledge library when it holds
+      // documents. A bound shelf that has not synced yet (its PFDs still
+      // "Not synced yet", carrying no library) opens on every library, so
+      // the area's drawings are on screen with their Sync button.
+      if (!filterChosen.current) {
+        filterChosen.current = true;
+        if (next.areaKnowledgeLibrary && areaShelfDocCount(next, next.areaKnowledgeLibrary.id) > 0) setDcLibFilter("__area");
+      }
       setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
      
@@ -640,10 +688,9 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
       const skipped = pairs.length > 0
         ? `\n${pairs.slice(0, 6).map((p) => `${p.from} → ${p.to}: ${p.why}`).join("\n")}${pairs.length > 6 ? `\n…and ${pairs.length - 6} more.` : ""}`
         : "";
-      const outside = typeof json.outsideUnit === "number" && json.outsideUnit > 0
-        ? `\n${json.outsideUnit} of the proposals are outside this unit — they are listed under Proposed flows across the plant (All equipment).`
-        : "";
-      onDone(`${json.note ?? (json.proposed > 0 ? `${json.proposed} flow${json.proposed === 1 ? "" : "s"} proposed.` : "No new flows found.")}${outside}${skipped}`);
+      // FLOW-1: proposals outside this unit are linked by the panel, not printed here.
+      const outside = typeof json.outsideUnit === "number" && json.outsideUnit > 0 ? json.outsideUnit : 0;
+      onDone(`${json.note ?? (json.proposed > 0 ? `${json.proposed} flow${json.proposed === 1 ? "" : "s"} proposed.` : "No new flows found.")}${skipped}`, outside);
     } catch (e) { setError((e as Error).message); }
     finally { setRunningId(null); }
   };
@@ -879,7 +926,16 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
             </div>
           ) : viewTree.length === 0 && viewUploads.length === 0 ? (
             <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
-              {q ? "No documents match that search." : "No documents yet — upload PDFs in Documents or a knowledge library."}
+              {q ? "No documents match that search."
+                : dcLibFilter === "__area" ? (
+                  <>
+                    Nothing in this area&apos;s library yet{model?.areaKnowledgeLibrary ? ` (${model.areaKnowledgeLibrary.name})` : ""} — its documents may not be synced.{" "}
+                    <button type="button" onClick={() => setDcLibFilter("")} className="font-black text-cyan-700 hover:text-cyan-600 underline">
+                      Show all document libraries
+                    </button>
+                  </>
+                )
+                : "No documents yet — upload PDFs in Documents or a knowledge library."}
             </div>
           ) : (
             <>

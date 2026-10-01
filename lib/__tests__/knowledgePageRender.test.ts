@@ -43,6 +43,7 @@ vi.mock("unpdf", () => ({
 
 import {
   renderKnowledgePagesReport, renderKnowledgePages, RENDER_SLOTS, DRAWING_RENDER_WIDTH, rendersInFlight,
+  onceUnlessRejected,
 } from "@/lib/knowledgePageRender";
 
 beforeEach(() => {
@@ -109,5 +110,44 @@ describe("FLOW-13 / FLOW-11 — the width is the caller's; a partial set is repo
   it("the page cap still binds (maxPages), and duplicates are read once", async () => {
     const r = await renderKnowledgePagesReport("k", [1, 1, 2, 3, 4, 5, 6, 7, 8], { maxPages: 6 });
     expect(r.images.map((i) => i.page)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe("the engine is loaded once per process — and a failed load is not cached", () => {
+  it("a successful load is shared: the loader runs once for every caller", async () => {
+    let runs = 0;
+    const load = onceUnlessRejected(async () => { runs += 1; return { engine: runs }; });
+    const [a, b] = await Promise.all([load(), load()]);
+    expect(await load()).toBe(a);
+    expect(b).toBe(a);
+    expect(runs).toBe(1);
+  });
+
+  it("one rejected load (a cold-start hiccup) is forgotten: the next call loads again and succeeds, and that result is then shared", async () => {
+    let runs = 0;
+    const load = onceUnlessRejected(async () => {
+      runs += 1;
+      if (runs === 1) throw new Error("transient WASM init failure");
+      return { engine: runs };
+    });
+    await expect(load()).rejects.toThrow("transient WASM init failure");
+    const ok = await load();
+    expect(ok).toEqual({ engine: 2 });
+    expect(await load()).toBe(ok);
+    expect(runs).toBe(2);
+  });
+
+  it("the renderer's PDF engine is loaded through it (no bare ??= import cache that would keep a rejection)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(`${process.cwd()}/lib/knowledgePageRender.ts`, "utf8");
+    expect(src).toContain('const loadUnpdf = onceUnlessRejected(() => import("unpdf"));');
+    expect(src).not.toMatch(/\?\?= import\("unpdf"\)/);
+  });
+
+  it("a synchronous throw from the loader is a rejection, forgotten the same way", async () => {
+    let runs = 0;
+    const load = onceUnlessRejected<number>(() => { runs += 1; if (runs === 1) throw new Error("sync"); return Promise.resolve(7); });
+    await expect(load()).rejects.toThrow("sync");
+    await expect(load()).resolves.toBe(7);
   });
 });

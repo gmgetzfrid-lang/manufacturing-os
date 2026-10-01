@@ -538,21 +538,21 @@ resolve documents the same way.
 
 **Resolution (2026-10-01, intelligence Round G, I-09 — `/api/flows/read`).** Reproduced first on the base route: a controller's read of a source-linked mirror rendered `knowledge_documents.file_key` as the service role without asking the document gate ("SEC-10: the controlled document gate is never asked": `expected +0 to be 1`).
 
-What landed: `app/api/flows/read/route.ts` resolves a mirror's `source_document_id` through `lib/docFileServer` `resolveDocumentFile(orgId, sourceDocumentId, { uid, email, channel: "flows_read" })` before anything is gated, rendered or sent. So:
+What landed: `app/api/flows/read/route.ts` resolves a mirror's `source_document_id` through `lib/docFileServer` `resolveDocumentFile(orgId, sourceDocumentId, { uid, email, channel: "flows_read" })` before anything is rendered or sent. Fix pass: the gate is asked AFTER `assertAiGates` and the roster, just before the render. The first version asked it before the AI gates. A controller's restricted read then wrote a `CONTROLLER_RESTRICTED_READ` row even when the gates refused (412 / 428 / 402 / 503), and the 428 → sign → retry path wrote two rows for one read. Now a read the gates or the empty registry refuse opens no file and records nothing. So:
 - an explicit download deny binds (controllers too);
 - a broken folder chain is named (409), and a chain that cannot be read is 503;
 - pages served only because the reader is a controller write `CONTROLLER_RESTRICTED_READ` with `channel: "flows_read"` (DEC-43).
 
 The pages rendered are the file the gate decided on. An upload-origin knowledge document (no source document) keeps its own rule: the route is controller-only.
 
-Tests: `lib/__tests__/flowsReadRoute.test.ts` ("SEC-10 — the pages are the caller's to read": a refusal is its status with nothing rendered or sent, the call's arguments and channel; 409 / 503 before any spend; the gate's file is the one rendered; an upload skips the gate). The gate's own deny, chain and DEC-43 behaviour is pinned in `docFileServer.test.ts` / `apiRouteAuth.test.ts`.
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("SEC-10 — the pages are the caller's to read": a refusal is its status with nothing rendered or sent, the call's arguments and channel; 409 / 503 before any spend; the gate's file is the one rendered; an upload skips the gate; from the fix pass, "the document gate is asked only once the read will happen …": an unsigned DocCtrl's 428 and an empty registry's 412 ask no gate, the retry after signing asks it once, and the order is gates → document gate → render → call). The gate's own deny, chain and DEC-43 behaviour is pinned in `docFileServer.test.ts` / `apiRouteAuth.test.ts`.
 
 **Done-when.**
 - A member without ACL read on a document receives 403 from the checklist route — ✓ (2026-09-30).
 - The check is applied to every route that resolves a document via `supabaseAdmin` — ✓. The one route left, `/api/flows/read`, now reads through `resolveDocumentFile`.
 - An `apiRouteAuth.test.ts` case pins it — ✓ (2026-09-30). For flows/read the pins are in `flowsReadRoute.test.ts`.
 
-**Scope / residual.** The residuals (2)–(7) above stay with their owners (KACL-5, DACL-6, EGRESS-6's overlay, DC P7's citation). They are not this route's.
+**Scope / residual.** The residuals (2)–(7) above stay with their owners (KACL-5, DACL-6, EGRESS-6's overlay, DC P7's citation). They are not this route's. One case is still recorded: once the gate has resolved the file for a controller bypass, a render that then fails (502) or runs out of time (504) has fetched the controlled bytes for that reader, so it keeps its DEC-43 row. This is the same rule as the egress route, which records when the URL is issued, not when the download completes.
 
 ---
 

@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildRoster, rosterPrompt, parseFlowReply, planFlowProposals, readNote, reproposable, pageList,
   ROSTER_ASSET_BUDGET, MAX_PROPOSALS_PER_READ, LOW_CONFIDENCE, type PriorFlow, type ReadOutcome,
+  namesFlowDrawing, flowReadCoverage,
 } from "@/lib/flowsRead";
 
 const asset = (i: number, unit: string | null, tag?: string) => ({
@@ -196,5 +197,33 @@ describe("readNote — every reason a read came back short is named, on both bra
   });
   it("pageList folds runs", () => {
     expect(pageList([6, 1, 2, 3, 9, 10])).toBe("1–3, 6, 9–10");
+  });
+});
+
+describe("AREA-8 — flowReadCoverage: the flow drawings are the denominator, not every document on the shelf", () => {
+  it("names a flow drawing by title or folder — whole words only", () => {
+    for (const t of ["PFD", "P&ID 1", "P & ID-200", "PIDs", "20-PFD-001", "Process Flow Diagram Crude", "Block Flow Diagram", "Flowsheet", "Utility UFD", "pfd.pdf"]) {
+      expect(namesFlowDrawing(t), t).toBe(true);
+    }
+    for (const t of ["rapid response", "Data sheet V-101", "Operating manual", "API 650 standard", "Spidery", ""]) {
+      expect(namesFlowDrawing(t), t).toBe(false);
+    }
+    expect(namesFlowDrawing("20-XX-001", "Drawings", "PFDs", "Crude")).toBe(true);
+    expect(namesFlowDrawing("20-XX-001", null, undefined)).toBe(false);
+  });
+
+  it("12 PFDs read beside 300 data sheets is DONE (12 of 12); the data sheets are said apart", () => {
+    const ready = [
+      ...Array.from({ length: 12 }, (_, i) => ({ id: `p${i}`, name: `PFD-${i}` })),
+      ...Array.from({ length: 300 }, (_, i) => ({ id: `s${i}`, name: `Data sheet ${i}` })),
+    ];
+    const read = new Set(Array.from({ length: 12 }, (_, i) => `p${i}`));
+    expect(flowReadCoverage(ready, read)).toEqual({ readable: 12, read: 12, otherDocs: 300 });
+  });
+
+  it("a document already read for flows always counts (read and readable), whatever its name; an unread flow drawing holds the tick back", () => {
+    const ready = [{ id: "m", name: "Operating manual" }, { id: "p", name: "Crude PFD" }, { id: "f", name: "20-XX-9", folderPath: ["P&IDs", "Crude"] }];
+    expect(flowReadCoverage(ready, new Set(["m"]))).toEqual({ readable: 3, read: 1, otherDocs: 0 });
+    expect(flowReadCoverage(ready, new Set())).toEqual({ readable: 2, read: 0, otherDocs: 1 });
   });
 });

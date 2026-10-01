@@ -20,6 +20,10 @@
 //                      unknown when absent, never a default (PR-7)
 //   readNote           one sentence that names every reason a read came back
 //                      short (FLOW-11 / FLOW-12) instead of blaming the drawing
+//   flowReadCoverage   the area checklist's deep-read count (AREA-8): of the
+//                      shelf's FLOW DRAWINGS (named PFD / P&ID / block
+//                      diagram … by title or folder), how many were read —
+//                      data sheets, manuals and standards are not the target
 //
 // The grounding contract is unchanged: the model only ever sees opaque
 // handles (A1, U2) the server built, and only a handle on the roster becomes
@@ -307,4 +311,48 @@ export function readNote(o: ReadOutcome): string {
     parts.push(`${plural(o.assetsOmitted, "registry equipment item")} ${o.assetsOmitted === 1 ? "was" : "were"} not offered to the reader (it reads ${ROSTER_ASSET_BUDGET} at a time, this area's first), so flows between ${o.assetsOmitted === 1 ? "it" : "them"} cannot be found from here.`);
   }
   return parts.join(" ");
+}
+
+// ── AREA-8: the area checklist's deep-read coverage ─────────────────────────
+
+/** A title or folder name that says "flow drawing": a PFD / process flow
+ *  diagram, a P&ID, a block (flow) diagram, a utility flow diagram, a
+ *  flowsheet. Whole words only ("rapid" is not a PID). */
+const FLOW_DRAWING_WORD =
+  /(?:^|[^a-z0-9])(?:p\s*&\s*ids?|p\s*and\s*ids?|pids?|pfds?|ufds?|bfds?|process\s+flows?(?:\s+diagrams?)?|flow\s+diagrams?|flow\s*sheets?|block\s+(?:flow\s+)?diagrams?)(?=$|[^a-z0-9])/i;
+
+/** Does any of these names (the document's own, its folder path) call it a
+ *  flow drawing? */
+export function namesFlowDrawing(...names: Array<string | null | undefined>): boolean {
+  return names.some((n) => !!n && FLOW_DRAWING_WORD.test(n));
+}
+
+export interface FlowReadCoverage {
+  /** The shelf's flow drawings: ready documents named as one (title or
+   *  folder), plus any ready document already read for flows — a read is
+   *  never in one count and missing from the other. */
+  readable: number;
+  /** Of those, how many were read for flows. */
+  read: number;
+  /** Ready documents on the shelf that are neither (data sheets, manuals,
+   *  standards) — said, not counted: reading them for flows is not the job. */
+  otherDocs: number;
+}
+
+/** AREA-8: step 3's coverage. Done means every flow drawing on the shelf was
+ *  read once — the threshold a plant engineer sets for "the PFDs and P&IDs
+ *  are mapped", not "every data sheet went through the paid reader". */
+export function flowReadCoverage(
+  ready: Array<{ id: string; name: string; folderPath?: string[] }>,
+  readIds: ReadonlySet<string>,
+): FlowReadCoverage {
+  let readable = 0, read = 0, otherDocs = 0;
+  for (const d of ready) {
+    const wasRead = readIds.has(d.id);
+    if (wasRead || namesFlowDrawing(d.name, ...(d.folderPath ?? []))) {
+      readable += 1;
+      if (wasRead) read += 1;
+    } else otherDocs += 1;
+  }
+  return { readable, read, otherDocs };
 }

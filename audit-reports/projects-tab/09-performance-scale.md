@@ -382,7 +382,7 @@ customer's own key, and a 504 burns it entirely.
 
 **Partial (2026-10-01, intelligence Round G, I-09 — the renderer limb).** `lib/knowledgePageRender.ts`:
 - **Parallel under a cap shared by every read in the process.** Pages render in parallel lanes, and every render in the process shares `RENDER_SLOTS` (2). Two concurrent reads hold at most two page canvases between them, not one per page per read. A released slot passes straight to the next waiter, so a newcomer can never overfill.
-- **The document is released.** The parsed PDF is destroyed when the read ends. The PDF engine is loaded once per process.
+- **The document is released.** The parsed PDF is destroyed when the read ends. The PDF engine is loaded once per process (`onceUnlessRejected`). Fix pass: a failed load is not kept. The first version cached the import promise with `??=`, so one rejected `import("unpdf")` on a cold start failed every later render in the warm process, the ask route's deep read included. The base code had retried the import on every call. Now the next caller loads it again (test: "the engine is loaded once per process — and a failed load is not cached").
 - **A deadline.** A caller passes `deadlineAt`; no page STARTS after it, and the pages not started are reported, not absorbed.
 - **The width is a parameter** (`FLOW-13`); the default stays 1,400 px.
 - `renderKnowledgePages` keeps its old contract for the routes that use it: the images only, fewer on failure.

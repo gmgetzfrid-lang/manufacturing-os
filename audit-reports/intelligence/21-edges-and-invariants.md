@@ -336,7 +336,7 @@ What landed: `20261155` `process_flows_guard()` refuses a person's `origin 'ai'`
 2. ✓ `decided_by_name` is derived by the database from the deciding person; the inserting client cannot set it.
 3. ✓ A forged confirmed edge from a Viewer is downgraded, and the forged AI one refused: the scratch-database cases on `FLOW-2` (1, 2), and the shape test `intelRoundGProcessFlowsMigration.test.ts`.
 
-**Scope / residual.** Pending migration `20261155`.
+**Scope / residual.** Pending migration `20261155`. Fix pass: the first version of the guard refused the foreign key's `ON DELETE SET NULL` on `source_document_id`, so a cited knowledge document, controlled document or library could not be deleted by a person. The guard now lets a source be cleared, and still refuses setting or retargeting one. The correction and its scratch cases are on `FLOW-2`. No forged provenance can be written: every other provenance column stays fixed, and clearing a citation removes provenance, never adds it.
 
 ---
 
@@ -380,7 +380,7 @@ What landed:
 Tests: `lib/__tests__/flowsRead.test.ts` ("IEDGE-8: a dismissal of THIS document's reading at an older revision is re-proposed on a new revision; on the same revision it sticks"; "a dismissal sticks when …"), `lib/__tests__/flowsReadRoute.test.ts` ("the drawing revised (rev2): the dismissed pair is re-proposed in place, with the new revision"; "before 20261155 (no source_version_id): … every dismissal sticks"; the `skippedPairs` assertions).
 
 **Done-when.**
-1. ✓ Settled is "a person decided" (confirmed, or dismissed on this revision); pending rows are "awaiting review", never a dismissal. A dismissal is scoped to the revision it judged, so a revised PFD can re-propose.
+1. ✓ — the revision limb to the letter; the status limb in effect. Settled is "a person decided": confirmed, or dismissed on this revision. A dismissal is scoped to the revision it judged, so a revised PFD can re-propose. A `proposed` pair is still not re-proposed. It is skipped and reported apart as "awaiting review" (`skippedPending`), never counted as a dismissal or as settled. So the literal `status IN ('confirmed','dismissed')` is not how the code reads it. Re-proposing a pending pair could not land anyway: `20261017`'s `UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)` refuses a second row for it. The harm the criterion named — a pending row treated as a decision — is gone.
 2. ✓ The insert is an upsert-with-ignore, falling back to one row at a time (`FLOW-12`); one collision cannot discard a reading.
 3. ✓ Each skipped pair is surfaced with its reason, never folded into "no new flows".
 

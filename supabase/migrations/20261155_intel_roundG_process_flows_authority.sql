@@ -29,7 +29,11 @@
 --      never what a client sent. created_by / created_by_name / created_at
 --      are stamped the same way on a person's insert. A member keeps edit and
 --      delete over their OWN row only while it is still a proposal (they can
---      withdraw it); a decided row is the controller tier's.
+--      withdraw it); a decided row is the controller tier's. A person's
+--      update never changes a flow's endpoints, origin, author or where it
+--      was read (42501) — except that the source may be CLEARED: deleting a
+--      cited knowledge document runs 20261017's ON DELETE SET NULL as an
+--      UPDATE under the deleting person's session, and it must land.
 --   3. Endpoints exist (every writer, the service role included — 23503): an
 --      'asset' end names an asset of the same org, a 'unit' end a Site
 --      Codebook unit (codebook_entries kind 'unit') of the same org, and a
@@ -214,11 +218,17 @@ BEGIN
   END IF;
 
   -- UPDATE by a person. What a flow is, and where it was read, are fixed.
+  -- One exception: the source may be CLEARED. Deleting the knowledge
+  -- document a flow was read from runs the foreign key's ON DELETE SET NULL
+  -- (20261017) as an UPDATE under the deleting person's session — refusing
+  -- it would make every cited knowledge document, controlled document
+  -- (20261122's cascade) and library undeletable. Setting or retargeting a
+  -- source is still refused.
   IF NEW.org_id IS DISTINCT FROM OLD.org_id
      OR NEW.from_kind IS DISTINCT FROM OLD.from_kind OR NEW.from_ref IS DISTINCT FROM OLD.from_ref
      OR NEW.to_kind IS DISTINCT FROM OLD.to_kind OR NEW.to_ref IS DISTINCT FROM OLD.to_ref
      OR NEW.origin IS DISTINCT FROM OLD.origin
-     OR NEW.source_document_id IS DISTINCT FROM OLD.source_document_id
+     OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)
      OR NEW.source_page IS DISTINCT FROM OLD.source_page
      OR NEW.source_version_id IS DISTINCT FROM OLD.source_version_id
      OR NEW.evidence IS DISTINCT FROM OLD.evidence
@@ -355,6 +365,14 @@ SELECT 'process_flows.source_version_id exists (the revision a proposal was read
 UNION ALL
 SELECT 'process_flows_to_idx exists (the to-side endpoint)',
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'process_flows' AND indexname = 'process_flows_to_idx'),
+       NULL
+UNION ALL
+SELECT 'the guard lets a cited knowledge document be deleted: the foreign key''s ON DELETE SET NULL clears the source (setting or retargeting one is still refused)',
+       (SELECT prosrc LIKE '%OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)%'
+          FROM pg_proc WHERE proname = 'process_flows_guard')
+       AND EXISTS (SELECT 1 FROM pg_constraint c
+                    WHERE c.conrelid = 'process_flows'::regclass AND c.contype = 'f'
+                      AND c.confrelid = 'knowledge_documents'::regclass AND c.confdeltype = 'n'),
        NULL
 UNION ALL
 SELECT 'is_org_controller still reads the role collection (20260814; the tier the guard and policies name)',

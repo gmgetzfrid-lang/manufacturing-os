@@ -180,7 +180,7 @@ vi.mock("@/lib/knowledgePageRender", () => ({
   }),
 }));
 vi.mock("@/lib/docFileServer", () => ({
-  resolveDocumentFile: vi.fn(async (...args: unknown[]) => { st.docGateCalls.push(args); return st.docGate; }),
+  resolveDocumentFile: vi.fn(async (...args: unknown[]) => { st.order.push("docgate"); st.docGateCalls.push(args); return st.docGate; }),
 }));
 
 import { POST } from "@/app/api/flows/read/route";
@@ -258,6 +258,8 @@ describe("GOV-11 / PR-12 — the gates run before any render; the call is govern
     const json = await res.json();
     expect(json).toMatchObject({ agreementRequired: true, agreementText: "the rules", agreementVersion: "2026-10-v3" });
     expect(st.order).toEqual(["gates"]);
+    // SEC-10 / DEC-43: the refused read opened no file — no restricted-read record
+    expect(st.docGateCalls).toHaveLength(0);
   });
 
   it("a $0 lock (402) and an unreadable ledger (503) refuse the same way, before the render", async () => {
@@ -270,11 +272,12 @@ describe("GOV-11 / PR-12 — the gates run before any render; the call is govern
     res = await post({});
     expect(res.status).toBe(503);
     expect(st.order).toEqual(["gates"]);
+    expect(st.docGateCalls).toHaveLength(0);
   });
 
-  it("a signed member under their cap: gates, then render, then ONE governed call carrying the rendered pages", async () => {
+  it("a signed member under their cap: gates, then the document gate, then render, then ONE governed call carrying the rendered pages", async () => {
     await post({});
-    expect(st.order).toEqual(["gates", "render", "call"]);
+    expect(st.order).toEqual(["gates", "docgate", "render", "call"]);
     expect(st.aiInputs).toHaveLength(1);
     expect(st.aiInputs[0]).toMatchObject({ orgId: "o1", userId: "admin1", op: "flowRead", maxTokens: 1600 });
     expect((st.aiInputs[0].images as unknown[]).length).toBe(6);
@@ -295,15 +298,34 @@ describe("SEC-10 — the pages are the caller's to read", () => {
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("You don't have access to read that document.");
     expect(st.docGateCalls[0]).toEqual(["o1", "dc1", { uid: "admin1", email: "admin@x.io", channel: "flows_read" }]);
-    expect(st.order).toEqual([]);
+    expect(st.order).toEqual(["gates", "docgate"]);
   });
 
   it("a broken folder chain is named (409); a gate that cannot read is 503 — both before any spend", async () => {
     st.docGate = { ok: false, status: 409, error: "This document's folder chain is broken (folder f9 no longer exists), so access to it can't be checked." };
     expect((await post({})).status).toBe(409);
     st.docGate = { ok: false, status: 503, error: "Couldn't verify your access to that document — try again." };
+    st.order = [];
     expect((await post({})).status).toBe(503);
-    expect(st.order).toEqual([]);
+    expect(st.order).toEqual(["gates", "docgate"]);
+  });
+
+  it("the document gate is asked only once the read will happen: a refusal before it (the agreement, an empty registry) records no restricted read, and 428 → sign → retry asks it once", async () => {
+    // A DocCtrl who has not signed: 428, no file opened.
+    st.user = { id: "mgrdc", email: "dc@x.io" };
+    st.gateError = new GovernedCallError("Accept the AI acceptable-use agreement first.", 428, { agreementRequired: true, agreementText: "the rules" });
+    expect((await post({})).status).toBe(428);
+    expect(st.docGateCalls).toHaveLength(0);
+    // They sign; the modal retries: ONE resolution (one DEC-43 record at most), then the read.
+    st.gateError = null;
+    expect((await post({})).status).toBe(200);
+    expect(st.docGateCalls).toHaveLength(1);
+    // Nothing to connect (412): refused before any file is opened.
+    st.docGateCalls = []; st.order = [];
+    st.rows.assets = []; st.rows.codebook_entries = [];
+    expect((await post({})).status).toBe(412);
+    expect(st.docGateCalls).toHaveLength(0);
+    expect(st.order).toEqual(["gates"]);
   });
 
   it("the pages rendered are the file the gate decided on; a mirror a sync has not caught up with reads the current revision, recorded as unknown", async () => {

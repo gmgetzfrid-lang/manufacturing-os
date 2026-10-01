@@ -201,13 +201,14 @@ app/api/flows/read/route.ts:58 — `supabaseAdmin.from("assets").select("id, tag
 What landed for this finding's own limbs:
 - `ReadFlowsModal` takes the launching `unitCode` and sends it to `/api/flows/read`, which puts that unit's equipment first on the roster.
 - It also sends it to `/api/flows/browse`, which answers `areaKnowledgeLibrary`: the unit's bound knowledge library (`codebook_entries.meta.knowledgeLibraryId`). The picker then opens on "This area's library — <name>", showing only documents mirrored into it (rows now carry `kLibraryId`). "All document libraries" is one choice away.
+- Fix pass: the picker opens on the area's library only when that library holds documents (`lib/flowsBrowse.ts` `areaShelfDocCount`). An area that is bound but not yet synced has PFDs that are still "Not synced yet". Those rows carry no library, so the area filter hid them. Such an area now opens on every library, with the rows and their Sync button visible. The opening filter is chosen once, so a reload after a sync never moves the person off what they picked. A person who picks the area filter on an empty shelf reads "Nothing in this area's library yet (<name>) — its documents may not be synced", with a "Show all document libraries" button. Before, the panel said "No documents yet — upload PDFs …".
 
-Tests: `lib/__tests__/flowsReadRoute.test.ts` (the roster cases on `FLOW-4`), `lib/__tests__/flowsBrowse.test.ts` ("AREA-5: a mirrored row names the knowledge library it lives in …").
+Tests: `lib/__tests__/flowsReadRoute.test.ts` (the roster cases on `FLOW-4`), `lib/__tests__/flowsBrowse.test.ts` ("AREA-5: a mirrored row names the knowledge library it lives in …"; "AREA-5 — what the area-shelf filter would show"), `lib/__tests__/flowPanelRender.test.ts` ("a bound area whose shelf has not synced opens on ALL libraries …", "an area shelf that holds mirrors opens on it …", "the area filter chosen on an empty shelf names itself …").
 
 **Done-when.**
 1. ✓ The roster is selected deliberately: the launching unit's equipment first, plus every codebook unit, ordered by tag.
 2. ✓ Past the roster budget the response says so explicitly, and the note names the count.
-3. ✓ ReadFlowsModal accepts and forwards the unit; the picker defaults to the area's bound knowledge library.
+3. ✓ ReadFlowsModal accepts and forwards the unit. The picker defaults to the area's bound knowledge library whenever that library holds documents; when it holds none (bound, not yet synced), it opens on every library.
 
 ---
 
@@ -328,17 +329,21 @@ components/assets/AreaKnowledgePanel.tsx:192-196 — `const drawingsDone = statu
 **Resolution (2026-10-01, intelligence Round G).** Reproduced first: step 1 ticked on `suggestions.some((s) => s.docCount > 0)` (a name-matched folder with one readable document), step 3 on `flowCount > 0`, step 4 on `docLinkCount > 0`.
 
 What landed:
-- `app/api/area/knowledge-status/route.ts` answers `flowReads: { readable, read }` for a bound area. `readable` is the shelf's ready documents. `read` is how many have a `FLOWS_READ` record — `/api/flows/read` now writes one per read, flows found or not — or a flow read off them. It is null when it cannot be counted, or when the area has no shelf.
+- `app/api/area/knowledge-status/route.ts` answers `flowReads: { readable, read, otherDocs }` for a bound area. It is computed by `lib/flowsRead.ts` `flowReadCoverage`, and is null when it cannot be counted or when the area has no shelf.
+  - `readable` is the shelf's **flow drawings**. A flow drawing is a ready document whose title, or whose doc-control library / folder path, names it a PFD, P&ID, block (flow) diagram, UFD or flowsheet (`namesFlowDrawing`, whole words). A ready document that has already been read for flows also counts.
+  - `read` is how many of them have a `FLOWS_READ` record — `/api/flows/read` now writes one per read, flows found or not — or have a flow read off them.
+  - `otherDocs` counts the data sheets, manuals and standards on the same shelf. They are reported, not counted.
+  - Fix pass: the first version counted every ready document on the shelf. An area holding 12 PFDs and 300 data sheets read "12 of 312 readable drawings", step 3 could not be finished, and the panel pointed users at spending their AI key reading data sheets for flows.
 - `components/assets/AreaKnowledgePanel.tsx` ticks:
   - step 1 only when the area's shelf holds its drawings. A folder named like the area is shown as "Suggested: <library> / <folder> (N docs) — a folder named for this area; connect it in step 2 …", never a tick.
-  - step 3 only when every readable drawing was read for flows ("3 of 40 readable drawings read for flows").
+  - step 3 only when every flow drawing on the shelf was read for flows ("3 of 40 flow drawings (PFDs, P&IDs, block diagrams) read for flows · 300 other documents on the shelf (data sheets, manuals…) not counted"). A shelf with no flow drawing by title or folder says so and stays to-do; it is never ticked on 0 of 0.
   - step 4 only when every piece of the area's equipment has a linked document ("1 of 2 equipment items … has a linked document").
 - In between, a step is "in progress", a new amber state.
 
-Tests: `lib/__tests__/areaKnowledgeCoverage.test.ts` (the route's count, an unreadable record is null, unbound is null; the panel's in-progress and done states; an unbound area's suggestion is never a tick), `lib/__tests__/flowsReadRoute.test.ts` ("every read writes a FLOWS_READ record …").
+Tests: `lib/__tests__/areaKnowledgeCoverage.test.ts` (the route's count, an unreadable record is null, unbound is null; the panel's in-progress and done states; an unbound area's suggestion is never a tick; from the fix pass, "a shelf of 12 PFDs beside 300 data sheets: the 12 PFDs are the denominator …", "a mirror named only by its number counts … under a PFD folder", "a shelf with no flow drawing … never a tick on 0 of 0"), `lib/__tests__/flowsRead.test.ts` ("AREA-8 — flowReadCoverage …"), `lib/__tests__/flowsReadRoute.test.ts` ("every read writes a FLOWS_READ record …").
 
 **Done-when.**
-1. ✓ Steps 3 and 4 carry coverage (drawings read / readable on the shelf; linked equipment / area equipment), and "done" means all of them. A drawing that prints no flows still counts once it has been read.
+1. ✓ Steps 3 and 4 carry coverage: flow drawings read out of the shelf's flow drawings, and linked equipment out of the area's equipment. "Done" means all of them. Step 3 is done when every PFD, P&ID and block diagram on the shelf (by title or folder) has been read once, which is the threshold a plant engineer sets for "the flow drawings are mapped"; the data sheets beside them are said, not owed a read. A drawing that prints no flows still counts once it has been read. Limit: the test is by name. A flow drawing filed under an unhelpful title in an unhelpful folder is counted as an "other document" until it is read, and from then on it counts as read.
 2. ✓ Step 1's unbound state is a suggestion, not completion.
 3. ✓ Verified, no change needed: the counts run over the area's full equipment list. `lib/assets.ts` `listAssets` reads every page (`readAllPages`, or a stated refusal past `MAX_REGISTRY_ROWS`), and the page passes the whole area (`areaAssetIds`). Step 4's link read is chunked over every id.
 

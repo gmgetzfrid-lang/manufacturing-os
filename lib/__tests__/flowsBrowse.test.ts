@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleFlowsBrowse, type FlowsBrowseInputs } from "@/lib/flowsBrowse";
+import { assembleFlowsBrowse, areaShelfDocCount, type FlowsBrowseInputs } from "@/lib/flowsBrowse";
 
 // The picker's promise: the DOCUMENT-CONTROL tree, exactly as filed —
 // libraries, nested folders, every controlled document — with a named AI
@@ -177,5 +177,29 @@ describe("FLOW-7 — a failed ingest is named, with its reason, never 'indexing'
     inputs.knowledgeDocs = [{ id: "k1", name: "PFD", libraryId: "kl1", pageCount: 2, status: "ready", sourceDocumentId: "d1" }];
     inputs.dcDocs = [{ id: "d1", name: "PFD", libraryId: "dl1", collectionId: null, block: null }];
     expect(assembleFlowsBrowse(inputs).tree[0].docs[0]).toMatchObject({ state: "ready", kdocId: "k1", kLibraryId: "kl1" });
+  });
+});
+
+describe("AREA-5 — what the area-shelf filter would show (areaShelfDocCount)", () => {
+  const doc = (id: string, kLibraryId: string | null, state: "ready" | "pending_sync" = "ready") =>
+    ({ dcDocId: id, name: id, state, kdocId: kLibraryId ? `k-${id}` : null, pageCount: 1, kLibraryId });
+  const model = {
+    tree: [{
+      id: "dl1", name: "Drawings", watched: true, totalDocs: 4,
+      docs: [doc("root", "kl-area")],
+      folders: [{ id: "f1", name: "PFDs", watched: true, totalDocs: 3, docs: [doc("a", "kl-other"), doc("b", null, "pending_sync")],
+        folders: [{ id: "f2", name: "Unit 20", watched: true, totalDocs: 1, docs: [doc("c", "kl-area")], folders: [] }] }],
+    }],
+    uploads: [
+      { knowledgeLibraryId: "kl-area", knowledgeLibraryName: "Area", docs: [{ kdocId: "u1", name: "u1", pageCount: 1, state: "ready" as const }] },
+      { knowledgeLibraryId: "kl-other", knowledgeLibraryName: "Other", docs: [{ kdocId: "u2", name: "u2", pageCount: 1, state: "ready" as const }] },
+    ],
+  };
+  it("counts the area library's mirrors at every depth and its direct uploads — never another shelf's, never an unsynced row", () => {
+    expect(areaShelfDocCount(model, "kl-area")).toBe(3);
+    expect(areaShelfDocCount(model, "kl-other")).toBe(2);
+  });
+  it("a bound shelf that has not synced (its rows carry no library) counts 0 — the modal opens on every library", () => {
+    expect(areaShelfDocCount({ tree: [{ ...model.tree[0], docs: [doc("x", null, "pending_sync")], folders: [] }], uploads: [] }, "kl-area")).toBe(0);
   });
 });

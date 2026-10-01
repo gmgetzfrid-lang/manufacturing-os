@@ -514,7 +514,7 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 2. ✓ By decision (`DEC-44 (I-09)` item 1) Connect stays open to every member, as a proposal, and the database decides what lands. The review UI's controls follow the same tier (`FLOW-3`), so the affordance matches the permission: anyone proposes, a controller confirms.
 3. ✓ A source document is tied to a knowledge document of the same org, for every writer, in the guard (`process_flows_source`, 23503; the scratch case refused a cross-workspace source from the service role). A person cannot set one at all. Existing cross-workspace sources are counted in the inventory, never rewritten.
 
-**Scope / residual.** Pending migration `20261155`.
+**Scope / residual.** Pending migration `20261155`. Fix pass: the first version of the guard also refused a person CLEARING the source. That is the UPDATE 20261017's `ON DELETE SET NULL` runs, so deleting a cited knowledge document, controlled document or library failed with `process_flows_fixed`. The guard now lets a source be cleared, and still refuses setting or retargeting one. The correction, the reproduction and the scratch PostgreSQL 16 cases are on `FLOW-2`.
 
 ---
 

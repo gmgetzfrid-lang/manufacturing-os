@@ -25,20 +25,26 @@ const db = vi.hoisted(() => ({
   flows: [] as Row[],
   assets: [] as Row[],
   updateReturns: [] as Row[] | null,
+  flowsError: null as null | { message: string },
+  assetsError: null as null | { message: string },
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
 }));
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string): unknown => {
     let op = "select";
     let inIds: string[] | null = null;
+    // eq / neq on a read are honoured, so a status filter is the database's
+    const filters: Array<(r: Row) => boolean> = [];
     const h: ProxyHandler<object> = {
       get(_t, prop: string) {
         if (prop === "then") {
           let res: unknown;
-          if (table === "process_flows" && op === "select") res = { data: db.flows, error: null };
+          if (table === "process_flows" && op === "select") {
+            res = db.flowsError ? { data: null, error: db.flowsError } : { data: db.flows.filter((r) => filters.every((f) => f(r))), error: null };
+          }
           else if (table === "process_flows" && op === "update") res = { data: db.updateReturns, error: null };
           else if (table === "process_flows" && op === "delete") res = { data: [{ id: "x" }], error: null };
-          else if (table === "assets") res = { data: db.assets.filter((a) => !inIds || inIds.includes(String(a.id))), error: null };
+          else if (table === "assets") res = db.assetsError ? { data: null, error: db.assetsError } : { data: db.assets.filter((a) => !inIds || inIds.includes(String(a.id))), error: null };
           else res = { data: [], error: null };
           return (resolve: (v: unknown) => void) => resolve(res);
         }
@@ -46,6 +52,8 @@ vi.mock("@/lib/supabase", () => {
           db.calls.push({ table, method: prop, args });
           if (prop === "update" || prop === "delete") op = prop;
           if (prop === "in") inIds = args[1] as string[];
+          if (op === "select" && prop === "eq") filters.push((r) => r[String(args[0])] === args[1]);
+          if (op === "select" && prop === "neq") filters.push((r) => r[String(args[0])] !== args[1]);
           return new Proxy({}, h);
         };
       },
@@ -90,7 +98,7 @@ const panel = (isController: boolean, userId = "admin1") =>
 const buttons = () => [...host.querySelectorAll("button")];
 
 beforeEach(() => {
-  db.calls = [];
+  db.calls = []; db.flowsError = null; db.assetsError = null;
   db.assets = [{ id: LOOSE1, tag: "P-900", archived: false, unit_code: null }, { id: LOOSE2, tag: "T-901", archived: false, unit_code: null }];
   db.updateReturns = [{ id: "x" }];
   db.flows = [
@@ -196,5 +204,144 @@ describe("FLOW-1 / AREA-6 — elsewhere, and the pivot", () => {
     expect(page).not.toContain("unitAssets={filtered}");
     expect(page).toMatch(/<FlowReviewQueue orgId=\{activeOrgId\} userId=\{uid\} userName=\{userEmail \?\? undefined\} isController=\{isController\} \/>/);
     expect(page).toContain("const flows = await countAssetFlows(orgId, asset.id);");
+  });
+});
+
+describe("FLOW-1 — the plant-wide review: proposals only, a failed read said, an unread registry never guessed", () => {
+  const queue = () => React.createElement(FlowReviewQueue, { orgId: "o1", userId: "admin1", isController: true });
+
+  it("reads only the proposals, filtered in the database — a confirmed flow is never loaded into the queue", async () => {
+    db.flows = [
+      flow({ id: "p5", status: "proposed", origin: "ai", from_ref: LOOSE1, to_ref: LOOSE2, evidence: { confidence: 0.8 } }),
+      flow({ id: "c5", status: "confirmed" }),
+    ];
+    await render(queue());
+    expect(db.calls.some((c) => c.table === "process_flows" && c.method === "eq" && c.args[0] === "status" && c.args[1] === "proposed")).toBe(true);
+    expect(db.calls.some((c) => c.table === "process_flows" && c.method === "neq")).toBe(false);
+    expect(host.textContent).toContain("1 awaiting a decision");
+  });
+
+  it("a list read that fails is SAID, even with no rows — never a vanished queue a controller reads as 'nothing to review'", async () => {
+    db.flowsError = { message: "network down" };
+    await render(queue());
+    expect(host.textContent).toContain("Proposed flows across the plant");
+    expect(host.textContent).toContain("The proposed flows could not be read: network down");
+  });
+
+  it("nothing proposed and nothing failed: the queue stays out of the way", async () => {
+    db.flows = [flow({ id: "c5", status: "confirmed" })];
+    await render(queue());
+    expect(host.textContent).toBe("");
+  });
+
+  it("an unreadable registry: each asset end is 'unit not checked' (never 'no operating area'), and the unfiled filter is off", async () => {
+    db.flows = [
+      flow({ id: "p5", status: "proposed", origin: "ai", from_ref: LOOSE1, to_ref: LOOSE2, evidence: { confidence: 0.8 } }),
+      flow({ id: "p6", status: "proposed", origin: "ai", from_kind: "unit", from_ref: "20", to_ref: V, evidence: { confidence: 0.8 } }),
+    ];
+    db.assetsError = { message: "registry down" };
+    await render(queue());
+    const text = host.textContent ?? "";
+    expect(text).not.toContain("no operating area\u00a0");
+    expect([...host.querySelectorAll("span")].filter((x) => x.textContent === "no operating area")).toHaveLength(0);
+    expect([...host.querySelectorAll("span")].filter((x) => x.textContent === "unit not checked")).toHaveLength(1);
+    expect([...host.querySelectorAll("span")].filter((x) => x.textContent === "Unit 20 · equipment's unit not checked")).toHaveLength(1);
+    expect(text).toContain("The equipment registry could not be read");
+    const box = host.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    // both proposals stay listed — the filter cannot hide them on a guess
+    expect(text).toContain("2 awaiting a decision");
+    expect(host.querySelectorAll('button[title="Confirm — draw it on the graph"]')).toHaveLength(2);
+  });
+
+  it("a readable registry keeps the filter: only proposals touching no operating area", async () => {
+    db.flows = [
+      flow({ id: "p5", status: "proposed", origin: "ai", from_ref: LOOSE1, to_ref: LOOSE2, evidence: { confidence: 0.8 } }),
+      flow({ id: "p6", status: "proposed", origin: "ai", from_kind: "unit", from_ref: "20", to_ref: LOOSE1, evidence: { confidence: 0.8 } }),
+    ];
+    await render(queue());
+    const box = host.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(box.disabled).toBe(false);
+    await act(async () => { box.click(); });
+    await flush();
+    expect(host.querySelectorAll('button[title="Confirm — draw it on the graph"]')).toHaveLength(1);
+    expect([...host.querySelectorAll("span")].some((x) => x.textContent === "no operating area")).toBe(true);
+  });
+});
+
+describe("AREA-5 / FLOW-1 — the Read-flows modal: the area's shelf when it holds documents, and proposals outside the unit linked", () => {
+  const browse = (over: Row = {}) => ({
+    tree: [{
+      id: "lib1", name: "PFDs", watched: true, totalDocs: 1, docs: [],
+      folders: [{ id: "f1", name: "Crude", watched: true, totalDocs: 1, folders: [], docs: [
+        { dcDocId: "d1", name: "PFD-100 Crude", state: "pending_sync", kdocId: null, pageCount: null },
+      ] }],
+    }],
+    uploads: [],
+    knowledgeLibraries: [{ id: "kl1", name: "Crude shelf" }],
+    areaKnowledgeLibrary: { id: "kl1", name: "Crude shelf" },
+    canSync: true,
+    ...over,
+  });
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const openModal = async (model: Row, readReply?: Row) => {
+    fetchMock = vi.fn(async (url: string) => {
+      if (String(url).startsWith("/api/flows/browse")) return new Response(JSON.stringify(model), { status: 200 });
+      return new Response(JSON.stringify(readReply ?? {}), { status: 200 });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await render(panel(true));
+    const open = buttons().find((b) => b.textContent?.includes("Read flows from a document"))!;
+    await act(async () => { open.click(); });
+    await flush();
+  };
+  const select = () => document.body.querySelector("select") as HTMLSelectElement;
+
+  it("a bound area whose shelf has not synced opens on ALL libraries: the area's PFD is on screen, 'Not synced yet', with its Sync button", async () => {
+    await openModal(browse());
+    expect(select().value).toBe("");
+    expect(document.body.textContent).toContain("PFD-100 Crude");
+    expect(document.body.textContent).not.toContain("No documents yet");
+    expect([...document.body.querySelectorAll("button")].some((b) => b.textContent === "Sync now")).toBe(true);
+  });
+
+  it("an area shelf that holds mirrors opens on it (regression pin: AREA-5's default)", async () => {
+    const model = browse();
+    (model.tree as Array<{ folders: Array<{ docs: Row[] }> }>)[0].folders[0].docs = [
+      { dcDocId: "d1", name: "PFD-100 Crude", state: "ready", kdocId: "kd1", pageCount: 3, kLibraryId: "kl1" },
+    ];
+    await openModal(model);
+    expect(select().value).toBe("__area");
+    expect(document.body.textContent).toContain("PFD-100 Crude");
+  });
+
+  it("the area filter chosen on an empty shelf names itself and offers every library — never 'No documents yet'", async () => {
+    await openModal(browse());
+    await act(async () => { select().value = "__area"; select().dispatchEvent(new Event("change", { bubbles: true })); });
+    await flush();
+    expect(document.body.textContent).toContain("Nothing in this area's library yet (Crude shelf)");
+    expect(document.body.textContent).not.toContain("No documents yet");
+    const all = [...document.body.querySelectorAll("button")].find((b) => b.textContent === "Show all document libraries")!;
+    await act(async () => { all.click(); });
+    await flush();
+    expect(select().value).toBe("");
+    expect(document.body.textContent).toContain("PFD-100 Crude");
+  });
+
+  it("a read whose proposals land outside the unit LINKS them to where they are decided", async () => {
+    const model = browse();
+    (model.tree as Array<{ folders: Array<{ docs: Row[] }> }>)[0].folders[0].docs = [
+      { dcDocId: "d1", name: "PFD-100 Crude", state: "ready", kdocId: "kd1", pageCount: 3, kLibraryId: "kl1" },
+    ];
+    await openModal(model, { proposed: 2, outsideUnit: 1, note: "Read pages 1–3 of 3. 2 flows proposed." });
+    const read = [...document.body.querySelectorAll("button")].find((b) => b.textContent?.includes("PFD-100 Crude"))!;
+    await act(async () => { read.click(); });
+    await flush();
+    expect(host.textContent).toContain("Read pages 1–3 of 3. 2 flows proposed.");
+    expect(host.textContent).toContain("1 of the proposals is outside this unit");
+    const link = [...host.querySelectorAll("a")].find((x) => x.textContent === "decide it under Proposed flows across the plant");
+    expect(link?.getAttribute("href")).toBe("/admin/assets#plant-flow-review");
+    const readCall = fetchMock.mock.calls.find((c) => c[0] === "/api/flows/read")!;
+    expect(JSON.parse(String((readCall[1] as RequestInit).body))).toMatchObject({ knowledgeDocumentId: "kd1", unitCode: "20" });
   });
 });
