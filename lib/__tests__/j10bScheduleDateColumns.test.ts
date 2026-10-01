@@ -7,7 +7,9 @@
 // did not: the question named a sample value, and the skip warning said "a
 // start or finish date". Now both name the column — as the file spells its
 // header — the question in the parser's warning and on the import modal,
-// and the skip warning per column with its row count.
+// and the skip warning per column with its row count. A file that
+// contradicts itself names EACH side's own column, in the warning and on the
+// modal (the review: the modal gave both sides the first one's column).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
@@ -27,7 +29,7 @@ describe("GAP-403 acceptance 3 — the date question names its column", () => {
     expect(asked.needsDateConvention).toBe(true);
     expect(asked.rows).toEqual([]);
     expect(asked.warnings[0]).toBe('Every slash date in the "Start Date" and "Due Date" columns (e.g. 05/08/2026 in "Start Date") reads as either day/month or month/day. Choose how to read dates before importing — the choice applies to every row.');
-    expect(asked.dateSource).toEqual({ columns: ["Start Date", "Due Date"], sampleColumn: "Start Date" });
+    expect(asked.dateSource).toEqual({ columns: ["Start Date", "Due Date"], samples: [{ value: "05/08/2026", column: "Start Date", reads: null }], conflict: false });
     // the existing dates record is unchanged
     expect(asked.dates).toEqual({ convention: null, decidedBy: "none", sample: "05/08/2026" });
   });
@@ -42,6 +44,11 @@ describe("GAP-403 acceptance 3 — the date question names its column", () => {
     const asked = parseScheduleFile("plan.csv", csv);
     expect(asked.needsDateConvention).toBe(true);
     expect(asked.warnings[0]).toMatch(/^The file contradicts itself about date order \(15\/08\/2026 in "Finish" vs 08\/15\/2026 in "Start"\)\./);
+    // each side carries its own column, and the only order it reads in
+    expect(asked.dateSource).toEqual({
+      columns: ["Start", "Finish"], conflict: true,
+      samples: [{ value: "15/08/2026", column: "Finish", reads: "dmy" }, { value: "08/15/2026", column: "Start", reads: "mdy" }],
+    });
   });
 
   it("under the chosen order an impossible date skips its row, and the warning names the column and counts its rows", () => {
@@ -71,7 +78,25 @@ describe("GAP-403 acceptance 3 — rendered: the import modal's question names t
     await act(async () => {
       root.render(createElement(ScheduleImportModal, { orgId: "o1", projectId: "p1", userId: "u1", onClose: () => {}, onDone: () => {} }));
     });
-    const csv = ["Task Name,Start,Finish", "A,05/08/2026,06/08/2026", "B,03/04/2026,04/04/2026"].join("\n");
+    const text = await drop(["Task Name,Start,Finish", "A,05/08/2026,06/08/2026", "B,03/04/2026,04/04/2026"].join("\n"));
+    expect(text).toContain("How should dates in this file be read?");
+    expect(text).toContain("Every slash date in “Start” and “Finish” (e.g. 05/08/2026 in “Start”) could be day/month or month/day.");
+  });
+
+  it("a self-contradicting CSV (Start 08/15/2026, Finish 15/08/2026): each value is named with its OWN column — never both with one", async () => {
+    await act(async () => {
+      root.render(createElement(ScheduleImportModal, { orgId: "o1", projectId: "p1", userId: "u1", onClose: () => {}, onDone: () => {} }));
+    });
+    const text = await drop(["Task Name,Start,Finish", "A,08/15/2026,15/08/2026"].join("\n"));
+    expect(text).toContain("How should dates in this file be read?");
+    expect(text).toContain("This file contradicts itself about date order: 15/08/2026 in “Finish” can only be day/month, but 08/15/2026 in “Start” can only be month/day. Nothing is imported until you choose; the choice applies to the whole file, and a row whose dates cannot be read that way is skipped.");
+    // the review's failure: "(e.g. 15/08/2026 vs 08/15/2026 in "Finish")"
+    expect(text).not.toContain("vs 08/15/2026 in “Finish”");
+    expect(text).not.toContain("08/15/2026 in “Finish”");
+    expect(text).not.toContain("Every slash date");
+  });
+
+  async function drop(csv: string): Promise<string> {
     const input = host.querySelector('input[type="file"]') as HTMLInputElement;
     const bytes = new TextEncoder().encode(csv);
     const file = new File([bytes], "plan.csv", { type: "text/csv" });
@@ -79,8 +104,6 @@ describe("GAP-403 acceptance 3 — rendered: the import modal's question names t
     Object.defineProperty(input, "files", { value: [file], configurable: true });
     await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
-    const text = (host.textContent ?? "").replace(/\s+/g, " ");
-    expect(text).toContain("How should dates in this file be read?");
-    expect(text).toContain("Every slash date in “Start” and “Finish” (e.g. 05/08/2026 in “Start”) could be day/month or month/day.");
-  });
+    return (host.textContent ?? "").replace(/\s+/g, " ");
+  }
 });

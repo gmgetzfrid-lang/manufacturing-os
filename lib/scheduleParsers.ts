@@ -97,9 +97,16 @@ export interface ParseResult {
    *  convention was supplied — rows are withheld until the user picks one. */
   needsDateConvention?: boolean;
   /** GAP-403: the columns the slash dates were read from (a CSV's start /
-   *  finish headers, as the file spells them) and the column the shown
-   *  sample came from — so the question names its column. CSV only. */
-  dateSource?: { columns: string[]; sampleColumn: string | null };
+   *  finish headers, as the file spells them) and each sample shown with
+   *  the column IT came from — so the question names the right column for
+   *  every value. `conflict`: the file contradicts itself, and the samples
+   *  are its two sides (`reads`: the only order that value can be read in);
+   *  otherwise one sample that reads either way (`reads` null). CSV only. */
+  dateSource?: {
+    columns: string[];
+    samples: Array<{ value: string; column: string | null; reads: DateConvention | null }>;
+    conflict: boolean;
+  };
   /** The column (or derivation) that keys rows for re-import matching. */
   keyColumn?: string;
   /** Every project the file holds (P6 XML / XER), with its row count. */
@@ -344,16 +351,23 @@ function runParser(format: ScheduleFormat, filename: string, text: string, opts?
   if (detected.convention) dates = { convention: detected.convention, decidedBy: "file", sample: detected.sample };
   else if (opts?.dateConvention && detected.ambiguous) dates = { convention: opts.dateConvention, decidedBy: "user", sample: detected.sample };
   else if (detected.ambiguous) {
-    // GAP-403: the question names the column(s) the ambiguous dates are in.
+    // GAP-403: the question names the column(s) the ambiguous dates are in —
+    // each sample with its OWN column (a contradicting file's two sides are
+    // usually in different columns). detectDateConvention gives a conflict's
+    // sample as "<day-first only> vs <month-first only>".
     const samples = (detected.sample ?? "").split(" vs ");
-    const named = samples.map((v) => { const col = evidence.columnOf(v); return col ? `${v} in "${col}"` : v; });
+    const sides = samples.map((value, i) => ({
+      value, column: evidence.columnOf(value),
+      reads: detected.conflict ? (i === 0 ? "dmy" as const : "mdy" as const) : null,
+    }));
+    const named = sides.map((side) => (side.column ? `${side.value} in "${side.column}"` : side.value));
     const why = detected.conflict
       ? `The file contradicts itself about date order (${named.join(" vs ")}).`
       : `Every slash date in ${columnsPhrase(evidence.columns)} (e.g. ${named[0]}) reads as either day/month or month/day.`;
     return {
       format, rows: [], needsDateConvention: true,
       dates: { convention: null, decidedBy: "none", sample: detected.sample },
-      dateSource: { columns: evidence.columns, sampleColumn: evidence.columnOf(samples[0]) },
+      dateSource: { columns: evidence.columns, samples: sides, conflict: detected.conflict },
       warnings: [`${why} Choose how to read dates before importing — the choice applies to every row.`],
     };
   } else dates = { convention: null, decidedBy: "none", sample: null };

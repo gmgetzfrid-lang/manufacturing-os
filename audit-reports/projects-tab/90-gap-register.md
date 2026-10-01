@@ -192,19 +192,20 @@ On the "Do not infer identity from the task name" rule: a keyless row's content 
 
 **Resolution (2026-10-01, projects Round G).** The date question and the skip warning now name the column, spelled as the file spells its header.
 - `lib/scheduleParsers.ts`:
-  - `ParseResult.dateSource` (`{ columns, sampleColumn }`) records the start / finish columns the slash dates came from and the column of the sample.
+  - `ParseResult.dateSource` (`{ columns, samples, conflict }`) records the start / finish columns the slash dates came from. It also records each sample shown with the column it came from (`samples[].column`) and the only order it can be read in (`samples[].reads`: `dmy` or `mdy` for a contradicting file's two sides, null for a sample that reads either way). *Review fix:* the first pass carried a single `sampleColumn`, which the modal applied to both sides of a contradiction.
   - The ambiguity warning reads `Every slash date in the "Start Date" and "Due Date" columns (e.g. 05/08/2026 in "Start Date") reads as either day/month or month/day. Choose how to read dates before importing — the choice applies to every row.`
   - A file that contradicts itself names the column of each side: `(15/08/2026 in "Finish" vs 08/15/2026 in "Start")`.
   - A row skipped under the chosen order is counted per column: `2 rows skipped (a start or finish date could not be read as month/day/year) — in "Finish" (1 row), "Start" (1 row).`
-- `components/projects/ScheduleImportModal.tsx`: the date question names the same columns and the sample's column.
+- `components/projects/ScheduleImportModal.tsx`: the date question names the same columns and the sample's column. A contradicting file gets its own sentence, which names each side with its own column: `This file contradicts itself about date order: 15/08/2026 in "Finish" can only be day/month, but 08/15/2026 in "Start" can only be month/day. Nothing is imported until you choose; the choice applies to the whole file, and a row whose dates cannot be read that way is skipped.` The first pass rendered `(e.g. 15/08/2026 vs 08/15/2026 in "Finish")`, which named the wrong column for 08/15/2026.
 - The never-guessed half is unchanged. Rows are withheld until the order is chosen, on a radio with no default. XML and XER carry ISO dates and never reach the question.
-- Tests: `lib/__tests__/j10bScheduleDateColumns.test.ts` (6):
+- Tests: `lib/__tests__/j10bScheduleDateColumns.test.ts` (7):
   - the question naming two columns and the sample's column;
   - a single column;
-  - the contradiction;
+  - the contradiction, in the warning and in `dateSource` (each side with its own column and order);
   - the per-column skip count under both orders;
   - XML, with no date source;
-  - rendered: the import modal's question names the columns.
+  - rendered: the import modal's question names the columns;
+  - rendered: a contradicting CSV (Start `08/15/2026`, Finish `15/08/2026`) names each value with its own column, never both with one.
 
   The skip-message pin in `lib/__tests__/scheduleParsers.test.ts` now carries the column.
 
