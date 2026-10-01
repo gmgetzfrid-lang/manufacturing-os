@@ -150,6 +150,20 @@ describe("DRLS-14 — the doors that delete a document, and the ones that never 
     expect(page).toContain('await appAlert({ title: "Delete failed", message: msg, tone: "danger" });');
   });
 
+  it("P14 review fix — the bulk delete's false success is a DEPLOY PREREQUISITE of the paste, not a follow-up: the header, the paste order, DEC-44 (P14) and DRLS-14 all say so", () => {
+    const head = M.slice(0, M.indexOf("DROP TABLE IF EXISTS"));
+    expect(head).toMatch(/DEPLOY PREREQUISITE \(DRLS-14, as 20261131 waits on DRLS-15 \/ DRLS-17\):\n-- not pasteable until the app deployed carries a library-page bulk delete/);
+    expect(head).toContain("CHECKS\n-- each delete (.select(\"id\") plus its error) and keeps every refused row on\n-- screen with the database's sentence");
+    expect(head).not.toMatch(/none needs a code change to stay truthful/);
+    const seq = src("audit-reports/document-control/99-fix-sequencing.md");
+    const p14 = seq.slice(seq.indexOf("Paste order — P14 RECORDS & REVIEW REMAINDERS"), seq.indexOf("20261150_dc_roundF_work_package_repin_record.sql"));
+    expect(p14).toMatch(/\*\*Deploy prerequisite \(as\s+`20261131` waits on `DRLS-15` \/ `DRLS-17`\):\*\* not pasteable until the app\s+deployed carries a library-page bulk delete/);
+    const dec = src("audit-reports/DECISIONS.md");
+    expect(dec.slice(dec.indexOf('<a id="dec-44-p14"></a>'))).toMatch(/\*\*Deploy prerequisite \(P14 review fix\):\*\* `20261149` is not pasted, even once this decision is ratified, until/);
+    const rec = src("audit-reports/document-control/10-rls.md");
+    expect(rec).toContain("**Deploy prerequisite of `20261149` (P14 review fix — first recorded only as a follow-up).**");
+  });
+
   it("a library delete on /documents shows the database's sentence too", () => {
     const page = src("app/(protected)/documents/page.tsx");
     expect(page).toContain('const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);');

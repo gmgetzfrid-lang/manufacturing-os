@@ -327,7 +327,16 @@ one-paste migrations, independent of one another (any order among them):
   pending document-control paste (`20261131`, `20261139`, `20261143`,
   `20261144`); with `20261131` pasted, a document carrying only unanswered
   asks still deletes. Its result set carries the DEC-30 inventory of the
-  documents it would now refuse to delete.
+  documents it would now refuse to delete. **Deploy prerequisite (as
+  `20261131` waits on `DRLS-15` / `DRLS-17`):** not pasteable until the app
+  deployed carries a library-page bulk delete (`handleBulkDelete`, the
+  page's owner — identity `IS-P1` / intelligence `I-12`; coordinate) that
+  checks each delete (`.select("id")` plus its error) and keeps a refused
+  row on screen with the database's sentence, or pre-checks the
+  selection's evidence counts before deleting anything — today it drops
+  every selected row from the screen whatever the database answered, a
+  false success once the guard refuses. Beside it: `/admin/libraries`
+  showing the sentence instead of "Failed to delete library." (`DRLS-14`).
 - `20261150_dc_roundF_work_package_repin_record.sql` (`DRLS-10`) — after
   `20261032` / `20261033` (the pin policies and the pin guard it sits
   beside); a new AFTER UPDATE trigger only, re-creating nothing.

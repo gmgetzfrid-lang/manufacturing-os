@@ -37,16 +37,19 @@
 --   guard decides before the cascade runs. Reversal = drop the trigger
 --   (DEC-44 (P14) §Reversal); the FKs never moved.
 --
---   Doors that meet the refusal (none needs a code change to stay truthful):
+--   Doors that meet the refusal (one is NOT truthful about it — the bulk
+--   delete, a DEPLOY PREREQUISITE of this paste, below):
 --     · the library page's single delete — one checked statement since
 --       DRLS-17 (P12); it shows the database's sentence verbatim ("Delete
 --       failed: …");
 --     · a library delete (cascades its documents): /documents shows the
 --       sentence ("Delete failed: …"); /admin/libraries says "Failed to
 --       delete library." (its own wording — follow-up for that page);
---     · the library page's BULK delete issues unchecked deletes — a
---       refused row stays in the database and reappears on reload; recorded
---       on DRLS-14 as a follow-up for the page's next owner;
+--     · the library page's BULK delete (handleBulkDelete) awaits each
+--       delete without reading its error and then drops EVERY selected row
+--       from the screen — a refused row reads as deleted (a false success)
+--       and reappears on reload, with nothing saying why. Fixing it is a
+--       DEPLOY PREREQUISITE (HOW TO APPLY);
 --     · the intake upload's discard (service role) deletes only a document
 --       the same request created — it cannot carry a person's act yet.
 --   /api/collections/delete and /api/collections/trash never delete a
@@ -64,6 +67,15 @@
 -- document carrying only unanswered asks still deletes, its rows going in
 -- the same statement), 20261139, 20261143, 20261144 (none defines anything
 -- this file touches). Paste ONLY once the user ratifies DEC-44 (P14).
+-- DEPLOY PREREQUISITE (DRLS-14, as 20261131 waits on DRLS-15 / DRLS-17):
+-- not pasteable until the app deployed carries a library-page bulk delete
+-- (app/(protected)/documents/[libraryId]/page.tsx handleBulkDelete — the
+-- page's owner, identity IS-P1 / intelligence I-12; coordinate) that CHECKS
+-- each delete (.select("id") plus its error) and keeps every refused row on
+-- screen with the database's sentence — or one that pre-checks the
+-- selection's evidence counts and refuses before deleting anything. Ship
+-- beside it: /admin/libraries showing the database's sentence instead of
+-- "Failed to delete library." (not a false success, but no reason given).
 -- Single paste: temp-table inventory → BEGIN/DDL/COMMIT → one SELECT
 -- (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
