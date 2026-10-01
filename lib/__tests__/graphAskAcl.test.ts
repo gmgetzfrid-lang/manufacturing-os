@@ -24,6 +24,8 @@
 //   * the contract is evidence-only (IEDGE-11).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { db, resetDb } from "./knowledgeFakeDb";
 
@@ -198,5 +200,34 @@ describe("GPV-1 / IEDGE-1 — the graph's Ask box reads only what the asker may 
       body: JSON.stringify({ orgId: ORG, question: "settlement terms" }),
     }));
     expect(res.status).toBe(401);
+  });
+});
+
+describe("IEDGE-11 (GPV-12's route half) — the contract is evidence-only", () => {
+  const route = readFileSync(join(process.cwd(), "app/api/graph/ask/route.ts"), "utf8");
+
+  it("no 'answered' mode and no answer field in the exported contract; every payload says evidence", async () => {
+    expect(route).not.toMatch(/"answered"/);
+    expect(route).not.toMatch(/\banswer:\s*(null|string)/);
+    expect(route).toMatch(/mode: "evidence";/);
+    net.graphAsk = [HIT.ops];
+    const { body } = await ask("viewer", "support");
+    expect(body.mode).toBe("evidence");
+    expect(body).not.toHaveProperty("answer");
+    net.graphAsk = [];
+    const empty = (await ask("viewer", "support")).body;
+    expect(empty.mode).toBe("evidence");
+    expect(empty).not.toHaveProperty("answer");
+  });
+
+  it("the header describes the enforcement that runs (no SECURITY INVOKER claim), and the one consumer never branches on a mode", () => {
+    expect(route).not.toMatch(/SECURITY INVOKER under the caller's own RLS/);
+    expect(route).toMatch(/readableControlledDocIds/);
+    expect(route).toMatch(/fail(s)? CLOSED/i);
+    const page = readFileSync(join(process.cwd(), "app/(protected)/graph/page.tsx"), "utf8");
+    expect(page).not.toMatch(/"answered"/);
+    const ask = page.slice(page.indexOf("interface GraphAsk {"), page.indexOf("}", page.indexOf("interface GraphAsk {")));
+    expect(ask).toContain("hits:");
+    expect(ask).not.toMatch(/\bmode\b|\banswer\b/);
   });
 });

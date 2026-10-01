@@ -11,12 +11,11 @@
 // caller can light up the exact region of the map that holds your answer. You
 // see where the knowledge lives, not just a list.
 //
-// Two answer modes, and it is always honest about which one you got:
-//   EVIDENCE  — ranked passages with citations. No AI key needed, never wrong,
-//               always available.
-//   ANSWERED  — the same evidence, plus a written answer grounded in it, when
-//               the org has a key configured. Citations are the evidence rows;
-//               nothing is asserted that isn't in them.
+// One answer mode, EVIDENCE: ranked passages with citations. No AI key
+// needed, no model call, always available. This route never writes an
+// answer (IEDGE-11): a written, cited answer is the knowledge ask route's
+// job (/api/knowledge/ask), behind the governed key / agreement / cap gates
+// every AI surface uses. The contract below says only what this returns.
 //
 // Security (GPV-1 / IEDGE-1): org membership is checked here, and then the
 // asker's own document ACL is applied, because the corpus RPC does NOT run
@@ -104,9 +103,9 @@ export interface GraphAskHit {
 }
 
 export interface GraphAskResponse {
-  mode: "evidence" | "answered";
+  /** Always "evidence": passages, never a written answer (IEDGE-11). */
+  mode: "evidence";
   question: string;
-  answer: string | null;
   hits: GraphAskHit[];
   /** Graph node ids to spotlight — documents AND the equipment they mention. */
   nodeIds: string[];
@@ -173,7 +172,7 @@ export async function POST(req: NextRequest) {
 
   if (!view || hits.length === 0) {
     return NextResponse.json<GraphAskResponse>({
-      mode: "evidence", question, answer: null, hits: [], nodeIds: [], assets: [],
+      mode: "evidence", question, hits: [], nodeIds: [], assets: [],
       note: "Nothing in the indexed libraries matches that. Only documents toggled for indexing are searchable.",
     });
   }
@@ -254,7 +253,6 @@ export async function POST(req: NextRequest) {
   const payload: GraphAskResponse = {
     mode: "evidence",
     question,
-    answer: null,
     hits: shown,
     nodeIds: [...nodeIds],
     assets: [...assets.values()].sort((a, b) => b.count - a.count).slice(0, 12),
