@@ -94,6 +94,9 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   const [docLinkCount, setDocLinkCount] = useState<number | null>(null);
   // AREA-8: how many of the area's equipment have at least one linked document.
   const [linkedAssetCount, setLinkedAssetCount] = useState<number | null>(null);
+  // The document_assets read behind both counts failed: "could not be
+  // counted", never "0 of N" (AREA-8).
+  const [linksUnread, setLinksUnread] = useState(false);
   const [plotMarkCount, setPlotMarkCount] = useState<number | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -113,6 +116,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
 
   useEffect(() => {
     let alive = true;
+    let linksSettled = false;
     (async () => {
       const assetSet = new Set(unitAssetIds);
       const flows = await listProcessFlows(orgId);
@@ -131,12 +135,14 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         // linked" must mean 12, not "12 among the slice we looked at".
         const docIds = new Set<string>();
         const linkedAssets = new Set<string>();
-        for (let i = 0; i < unitAssetIds.length; i += 200) {
+        let failed = false;
+        for (let i = 0; i < unitAssetIds.length && !failed; i += 200) {
           const chunk = unitAssetIds.slice(i, i + 200);
           for (let from = 0; ; from += 1000) {
-            const { data: links } = await supabase.from("document_assets")
+            const { data: links, error: linksError } = await supabase.from("document_assets")
               .select("document_id, asset_id").in("asset_id", chunk)
               .order("document_id").order("asset_id").range(from, from + 999);
+            if (linksError) { failed = true; break; }
             for (const l of links ?? []) {
               docIds.add(l.document_id as string);
               linkedAssets.add(l.asset_id as string);
@@ -144,8 +150,12 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             if (!links || links.length < 1000 || from >= 20000) break;
           }
         }
-        if (alive) { setDocLinkCount(docIds.size); setLinkedAssetCount(linkedAssets.size); }
-      } else if (alive) { setDocLinkCount(0); setLinkedAssetCount(0); }
+        linksSettled = true;
+        if (alive) {
+          setLinksUnread(failed);
+          if (!failed) { setDocLinkCount(docIds.size); setLinkedAssetCount(linkedAssets.size); }
+        }
+      } else if (alive) { linksSettled = true; setLinksUnread(false); setDocLinkCount(0); setLinkedAssetCount(0); }
       // Every plot plan, paged — the old .limit(50) undercounted markers on
       // sites with more than 50 plans.
       let marks = 0;
@@ -161,7 +171,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         if (!plots || plots.length < 100 || from >= 2000) break;
       }
       if (alive) setPlotMarkCount(marks);
-    })().catch(() => { if (alive) { setFlowCount(0); setDocLinkCount(0); setLinkedAssetCount(0); setPlotMarkCount(0); } });
+    })().catch(() => { if (alive) { setFlowCount(0); if (!linksSettled) setLinksUnread(true); setPlotMarkCount(0); } });
     return () => { alive = false; };
   }, [orgId, unit.code, unitAssetIds]);
 
@@ -217,7 +227,9 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     : reads.read > 0 ? "partial" : "todo";
   // Step 4: equipment with a linked document, over the area's equipment.
   const areaTotal = unitAssetIds.length;
-  const linkState: "done" | "partial" | "todo" | "loading" = status === null || linkedAssetCount === null ? "loading"
+  const linkState: "done" | "partial" | "todo" | "loading" | "unknown" = status === null ? "loading"
+    : linksUnread ? "unknown"
+    : linkedAssetCount === null ? "loading"
     : areaTotal > 0 && linkedAssetCount >= areaTotal ? "done"
     : linkedAssetCount > 0 ? "partial" : "todo";
 
@@ -227,7 +239,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
 
   const Step = ({ n, title, state, children, action }: {
     n: number; title: string;
-    state: "done" | "partial" | "review" | "todo" | "loading";
+    state: "done" | "partial" | "review" | "todo" | "loading" | "unknown";
     children: React.ReactNode;
     action?: React.ReactNode;
   }) => (
@@ -251,6 +263,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           {state === "partial" && (
             <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
               in progress
+            </span>
+          )}
+          {state === "unknown" && (
+            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+              not counted
             </span>
           )}
         </div>
@@ -389,14 +406,18 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               )}
             </span>
             <span>· <b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
-            <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
+            {linksUnread
+              ? <span>· linked documents could not be counted</span>
+              : <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>}
             <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
             <Link href="/plot-plans" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
         <Step n={4} title="Link equipment files to assets"
           state={linkState}>
-          {linkedAssetCount !== null && (
+          {linksUnread ? (
+            <span className="block">Equipment with a linked document could not be counted — the document links could not be read. Reload to try again.</span>
+          ) : linkedAssetCount !== null && (
             <span className="block"><b>{linkedAssetCount}</b> of <b>{areaTotal}</b> equipment item{areaTotal === 1 ? "" : "s"} in this area {linkedAssetCount === 1 ? "has" : "have"} a linked document.</span>
           )}
           Open any asset below → <b>+ Link document</b> attaches its data sheets and files; drawings that print the tag link themselves.

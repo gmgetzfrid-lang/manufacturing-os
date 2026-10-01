@@ -60,12 +60,14 @@ vi.mock("@/lib/knowledgeAccess", () => ({
   containerReadable: () => true,
 }));
 // The panel's client reads (flows, document links, plot plans).
-const cl = vi.hoisted(() => ({ links: [] as Row[], flows: [] as Row[] }));
+const cl = vi.hoisted(() => ({ links: [] as Row[], flows: [] as Row[], linksError: null as { message: string } | null, linksThrow: false }));
 vi.mock("@/lib/supabase", () => {
   const c = (table: string): unknown => {
     const h: ProxyHandler<object> = {
       get(_t, prop: string) {
         if (prop === "then") {
+          if (table === "document_assets" && cl.linksThrow) return () => { throw new Error("network down"); };
+          if (table === "document_assets" && cl.linksError) return (resolve: (v: unknown) => void) => resolve({ data: null, error: cl.linksError });
           const data = table === "document_assets" ? cl.links : table === "process_flows" ? cl.flows : [];
           return (resolve: (v: unknown) => void) => resolve({ data, error: null });
         }
@@ -239,6 +241,7 @@ describe("AREA-8 — the panel ticks coverage, not presence", () => {
     return el.closest("div.flex.items-start") as HTMLElement;
   };
   beforeEach(() => {
+    cl.linksError = null; cl.linksThrow = false;
     cl.links = [{ document_id: "d1", asset_id: "a1" }];
     cl.flows = [{ status: "confirmed", from_kind: "unit", from_ref: "20", to_kind: "unit", to_ref: "25" }];
     host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
@@ -281,4 +284,35 @@ describe("AREA-8 — the panel ticks coverage, not presence", () => {
     expect(step(1).textContent).toContain("Suggested: Memos / Crude (1 doc)");
     expect(step(3).textContent).toContain("connect the area's knowledge to measure the deep read");
   });
+
+  it("regression pin: a document-links read that succeeds with no links still says '0 of 2' — a todo, as before", async () => {
+    cl.links = [];
+    await mount(status({}));
+    expect(step(4).textContent).toContain("0 of 2 equipment items in this area have a linked document");
+    expect(step(4).textContent).not.toContain("in progress");
+    expect(step(4).textContent).not.toContain("not counted");
+    expect(step(4).querySelector("span.bg-emerald-500")).toBeNull();
+    expect(step(3).textContent).toContain("0 linked documents");
+  });
+
+  for (const [how, fail] of [
+    ["returns an error", () => { cl.linksError = { message: "permission denied" }; }],
+    ["throws", () => { cl.linksThrow = true; }],
+  ] as const) {
+    it(`a document-links read that ${how} says 'could not be counted' — never '0 of 2'; step 4 is neither done, in progress nor todo`, async () => {
+      fail();
+      await mount(status({}));
+      const s4 = step(4).textContent ?? "";
+      expect(s4).toContain("Equipment with a linked document could not be counted");
+      expect(s4).not.toMatch(/\d+ of 2 equipment/);
+      expect(s4).toContain("not counted"); // its own badge — not a todo's bare number
+      expect(s4).not.toContain("in progress");
+      expect(step(4).querySelector("span.bg-emerald-500")).toBeNull();
+      expect(step(4).querySelector(".animate-spin")).toBeNull(); // settled, not loading forever
+      // the same read feeds step 3's linked-document count
+      const s3 = step(3).textContent ?? "";
+      expect(s3).toContain("linked documents could not be counted");
+      expect(s3).not.toMatch(/· 0 linked documents?/);
+    });
+  }
 });
