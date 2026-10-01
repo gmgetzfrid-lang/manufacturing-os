@@ -377,7 +377,7 @@ describe("SCH-4 / SCH-9 · grouping under an existing phase is checked for loops
     seed();
     const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "P", childIds: ["t"], actorUserId: USER });
     expect(grp.errors).toEqual([
-      "Grouping under “Mechanical” would leave a loop in the links: “Punch rework” → (its phase) “Mechanical” → “Hydrotest” → “Punch rework”. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.",
+      "Grouping under “Mechanical” would close a loop in the links: “Punch rework” → (its phase) “Mechanical” → “Hydrotest” → “Punch rework”. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.",
     ]); // was: grouped, and every later drag in Mechanical refused
     expect(grp.childCount).toBe(0);
     expect(updates()).toEqual([]);
@@ -420,6 +420,32 @@ describe("SCH-4 / SCH-9 · grouping under an existing phase is checked for loops
     db.failSelect = (table) => (table === "milestones" && ++n === 3 ? { message: "statement timeout" } : null); // the selected rows, the parent, then the project
     const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["t"], actorUserId: USER });
     expect(grp.errors).toEqual(["Couldn't check the grouping for loops (statement timeout). Nothing was grouped."]);
+    expect(updates()).toEqual([]);
+  });
+
+  // Review (seventh pass) probe: a loop already in the data — t1 linked to
+  // its own phase P, downstream of u through t2 — refused grouping u under
+  // an unrelated phase R, "would leave a loop", though the regroup neither
+  // closes nor touches it.
+  it("a loop already in the data that the regroup does not close does not refuse it; one it closes still does", async () => {
+    const stale = (): Row[] => [
+      row({ id: "P", name: "Mechanical", is_summary: true, parent_id: null, planned_start_at: "2026-06-01T00:00:00Z", planned_at: "2026-06-05T00:00:00Z" }),
+      row({ id: "t1", name: "Fit-up", parent_id: "P", planned_start_at: "2026-06-01T00:00:00Z", planned_at: "2026-06-02T00:00:00Z", depends_on: ["P"] }),
+      row({ id: "t2", name: "Weld-out", parent_id: "P", planned_start_at: "2026-06-03T00:00:00Z", planned_at: "2026-06-05T00:00:00Z", depends_on: ["u"] }),
+      row({ id: "u", name: "Delivery", parent_id: null, planned_start_at: "2026-05-28T00:00:00Z", planned_at: "2026-05-29T00:00:00Z" }),
+      row({ id: "R", name: "Logistics", is_summary: true, parent_id: null, planned_start_at: "2026-05-25T00:00:00Z", planned_at: "2026-05-29T00:00:00Z" }),
+    ];
+    db.tables.milestones = stale();
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "R", childIds: ["u"], actorUserId: USER });
+    expect(grp.errors).toEqual([]); // was: "Grouping under “Logistics” would leave a loop in the links: “Fit-up” → (its phase) “Mechanical” → “Fit-up” …"
+    expect(grp.childCount).toBe(1);
+    expect(ms().find((r) => r.id === "u")!.parent_id).toBe("R");
+    // With the same stale loop in the data, a regroup that closes a NEW one is still refused, and names the new one.
+    db.writes = [];
+    db.tables.milestones = [...stale(), row({ id: "X", name: "Hydrotest", parent_id: null, planned_start_at: "2026-06-08T00:00:00Z", planned_at: "2026-06-09T00:00:00Z", depends_on: ["P"] }),
+      row({ id: "t", name: "Punch rework", parent_id: null, planned_start_at: "2026-06-10T00:00:00Z", planned_at: "2026-06-11T00:00:00Z", depends_on: ["X"] })];
+    const bad = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "P", childIds: ["t"], actorUserId: USER });
+    expect(bad.errors[0]).toMatch(/^Grouping under “Mechanical” would close a loop in the links: “Punch rework” → \(its phase\) “Mechanical” → “Hydrotest” → “Punch rework”\./);
     expect(updates()).toEqual([]);
   });
 

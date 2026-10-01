@@ -2250,7 +2250,10 @@ export interface GroupTasksResult {
  *  and a phase grouped under its own sub-task puts itself inside itself.
  *  Checked over EVERY row of the project, read here (paged past PostgREST's
  *  1,000-row cap, as updateMilestone's link check), on the outline as it
- *  would be. A selected row that IS the target stays where it is (it is
+ *  would be against the outline as it is: only a loop the regroup CLOSES
+ *  refuses it — a loop already in the data (a stale link from a task to its
+ *  own phase downstream, say) is not this regroup's doing (seventh review
+ *  pass). A selected row that IS the target stays where it is (it is
  *  skipped below, never made its own parent). */
 async function groupingLoopRefusal(projectId: string, parentId: string, parentName: string, childIds: string[]): Promise<string | null> {
   const rows: Array<{ id: string; name: string; parent_id: string | null; depends_on: string[] | null }> = [];
@@ -2275,14 +2278,13 @@ async function groupingLoopRefusal(projectId: string, parentId: string, parentNa
       return `“${parentName}” sits inside ${label(at)}, one of the selected tasks — grouping ${label(at)} under it would put ${label(at)} inside itself. Nothing was grouped; pick a parent outside the selected tasks.`;
     }
   }
-  // A loop through a phase on the regrouped outline.
-  const nodes: ReflowNode[] = rows.map((r) => ({
-    id: r.id, parentId: moving.has(r.id) ? parentId : (r.parent_id ?? null), plannedAt: "", dependsOn: r.depends_on ?? [],
-  }));
-  const loop = outlineLoop(nodes, [...moving]);
+  // A loop through a phase that the regrouped outline closes.
+  const asIs: ReflowNode[] = rows.map((r) => ({ id: r.id, parentId: r.parent_id ?? null, plannedAt: "", dependsOn: r.depends_on ?? [] }));
+  const nodes: ReflowNode[] = asIs.map((n) => (moving.has(n.id) ? { ...n, parentId } : n));
+  const loop = outlineLoop(nodes, [...moving], asIs);
   if (!loop) return null;
   const path = [label(loop[0].from), ...loop.map((e) => `${e.via === "contains" ? "(contains) " : e.via === "within" ? "(its phase) " : ""}${label(e.to)}`)].join(" → ");
-  return `Grouping under “${parentName}” would leave a loop in the links: ${path}. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.`;
+  return `Grouping under “${parentName}” would close a loop in the links: ${path}. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.`;
 }
 
 export async function groupTasksUnderParent(input: GroupTasksInput): Promise<GroupTasksResult> {

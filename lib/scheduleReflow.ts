@@ -683,10 +683,18 @@ export interface CascadePlan {
  *  topological order), as named edges starting nearest the moved tasks — or
  *  null when every loop there is made of task-to-task links alone. An edge
  *  that is not a plain link ("contains", "within") whose two ends sit in one
- *  strongly connected component lies on a loop (Tarjan, iterative). */
-function phaseLoopIn(g: PhaseGraph, ids: string[], seeds: string[]): CascadeEdge[] | null {
+ *  strongly connected component lies on a loop (Tarjan, iterative).
+ *  `edgesOut` is the graph walked (the cascade's leaves a locked node's
+ *  links out; default: every edge), and `opens` which non-link edges may be
+ *  the one the loop is found through (default: any — outlineLoop passes
+ *  "only an edge the regroup adds"). */
+function phaseLoopIn(
+  g: PhaseGraph, ids: string[], seeds: string[],
+  opts?: { edgesOut?: (id: string) => PhaseEdge[]; opens?: (from: string, e: PhaseEdge) => boolean },
+): CascadeEdge[] | null {
   const inSet = new Set(ids);
-  const outIn = (v: string) => g.edgesOut(v).filter((e) => inSet.has(e.to));
+  const edgesOut = opts?.edgesOut ?? g.edgesOut;
+  const outIn = (v: string) => edgesOut(v).filter((e) => inSet.has(e.to));
   const index = new Map<string, number>();
   const low = new Map<string, number>();
   const comp = new Map<string, number>();
@@ -715,43 +723,58 @@ function phaseLoopIn(g: PhaseGraph, ids: string[], seeds: string[]): CascadeEdge
       }
     }
   }
+  // The loop through one such edge: the edge, then the shortest way back
+  // from its far end to `u` inside the component.
+  const ringThrough = (u: string, e: PhaseEdge): Array<{ from: string; edge: PhaseEdge }> => {
+    const prev = new Map<string, { from: string; edge: PhaseEdge }>();
+    const queue = [e.to];
+    const seen = new Set([e.to]);
+    for (let i = 0; i < queue.length && !seen.has(u); i++) {
+      for (const f of outIn(queue[i])) {
+        if (comp.get(f.to) !== comp.get(u) || seen.has(f.to)) continue;
+        seen.add(f.to); prev.set(f.to, { from: queue[i], edge: f }); queue.push(f.to);
+      }
+    }
+    const ring: Array<{ from: string; edge: PhaseEdge }> = [{ from: u, edge: e }];
+    const back: Array<{ from: string; edge: PhaseEdge }> = [];
+    for (let at = u; at !== e.to;) { const p = prev.get(at)!; back.unshift(p); at = p.from; }
+    ring.push(...back);
+    return ring;
+  };
+  // The cascade names the loop through the first such edge; with `opens`
+  // (only some edges may open it, and few do), the shortest of their loops,
+  // so the links it names are the ones that close it.
+  // (Its length as named: a "within" step names the phase between.)
+  const named = (r: Array<{ edge: PhaseEdge }>) => r.reduce((n, x) => n + (x.edge.via === "within" && x.edge.phase ? 2 : 1), 0);
+  let ring: Array<{ from: string; edge: PhaseEdge }> | null = null;
   for (const u of ids) {
     for (const e of outIn(u)) {
       if (e.via === "link" || comp.get(e.to) !== comp.get(u)) continue;
-      // The loop: this edge, then the shortest way back from e.to to u
-      // inside the component.
-      const prev = new Map<string, { from: string; edge: PhaseEdge }>();
-      const queue = [e.to];
-      const seen = new Set([e.to]);
-      for (let i = 0; i < queue.length && !seen.has(u); i++) {
-        for (const f of outIn(queue[i])) {
-          if (comp.get(f.to) !== comp.get(u) || seen.has(f.to)) continue;
-          seen.add(f.to); prev.set(f.to, { from: queue[i], edge: f }); queue.push(f.to);
-        }
-      }
-      const ring: Array<{ from: string; edge: PhaseEdge }> = [{ from: u, edge: e }];
-      const back: Array<{ from: string; edge: PhaseEdge }> = [];
-      for (let at = u; at !== e.to;) { const p = prev.get(at)!; back.unshift(p); at = p.from; }
-      ring.push(...back);
-      // Start the loop where the move comes in: the member nearest a seed.
-      const dist = new Map<string, number>();
-      const bfs = seeds.filter((sd) => g.byId.has(sd));
-      for (const sd of bfs) dist.set(sd, 0);
-      for (let i = 0; i < bfs.length; i++) {
-        for (const f of g.edgesOut(bfs[i])) if (!dist.has(f.to)) { dist.set(f.to, dist.get(bfs[i])! + 1); bfs.push(f.to); }
-      }
-      let first = 0;
-      ring.forEach((r, i) => { if ((dist.get(r.from) ?? Infinity) < (dist.get(ring[first].from) ?? Infinity)) first = i; });
-      const out: CascadeEdge[] = [];
-      for (const { from, edge } of [...ring.slice(first), ...ring.slice(0, first)]) {
-        if (edge.via === "within" && edge.phase) {
-          out.push({ from, to: edge.phase, via: "within" }, { from: edge.phase, to: edge.to, via: "link" });
-        } else out.push({ from, to: edge.to, via: edge.via });
-      }
-      return out;
+      if (opts?.opens && !opts.opens(u, e)) continue;
+      const r = ringThrough(u, e);
+      if (!ring || named(r) < named(ring)) ring = r;
+      if (!opts?.opens) break;
     }
+    if (ring && !opts?.opens) break;
   }
-  return null;
+  if (!ring) return null;
+  // Start the loop where the move comes in: the member nearest a seed.
+  const dist = new Map<string, number>();
+  const bfs = seeds.filter((sd) => g.byId.has(sd));
+  for (const sd of bfs) dist.set(sd, 0);
+  for (let i = 0; i < bfs.length; i++) {
+    for (const f of edgesOut(bfs[i])) if (!dist.has(f.to)) { dist.set(f.to, dist.get(bfs[i])! + 1); bfs.push(f.to); }
+  }
+  const found = ring;
+  let first = 0;
+  found.forEach((r, i) => { if ((dist.get(r.from) ?? Infinity) < (dist.get(found[first].from) ?? Infinity)) first = i; });
+  const out: CascadeEdge[] = [];
+  for (const { from, edge } of [...found.slice(first), ...found.slice(0, first)]) {
+    if (edge.via === "within" && edge.phase) {
+      out.push({ from, to: edge.phase, via: "within" }, { from: edge.phase, to: edge.to, via: "link" });
+    } else out.push({ from, to: edge.to, via: edge.via });
+  }
+  return out;
 }
 
 /** A loop through a phase that the outline `nodes` holds among the subtrees
@@ -762,8 +785,16 @@ function phaseLoopIn(g: PhaseGraph, ids: string[], seeds: string[]): CascadeEdge
  *  that already leads up to one of them closes a loop without any new link,
  *  and every move that reaches it would then be refused (planCascade). Run
  *  it over the outline as it WOULD be, every row of the project. A loop of
- *  plain task links alone is not reported (phaseLoopIn). */
-export function outlineLoop(nodes: ReflowNode[], movedIds: string[]): CascadeEdge[] | null {
+ *  plain task links alone is not reported (phaseLoopIn). With `before` (the
+ *  outline as it IS), only a loop the regroup CLOSES is reported: one
+ *  through an edge the regroup adds (a phase carrying a moved task, or a
+ *  moved task waited for by a new phase's successor). A loop already there
+ *  — a stale task-to-own-phase link downstream, say — is not this regroup's
+ *  doing and does not refuse it (seventh review pass: it did, and said the
+ *  grouping "would leave a loop"). Every loop the regroup closes runs
+ *  through such an edge: a loop of edges that were all there already was
+ *  there already. */
+export function outlineLoop(nodes: ReflowNode[], movedIds: string[], before?: ReflowNode[]): CascadeEdge[] | null {
   const g = phaseGraph(nodes);
   const seeds = [...new Set(movedIds.filter((id) => g.byId.has(id)).flatMap((id) => g.subtreeOf(id)))];
   const reach = new Set<string>(seeds);
@@ -771,7 +802,14 @@ export function outlineLoop(nodes: ReflowNode[], movedIds: string[]): CascadeEdg
   for (let i = 0; i < queue.length; i++) {
     for (const e of g.edgesOut(queue[i])) if (!reach.has(e.to)) { reach.add(e.to); queue.push(e.to); }
   }
-  return phaseLoopIn(g, [...reach], seeds);
+  if (!before) return phaseLoopIn(g, [...reach], seeds);
+  // The edges the outline already had (by their ends and kind — which phase a
+  // "within" edge runs through does not change what the cascade refuses).
+  const was = phaseGraph(before);
+  const key = (from: string, e: PhaseEdge) => `${from}\u0000${e.to}\u0000${e.via}`;
+  const had = new Set<string>();
+  for (const u of reach) for (const e of was.edgesOut(u)) had.add(key(u, e));
+  return phaseLoopIn(g, [...reach], seeds, { opens: (u, e) => !had.has(key(u, e)) });
 }
 
 /**
@@ -796,7 +834,9 @@ export function outlineLoop(nodes: ReflowNode[], movedIds: string[]): CascadeEdg
  * its edges named (CascadeRefusedError): one that runs through a phase
  * whenever the move reaches it, one of task-to-task links alone when a push
  * goes round it; so is a push further than any acyclic cascade over the
- * schedule could go. Pure.
+ * schedule could go. A loop with a LOCKED member is not one for the cascade:
+ * a locked node never moves, so no push can go round it — the move is
+ * written and the locked node checked for `held`. Pure.
  */
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
   return planCascade(nodes, changedIds).changes;
@@ -897,11 +937,27 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
   };
 
   const seeds = [...new Set(changedIds)].filter((id) => byId.has(id));
+  const seedSet = new Set(seeds);
+
+  // The graph this move is walked on. A LOCKED node (an actual, an imported
+  // or a pinned row) is never shifted, so nothing moves because of it: from
+  // one that is not itself a primary move only the carry through it is
+  // walked ("contains" — a pushed phase still carries the work inside a
+  // locked sub-phase), never its links or its phases' successors; and an
+  // edge INTO a locked node orders nothing, since it is checked for `held`
+  // once every node that can move is settled. So a loop with a locked member
+  // is no loop for the cascade — no push can go round a node that never
+  // moves — while a loop of nodes that can move still is (seventh review
+  // pass: a completed task linked to its own phase, or a phase's successor
+  // done long ago, refused every move that reached it).
+  const fixed = (id: string) => isLocked(byId.get(id)) && !seedSet.has(id);
+  const walkOut = (id: string): PhaseEdge[] => (fixed(id) ? g.edgesOut(id).filter((e) => e.via === "contains") : g.edgesOut(id));
+  const orderOut = (id: string): PhaseEdge[] => walkOut(id).filter((e) => e.via === "contains" || !isLocked(byId.get(e.to)));
 
   // The part of the network this move can reach: through a link to a
   // successor, from a task to the sub-tasks a push of it would carry, or
-  // from a task to the successors of the phases it sits in (phaseGraph).
-  const outOf = (id: string): string[] => g.edgesOut(id).map((e) => e.to);
+  // from a task to the successors of the phases it sits in (phaseGraph) —
+  // locked nodes included (their `held` check), but not walked on from.
   const affected = new Set<string>();
   {
     const stack = [...seeds];
@@ -909,9 +965,10 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       const cur = stack.pop()!;
       if (affected.has(cur)) continue;
       affected.add(cur);
-      for (const o of outOf(cur)) stack.push(o);
+      for (const e of walkOut(cur)) stack.push(e.to);
     }
   }
+  const outOf = (id: string): string[] => orderOut(id).map((e) => e.to);
   const indeg = new Map<string, number>();
   for (const id of affected) indeg.set(id, 0);
   for (const id of affected) for (const o of outOf(id)) if (affected.has(o)) indeg.set(o, indeg.get(o)! + 1);
@@ -942,16 +999,11 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       const pid = n.parentId && byId.has(n.parentId) && affected.has(n.parentId) ? n.parentId : null;
       const c = pid ? (carried.get(pid) ?? 0) + (own.get(pid) ?? 0) : 0;
       carried.set(t, c);
+      // An actual (or an imported / pinned row) is never carried or pushed —
+      // it stays where it is (the carry passes through it to the work inside)
+      // and is checked for a broken link below.
+      if (isLocked(n)) continue;
       const triggered = (n.dependsOn ?? []).some((p) => movedSet.has(p) || rolled.has(p));
-      if (isLocked(n)) {
-        // An actual (or an imported / pinned row) is never carried or pushed
-        // — it stays where it is and a link it now breaks is reported.
-        if (triggered) {
-          const { req, from } = requirement(n);
-          if (start.get(t)! < req) held.set(t, { id: t, predecessorId: from ?? t });
-        }
-        continue;
-      }
       if (c !== 0) { shift(t, c, { from: pid!, via: "contains" }); markMoved(t); }
       if (!triggered) continue;
       const { req, from } = requirement(n);
@@ -960,6 +1012,14 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
       own.set(t, delta);
       shift(t, delta, { from: from!, via: "link" });
       markMoved(t);
+    }
+    // Each locked node the move reached, once every node that can move is
+    // final: a link it now breaks is reported, never pushed (PC SCHED-5).
+    for (const t of order) {
+      const n = byId.get(t)!;
+      if (!isLocked(n) || !(n.dependsOn ?? []).some((p) => movedSet.has(p) || rolled.has(p))) continue;
+      const { req, from } = requirement(n);
+      if (start.get(t)! < req) held.set(t, { id: t, predecessorId: from ?? t });
     }
   } else {
     // A loop somewhere the move reaches. One that runs through a PHASE — a
@@ -970,7 +1030,7 @@ export function planCascade(nodes: ReflowNode[], changedIds: string[]): CascadeP
     // push would go round it (fifth review pass: it sent the move into the
     // relaxation below and was never refused).
     const settled = new Set(order);
-    const loop = phaseLoopIn(g, [...affected].filter((id) => !settled.has(id)), seeds);
+    const loop = phaseLoopIn(g, [...affected].filter((id) => !settled.has(id)), seeds, { edgesOut: orderOut });
     if (loop) throw new CascadeRefusedError("cycle", loop);
     // A loop of task-to-task links (an old import's) is left: relax push by
     // push and refuse the moment a push goes round the loop (its cause chain

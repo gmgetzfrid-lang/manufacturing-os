@@ -284,6 +284,12 @@ export default function ExecutionView({
   const critical = useMemo(() => computeCriticalPath(items), [items]);
   // The clock it was measured on, as the button and the legend name it.
   const criticalCalendar = pathCalendarLabel(critical.calendar, critical.workedWeekendDays.length);
+  // The tasks a loop of links keeps off the path: the button says so, so a
+  // highlighted chain is never read as the whole story (seventh review pass).
+  const loopCaveat = critical.cycle
+    ? `${critical.cycle.length} task${critical.cycle.length === 1 ? " is" : "s are"} in a loop of links and left out of the path`
+    : null;
+  const criticalOn = showCritical && critical.ids.size > 0;
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
@@ -874,16 +880,24 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
-        {layout === "timeline" && critical.ids.size > 0 && (
+        {layout === "timeline" && (critical.ids.size > 0 || loopCaveat) && (
           <button
             onClick={() => setShowCritical((v) => !v)}
-            title={critical.linked
-              ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
-              : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it"}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
+            disabled={critical.ids.size === 0}
+            aria-pressed={criticalOn}
+            title={(critical.ids.size === 0
+              ? "No critical path to highlight: every unfinished task is in a loop of links"
+              : critical.linked
+                ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
+                : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it")
+              + (loopCaveat && critical.ids.size > 0 ? `. ${loopCaveat} — remove one of those links to see where they fall` : "")}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${criticalOn ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
           >
             <Zap className="w-3.5 h-3.5" /> Critical path
           </button>
+        )}
+        {layout === "timeline" && loopCaveat && (criticalOn || critical.ids.size === 0) && (
+          <span className="text-[11px] text-[var(--color-text-muted)]">{loopCaveat}</span>
         )}
       </div>
 
@@ -1026,7 +1040,7 @@ export default function ExecutionView({
                     else void resizeEdge(r.ms.id, edge, d);
                   }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  critical={criticalOn ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
                   color={colors.colorOf(r.ms)}
                 />
               ))}

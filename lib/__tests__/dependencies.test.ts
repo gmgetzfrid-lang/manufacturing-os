@@ -527,6 +527,76 @@ describe("SCH-4 / SCH-9 · a task linked to its own phase is a loop", () => {
   });
 });
 
+// PT SCH-4 / PC SCHED-5 (seventh review pass): a locked node — completed, an
+// actual, an imported row — is never shifted, so no push can go round a loop
+// through it. The cascade walked its links anyway and refused every move that
+// reached such a loop: a COMPLETED task linked to its own phase blocked every
+// drag in the phase (base and the fifth pass wrote them), and the only remedy
+// was to edit a finished task's links (impossible for an imported row).
+describe("SCH-4 / SCHED-5 · a loop through a locked task is no loop for the cascade", () => {
+  const N = (id: string, parentId: string | null, s: string, f: string, deps: string[] = [], extra: Partial<ReflowNode> = {}): ReflowNode =>
+    ({ id, parentId, plannedStartAt: d(`2026-${s}`), plannedAt: d(`2026-${f}`), dependsOn: deps, status: "planned", ...extra });
+  const drag = (nodes: ReflowNode[], id: string, delta: number) => {
+    const primary = computeTreeMove(nodes, id, delta, "defer");
+    const by = new Map(primary.map((c) => [c.id, c]));
+    const updated = nodes.map((n) => (by.has(n.id) ? { ...n, plannedStartAt: by.get(n.id)!.plannedStartAt, plannedAt: by.get(n.id)!.plannedAt } : n));
+    return { primary, plan: planCascade(updated, primary.map((c) => c.id)) };
+  };
+  const span = (cs: Array<{ id: string; plannedStartAt: string; plannedAt: string }>) =>
+    cs.map((c) => `${c.id} ${day(c.plannedStartAt).slice(5)}→${day(c.plannedAt).slice(5)}`).sort();
+
+  it("the probe: P holds t1 (completed, linked to P), t2 and t3 — a drag of t2, or of t3, is written, never refused", () => {
+    const nodes = [
+      N("P", null, "06-01", "06-10"), N("t1", "P", "06-01", "06-02", ["P"], { status: "completed" }),
+      N("t2", "P", "06-03", "06-04"), N("t3", "P", "06-05", "06-10"),
+    ];
+    const a = drag(nodes, "t2", 1); // was: "The dependency links form a loop (t1 → P, P → t1); nothing was moved."
+    expect(span(a.primary)).toEqual(["t2 06-04→06-05"]);
+    expect(a.plan.changes).toEqual([]);
+    expect(a.plan.held.map((h) => h.id)).toEqual(["t1"]); // the done task's link to its own phase is reported, never met
+    const b = drag(nodes, "t3", 1);
+    expect(span(b.primary)).toEqual(["P 06-01→06-11", "t3 06-06→06-11"]);
+    expect(b.plan.changes).toEqual([]);
+    // The same link on an open task is still a loop, and still refused.
+    const open = nodes.map((n) => (n.id === "t1" ? { ...n, status: "planned" } : n));
+    expect(() => drag(open, "t2", 1)).toThrow(CascadeRefusedError);
+  });
+
+  it("the fifth pass's phase loop through a completed task: t2 (in P) waits for X, X (completed) waits for P — a drag of t3 is written", () => {
+    const nodes = [
+      N("P", null, "06-03", "06-10"), N("t2", "P", "06-03", "06-04", ["X"]),
+      N("X", null, "05-20", "05-21", ["P"], { status: "completed" }), N("t3", "P", "06-05", "06-10"),
+    ];
+    const { primary, plan: p } = drag(nodes, "t3", 1);
+    expect(span(primary)).toEqual(["P 06-03→06-11", "t3 06-06→06-11"]);
+    expect(p.changes).toEqual([]);
+    expect(p.held.map((h) => h.id)).toEqual(["X"]);
+    // An actual finish locks it the same way; with X open, the loop is refused.
+    expect(() => drag(nodes.map((n) => (n.id === "X" ? { ...n, status: "planned", actualAt: d("2026-05-21") } : n)), "t3", 1)).not.toThrow();
+    expect(() => drag(nodes.map((n) => (n.id === "X" ? { ...n, status: "planned" } : n)), "t3", 1)).toThrow(CascadeRefusedError);
+  });
+
+  it("a loop through a locked PHASE's own work: the phase is held, its work still pushed — and a pushed phase still carries the work inside a locked sub-phase", () => {
+    // L (an imported summary) waits for X; X waits for c, which sits inside L.
+    const nodes = [
+      N("L", null, "06-01", "06-05", ["X"], { locked: true }), N("c", "L", "06-01", "06-02"),
+      N("X", null, "06-03", "06-04", ["c"]),
+    ];
+    const { plan: p } = drag(nodes, "c", 2);
+    expect(span(p.changes)).toEqual(["X 06-05→06-06"]);
+    expect(p.held.map((h) => h.id)).toEqual(["L"]);
+    // A (manual) holds the locked sub-phase K, which holds k. Pushing A's
+    // predecessor Z carries A's work through K to k; K stays put, so A
+    // re-envelopes round K and k (Jun 1–10, unchanged).
+    const carry = [
+      N("Z", null, "05-25", "05-29"), N("A", null, "06-01", "06-10", ["Z"]),
+      N("K", "A", "06-01", "06-05", [], { locked: true }), N("k", "K", "06-01", "06-05"),
+    ];
+    const { plan: q } = drag(carry, "Z", 7);
+    expect(span(q.changes)).toEqual(["k 06-06→06-10"]);
+  });
+});
+
 // PT SCH-4 / SCH-9 (sixth review pass): a loop through a phase can be made
 // without any new link — by putting a task inside a phase whose successor it
 // already leads up to (the board's "Group under a parent → Use existing").
@@ -569,6 +639,30 @@ describe("SCH-4 / SCH-9 · outlineLoop: a regroup that would close a loop throug
     // An old loop of plain links downstream is left to the cascade's relaxation.
     const plain = [...before(), N("b", null, "07-01", "07-02", ["t", "c"]), N("c", null, "07-03", "07-04", ["b"])];
     expect(outlineLoop(plain, ["t"])).toBeNull();
+  });
+
+  // Review (seventh pass) probe: a loop already in the data — t1 linked to
+  // its own phase P, reached from u through t2 — was reported for grouping u
+  // under the unrelated R. With the outline as it is, only a loop the regroup
+  // closes is reported.
+  it("given the outline as it is, a loop already there is not the regroup's; one it closes is (a plain-link loop it turns into a phase loop included)", () => {
+    const was = [
+      N("P", null, "06-01", "06-05"), N("t1", "P", "06-01", "06-02", ["P"]), N("t2", "P", "06-03", "06-05", ["u"]),
+      N("u", null, "05-28", "05-29"), N("R", null, "05-25", "05-29"),
+    ];
+    const str = (l: ReturnType<typeof outlineLoop>) => l?.map((e) => `${e.from}>${e.to}:${e.via}`) ?? null;
+    expect(str(outlineLoop(was, ["u"]))).toEqual(["t1>P:within", "P>t1:link"]); // there already
+    const after = regroup(was, ["u"], "R");
+    expect(str(outlineLoop(after, ["u"]))).toEqual(["t1>P:within", "P>t1:link"]); // what refused it
+    expect(outlineLoop(after, ["u"], was)).toBeNull();
+    // With the stale loop still there, a regroup that closes a new one is named by the new one.
+    const more = [...was, N("X", null, "06-08", "06-09", ["P"]), N("t", null, "06-10", "06-11", ["X"])];
+    expect(str(outlineLoop(regroup(more, ["t"], "P"), ["t"], more))).toEqual(["t>P:within", "P>X:link", "X>t:link"]);
+    // b ↔ c, an old plain-link loop (left to the cascade's relaxation); c also waits for Q. Grouping
+    // b under Q makes c wait for b through Q too — now a loop through a phase, refused whenever reached.
+    const plain = [N("Q", null, "06-01", "06-02"), N("b", null, "06-03", "06-04", ["c"]), N("c", null, "06-05", "06-06", ["b", "Q"])];
+    expect(outlineLoop(plain, ["b"])).toBeNull();
+    expect(str(outlineLoop(regroup(plain, ["b"], "Q"), ["b"], plain))).toEqual(["b>Q:within", "Q>c:link", "c>b:link"]);
   });
 
   it("each moved task's whole subtree is checked: grouping a phase whose sub-task leads up to the target's successor", () => {

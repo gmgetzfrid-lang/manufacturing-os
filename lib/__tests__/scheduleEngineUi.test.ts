@@ -14,6 +14,9 @@
 //               stays as a retry); the timers map holds only toasts on screen.
 //   PT PERF-5 — a 400-row board renders a window of rows, not 800 components.
 //   PC SCHED-12 (limb c) — the timeline's critical-path control says what it is.
+//   PT SCH-15 / PC SCHED-10 (seventh review pass) — a loop of links that keeps
+//               tasks off the critical path is named on the board's toggle
+//               and on the Report, with no path to show too.
 //   PT SCH-10 — the rebase form builds and shows schedule time (UTC) in every zone.
 //   PT A11Y-3 — milestone row tints keep every text colour at ≥ 4.5 : 1 in both themes.
 
@@ -37,6 +40,7 @@ vi.mock("@/lib/projects", () => ({ listMembers: vi.fn(async () => []) }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(async () => true), appAlert: vi.fn(), appPrompt: vi.fn() }));
 
 import ExecutionView from "@/components/projects/ExecutionView";
+import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
@@ -159,6 +163,53 @@ describe("SCHED-12 (limb c) · the timeline's critical-path control says what it
     expect(btn?.getAttribute("title")).toMatch(/drives the finish date \(working days Mon–Fri, plus the 2 weekend days with work planned on them — no holiday calendar\)/);
     const legend = [...host.querySelectorAll("span[title]")].find((s) => (s.getAttribute("title") ?? "").startsWith("On the critical path"));
     expect(legend?.getAttribute("title")).toMatch(/finish-to-start links .*working days Mon–Fri, plus the 2 weekend days with work planned on them, no holiday calendar/);
+  });
+});
+
+// PT SCH-15 / PC SCHED-10 (seventh review pass): the toggle never mentioned a
+// loop, and with every unfinished task in one both the toggle and the Report
+// card were hidden, so the loop note was never shown.
+describe("SCH-15 · a loop of links that keeps tasks off the critical path is named where the path is shown", () => {
+  // Phase P (Mon 03-02 → Fri 03-06) holds t1 — linked to P, a loop — and t2;
+  // S waits for P. allInLoop: t2 is linked to P too, and there is no S.
+  const looped = (allInLoop: boolean): Milestone[] => [
+    mk({ id: "P", name: "Phase", isSummary: true, plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-06T00:00:00Z" }),
+    mk({ id: "t1", name: "Loop task", parentId: "P", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-03T00:00:00Z", dependsOn: ["P"] }),
+    mk({ id: "t2", name: "Other task", parentId: "P", plannedStartAt: "2026-03-04T00:00:00Z", plannedAt: "2026-03-06T00:00:00Z", dependsOn: allInLoop ? ["P"] : [] }),
+    ...(allInLoop ? [] : [mk({ id: "S", name: "Successor", plannedStartAt: "2026-03-09T00:00:00Z", plannedAt: "2026-03-10T00:00:00Z", dependsOn: ["P"] })]),
+  ];
+  const toggle = () => [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Critical path"));
+
+  it("the board: the toggle's title carries the caveat, and the note is shown while the path is highlighted", async () => {
+    await render(board(looped(false)));
+    const btn = toggle()!;
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("title")).toMatch(/drives the finish date .*\. 1 task is in a loop of links and left out of the path — remove one of those links/);
+    expect(host.textContent).not.toMatch(/in a loop of links and left out/); // not until the path is shown
+    await act(async () => { btn.click(); });
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(host.textContent).toMatch(/1 task is in a loop of links and left out of the path/);
+  });
+
+  it("the board: with every unfinished task in a loop the toggle is shown, disabled, with the note", async () => {
+    await render(board(looped(true)));
+    const btn = toggle()!;
+    expect(btn).toBeDefined();
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/No critical path to highlight: every unfinished task is in a loop of links/);
+    expect(host.textContent).toMatch(/2 tasks are in a loop of links and left out of the path/);
+  });
+
+  it("the Report: the card names the loop's tasks, and is shown with no path at all", async () => {
+    await render(React.createElement(ExecutionReportView, { milestones: looped(false) }));
+    let text = (host.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/Driving the finish ?2 tasks on the critical path/);
+    expect(text).toMatch(/1 task in a loop of links left out/);
+    expect(text).toMatch(/Left out of the path — this task waits for itself through a loop of links: “Loop task”/);
+    await render(React.createElement(ExecutionReportView, { milestones: looped(true) }));
+    text = (host.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/Driving the finish ?No critical path — every unfinished task is in a loop of links/);
+    expect(text).toMatch(/these tasks wait for each other through a loop of links: “Loop task”, “Other task”/);
   });
 });
 

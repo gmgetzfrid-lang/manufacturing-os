@@ -64,6 +64,12 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
   );
+  // The tasks a loop of links keeps off the path, named so the loop can be
+  // found and a link removed (PT SCH-15, seventh review pass).
+  const loopNames = useMemo(() => {
+    const inLoop = new Set(critical.cycle ?? []);
+    return milestones.filter((m) => m.id && inLoop.has(m.id)).map((m) => m.name);
+  }, [milestones, critical]);
 
   if (r.totalLeaves === 0) {
     return (
@@ -141,13 +147,17 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
         </Card>
       </div>
 
-      {/* Critical path — what's driving the finish */}
-      {critical.ids.size > 0 && (
+      {/* Critical path — what's driving the finish. Shown with no path too
+          when a loop of links keeps every unfinished task off it, so the
+          loop is never silent (seventh review pass). */}
+      {(critical.ids.size > 0 || critical.cycle) && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-rose-600" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
-            <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
+            <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size > 0
+              ? `${critical.ids.size} task${critical.ids.size === 1 ? "" : "s"} on the critical path`
+              : "No critical path — every unfinished task is in a loop of links"}</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h still to do on the chain</span>}
             <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">
               {critical.linked
@@ -162,6 +172,11 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
             ))}
             {criticalNames.length > 10 && <span className="text-[11px] text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
           </div>
+          {loopNames.length > 0 && (
+            <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+              Left out of the path — {loopNames.length === 1 ? "this task waits" : "these tasks wait"} for {loopNames.length === 1 ? "itself" : "each other"} through a loop of links: {loopNames.slice(0, 5).map((n) => `“${n}”`).join(", ")}{loopNames.length > 5 ? `, +${loopNames.length - 5} more` : ""}. Remove one of those links (in the task panel, or in the scheduling tool for an imported task) to put {loopNames.length === 1 ? "it" : "them"} back on the path.
+            </p>
+          )}
         </div>
       )}
 

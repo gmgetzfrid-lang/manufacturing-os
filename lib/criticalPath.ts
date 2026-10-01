@@ -75,8 +75,13 @@
 // counts when it ends at the finish. Summaries are envelopes: a link to or
 // from a phase applies to every leaf inside it — so a task linked to a phase
 // it sits in (or a phase to its own task) would wait for itself, and is a
-// loop, as the link checks and the cascade read it. A loop in the links is
-// reported and left out. Pure.
+// loop, as the link checks and the cascade read it. A LOOP is a strongly
+// connected set of unfinished leaves (Tarjan), or one leaf that waits for
+// itself: only its members are reported and left out. Every other leaf keeps
+// its place in the pass, its links to a loop member dropped, so a loop
+// upstream does not take the rest of the path with it. A finished leaf gates
+// nothing and waits for nothing here, so a loop through one is not a loop
+// for the path. Pure.
 
 import type { Milestone } from "@/types/schema";
 import { DAY_MS, fsReadyMs, isWeekendUtcDay, lagWorkingMs, reflowNodesFromMilestones, workingTimeMs } from "@/lib/scheduleReflow";
@@ -109,7 +114,9 @@ export interface CriticalPathResult {
   /** Unfinished leaves with no link in or out — they count only when they
    *  end at the finish, so the screen can say "add links to see the chain". */
   unlinked: number;
-  /** Leaf ids inside a loop of links (left out of the pass), or null. */
+  /** The unfinished leaves that are MEMBERS of a loop of links (left out of
+   *  the pass), or null. Only the members: a leaf downstream of a loop keeps
+   *  its place on the path. */
   cycle: string[] | null;
 }
 
@@ -175,6 +182,8 @@ export function computeCriticalPath(
   // as the link checks and the cascade read it (scheduleReflow linkCyclePath
   // / planCascade): reported and left out, never read as "waits for the rest
   // of the phase" (sixth review pass: the three read that link three ways).
+  // Its links to the other leaves still count below, so the loop is only the
+  // leaf itself (and any leaf it is strongly connected with).
   const selfLoop = new Set<string>();
   let linked = false;
   for (const m of milestones) {
@@ -193,25 +202,80 @@ export function computeCriticalPath(
     }
   }
 
-  // Reverse topological order (Kahn over the successor edges); a leaf left
-  // over is inside a loop of links and is reported, not guessed at.
+  // The loops: the strongly connected components of the successor edges
+  // between UNFINISHED leaves (Tarjan, iterative), plus each unfinished leaf
+  // that waits for itself through a phase. Only their MEMBERS are left out
+  // (seventh review pass: Kahn's leftover was reported as "the loop", and it
+  // held every leaf downstream of the loop too — a phase link expands to
+  // every leaf of the phase, so one task linked to its own phase took every
+  // later phase off the path and the board highlighted the wrong chain). A
+  // finished leaf gates nothing and waits for nothing (the float pass skips
+  // its links), so its edges are not read here and a loop through one is no
+  // loop for the path.
+  const leafSet = new Set(leafIds);
+  const unfinished = (id: string) => { const m = byId.get(id)!; return m.status !== "completed" && !m.actualAt; };
+  const liveEdge = (p: string, s: string) => p !== s && leafSet.has(p) && leafSet.has(s) && unfinished(p) && unfinished(s);
+  const loopMember = new Set<string>();
+  {
+    const index = new Map<string, number>();
+    const low = new Map<string, number>();
+    const stack: string[] = [];
+    const onStack = new Set<string>();
+    let next = 0;
+    const outs = (v: string) => [...(succ.get(v)?.keys() ?? [])].filter((w) => liveEdge(v, w));
+    for (const root of leafIds) {
+      if (index.has(root)) continue;
+      const visit = (v: string) => { index.set(v, next); low.set(v, next); next++; stack.push(v); onStack.add(v); };
+      visit(root);
+      const work: Array<{ v: string; i: number; out: string[] }> = [{ v: root, i: 0, out: outs(root) }];
+      while (work.length) {
+        const top = work[work.length - 1];
+        if (top.i < top.out.length) {
+          const w = top.out[top.i++];
+          if (!index.has(w)) { visit(w); work.push({ v: w, i: 0, out: outs(w) }); }
+          else if (onStack.has(w)) low.set(top.v, Math.min(low.get(top.v)!, index.get(w)!));
+          continue;
+        }
+        work.pop();
+        if (work.length) { const up = work[work.length - 1].v; low.set(up, Math.min(low.get(up)!, low.get(top.v)!)); }
+        if (low.get(top.v) === index.get(top.v)) {
+          const comp: string[] = [];
+          let w: string;
+          do { w = stack.pop()!; onStack.delete(w); comp.push(w); } while (w !== top.v);
+          if (comp.length > 1) for (const c of comp) loopMember.add(c);
+          else if (selfLoop.has(top.v) && unfinished(top.v)) loopMember.add(top.v);
+        }
+      }
+    }
+  }
+
+  // Reverse topological order (Kahn) over every leaf outside a loop, on the
+  // edges between leaves that are unfinished and outside a loop — acyclic by
+  // construction, so every such leaf is placed and keeps its place.
+  const live = (id: string) => !loopMember.has(id) && unfinished(id);
   const indeg = new Map<string, number>();
-  for (const id of leafIds) indeg.set(id, selfLoop.has(id) ? 1 : 0); // a self-loop never clears
-  for (const [, row] of succ) for (const s of row.keys()) if (indeg.has(s)) indeg.set(s, indeg.get(s)! + 1);
+  for (const id of leafIds) if (!loopMember.has(id)) indeg.set(id, 0);
+  for (const [p, row] of succ) {
+    if (!indeg.has(p) || !live(p)) continue;
+    for (const s of row.keys()) if (liveEdge(p, s) && indeg.has(s) && live(s)) indeg.set(s, indeg.get(s)! + 1);
+  }
   const order: string[] = [];
   const q = leafIds.filter((id) => indeg.get(id) === 0);
   while (q.length) {
     const cur = q.shift()!;
     order.push(cur);
+    if (!live(cur)) continue;
     for (const s of succ.get(cur)?.keys() ?? []) {
-      if (!indeg.has(s)) continue;
+      if (!liveEdge(cur, s) || !indeg.has(s) || !live(s)) continue;
       const d = indeg.get(s)! - 1;
       indeg.set(s, d);
       if (d === 0) q.push(s);
     }
   }
   const inOrder = new Set(order);
-  const cycle = leafIds.filter((id) => !inOrder.has(id));
+  // The loop's members (a leaf the order could not place would be one too;
+  // none can be).
+  const cycle = leafIds.filter((id) => loopMember.has(id) || !inOrder.has(id));
   const preds = new Map<string, Array<{ p: string; lag: number }>>();
   for (const [p, row] of succ) for (const [sId, lag] of row) {
     const arr = preds.get(sId) ?? []; arr.push({ p, lag }); preds.set(sId, arr);
@@ -219,7 +283,6 @@ export function computeCriticalPath(
 
   // The clock (see the header). A leaf's OWN weekend days: the Saturdays and
   // Sundays its unfinished span works, when it starts or finishes on one.
-  const unfinished = (id: string) => { const m = byId.get(id)!; return m.status !== "completed" && !m.actualAt; };
   const spanOf = (id: string): { s: number; f: number } => {
     const m = byId.get(id)!;
     const f = finishMs(m);
@@ -291,7 +354,9 @@ export function computeCriticalPath(
     projectFinish = Math.max(projectFinish, f);
   }
 
-  // Unfinished and analysable: not completed, no actual finish, not in a loop.
+  // Unfinished and analysable: not completed, no actual finish, not a loop's
+  // member (a leaf downstream of one is analysed; its link from the member
+  // is not read, as a finished predecessor's is not).
   const open = (id: string) => unfinished(id) && inOrder.has(id);
   // The finish the float is measured against: the latest ready instant of an
   // UNFINISHED leaf (a completed task's planned date gates nothing). The
