@@ -861,7 +861,7 @@ Tests: `lib/__tests__/sourceSync.test.ts` ("chunks, page entities, machine menti
 
 **Resolution (2026-10-01, intelligence Round G, I-07).** The missing half landed. The drawing rebuild (`app/api/knowledge/drawing/route.ts`, POST `action: "rebuild"`) no longer resets rows itself. It calls `resetKnowledgeIndex` per document, under that document's ingest claim, so the row is written with `RESET_ROW`'s zeros: `vision_pages: 0`, empty pages, the vision retry queue, `ingest_failures` and `vision_retry_after` (ING-8). Then chunks, page entities and machine mentions go, each checked.
 - **Busy documents.** A document another driver is indexing is left alone and reported (`busy`).
-- **Large libraries.** A large library is reset in id order within a time budget and continued by cursor, so no document is reset (and re-billed) twice. The Drawing intelligence panel follows the cursor. The library page's "Re-index all" does not yet (review fix pass below).
+- **Large libraries.** A large library is reset in id order within a time budget and continued by cursor, so no document is reset (and re-billed) twice. The Drawing intelligence panel follows the cursor. The library page's "Re-index all" did not (review fix pass below). Since I-07's second review fix pass the route keeps that caller's place, so each press continues where the last stopped.
 - **Failures.** Failures are reported, never a silent success — by the panel, and by the route to a caller that cannot show them (review fix pass below).
 
 Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "zeroes every counter under the claim, clears chunks and entities, and leaves a document another driver holds alone", with `vision_pages` 7 → 0, `ingest_failures` 2 → 0 and `vision_retry_after` → null. It also covers "a continuation cursor never resets the same document twice". It fails against the base route.
@@ -880,4 +880,21 @@ Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "zeroes every counter und
 
 Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a caller that sends no cursor (the library page's Re-index all) can never read a partial reset as done (fix pass)" and "a budget spent before the first reset answers the cursor it was given, not a crash (fix pass)"; both fail against the round's first commit. The existing rebuild test now sends the panel's shape (`cursor: null`).
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G, I-07).** The first fix pass made a cursorless call answer 409 when documents were left unreached. It did not make such a call progress. Every press of the library page's "Re-index all" sent no cursor and restarted at the first document. A library larger than one 40-second budget could never finish: each press re-reset, and re-billed, the same head documents. The 409 pointed to the Drawing intelligence panel, but that panel renders only for libraries marked as drawing sets (`aiFeatures.drawingIntel`). A large prose or standards library therefore had no complete re-index path until I-02 lands.
+- **The route keeps the place.** `rebuild()` in `app/api/knowledge/drawing/route.ts` reads `knowledge_libraries.ai_features.rebuildCursor` for a call that sends no `cursor` key. That is `{ cursor, at }`, written by that caller's last partial call. If it is younger than `REBUILD_RESUME_WINDOW_MS` (6 hours), the call resumes after it. The call writes the new place while documents remain, and clears it once a press takes the last document. The response carries `resumedFrom`. The 409 now says "Press the button again (within 6 hours) to continue from where this call stopped; no document is reset twice". If the place cannot be saved, it says the next press starts from the first document.
+- **What the mark touches.** The library row is read again right before the write, and only that key changes. A Library AI setup saved meanwhile is kept, apart from a one-round-trip race. `LibraryAiModal` writes a fresh features object, so a save can only erase the mark; it can never restore a stale one. An erased mark restarts at the head, which costs extra resets and never skips a document. A mark older than the window is ignored. Calls that send a cursor key (the panel) neither read nor write the mark.
+- **The panel keeps what earlier rounds did.** `rebuildAll` in `components/knowledge/DrawingIntelPanel.tsx` threw on any failed round, losing the totals of the rounds that had already queued documents. Now it returns those totals with the error. The toast says "The rebuild stopped part-way (…) — N document(s) already queued are re-indexing", and the page refreshes whenever anything was queued.
+- **Hand-off to I-06.** `lib/knowledgeIngest.ts` (I-06's file) still says, at the header and at `RESET_ROW` / `resetKnowledgeIndex`, that the drawing rebuild "today resets without the claim". That has been false since this package moved the rebuild onto `resetKnowledgeIndex`. I-06 should drop those two sentences. The file was not edited here.
+
+I-02's loop in `rebuildDrawingIndex` (above) is still the better shape: one press, the whole library, with `busy` and errors shown. Until it lands, presses complete the re-index.
+
+Tests:
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "ING-12 — the library page's Re-index all continues where it stopped":
+  - eight documents, one round of six per press: the second press resets only the last two and clears the place, and the library's decoder is kept;
+  - a place older than the window is ignored;
+  - the panel's calls never read or write the place.
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): a failed second round and a network failure each keep the first round's six documents in the toast and refresh the page; a failed first round with nothing queued is only the error.
+
+Each behavioural case fails against the first fix pass.
 ---

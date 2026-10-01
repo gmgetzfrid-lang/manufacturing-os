@@ -99,7 +99,7 @@ Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-1 (criteria 
 - ✓ `recordAudit` reads the revision from `knowledge_documents.source_rev` and refuses to record when it disagrees with the controlled document's.
 - ✓ A sheet whose `source_version_id` differs from the controlled document's `current_version_id` is reported `skipped` with a reason, never `passed`, and nothing is written for it.
 
-**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13); a sheet whose revision is unknown (`""`) always is. Recording needs `20261124`: without it the route answers 424 and writes nothing (Pending migration, under DWG-6).
+**Scope / residual.** The record is now keyed per library as well (DWG-6, `20261124`), and an unrevised sheet is not re-audited (DWG-13); a sheet whose revision is unknown (`""`) always is. Recording no longer waits for `20261124` (corrected in the second review fix pass): without it the route records on the org-wide key that database has, never lowering a stored verdict (see DWG-6).
 
 **Review fix pass (2026-10-01, intelligence Round G).** "The lens never trusts a half-read sheet" did not hold for an ACCEPTED partial index: a controller's accepted document is `ready`, so it counted as indexed and could be recorded `passed` with pages AI vision never read. Now `recordAudit` files a finding for every sheet whose `vision_failed_pages` is not empty ("Page(s) 5, 6 were never read by AI vision (partial index accepted) — nothing on them was audited"), through the new `unreadPages` input of `verdictsForSheets` (`lib/drawingAuditLog.ts`). Such a sheet is `flagged`, never `passed` and never `broken_connectors`. Tests: `lib/__tests__/drawingAuditLog.test.ts` "unread pages keep a sheet from passing (an accepted partial index)", `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "an accepted partial index is never recorded passed: the unread pages are a finding (fix pass)". Both fail against the round's first commit.
 
@@ -329,6 +329,28 @@ Tests:
 
 Tests: `lib/__tests__/drawingText.test.ts`, the DWG-4 block: "a destination in any numbering scheme is a destination — never 'names no drawing'" (the nine shapes above), "the DWG label gives the reference layer its context", "pairs by the positional destination, whatever its shape", "broken means what the contract says: the field reads NONE, or is empty", "a destination present but not shaped like a drawing number is unknown, never broken", "a line outside the contract: unknown when something on it could still be a drawing number, broken only when nothing could"; `lib/__tests__/intelRoundGDrawing.test.ts` (the real ingest writes the loose-shaped connector as a reference, and its stored lines audit with only the `NONE` box broken). Each new `drawingText` case fails against the round's first commit. The notice: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "box pairing with no box numbers says it has no input instead of showing a clean zero" (and never mentions every-page vision) and "a set already read by AI vision before the connector contract is told a rebuild re-reads its boxes — and re-bills".
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** The first fix pass said "broken means what the contract says". Two paths still filed a correctly drafted connector as `broken_connectors`, both made live by switching the prompt on:
+- **A target with no box numbers read.** A connector into a sheet with no `opc` rows at all was filed `unreturned`. That covers every connector into a text-layer sheet (a text layer prints a pennant, never the box token) and into a sheet vision-read before this contract. Mixed libraries are normal, so this fired routinely. `auditOpcBoxes` (`lib/drawingText.ts`) now judges `unreturned` only when the target's box numbers WERE read. Otherwise the connector goes to a new `unpaired` bucket: the pairing could not be checked. That is absence of evidence (DWG-8's principle). `verdictsForSheets` (`lib/drawingAuditLog.ts`) files it as `unpairedConnectors` ("Connector 14 continues to SH4.pdf, whose box numbers were never read — the pairing was not checked"). The sheet is `flagged`, never `broken_connectors`. The lens lists these separately (`opcUnpaired`, "not counted as broken"), and the panel has its own list.
+- **A sheet-only connector.** "CONT ON SHEET 4" within one drawing was transcribed `OPC 14: DWG NONE SH 4`, as the first prompt told the model, and filed "names no destination drawing". `parseOpcLine` now reads a connector that names only a sheet as `sameDrawing`. That covers the new `SAME` token (`OPC_SAME_DRAWING`), and also `NONE` or an empty field followed by `SH n`. `auditOpcBoxes` pairs it against `<declared base>-SH<n>` of the source's own title block (`declaredSheetIdentity`), so it is never `noRef`. If the source declared no number, the connector is `unpaired`. `none` and `empty` now mean "no drawing number AND no sheet". `SAME` with no sheet is `unknown`.
+- **The prompt.** `VISION_SYSTEM` (`lib/knowledgeVision.ts`) asks for `DWG SAME SH <n>` when the connector shows only a sheet, and for `NONE` only when it shows neither. It also says what to do with a pennant that shows no box number: write no OPC line, never make a number up, and transcribe it as `CONT ON DWG <number> SH <n>`. The reference audit reads that line (one-way, missing within a held series), so box pairing never sees an invented box.
+
+Broken is now exactly: a connector that shows neither a drawing number nor a sheet, or a box whose continuation sheet's boxes were read and do not include it.
+
+Tests:
+- `lib/__tests__/drawingText.test.ts`:
+  - "a connector into a sheet with NO box numbers read is unpaired — never unreturned, never broken";
+  - "a connector naming only a sheet continues within its own drawing — paired there, never broken" (`SAME`, `NONE SH 4` and an empty field with a sheet; paired, unreturned or unpaired by the target's boxes; an undeclared source is unpaired; `SAME` with no sheet is unknown);
+  - "the prompt says how to write a sheet-only connector, and never to invent a box number".
+  - The three tests that pinned the false positive (the round-trip's SH5 with no boxes, the positional pairing, and a readable reference outside the contract) now give the target box rows for `unreturned` and assert `unpaired` without them.
+- `lib/__tests__/drawingAuditLog.test.ts` "DWG-4 — a box nobody could pair keeps a sheet from passing, never makes it broken".
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+  - "the lens lists it as not paired, and the record files the source flagged — never broken_connectors";
+  - "a sheet-only connector (DWG SAME SH n) pairs inside its own drawing — a missing box there is the broken one".
+
+Each fails against the first fix pass (`2f2a3a7`).
+
+Residual. A same-drawing connector to a sheet the library does not hold yields no `ref` row, so it is not reported as a missing sheet. Its box is not paired either, because nothing is there to pair it with.
 ---
 
 <a id="dwg-5"></a>
@@ -446,7 +468,7 @@ app/api/knowledge/drawing/route.ts:445 — `const RANK: Record<string, number> =
   - The route upserts on `org_id,library_id,sheet_number,revision_code`.
 - **Never lowered.** `RANK` and `wouldLowerSeverity` (`lib/drawingAuditLog.ts`, exported for every writer, the orchestrator's `log_audit_completion` included) are checked against the STORED row for this library, not just within the batch. A computed verdict that would lower a stored one is not written; it is reported under `keptStored`. With DWG-13, a stored non-`skipped` verdict at this revision is not even recomputed.
 - **The set is on the record.** `audit_details` carries `libraryId` and `set` (every sheet number in the library when the verdict was computed: the count always, the list up to 500 with `truncated` past that). `audited_at` is written on every write.
-- **No verdict about a set the library does not hold.** A gap ("isn't in the set") is judged only inside a series the library holds (`seriesHeldBySet`). A sheet that is the only one of its series in the library (`sheetsAloneInTheirSeries`) is still recorded for what is its own — its connectors and boxes — while references into its series are out of the set's scope (`missingWithinHeldSeries`), and the record names the series not judged (`audit_details.set.seriesNotJudged`). (Corrected in the review fix pass below: the first rule dropped such sheets whole.)
+- **No verdict about a set the library does not hold.** A gap ("isn't in the set") is judged only inside a series the library holds (`seriesHeldBySet`). A sheet that is the only one of its series in the library (`sheetsAloneInTheirSeries`) is still recorded for what is its own — its connectors and boxes — while references into its series are out of the set's scope (`missingWithinHeldSeries`), and the record names the series not judged (`audit_details.set.seriesNotJudged`). (Corrected in the review fix pass below: the first rule dropped such sheets whole. Replaced in review fix pass 2: a series is held only when the library carries two or more different numbers of it; `sheetsAloneInTheirSeries` is gone.)
 - **No verdict from a partial read.** If the entity index could not be read whole (DWG-11), the route answers 409 and records nothing.
 
 Tests:
@@ -462,11 +484,11 @@ Tests:
 - ✓ The unique key includes the scope the verdict was computed in (`library_id`), so two libraries cannot overwrite each other.
 - ✓ The upsert refuses to lower severity: the RANK comparison runs against the existing row, and a stored `broken_connectors` or `flagged` is never replaced by `skipped`. One qualification (review fix pass, with DWG-13): under an UNKNOWN revision (`""`) the latest non-`skipped` verdict replaces the row (`mayReplaceStored`), because nothing can tell that row's drawing from the one that replaced it; `skipped` still never replaces a verdict.
 - ✓ `audit_details` records the library and the sheet list the verdict was computed against, and the series it did not judge.
-- ✓ In the form the review fix pass settled: no verdict ABOUT a series — a gap — is ever recorded from a library that does not hold that series (the finding's failure scenario: Tank Farm now files no "isn't in the set" against 025-PID). The sheet itself is recorded for what is its own. The criterion's literal "not recorded at all" also dropped a lone sheet's own defects (a connector naming no drawing) and every verdict of a single-sheet or one-sheet-per-series library, which the base recorded; that was the over-reach the review found.
+- ✓ In the form the review fix pass settled: no verdict ABOUT a series — a gap — is ever recorded from a library that does not hold that series (the finding's failure scenario: Tank Farm now files no "isn't in the set" against 025-PID). The sheet itself is recorded for what is its own. The criterion's literal "not recorded at all" also dropped a lone sheet's own defects (a connector naming no drawing) and every verdict of a single-sheet or one-sheet-per-series library, which the base recorded; that was the over-reach the review found. (The first fix pass ticked this while a library holding ONE multi-sheet drawing of 025-PID — per-sheet PDFs, or one combined PDF of its sheets — still counted 025-PID as held and filed the gap. That overstated it. It holds since review fix pass 2, below.)
 
 **Final key, for I-04.** `UNIQUE (org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT`. `log_audit_completion` (`lib/orchestrator/tools.ts`) must upsert with `onConflict: "org_id,library_id,sheet_number,revision_code"` and `library_id` NULL (org-wide), and should apply `RANK` / `wouldLowerSeverity` before writing. Until it does, once `20261124` is applied that one tool's upsert names a key that no longer exists, and PostgREST refuses it (42P10). The tool returns that error; it does not write elsewhere. Apply `20261124` after the merge that moves it (the migration's header says so).
 
-**Pending migration:** `20261124_intel_roundG_drawing_audit_scope.sql`. Until it is applied the route records nothing: it answers 424, naming the migration. The pre-apply inventory counts the verdicts on a sheet mirrored into more than one library, which are the ambiguous ones. Decision: `DEC-59` item 2.
+**Pending migration:** `20261124_intel_roundG_drawing_audit_scope.sql`. Until it is applied the route records on the org-wide key that database has (review fix pass 2, below). The first record said it answered 424 and wrote nothing, which closed a write path the base had. The pre-apply inventory counts the verdicts on a sheet mirrored into more than one library, which are the ambiguous ones. Decision: `DEC-59` item 2.
 
 **Review fix pass (2026-10-01, intelligence Round G).** `sheetsAloneInTheirSeries` dropped whole verdicts that the base recorded: a single-sheet library, a library holding one sheet per series, and a combined PDF declaring `025-PID-0101/0102/0103` with no SHEET field (only several `-SHn` forms exempted a document). The suppression covered every finding, including a connector that names `NONE`, a defect of the sheet itself. Now:
 - **A document holds a series of its own** when it declares two or more numbers of one series, whichever form (`sheetsAloneInTheirSeries` counts distinct identities per series within the document; the `-SHn` rule is one case of it).
@@ -474,6 +496,24 @@ Tests:
 
 Tests: `lib/__tests__/drawingAuditLog.test.ts` "a combined PDF declaring several numbers of one series holds that series itself (fix pass)", "a single-sheet library, and one sheet per series, are alone — and recorded for what is their own", "gaps are judged only inside a series the library holds", and "verdictRows — the series not judged are on the record"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "Crude Unit records 0104 passed; Tank Farm judges no gap in a series it holds one sheet of …" (0104 recorded `passed` in Tank Farm with no missing reference and `seriesNotJudged: ["025-PID"]`; Crude Unit's row untouched), "a lone sheet's own defect is still recorded: a connector that names no drawing is broken in any set (fix pass)", and "a single combined PDF, and a single-sheet library, are recorded". Each fails against the round's first commit.
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** Three corrections.
+- **One drawing never holds its parent series.** `seriesHeldBySet` added every series of a document that was not alone. Per-sheet documents of one drawing share its number (`025-PID-0104`), so they were "not alone". A library holding one multi-sheet drawing therefore counted the whole `025-PID` series as held and filed "References 025-PID-0107, which isn't in the set". Now a series is held only when two or more DIFFERENT numbers of it exist in the library, counted across all documents (`seriesHeldBySet(identities)` in `lib/drawingAuditLog.ts`). A combined PDF declaring `025-PID-0101/0102/0103` holds `025-PID`. Two sheets of `025-PID-0104`, as per-sheet PDFs or one combined PDF, hold that drawing's sheets and never `025-PID`. A missing sheet of a drawing whose parent series is held is in scope (`025-PID-0105-SH2` in a Crude Unit set). `seriesNotJudged` names the root series of every number outside a held series. `sheetsAloneInTheirSeries` is deleted; nothing else called it.
+- **Recording before `20261124`.** The route answered 424 until the migration was applied, and the migration waits on I-04. That closed a write path the base had for that whole window. Now, when `drawing_audit_logs.library_id` does not exist, `recordAudit` reads prior verdicts org-wide and upserts on the old key (`org_id,sheet_number,revision_code`), with `library_id` left out of the rows and kept in `audit_details`. It applies the same `mayReplaceStored` guard, so a stored verdict on the shared key is never lowered (the base overwrote it). The response carries `legacyKey: true` and a notice naming the migration. With `20261124` applied, the scoped key is used as before.
+- **The set list is stored once per run.** `verdictRows` copied up to 500 sheet numbers into every row, so a 600-sheet library sent one upsert of about 5 MB. Now every row carries `set.count` and `set.digest` (a digest of the sorted list). The first row of the run alone carries `set.sheets`. A reader finds the list on the row with the same `audited_at` and digest.
+
+Tests:
+- `lib/__tests__/drawingAuditLog.test.ts`, block "seriesHeldBySet — a gap is judged only in a series the library holds":
+  - "ONE multi-sheet drawing holds its sheets, never its parent series — per-sheet PDFs or one combined PDF";
+  - "a set of single-sheet drawings holds the series, and a sheet of any of its drawings is in scope";
+  - the lone-sheet, combined-PDF, single-sheet and one-per-series cases, rewritten on the new rule.
+- `lib/__tests__/drawingAuditLog.test.ts` "stores the set list ONCE per run: every row its count and digest, the first row the list".
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+  - "Tank Farm holding 025-PID-0104 as per-sheet PDFs files no gap against 025-PID";
+  - "on a database without library_id: the org-wide key, never lowered, and the route says so" (replaces "nothing is recorded and the route names the migration").
+- `lib/__tests__/intelRoundGDrawingMigration.test.ts`: the route names the old key exactly once, in the `legacyKey` branch that drops `library_id`.
+
+Each fails against the first fix pass (`2f2a3a7`).
 ---
 
 <a id="dwg-7"></a>
@@ -542,8 +582,16 @@ Tests:
 - ✓ The `text-no-tags` diagnostic says whether the sheet looks like a drawing we got no tags from, or like prose.
 - ✓ The remaining ceiling (`SPARSE_PAGE_MAX_CHARS`, now a fast path) and both thresholds are named constants with their rationale recorded at the declaration.
 
-**Scope / residual.** Already-indexed dense sheets gain their tags at their next re-index (a rebuild, or a rev-up). The letter-case signal will miss a drawing lettered in mixed case past 2,000 characters with no title block. Such a sheet is shown as "Prose" and keeps the old behaviour.
+**Scope / residual.** Already-indexed dense sheets gain their tags at their next re-index (a rebuild, or a rev-up). The letter-case signal will miss ANY drawing lettered in mixed case past 2,000 characters, title block or not: `isDrawingLikePage` refuses a page more than 35 % lower case before it looks for a title block. Such a sheet is shown as "Prose" and keeps the old behaviour. (Corrected in review fix pass 2. This line first said "with no title block", which understated it. Letting a title block override the case test was rejected: a specification citing "Drawing No. 123-A-456" would then be read as a drawing.)
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** The "Drawing, no tags" advice told every sheet that looked like a drawing to turn on library-wide every-page vision. That included a legend, cover or drawing-index sheet in a healthy TrueType set, which has references but no equipment. `forceAllPages` reads and bills every page of every document in the library, which DEC-59 item 1 and the 99 do-not rule out as a default. Now the route marks a sheet `shxLike` only when it looks like an SHX export: capital lettering, thin text (at most `THIN_PAGE_MAX_CHARS`, 1,200, per page, now exported from `lib/drawingText.ts`), no drawing references, and no more declared drawing numbers than pages. Only such sheets get the advice. It now says plainly that the switch reads every page of every document and bills each one, and to turn it on only if most of the library is like these sheets. A drawing sheet whose text layer gave references is never advised. Before `20261124` the letter case is not measured (DWG-11), so no sheet is `shxLike` and no advice is given on a guess. The panel's footnote says the same.
+
+Tests: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+- "text with no tags says drawing … or prose — and the advice differs" (now asserts `shxLike` and the billing sentence);
+- "a drawing sheet whose text layer gave references (a legend, an index) is never told to vision-read the library".
+
+The second fails against the first fix pass.
 ---
 
 <a id="dwg-8"></a>
@@ -609,6 +657,8 @@ Tests:
 
 **Review fix pass (2026-10-01, intelligence Round G).** With DWG-4's corrected contract, `unknown` also takes a connector whose destination is present but not shaped like a drawing number, a line outside the contract that still holds a number-like run, and a row with no stored line — absence of evidence each time, never broken. A contract line's destination sits right after `OPC <n>: DWG`, so for it the cut cannot matter: a contract line well past 160 characters, cut the way ingest cuts it, still reads its destination — neither broken nor unknown (test "a contract line keeps its destination at the head, so the storage cut can never take it"). The criteria's status is unchanged.
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** Criterion 3's principle — absence of evidence is recorded as unknown, never as broken — did not hold for box pairing. A connector into a sheet with NO box numbers read (a text layer, or a sheet read before the contract) was filed `unreturned`, which is `broken_connectors`. The connector's destination was read; what was missing was any evidence on the target's side. That is now the `unpaired` bucket (see DWG-4's second fix pass): `flagged`, never broken, named on the record as `unpairedConnectors`. The criteria's status is unchanged; criterion 3's principle now holds for box pairing as well as for a cut line.
 ---
 
 <a id="dwg-9"></a>
@@ -799,6 +849,14 @@ Also `lib/__tests__/drawingText.test.ts` "DWG-11 — the roll-up the census is c
 
 **Review fix pass (2026-10-01, intelligence Round G).** The text-statistics read (`loadTextStats`, the raw-chunk path before `20261124`) stopped at the ceiling without saying which documents it had not read, so the sheets past the cut showed 0 characters: "Nothing read", counted as textless, and the lens advised paying for AI vision beside its own PARTIAL notice. Now `loadTextStats` stops at a whole document like the entity read and returns the documents it did not reach. They join `notCounted`, get the verdict `not-counted` (shown "Not counted"), and are left out of the textless count and its vision suggestion. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a sheet past the text-stats read is not counted — never 'Nothing read', never sent to vision (fix pass)", which fails against the round's first commit.
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** Before `20261124`, `loadTextStats` read the full `content` of every chunk in the library on every census GET, for every library, prose included. The base read at most 1,000 rows per slice, and only `document_id` for its textless probe. A 1,000-document standards library would ship about 100 MB through 1,000-row pages inside a 60-second function, and the window is long because `20261124` waits on I-04. Now the pre-migration path selects `document_id` only. It still pages to exhaustion and stops at a whole document, so the per-document chunk counts, and with them the textless count, stay exact. Characters and letter case wait for `knowledge_doc_text_stats()`:
+- the route answers `textStats: "counts"` and `chars: null` per sheet, and the panel shows "—" with a note naming the migration;
+- a sheet with chunks but no tags is "text-no-tags" by its chunk count;
+- without a title block or a reference, it is `looksLike: "unknown"` (shown "Text, no tags"), never guessed to be prose or a drawing;
+- no SHX advice is given on an unmeasured sheet (DWG-7).
+
+Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "before 20261124 the text statistics COUNT chunks and never ship their content". It asserts that every chunk read selects only `document_id`, and that the readout is measured once the function exists. It fails against the first fix pass.
 ---
 
 <a id="dwg-12"></a>
@@ -921,7 +979,7 @@ Tests:
 - `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate round says what was actually observed".
 
 **Done-when.**
-- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established — a known revision; a sheet under an unknown revision is audited every time.
+- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established: a known revision, and a stored row that covered this sheet from the index it holds now (review fix pass 2). A sheet under an unknown revision is audited every time.
 - ✓ The response distinguishes "recorded" from "already recorded at this revision".
 - ✓ The refine loop calls `buildRelocateUser` when the close-up returns no sighting, instead of silently keeping a point it just failed to confirm.
 - ✓ No function stays unwired: `sheetsNeedingAudit` and `buildRelocateUser` both have production callers now.
@@ -934,4 +992,26 @@ Tests:
 
 Tests: `lib/__tests__/drawingAuditLog.test.ts` "never treats a verdict under an UNKNOWN revision as done — 'unrevised' can't be established (fix pass)" and "mayReplaceStored — the latest verdict, never a lower one at a known revision"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "a sheet whose revision is unknown is re-audited every time, and its row takes the latest verdict (fix pass)" (flagged → passed once the set is widened, one row; a sheet that cannot be read keeps its verdict, reported under `keptStored`) and "a point no close-up checked (past REFINE_MAX) is cached as the coarse estimate it is — approximate, rejectable". The `""` tests fail against the round's first commit. The DWG-13 route tests now mirror every Crude Unit sheet with a revision, so "a second record writes nothing" exercises the known-revision rule it states.
 
+
+**Review fix pass 2 (2026-10-01, intelligence Round G).** "Skipped never counts as done" and "unrevised is never re-audited" both read the record by KEY. Two gaps followed.
+- **Sibling sheets.** Every per-sheet document of a multi-sheet drawing is filed under the drawing's number. Once any one was recorded non-`skipped` at a revision, every sibling was "already recorded". That included a sibling skipped in that run (`bestByKey` kept the sibling's `passed`) and one added later.
+- **A rebuild.** A verdict computed from an older index stayed final after a rebuild, the one the route itself tells users to pay for. A sheet recorded `passed` before its boxes were transcribed kept `passed` after the re-read transcribed `OPC 15: DWG NONE`.
+
+Now each row records what it covered. `audit_details.coverage` maps each knowledge document merged into the row, if it was read (`skipped` covers nothing), to the fingerprint of the index it was computed from. `indexFingerprint` in `lib/drawingAuditLog.ts` digests the document's roll-up rows, connector lines and unread pages, independent of row order.
+
+`sheetsNeedingAudit(sheets, prior, fingerprints)` counts a key as done only when every current document filed under it is on the row's coverage with an unchanged fingerprint. A key that is not done is recomputed from all its documents, still never lowered (`mayReplaceStored`). A row with no coverage (written before this, or by another writer) is audited once more. A rebuild that extracts the same rows changes nothing. One that changes them re-audits that sheet at the same revision.
+
+The `sheetsNeedingAudit` comment named a nonexistent `unknownRevisionReplaceable`; it now names `mayReplaceStored`.
+
+Tests:
+- `lib/__tests__/drawingAuditLog.test.ts`:
+  - "a row is done only for the documents it covered — a sibling sheet under the same number is not";
+  - "a row is done only for the index it was computed from — a rebuild that changed it re-audits";
+  - "a row with no coverage … is audited once more";
+  - the `indexFingerprint` block.
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+  - "a sibling's verdict never stands for a sheet that was skipped: once SH2 is read, the shared row is re-audited" (`passed` covering SH1 → `broken_connectors` covering both → done);
+  - "a rebuild that changed a sheet's index re-audits it at the same revision: the new NONE box is recorded broken".
+
+Each fails against the first fix pass. Residual: a stored verdict that a recomputation would lower stays, reported under `keptStored`, and its row is recomputed on each record until a recomputation is at least as severe.
 ---
