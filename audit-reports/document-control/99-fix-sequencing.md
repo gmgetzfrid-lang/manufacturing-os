@@ -234,6 +234,24 @@ and to the other:
 Both narrow; their result sets carry the DEC-30 inventories to read back
 into the records.
 
+⚠ **Paste order — P13 STATUS-TRANSITION (2026-10-01).** One one-paste
+migration, `20261144_dc_roundF_status_issue_transition.sql` (`REV-18`):
+after `20261139` (the guard's base — it re-creates
+`enforce_document_publish_guard` from `20261139`'s body, so **never re-paste
+`20261139`, `20261105` or any earlier guard migration after it**, or the issue
+rule is dropped). It is independent of `20261131` (the register rail never
+fires on a status-only write), `20261129`, `20261130` and `20261140`; when
+`20261131` is also pending, paste `20261131` first so `REV-17`'s INSERT door
+is closed by the time this rule binds the status. Narrow; its result set
+carries the DEC-30 inventory (issued-unreviewed documents under a require
+policy; not-issued documents whose next issue now needs a controller; held
+Draft / In Review documents) and a behaviour probe of
+`is_controlled_issue_status`. Deploy the app carrying P13 with or before it,
+so the rev-up flow and the two status editors say the rule before the
+database refuses. After the paste, in a require-mode library a non-controller
+cannot restore an UNREVIEWED revision to an issue status (un-archive, a
+failed supersede / split / merge put-back) — Document Control does it.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
