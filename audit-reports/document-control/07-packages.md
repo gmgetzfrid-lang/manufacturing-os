@@ -320,6 +320,10 @@ lib/workPackages.ts:99-106 — `const pinned = (m.pinned_version_id as string | 
   - A failed documents read marks its members `unknownReason: "unread"`, labelled "Document (not read just now)" with "not read just now — reload to try again". "Restricted document" / "status unknown to you" are kept for a read that answered without the row (`unknownReason: "restricted"`).
   - Both `.in()` reads are chunked at 150 ids (members by package, so each package's members stay in one ordered read), so ~30 open packages of ~20 sheets is no longer one 600-id GET.
   - Tests: three more in "PKG-7 — …" (the failed member read, the failed documents read, the chunked reads).
+- **Fix pass 2 (review findings).** The first fix pass chunked `listWorkPackages` only; the other `.in()` reads of a large package or asset tag were still one GET each. Now chunked at 150 ids too:
+  - `refreshWorkPackage`'s documents read and `createWorkPackage`'s (`lib/workPackages.ts`). A chunk that fails refuses the whole refresh ("nothing moved") or create ("the package was not created"), as one failed read did before.
+  - `readAndGatePackDocs`' documents and `document_holds` reads, and the builder's `document_versions` read (`lib/docPack.ts`, local `chunkIds`). A hold chunk that fails fails CLOSED for every sheet (`hold_unknown`), as one failed read did.
+  - Tests (`dcRoundFField.test.ts` "PKG-7 — …"): a 400-sheet refresh and create read in chunks of 150 / 150 / 100, and a failed chunk still refuses the create with nothing inserted. A 400-id pack gate reads documents and holds in chunks, sees a hold in the last chunk, and fails closed when the hold read fails.
 
 **Done-when.**
 1. ✓ Every consumer compares the requested ids against the returned rows: `drifted` is `unknown` (not false) for an unreadable member; refresh refuses to write rather than NULLing a pin; `createWorkPackage` errors; docPack records an explicit skipped entry.
@@ -580,19 +584,40 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
 - **Fix pass (review findings).**
   - **The split is offered where it can be acted on.** The asset hub (`app/(protected)/assets/[tag]/page.tsx`, outside the plan, disclosed) turns a refused pack into "Print part i of N" buttons (`runPack`, `splitPackIds` — no longer unused); a part refused for pages or bytes re-splits at the smaller size. A single sheet over the budget alone is not split (it is downloaded on its own).
   - **`/packages` has no one-click split, by design (the lost capability, recorded).** A part-print of a work package would need its own snapshot semantics — the parts not on that paper would read "added since this pack was printed" on every scan. A package over 150 sheets can no longer be printed as ONE pack; the refusal names the remedy (split the work package, e.g. one per area).
-  - **Who the budget removes is measured, not assumed.** No count was taken when the budget was set (this package has no database access). Migration `20261143` (DRLS-10's) carries two read-only MEASURE rows in its one result set: open / executing packages with more than 150 sheets, and asset tags carried by more than 150 non-archived documents. The count lands with the paste. The 150 MB source-byte cap also catches a few dozen high-resolution scans; that population has no measure (file sizes per pack are not stored).
+  - **Who the budget removes is measured, not assumed.** No count was taken when the budget was set (this package has no database access). Migration `20261143` (DRLS-10's) carries two read-only MEASURE rows in its one result set: open / executing packages with more than 150 sheets, and asset tags carried by more than 150 non-archived documents. The count lands with the paste. The 150 MB source-byte cap also catches a few dozen high-resolution scans; that population has no measure (file sizes per pack are not stored). *(Corrected at fix pass 2: that last sentence was wrong — `document_versions.size BIGINT` is in the base schema, and the two rows counted raw members / non-archived documents, not the sheets the gate admits. See fix pass 2.)*
   - **Behaviour change, stated.** A pack that printed yesterday may be refused today: a package or asset tag over 150 sheets, a pack over 1000 pages, or one whose source files exceed 150 MB.
   - **The failure scenario is the finding's, not an incident.** "A 180-sheet pack" in DEC-44 (P8 FIELD)'s rationale is now worded as this finding's scenario.
   - Test: "the asset hub turns a refused pack into the parts it names …".
 
+- **Fix pass 2 (review findings).**
+  - **A sheet over the budget ON ITS OWN is left out, not a reason to refuse the pack.** Before, one 180 MB vendor data book (or a sheet over 1000 pages) refused the whole pack with `perPack: 1`. The asset hub then offered no parts, and `/packages` cannot remove a member, so the package or tag could never be printed. Now `packSheetOverBudget` (pure, `lib/docPack.ts`) checks the sheet first:
+    - its fetched byte length, BEFORE pdf-lib parses it — parsing it is what would exhaust the tablet;
+    - its page count, right after load.
+    - Either one leaves the sheet out with the new code `too_large` (`lib/packLeftOut.ts`: "too large for a field pack when printed — it is printed on its own"). The reason ("180 MB on its own — over a field pack's 150 MB budget, so it was left out; download it on its own") goes in the toast on both pages and on the print snapshot (`VFY-19`), and the rest of the pack is built.
+  - **Only the running total refuses, so the split always helps.** `packContentBudgetRefusal` now sees only sheets that fit the budget alone. It offers packs of at most the sheets that fitted, down to one sheet per pack. The asset hub takes a split of one (`perPack >= 1`).
+  - **`/packages` states the split in its own terms.** A refusal there now reads "Too large for one field pack — nothing was printed … that means N work packages of at most M sheets each — create them from this one's drawings (e.g. one per area), then print each". There is still no one-click part-print, for the reason above.
+  - **The measure counts the population the budget reaches, and is read before the app deploys.** `20261143`'s MEASURE rows now count only the sheets the print gate admits: Issued / Locked, with no active `document_holds` row. Each row is labelled an upper bound, because a printer's outstanding sign-offs and unreadable sheets are per person. The rows are:
+    - packages and asset tags over 150 such sheets;
+    - packages and asset tags whose sheets, each within budget alone, record more than 150 MB together (`document_versions.size`) — refused with a split;
+    - Issued / Locked documents whose current file records more than 150 MB — left out as `too_large`;
+    - Issued / Locked documents with no recorded size, which the size rows cannot see.
+    - The 1000-page budget has no row: page counts are not stored per version.
+    - The file now states its deploy order: paste it, and read these rows, BEFORE the P8 app deploys, so the owners of a counted package or tag hear before the refusal does.
+    - Exercised against a scratch PostgreSQL 16 with seeded packages and tags. Each row counted exactly the seeded population: a held member and a Draft member drop a 151-sheet package to 150 (not counted); a closed package and an Archived 300 MB file are not counted; a 200 MB file is counted as too large and left out of its package's sum.
+  - Tests:
+    - `dcRoundFField.test.ts` "PKG-12 — …": a sheet over the page budget alone is left out and the rest built (the cover hook receives it with `too_large`); a file over the byte budget alone is left out before pdf-lib loads it; the running-total refusal splits down to one sheet per pack; `/packages` states the work-package split.
+    - `dcRoundFWorkPackageCloseRail.test.ts`: the MEASURE rows use the gate's statuses and the hold term, the byte constants match `PACK_MAX_BYTES` and `PORTAL_STAMP_MAX_BYTES`, `document_versions.size` exists in `schema.sql`, and the deploy-order line is present.
+    - `verifyPackageSnapshot.test.ts`: a `too_large` sheet stays red at the verify door; the route gains no new rule.
+
 **Done-when.**
-1. ✓ docPack enforces an explicit cap — document count, cumulative pages and cumulative bytes — and refuses above it with a clear message offering a split. The asset hub offers the split as part buttons; `/packages` offers it as an instruction (split the work package — see the fix pass for why there is no part-print there).
+1. ✓ docPack enforces an explicit cap — document count, cumulative pages and cumulative bytes — and refuses above it with a clear message offering a split. The asset hub offers the split as part buttons; `/packages` offers it as a stated split into work packages (see the fix pass for why there is no part-print there). A sheet over the page or byte budget on its own no longer refuses anything: it is left out, named (`too_large`), and the rest prints (fix pass 2).
 2. ✓ Both reads give a deterministic order (the documents in the caller's order, the members by `added_at`, `id`), and the cover is generated from the merged pack's actual page order with a page reference per entry.
 3. ✓ (PS-VERIFY, 2026-10-01) The cover lists every sheet, with continuation pages.
 
 **Scope / residual.**
 - The asset hub's `.limit(500)` read (`app/(protected)/assets/[tag]/page.tsx`, PS-VERIFY's file) is unchanged. docPack now refuses any pack over 150 sheets with the split, whichever page calls it; the asset hub prints the parts.
-- The budget's reach is the `20261143` MEASURE rows, pending the paste.
+- The budget's reach is the `20261143` MEASURE rows: sheet counts and recorded sizes over the gate's population, an upper bound. They land with the paste, which the file orders BEFORE the app deploys (an operator step). The 1000-page budget is unmeasured, because page counts are not stored. Files with no recorded size are counted, not measured.
+- A `too_large` sheet reads red "not in this pack" at the verify door (the route's existing split; no verdict rule was added). The crew needs that sheet and gets it separately.
 - Ink analysis still caps at 40 pages per document (`lib/stamping.ts`, PS-STAMP's file), as the verifier noted.
 - The budget values are a stated default (provisional DEC-44 (P8 FIELD) — the integrator renumbers).
 
