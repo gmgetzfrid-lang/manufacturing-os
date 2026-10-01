@@ -30,10 +30,10 @@ import { GovernedCallError } from "@/lib/ai/gateError";
 export const DEFAULT_MONTHLY_CAP_USD = 10;
 
 /** GOV-3: a cap of $0 LOCKS — no spend at all. getCapUsd returns it as the
- *  smallest positive number, never 0: every gate written
- *  `cap > 0 && spent >= cap` (the shape the routes that do not go through
- *  lib/ai/aiGates still carry) then refuses as soon as anything at all has
- *  been spent, where a 0 short-circuited the check and uncapped everything.
+ *  smallest positive number, never 0, and getMonthUsage never reads a locked
+ *  member's month below it: every gate written `cap > 0 && spent >= cap`
+ *  (the shape the routes that do not go through lib/ai/aiGates still carry)
+ *  then refuses, where a 0 short-circuited the check and uncapped everything.
  *  capReached() — what aiGates and governedCall read — refuses it outright.
  *  It prints as "$0.00" through toFixed, and displayCapUsd maps it to 0. */
 export const LOCKED_CAP_USD = Number.MIN_VALUE;
@@ -184,9 +184,15 @@ async function readMonthRows(orgId: string, userId: string | null): Promise<Usag
 }
 
 /** One user's current-month usage, every op. Throws AiUsageUnavailableError
- *  when the ledger cannot be read (GOV-4) — never a zero ledger. */
+ *  when the ledger (or the cap) cannot be read (GOV-4) — never a zero ledger.
+ *  GOV-3: a LOCKED member's month never reads below LOCKED_CAP_USD (it prints
+ *  as $0.00), so a gate shaped `cap > 0 && spent >= cap` refuses them at $0
+ *  spent as well — no first call slips through before anything is metered. */
 export async function getMonthUsage(orgId: string, userId: string): Promise<MonthUsage> {
-  return rollupUsage(await readMonthRows(orgId, userId));
+  const [rows, capUsd] = await Promise.all([readMonthRows(orgId, userId), getCapUsd(orgId, userId)]);
+  const month = rollupUsage(rows);
+  if (capIsLocked(capUsd) && month.spentUsd < LOCKED_CAP_USD) month.spentUsd = LOCKED_CAP_USD;
+  return month;
 }
 
 /** Whole-org current-month usage, keyed by user_id (controllers' team view),

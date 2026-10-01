@@ -232,6 +232,16 @@ describe("GOV-3 — a $0 cap locks", () => {
     expect(displayCapUsd(10)).toBe(10);
   });
 
+  it("every legacy `cap > 0 && spent >= cap` gate refuses a locked member at $0 spent — no first call slips through", async () => {
+    db.tables.ai_usage_limits = [{ org_id: "o1", user_id: "u1", monthly_cap_usd: 0 }];
+    const [month, cap] = await Promise.all([getMonthUsage("o1", "u1"), getCapUsd("o1", "u1")]);
+    expect(month.calls).toBe(0);
+    expect(cap > 0 && month.spentUsd >= cap).toBe(true);
+    expect(month.spentUsd.toFixed(2)).toBe("0.00");
+    // an unlocked member with nothing spent still reads exactly 0
+    expect((await getMonthUsage("o1", "u2")).spentUsd).toBe(0);
+  });
+
   it("a locked member's reservation is refused (402) before any ledger write", async () => {
     const err = await reserveWithinCap({ orgId: "o1", userId: "u1", op: "graphShape", provider: "anthropic", model: "m", worstCaseUsd: 0.001, capUsd: LOCKED_CAP_USD }).catch((e) => e);
     expect((err as GovernedCallError).status).toBe(402);
