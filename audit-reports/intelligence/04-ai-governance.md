@@ -228,7 +228,9 @@ const capped = usage.percent >= 100;
 3. ✓ The usage route's percent / `locked` and the modal's capped and hot states follow what the server enforces.
 4. ✓ Test: a $0 cap, then a governed call → 402 (`aiGates.test.ts`); the route accepts and reports it (`aiUsageRoute.test.ts`).
 
-**Scope / residual.** The floor makes `getMonthUsage` read the cap beside the ledger (two small reads). Caps already stored as $0 change meaning on deploy — `20261137`'s pre-apply inventory counts them (per person and workspace default).
+Fix pass, after the review (*corrected:* done-when 1 was marked ✓ while the connection route's verify-on-save exemption admitted a LOCKED member for five metered provider calls an hour — any 402 fell into it, the lock's included). `gateProbe` in `app/api/ai/connection/route.ts` now refuses a refusal carrying `details.locked` outright: a locked member's new key is neither checked nor saved ("A new key can't be checked while AI is locked for you, so it was not saved."), and the exemption stays for a member who has SPENT their cap. Test: `aiConnectionRoute.test.ts` ("a LOCKED ($0) member gets no de-minimis exemption…": no provider call, no metering row, the stored keys unchanged).
+
+**Scope / residual.** The floor makes `getMonthUsage` read the cap beside the ledger (two small reads). Caps already stored as $0 change meaning the moment the APP deploys — the app half does not wait for `20261137` — so the migration's two $0 counts are to be run read-only BEFORE the deploy, not only when the migration is pasted; the query is in `99-fix-sequencing.md` ("Deploy order — intelligence Round G I-05"). A workspace that stored $0 meaning "no cap" sets a real figure first.
 
 ---
 
@@ -283,18 +285,24 @@ usageServer.ts:65 `if (error) return EMPTY_USAGE;` vs usageServer.ts:96 `if (err
 **Partial (2026-10-01, intelligence Round G).** Reproduced: `getMonthUsage` returned `EMPTY_USAGE` on any read error, and the PGRST204 fallback wrote cost-less rows that read as $0. What landed (`DEC-44` (I-05) item 3):
 
 - A ledger read error throws `AiUsageUnavailableError` — a `GovernedCallError`, status 503, "AI usage can't be read right now, so AI calls are refused until it can (…)". Every gate refuses: routes that map `GovernedCallError` answer 503, the others fail with the error instead of proceeding. `getCapUsd` throws too on any read error but a missing table — a cap that cannot be read must not quietly become $10 for someone an Admin locked.
-- Rows with neither a cost nor token counts (the fallback insert) count as `unpricedCalls` — unknown spend, never $0 — and `assertAiGates` / `reserveWithinCap` refuse (503) while any exist this month. Rows with tokens but no cost are priced (an unknown model at frontier rates).
+- Rows with neither a cost nor token counts (the fallback insert) count as `unpricedCalls` — unknown spend, never $0. Rows with tokens but no cost are priced (an unknown model at frontier rates).
 - `/api/ai/usage` answers 503 with `usageUnavailable: true`, and the AI settings meter shows that sentence with a Retry instead of vanishing.
 
 Tests: `aiUsage.test.ts` ("GOV-4 — the gate fails CLOSED"), `aiGates.test.ts` ("a ledger read error → 503 and no provider call"), `aiUsageRoute.test.ts`, `aiSettingsUsagePanel.test.ts`.
 
+Fix pass, after the review (*corrected:* three claims were overstated):
+
+- *A cost-less row was a month-long lock, not "unknown spend".* `assertAiGates` and `reservationVerdict` refused (503) while any such row existed, until the 1st, for every `aiGates` feature including saving or rotating a key, with the remedy "apply migration 20260916" — false whenever it was reached, since the read had just selected `est_cost_usd`. The row comes from `recordAskUsage`'s fallback, which a stale PostgREST schema cache also triggers. Now `rollupUsage` counts each such row at `UNPRICED_CALL_USD` — $1.00, a frontier-rate call with a 120,000-token prompt and a 16,000-token reply, deliberately above one call — inside `spentUsd` and its op line. The 503 is kept for a ledger that cannot be read; the unpriced branch and its migration sentence are gone. AI settings says "N AI calls were recorded without a cost this month; each is counted at $1.00…". Tests: `aiUsage.test.ts` ("rows written without a cost … count at UNPRICED_CALL_USD — not $0, and not a lock"), `aiGates.test.ts` ("…never $0, never a month-long lock"), `aiSettingsUsagePanel.test.ts`.
+- *The throw escaped non-AI work.* `getMonthUsage` / `getCapUsd` throw where they used to read $0 / $10, and the interactive ingest route and the cron's ingest drain called them outside any catch — a ledger error failed text-only indexing with a 500, and ended the drain's run for every org. Both now catch the refusal (`isAiUsageUnavailable` in `lib/ai/gateError.ts`) and skip only the vision step: the route indexes the text layer and says "AI usage can't be read right now, so pages without a text layer were skipped…"; `loadSponsorVision` returns no vision context, so the drain indexes text-only (a read-every-page library is filed behind) and goes on. `/api/codebook/import` maps it to its 503 sentence instead of a 500. These are coordinated edits in merged packages' files (I-06's `app/api/knowledge/ingest/route.ts` and `lib/knowledgeIngest.ts`, I-10's codebook route). Test: `aiUsageOutageIngest.test.ts` (each case fails on the pre-fix code).
+- *A partial ledger read could still pass for headroom.* `readMonthRows` took a page shorter than 1,000 rows as the last, so a project whose PostgREST max-rows is lower summed only the first page. It now asks for the exact count and reads on from where the rows end until it holds that count or a page comes back empty. Tests: `aiUsage.test.ts` ("a max-rows setting below the page size never truncates the sum", "without a count it still reads until a page comes back empty").
+
 **Done-when.**
 1. ✓ "Zero spend" and "could not read spend" are distinct; the gate refuses on the second.
-2. ✓ The fallback insert is kept (metering never breaks an answer) and its rows are counted as unknown spend.
+2. ✓ The fallback insert is kept (metering never breaks an answer) and its rows are counted as unknown spend — at a fixed conservative figure inside the month's total, never $0 and never a refusal of their own.
 3. ✗ Not done here. The `EXPECTED_COLUMNS` row for `ai_usage_events.est_cost_usd` (`20260916`) belongs in `lib/schemaExpectations.ts`, which A&O P2 (the regeneration) and PS-VERIFY own. The blocking behaviour itself holds: every AI call is refused, and AI settings shows the read error, which names the column.
 4. ✓ Test: a mocked ledger error produces a refused governed call.
 
-**Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns every AI call is refused — the columns are a hard precondition. During a ledger outage, the routes that do not catch the refusal (ask, orchestrator, codebook import, locate, ingest) answer with the error instead of continuing. The interactive ingest route then fails its text-layer indexing too, and the cron's ingest drain stops for that run. The fix belongs in those routes' own files: catch `AiUsageUnavailableError` and skip only the AI step with a reason (I-06 for ingest; I-03, I-04, I-07 and I-10 for the others, as they adopt `assertAiGates`).
+**Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns the ledger read fails, so every AI call is refused — the columns are a hard precondition. During a ledger outage the ask, orchestrator and locate routes still answer an unhandled error (a 500) instead of the 503 sentence — refused either way, never spent; their owners map `GovernedCallError` as they adopt `assertAiGates` (I-03 ask, I-04 orchestrator, I-07 locate — listed in `99-fix-sequencing.md`). The embed route (I-02) does the same, and the embed drain records the refusal and ends that run, which only spends AI.
 
 ---
 
@@ -477,7 +485,7 @@ The test path also accepts a caller-supplied `model` while using the SAVED key (
 - [ ] The test path stops honoring a body-supplied model against a saved key, or validates it the same way the save path does
 
 
-**Resolution (2026-10-01, intelligence Round G).** Every live call in `/api/ai/connection` — the test, the embeddings test, and the verify-on-save of a new chat or embeddings key — runs `assertAiGates`: the allowlist for that key's kind, the cap, and a reservation. Each is metered as `connectionTest` with the provider's counts, and a failure as a failed call. A test against the SAVED key uses the saved provider and model; a body-supplied model rides only with a body-supplied key (the pre-save test of a new key). A capped or locked member cannot run a test (402). Verifying a NEW key while saving stays possible, so a key can always be rotated: a documented de-minimis exemption, at most five an hour (counted from the member's own `connectionTest` rows), metered all the same; the sixth answers 429. Tests: `aiConnectionRoute.test.ts` ("GOV-7 — tests are gated and metered").
+**Resolution (2026-10-01, intelligence Round G).** Every live call in `/api/ai/connection` — the test, the embeddings test, and the verify-on-save of a new chat or embeddings key — runs `assertAiGates`: the allowlist for that key's kind, the cap, and a reservation. Each is metered as `connectionTest` with the provider's counts, and a failure as a failed call. A test against the SAVED key uses the saved provider and model; a body-supplied model rides only with a body-supplied key (the pre-save test of a new key). A capped or locked member cannot run a test (402). Verifying a NEW key while saving stays possible, so a key can always be rotated: a documented de-minimis exemption, at most five an hour (counted from the member's own `connectionTest` rows), metered all the same; the sixth answers 429. Tests: `aiConnectionRoute.test.ts` ("GOV-7 — tests are gated and metered"). Fix pass, after the review: the exemption is for a member who has spent their cap, never one whose cap is $0 — a locked member's new key is neither checked nor saved (GOV-3; tested).
 
 **Done-when.**
 1. ✓ Connection tests write a `connectionTest` metering row.
@@ -652,15 +660,17 @@ authMember read in full (:25-37) — the role set is built inline, not from capa
 
 Tests: `aiUsageRoute.test.ts` ("GOV-10 — cap changes are the ai.manage_caps capability…"), `aiSettingsUsagePanel.test.ts` (GOV-10), `intelRoundGAiCapsMigration.test.ts` (it finds the newest earlier definer by scanning the sequence and checks exactly one added row, the CASE equal to `CAPABILITY_DEFS`, the DRLS-16 grants and the one-paste shape). Four historical evaluator tests now list the row as a later addition.
 
+Fix pass, after the review (*corrected:* done-when 2 was marked ✓ while a holder could still raise their own cap by raising the workspace default — the finding's own failure scenario, "sets the org default to $500 … and continues"; the record called that "an org decision, not a self-raise"). Now a setter whose cap FOLLOWS the default (no override of their own) who raises it is held where they were: the route writes them an override at the previous default, audited (`AI_CAP_CHANGED`, `heldOnDefaultRaise: true`), BEFORE the default moves — a hold that cannot be written refuses the change (500, the default untouched). Everyone else follows the new default; raising the setter's own cap takes another holder, like any other self-raise, and clearing the hold onto the higher default is refused (403). The response carries `selfHeldAtUsd`; AI settings says "Your own cap stays at $10.00 — nobody raises their own cap, so another person who manages AI caps has to raise yours" (GET's `selfFollowsDefault`). A setter who has their own override, or who lowers the default, is not touched. Also corrected: the team view, the org-default "previous figure" and the clear path's self-raise test ignored `ai_usage_limits` read errors, so a failed read showed everyone "on the $10 default" and could audit "from $10"; each now refuses (503) instead. Tests: `aiUsageRoute.test.ts` ("raising the workspace default you follow does NOT raise your own cap…", "only a setter who FOLLOWS the default is held…", "GOV-4 — an unreadable cap table refuses…"), `aiSettingsUsagePanel.test.ts`.
+
 **Pending migration:** `supabase/migrations/20261137_intel_roundG_ai_manage_caps.sql`. It follows DEC-30's one-paste protocol. The inventory (Admin members, DocCtrl-not-Admin members, stored policies and grants naming the capability, and caps stored as $0 that now lock) is captured before the transaction. The probes check the row, every earlier default, the untouched wrapper, the search_path pins and the anon revoke. Until it is applied nothing changes for anyone: the app reads the default from `CAPABILITY_DEFS`, and no policy or trigger asks the SQL evaluator for `ai.manage_caps`.
 
 **Done-when.**
 1. ✓ Raising a cap is a capability an org can configure (default Admin).
-2. ✓ Raising one's own cap is blocked.
+2. ✓ Raising one's own cap is blocked — by an override, by clearing one onto a higher default, and by raising the workspace default one follows (the setter is held at their current cap; tested).
 3. ✓ The copy names who can actually do it.
 4. ✓ The other holders are notified, as is the person whose cap moved.
 
-**Scope / residual.** Raising the WORKSPACE default lifts every member who follows it, the setter included. It is treated as an org decision — audited, with every holder notified — not as a self-raise. `ai.manage_caps` is not on the policy write guard's critical list (`20261056`), so an org may narrow it like any other capability. J2b's parallel re-creation (`20261136`, `quality.sign_off`) folds into this body at merge, and the shape test follows the newest earlier definer.
+**Scope / residual.** Two holders can still raise each other's caps — the second signature the finding asked for, by design. `ai.manage_caps` is not on the policy write guard's critical list (`20261056`), so an org may narrow it like any other capability. J2b's parallel re-creation (`20261136`, `quality.sign_off`) folds into this body at merge: its CASE row may sit on either side of the `ai.manage_caps` row — the shape test admits exactly the one added row against whichever definer is newest and requires only that every earlier row sits inside the CASE before its ELSE (the fix pass relaxed an ordering check that would have failed a row folded in after `ai.manage_caps`).
 
 ---
 
@@ -711,13 +721,13 @@ Two searches agree on the gate's five locations: `grep -rn 'ai_key_agreements' -
 1. ✓ in substance. `governedAiCall` already carried `images`. `aiGates` is the shared stack for the routes that call the model directly: flows/read, locate and the vision paths.
 2. ✗ Not everywhere yet:
    - flows/read (I-09) and knowledge/locate (I-07) still skip the agreement.
-   - So does `app/api/knowledge/ingest`'s interactive vision path (I-06), the verifier's sixth route. It reaches the provider through `lib/knowledgeVision`, so the census lists it under that helper.
+   - So does `app/api/knowledge/ingest`'s interactive vision path, the verifier's sixth route. It reaches the provider through `lib/knowledgeVision`. *Corrected in the fix pass:* the census used to describe that helper as gated by "the ingest paths", so its green run did not show this route. It now also scans `app/` for routes that build a `VisionContext` and lists this one under PENDING. I-06 merged without this limb, so the integrator re-assigns it.
    - knowledge/embed checks the agreement locally (I-02: "aiGates when it lands"). Its move onto aiGates is recorded as the I-02b / I-03 follow-up.
    - ask, orchestrator and codebook/import check it inline.
 3. ✓ The census classifies every caller as GATED, INLINE, PENDING (with its owner) or HELPER; an unclassified provider call fails the suite.
 4. ✓ The connection probes are exempted in writing and send a fixed sentence, never org content.
 
-**Scope / residual.** OPEN until flows/read (I-09), locate (I-07) and the ingest route (I-06) run the agreement gate. Each adopts `assertAiGates` in its own file.
+**Scope / residual.** OPEN until flows/read (I-09), locate (I-07) and the ingest route (I-06's file, merged without it — to be re-assigned) run the agreement gate. Each adopts `assertAiGates` in its own file.
 
 ---
 

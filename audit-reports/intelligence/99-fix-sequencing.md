@@ -108,6 +108,32 @@ here"* — describes a place at least as much as a filter. Decide deliberately.
 
 Then the remaining findings in severity order.
 
+⚠ **Deploy order — intelligence Round G I-05 (AI governance; `DEC-44` (I-05)).**
+A stored $0 cap LOCKS the moment the app deploys (`GOV-3`) — the app half does
+not wait for `20261137` — where $0 used to mean "no cap". **Before the app
+deploys**, run this read-only query in the Supabase SQL editor (it changes
+nothing; it is `20261137`'s two $0 inventory counts):
+
+```sql
+SELECT 'per-person AI caps stored as $0 (they LOCK once the app deploys)' AS check, COUNT(*)::text AS n
+  FROM ai_usage_limits WHERE user_id IS NOT NULL AND monthly_cap_usd = 0
+UNION ALL
+SELECT 'workspace-default AI caps stored as $0 (every member on the default is locked)', COUNT(*)::text
+  FROM ai_usage_limits WHERE user_id IS NULL AND monthly_cap_usd = 0;
+```
+
+A non-zero count is a workspace that meant "unlimited": set a real figure
+first (AI settings, or an UPDATE of that row), then deploy. `20261137` itself
+may be pasted before or after the app.
+
+**Owners still to map the ledger refusal** (`GOV-4`): during a ledger outage,
+`getMonthUsage` / `getCapUsd` throw a 503 `GovernedCallError`. The ingest
+route, the ingest drain and the codebook import catch it (I-05). The ask
+(I-03), orchestrator (I-04), locate (I-07) and embed (I-02's, merged) routes
+still answer an unhandled 500. They refuse either way, but the sentence is
+lost. Each maps `GovernedCallError` onto its response as it adopts
+`assertAiGates`.
+
 ---
 
 ## Do not do these

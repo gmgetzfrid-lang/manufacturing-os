@@ -424,9 +424,11 @@ intelligence/page.tsx:70 — `const snapKey = `intel-status-${activeOrgId}`;` an
 
 **Resolution (2026-10-01, intelligence Round G).** The snapshot keys are now `intel-status-<uid>-<org>` and `schema-gaps-<uid>-<org>`; RoleContext's sign-out sweep still matches the prefixes. The stored snapshot carries the uid it was written for and is discarded on a mismatch (`readHubSnapshot`). The org-only keys of before are removed on load and never read. Tests: `hubStatus.test.ts` ("HUB-10 — the snapshot belongs to one user", including a shared-device render).
 
+Fix pass, after the review (*corrected:* done-when 2 held for the snapshot on disk but not for the status in memory). When the uid or workspace changed while the page was mounted — an account switched in another tab, since Supabase syncs auth across tabs — the effect kept what was on screen (`{ ...prev }`) with its "known" flags, and the next patch saved the last person's key last-4 and recent questions under the NEW person's key, stamped with the new uid, where the uid check could not catch them. Now the page remembers whose status is on screen (`uid|org`). Only a Retry for the same person and workspace keeps it; any other change starts from the new identity's own snapshot or the empty status. The board also paints nothing it holds for anyone else, even in the frame before the reset (`statusFor`). Tests: `hubStatus.test.ts` ("a uid change while the page is mounted … the last person's status is neither shown nor saved under the new key" — it fails on the pre-fix page; "a Retry for the SAME person keeps what is on screen").
+
 **Done-when.**
 1. ✓ Both keys include the uid.
-2. ✓ The snapshot carries its uid and is discarded on a mismatch, without relying on a sign-out handler having run.
+2. ✓ The snapshot carries its uid and is discarded on a mismatch, without relying on a sign-out handler having run. The in-memory status is never carried across a uid or workspace change, so it is never saved under another identity's key.
 
 **Scope / residual.** None for this finding.
 
