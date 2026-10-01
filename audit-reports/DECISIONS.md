@@ -3310,7 +3310,7 @@ and an unverifiable sheet needs a deliberate single adopt.
 
 *Number provisional — minted by document-control Round F wave 2 (package P3 LIFECYCLE) as the brief directs; distinct from the download-record DEC-44 above. The integrator renumbers on merge (references: `REV-9`, `REV-11`, `REV-12`, `REV-16`, `DRLS-14` in document-control, the header of `supabase/migrations/20261131_dc_roundF_documents_rails.sql`, and one pattern in `lib/__tests__/dcRoundFLifecycleMigration.test.ts`).*
 
-*Sign-off: §2 and §3 remove capabilities (split / merge in a require-mode library, for controllers too; reversing a split / merge recorded before this round, from the UI) and are **awaiting integrator or user sign-off before merge** — the package chose the fail-safe side, but the choice is not the package's to ratify.*
+*Sign-off: the first version of §2 and §3 removed capabilities (split / merge in a require-mode library, for controllers too; reversing a split / merge recorded before this round, from the UI) and was held for sign-off. The second review fix withdrew both removals — a controller issues in a require-mode library with the decision recorded (§2), and the reverse dialog names a legacy status explicitly (§3, `REV-16`) — so neither section now removes a write path the database allows; the integrator need only confirm the refusal §2 keeps (a non-controller in a require-mode library), which is the finding's own bypass closed.*
 
 **Decision. Four calls the lifecycle package had to make, each in the direction that fails safe:**
 
@@ -3338,46 +3338,54 @@ and an unverifiable sheet needs a deliberate single adopt.
    delete flow, which clears the pointer before deleting the versions, now
    stops part-way at the version step (`DRLS-17`).
 2. **A creation that issues controlled content in a library whose effective
-   policy REQUIRES sign-off is refused, not routed** *(awaiting sign-off —
-   see above)*. Split and merge sheets
+   policy REQUIRES sign-off is refused for everyone but a controller, never
+   routed — and a controller's issue is recorded.** Split and merge sheets
    and an "Issued" upload are first issues outside the database's revision
    gate (RG-7). Routing a split's sheets through review would supersede the
    controlled source while its replacements are unapproved — no controlled
-   copy in between — so the operation refuses and says how to proceed
-   (create as Draft, review, then retire the old document). Under
-   `publisher_choice` / `none` it proceeds and the decision is recorded on
-   the creation event. An unreadable policy refuses (RG-6). The cost, stated:
-   in a require-mode library nobody — Doc Control and Admin included — can
-   split or merge; they hand-build Draft sheets, review them, then supersede.
-   Letting a controller proceed with the decision recorded (the database's
-   RG-7 admits a first issue) is the alternative the sign-off may choose.
-3. **A reversal restores only a status it can prove** *(awaiting sign-off —
-   see above)*. Split and merge
+   copy in between — so for a non-controller the operation refuses and says
+   how to proceed (create as Draft, review, then retire the old document, or
+   ask Document Control); that refusal is the finding's own bypass closed
+   (an owner splitting past a mandatory review). Doc Control and Admin — the
+   people who own the policy — proceed, and the creation event records the
+   decision and who made it (`reviewPolicy: "require — issued WITHOUT the
+   sign-off the policy requires, by controller <uid> …"`). Under
+   `publisher_choice` / `none` it proceeds and the decision is recorded too.
+   An unreadable policy refuses (RG-6). *(Second review fix: the first
+   version refused controllers as well, removing a write path the database
+   admits.)*
+3. **A reversal restores only a status it can prove — or one a controller
+   names.** Split and merge
    record the source's prior status (read fresh) and the operation's instant
    on their audit event; a reversal restores exactly that. An event recorded
    before this round carries none: the reversal refuses rather than guess —
    restoring "Issued" is what made a Void or Draft source a controlled copy
    again — unless the caller names the status explicitly. The reversal
-   dialog has no way to name one yet, so a split / merge recorded before this
-   round cannot be reversed from the UI until it does (`REV-16`); and a
-   reversal is a Document Control / Admin act (it deletes supersession rows,
-   which `20261131` reserves to them), so an owner who still sees the button
-   is refused with the reason.
+   dialog names it: for an event that recorded none it shows a required
+   picker of the validated statuses with nothing pre-selected (`REV-16`,
+   second review fix). A reversal is a Document Control / Admin act (it
+   deletes supersession rows, which `20261131` reserves to them), and the
+   reverse affordance is offered only to them.
 4. **"In effect" is decided in one calendar: the facility's.** The
    deployment names it in `NEXT_PUBLIC_FACILITY_TIME_ZONE` (an IANA zone,
    read at call time by `effectiveDateTimeZone()` — the browser bundle and
    the cron scan read the same name). The badge, the suppression watermark,
    the daily scan and (once P8 swaps its inline date for
    `effectiveTodayISO()`) `/api/verify` compare YYYY-MM-DD strings in it.
-   Unset, or not a zone the runtime knows, it falls back to UTC — the
-   calendar the server paths already used. That fallback is consistent but
-   NOT neutral: the badge moved off the browser's local calendar, so with no
-   zone named it flips a date early for every site west of UTC (a Houston
-   publisher's "tomorrow" reads in effect from 19:00 the evening before, and
-   is never announced). `REV-9` therefore stays open until every deployment
-   names its zone, or an org / library zone setting lands (which changes
-   `effectiveDateTimeZone()` and nothing else); closing it takes the zone,
-   not only P8's one-line `/api/verify` swap. The database never pre-stamps
+   Unset, or not a zone the runtime knows, it falls back to **UTC-12**
+   (`Etc/GMT+12`), the latest calendar on Earth — never UTC. A day begins
+   there only after it has begun in every facility's calendar, so with no
+   zone named a date is never shown, stamped or announced as in force early
+   anywhere; it is late instead, by the facility's offset plus twelve hours
+   at most (a Houston badge flips at 07:00, not midnight). *(Second review
+   fix: the first version fell back to UTC, which moved the field-facing
+   badge onto a calendar that flips a date early for every site west of UTC
+   — a Houston publisher's "tomorrow" read in effect from 19:00 the evening
+   before, and was never announced.)* `REV-9` stays open until P8 swaps
+   `/api/verify`'s inline date and every deployment names its zone (the
+   wave-2 app deploy is conditional on it), or an org / library zone setting
+   lands (which changes `effectiveDateTimeZone()` and nothing else). The
+   database never pre-stamps
    a date that may still be ahead in the facility's calendar: the register
    rail's copy (`REV-13`, below) stamps the watermark only for no date or a
    date before yesterday in UTC.
@@ -3415,12 +3423,15 @@ holds before the supersession, recorded prior statuses, checked reversals),
 versions (strip on insert, patch after), the rails can become declared FKs
 with no change in behaviour. (2) A "pending split" state that supersedes on
 approval would let a require-mode library route instead of refuse. (3) A
-picker in the reversal dialog supplies the explicit status for a legacy
-event. (4) An org / library zone setting replaces the deployment variable.
+per-source picker would let a legacy merge restore siblings to different
+statuses. (4) An org / library zone setting replaces the deployment variable.
 
 **Risk:** low on authority — every rule refuses something that was allowed;
 nobody gains anything on apply. Medium on workflow: `20261131`'s label rail
 refuses the library page's metadata save whenever it changes Rev (the
-whole statement, other edits included, and the page discards the error), so
-fixing that save is a deploy prerequisite of `20261131` (`DRLS-15`,
-recorded in `document-control/99-fix-sequencing.md`).
+whole statement, other edits included, and the page discards the error),
+and its evidence FKs stop the page's delete flow part-way, so `20261131` is
+**not pasteable** until both page fixes are deployed (`DRLS-15`, `DRLS-17`;
+the order is in `document-control/99-fix-sequencing.md`).
+
+*Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, second review fix): §2's controller path (recorded) and §3's dialog picker (`REV-16`) withdraw the two capability removals; §4's fallback is UTC-12, never early. The split / merge / supersede saga now does nothing irreversible (the review void, the share revocation) before its last step that can roll back, registers each source's restore before its flip, and runs an extended merge target's rev-up last. See `REV-6`, `REV-9`, `REV-11`, `REV-12`, `REV-14`, `REV-16`, `HLD-2`.*
