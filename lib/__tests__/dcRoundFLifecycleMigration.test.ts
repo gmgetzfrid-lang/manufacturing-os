@@ -172,11 +172,13 @@ describe("20261130 — publish_revision re-created from 20261105 with the DCK-8 
     expect(M130).toContain("GRANT EXECUTE ON FUNCTION publish_revision(uuid, uuid, text, jsonb, uuid, text, boolean, boolean, text, text, boolean, text) TO authenticated, service_role;");
   });
 
-  it("20261130 is the newest publish_revision; the publish guard is untouched (20261105 stays its newest body)", () => {
+  it("20261130 is the newest publish_revision; it leaves the publish guard alone (20261105's body, re-created next by P12's 20261139 for REV-17)", () => {
     const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const newest = (fn: RegExp) => files.filter((f) => fn.test(stripComments(mig(f)))).pop();
     expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");
-    expect(newest(/CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/)).toBe("20261105_prj_roundG_intake_review_and_attempts.sql");
+    // P12 WAVE-2 RESIDUALS (REV-17) re-creates the guard from 20261105's body + one block (its own lineDiff test)
+    expect(newest(/CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/)).toBe("20261139_dc_roundF_first_issue_and_branch_closeout.sql");
+    expect(stripComments(mig("20261130_dc_roundF_publish_override_reason.sql"))).not.toMatch(/FUNCTION enforce_document_publish_guard\(/);
     expect(stripComments(M131)).not.toMatch(/FUNCTION (publish_revision|enforce_document_publish_guard|user_can_publish_on_library)\(/);
   });
 

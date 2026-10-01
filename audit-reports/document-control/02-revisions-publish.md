@@ -1,6 +1,6 @@
 # 02 · Revisions, publish & supersession
 
-**17 findings** — 2 CRITICAL · 4 HIGH · 8 MEDIUM · 3 LOW.
+**18 findings** — 2 CRITICAL · 5 HIGH · 8 MEDIUM · 3 LOW.
 
 Every path to a published revision, and which ones skip the guard.
 
@@ -717,7 +717,7 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 ## REV-17 · The database admits a non-controller's first issue in a library whose policy requires sign-off — the require-mode refusal of a new document's Rev 0 is enforced by the app only
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P12 WAVE-2 RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql:415` (`enforce_document_publish_guard`, newest body — the RG-7 block), `lib/revisions.ts` (`resolveCreationReviewGate`, `createDocumentWithFile`), `lib/documentLifecycle/common.ts` (`createNewDocWithFirstVersion`), DEC-63 (P3 LIFECYCLE) §2
@@ -733,5 +733,42 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 - [ ] A test pins the refusal and the controller / intake exemptions.
 
 **Closer:** the integrator assigns it (the guard's newest body is J1's 20261105; P3 LIFECYCLE's migration numbers this wave are 20261130 / 20261131, neither of which re-creates the guard).
+
+**Resolution (2026-10-01, document-control Round F wave 2).** P12 WAVE-2 RESIDUALS — the code half; **Pending migration:** `supabase/migrations/20261139_dc_roundF_first_issue_and_branch_closeout.sql` (DEC-30) — the finding is not closed in any database until it is pasted. Reproduced on `00560fb`: the newest `enforce_document_publish_guard` is `20261105` (grep of the numbered sequence: `20261130` / `20261131` / `20261132` / `20261133` do not re-create it); its RG-7 block refuses a direct revision only under `OLD.current_version_id IS NOT NULL`, so a NULL → version first pointer write passed in a require-mode library (exercised on a throwaway PostgreSQL 16 with the real `20261105` body and `review_control_mode_for`: a non-controller owner's Issued first pointer write was admitted).
+- **The rule** (`20261139` §1): the guard re-created from `20261105`'s body plus ONE block in the zero-roster branch, after RG-7's Major rule and before SEC-13 — a first pointer write (`OLD.current_version_id IS NULL`), not intake-linked, onto a document in an issued status (`NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')` — `lib/revisions.ts` `isControlledIssueStatus`, the same predicate the app's creation doors use; `WORK_IN_PROGRESS_STATUSES` + `NOT_CURRENT_STATUSES`), by a non-controller (`is_org_controller`), when the folder / library chain (`review_control_mode_for(NULL, …)`, what `resolveCreationReviewGate` reads) OR the document's own policy requires sign-off, raises `check_violation` "This library requires reviewer sign-off, so a new document can't be issued unreviewed; create it as a Draft and submit it for review, or ask Document Control." The chain is read as well as the document's own setting so a creator cannot insert the document with `review_control = {"mode":"none"}` and slip past (20261072 guards that column on UPDATE only). A first revision carrying a complete roster passes (it was reviewed); intake-linked versions keep SEC-13's refusal; a controller proceeds and the app records the decision (DEC-63 §2). Every other line of the `20261105` body is carried byte for byte. EXECUTE on the trigger function is revoked from PUBLIC and every client role (DRLS-16 rule; a trigger function's privilege is checked when the trigger is created, never when it fires — exercised).
+- **DEC-30 inventory** (before the transaction, counts only): documents in an issued status whose current revision is their first, with no reviewer roster and no intake link, under a require policy; and of those, the ones whose creator is not now an active controller. Kept as they are; the rail binds the next first issue. The final SELECT probes the block (five `prosrc` fragments), the surviving `20261105` rules, the definer / `search_path` / no-client-EXECUTE state and the trigger binding.
+- **The app's half** (landed with `REV-15`, `uploadOne`): the library page's bulk upload — the one creation door that never asked the gate — now resolves `resolveCreationReviewGate` for a controlled status before anything is uploaded or inserted, so after the paste a non-controller in a require-mode library is refused cleanly by the app instead of leaving a document whose first pointer write the database refused; its pointer write is checked either way.
+- **Exercised** on a throwaway PostgreSQL 16 (stub roles / `auth.uid()` / evaluators, the real `20261105` guard, `20261070`'s `review_control_mode_for`, `20261061`'s policy), applied twice (idempotent; every probe `true` both times; inventory 2 / 1 on the seed): a non-controller owner's Issued first issue in a require library — refused; the same with a document-level `{"mode":"none"}` — refused; a document-level `require` in a `none` library — refused; a Draft — admitted; Issued in a `none` library — admitted; a first revision with a complete signed roster — admitted; an intake-linked first version — SEC-13's refusal; a controller — admitted.
+- Tests: `lib/__tests__/dcRoundFWave2ResidualsMigrations.test.ts` "20261139 — REV-17 …": `20261105` is the newest earlier definition; byte fidelity both as a lineDiff (nothing removed; the added code lines exactly the block) and ordered (cutting the one contiguous block out of the new body gives `20261105`'s body exactly); the block's position (zero-roster branch, after RG-7, before SEC-13, after `v_intake_link` is read); the SQL status list in the guard and both inventory rows equals `WORK_IN_PROGRESS_STATUSES` + `NOT_CURRENT_STATUSES`; definer + `search_path` + the REVOKE; every `prosrc` probe fragment occurs in the body; the one-paste protocol (TEMP inventory before one BEGIN / COMMIT, one final SELECT of the fixed shape, counts only, no cast in a deparsed LIKE). `dcRoundFLifecycleMigration.test.ts`'s newest-guard pin now names `20261139` (and still proves `20261130` leaves the guard alone). "REV-15 / REV-17 — which statuses ISSUE …" pins the predicate.
+
+**Done-when.**
+1. ✓ `enforce_document_publish_guard`, re-created from its newest body (`20261105`) with a lineDiff proof, refuses a NULL → version first pointer write by a non-controller when the governing review policy is `require`, excluding intake-linked versions — with a DEC-30 inventory of documents issued that way. *(In `20261139`, not yet pasted.)*
+2. ✓ A test pins the refusal and the controller / intake exemptions: the shape test pins the block and its exemptions in the SQL; the throwaway-PostgreSQL run exercised each (no live database in CI).
+
+**Scope / residual.** **Pending migration:** `20261139` (DEC-30; paste after `20261105` and `20261061`; independent of `20261129`–`20261131`; never re-paste `20261105` afterwards). The rule binds the first POINTER write. A document created as a Draft (admitted) can still be moved to Issued by a plain status update, which the guard does not see at all (`v_advancing` covers a pointer move, entry into Superseded / Archived and exit from Superseded / Archived / Void — never Draft → Issued) — and the documents UPDATE policy admits any active member, so that is wider than this finding (any member, any policy). Opened as **`REV-18`** (DEC-31) rather than folded in: adding Draft → issued to `v_advancing` changes who may change a status for every library, and needs its own inventory and decision.
+
+---
+
+<a id="rev-18"></a>
+
+## REV-18 · Moving a document from Draft / In Review to Issued is a write no guard sees — any active member issues an unreviewed revision by changing the status, whatever the library's review policy
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Verification:** CONFIRMED (read from the newest guard and the documents policies; the guard half exercised on a throwaway PostgreSQL 16)
+- **Locations:** `supabase/migrations/20261105_prj_roundG_intake_review_and_attempts.sql` (`enforce_document_publish_guard`, the `v_advancing` expression — carried unchanged into `20261139`), `supabase/schema.sql` (`documents_org_access` FOR ALL), `components/documents/BulkEditModal.tsx` (Status as a bulk field), `components/documents/MetadataEditor.tsx` (the Status select)
+- **Independently verified:** — opened 2026-10-01 by document-control Round F wave 2 (P12 WAVE-2 RESIDUALS) while closing `REV-17`, per DEC-31 (the remainder of a fix that would otherwise change who may change a status in every library); not yet challenged by a second party.
+
+**Mechanism.** The publish guard decides only "advancing" writes: `v_advancing` is a `current_version_id` move, entry into Superseded or Archived, or exit from Superseded / Archived / Void (OWN-15 / OWN-19). A status change from Draft or In Review to Issued (or IFC, or any library status) moves no pointer, so the guard returns `NEW` before its review gate, its publish-authority check and its hold check. No other trigger reads that transition (the register rail `20261131` binds rev / revision / number / effective date / pointers; the lock, access, review-control, legal-hold and retention guards bind other columns), and `documents_org_access` admits an UPDATE by any active member of the org. `REV-17` (`20261139`) refuses a non-controller's issued FIRST pointer write in a require-mode library — but a Draft first revision is admitted (it is not an issue), so the issue can be made one step later by the status alone.
+
+**Failure scenario.** In a library whose policy requires sign-off, an engineer creates "P-101 Rev 0" as a Draft (admitted), then — or any Viewer, through PostgREST — PATCHes `{"status": "Issued"}`. The register shows a controlled Issued drawing whose only revision was never reviewed; `/api/verify` answers CURRENT for it, a share link can now be minted for it, the compliance clocks never started, and nothing recorded the issue. Exercised on a throwaway PostgreSQL 16 with the real guard: a member with no authority and no ownership moved a Draft document with an unreviewed current revision to Issued in a require-mode library (`UPDATE 1`).
+
+**Done when.**
+
+- [ ] A status change that makes a document with a current revision a controlled issue (out of Draft / In Review into anything `isControlledIssueStatus` calls an issue) is a guarded write: the publisher tier only (controller, library publisher, effective owner), never over an active hold, and in a require-mode library only for a controller or when the current revision carries a complete roster — with a DEC-30 inventory of documents issued that way.
+- [ ] The app's status editors (the metadata editor, the bulk editor) surface the refusal.
+- [ ] A test pins the transition rule, its exemptions and the inventory.
+
+**Closer:** unassigned — the integrator assigns it (the guard's newest body is `20261139`, P12's; a status transition rule changes behaviour in every library and wants a decision on the authority it takes).
 
 ---

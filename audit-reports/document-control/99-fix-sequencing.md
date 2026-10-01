@@ -202,3 +202,19 @@ future migration that re-opens the shape.
 
 **`REV-9` closes** when P8 swaps `/api/verify`'s inline date for
 `effectiveTodayISO()` and every deployment names its zone (rule 2).
+
+⚠ **Paste order — P12 WAVE-2 RESIDUALS (2026-10-01).** Two one-paste
+migrations, each independent of `20261129`–`20261131` and of each other:
+
+- `20261139_dc_roundF_first_issue_and_branch_closeout.sql` (`REV-17`,
+  `DRLS-9`) — after `20261105` (the publish guard's base) and `20261061`
+  (the branch policy's base). It re-creates `enforce_document_publish_guard`:
+  **never re-paste `20261105` (or any earlier guard migration) after it**, or
+  the first-issue block is dropped. Deploy the app carrying `REV-15`'s bulk
+  upload change with or before it, so a refused first issue is asked up
+  front instead of leaving a document with no file.
+- `20261140_dc_roundF_share_download_deny_rail.sql` (`SHR-14`) — after
+  `20261080` (the share INSERT policy's base).
+
+Both narrow; their result sets carry the DEC-30 inventories to read back
+into the records.

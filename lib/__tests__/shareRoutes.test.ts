@@ -1037,7 +1037,8 @@ describe("20261081 — the per-access record and the pinned counter", () => {
   it("the numbered sequence's LAST definition of each share object is this package's", () => {
     const files = readdirSync(join(root, "supabase", "migrations")).filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort();
     const lastDefining = (re: RegExp) => files.filter((f) => re.test(stripSqlComments(mig(f)))).at(-1);
-    expect(lastDefining(/CREATE POLICY document_shares_insert ON/)).toBe("20261080_dc_roundF_share_minting_and_revocation.sql");
+    // P12 WAVE-2 RESIDUALS (SHR-14) re-creates the INSERT rail from 20261080's body + the download-deny arm
+    expect(lastDefining(/CREATE POLICY document_shares_insert ON/)).toBe("20261140_dc_roundF_share_download_deny_rail.sql");
     expect(lastDefining(/CREATE POLICY document_shares_delete ON/)).toBe("20261080_dc_roundF_share_minting_and_revocation.sql");
     expect(lastDefining(/CREATE OR REPLACE FUNCTION document_shares_anchor_immutable\(\)/)).toBe("20261080_dc_roundF_share_minting_and_revocation.sql");
     expect(lastDefining(/CREATE OR REPLACE FUNCTION bump_share_access\(/)).toBe("20261081_dc_roundF_share_access_log.sql");
