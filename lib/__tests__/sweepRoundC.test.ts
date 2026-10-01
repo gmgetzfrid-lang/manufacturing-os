@@ -20,6 +20,9 @@ const state = vi.hoisted(() => ({
   /** acl_index_denies answers (ORCH-8): action → denied. */
   denies: {} as Record<string, boolean>,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** ORCH-6: a read of these tables errors; `.or()` lists are recorded. */
+  errors: {} as Record<string, { message: string }>,
+  orCalls: [] as Array<{ table: string; list: string }>,
 }));
 
 function chain(table: string) {
@@ -27,9 +30,12 @@ function chain(table: string) {
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
-        return (resolve: (v: unknown) => void) => resolve({ data: state.lists[table] ?? [], error: null });
+        return (resolve: (v: unknown) => void) => resolve(state.errors[table]
+          ? { data: null, error: state.errors[table] }
+          : { data: state.lists[table] ?? [], error: null });
       }
       return (...args: unknown[]) => {
+        if (prop === "or") state.orCalls.push({ table, list: String(args[0]) });
         if (prop === "maybeSingle") return Promise.resolve({ data: state.single[table] ?? null, error: null });
         if (prop === "upsert") {
           state.upserts.push({ table, row: args[0] as Record<string, unknown>, opts: args[1] });
@@ -87,7 +93,7 @@ const run = (name: string, args: Record<string, string | number | boolean>, ctx:
 beforeEach(() => {
   state.single = {}; state.lists = {}; state.readable = new Set();
   state.upserts = []; state.askedFor = []; state.emitted = []; state.rpc = [];
-  state.denies = {}; state.rpcCalls = [];
+  state.denies = {}; state.rpcCalls = []; state.errors = {}; state.orCalls = [];
 });
 
 /** Two knowledge mirrors (k1 → d1 denied, k3 → d2 readable) and one
@@ -259,6 +265,30 @@ describe("SURF-7 / EGRESS-3 — reads and acts are filtered through the caller",
       row: { org_id: "o1", library_id: null, sheet_number: "P-2030-001", revision_code: "C", status: "passed" },
       opts: { onConflict: "org_id,library_id,sheet_number,revision_code" },
     });
+  });
+});
+
+describe("ORCH-6 — model text is escaped in .or() filters, and a failed lookup is never 'nothing found'", () => {
+  it("find_documents / query_equipment_by_unit quote the model's text as one literal value", async () => {
+    await run("find_documents", { query: "Pumps, Centrifugal (Unit 12)" }, ctxFor(["Viewer"]));
+    await run("query_equipment_by_unit", { unit_name: "Crude (U-20)" }, ctxFor(["Viewer"]));
+    expect(state.orCalls).toEqual([
+      { table: "documents", list: 'document_number.ilike."%Pumps, Centrifugal (Unit 12)%",title.ilike."%Pumps, Centrifugal (Unit 12)%"' },
+      { table: "assets", list: 'unit_code.ilike."%Crude (U-20)%",description.ilike."%Crude (U-20)%"' },
+    ]);
+  });
+  it("a query error comes back as an error payload — never matches: [] / equipment: []", async () => {
+    state.errors.documents = { message: "failed to parse logic tree" };
+    const found = await run("find_documents", { query: "Pumps, Centrifugal (Unit 12)" }, ctxFor(["Viewer"]));
+    expect(found.data).toMatchObject({ matches: null });
+    expect(String((found.data as { error?: string }).error)).toMatch(/NOT the same as finding nothing/);
+    state.errors.assets = { message: "timeout" };
+    const eq = await run("query_equipment_by_unit", { unit_name: "Crude" }, ctxFor(["Viewer"]));
+    expect(eq.data).toMatchObject({ equipment: null });
+    expect(String((eq.data as { error?: string }).error)).toMatch(/NOT the same as an empty unit/);
+  });
+  it("the system prompt tells the model a result with an error is a failed lookup", () => {
+    expect(src("lib/orchestrator/loop.ts")).toMatch(/A tool result with an \\"error\\" field means the lookup FAILED/);
   });
 });
 

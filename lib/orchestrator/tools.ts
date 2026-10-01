@@ -21,7 +21,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
-import type { ParamSpec } from "@/lib/orchestrator/protocol";
+import { orIlikeContains, type ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -163,7 +163,7 @@ const findDocuments: ToolDef = {
   ],
   async run(args, ctx) {
     const q = String(args.query);
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("documents")
       .select("id, document_number, title, rev, status, library_id, updated_at")
       .eq("org_id", ctx.orgId)
@@ -172,10 +172,17 @@ const findDocuments: ToolDef = {
       // honoured here explicitly because this code runs on the service-role
       // key, where RLS would not stop us.
       .eq("ai_excluded", false)
-      .or(`document_number.ilike.%${q}%,title.ilike.%${q}%`)
+      // ORCH-6: the model's text is a quoted, escaped literal — a comma or a
+      // parenthesis in a title no longer re-splits the filter list.
+      .or(orIlikeContains(["document_number", "title"], q))
       .neq("status", "Archived")
       .order("updated_at", { ascending: false })
       .limit(LIMIT * 4);
+    // ORCH-6: a failed lookup is reported as a failure — never as "no
+    // documents", which the model would pass on as a true absence.
+    if (error) {
+      return { data: { error: "The document lookup failed — this is NOT the same as finding nothing. Say it could not be checked.", matches: null } };
+    }
     // SURF-7: only what the caller could open themselves.
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     const readable = await readableIds(ctx, rows.map((r) => String(r.id)));
@@ -255,12 +262,15 @@ const queryEquipmentByUnit: ToolDef = {
   params: [{ name: "unit_name", type: "string", required: true, description: "Unit name or code." }],
   async run(args, ctx) {
     const u = String(args.unit_name);
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("assets")
       .select("id, tag, description, unit_code")
       .eq("org_id", ctx.orgId).eq("archived", false)
-      .or(`unit_code.ilike.%${u}%,description.ilike.%${u}%`)
+      .or(orIlikeContains(["unit_code", "description"], u))
       .limit(100);
+    if (error) {
+      return { data: { unit: u, error: "The equipment lookup failed — this is NOT the same as an empty unit. Say it could not be checked.", equipment: null } };
+    }
     return {
       data: {
         unit: u,

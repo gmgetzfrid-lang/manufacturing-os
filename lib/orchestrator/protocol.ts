@@ -161,3 +161,73 @@ export function isRepeatCall(history: readonly ToolCall[], next: ToolCall): bool
   return last.tool === next.tool
     && JSON.stringify(last.parameters) === JSON.stringify(next.parameters);
 }
+
+/**
+ * ORCH-6: a model-supplied text as the value of an `ilike` "contains" term
+ * inside a PostgREST `.or()` filter list, matched as a LITERAL substring.
+ *
+ * `.or()` takes a comma-separated list of `column.op.value` terms and
+ * appends it to the URL verbatim, so a comma, a parenthesis or a quote in a
+ * raw value re-splits the list — 'Pumps, Centrifugal (Unit 12)' became a
+ * malformed filter, PostgREST answered 400, and the tool reported "no
+ * documents". Here the LIKE wildcards and escape (`%`, `_`, `\`) are
+ * escaped so the text matches literally, the pattern is wrapped in `%…%`,
+ * and the whole value is double-quoted — PostgREST's escape for reserved
+ * characters — with `\` and `"` backslash-escaped inside the quotes.
+ * (PostgREST reads `*` in a like pattern as `%` and offers no escape for
+ * it, so a `*` still matches anything — a wider search within the other
+ * AND-ed filters, never a different column or org.)
+ */
+export function ilikeContainsValue(text: string): string {
+  const literal = text.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const pattern = `%${literal}%`;
+  return `"${pattern.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/** `col1.ilike.<v>,col2.ilike.<v>` for `.or()`, the value escaped once. */
+export function orIlikeContains(columns: readonly string[], text: string): string {
+  const v = ilikeContainsValue(text);
+  return columns.map((c) => `${c}.ilike.${v}`).join(",");
+}
+
+/**
+ * ORCH-9: neutralise document-derived text before it enters the model's
+ * transcript. Tool results carry text other people wrote (extracted PDF
+ * passages, mention snippets, document names); a page can be written to
+ * look like the transcript's own structure or like an instruction. Every
+ * string in the value is rewritten so that:
+ *   - the result fence's markers (`<<<`, `>>>`) cannot appear;
+ *   - a role or transcript marker (`SYSTEM:`, `ASSISTANT:`, `USER:`,
+ *     `QUESTION:`, `WHAT YOU HAVE DONE SO FAR`, `STOP CALLING TOOLS`, …) is
+ *     visibly quoted («…»), so it reads as text in a document;
+ *   - a tool-call key (`tool_name`) is broken up.
+ * The fence itself carries a per-run id the document cannot know (loop.ts).
+ * Pure; returns a new value, never mutates the input.
+ */
+export function neutralizeUntrusted<T>(value: T): T {
+  return walk(value) as T;
+}
+
+const ROLE_MARKER = /\b(SYSTEM|ASSISTANT|USER|DEVELOPER|HUMAN|TOOL|QUESTION|REJECTED|PARAMETERS REJECTED|SITE INSTRUCTIONS)\s*:/gi;
+const TRANSCRIPT_PHRASE = /WHAT YOU HAVE DONE SO FAR|YOUR LAST REPLY WAS REJECTED|STOP CALLING TOOLS|TOOL RESULT/gi;
+
+function neutralizeString(text: string): string {
+  return text
+    .replace(/<{3,}/g, (m) => "‹".repeat(m.length))
+    .replace(/>{3,}/g, (m) => "›".repeat(m.length))
+    .replace(ROLE_MARKER, (m) => `«${m}»`)
+    .replace(TRANSCRIPT_PHRASE, (m) => `«${m}»`)
+    .replace(/tool_name/gi, "tool name");
+}
+
+function walk(v: unknown): unknown {
+  if (typeof v === "string") return neutralizeString(v);
+  if (Array.isArray(v)) return v.map(walk);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+    return out;
+  }
+  return v;
+}
+
