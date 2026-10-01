@@ -367,6 +367,27 @@ describe("GM-13 / FLOW-9 (orgGraph half) — every capped pull is said; the mirr
   });
 });
 
+describe("pageIn — chunked, waved IN reads lose nothing", () => {
+  it("1,200 mentions through 1,200 distinct mirrors (8 chunks, 2 waves) are all resolved and drawn", async () => {
+    const n = 1200;
+    const docs = Array.from({ length: n }, (_, i) => o({
+      id: `dm${String(i).padStart(5, "0")}`, document_number: `M-${i}`, title: null, library_id: "L1", unit_id: null, unit_code: null,
+      sheet_number: null, sheet_total: null, updated_at: "2026-09-01",
+    }));
+    reset(plant({
+      documents: docs,
+      knowledge_documents: docs.map((d, i) => o({ id: `km${String(i).padStart(5, "0")}`, source_document_id: d.id })),
+      entity_mentions: docs.map((_, i) => o({ id: `mm${String(i).padStart(5, "0")}`, asset_id: "a1", document_id: null, knowledge_document_id: `km${String(i).padStart(5, "0")}` })),
+    }));
+    const g = await buildOrgGraph(ORG);
+    expect(g.mentionCoverage).toMatchObject({ rows: n, drawn: n, unmapped: 0 });
+    expect(g.truncations.join("\n")).not.toMatch(/could not resolve|library-only/);
+    const inCalls = db.calls.filter((c) => c.table === "knowledge_documents" && c.method === "in");
+    expect(inCalls).toHaveLength(Math.ceil(n / 150));
+    expect(inCalls.every((c) => (c.args[1] as unknown[]).length <= 150)).toBe(true);
+  });
+});
+
 describe("GM-6 — the reader's ACL is reported, not presented as a fact about the plant", () => {
   const twoDocs = () => plant({
     documents: [

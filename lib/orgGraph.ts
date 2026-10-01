@@ -153,6 +153,7 @@ const LIST_CAP = 300;
 const EDGE_PAGE = 1000;
 const EDGE_CAP = 8000;
 const IN_CHUNK = 150;
+const IN_WAVE = 6;
 
 export const GRAPH_CAPS = { DOC_CAP, ASSET_CAP, LIST_CAP, EDGE_PAGE, EDGE_CAP } as const;
 
@@ -274,24 +275,35 @@ export async function pageRows<T extends { id: string }>(
   return { rows, capped: total === null || total > rows.length, missing: false, total, error: null };
 }
 
-/** pageRows over `column IN values`, chunked; rows de-duplicated by id. */
+/** pageRows over `column IN values`, chunked (IN_CHUNK ids per request, up
+ *  to IN_WAVE requests in flight); rows de-duplicated by id, ordered by id. */
 export async function pageIn<T extends { id: string }>(
   table: string, select: string, orgId: string, column: string,
   values: readonly string[], cap: number,
 ): Promise<PagedRows<T>> {
   const seen = new Map<string, T>();
   const uniq = [...new Set(values.filter(Boolean))];
-  for (let i = 0; i < uniq.length; i += IN_CHUNK) {
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += IN_CHUNK) chunks.push(uniq.slice(i, i + IN_CHUNK));
+  const done = (extra: Partial<PagedRows<T>>): PagedRows<T> => {
+    const rows = [...seen.values()].sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+    const capped = extra.capped ?? false;
+    return { rows: capped ? rows.slice(0, cap) : rows, capped, missing: false, total: capped ? null : rows.length, error: null, ...extra };
+  };
+  for (let w = 0; w < chunks.length; w += IN_WAVE) {
     const room = cap - seen.size;
-    if (room <= 0) return { rows: [...seen.values()], capped: true, missing: false, total: null, error: null };
-    const chunk = uniq.slice(i, i + IN_CHUNK);
-    const r = await pageRows<T>(table, select, orgId, room, (q) => q.in(column, chunk));
-    if (r.missing) return { rows: [...seen.values()], capped: false, missing: true, total: null, error: null };
-    for (const row of r.rows) seen.set(String(row.id), row);
-    if (r.error) return { rows: [...seen.values()], capped: false, missing: false, total: null, error: r.error };
-    if (r.capped) return { rows: [...seen.values()], capped: true, missing: false, total: null, error: null };
+    if (room <= 0) return done({ capped: true });
+    const wave = await Promise.all(chunks.slice(w, w + IN_WAVE).map((chunk) =>
+      pageRows<T>(table, select, orgId, room, (q) => q.in(column, chunk))));
+    for (const r of wave) {
+      if (r.missing) return { rows: [...seen.values()], capped: false, missing: true, total: null, error: null };
+      for (const row of r.rows) seen.set(String(row.id), row);
+    }
+    const failed = wave.find((r) => r.error);
+    if (failed) return done({ error: failed.error });
+    if (wave.some((r) => r.capped) || seen.size > cap) return done({ capped: true });
   }
-  return { rows: [...seen.values()], capped: false, missing: false, total: seen.size, error: null };
+  return done({});
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
