@@ -24,6 +24,12 @@
 //                  already held is counted, never "refused"; bisection has a
 //                  statement budget; every check is audited; a storage key
 //                  under another workspace's prefix is refused.
+//   fix pass 3     the outbound mail queue is never restored (a restored
+//                  queued row bypassed SURF-17 and was sent by the drain); a
+//                  re-run links the placeholders an earlier run created
+//                  (members of every status), so uid-keyed rows never land
+//                  twice; a cleared pointer is reported only for a row the
+//                  database took.
 //
 // The routes run for real against an in-memory engine that behaves like
 // PostgREST where it matters here: a statement is atomic, `upsert` with
@@ -53,8 +59,8 @@ import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore,
   previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, ROW_LEVEL_SQLSTATES,
-  RESTORE_BISECT_MAX_STATEMENTS,
-  type RestorePost, type RestoreEnvelopeLike,
+  RESTORE_BISECT_MAX_STATEMENTS, RESTORE_LINK_MEMBER_STATUSES, restoreTableRefusal,
+  type RestorePost, type RestoreEnvelopeLike, type CurrentMember,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
@@ -959,5 +965,214 @@ describe("BKP-5 (fix pass 2) — the result panel never says 'nothing new' over 
     expect(page).toMatch(/result\.totalRefused > 0 \|\| result\.totalCleared > 0 \|\| result\.totalUncounted > 0 \|\| nothingNew \? "border-amber-200/);
     expect(page).toMatch(/pointer\(s\) cleared/);
     expect(page).toMatch(/result\.placeholdersWithoutProfile > 0/);
+  });
+});
+
+// ─── admin-and-org Round G, P1 fix pass 3 ───────────────────────────────────
+
+describe("BKP-11 (restore half) / DEC-45 (fix pass 3) — no restored row of the mail queue can be sent", () => {
+  // The hostile row the review reproduced: an external address, marked
+  // external, queued, with a phishing body — everything the client INSERT
+  // rail (SURF-17) refuses and the service-role restore never sees.
+  const hostile = (id: string, extra: Row = {}) => ({
+    id, org_id: "backup-org", to_email: "victim@external.example", subject: "Action required",
+    body_text: "x", body_html: "<a href=https://evil>sign in</a>", status: "queued", attempt_count: 0,
+    metadata: { external: "true" }, ...extra,
+  });
+  /** The drain's candidates (send-queued: status queued/failed AND attempt_count < 5), plus the
+   *  rows an Admin's dead-letter re-queue (admin/settings) would make candidates again. */
+  const sendable = () => rowsOf("email_notifications").filter((r) => ["queued", "failed"].includes(String(r.status)));
+
+  it("the drain's and the re-queue's definitions are the ones this test assumes", () => {
+    const drain = readFileSync(join(process.cwd(), "app/api/notifications/send-queued/route.ts"), "utf8");
+    expect(drain).toMatch(/\.in\("status", \["queued", "failed"\]\)\s*\.lt\("attempt_count", MAX_ATTEMPTS\)/);
+    // why landing a row terminal ('failed', attempt 5) would not do: an Admin re-queues those, address and body unchanged
+    const settings = readFileSync(join(process.cwd(), "app/(protected)/admin/settings/page.tsx"), "utf8");
+    expect(settings).toMatch(/\.update\(\{ status: "queued", attempt_count: 0 \}\)\s*\.eq\("org_id", activeOrgId\)\.eq\("status", "failed"\)\.gte\("attempt_count", 5\)/);
+  });
+
+  it("the chunked /apply-table refuses the table with 400 and writes nothing — not even a terminal row", async () => {
+    const r = await chunk("email_notifications", [hostile("m1"), hostile("m2", { status: "failed", attempt_count: 5 }), hostile("m3", { status: "sent" })]);
+    expect(r.status).toBe(400);
+    expect(String(r.body.error)).toMatch(/^Table "email_notifications" is never blind-imported \(the outbound mail queue/);
+    expect(rowsOf("email_notifications")).toEqual([]);
+    expect(db.attempts.filter((a) => a.table === "email_notifications")).toEqual([]);
+    expect(sendable()).toEqual([]);
+    expect(restoreTableRefusal("email_notifications")).toMatch(/delivery state is never restored/);
+  });
+
+  it("the single-shot /apply plans it out and lands the rest; the plan says why; a live queue row of this workspace is untouched", async () => {
+    db.rows.email_notifications = [{ id: "live-1", org_id: ORG, to_email: "a@acme.com", status: "sent", attempt_count: 1 }];
+    const env = { manifest: { orgId: "backup-org" }, tables: { email_notifications: [hostile("m1")], notes: [{ id: "n1", org_id: "backup-org" }] } };
+    const plan = planFor(env as RestoreEnvelopeLike);
+    expect(plan.counts.tables.find((t) => t.name === "email_notifications")).toMatchObject({ willImport: false, reason: expect.stringMatching(/outbound mail queue/) });
+    expect(plan.counts.tables.find((t) => t.name === "email_notifications")!.offContract).toBeUndefined();
+    const { status, body } = await single(env);
+    expect(status).toBe(200);
+    expect(body.failedTables).toEqual([]);
+    expect((body.tables as Array<{ name: string }>).map((t) => t.name)).toEqual(["notes"]);
+    expect(rowsOf("email_notifications")).toEqual([{ id: "live-1", org_id: ORG, to_email: "a@acme.com", status: "sent", attempt_count: 1 }]);
+    expect(sendable()).toEqual([]);
+  });
+
+  it("the page's driver never sends the table at all", async () => {
+    const sent: string[] = [];
+    const spy: RestorePost = async (path, body) => {
+      if (path.startsWith("/api/admin/restore/apply-table")) sent.push(String((body as { table: string }).table));
+      return routePost(path, body);
+    };
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { email_notifications: [hostile("m1")], notes: [{ id: "n1", org_id: "backup-org" }] } };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: spy });
+    expect(result.stoppedAt).toBeNull();
+    expect(sent).toEqual(["notes"]);
+    expect(sendable()).toEqual([]);
+  });
+});
+
+describe("BKP-5 / BKP-12 (fix pass 3) — a re-run links the placeholders the first run created; nothing uid-keyed lands twice", () => {
+  const ALICE = "uid-alice-live";
+  beforeEach(() => {
+    db.rows.org_members = [{ org_id: ORG, uid: ALICE, email: "alice@acme.com", status: "active" }];
+    db.keys.recently_viewed_docs = [["user_id", "document_id"]];
+    db.keys.document_favorites = [["user_id", "document_id"]];
+  });
+  const backupMembers = [
+    { uid: "old-alice", email: "alice@acme.com", role: "Engineer" },
+    { uid: "old-bob", email: "bob@acme.com", role: "Engineer" },
+    { uid: "old-cara", email: "Cara@Acme.com", role: "Viewer" },
+  ];
+  const begin = async () => {
+    const res = await beginRoute(post("/api/admin/restore/begin", { manifest: { orgId: "backup-org", orgName: "Acme" }, orgMembers: backupMembers }));
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  const membersWith = (email: string) => rowsOf("org_members").filter((m) => String(m.email).toLowerCase() === email);
+  /** What the page reads before it plans (every status, as /begin reads). */
+  const pagePlan = (env: RestoreEnvelopeLike) => planRestore(env, {
+    orgId: ORG, orgName: "Acme",
+    members: rowsOf("org_members").filter((m) => RESTORE_LINK_MEMBER_STATUSES.includes(String(m.status)))
+      .map((m) => ({ uid: String(m.uid), email: String(m.email), status: String(m.status) })),
+  });
+
+  it("/begin twice: one placeholder per person, and the second answers the SAME uid map with nothing created", async () => {
+    const first = await begin();
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ createdUsers: 2, linkedUsers: 1 });
+    const second = await begin();
+    expect(second.status).toBe(200);
+    expect(second.body).toMatchObject({ createdUsers: 0, linkedUsers: 3 });
+    expect((second.body.idRemap as { uid: Record<string, string> }).uid).toEqual((first.body.idRemap as { uid: Record<string, string> }).uid);
+    for (const e of ["alice@acme.com", "bob@acme.com", "cara@acme.com"]) expect(membersWith(e), e).toHaveLength(1);
+    expect(membersWith("bob@acme.com")[0].status).toBe("inactive"); // linking changes nothing about the row
+    expect(audits("RESTORE_BEGIN").map((a) => (a.details as Record<string, unknown>).createdUsers)).toEqual([2, 0]);
+  });
+
+  it("the page's driver run twice (the stop panel's advice): favorites and recents are not duplicated, and the person is one member", async () => {
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org", orgName: "Acme" },
+      tables: {
+        org_members: backupMembers,
+        documents: [{ id: "d1", org_id: "backup-org", title: "P&ID" }],
+        recently_viewed_docs: [{ org_id: "backup-org", user_id: "old-bob", document_id: "d1" }, { org_id: "backup-org", user_id: "old-alice", document_id: "d1" }],
+        document_favorites: [{ org_id: "backup-org", user_id: "old-bob", document_id: "d1" }],
+      },
+    };
+    const first = await runChunkedRestore({ orgId: ORG, envelope: env, plan: pagePlan(env), orgNameChoice: "current", post: routePost });
+    expect(first.stoppedAt).toBeNull();
+    expect(first.createdUsers).toBe(2);
+    const replan = pagePlan(env);
+    expect(replan.counts).toMatchObject({ matchedUsers: 3, newUsers: 0 }); // what the page now shows before the re-run
+    expect(replan.users.find((u) => u.email === "bob@acme.com")).toMatchObject({ disposition: "linked", linkedStatus: "inactive" });
+    const second = await runChunkedRestore({ orgId: ORG, envelope: env, plan: replan, orgNameChoice: "current", post: routePost });
+    expect(second.stoppedAt).toBeNull();
+    expect(second).toMatchObject({ createdUsers: 0, linkedUsers: 3, totalInserted: 0 });
+    expect(second.idRemap.uid).toEqual(first.idRemap.uid);
+    for (const t of ["recently_viewed_docs", "document_favorites"]) {
+      expect(second.tables.find((x) => x.name === t), t).toMatchObject({ inserted: 0, existing: t === "recently_viewed_docs" ? 2 : 1 });
+    }
+    expect(rowsOf("recently_viewed_docs")).toHaveLength(2);
+    expect(rowsOf("document_favorites")).toEqual([expect.objectContaining({ user_id: first.idRemap.uid["old-bob"], document_id: "d1" })]);
+    expect(membersWith("bob@acme.com")).toHaveLength(1);
+  });
+
+  it("the single-shot /apply run twice: the same", async () => {
+    const env = {
+      manifest: { orgId: "backup-org", orgName: "Acme" },
+      tables: { org_members: backupMembers, documents: [{ id: "d1", org_id: "backup-org" }], document_favorites: [{ org_id: "backup-org", user_id: "old-bob", document_id: "d1" }] },
+    };
+    const first = await single(env);
+    expect(first.body).toMatchObject({ ok: true, createdUsers: 2 });
+    const second = await single(env);
+    expect(second.body).toMatchObject({ ok: true, createdUsers: 0, linkedUsers: 3, totalInserted: 0 });
+    expect(rowsOf("document_favorites")).toHaveLength(1);
+    expect(membersWith("bob@acme.com")).toHaveLength(1);
+  });
+
+  it("one address with several rows links the active one first; a row given no status counts as active", () => {
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "b" }, tables: { org_members: [{ uid: "old", email: "dan@acme.com" }] } };
+    const linkTo = (members: CurrentMember[]) => planRestore(env, { orgId: ORG, orgName: "", members }).users[0];
+    expect(linkTo([{ uid: "p1", email: "dan@acme.com", status: "inactive" }, { uid: "real", email: "DAN@acme.com", status: "active" }]))
+      .toMatchObject({ disposition: "linked", newUid: "real", linkedStatus: "active" });
+    expect(linkTo([{ uid: "real", email: "dan@acme.com", status: "active" }, { uid: "p1", email: "dan@acme.com", status: "inactive" }]).newUid).toBe("real");
+    expect(linkTo([{ uid: "p1", email: "dan@acme.com", status: "inactive" }, { uid: "p2", email: "dan@acme.com", status: "inactive" }]).newUid).toBe("p1");
+    expect(linkTo([{ uid: "s", email: "dan@acme.com", status: "suspended" }, { uid: "i", email: "dan@acme.com", status: "invited" }]).newUid).toBe("i");
+    expect(linkTo([{ uid: "legacy", email: "dan@acme.com" }])).toMatchObject({ newUid: "legacy", linkedStatus: "active" });
+    expect(linkTo([])).toMatchObject({ disposition: "new" });
+    expect(linkTo([]).linkedStatus).toBeUndefined();
+  });
+
+  it("every status a membership can hold links (types/schema.ts MemberStatus), and both routes and the page read them", () => {
+    const schema = readFileSync(join(process.cwd(), "types/schema.ts"), "utf8");
+    const declared = /export type MemberStatus = ([^;]+);/.exec(schema)![1].match(/"([a-z_]+)"/g)!.map((x) => x.slice(1, -1));
+    expect([...RESTORE_LINK_MEMBER_STATUSES].sort()).toEqual([...declared].sort());
+    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
+      const src = readFileSync(join(process.cwd(), f), "utf8");
+      expect(src, f).toMatch(/from\("org_members"\)\.select\("uid, email, status"\)\.eq\("org_id", (orgId|activeOrgId)\)\.in\("status", \[\.\.\.RESTORE_LINK_MEMBER_STATUSES\]\)/);
+      expect(src, f).not.toMatch(/from\("org_members"\)\.select\("uid, email"\)\.eq\("org_id", (orgId|activeOrgId)\)\.eq\("status", "active"\)/);
+    }
+  });
+});
+
+describe("BKP-5 (fix pass 3) — a cleared pointer is reported only for a row the database took", () => {
+  beforeEach(() => {
+    db.keys.teams = [["id"], ["org_id", "name"]];
+    db.rows.users = [{ id: "u-real" }];
+    db.rows.teams = [{ id: "team-live", org_id: ORG, name: "Ops" }];
+  });
+  const team = (id: string, name: string) => ({ id, org_id: "backup-org", name, created_by: "u-placeholder" });
+
+  it("a cleared row the database then refuses (23505) is in refused only; its neighbour lands and is the one clear reported", async () => {
+    const r = await chunk("teams", [team("team-2", "Ops"), team("team-3", "Eng")]);
+    expect(r.status).toBe(200);
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "team-2", code: "23505" })]);
+    expect(r.body.cleared).toEqual([expect.objectContaining({ id: "team-3", code: "person_not_restored" })]);
+    expect(rowsOf("teams").map((t) => t.id)).toEqual(["team-live", "team-3"]);
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 1, refused: [expect.objectContaining({ id: "team-2" })], cleared: [expect.objectContaining({ id: "team-3" })] });
+    // the run's totals and the single-shot route agree
+    db.rows.teams = [{ id: "team-live", org_id: ORG, name: "Ops" }];
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { teams: [team("team-2", "Ops"), team("team-3", "Eng")] } };
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(run).toMatchObject({ totalInserted: 1, totalRefused: 1, totalCleared: 1 });
+    db.rows.teams = [{ id: "team-live", org_id: ORG, name: "Ops" }];
+    const { body } = await single(env);
+    const t = (body.tables as Array<Record<string, unknown>>).find((x) => x.name === "teams")!;
+    expect(t).toMatchObject({ inserted: 1, refused: [expect.objectContaining({ id: "team-2" })], cleared: [expect.objectContaining({ id: "team-3" })] });
+  });
+
+  it("a cleared row refused alone (one-row chunk) reports no clear, and leaves no 'pointer cleared' audit", async () => {
+    const r = await chunk("teams", [team("team-2", "Ops")]);
+    expect(r.body).toMatchObject({ inserted: 0, refused: [expect.objectContaining({ id: "team-2", code: "23505" })] });
+    expect(r.body.cleared).toBeUndefined();
+    expect((audits("RESTORE_CHUNK")[0].details as Record<string, unknown>).cleared).toBeUndefined();
+  });
+
+  it("a statement that fails the chunk outright reports no clear for rows it never wrote — and leaves nothing to audit", async () => {
+    db.writeError = (table, op) => (table === "teams" && op === "upsert" ? { code: "42703", message: 'column "slug" of relation "teams" does not exist' } : null);
+    const r = await chunk("teams", [team("team-3", "Eng")]);
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ inserted: 0, code: "42703" });
+    expect(r.body.cleared).toBeUndefined();
+    expect(audits("RESTORE_CHUNK")).toEqual([]);
+    const direct = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "teams", rows: [team("team-3", "Eng")], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+    expect(direct).toMatchObject({ ok: false, inserted: 0, cleared: [] });
   });
 });

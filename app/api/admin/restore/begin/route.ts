@@ -5,7 +5,8 @@
 // limits — a real org's envelope JSON is tens of MB, far over the ~4.5MB
 // request cap that broke the single-shot apply). This call carries ONLY the
 // backup's membership list:
-//   • links backup members to current members by email,
+//   • links backup members to current members by email — members of any
+//     status, so a placeholder an earlier run created is linked again,
 //   • creates inactive "restored" placeholders for unknown emails
 //     (idempotent — an email that already exists is linked, not duplicated),
 //   • applies the org-name choice,
@@ -16,7 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, mergeNewUserUids, placeholderProfile, type CurrentMember, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, mergeNewUserUids, placeholderProfile, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -45,9 +46,12 @@ export async function POST(req: NextRequest) {
   // Current context → plan (reusing the pure planner for the user reconciliation).
   const { data: orgRow } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
   const orgName = (orgRow as { name?: string } | null)?.name ?? "";
-  const { data: memberRows } = await sb.from("org_members").select("uid, email").eq("org_id", orgId).eq("status", "active");
-  const current: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null }> | null) ?? [])
-    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
+  // Fix pass 3: every membership status links by email — a re-run finds the
+  // placeholder an earlier run created instead of minting a second one under
+  // a new uid (which would land every uid-keyed row again).
+  const { data: memberRows } = await sb.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]);
+  const current: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
+    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
   const plan = planRestore(
     { manifest: { orgId: parsed.manifest.orgId, orgName: parsed.manifest.orgName }, tables: { org_members: members } },
     { orgId, orgName, members: current },

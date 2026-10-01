@@ -35,13 +35,29 @@ export interface RestoreEnvelopeLike {
   files?: Array<{ path: string }>;
 }
 
-export interface CurrentMember { uid: string; email: string }
+/** A member row of the target workspace. `status` is one of
+ *  RESTORE_LINK_MEMBER_STATUSES (absent = active, for older callers). */
+export interface CurrentMember { uid: string; email: string; status?: string | null }
 export interface CurrentOrgContext {
   orgId: string;
   orgName: string;
-  /** Active members of the target workspace (the join key is email). */
+  /** Members of the target workspace in any RESTORE_LINK_MEMBER_STATUSES
+   *  status (the join key is email) — a placeholder an earlier run of this
+   *  restore created is inactive, and a re-run must link to it, never mint a
+   *  second one. */
   members: CurrentMember[];
 }
+
+/** admin-and-org P1 (fix pass 3): the member statuses a backup person is
+ *  linked to by email — every status a membership row can hold
+ *  (types/schema.ts MemberStatus). Reconciling against active rows alone made
+ *  a re-run (the stop panel tells the Admin to re-run) mint a SECOND inactive
+ *  placeholder for every unlinked person and remap their old uid to a new
+ *  one, so every uid-keyed row (favorites, recents) landed twice. Linking
+ *  changes nothing about the member row: an inactive placeholder stays
+ *  inactive, a suspended member stays suspended. When one address holds
+ *  several rows, the earliest status in this list wins. */
+export const RESTORE_LINK_MEMBER_STATUSES: readonly string[] = ["active", "invited", "suspended", "inactive"];
 
 export type UserDisposition = "linked" | "new";
 export interface UserReconcileItem {
@@ -54,6 +70,9 @@ export interface UserReconcileItem {
   disposition: UserDisposition;
   /** Present when disposition === "linked": the existing workspace uid. */
   newUid?: string;
+  /** Present when disposition === "linked": that member's status (an
+   *  "inactive" one is usually a placeholder an earlier restore created). */
+  linkedStatus?: string;
 }
 
 export interface TablePlanItem {
@@ -105,6 +124,14 @@ const SKIP_TABLES: Record<string, string> = {
   org_members: "membership is rebuilt from the user reconciliation",
   users: "user profiles are created via the additive-by-email reconciliation",
   notification_preferences: "per-user settings are re-established on re-invite",
+  // admin-and-org P1 (fix pass 3), BKP-11 restore half / DEC-45: the restore
+  // writes with the service role, so the mail queue's INSERT rail (SURF-17:
+  // same-org recipients only, never metadata.external) never sees a restored
+  // row, and the drain sends every queued/failed row under the attempt cap.
+  // Landing rows terminal is not enough — an Admin's dead-letter re-queue
+  // (admin/settings) makes any failed row sendable again with its address
+  // and body unchanged. So no row of the queue is ever written by a restore.
+  email_notifications: "the outbound mail queue — a restored message would be sent again, to whatever address the backup names; delivery state is never restored",
   subscriptions: "billing state is owned by the payment provider — re-subscribe, never copy",
   push_subscriptions: "device push registrations are machine-specific — re-established per device",
 };
@@ -348,14 +375,16 @@ export function restoreRowsInOrder(table: string, rows: ReadonlyArray<Record<str
 }
 
 /** Why `table` may not be written by a restore, or null when it may. The
- *  messages are the chunked route's, unchanged. */
+ *  messages are the chunked route's; since fix pass 3 a skipped table's
+ *  names its reason (not every skipped table is reconciled — the mail queue
+ *  is never restored at all). */
 export function restoreTableRefusal(table: string): string | null {
   if (!table || !isRestoreContractTable(table)) return `Table "${table}" is not part of the backup contract.`;
   if (isImmutableTable(table)) {
     // SURF-8: append-only / self-insert-only tables cannot be blind-imported.
     return `Table "${table}" is append-only (${IMMUTABLE_TABLES[table]}); it is never restored by import.`;
   }
-  if (has(SKIP_TABLES, table)) return `Table "${table}" is reconciled, never blind-imported.`;
+  if (has(SKIP_TABLES, table)) return `Table "${table}" is never blind-imported (${SKIP_TABLES[table]}).`;
   return null;
 }
 
@@ -431,9 +460,19 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
       : null;
 
   // ── User reconciliation (additive by email) ─────────────────────────────
-  const existingByEmail = new Map<string, string>(); // email -> uid
+  // Any membership status links (fix pass 3): a re-run finds the placeholder
+  // the first run created. One address with several rows: the earliest
+  // status in RESTORE_LINK_MEMBER_STATUSES wins, then the first row given.
+  const statusRank = (st: string | null | undefined) => {
+    const i = RESTORE_LINK_MEMBER_STATUSES.indexOf(st ?? "active");
+    return i === -1 ? RESTORE_LINK_MEMBER_STATUSES.length : i;
+  };
+  const existingByEmail = new Map<string, { uid: string; status: string }>(); // email -> member
   for (const m of current.members) {
-    if (m.email) existingByEmail.set(norm(m.email), m.uid);
+    if (!m.email) continue;
+    const k = norm(m.email);
+    const held = existingByEmail.get(k);
+    if (!held || statusRank(m.status) < statusRank(held.status)) existingByEmail.set(k, { uid: m.uid, status: m.status ?? "active" });
   }
 
   const members = (env.tables.org_members as BackupMember[] | undefined) ?? [];
@@ -451,7 +490,8 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
       role: m.role,
       roles: Array.isArray(m.roles) ? m.roles.filter((r): r is string => typeof r === "string") : undefined,
       disposition: existing ? "linked" : "new",
-      newUid: existing,
+      newUid: existing?.uid,
+      ...(existing ? { linkedStatus: existing.status } : {}),
     });
   }
 
@@ -871,7 +911,10 @@ export interface RestoreChunkResult {
   refused: RestoreRowRefusal[];
   /** Rows WRITTEN with one nullable pointer cleared, each with the column and
    *  why (a person with no sign-in account; an owner team or SOW document
-   *  that is not a row of this workspace). */
+   *  that is not a row of this workspace). Fix pass 3: emitted only once the
+   *  statement carrying the row is accepted — a row the database refuses is
+   *  in `refused` alone, and a statement that fails the chunk reports no
+   *  clear for its rows. */
   cleared: RestoreRowRefusal[];
   /** Rows left after the restore's own filters (comments of a ticket archived
    *  since the backup are dropped). */
@@ -1212,11 +1255,17 @@ export async function applyRestoreChunk(
     }
   }
   for (const { row, why } of refusedRows) if (!settled.has(row)) refused.push(why);
+  // Fix pass 3: a clear is reported only for a row the database took — the
+  // note rides with the row and is emitted when the statement carrying it is
+  // accepted, never for a row the write then refuses or a statement that
+  // fails the chunk.
+  const clearNotes = new Map<Record<string, unknown>, RestoreRowRefusal[]>();
   mapped = mapped.filter((r) => !settled.has(r)).map((r) => {
     const list = clears.get(r);
     if (!list) return r;
     const out = { ...r };
-    for (const { column, note } of list) { out[column] = null; cleared.push(note); }
+    for (const { column } of list) out[column] = null;
+    clearNotes.set(out, list.map((x) => x.note));
     return out;
   });
 
@@ -1232,6 +1281,7 @@ export async function applyRestoreChunk(
   const write = async (rows: Array<Record<string, unknown>>): Promise<{ error: string; code: string } | null> => {
     const up = await sb.from(table).upsert(rows, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
     if (!up.error) {
+      for (const r of rows) { const notes = clearNotes.get(r); if (notes) cleared.push(...notes); }
       // count: "exact" reports the rows the statement WROTE; ON CONFLICT DO
       // NOTHING skipped the rest. No count is recorded as unknown, never as written.
       if (typeof up.count !== "number") { uncounted += rows.length; return null; }

@@ -26,7 +26,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, restoreRowsInOrder, placeholderProfile, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, restoreRowsInOrder, placeholderProfile, type RestoreEnvelopeLike, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -51,9 +51,12 @@ export async function POST(req: NextRequest) {
   // Current context → re-plan.
   const { data: orgRow } = await sb.from("orgs").select("name").eq("id", orgId).maybeSingle();
   const orgName = (orgRow as { name?: string } | null)?.name ?? "";
-  const { data: memberRows } = await sb.from("org_members").select("uid, email").eq("org_id", orgId).eq("status", "active");
-  const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null }> | null) ?? [])
-    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
+  // Fix pass 3: every membership status links by email — a re-run finds the
+  // placeholder an earlier run created instead of minting a second one under
+  // a new uid (which would land every uid-keyed row again).
+  const { data: memberRows } = await sb.from("org_members").select("uid, email, status").eq("org_id", orgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]);
+  const members: CurrentMember[] = ((memberRows as Array<{ uid: string; email: string | null; status: string | null }> | null) ?? [])
+    .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
   const plan = planRestore(envelope, { orgId, orgName, members });
 
   // ORG-1: no arbitrary table writes. Refused before ANY write (org name,

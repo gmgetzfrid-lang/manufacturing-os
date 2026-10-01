@@ -30,7 +30,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
-  RESTORE_HELD_ELSEWHERE_NOTE, restoreRefusalLabel,
+  RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
@@ -140,13 +140,15 @@ export default function RestorePage() {
         throw new Error("Not a recognizable backup: missing manifest/tables.");
       }
 
-      // Current workspace context for the local plan.
+      // Current workspace context for the local plan. Members of every status
+      // link by email, as /begin links them: a re-run finds the placeholders
+      // an earlier run created (never a second set under new ids).
       const [{ data: orgRow }, { data: memberRows }] = await Promise.all([
         supabase.from("orgs").select("name").eq("id", activeOrgId).maybeSingle(),
-        supabase.from("org_members").select("uid, email").eq("org_id", activeOrgId).eq("status", "active"),
+        supabase.from("org_members").select("uid, email, status").eq("org_id", activeOrgId).in("status", [...RESTORE_LINK_MEMBER_STATUSES]),
       ]);
-      const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null }>)
-        .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string }));
+      const members = ((memberRows ?? []) as Array<{ uid: string; email: string | null; status: string | null }>)
+        .filter((m) => m.email).map((m) => ({ uid: m.uid, email: m.email as string, status: m.status }));
       const p = planRestore(envelope, {
         orgId: activeOrgId,
         orgName: ((orgRow as { name?: string } | null)?.name ?? ""),
@@ -391,7 +393,10 @@ export default function RestorePage() {
                       <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">{u.email}{u.role ? ` · ${u.role}` : ""}</div>
                     </div>
                     {u.disposition === "linked" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"><UserCheck className="w-3 h-3" /> re-link</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                        title={u.linkedStatus && u.linkedStatus !== "active" ? `Linked to this workspace's ${u.linkedStatus} member with this email (a restore placeholder is inactive) — no new placeholder is created, and the member's status is not changed.` : undefined}>
+                        <UserCheck className="w-3 h-3" /> re-link{u.linkedStatus && u.linkedStatus !== "active" ? ` (${u.linkedStatus})` : ""}
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded"><UserPlus className="w-3 h-3" /> restore + re-invite</span>
                     )}
