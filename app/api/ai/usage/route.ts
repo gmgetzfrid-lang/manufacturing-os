@@ -5,7 +5,9 @@
 //                       outputTokens, asks, calls, byOp, avgPromptTokens,
 //                       monthLabel, canManageCaps }
 //                     Controllers and cap managers additionally get
-//                     { team: [...] } — every member's month spend — and
+//                     { team: [...] } — every member's month spend (or
+//                     { teamUnavailable: reason } when the team ledger
+//                     cannot be summed) — and
 //                     { orgCapUsd, selfUserId, selfFollowsDefault } for the
 //                     editor (holders: soleCapsHolder).
 //   POST { orgId, capUsd } (ai.manage_caps) → set the org-default monthly cap.
@@ -77,13 +79,19 @@
 // the setter's own lowering of one).
 // Every change is audited and notifies the other holders; a change to one
 // person's cap notifies that person too (the members who follow the default
-// are not told one by one when it moves). A request that changes nothing —
-// clearing an override that is not there, a figure the cap already has —
-// answers `unchanged: true`, and is neither audited nor told. A person who
+// are not told one by one when it moves), and names whose cap it is. A
+// request that changes nothing — clearing an override that is not there
+// (your own included), a figure the cap already has — answers
+// `unchanged: true`, and is neither audited nor told. A person who
 // follows the default given its figure as their own is a change (the
-// default no longer moves them), said as that (`pinnedAtDefault`).
+// default no longer moves them), said as that (`pinnedAtDefault`, in the
+// answer and the notice); so is the hold a default raise writes for its
+// setter, which the default's notice names (`heldSelfAtUsd`).
 // A cap table that cannot be read refuses (503) — the team
-// view and the "previous figure" never fall back to $10.
+// view and the "previous figure" never fall back to $10. A team ledger that
+// cannot be summed (an outage, or past the 100,000-row read ceiling) leaves
+// the viewer's own meter and the default's editor up and says the team view
+// is unavailable (`teamUnavailable`), never "$0.00" per person.
 //
 // Reads are service-role only: ai_usage_events and ai_usage_limits have RLS
 // with zero client policies, so this route is the only window into them.
@@ -93,7 +101,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   getMonthUsage, getMonthUsageByUser, getCapUsd, DEFAULT_MONTHLY_CAP_USD, capIsLocked, displayCapUsd,
-  type MonthUsage,
+  AiUsageUnavailableError, type MonthUsage,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { loadCapabilityPolicyStrict, policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -488,12 +496,17 @@ export async function GET(req: NextRequest) {
   };
 
   if (auth.isController || canManageCaps) {
-    let byUser: Map<string, MonthUsage>;
+    // GOV-4 / GOV-1: a team ledger that cannot be summed — an outage since
+    // the viewer's own read, or more rows this month than the read ceiling
+    // (getMonthUsageByUser) — is said as that: the team view is unavailable
+    // (`teamUnavailable`, the reason), never "$0.00" per person, and the
+    // viewer's own meter (read above) and the default's editor stay up.
+    let byUser: Map<string, MonthUsage> | null = null;
     try {
       byUser = await getMonthUsageByUser(orgId);
     } catch (e) {
-      if (e instanceof GovernedCallError) return bad(e.message, e.status, { usageUnavailable: true });
-      throw e;
+      if (!(e instanceof GovernedCallError)) throw e;
+      payload.teamUnavailable = e instanceof AiUsageUnavailableError ? e.detail : e.message;
     }
     const [membersRes, limitsRes] = await Promise.all([
       supabaseAdmin.from("org_members")
@@ -526,9 +539,11 @@ export async function GET(req: NextRequest) {
     if (caps.ok && caps.allowed && !membersRes.error) {
       payload.soleCapsHolder = holdersAmong(membersRes.data, caps.policy).every((uid) => uid === auth.userId);
     }
+    if (byUser === null) return NextResponse.json(payload);
+    const spendByUser = byUser;
     payload.team = members
       .map((m) => {
-        const u = byUser.get(m.uid);
+        const u = spendByUser.get(m.uid);
         const override = overrideByUser.get(m.uid);
         const cap = Number.isFinite(override) ? (override as number) : orgCapUsd;
         return {
@@ -558,9 +573,14 @@ export async function GET(req: NextRequest) {
  *  none. Best-effort: the change and its audit row are already written.
  *  `pinnedAtDefault`: a person who followed the default was given its figure
  *  as their own — the figure is the same, but the default no longer moves
- *  it, and the notice says that rather than "from $10 to $10". Three
- *  notices are about the actor's OWN cap after a change of theirs (so they
- *  go to the other holders only):
+ *  it, and the notice says that rather than "from $10 to $10".
+ *  `heldSelfAtUsd`: a default raise held the actor's own cap at that figure
+ *  as a personal override (the same transition as a pin at the default:
+ *  the default no longer moves it), so the default's notice says so.
+ *  `targetName`: the person whose cap it is, named in the notice (the
+ *  actor's own cap reads "their own"); "a person's" only when the member
+ *  row carries no name. Three notices are about the actor's OWN cap after
+ *  a change of theirs (so they go to the other holders only):
  *  `putBack` — the route put it back down at `capUsd` from `previousCapUsd`
  *  (the figure it replaced) because it rose (with `error` when it could not
  *  be put back; `overrideRemoved` when it was their own new override the
@@ -571,15 +591,20 @@ export async function GET(req: NextRequest) {
 async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPolicy, change: {
   targetUserId: string | null; capUsd: number | null; previousCapUsd: number | null;
   putBack?: { error: string | null; overrideRemoved?: boolean }; unverified?: boolean; holdKept?: string;
-  pinnedAtDefault?: boolean;
+  pinnedAtDefault?: boolean; heldSelfAtUsd?: number | null; targetName?: string | null;
 }) {
   const others = await otherCapsHolders(orgId, auth, policy);
   const recipients = new Set(others.ok ? others.uids : []);
   if (change.targetUserId) recipients.add(change.targetUserId);
   for (const uid of [...recipients]) if (sameUid(uid, auth.userId)) recipients.delete(uid);
   if (recipients.size === 0) return;
-  const what = change.targetUserId ? "a person's monthly AI cap" : "the workspace's default monthly AI cap";
+  const what = !change.targetUserId ? "the workspace's default monthly AI cap"
+    : sameUid(change.targetUserId, auth.userId) ? "their own monthly AI cap"
+      : `${change.targetName ? `${change.targetName}'s` : "a person's"} monthly AI cap`;
   const fmt = (v: number | null) => (v === null ? "the workspace default" : v === 0 ? "$0 (locked)" : `$${v}`);
+  const held = typeof change.heldSelfAtUsd === "number"
+    ? `; ${auth.name}'s own cap stays at ${fmt(change.heldSelfAtUsd)} as a personal cap, so a change to the default no longer moves it`
+    : "";
   const own = `${auth.name}'s own monthly AI cap`;
   const together = "a cap change of theirs and another change landed at the same moment";
   const body = change.putBack?.error
@@ -594,7 +619,7 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
           ? `${own} stays held at ${fmt(change.capUsd)}: a raise of the workspace default by them did not land, and the hold it wrote stays — ${change.holdKept}. They no longer follow the default; if they should, clear their cap in AI settings.`
           : change.pinnedAtDefault
             ? `${auth.name} set ${what} to ${fmt(change.capUsd)} — the figure of the workspace default it followed until now — so a change to the default no longer moves it.`
-            : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}.`;
+            : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}${held}.`;
   const title = (uid: string) => change.putBack?.error ? "A monthly AI cap could not be put back"
     : change.putBack ? "A monthly AI cap was put back"
       : change.unverified ? "A monthly AI cap needs checking"
@@ -621,6 +646,7 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
       ...(change.unverified ? { unverified: true } : {}),
       ...(change.holdKept ? { holdKept: change.holdKept } : {}),
       ...(change.pinnedAtDefault ? { pinnedAtDefault: true } : {}),
+      ...(typeof change.heldSelfAtUsd === "number" ? { heldSelfAtUsd: change.heldSelfAtUsd } : {}),
     },
   }))).then(() => undefined, () => undefined);
 }
@@ -652,15 +678,19 @@ export async function POST(req: NextRequest) {
   // lookup returns.
   const rawTarget = String(body.userId ?? "").trim();
   let targetUserId: string | null = null;
+  // Who the person is, for the notices (GOV-10: a notice names whose cap changed).
+  let targetName: string | null = null;
   if (rawTarget) {
     const asUuid = canonicalUuid(rawTarget);
     if (!asUuid) return bad("userId must be a workspace member's id.");
     const { data: target } = await supabaseAdmin
-      .from("org_members").select("uid")
+      .from("org_members").select("uid, display_name, email")
       .eq("org_id", orgId).eq("uid", asUuid).eq("status", "active")
       .maybeSingle();
     if (!target) return bad("That person isn't an active member of this workspace.", 404);
-    targetUserId = String((target as { uid: string }).uid);
+    const t = target as { uid: string; display_name?: string | null; email?: string | null };
+    targetUserId = String(t.uid);
+    targetName = t.display_name || t.email || null;
   }
 
   // The cap that applies to the target before this change (display figure:
@@ -781,10 +811,22 @@ export async function POST(req: NextRequest) {
     // default it was compared with: racing one against a default raise
     // deleted the hold the raise had just written, leaving the holder on
     // the raised default. A sole holder may clear it (audited below).
+    // A clear that finds no override of their own changes nothing, and is
+    // answered as that (200 `unchanged`, nothing audited or told) — never a
+    // refusal that names an override which is not there. (Allowing a
+    // self-clear that is not a raise — one onto a default at or below the
+    // override — is GOV-15's: it needs the clear and the default read in
+    // one transaction.)
     if (selfTarget) {
       const v = await soleHolderVerdict();
       if (!v.ok) return v.res;
       if (!v.sole) {
+        const { data: own, error: ownError } = await supabaseAdmin.from("ai_usage_limits")
+          .select("id").eq("org_id", orgId).eq("user_id", targetUserId).maybeSingle();
+        if (ownError && !limitsTableMissing(ownError)) {
+          return bad(`Couldn't read your own cap override, so nothing was changed: ${ownError.message}`, 503);
+        }
+        if (!own) return NextResponse.json({ ok: true, cleared: false, unchanged: true });
         return bad("You can't clear your own monthly AI cap override while another person has the “Manage AI spend caps” permission — set a lower figure for yourself directly, or ask them to change it.", 403);
       }
     }
@@ -815,7 +857,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, cleared: false, unchanged: true });
     }
     if (!soleHolder) await auditCapChange(orgId, auth, details);
-    await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd: null, previousCapUsd });
+    await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd: null, previousCapUsd, targetName });
     return NextResponse.json({ ok: true, cleared: true, ...(soleHolder ? { soleHolder: true } : {}) });
   }
 
@@ -1104,8 +1146,14 @@ export async function POST(req: NextRequest) {
 
   if (!recorded) await auditCapChange(orgId, auth, details);
   // The change has landed: the other holders and the person whose cap moved
-  // are told, whatever the check below finds about the setter's own cap.
-  await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd, ...(pinnedAtDefault ? { pinnedAtDefault: true } : {}) });
+  // are told, whatever the check below finds about the setter's own cap. A
+  // hold written for a default raise moved the setter off the default (as a
+  // pin at its figure does), so the default's notice says that too.
+  await notifyCapChange(orgId, auth, caps.policy, {
+    targetUserId, capUsd, previousCapUsd, targetName,
+    ...(pinnedAtDefault ? { pinnedAtDefault: true } : {}),
+    ...(pinnedSelfAtUsd !== null ? { heldSelfAtUsd: pinnedSelfAtUsd } : {}),
+  });
 
   // GOV-10: your own override, INSERTED while you followed the default, is
   // checked against the default read again now. One that fell below it
@@ -1251,6 +1299,9 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true, capUsd, locked: capUsd === 0,
+    // A person who followed the default was given its figure as their own:
+    // the same figure, but the default no longer moves it (said, not silent).
+    ...(pinnedAtDefault ? { pinnedAtDefault: true } : {}),
     // Another holder's figure applies to the setter now (it rose, signed by
     // them — or the setter lowered a figure they signed: selfCapOwnLowering).
     ...(ownSetByAnother && ownAfterUsd !== null ? standsExtra(ownAfterUsd, ownLowering)

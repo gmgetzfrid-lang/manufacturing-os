@@ -81,6 +81,10 @@ type UsageView = AiUsageSummary & {
   soleCapsHolder?: boolean;
   /** GOV-10: the viewer's uid — their own row in `team`. */
   selfUserId?: string;
+  /** GOV-4 / GOV-1: the team's month could not be summed (an outage, or more
+   *  rows this month than the server reads) — the reason; `team` is absent,
+   *  the viewer's own figures and the default's editor still stand. */
+  teamUnavailable?: string;
 };
 /** What POST /api/ai/usage answers beyond lib/knowledge's AiCapSetResult
  *  (GOV-10): after a default raise, the setter's own cap when it is no
@@ -88,8 +92,12 @@ type UsageView = AiUsageSummary & {
  *  applies now is one another holder set (their raise, never a hold), and
  *  `selfCapOwnLowering` when it is the setter's own lowering of one;
  *  `unchanged` when the cap already stood as asked, so nothing was written,
- *  audited or told. */
-type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean; unchanged?: boolean };
+ *  audited or told; `pinnedAtDefault` when a person who followed the
+ *  default was given its figure as their own, so the default no longer
+ *  moves them. */
+type CapSetView = AiCapSetResult & {
+  selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean; unchanged?: boolean; pinnedAtDefault?: boolean;
+};
 
 /** The meter line each feature writes, named for a person (GOV-1: every
  *  line counts against the one cap). An unknown op shows as itself. */
@@ -665,8 +673,12 @@ export function UsagePanel({ orgId }: { orgId: string }) {
           : `${name} follows the workspace default again.${res.soleHolder === true ? sole : ""}` });
       } else {
         const res: CapSetView = await setAiCap(orgId, Number(value), userId);
+        // GOV-10: the default's own figure, given to someone who followed
+        // it, is a personal cap now — later default changes don't move them.
         showToast({ type: "success", title: res.unchanged === true
           ? `${name}'s monthly cap is already ${Number(value) === 0 ? "$0 — AI is locked for them" : `$${Number(value)}`}, so nothing changed.`
+          : res.pinnedAtDefault === true
+            ? `${name}'s monthly cap set to ${Number(value) === 0 ? "$0 (AI locked)" : `$${Number(value)}`} as a personal cap — the workspace default's figure, but a change to the default no longer moves it.${res.soleHolder === true ? sole : ""}`
           : (Number(value) === 0
             ? `${name}'s monthly cap set to $0 — AI is locked for them.`
             : `${name}'s monthly cap set to $${Number(value)}.`) + (res.soleHolder === true ? sole : "") });
@@ -744,7 +756,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
         </p>
       ) : null}
 
-      {usage.team && (
+      {(usage.team || usage.teamUnavailable) && (
         <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
@@ -766,7 +778,14 @@ export function UsagePanel({ orgId }: { orgId: string }) {
               </span>
             )}
           </div>
-          <ul className="space-y-1">
+          {/* GOV-4: a team month that can't be summed is said — never "$0.00" a person. */}
+          {!usage.team && usage.teamUnavailable && (
+            <p role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
+              The team&apos;s month can&apos;t be shown right now ({usage.teamUnavailable}). Your own figures above are
+              current{canManageCaps ? ", and the default cap can still be set" : ""}; per-person caps show again once it can be read.
+            </p>
+          )}
+          {usage.team && <ul className="space-y-1">
             {usage.team.map((m) => {
               // Each person meters against THEIR cap (override or default);
               // a $0 cap is locked (GOV-3).
@@ -817,7 +836,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                 </li>
               );
             })}
-          </ul>
+          </ul>}
           <p className="text-[10px] text-[var(--color-text-muted)]">
             Each person meters against their own cap{canManageCaps ? " — the dropdown sets it (highlighted = personal override, “def” = the workspace default)" : ""}.
             Every AI call counts (hover a row for where it went). Estimated from exact provider token counts ×

@@ -55,9 +55,13 @@ export const displayCapUsd = (capUsd: number): number => (capIsLocked(capUsd) ? 
  *  refused — 503, never "$0 spent". Routes that map GovernedCallError onto
  *  their response answer with this status and sentence. */
 export class AiUsageUnavailableError extends GovernedCallError {
+  /** What could not be read, without the refusal sentence around it (the
+   *  usage route's team view says it in its own words). */
+  readonly detail: string;
   constructor(detail: string) {
     super(`AI usage can't be read right now, so AI calls are refused until it can (${detail}).`, 503, { usageUnavailable: true });
     this.name = "AiUsageUnavailableError";
+    this.detail = detail;
   }
 }
 

@@ -9,6 +9,7 @@
 //           cap is read from the server's answer to the save, never inferred
 //           from what the panel read when it opened
 //   GOV-4   an unreadable meter is an alert with a retry, not a vanished panel;
+//           a team month the server can't sum is said, the own meter kept;
 //           calls recorded without a cost are said, with the figure the
 //           server counts each at
 //   GOV-1   "Where it went" names each feature's spend
@@ -256,6 +257,48 @@ describe("UsagePanel", () => {
     await pick("default");
     expect(lastToast()).toBe("Eve follows the workspace default again.");
     kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10 (fix pass 12): a person who followed the default, given its figure, is told to the setter as a personal cap the default no longer moves — never a plain 'set to $10'", async () => {
+    const team = [{ userId: "u2", name: "Eve", spentUsd: 1, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, orgCapUsd: 10, team, canManageCaps: true, soleCapsHolder: false, selfUserId: "u1" });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    const pick = async (value: string) => {
+      const select = host.querySelector("select") as HTMLSelectElement;
+      await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); });
+    };
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 10, locked: false, pinnedAtDefault: true });
+    await pick("10");
+    expect(kn.setAiCap).toHaveBeenLastCalledWith("o1", 10, "u2");
+    // was: "Eve's monthly cap set to $10."
+    expect(lastToast()).toBe("Eve's monthly cap set to $10 as a personal cap — the workspace default's figure, but a change to the default no longer moves it.");
+    // a figure that is not the default's reads as before
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 25, locked: false });
+    await pick("25");
+    expect(lastToast()).toBe("Eve's monthly cap set to $25.");
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-4 (fix pass 12): a team month the server can't sum is said in the team section — the viewer's own meter and the default's editor stay, no per-person rows, never $0.00 a person", async () => {
+    kn.getAiUsage.mockResolvedValueOnce({
+      ...base, spentUsd: 2.5, percent: 5, capUsd: 50, orgCapUsd: 50, canManageCaps: true, soleCapsHolder: false, selfUserId: "u1",
+      teamUnavailable: "the usage ledger holds more than 100000 rows this month",
+    });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    expect(host.textContent).toMatch(/\$2\.50 of \$50\.00 · 5%/);
+    const alerts = [...host.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatch(/The team's month can't be shown right now \(the usage ledger holds more than 100000 rows this month\)\. Your own figures above are current, and the default cap can still be set/);
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Set")).toBe(true);
+    expect(host.querySelector("select")).toBeNull();
+    // a controller without the capability is told the same, with no editor
+    kn.getAiUsage.mockResolvedValueOnce({ ...base, orgCapUsd: 50, canManageCaps: false, teamUnavailable: "couldn't read the usage ledger: timeout" });
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/can't be shown right now \(couldn't read the usage ledger: timeout\)\. Your own figures above are current; per-person caps show again/);
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Set")).toBe(false);
   });
 
   it("GOV-10: a refused save is said in the server's words and the panel re-reads what is stored (a 409 can follow a change that landed)", async () => {
