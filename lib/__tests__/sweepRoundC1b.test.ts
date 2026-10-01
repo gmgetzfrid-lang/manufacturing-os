@@ -101,7 +101,9 @@ describe("census — server routes authorise by the collection", () => {
   for (const f of SERVER_ROUTES) {
     it(f, () => {
       const s = src(f);
-      expect(s).toMatch(/memberHoldsAny\(|roleFilter\(/);
+      // isControllerPrincipal (lib/permissions) reads the same collection —
+      // flows/read names the controller tier through it (I-09, DEC-35).
+      expect(s).toMatch(/memberHoldsAny\(|roleFilter\(|isControllerPrincipal\(\{ role: [^}]*roles: normalizeRoles\(/);
       expect(s).not.toMatch(/\.select\("role"\)/);
       expect(s).not.toMatch(/\.select\("role, status"\)/);
       expect(s).not.toMatch(/\.select\("role, email"\)/);
