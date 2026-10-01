@@ -294,7 +294,7 @@ Tests: `aiUsage.test.ts` ("GOV-4 — the gate fails CLOSED"), `aiGates.test.ts` 
 3. ✗ Not done here. The `EXPECTED_COLUMNS` row for `ai_usage_events.est_cost_usd` (`20260916`) belongs in `lib/schemaExpectations.ts`, which A&O P2 (the regeneration) and PS-VERIFY own. The blocking behaviour itself holds: every AI call is refused, and AI settings shows the read error, which names the column.
 4. ✓ Test: a mocked ledger error produces a refused governed call.
 
-**Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns every AI call is refused — the columns are a hard precondition.
+**Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns every AI call is refused — the columns are a hard precondition. During a ledger outage, the routes that do not catch the refusal (ask, orchestrator, codebook import, locate, ingest) answer with the error instead of continuing. The interactive ingest route then fails its text-layer indexing too, and the cron's ingest drain stops for that run. The fix belongs in those routes' own files: catch `AiUsageUnavailableError` and skip only the AI step with a reason (I-06 for ingest; I-03, I-04, I-07 and I-10 for the others, as they adopt `assertAiGates`).
 
 ---
 
