@@ -61,6 +61,7 @@ import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { applyEmailLookup } from "@/lib/identity";
 import type {
@@ -148,6 +149,9 @@ export default function ProjectDetailPage() {
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
   const [lessonsDraft, setLessonsDraft] = useState<string | null>(null);
+  // A11Y-4: what the editor opened with — Escape / the backdrop ask before
+  // discarding edits, and close at once when nothing changed.
+  const [lessonsSeed, setLessonsSeed] = useState<string | null>(null);
   const [lessonsBusy, setLessonsBusy] = useState(false);
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
@@ -483,7 +487,9 @@ export default function ProjectDetailPage() {
                   try {
                     const existing = await supabase.from("projects").select("lessons_learned").eq("id", project.id).maybeSingle();
                     const stored = (existing.data as { lessons_learned?: string | null } | null)?.lessons_learned ?? null;
-                    setLessonsDraft(stored || await draftLessonsLearned(project.orgId, project.id));
+                    const seed = stored || await draftLessonsLearned(project.orgId, project.id);
+                    setLessonsSeed(seed);
+                    setLessonsDraft(seed);
                   } catch (e) {
                     await appAlert({ message: (e as Error).message, tone: "danger" });
                   } finally { setLessonsBusy(false); }
@@ -684,16 +690,15 @@ export default function ProjectDetailPage() {
       {/* Lessons-learned editor — auto-drafted from the project's exhaust
           (change orders by reason, slips, rejections), edited by a human. */}
       {lessonsDraft !== null && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
-              <div className="text-sm font-black text-[var(--color-text)]">Lessons learned</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                Drafted from this project&apos;s own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
-              </div>
-            </div>
+        <Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden"
+          onClose={() => void (async () => {
+            if (lessonsDraft !== lessonsSeed && !(await appConfirm({ title: "Discard your edits?", message: "The lessons-learned text you changed has not been saved.", confirmLabel: "Discard", tone: "danger" }))) return;
+            setLessonsDraft(null);
+          })()}>
+            <ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => setLessonsDraft(null)}
+              subtitle="Drafted from this project's own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report." />
             <div className="px-6 py-4">
-              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12}
+              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12} aria-label="Lessons learned"
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
@@ -714,8 +719,7 @@ export default function ProjectDetailPage() {
                 Save to project
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {showEdit && uid && (
@@ -731,22 +735,19 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
-              <div className="text-sm font-black text-[var(--color-text)]">
-                {pendingStatus === "cancelled" ? "Cancel project" :
-                 pendingStatus === "completed" ? "Mark project complete" :
-                 pendingStatus === "archived" ? "Archive project" :
-                 pendingStatus === "paused" ? "Pause project" :
-                 "Resume project"}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
-                  ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
-                  : "No checkouts will be affected."}
-              </div>
-            </div>
+        <Modal size="md" dismissable={!transitionBusy} className="overflow-hidden"
+          onClose={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }}>
+            <ModalHeader
+              title={pendingStatus === "cancelled" ? "Cancel project" :
+                pendingStatus === "completed" ? "Mark project complete" :
+                pendingStatus === "archived" ? "Archive project" :
+                pendingStatus === "paused" ? "Pause project" :
+                "Resume project"}
+              subtitle={pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
+                ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
+                : "No checkouts will be affected."}
+              onClose={transitionBusy ? undefined : () => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} />
+            <div className="overflow-y-auto">
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && gates && (() => {
@@ -775,17 +776,19 @@ export default function ProjectDetailPage() {
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+              <label htmlFor="transition-reason" className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea
+                id="transition-reason"
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
                 rows={3}
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
-              {actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}
+              {actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}
+            </div>
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
@@ -794,8 +797,7 @@ export default function ProjectDetailPage() {
                 Confirm
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

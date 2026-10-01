@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  HardHat, Plus, Search, Loader2, AlertTriangle, X, Check, Phone, Mail,
+  HardHat, Plus, Search, Loader2, AlertTriangle, Check, Phone, Mail,
   Trophy, GitPullRequestArrow, Briefcase, ShieldAlert, BookOpenCheck, Timer,
   ChevronLeft, ChevronRight, RotateCcw,
 } from "lucide-react";
@@ -22,6 +22,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
+import { Modal, ModalHeader } from "@/components/ui/Modal";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   listCompaniesPage, saveCompany, gatherCompanyProfiles, COMPANY_PAGE_SIZE,
   COMPANY_KIND_LABEL, type Company, type CompanyProfileData,
@@ -350,22 +352,23 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
     } finally { setBusy(false); }
   };
 
+  // A11Y-4: Escape / the backdrop close it — asking first when something is typed.
+  const typed = !!(name.trim() || trade.trim() || contactName.trim() || contactEmail.trim() || contactPhone.trim() || notes.trim());
+  const dismiss = async () => {
+    if (typed && !(await appConfirm({ title: "Discard this company?", message: "What you typed has not been saved.", confirmLabel: "Discard", tone: "danger" }))) return;
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-accent)]" /></div>
-          <div className="flex-1">
-            <div className="text-sm font-black text-[var(--color-text)]">Add a known company</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Their record builds itself from real work — this is just the front of the file.</div>
-          </div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="px-6 py-5 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" autoFocus
+    <Modal onClose={() => void dismiss()} size="md" dismissable={!busy} className="overflow-hidden">
+        <ModalHeader icon={HardHat} title="Add a known company"
+          subtitle="Their record builds itself from real work — this is just the front of the file."
+          onClose={busy ? undefined : onClose} />
+        <div className="px-6 py-5 space-y-3 overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" autoFocus aria-label="Company name (required)"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
+            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])} aria-label="Kind"
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
@@ -374,7 +377,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
           </div>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I, scaffolding…)"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
@@ -385,19 +388,18 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
+            <div role="alert" className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
             </div>
           )}
         </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Add company
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

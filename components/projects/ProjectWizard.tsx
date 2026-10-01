@@ -13,7 +13,7 @@
 // (lib/projectWizardWrites), and if any of them is refused the wizard stays
 // open naming what did not save, holding the rows for a retry.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Briefcase, Loader2, Plus, X, ChevronLeft, ChevronRight, Check,
   Target, FileText, CircleDollarSign, Flag, HardHat, Search, AlertTriangle,
@@ -24,6 +24,7 @@ import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
 import { listCompanies, type Company } from "@/lib/companies";
 import { Field } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Modal";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures, retainedRowLines,
@@ -63,6 +64,22 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   // Partial-failure state: the project exists, but these writes were
   // refused. The typed rows stay in state for the retry.
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
+  // A11Y-6: where focus goes after a refusal — the field that failed, or the
+  // error banner when no single field did. Applied after the step renders.
+  const pendingFocus = useRef<"name" | "description" | "budget" | "error" | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    const el: HTMLElement | null = target === "name" ? nameRef.current
+      : target === "description" ? descriptionRef.current
+      : target === "budget" ? document.querySelector<HTMLInputElement>('input[aria-invalid="true"][aria-label^="Budget line"]')
+      : errorRef.current;
+    (el ?? errorRef.current)?.focus();
+  });
   const [failures, setFailures] = useState<WizardWriteFailure[]>([]);
   const [setupStateForRetry, setSetupStateForRetry] = useState<Record<string, string>>({});
 
@@ -178,11 +195,12 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   });
 
   const finish = async (finalSkips: Record<string, boolean>) => {
-    if (!name.trim()) { setStep(0); setError("Project name is required."); return; }
-    if (!description.trim()) { setStep(0); setError("Description is required — say what the team will be doing."); return; }
+    if (!name.trim()) { setStep(0); setError("Project name is required."); pendingFocus.current = "name"; return; }
+    if (!description.trim()) { setStep(0); setError("Description is required — say what the team will be doing."); pendingFocus.current = "description"; return; }
     if (budgetPrep.invalid.length > 0) {
       setStep(3);
       setError(`Budget amount isn't a number for: ${budgetPrep.invalid.join(", ")}. Type digits (commas and a currency sign are fine).`);
+      pendingFocus.current = "budget";
       return;
     }
     setBusy(true); setError(null);
@@ -208,6 +226,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
       router.push(`/projects/${projectId}`);
     } catch (e) {
       setError((e as Error).message);
+      pendingFocus.current = "error";
     } finally { setBusy(false); }
   };
 
@@ -249,17 +268,30 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     onClose();
   };
 
+  /** Escape / a click on the backdrop (A11Y-4). Nothing typed is lost to a
+   *  stray key or click: with rows typed, the wizard asks first; in the
+   *  partial-failure state it is the header X's own confirm. */
+  const typedSomething = !!(name.trim() || description.trim() || moc.trim() || targetDate || purpose.trim() || goals.length
+    || successCriteria.trim() || sowDoc || budgetRows.some((r) => r.name.trim() || r.budget.trim())
+    || milestoneRows.some((r) => r.name.trim() || r.date) || partyRows.some((r) => r.name.trim() || r.trade.trim()));
+  const dismissWizard = async () => {
+    if (busy) return;
+    if (failures.length > 0 && createdProjectId) { await closeWizard(); return; }
+    if (typedSomething && !(await appConfirm({ title: "Discard this new project?", message: "Nothing has been created yet — what you typed will be lost.", confirmLabel: "Discard", tone: "danger" }))) return;
+    onClose();
+  };
+
   const Icon = STEPS[step].icon;
+  const titleId = React.useId();
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+    <Modal onClose={() => void dismissWizard()} size="lg" dismissable={!busy} ariaLabelledBy={titleId} className="overflow-hidden">
         {/* Header + stepper */}
         <div className="px-6 py-4 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-accent)]" /></div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
+              <div id={titleId} className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
                 New project — {STEPS[step].label}
                 {step > 0 && <span className="text-[10px] font-bold uppercase tracking-wider rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[var(--color-text-muted)]">Optional</span>}
               </div>
@@ -328,11 +360,13 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {failures.length === 0 && step === 0 && (
             <>
               <Field label="Name *">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround — Unit 300" autoFocus
+                <input ref={nameRef} value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround — Unit 300" autoFocus
+                  aria-invalid={error === "Project name is required." ? true : undefined}
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
               </Field>
               <Field label="Description *">
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
+                <textarea ref={descriptionRef} value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
+                  aria-invalid={error?.startsWith("Description is required") ? true : undefined}
                   placeholder="What is this project about? What will the team do?"
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
               </Field>
@@ -347,7 +381,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   ))}
                 </div>
               </Group>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="MOC reference (Management of Change)">
                   <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142"
                     title="The Management of Change number authorizing this work — required by PSM before modifying covered processes."
@@ -440,17 +474,17 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <StepIntro text="Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast." />
               <div className="space-y-2">
                 {budgetRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setBudgetRows(rows(budgetRows, i, { name: e.target.value }))}
-                      aria-label={`Budget line ${i + 1} name`} placeholder="Budget line name" className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      aria-label={`Budget line ${i + 1} name`} placeholder="Budget line name" className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <select value={r.type} onChange={(e) => setBudgetRows(rows(budgetRows, i, { type: e.target.value }))}
-                      aria-label={`Budget line ${i + 1} cost type`} className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
+                      aria-label={`Budget line ${i + 1} cost type`} className="min-w-0 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
                       {["subcontract", "labor", "material", "equipment", "other"].map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       aria-label={`Budget line ${i + 1} amount (USD)`} placeholder="Budget (USD)" inputMode="decimal"
                       aria-invalid={!!r.name.trim() && budgetPrep.invalid.includes(r.name.trim()) ? true : undefined}
-                      className={`w-32 px-3 py-2 border rounded-lg text-sm font-mono tabular-nums bg-[var(--color-surface)] ${!!r.name.trim() && budgetPrep.invalid.includes(r.name.trim()) ? "border-rose-500" : "border-[var(--color-border-strong)]"}`} />
+                      className={`flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border rounded-lg text-sm font-mono tabular-nums bg-[var(--color-surface)] ${!!r.name.trim() && budgetPrep.invalid.includes(r.name.trim()) ? "border-rose-500" : "border-[var(--color-border-strong)]"}`} />
                     <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} aria-label={`Remove budget line ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
@@ -470,12 +504,12 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <StepIntro text="A few dated milestones are enough to start — they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Schedule tab." />
               <div className="space-y-2">
                 {milestoneRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { name: e.target.value }))}
                       aria-label={`Milestone ${i + 1} name`} placeholder={i === 0 ? "e.g. Mobilize" : i === 1 ? "e.g. Demo complete" : "Milestone"}
-                      className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <input type="date" value={r.date} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { date: e.target.value }))}
-                      aria-label={`Milestone ${i + 1} planned date`} className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
+                      aria-label={`Milestone ${i + 1} planned date`} className="flex-1 sm:flex-none min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
                     <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove milestone ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
@@ -490,16 +524,16 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <StepIntro text="Who's working this job? Pick from your Known Companies registry (their performance record follows them) or type a new name. Teammate invites live on the project's Members tab." />
               <div className="space-y-2">
                 {partyRows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setPartyRows(rows(partyRows, i, { name: e.target.value }))}
                       list="wizard-companies" aria-label={`Company ${i + 1} name`} placeholder="Company name"
-                      className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <select value={r.kind} onChange={(e) => setPartyRows(rows(partyRows, i, { kind: e.target.value }))}
-                      aria-label={`Company ${i + 1} kind`} className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
+                      aria-label={`Company ${i + 1} kind`} className="min-w-0 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
                       {["contractor", "vendor", "rental", "internal"].map((k) => <option key={k} value={k}>{k}</option>)}
                     </select>
                     <input value={r.trade} onChange={(e) => setPartyRows(rows(partyRows, i, { trade: e.target.value }))}
-                      aria-label={`Company ${i + 1} trade`} placeholder="Trade" className="w-32 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                      aria-label={`Company ${i + 1} trade`} placeholder="Trade" className="flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove company ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
@@ -513,7 +547,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           )}
 
           {error && (
-            <div role="alert" className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
+            <div ref={errorRef} tabIndex={-1} role="alert" className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
             </div>
           )}
@@ -569,8 +603,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
             </>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
