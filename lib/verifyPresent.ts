@@ -1,0 +1,260 @@
+// lib/verifyPresent.ts
+//
+// How the three public scan-landing pages (app/verify/[docId],
+// app/verify-package/[packageId], app/verify-hold/[holdId]) turn a verify
+// endpoint's answer into ONE full-screen verdict. Pure functions — no React,
+// no client — so the rules that decide the colour a field worker sees are
+// unit-tested (lib/__tests__/verifyPresent.test.ts) rather than read off JSX.
+//
+// The rule every surface keeps: GREEN only when the endpoint KNOWS the paper
+// is good. A verdict this module does not recognise (an older or newer API
+// build) never falls through to green.
+
+// ─── /verify/[docId] — one printed sheet ─────────────────────────────────
+
+export type DocVerdict =
+  | "current" | "not_yet_effective" | "held"
+  | "superseded" | "void" | "archived" | "retired" | "draft" | "not_issued"
+  | "superseded_version" | "unverifiable";
+
+export interface DocVerifyResult {
+  docNumber: string | null;
+  title: string | null;
+  printedRev: string | null;
+  printedAt: string | null;
+  currentRev: string | null;
+  currentIssuedAt: string | null;
+  effectiveDate: string | null;
+  notYetEffective: boolean;
+  onHold?: boolean;
+  activeHolds?: number | null;
+  holdReasons?: string[];
+  docStatus: string | null;
+  verdict?: DocVerdict;
+  isCurrent: boolean;
+  checkedAt: string;
+}
+
+export interface VerdictView {
+  bg: string;
+  icon: "ok" | "stop" | "x" | "q";
+  headline: string;
+  blurb: string;
+  ok: boolean;
+  advice: string | null;
+}
+
+/** An effective date is a calendar DAY (YYYY-MM-DD) — format it as that day,
+ *  never through the phone's zone (new Date("2026-03-02") is UTC midnight,
+ *  which reads as 1 March anywhere west of UTC). */
+export function formatEffectiveDay(day: string | null): string | null {
+  if (!day || !/^\d{4}-\d{2}-\d{2}/.test(day)) return null;
+  const t = new Date(`${day.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(t.getTime())) return null;
+  return t.toLocaleDateString(undefined, { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
+}
+
+const STOP_ADVICE = "Get the current revision from Document Control before performing any work from this drawing. Mark this print “SUPERSEDED” or destroy it.";
+const NOT_ISSUED_ADVICE = "This is not an approved revision. Get the issued revision from Document Control before performing any work.";
+
+/** Map /api/verify's verdict to its full-screen presentation. Falls back to
+ *  the legacy isCurrent / notYetEffective booleans when an older API build
+ *  omits `verdict` — and even then green needs a printed revision (VFY-3). */
+export function presentDocVerdict(r: DocVerifyResult): VerdictView {
+  const v: DocVerdict =
+    r.verdict ?? (r.notYetEffective ? "not_yet_effective" : r.isCurrent && r.printedRev ? "current" : r.isCurrent ? "unverifiable" : "superseded_version");
+  const status = r.docStatus ? ` (${r.docStatus})` : "";
+  switch (v) {
+    case "current":
+      return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "CURRENT", advice: null,
+        blurb: "This print matches the current revision." };
+    case "not_yet_effective":
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "NOT YET IN EFFECT",
+        advice: "Keep working to the prior in-force revision until the effective date.",
+        blurb: `This is the latest revision, but it comes into force ${formatEffectiveDay(r.effectiveDate) ?? "later"} — until then, keep working to the prior in-force revision.` };
+    case "held": {
+      const reasons = (r.holdReasons ?? []).filter(Boolean);
+      const n = r.activeHolds ?? null;
+      const what = n && n > 1 ? `${n} active holds` : "an active hold";
+      return { bg: "bg-red-700", icon: "stop", ok: false, headline: "ON HOLD — STOP WORK",
+        advice: "Do not perform any work from this drawing until Document Control releases every hold on it.",
+        blurb: `This document is under ${what}${reasons.length ? ` (${reasons.join(", ")})` : ""}. Do not perform any work from it. Contact Document Control.` };
+    }
+    case "void":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "VOID — DO NOT USE", advice: STOP_ADVICE,
+        blurb: "This document has been voided. It is not a valid drawing. Destroy this print." };
+    case "archived":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "ARCHIVED — DO NOT USE", advice: STOP_ADVICE,
+        blurb: "This document has been archived and is no longer maintained." };
+    case "superseded":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "SUPERSEDED — DO NOT USE", advice: STOP_ADVICE,
+        blurb: "This document has been superseded. Get the current revision from Document Control." };
+    case "retired":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "WITHDRAWN — DO NOT USE", advice: STOP_ADVICE,
+        blurb: `This document is no longer in force${status}.` };
+    case "draft":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DRAFT — NOT ISSUED", advice: NOT_ISSUED_ADVICE,
+        blurb: "This is an unissued draft, not a controlled revision. Do not use for construction." };
+    case "not_issued":
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "NOT ISSUED — DO NOT USE", advice: NOT_ISSUED_ADVICE,
+        blurb: `This document is not an issued, controlled revision${status}.` };
+    case "unverifiable":
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION",
+        advice: "Check the revision with Document Control before performing any work from this print.",
+        blurb: "This code does not say which revision was printed, so it cannot confirm the paper is current. Do not assume it is." };
+    case "superseded_version":
+    default:
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DO NOT USE", advice: STOP_ADVICE,
+        blurb: `${r.printedRev ? `This print is Rev ${r.printedRev}` : "This print is not the current revision"}${r.currentRev ? ` — the current revision is Rev ${r.currentRev}` : ""}.` };
+  }
+}
+
+// ─── /verify-package/[packageId] — a printed work pack ───────────────────
+
+export type PackVerdict =
+  | "current" | "not_yet_effective" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable";
+
+export type SheetState =
+  | "fresh" | "not_yet_effective" | "stale" | "held"
+  | "void" | "archived" | "superseded" | "retired" | "draft" | "not_issued"
+  | "missing" | "removed" | "unconfirmed";
+
+export interface PackSheetRow {
+  label: string;
+  printedRev: string | null;
+  currentRev: string | null;
+  fresh: boolean;
+  retired: boolean;
+  state?: SheetState;
+  held?: boolean;
+  holdReasons?: string[];
+}
+
+export interface PackVerifyResult {
+  name: string;
+  packageStatus: string | null;
+  closed: boolean;
+  printedAt?: string | null;
+  snapshotMissing?: boolean;
+  printConfirmed?: boolean;
+  sheetCount: number;
+  staleCount: number;
+  heldCount?: number;
+  addedSincePrint?: Array<{ label: string }>;
+  allFresh: boolean;
+  verdict?: PackVerdict;
+  sheets: PackSheetRow[];
+  checkedAt: string;
+}
+
+export function presentPackVerdict(r: PackVerifyResult): VerdictView {
+  const v: PackVerdict = r.verdict ?? (r.snapshotMissing ? "unverifiable" : r.allFresh ? "current" : "stale");
+  const n = r.sheetCount;
+  const sheets = (k: number) => `${k} sheet${k === 1 ? "" : "s"}`;
+  switch (v) {
+    case "current":
+      return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "PACK IS CURRENT", advice: null,
+        blurb: "Every sheet in this pack is still the current revision." };
+    case "not_yet_effective":
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "NOT YET IN EFFECT",
+        advice: "Keep working to the prior in-force revisions until the effective dates.",
+        blurb: "Every sheet is the latest revision, but at least one does not come into force yet — the sheets marked below." };
+    case "held":
+      return { bg: "bg-red-700", icon: "stop", ok: false, headline: "PACK ON HOLD — STOP WORK",
+        advice: "Do not work from the held sheets until Document Control releases every hold on them.",
+        blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
+    case "stale": {
+      const added = r.addedSincePrint?.length ?? 0;
+      const parts: string[] = [];
+      if (r.staleCount > 0) parts.push(`${r.staleCount} of ${sheets(n)} changed or withdrawn since this pack was printed`);
+      if (added > 0) parts.push(`${sheets(added)} added to the package since printing ${added === 1 ? "is" : "are"} not in this pack`);
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "PACK IS STALE",
+        advice: "Do not work from the outdated sheets. Ask the package owner or Document Control for a re-printed pack — the stale sheets are marked below.",
+        blurb: `${parts.join("; ") || "This pack no longer matches its package"} — get the new sheets before starting work.` };
+    }
+    case "closed":
+      return { bg: "bg-slate-700", icon: "x", ok: false, headline: "PACKAGE CLOSED — DO NOT WORK FROM IT",
+        advice: "A closed package is retired: its drawings are no longer watched, so its sheet list is not evidence that anything is current. Get a current pack from the package owner or Document Control.",
+        blurb: "This work package has been closed. Its pins stopped being monitored when it closed, so freshness here proves nothing." };
+    case "empty":
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "NO SHEETS IN THIS PACK",
+        advice: "Contact Document Control before working from this folder.",
+        blurb: "This package records no sheets, so there is nothing to verify." };
+    case "unconfirmed_print":
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM WHICH PRINTING",
+        advice: "Ask the package owner or Document Control for a re-printed pack — a current cover sheet carries a code that can be checked.",
+        blurb: "This cover sheet's code predates print records, so it cannot say which revisions were printed. Do not assume this pack is current." };
+    case "unverifiable":
+    default:
+      return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T VERIFY THIS PACK",
+        advice: "Contact Document Control before working from this pack.",
+        blurb: "The print record for this pack could not be read — do not assume it is current." };
+  }
+}
+
+/** The right-hand label of one sheet row on the pack page. */
+export function sheetLabel(s: PackSheetRow): { text: string; ok: boolean } {
+  const state: SheetState = s.state ?? (s.retired ? "retired" : s.fresh ? "fresh" : "stale");
+  const printed = s.printedRev ? `Rev ${s.printedRev}` : "Rev —";
+  switch (state) {
+    case "fresh": return { text: `${printed} ✓`, ok: true };
+    case "not_yet_effective": return { text: `${printed} · not yet in effect`, ok: false };
+    case "held": return { text: `ON HOLD${s.holdReasons?.length ? ` · ${s.holdReasons.join(", ")}` : ""}`, ok: false };
+    case "void": return { text: "VOID", ok: false };
+    case "archived": return { text: "ARCHIVED", ok: false };
+    case "superseded": return { text: "SUPERSEDED", ok: false };
+    case "retired": return { text: "RETIRED", ok: false };
+    case "draft": return { text: "DRAFT — NOT ISSUED", ok: false };
+    case "not_issued": return { text: "NOT ISSUED", ok: false };
+    case "missing": return { text: "NO LONGER AVAILABLE", ok: false };
+    case "removed": return { text: "REMOVED FROM PACKAGE", ok: false };
+    case "unconfirmed": return { text: `now Rev ${s.currentRev ?? "—"} · printing unknown`, ok: false };
+    case "stale":
+    default: return { text: `${printed} → ${s.currentRev ?? "—"}`, ok: false };
+  }
+}
+
+// ─── /verify-hold/[holdId] — a printed hold card ─────────────────────────
+
+export type HoldVerdict = "active" | "released_others_active" | "released_others_unknown" | "released";
+
+export interface HoldVerifyResult {
+  active: boolean;
+  verdict?: HoldVerdict;
+  reason: string | null;
+  reasonWithheld?: boolean;
+  openedAt: string | null;
+  releasedAt: string | null;
+  docLabel: string | null;
+  docRev: string | null;
+  heldRev?: string | null;
+  otherActiveHolds?: number | null;
+  otherHoldReasons?: string[];
+  checkedAt: string;
+}
+
+/** GREEN only when this hold is released AND no other hold is active on the
+ *  document (VFY-10 / PHYS-10) — "this tag can come down" is reachable only
+ *  there. A released hold whose siblings are active, or whose siblings could
+ *  not be read, is AMBER: leave the equipment tagged. */
+export function presentHoldVerdict(r: HoldVerifyResult): VerdictView {
+  const v: HoldVerdict = r.verdict ?? (r.active ? "active" : "released_others_unknown");
+  switch (v) {
+    case "active":
+      return { bg: "bg-red-600", icon: "stop", ok: false, headline: "HOLD ACTIVE", advice: null,
+        blurb: "Do not advance this document or the work it covers." };
+    case "released_others_active": {
+      const k = r.otherActiveHolds ?? 0;
+      const reasons = (r.otherHoldReasons ?? []).filter(Boolean);
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "RELEASED — DOCUMENT STILL ON HOLD", advice: null,
+        blurb: `This hold is released, but ${k} other hold${k === 1 ? " is" : "s are"} still active on this document${reasons.length ? ` (${reasons.join(", ")})` : ""}. Do not advance it, and leave the equipment tagged until every hold is released.` };
+    }
+    case "released":
+      return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "RELEASED", advice: null,
+        blurb: "This hold has been released and no other hold is active on this document — this tag can come down." };
+    case "released_others_unknown":
+    default:
+      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "RELEASED — CHECK OTHER HOLDS", advice: null,
+        blurb: "This hold is released, but whether other holds remain on this document could not be confirmed. Leave the equipment tagged until Document Control confirms." };
+  }
+}

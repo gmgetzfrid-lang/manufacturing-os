@@ -6,76 +6,22 @@
 //
 // Design rules: mobile-first (it's a phone screen at arm's length in a
 // plant), zero login, one giant verdict, details second. Green means work,
-// red means stop and get the current revision.
+// red means stop and get the current revision. Green is reachable ONLY for
+// the "current" verdict — an Issued / Locked document, not held, whose QR
+// names the version printed and that version is the current one, in force
+// (VFY-1 / VFY-3 / VFY-9). The document's status is shown in every branch.
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, OctagonAlert, RefreshCw } from "lucide-react";
-
-type Verdict =
-  | "current" | "not_yet_effective" | "held"
-  | "superseded" | "void" | "archived" | "draft" | "superseded_version";
-
-interface VerifyResult {
-  docNumber: string | null;
-  title: string | null;
-  printedRev: string | null;
-  printedAt: string | null;
-  currentRev: string | null;
-  currentIssuedAt: string | null;
-  effectiveDate: string | null;
-  notYetEffective: boolean;
-  onHold?: boolean;
-  docStatus: string | null;
-  verdict?: Verdict;
-  isCurrent: boolean;
-  checkedAt: string;
-}
-
-/** Map the verdict to its full-screen presentation. Falls back to the legacy
- *  isCurrent/notYetEffective booleans if an older API build omits `verdict`. */
-function present(r: VerifyResult): {
-  bg: string; icon: "ok" | "stop" | "x" | "q"; headline: string; blurb: string; ok: boolean;
-} {
-  const v: Verdict =
-    r.verdict ?? (r.notYetEffective ? "not_yet_effective" : r.isCurrent ? "current" : "superseded_version");
-  const currentRev = r.currentRev ?? "?";
-  const printedRev = r.printedRev ?? "?";
-  switch (v) {
-    case "current":
-      return { bg: "bg-emerald-600", icon: "ok", ok: true, headline: "CURRENT",
-        blurb: "This print matches the current revision." };
-    case "not_yet_effective":
-      return { bg: "bg-amber-500", icon: "q", ok: false, headline: "NOT YET IN EFFECT",
-        blurb: `This is the latest revision, but it comes into force ${r.effectiveDate ? new Date(r.effectiveDate).toLocaleDateString() : "later"} — until then, keep working to the prior in-force revision.` };
-    case "held":
-      return { bg: "bg-red-700", icon: "stop", ok: false, headline: "ON HOLD — STOP WORK",
-        blurb: "This document is under an active hold. Do not perform any work from it. Contact Document Control." };
-    case "void":
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "VOID — DO NOT USE",
-        blurb: "This document has been voided. It is not a valid drawing. Destroy this print." };
-    case "archived":
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "ARCHIVED — DO NOT USE",
-        blurb: "This document has been archived and is no longer maintained." };
-    case "superseded":
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "SUPERSEDED — DO NOT USE",
-        blurb: "This document has been superseded. Get the current revision from Document Control." };
-    case "draft":
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DRAFT — NOT ISSUED",
-        blurb: "This is an unissued draft, not a controlled revision. Do not use for construction." };
-    case "superseded_version":
-    default:
-      return { bg: "bg-red-600", icon: "x", ok: false, headline: "DO NOT USE",
-        blurb: `This print is Rev ${printedRev} — the current revision is Rev ${currentRev}.` };
-  }
-}
+import { presentDocVerdict, type DocVerifyResult } from "@/lib/verifyPresent";
 
 export default function VerifyPage() {
   const params = useParams<{ docId: string }>();
   const search = useSearchParams();
   const versionId = search.get("v");
 
-  const [result, setResult] = useState<VerifyResult | null>(null);
+  const [result, setResult] = useState<DocVerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -85,12 +31,12 @@ export default function VerifyPage() {
     try {
       const qs = new URLSearchParams({ doc: params.docId });
       if (versionId) qs.set("v", versionId);
-      const res = await fetch(`/api/verify?${qs.toString()}`);
+      const res = await fetch(`/api/verify?${qs.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || "Could not verify this code");
       }
-      setResult((await res.json()) as VerifyResult);
+      setResult((await res.json()) as DocVerifyResult);
     } catch (e) {
       setError((e as Error).message);
       setResult(null);
@@ -104,7 +50,7 @@ export default function VerifyPage() {
   const fmt = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
-  const view = result ? present(result) : null;
+  const view = result ? presentDocVerdict(result) : null;
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -161,20 +107,26 @@ export default function VerifyPage() {
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">This print</div>
                   <div className={`text-lg font-black ${view.ok ? "text-emerald-600" : "text-red-600"}`}>
-                    Rev {result.printedRev ?? "?"}
+                    {/* VFY-3: never "Rev ?" — a green answer always names the
+                        revision (the printed version IS the current one). */}
+                    Rev {result.printedRev ?? (view.ok ? result.currentRev : null) ?? "—"}
                   </div>
-                  <div className="text-[10px] text-slate-400">issued {fmt(result.printedAt)}</div>
+                  <div className="text-[10px] text-slate-400">{result.printedRev || view.ok ? `issued ${fmt(result.printedAt)}` : "not stated on this code"}</div>
                 </div>
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Current</div>
-                  <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "—"}</div>
                   <div className="text-[10px] text-slate-400">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
-              {!view.ok && (
+              {/* VFY-9: the document's state is visible in every branch. */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document status</span>
+                <span className="font-bold text-slate-800">{result.docStatus ?? "Not recorded"}{result.onHold ? " · on hold" : ""}</span>
+              </div>
+              {view.advice && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
-                  Get the current revision from Document Control before performing any work
-                  from this drawing. Mark this print &ldquo;SUPERSEDED&rdquo; or destroy it.
+                  {view.advice}
                 </div>
               )}
             </div>

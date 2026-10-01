@@ -3,26 +3,21 @@
 // /verify-hold/[holdId] — behind the QR on a printed HOLD card.
 //
 // A physical red tag hangs on equipment; weeks later nobody remembers if
-// the hold was released. Scan → one unmissable answer: red HOLD ACTIVE or
-// green RELEASED (take the tag down). Same design language as /verify.
+// the hold was released. Scan → one unmissable answer: red HOLD ACTIVE,
+// amber RELEASED BUT THE DOCUMENT IS STILL HELD (another hold remains — or
+// could not be ruled out — so leave the equipment tagged), or green
+// RELEASED (take the tag down) — green ONLY when no hold at all remains on
+// the document (VFY-10 / PHYS-10). Same design language as /verify; the
+// verdict comes from lib/verifyPresent.ts.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { OctagonAlert, CheckCircle2, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
-
-interface HoldStatus {
-  active: boolean;
-  reason: string | null;
-  openedAt: string | null;
-  releasedAt: string | null;
-  docLabel: string | null;
-  docRev: string | null;
-  checkedAt: string;
-}
+import { presentHoldVerdict, type HoldVerifyResult } from "@/lib/verifyPresent";
 
 export default function VerifyHoldPage() {
   const params = useParams<{ holdId: string }>();
-  const [result, setResult] = useState<HoldStatus | null>(null);
+  const [result, setResult] = useState<HoldVerifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -30,12 +25,12 @@ export default function VerifyHoldPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/verify-hold?id=${encodeURIComponent(params.holdId)}`);
+      const res = await fetch(`/api/verify-hold?id=${encodeURIComponent(params.holdId)}`, { cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error || "Could not verify this code");
       }
-      setResult((await res.json()) as HoldStatus);
+      setResult((await res.json()) as HoldVerifyResult);
     } catch (e) {
       setError((e as Error).message);
       setResult(null);
@@ -49,9 +44,11 @@ export default function VerifyHoldPage() {
   const fmt = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
+  const view = result ? presentHoldVerdict(result) : null;
+
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-slate-900" : result?.active ? "bg-red-600" : "bg-emerald-600"
+      loading || error || !view ? "bg-slate-900" : view.bg
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
@@ -71,20 +68,20 @@ export default function VerifyHoldPage() {
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
           </div>
-        ) : result && (
+        ) : result && view && (
           <>
-            {result.active ? (
-              <OctagonAlert className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
-            ) : (
+            {view.icon === "ok" ? (
               <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : view.icon === "q" ? (
+              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+            ) : (
+              <OctagonAlert className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
             <h1 className="text-3xl font-black text-white leading-tight mb-1">
-              {result.active ? "HOLD ACTIVE" : "RELEASED"}
+              {view.headline}
             </h1>
             <p className="text-white/90 text-sm font-bold mb-6">
-              {result.active
-                ? "Do not advance this document or the work it covers."
-                : "This hold has been released — this tag can come down."}
+              {view.blurb}
             </p>
 
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
@@ -94,12 +91,25 @@ export default function VerifyHoldPage() {
                   <div className="text-sm font-bold text-slate-900">
                     {result.docLabel}{result.docRev ? ` · Rev ${result.docRev}` : ""}
                   </div>
+                  {/* HLD-7: the revision the hold stopped, beside the current one when they differ. */}
+                  {result.heldRev && result.heldRev !== result.docRev && (
+                    <div className="text-[10px] text-slate-500 mt-0.5">Held at Rev {result.heldRev}{result.docRev ? ` — the document is now at Rev ${result.docRev}` : ""}</div>
+                  )}
                 </div>
               )}
               <div className="pt-2 border-t border-slate-100">
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Reason</div>
-                <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "—"}</div>
+                <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>
+                  {/* VFY-6: operator text is never published — say where to read it. */}
+                  {result.reasonWithheld ? "Not shown online — read it on the printed tag" : (result.reason ?? "—")}
+                </div>
               </div>
+              {(result.otherActiveHolds ?? 0) > 0 && (
+                <div className="pt-2 border-t border-slate-100 text-xs text-amber-800 font-bold">
+                  {result.otherActiveHolds} other active hold{result.otherActiveHolds === 1 ? "" : "s"} on this document
+                  {result.otherHoldReasons?.length ? `: ${result.otherHoldReasons.join(", ")}` : ""}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Placed</div>

@@ -123,14 +123,16 @@ export function buildFooterNotice(ctx: DownloadContext): string {
  *  document + the exact version this copy was printed from, so the field can
  *  check a paper print against the current revision with a phone. Always
  *  built on the PUBLIC origin — a print made from a preview deploy must not
- *  QR-link to a Vercel-gated URL. */
+ *  QR-link to a Vercel-gated URL. No resolvable version → NO QR (VFY-3): a
+ *  document-only code cannot say which revision the paper is, so it is never
+ *  stamped — the same guard lib/docPack.ts and app/api/share/file use. */
 export function buildVerifyUrl(ctx: DownloadContext): string | undefined {
   if (!ctx.doc.id) return undefined;
   const origin = publicOrigin();
   if (!origin) return undefined;
   const version = ctx.versionId ?? ctx.doc.currentVersionId;
-  const base = `${origin}/verify/${ctx.doc.id}`;
-  return version ? `${base}?v=${version}` : base;
+  if (!version) return undefined;
+  return `${origin}/verify/${ctx.doc.id}?v=${version}`;
 }
 
 /** Ambient intent capture for a content pull. Fire-and-forget: a holder's

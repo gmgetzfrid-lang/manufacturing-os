@@ -372,7 +372,13 @@ describe("HLD-7 — publicHoldReason and /api/verify-hold", () => {
     expect(body).toMatchObject({ active: true, reason: "On hold", docLabel: "P-2201", docRev: "5", heldRev: "3" });
     expect(body).not.toHaveProperty("notes");
     expect(body).not.toHaveProperty("openedByName");
-    expect(Object.keys(body).sort()).toEqual(["active", "checkedAt", "docLabel", "docRev", "heldRev", "openedAt", "reason", "releasedAt"]);
+    // PS-VERIFY (VFY-10 / VFY-6) added the verdict, the sibling-hold count and
+    // categories, and reasonWithheld — still no notes, no names.
+    expect(Object.keys(body).sort()).toEqual([
+      "active", "checkedAt", "docLabel", "docRev", "heldRev", "openedAt", "otherActiveHolds", "otherHoldReasons",
+      "reason", "reasonWithheld", "releasedAt", "verdict",
+    ]);
+    expect(body).toMatchObject({ reasonWithheld: true, verdict: "active", otherActiveHolds: 0 });
   });
   it("a predefined reason passes through; a pre-migration row (no held_rev_label) reports heldRev null, never the current rev", async () => {
     state.rows.document_holds = [openHoldRow({ released_at: "2026-09-10T00:00:00Z" })];
