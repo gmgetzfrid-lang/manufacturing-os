@@ -23,8 +23,8 @@
 --   tool and parameters, once, for that person, in that org, before
 --   expires_at (lib/orchestrator/proposals.ts).
 --   RLS ON with NO policies, and every table privilege revoked from anon and
---   authenticated: SERVICE ROLE ONLY (the verify_scans / intake_attempts
---   shape). No function is created. The prune (rows a week past expiry) is a
+--   authenticated: SERVICE ROLE ONLY (the intake_attempts shape, 20261105).
+--   No function is created. The prune (rows a week past expiry) is a
 --   service-role DELETE in lib/orchestrator/proposals.ts, run on every
 --   store — no cron entry, no vercel.json change. The permanent record of
 --   what ran is audit_logs (AI_ACTION_EXECUTED / AI_ACTION_FAILED).
