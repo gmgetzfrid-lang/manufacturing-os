@@ -242,15 +242,24 @@ after `20261139` (the guard's base — it re-creates
 rule is dropped). It is independent of `20261131` (the register rail never
 fires on a status-only write), `20261129`, `20261130` and `20261140`; when
 `20261131` is also pending, paste `20261131` first so `REV-17`'s INSERT door
-is closed by the time this rule binds the status. Narrow; its result set
-carries the DEC-30 inventory (issued-unreviewed documents under a require
-policy; not-issued documents whose next issue now needs a controller; held
-Draft / In Review documents) and a behaviour probe of
-`is_controlled_issue_status`. Deploy the app carrying P13 with or before it,
-so the rev-up flow and the two status editors say the rule before the
-database refuses. After the paste, in a require-mode library a non-controller
-cannot restore an UNREVIEWED revision to an issue status (un-archive, a
-failed supersede / split / merge put-back) — Document Control does it.
+is closed by the time this rule binds the status. Narrow; it also adds two
+nullable columns the guard alone writes (`documents.retired_issue_status`,
+`retired_issue_version_id` — the retirement stamp) and a BEFORE INSERT
+trigger that clears them on a signed-in INSERT. Its result set carries the
+DEC-30 inventory (issued-unreviewed documents under a require policy;
+Draft / In Review documents whose next issue now needs a controller;
+Superseded / Void / Archived documents, retired before the paste, whose
+restore of an unreviewed revision now needs a controller; held Draft / In
+Review documents) and a behaviour probe of `is_controlled_issue_status`.
+Deploy the app carrying P13 with or before it, so the rev-up flow, the set
+rev-up, the merge and the two status editors say the rule before the
+database refuses. After the paste, in a require-mode library a
+non-controller cannot issue an unreviewed Draft / In Review revision by any
+door, nor restore to an issue status an unreviewed revision of a document
+retired BEFORE the paste (or retired from a status that was not an issue) —
+Document Control does it. The put-back of an issue retired after the paste
+(a failed supersede / split / merge's compensation, an un-archive) is spared
+the rule (review fix, `REV-18`).
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
