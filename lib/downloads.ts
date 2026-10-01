@@ -4,15 +4,20 @@
 // Decision rules:
 //   - User holds an active checkout on the document  -> CONTROLLED copy (raw PDF)
 //   - Otherwise                                       -> UNCONTROLLED copy (stamped)
+//   - Never controlled, whoever asks (copyControlState): a non-current
+//     revision (REV-1), a copy with markups baked in (PKG-10), a document
+//     under an active hold or whose hold state cannot be read (HLD-1).
 //
-// Every download is logged to `download_audits`. Stamping rasterizes a
+// Every download is logged to `download_audits`, and a refused log write is
+// reported to the caller, never swallowed (EGR-6). Stamping rasterizes a
 // rotated watermark + footer onto every page via pdf-lib (see lib/stamping.ts).
 
 import { supabase } from "@/lib/supabase";
 import { downloadStampedPdf, stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
-import type { DocumentRecord } from "@/types/schema";
+import { decideHoldGate, readActiveHolds, type HoldGateDecision } from "@/lib/holdGate";
+import type { AckPolicy, DocumentRecord } from "@/types/schema";
 
 export type ControlState = "controlled" | "uncontrolled";
 
@@ -30,6 +35,10 @@ export type DownloadContext = {
    *  controlled (unstamped) master, regardless of who holds the checkout. */
   versionIsCurrent?: boolean;
   fileUrl: string;            // resolved presigned URL or blob URL of the source PDF
+  /** PKG-10: the bytes carry baked-in markups (redlines) — a copy that is
+   *  not the controlled master, so it is always stamped UNCONTROLLED, the
+   *  checkout holder's included. */
+  markedUp?: boolean;
   filename?: string;
   userId: string;
   userEmail?: string | null;
@@ -58,6 +67,52 @@ export function determineControlState(
   if (!versionIsCurrent) return "uncontrolled";
   if (doc.checkedOutBy && doc.checkedOutBy === userId) return "controlled";
   return "uncontrolled";
+}
+
+/** The copy rule as a download / print applies it: determineControlState,
+ *  plus the two facts it cannot see synchronously — a copy with markups baked
+ *  in is never the controlled master (PKG-10), and neither is a copy of a
+ *  document under an active hold, or one whose hold state could not be read
+ *  (HLD-1: such a copy is stamped with the hold, never passed through raw). */
+export function copyControlState(
+  ctx: Pick<DownloadContext, "doc" | "userId" | "versionIsCurrent" | "markedUp">,
+  hold?: Pick<HoldGateDecision, "blocked"> | null,
+): ControlState {
+  if (ctx.markedUp) return "uncontrolled";
+  if (hold?.blocked) return "uncontrolled";
+  return determineControlState(ctx.doc, ctx.userId, ctx.versionIsCurrent);
+}
+
+/** HLD-1 (the download / print / book limb): the document's hold state at
+ *  the moment a copy is taken, through THE hold gate (lib/holdGate.ts) — an
+ *  unreadable hold state is a hold (fail closed). Never throws. */
+export async function readCopyHoldState(documentId: string | null | undefined): Promise<HoldGateDecision> {
+  if (!documentId) return { blocked: false, holds: [] };
+  return decideHoldGate(await readActiveHolds(documentId), "taking a copy");
+}
+
+/** HLD-1: the hold line a copy of a held document carries in its footer —
+ *  the paper says work from it is stopped, rather than the copy leaving
+ *  silently. Null when the document is not held. */
+export function holdFooterLine(hold: Pick<HoldGateDecision, "blocked"> & { holds?: Array<{ reason: string }>; unreadable?: boolean } | null | undefined): string | null {
+  if (!hold?.blocked) return null;
+  if (hold.unreadable) {
+    return "HOLD STATUS UNKNOWN at time of issue — treat this document as ON HOLD until Document Control confirms otherwise.";
+  }
+  const reasons = (hold.holds ?? []).map((h) => h.reason).filter(Boolean);
+  return `ON HOLD at time of issue${reasons.length ? ` (${[...new Set(reasons)].join(", ")})` : ""} — work from this document is stopped until Document Control releases the hold.`;
+}
+
+/** The diagonal watermark of a stamped copy: a held document's copy says
+ *  ON HOLD (HLD-1), an old revision's says SUPERSEDED (PKG-10 done-when 2),
+ *  anything else the review watermark. */
+export function copyWatermark(
+  ctx: Pick<DownloadContext, "versionIsCurrent">,
+  hold?: Pick<HoldGateDecision, "blocked"> & { unreadable?: boolean } | null,
+): string {
+  if (hold?.blocked) return hold.unreadable ? "UNCONTROLLED — HOLD STATUS UNKNOWN" : "ON HOLD — DO NOT USE";
+  if (ctx.versionIsCurrent === false) return "SUPERSEDED — NOT CURRENT";
+  return "UNCONTROLLED — FOR REVIEW ONLY";
 }
 
 export type ViewBadgeTone = "controlled" | "caution" | "danger" | "muted";
@@ -103,9 +158,15 @@ function defaultFilename(ctx: DownloadContext, suffix: string): string {
 /** The stamped footer notice: rev-at-issue + (when someone else is mid-change)
  *  an active-change warning, so a stale print on a desk announces itself. The
  *  rev printed is the SERVED version's (REV-1), and a copy of an older
- *  revision says so outright. */
-export function buildFooterNotice(ctx: DownloadContext): string {
+ *  revision says so outright. A held document's copy LEADS with the hold
+ *  (HLD-1) — pass the hold decision read when the copy was taken. */
+export function buildFooterNotice(
+  ctx: DownloadContext,
+  hold?: Parameters<typeof holdFooterLine>[0],
+): string {
   const parts: string[] = [];
+  const holdLine = holdFooterLine(hold);
+  if (holdLine) parts.push(holdLine);
   const label = servedRev(ctx);
   if (ctx.versionIsCurrent === false) {
     parts.push(`SUPERSEDED REVISION — Rev ${label ?? "?"}. This is NOT the current revision; do not use for construction. Scan to verify.`);
@@ -160,6 +221,28 @@ function captureDownloadIntent(
   });
 }
 
+/** EGR-6 / DIST-9: the outcome of a distribution-record write. supabase-js
+ *  RESOLVES with `{ error }` on a refused insert (RLS, a NOT NULL org, a
+ *  dropped connection) — it does not throw — so the old try/catch around it
+ *  could never fire and a refused record read exactly like a written one. */
+export type DownloadAuditResult = { recorded: true } | { recorded: false; error: string };
+
+/** EGR-6: a copy that left the app WITHOUT its distribution record. Thrown
+ *  by downloadDocumentPdf / printDocumentPdf only AFTER the copy is in the
+ *  person's hands (auditing failure still never blocks the download) — so
+ *  the caller's error line says the copy is unrecorded instead of the UI
+ *  reading as a clean success. */
+export class DownloadUnrecordedError extends Error {
+  readonly code = "download_unrecorded" as const;
+  constructor(detail: string) {
+    super(
+      `The copy was delivered, but it could NOT be recorded on the distribution record (${detail}), ` +
+      "so it will not be recalled if this document changes. Tell Document Control.",
+    );
+    this.name = "DownloadUnrecordedError";
+  }
+}
+
 export async function logDownloadAudit(params: {
   doc: DocumentRecord;
   versionId?: string;
@@ -167,11 +250,18 @@ export async function logDownloadAudit(params: {
   userEmail?: string | null;
   state: ControlState;
   expiresAt?: Date | null;
-}) {
+}): Promise<DownloadAuditResult> {
+  // download_audits.org_id is required (20261068) — a row without one is a
+  // write RLS is guaranteed to refuse, so it is reported, never sent.
+  if (!params.doc.orgId || !params.doc.id) {
+    const error = "the document has no organization or id on record";
+    console.error("[download_audits] NOT RECORDED — this copy is missing from the distribution record:", error);
+    return { recorded: false, error };
+  }
   try {
-    await supabase.from("download_audits").insert({
-      org_id: params.doc.orgId ?? null,
-      document_id: params.doc.id ?? null,
+    const { error } = await supabase.from("download_audits").insert({
+      org_id: params.doc.orgId,
+      document_id: params.doc.id,
       version_id: params.versionId ?? null,
       user_id: params.userId,
       user_email: params.userEmail ?? null,
@@ -179,9 +269,18 @@ export async function logDownloadAudit(params: {
       expires_at: params.expiresAt ? params.expiresAt.toISOString() : null,
       watermark_policy_id: null,
     });
+    if (error) {
+      console.error("[download_audits] REFUSED — this copy is missing from the distribution record:", error.message, {
+        document: params.doc.id, version: params.versionId ?? null,
+      });
+      return { recorded: false, error: error.message || "the record write was refused" };
+    }
+    return { recorded: true };
   } catch (e) {
-    // Auditing failure should never block the download.
-    console.error("download_audits insert failed", e);
+    // Auditing failure never blocks the download — but it is said, loudly.
+    const error = (e as Error)?.message || String(e);
+    console.error("[download_audits] insert failed — this copy is missing from the distribution record:", error);
+    return { recorded: false, error };
   }
 }
 
@@ -213,50 +312,148 @@ export class AcknowledgmentRequiredError extends Error {
 // 60s, which is faster than the page reload that usually follows them.
 const ackPolicyMemo = new Map<string, { at: number; policy: unknown }>();
 const ACK_POLICY_TTL_MS = 60_000;
+/** The pending-acknowledgment read is chunked so a large pack stays under
+ *  PostgREST's URL limit (the lib/acknowledgments.ts chunk size). */
+const ACK_IN_CHUNK = 150;
+
+/** A document as the read-&-understood gate reads it — a DocumentRecord, or
+ *  a raw pack row mapped to these four fields (lib/docPack.ts). */
+export interface AckGateDoc {
+  id?: string | null;
+  libraryId?: string | null;
+  collectionId?: string | null;
+  ackPolicy?: unknown;
+}
+
+/** PKG-9: the gate's whole answer. `gated` — the documents whose effective
+ *  ack policy sets `hardGate` AND for which the person still has a pending
+ *  acknowledgment; `unknown` — the documents it could not decide because a
+ *  read failed (their chunk's pending-acknowledgment read, the policy
+ *  module, or their own folder / library policy read). */
+export interface AckGateOutcome {
+  gated: Set<string>;
+  unknown: Set<string>;
+}
+
+/** PKG-9 (P8's fifth fix pass): a document's inherited ack policy, resolved
+ *  with CHECKED reads. lib/acknowledgments.ts effectiveAckPolicyForDocument
+ *  reads the folder and library policies without looking at `{ error }` —
+ *  supabase-js RESOLVES with it on a PostgREST error or a dropped connection,
+ *  it does not throw — so a failed read resolved as "no policy here" and the
+ *  pack and the book let a hard-gated sheet through. The most specific
+ *  DEFINED level wins (resolveEffectiveAckPolicy), so a level is read only
+ *  while every more specific one is undefined: a document's own policy needs
+ *  no read at all. A read that errors (or throws) is `ok: false` — the gate
+ *  marks the document unknown and never memoizes it. */
+async function readEffectiveAckPolicy(
+  d: AckGateDoc & { libraryId: string },
+  resolve: typeof import("@/lib/acknowledgments").resolveEffectiveAckPolicy,
+): Promise<{ ok: true; policy: AckPolicy | null } | { ok: false }> {
+  const own = (d.ackPolicy ?? null) as AckPolicy | null;
+  if (own) return { ok: true, policy: resolve(own, null, null) };
+  let folder: AckPolicy | null = null;
+  if (d.collectionId) {
+    const { data, error } = await supabase.from("collections").select("ack_policy").eq("id", d.collectionId).maybeSingle();
+    if (error) return { ok: false };
+    folder = (data as { ack_policy?: AckPolicy | null } | null)?.ack_policy ?? null;
+    if (folder) return { ok: true, policy: resolve(null, folder, null) };
+  }
+  const { data: lib, error: libError } = await supabase.from("libraries").select("ack_policy").eq("id", d.libraryId).maybeSingle();
+  if (libError) return { ok: false };
+  return { ok: true, policy: resolve(null, folder, (lib as { ack_policy?: AckPolicy | null } | null)?.ack_policy ?? null) };
+}
+
+/** PKG-9: THE hard read-&-understood gate — the one helper every copy path
+ *  calls: the single-document download and print (assertAckGate below, via
+ *  `ackGatedDocumentIds`), the field doc pack (lib/docPack.ts) and the book
+ *  viewer's merged book. It never decides a document it could not read:
+ *  those are `unknown`, and each caller chooses its posture. The single
+ *  download reads `gated` alone and so fails OPEN (unchanged: a broken read
+ *  must never brick every desk copy — this gate is a client-side courtesy,
+ *  not a rail); the field pack and the book refuse `unknown` too — they fail
+ *  CLOSED, as the pack's hold gate does (P8's fourth fix pass).
+ *  The person's PENDING acknowledgments are read first (one chunked read),
+ *  and a policy is resolved only for a document with one — most people
+ *  printing have none, so a pack spread over many folders makes no policy
+ *  round trips at all (it used to resolve every sheet's policy, up to two
+ *  sequential reads per folder / library, before asking). */
+export async function ackGateDocuments(docs: AckGateDoc[], userId: string): Promise<AckGateOutcome> {
+  const gated = new Set<string>();
+  const unknown = new Set<string>();
+  const candidates = docs.filter((d): d is AckGateDoc & { id: string; libraryId: string } => !!d.id && !!d.libraryId);
+  if (candidates.length === 0) return { gated, unknown };
+  const pending = new Set<string>();
+  const ids = [...new Set(candidates.map((d) => d.id))];
+  for (let i = 0; i < ids.length; i += ACK_IN_CHUNK) {
+    const chunk = ids.slice(i, i + ACK_IN_CHUNK);
+    try {
+      const { data, error } = await supabase
+        .from("document_acknowledgments")
+        .select("document_id")
+        .in("document_id", chunk)
+        .eq("assignee_user_id", userId)
+        .eq("status", "pending");
+      if (error) { for (const id of chunk) unknown.add(id); continue; } // this chunk is undecided
+      for (const r of (data as Array<{ document_id: string }> | null) ?? []) pending.add(String(r.document_id));
+    } catch {
+      for (const id of chunk) unknown.add(id);
+    }
+  }
+  if (pending.size === 0) return { gated, unknown };
+  let resolveEffectiveAckPolicy: typeof import("@/lib/acknowledgments").resolveEffectiveAckPolicy;
+  try {
+    ({ resolveEffectiveAckPolicy } = await import("@/lib/acknowledgments"));
+  } catch {
+    for (const id of pending) unknown.add(id);
+    return { gated, unknown };
+  }
+  for (const d of candidates) {
+    if (!pending.has(d.id) || gated.has(d.id)) continue;
+    try {
+      const memoKey = `${JSON.stringify(d.ackPolicy ?? null)}|${d.collectionId ?? ""}|${d.libraryId}`;
+      const hit = ackPolicyMemo.get(memoKey);
+      let policy: AckPolicy | null;
+      if (hit && Date.now() - hit.at < ACK_POLICY_TTL_MS) {
+        policy = hit.policy as AckPolicy | null;
+      } else {
+        const read = await readEffectiveAckPolicy(d, resolveEffectiveAckPolicy);
+        if (!read.ok) { unknown.add(d.id); continue; } // undecided — and never memoized
+        policy = read.policy;
+        ackPolicyMemo.set(memoKey, { at: Date.now(), policy });
+        if (ackPolicyMemo.size > 200) {
+          const oldest = ackPolicyMemo.keys().next().value;
+          if (oldest !== undefined) ackPolicyMemo.delete(oldest);
+        }
+      }
+      if (policy?.enabled && policy.hardGate) gated.add(d.id);
+    } catch {
+      unknown.add(d.id); // undecided: its policy could not be read
+    }
+  }
+  return { gated, unknown };
+}
+
+/** PKG-9: the gated ids alone — the single download's posture: it fails
+ *  OPEN on a read error (an `unknown` document is not gated), as it always
+ *  has. */
+export async function ackGatedDocumentIds(docs: AckGateDoc[], userId: string): Promise<Set<string>> {
+  return (await ackGateDocuments(docs, userId)).gated;
+}
 
 async function assertAckGate(ctx: DownloadContext): Promise<void> {
   if (!ctx.doc.id || !ctx.doc.orgId) return;
-  try {
-    const { effectiveAckPolicyForDocument } = await import("@/lib/acknowledgments");
-    const memoKey = `${JSON.stringify(ctx.doc.ackPolicy ?? null)}|${ctx.doc.collectionId ?? ""}|${ctx.doc.libraryId}`;
-    const hit = ackPolicyMemo.get(memoKey);
-    let policy: Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
-    if (hit && Date.now() - hit.at < ACK_POLICY_TTL_MS) {
-      policy = hit.policy as Awaited<ReturnType<typeof effectiveAckPolicyForDocument>>;
-    } else {
-      policy = await effectiveAckPolicyForDocument({
-        ackPolicy: ctx.doc.ackPolicy ?? null,
-        collectionId: ctx.doc.collectionId ?? null,
-        libraryId: ctx.doc.libraryId,
-      });
-      ackPolicyMemo.set(memoKey, { at: Date.now(), policy });
-      if (ackPolicyMemo.size > 200) {
-        const oldest = ackPolicyMemo.keys().next().value;
-        if (oldest !== undefined) ackPolicyMemo.delete(oldest);
-      }
-    }
-    if (!policy?.enabled || !policy.hardGate) return;
-    const { data } = await supabase
-      .from("document_acknowledgments")
-      .select("id")
-      .eq("document_id", ctx.doc.id)
-      .eq("assignee_user_id", ctx.userId)
-      .eq("status", "pending")
-      .limit(1);
-    if (((data as unknown[]) ?? []).length > 0) {
-      throw new AcknowledgmentRequiredError(
-        String(ctx.doc.documentNumber || ctx.doc.title || ctx.doc.name || "Document"),
-      );
-    }
-  } catch (e) {
-    if (e instanceof AcknowledgmentRequiredError) throw e;
-    /* fail open: enforcement must not outlive its data */
+  const gated = await ackGatedDocumentIds([ctx.doc], ctx.userId);
+  if (gated.has(ctx.doc.id)) {
+    throw new AcknowledgmentRequiredError(
+      String(ctx.doc.documentNumber || ctx.doc.title || ctx.doc.name || "Document"),
+    );
   }
 }
 
 export async function downloadDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
   await assertAckGate(ctx);
-  const state = determineControlState(ctx.doc, ctx.userId, ctx.versionIsCurrent);
+  const hold = await readCopyHoldState(ctx.doc.id);
+  const state = copyControlState(ctx, hold);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 
   if (state === "controlled") {
@@ -273,8 +470,8 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
         email: ctx.userEmail ?? undefined,
         timestamp: new Date(),
         expiresAt,
-        watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-        footerNotice: buildFooterNotice(ctx),
+        watermarkText: copyWatermark(ctx, hold),
+        footerNotice: buildFooterNotice(ctx, hold),
         verifyUrl: buildVerifyUrl(ctx),
       },
     });
@@ -282,7 +479,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
 
   captureDownloadIntent(ctx, "download");
 
-  await logDownloadAudit({
+  const audit = await logDownloadAudit({
     doc: ctx.doc,
     versionId: ctx.versionId ?? ctx.doc.currentVersionId ?? undefined,
     userId: ctx.userId,
@@ -290,6 +487,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
     state,
     expiresAt: state === "uncontrolled" ? expiresAt : null,
   });
+  if (!audit.recorded) throw new DownloadUnrecordedError(audit.error);
 
   return state;
 }
@@ -300,7 +498,8 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
  */
 export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlState> {
   await assertAckGate(ctx);
-  const state = determineControlState(ctx.doc, ctx.userId, ctx.versionIsCurrent);
+  const hold = await readCopyHoldState(ctx.doc.id);
+  const state = copyControlState(ctx, hold);
   const expiresAt = new Date(Date.now() + (ctx.expiresInHours ?? 24) * 3600 * 1000);
 
   let blob: Blob;
@@ -313,8 +512,8 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
       email: ctx.userEmail ?? undefined,
       timestamp: new Date(),
       expiresAt,
-      watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-      footerNotice: buildFooterNotice(ctx),
+      watermarkText: copyWatermark(ctx, hold),
+      footerNotice: buildFooterNotice(ctx, hold),
       verifyUrl: buildVerifyUrl(ctx),
     });
   }
@@ -330,7 +529,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
   // Best-effort cleanup; do not revoke immediately or the new window blanks.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 
-  await logDownloadAudit({
+  const audit = await logDownloadAudit({
     doc: ctx.doc,
     versionId: ctx.versionId ?? ctx.doc.currentVersionId ?? undefined,
     userId: ctx.userId,
@@ -338,6 +537,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
     state,
     expiresAt: state === "uncontrolled" ? expiresAt : null,
   });
+  if (!audit.recorded) throw new DownloadUnrecordedError(audit.error);
 
   return state;
 }

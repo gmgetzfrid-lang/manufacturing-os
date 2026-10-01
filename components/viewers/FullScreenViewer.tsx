@@ -49,6 +49,7 @@ import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
+import { appAlert } from "@/components/providers/DialogProvider";
 import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
@@ -58,6 +59,7 @@ import {
   viewerStatusBadge,
   type ViewBadgeTone,
   logDownloadAudit,
+  DownloadUnrecordedError,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -866,7 +868,21 @@ export default function FullScreenViewer({
       else await printDocumentPdf(ctx);
       setPending(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      const message = (e as Error).message || "Action failed";
+      // EGR-6: a copy delivered but not recorded already reached the person —
+      // close the dialog (its download button would invite a second copy,
+      // unrecorded too) and say it. The dialog stays open only for a refusal
+      // made BEFORE delivery (acknowledgment, hold, fetch).
+      if (e instanceof DownloadUnrecordedError) {
+        setPending(null);
+        void appAlert(message);
+        return;
+      }
+      setActionError(message);
+      // The checkout holder's direct download / print opens no dialog, and
+      // actionError renders only inside it — say it anyway (a hold or an
+      // acknowledgment refusal is never silent).
+      if (!pending) void appAlert(message);
     } finally { setActionBusy(false); }
   };
   const requestDownload = () => {
@@ -1035,8 +1051,10 @@ export default function FullScreenViewer({
       // 4. Audit log — same row shape as a plain uncontrolled Download: a
       //    markup export is ALWAYS an uncontrolled copy (PHYS-5), so the
       //    ledger never records an unmarked redline as a controlled copy.
+      //    EGR-6: a refused record is said once the copy is delivered (the
+      //    same words a single download uses), never only logged.
       if (docRecord && currentUserId) {
-        await logDownloadAudit({
+        const audit = await logDownloadAudit({
           doc: docRecord,
           versionId: servedVersionId,
           userId: currentUserId,
@@ -1044,6 +1062,7 @@ export default function FullScreenViewer({
           state: "uncontrolled",
           expiresAt,
         });
+        if (!audit.recorded) void appAlert(new DownloadUnrecordedError(audit.error).message);
         // Marking up is the most edit-like act in the viewer — record it so
         // overlap advisories and provenance see the work. But marking up an
         // OLD revision is a reference, not an edit base (REV-1 chain reaction).

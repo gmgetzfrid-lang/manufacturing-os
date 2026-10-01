@@ -1,6 +1,6 @@
 # 06 · Transmittals & the external portal
 
-**15 findings** — 7 HIGH · 7 MEDIUM · 1 LOW (`TRX-15` opened at the P7 merge, 2026-10-01).
+**16 findings** — 7 HIGH · 7 MEDIUM · 2 LOW (`TRX-15` opened at the P7 merge, `TRX-16` at P8 FIELD's fix pass, 2026-10-01).
 
 What leaves the building, and what the recipient can reach.
 
@@ -719,6 +719,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** document-control P8 FIELD (a stamping consumer; after PS-STAMP merges) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** document-control P15 SURFACE REMAINDERS (done-when 1 via `TRX-16`'s issue-time stampability check) and the user (ratify the `DEC-61` §5 amendment; check one hidden-frame download on iOS Safari and Firefox) — by the integrator, 2026-10-01 (P8 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)
 - **Blast radius:** document-control integrity (an uncontrolled copy without its marking)
 - **Locations:**
@@ -736,6 +737,121 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 **Done when.**
 - Every PDF served by the portal carries the stamp, whatever its size — or a PDF that cannot be stamped is refused at issue with the reason.
 - The portal page does not hold a download in memory.
+
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD, a stamping consumer. (Recorded as resolved on the first pass; the review found the "refused at issue" limb undone and the issuer told only by an audit row, so it stays open — see the fix pass.) `lib/stamping.ts` is consumed as PS-STAMP left it; narrow edits to P7's route and page. Reproduced at `55e281d`:
+- `app/api/transmittal/route.ts` piped a PDF over `PORTAL_STAMP_MAX_BYTES` (64 MiB) through unstamped (`unstampedReason: "oversize"`), and delivered a PDF the stamper refused unstamped too ("stamping failed — delivering unstamped").
+- The portal page read every download with `res.blob()`.
+
+What the first pass landed in the route — **superseded at fix pass 2; kept as history, not as current behaviour.** Today the download-time refusal binds only an item the issue-time check (`TRX-16`) marked `stampable: true`, and no item carries that mark yet, so every live item keeps DEC-61 §5: a PDF that cannot be stamped is released as issued, recorded unstamped, and the issuer is told (fix pass 2). What the first pass shipped, and what became of it:
+- *First pass:* every PDF over the bound was stopped at its header (`hashBody(body, { stopIfPdf: true })`, the rest never read) and every PDF the stamper refused was refused too, both `422 { error: "unstampable", reason: "oversize" | "stamp_failed" }`. *Now:* only for an armed item (`stopIfPdf: armed`); an unarmed one is released unstamped.
+- *First pass and now, for an armed item:* nothing is recorded as delivered on a refusal; the refusal goes on the issuer's trail (`TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED` in `audit_logs`, attributed to the issuer, with the version, the reason and the bound).
+- *First pass:* only a file that was not a PDF left unstamped. *Now:* a non-PDF (hash-verified chunk by chunk when large, re-read pinned by `If-Match` and piped, `unstampedReason: "not_pdf"`) and, on every unarmed item, a PDF over the bound (`oversize`) or one the stamper refuses (`stamp_failed`) leave unstamped, recorded so.
+- **The snapshot flags such files.** Each item gets `releasedUnmarked` (a read of the pinned versions, `isPdfFile`, scoped to the transmittal's org; `null` = unknown), so the page can still say which files leave without the marking — extended at fix pass 2 (a PDF over the bound) and fix pass 3 (a copy the record shows already left unmarked, a stamper refusal included).
+
+What landed on the page:
+- **No download is held in memory.** The page points a hidden frame at the route with `&nav=1`, and the browser streams the `Content-Disposition: attachment` response straight to disk; no `fetch().blob()`, no object URL.
+- **A refusal is still explained.** In `&nav=1` mode the route answers a refusal as plain-text JSON carrying its status, which renders in the frame; the page reads it back (`frameRefusal`) and explains it ("This PDF is too large for the portal to mark as an UNCONTROLLED copy, so it was not released …"). Without `&nav=1` the JSON answer is unchanged for every other caller.
+- The standing note and the per-item "Not a PDF — released as issued, WITHOUT the UNCONTROLLED marking" line replace the response-header notice the page can no longer read.
+
+Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
+- *First pass (rewritten at fix pass 2, which replaced this group):* "TRX-15 — a PDF leaves the portal stamped or not at all" pinned the refusals for every item and that the route had no unstamped-PDF branch. Those pins no longer hold and were removed; the refusal pins now cover an armed item only, and the unarmed release is pinned instead (fix pass 2's list). What still stands from this group: `&nav=1` refusals are plain text with the status while the JSON callers are unchanged, and the page holds nothing in memory.
+- "TRX-15 — the snapshot flags a pinned file that is not a PDF".
+- The size tests now carry a large NON-PDF through the pinned pipe.
+
+`lib/__tests__/dcRoundFTransmittals.test.ts` (P7's test): its response-header pin is re-pointed at the per-item notice.
+
+**Fix pass (review findings).**
+- **Who the stamper fails, named.** `PDFDocument.load(source)` without `ignoreEncryption` throws on EVERY encrypted PDF — owner-password (permission-restricted) vendor and certified drawings included, which open in any viewer. That is the main population a stamped-or-refused rule would reach, then PDFs over 64 MiB. *First fix pass:* both were refused at download. *Since fix pass 2:* both are refused only on an item marked stampable at issue (none yet); otherwise they reach the recipient unstamped and recorded, as at `55e281d`, and the issuer is told.
+- **The issuer is told, not only the trail.** On a refusal the route now writes, besides `TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED`, a bell notification (`kind: "transmittal_unstampable"`, linking `/transmittals`) and a queued email to the issuer (`event_type: "transmittal_refused"`, which no per-category toggle mutes), naming the document, the likely cause (a permission-restricted PDF, else a damaged file; or the size bound) and the remedy (re-save without restrictions or split, then re-issue — "this one still reads issued on the register"). Once per transmittal and document: a refusal already on the trail for the pair means the issuer was told (`unstampableAlreadyOnTrail`; an unreadable trail errs toward telling again). `lib/notify`'s `emit()` runs on the signed-in browser client and cannot be called from this service-role route, so it uses the route's own issuer path — the same two rows the receipt path writes. Best-effort: it never blocks the refusal.
+- **The issue-time check is a tracked finding**, not prose: `TRX-16` (owner P7 / `lib/transmittals.ts`).
+- Tests (`transmittalPortalRoute.test.ts` "TRX-15 — …"): the issuer is told once — bell and email, with the restricted-PDF wording — and a retry is refused and trailed again without a second notice; an oversize PDF names the bound; a transmittal with no issuer on the row is still refused.
+
+**Fix pass 2 (review findings).**
+- **The download-time refusal is sequenced behind `TRX-16`, not shipped ahead of it.** As shipped, every LIVE transmittal carrying a permission-restricted vendor PDF, or a PDF over 64 MiB, would have answered its external recipient 422 on deploy. The issuer would have heard only afterwards, and `DEC-61` §5, which the user never ratified a change to, would have been reversed through a landed note. Now:
+  - The refusal is ARMED per item, only by the issue-time check's mark: `refusesUnstampable(item)` is `item.stampable === true` (`app/api/transmittal/route.ts`). No item carries the mark until `TRX-16` lands. An item issued with the mark was checked as stampable when it was issued, so the issuer learns of any problem at issue, not from the recipient.
+    - For an armed item, a PDF over the bound is stopped at its header (`hashBody(…, { stopIfPdf: armed })`), and a stamping failure is refused (`422 unstampable`, `TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED` on the trail, nothing recorded as delivered), exactly as the first pass did.
+    - `items` is browser-written on a draft, but a forged mark can only make the portal stricter for that item.
+  - Every other item keeps `DEC-61` §5 as written, which is every live transmittal today. A PDF over the bound is hashed chunk by chunk, re-read pinned (`If-Match`) and piped. A PDF the stamper refuses goes out as the as-issued bytes. Both are recorded `transmittal_portal_unstamped` with `unstampedReason: "oversize" | "stamp_failed"`, as at `55e281d`.
+  - **What `TRX-15` adds to §5: the issuer is TOLD.** Once the copy has left (after its `download_audits` row), the issuer gets a bell and an email: "… went to the recipient WITHOUT the UNCONTROLLED marking". It names the cause (the size bound, or a permission-restricted / damaged PDF) and the remedy. It goes out once per transmittal and document (`metadata.outcome: "released"`, `event_type: "transmittal_unstamped"`).
+- **The notice is checked and deduped on a DELIVERED notice** (review minor). The bell and email inserts now destructure and log `{ error }`, so a refused insert is never read as delivered. "Already told" (`issuerAlreadyTold`) reads `notifications` for a written bell row of kind `transmittal_unstampable` on this transmittal and document. It no longer reads the trail, so a failed first notice no longer silences every later one. An unreadable notification set errs toward telling again.
+- **The queue kick uses the configured origin** (review minor): `publicOrigin()`, never `req.nextUrl.origin`; no configured origin, no kick (the maintenance cron drains). The receipt path's identical call (`POST`) is unchanged — a separate task, as the review notes.
+- **The page always offers a working fallback** (`app/transmittal/[token]/page.tsx`). The hidden-frame download (`&nav=1`) has not been tried on iOS Safari or Firefox, and a browser may drop an attachment that arrives in a `display:none` frame. Once a download is started, the item now shows a visible link, "Download didn't start? Open the file directly". It points to the SAME address (`fileHref`), opened as a top-level navigation (`target="_blank"`), so it always reaches the browser's own download handling. The 8-second note no longer says the browser "is saving the file". It now says the download should have started and points to that link. Wording follows §5: a PDF the portal cannot mark is released without the marking, and the issuer is told.
+- **The snapshot flags a large PDF too.** `releasedUnmarked` is now true for a PDF over the bound as well as for a non-PDF, when the item is not armed. The size comes from the item's `fileSize` (recorded at issue), else the pinned version's `size`. `unmarkedReason` (`"not_pdf" | "oversize"`) tells the page which line to show: "Too large for the portal to mark — released as issued, WITHOUT the UNCONTROLLED marking (the issuer is told)". A PDF the stamper refuses is known only at download.
+- **The population is measured** (review). `20261143`'s inventory carries two read-only `MEASURE (TRX-15, …)` rows. The first counts items on LIVE transmittals (issued / acknowledged, a token, link not revoked or expired) whose file is a PDF over 64 MiB, by the item's `fileSize`, else the pinned version's `size`. The second counts live items with no recorded size. The `20261133` portal columns are read through `to_jsonb`, so the rows run on a database without `20261133`. Exercised against a scratch PostgreSQL 16: revoked, expired, voided and draft transmittals are not counted. The encrypted population cannot be counted in SQL (it needs a pdf-lib load).
+- `DEC-61` §5's body is unchanged. The landed note no longer reverses it: it records the notice and the staging, and leaves the amendment ("a PDF that cannot be stamped is refused, never released unmarked") for the user to ratify when `TRX-16` lands.
+- Tests (`transmittalPortalRoute.test.ts` "TRX-15 — …", rewritten):
+  - unmarked item: an oversize PDF is verified, pinned and piped unstamped (`oversize`), with the issuer told it was released unmarked;
+  - unmarked item: a stamper refusal goes out as issued (`stamp_failed`), the issuer told once across two pulls;
+  - marked item: an oversize PDF is refused unread (422), and a stamper refusal is refused (422), the issuer told once;
+  - a failed bell or email insert is logged and does not count as told, so the next pull tells;
+  - the queue kick goes to `publicOrigin()` even when the request names another host; no issuer means no notice;
+  - source pins on the armed branches;
+  - `&nav=1` with a marked item;
+  - the page's fallback link (the same address, `target="_blank"`), and that the page never claims "saving";
+  - the snapshot flags an oversize PDF (by item or version size) and does not flag a marked item.
+
+**Fix pass 3 (review findings).**
+- **The recipient is told per file again when a copy leaves unmarked.** Fix pass 2's page saves through a hidden frame and cannot read `X-Transmittal-Stamped`, and its per-item flag covered only a non-PDF and a PDF over the bound with a RECORDED size. So a PDF the stamper refused (`stamp_failed` — a permission-restricted vendor datasheet, the main population) or an oversize PDF with no recorded size left with only "the download should have started" and the generic standing note, where `55e281d` said "<file> was released without the UNCONTROLLED marking". Now:
+  - The snapshot GET flags any item a copy of which ALREADY left unmarked (`unmarkedCopiesOut`, `app/api/transmittal/route.ts`): the distribution record (`download_audits` rows of this transmittal with `source = 'transmittal_portal_unstamped'` — a checked write made before the bytes leave) says that it left unmarked; the issuer's trail (`TRANSMITTAL_PORTAL_DOWNLOAD`, `details.stamped` false) says why — `unmarkedReason` gains `stamp_failed`, and is `null` with `releasedUnmarked: true` when the trail has no reason. Any copy counts, not only the latest pull: a later stamped pull does not recall an unmarked copy already out. Both reads are paged past max-rows; a read that fails flags nothing (unknown), never "marked". On a database without the `20261068` columns the trail alone answers.
+  - The page re-reads the snapshot when a download settles and again 45 s later (`&recheck=1` — not counted as an open on the usage trail; a failed re-read leaves the page as it is). When the item is flagged, the settle message says "This copy was released WITHOUT the UNCONTROLLED marking — see the note under <file>", and the line under the file names the cause: "Could not be marked UNCONTROLLED (most often a PDF saved with security or permission restrictions) — the copy downloaded from this link was released as issued, WITHOUT the marking, the as-issued footer or the verify QR (the issuer is told)."
+- **The snapshot's pinned-version read is chunked** at 150 ids; a chunk that fails leaves only its items unknown. It stays scoped to the transmittal's org: the download's own resolver (`fileKeyForItem`) never serves a version row outside it — a legacy row with no `org_id` included — so there is no copy of such a file to flag.
+- **Records corrected.** The first-pass bullets and test list above are rewritten as history ("A PDF leaves stamped or not at all", "Only a file that is not a PDF leaves unstamped", "the route has no unstamped-PDF branch" no longer read as current), and the residual's "unchanged for the recipient" now names what changed for the recipient and what was restored.
+- Tests (`transmittalPortalRoute.test.ts` "TRX-15 — the snapshot flags …"): a small PDF pin reads unflagged, its pull is refused by the stamper and released unmarked, and the re-read flags it `stamp_failed` — still flagged after a later stamped pull; a record row with no trail reason flags it with no reason, another transmittal's row does not, and a failed record read flags nothing; `&recheck=1` bumps no open; the pinned-version read is chunked 150 / 150 / 20; the page's re-read, its settle message and the `stamp_failed` line. `dcRoundFTransmittals.test.ts`'s portal pin follows the per-item line into `unmarkedLine`.
+
+**Fix pass 4 (review findings).**
+- **A failed record read is unknown, never "nothing says so".** `unmarkedCopiesOut` swallowed a failed `download_audits` or trail read, and a small PDF then answered `releasedUnmarked: false`, the value for "nothing says it left unmarked". The function's own comment promised "unknown". An API consumer, or a later page change, could read that `false` as "stamped" for a permission-restricted PDF that had already left unmarked. Now:
+  - `readPaged` reports whether it reached the end of its rows (`complete`: an empty page). An error, a throw or the 10-page cap leaves it incomplete.
+  - `unmarkedCopiesOut` returns `readFailed`, and an item it could not clear reads `releasedUnmarked: null`, which the page covers with its standing note.
+  - What the file itself says still stands: a non-PDF, or a PDF recorded over the bound, is `true` whatever the read did.
+- **`&recheck=1` no longer lets any token holder skip the open counter.** The flag is unauthenticated (token only). A re-read is now taken as the page's own, and not counted as an open, only within 10 minutes of the portal's last recorded use (`isPortalRecheck`; `portal_last_used_at` is bumped by every open and download). The page re-reads when a download settles and 45 s later, so its own re-reads are unaffected. Any other GET, flag or not, is counted, as is a GET on a row without the `20261133` column. A client that always sends the flag can no longer keep the issuer's open count at zero.
+- Tests (`transmittalPortalRoute.test.ts`):
+  - a failed record read leaves a small PDF `releasedUnmarked: null`, never `false`, while a non-PDF still reads `true` / `not_pdf`;
+  - a recheck within minutes of the last use bumps no open, but a stale or absent last use is counted, and a plain open always is.
+
+**Done-when.**
+1. ✗ Not met, by design until `TRX-16`. Every PDF the portal can stamp carries the stamp. A PDF it cannot stamp is, for now, released recorded-unstamped with the issuer told, as `DEC-61` §5 says. It is not refused at issue: that is `TRX-16` (the issue gate, `lib/transmittals.ts`, P7's file). Once `TRX-16` writes `stampable: true` on the items it checks, the portal refuses such an item instead of releasing it unmarked. The portal side of that is in place and tested.
+2. ◐ The portal page does not hold a download in memory (the hidden-frame save, `&nav=1`), and a visible same-address link is the fallback on any browser that drops the frame's attachment. Still not checked on a device: no iOS Safari or Firefox download was exercised (no browser in this environment). An operator should check once on each before this closes.
+
+**Scope / residual.**
+- Stays OPEN for done-when 1 (`TRX-16`, then the user's ratification of the §5 amendment) and done-when 2's device check (iOS Safari, Firefox).
+- Behaviour now, relative to `55e281d`. *Delivery:* unchanged — the recipient still receives a PDF that cannot be stamped, as issued, recorded unstamped. *The issuer* is now told (bell and email). *The recipient's page* saves through a hidden frame with a visible fallback link, and so can no longer read the per-download `X-Transmittal-Stamped` header that `55e281d` turned into "<file> was released without the UNCONTROLLED marking". Fix pass 2 lost that notice for a stamper refusal and for an oversize PDF with no recorded size (the record wrongly called the recipient's side "unchanged"); fix pass 3 restores it from the record — up front for a non-PDF or a recorded oversize PDF, and from the snapshot re-read once a copy has left unmarked. The difference left: the notice arrives when the page's re-read sees the record (at the 8-second settle, or 45 s later for a slow stamp), not with the response; and a recipient who closes the page at once still has only the standing note.
+- The first pass's change ("refused at download") is staged behind `TRX-16`'s mark. Shipping it ahead would have refused live transmittals that nobody checked at issue.
+- When the frame cannot deliver, the route has already recorded the copy as delivered, and so does the fallback link's second pull, which is a second, real pull. A frame that a browser silently drops still reads as delivered on the distribution record. Only the device check can size that gap.
+- The snapshot GET runs up to two paged reads (the record and the trail, at most 10 windows each) per open or re-read, on a token-only endpoint with no per-IP cap. The verify routes' limiter (`lib/verifyRateLimit.ts`) was considered and not reused. It counts rows of the public scan record (`verify_scans`), so a portal open would land in another surface's log. A portal cap needs its own window table: P7's, or a follow-up. A download that streams for more than 10 minutes has its settle re-read counted as an open (fix pass 4's window).
+
+---
+
+<a id="trx-16"></a>
+
+## TRX-16 · A PDF the portal cannot stamp is accepted at issue and refused only when the recipient downloads it
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** document-control P7 TRANSMITTALS follow-up (`lib/transmittals.ts`, the issue path) — opened 2026-10-01 at P8 FIELD's fix pass, at the reviewer's request (the issue-time limb of `TRX-15`).
+- **Assigned:** document-control P15 SURFACE REMAINDERS (`lib/transmittals.ts` issue: a size bound plus a pdf-lib load, refused or warned at issue) — by the integrator, 2026-10-01 (P8 merge; fleet plan `audit-reports/fleet-plans/`).
+- **Verification:** CONFIRMED (by reading; the download-time refusal it follows is pinned in `lib/__tests__/transmittalPortalRoute.test.ts` "TRX-15 — …")
+- **Blast radius:** document-control delivery (an issued transmittal its recipient cannot receive)
+- **Locations:**
+  - `lib/transmittals.ts` — the issue transition (with the `20261133` issue rail) checks each item's status, holds and pinned revision, but not whether a PDF item can be stamped
+  - `app/api/transmittal/route.ts` — `refuseUnstampable` (`TRX-15`): the refusal happens at download, and since P8's second fix pass only for an item this check has marked (`refusesUnstampable`); every other item is released recorded-unstamped, with the issuer told
+- **Related:** `TRX-15`, `TRX-5`, `DEC-61`
+- **Independently verified:** — (`author`: opened at P8 FIELD's fix pass per `DEC-31`; not yet challenged)
+
+**Mechanism.** Since `TRX-15` a PDF leaves the portal stamped or not at all. pdf-lib's plain load refuses every encrypted PDF — owner-password (permission-restricted) vendor and certified drawings included, though they open in any viewer — and the portal does not stamp above 64 MiB. Issuing checks neither, so the transmittal is issued, the register reads it as sent, and the first refusal is the recipient's download. The issuer is told at that moment (a bell and an email, once per transmittal and document), not before. *(P8 fix pass 2: so that no live transmittal is refused for a file nobody checked, the portal now refuses only an item this check marks `stampable: true`; until then such a PDF goes out recorded-unstamped under `DEC-61` §5 and the issuer is told after the fact — the same late notice, about an unmarked copy instead of a refusal.)*
+
+**Failure scenario.** A DocCtrl issues TR-0107 carrying a permission-restricted vendor datasheet. The external contractor clicks Download and is refused ("could not be marked … Contact the issuer"). The issuer hears of it then, re-saves the file without restrictions and issues again — a day lost on a transmittal the register showed as issued.
+
+**Remediation.** At issue (the draft → issued transition, before the update), for each PDF item: refuse or warn when the version's stored size is over the portal's stamping bound, and when a pdf-lib load of its bytes (without `ignoreEncryption`) fails — in a server route, so the browser does not fetch every file — naming the item and the reason ("permission-restricted PDF: re-save it without restrictions, then issue").
+
+**Done when.**
+- Issuing a transmittal with a PDF the portal cannot stamp is refused or warned at issue, naming the item and the reason.
+- A test pins the check for an encrypted PDF and for one over the bound.
+
+**The portal's hook (2026-10-01, P8 FIELD fix pass 2).** `TRX-15`'s download-time refusal ("a PDF goes out stamped or not at all") is sequenced behind this finding. The portal arms it per item only when the item carries `stampable: true` (`refusesUnstampable`, `app/api/transmittal/route.ts`). Until this check writes that mark, every item keeps `DEC-61` §5: a PDF that cannot be stamped is released recorded-unstamped, and the issuer is told. So the issue-time check should:
+- write `stampable: true` on each PDF item it loaded and stamped (the issue trigger in `20261133` merges a draft item's own keys into the issued snapshot, `it || jsonb_build_object(…)`);
+- write `stampable: false`, or nothing, where it only warned and the issuer went ahead (that item then keeps §5's release).
+
+Arming the refusal changes `DEC-61` §5, so it lands with the user's ratification of that amendment.
 
 ---
 

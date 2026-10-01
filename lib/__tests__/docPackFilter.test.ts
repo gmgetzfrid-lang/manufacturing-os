@@ -48,14 +48,21 @@ describe("filterPackDocs (PKG-4)", () => {
     },
   );
 
-  it("tolerates a legacy row with no status at all (pre-status data passes)", () => {
+  // VFY-17 (document-control Round F, P8): the gate is the verify allow-list
+  // — a legacy row with no status used to print here and then scan red
+  // ("not issued") the minute it reached the field.
+  it("refuses a legacy row with no status at all (VFY-17 — the verify allow-list reads it not_issued)", () => {
     const { docs, skipped } = filterPackDocs(
-      [doc({ status: "" }), doc({ id: "d2", status: undefined })],
+      [doc({ status: "" }), doc({ id: "d2", status: undefined }), doc({ id: "d3", status: null })],
       none,
       false,
     );
-    expect(docs).toHaveLength(2);
-    expect(skipped).toEqual([]);
+    expect(docs).toHaveLength(0);
+    expect(skipped).toHaveLength(3);
+    for (const s of skipped) {
+      expect(s.reason).toBe("no status — not an issued, controlled revision");
+      expect(s.code).toBe("not_issued");
+    }
   });
 
   it("refuses a document under an active hold, telling the crew to stop", () => {
@@ -66,7 +73,7 @@ describe("filterPackDocs (PKG-4)", () => {
     );
     expect(docs.map((d) => d.id)).toEqual(["clear"]);
     expect(skipped).toEqual([
-      { label: "P-101", reason: "under an active hold — work from this document should stop" },
+      { documentId: "held", label: "P-101", reason: "under an active hold — work from this document should stop", code: "on_hold" },
     ]);
   });
 

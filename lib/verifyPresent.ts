@@ -198,13 +198,17 @@ export interface PackVerifyResult {
   heldCount?: number;
   /** Sheets in the package that are NOT in this pack and could be printed
    *  now — added since printing, or left out of it for a reason that no
-   *  longer holds (a file that failed to fetch, a sheet issued since). The
-   *  route cannot tell which (VFY-19), so it never says "added since". */
-  notInPack?: Array<{ label: string }>;
+   *  longer holds (a file that failed to fetch, a sheet issued since). Only
+   *  a snapshot that records its left-out sheets can say which (VFY-19,
+   *  document-control P8): then exactly one of `leftOutAtPrint` (a
+   *  lib/packLeftOut.ts code) or `addedSincePrint` is set; an older
+   *  snapshot sets neither, and nothing says "added since". */
+  notInPack?: Array<{ label: string; leftOutAtPrint?: string; addedSincePrint?: boolean }>;
   /** Sheets in the package that are NOT in this pack and cannot be printed
    *  now (NotPrintableReason) — a re-print would leave them out too, so they
-   *  never make the pack stale; on their own they make it "incomplete". */
-  notPrintable?: Array<{ label: string; reason: NotPrintableReason }>;
+   *  never make the pack stale; on their own they make it "incomplete". The
+   *  same optional VFY-19 fields say when it went missing. */
+  notPrintable?: Array<{ label: string; reason: NotPrintableReason; leftOutAtPrint?: string; addedSincePrint?: boolean }>;
   allFresh: boolean;
   verdict?: PackVerdict;
   sheets: PackSheetRow[];
@@ -229,9 +233,12 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
         blurb: `${sheets(r.heldCount ?? 0)} in this pack ${(r.heldCount ?? 0) === 1 ? "is" : "are"} under an active hold — the sheets marked below.` };
     case "stale": {
       // A sheet of the package that is not in this pack but could be printed
-      // now. The print snapshot does not record what the print gate left out
-      // (VFY-19), so nothing here says it was "added since printing" — only
-      // that the package holds it and this pack does not.
+      // now. The verdict words here say only that the package holds it and
+      // this pack does not; WHEN it went missing is per sheet, and only from
+      // a snapshot that records its left-out sheets (VFY-19): the route sets
+      // `leftOutAtPrint` or `addedSincePrint`, and the pack page appends
+      // "left out of this printing — …" / "added since this pack was
+      // printed" to the sheet's line (lib/packLeftOut.ts missingSheetWhen).
       const missing = r.notInPack?.length ?? 0;
       // A sheet that is not an issued revision (a draft, or a legacy row with
       // no status) is not evidence that anything CHANGED since printing — it

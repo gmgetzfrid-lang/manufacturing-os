@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "RESOLVED": 42,
-      "OPEN": 19,
+      "RESOLVED": 46,
+      "OPEN": 15,
       "WONTFIX": 1
     }
   },
@@ -177,7 +177,7 @@
       "id": "PHYS-1",
       "title": "A document under an active HOLD verifies GREEN \"CURRENT\" on the public scan page — the hold, the stop-work signal the system exists to carry, is invisible to every field scan",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1580,7 +1580,7 @@
       "id": "VFY-17",
       "title": "The pack print gate admits a legacy EMPTY-status document that the verify allow-list refuses — a just-printed pack can never scan green",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1604,7 +1604,7 @@
       "id": "VFY-18",
       "title": "A print whose snapshot insert fails still ships, with a bare-package cover QR that can never read green — and the packages page reports success",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1628,7 +1628,7 @@
       "id": "VFY-19",
       "title": "The print snapshot does not record which package sheets the print gate LEFT OUT, so the pack verdict cannot tell \"left out at print\" from \"added since printing\"",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

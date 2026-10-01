@@ -31,7 +31,7 @@ What a printed page asserts, and whether it can be wrong.
 ## PHYS-1 · A document under an active HOLD verifies GREEN "CURRENT" on the public scan page — the hold, the stop-work signal the system exists to carry, is invisible to every field scan
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify/route.ts:34-38`, `app/api/verify/route.ts:89-90`, `app/verify/[docId]/page.tsx:64-65`, `app/verify/[docId]/page.tsx:98-100`, `app/api/verify-package/route.ts:56`, `app/api/verify-package/route.ts:61`, `lib/documentGuards.ts:1-7`, `lib/downloads.ts:227-240`
@@ -70,6 +70,16 @@ verify/route.ts:89-90 `const docRetired = d.status === "Superseded" || d.status 
 
 **Scope / residual.** Stays OPEN for done-when 4 → document-control P8 FIELD.
 
+
+**Resolution (2026-10-01, document-control Round F wave 2 — reconciled by the integrator at the P8 merge).** Done-when 4 landed with P8 FIELD's `HLD-1` download / footer limb. `lib/downloads.ts` `buildFooterNotice(ctx, hold)` adds `holdFooterLine(hold)`. The line reads "ON HOLD at time of issue (<reasons>) — work from this document is stopped until Document Control releases the hold", or "HOLD STATUS UNKNOWN at time of issue …" when the hold state cannot be read. Both copy paths (`downloadDocumentPdf` / `printDocumentPdf`) read the hold at issue time (`readCopyHoldState`) and pass it to the footer and to `copyWatermark` ("ON HOLD — DO NOT USE"). Tests: `lib/__tests__/dcRoundFField.test.ts` ("ON HOLD at time of issue (Client Review)", the deduplicated reasons, no line for an unheld document). Done-when 1–3 landed earlier (Partial above).
+
+**Done-when.**
+- [x] 1 — `DIST-2` + `VFY-5` (above).
+- [x] 2 — PS-VERIFY (above).
+- [x] 3 — `DIST-2` + the `VFY-1` allow-list (above).
+- [x] 4 — `buildFooterNotice` adds the hold line at issue time (P8 FIELD).
+
+**Scope / residual.** None for this finding. The copy paths are client-side, as the verifier noted for `HLD-1`, whose own record keeps its remaining limbs.
 ---
 
 <a id="phys-2"></a>

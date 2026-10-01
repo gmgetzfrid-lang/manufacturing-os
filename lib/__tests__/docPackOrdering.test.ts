@@ -42,6 +42,7 @@ vi.mock("pdf-lib", () => {
     addPage: () => {},
     insertPage: (i: number) => { state.events.push(`insert@${i}`); },
     getPageIndices: () => [0],
+    getPageCount: () => 1,
     save: async () => { state.events.push("save"); return new Uint8Array([1]); },
   });
   return { PDFDocument: { create: async () => doc(), load: async () => doc() } };

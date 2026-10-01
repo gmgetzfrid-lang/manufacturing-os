@@ -19,15 +19,22 @@
 // the package — and every sheet the package holds is in the pack (VFY-2). A
 // package sheet missing from the paper is split by what is true of it NOW:
 // one that could be printed makes the pack red (`notInPack` — "in the
-// package but not in this pack"; the snapshot does not record what the print
-// gate left out, so the route never claims it was "added since printing" —
-// VFY-19); one that cannot be printed now (not issued, status not
-// recognised, withdrawn, under a document hold, no current file, a file that
-// is not a PDF — the print gate's refusals, and only those: a legal hold
-// alone is not one) is listed with why and makes an otherwise current pack
-// amber "incomplete", never stale: a re-print would leave it out too.
+// package but not in this pack"); one that cannot be printed now (not
+// issued, status not recognised, withdrawn, under a document hold, no
+// current file, a file that is not a PDF — the print gate's refusals, and
+// only those: a legal hold alone is not one) is listed with why and makes an
+// otherwise current pack amber "incomplete", never stale: a re-print would
+// leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
 // green (VFY-2's fail-safe default, 2026-09-17).
+// VFY-19 (document-control P8 FIELD): a print recorded since then also lists
+// the package sheets it LEFT OUT (`printed: false`, a lib/packLeftOut.ts
+// code). From such a snapshot each missing sheet also says WHEN: "left out of
+// this printing — <code>" or "added to the package since this printing". The
+// verdict is unchanged: the same present-tense split decides red or amber.
+// An older snapshot (no marker) keeps the split alone and never claims
+// "added since printing". Only the CODE is published — never the printer's
+// free-text reason.
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -36,6 +43,7 @@ import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
 import { recordVerifyScan } from "@/lib/verifyScanLog";
+import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
@@ -128,6 +136,10 @@ export async function GET(req: NextRequest) {
   let printedAt: string | null = null;
   let snapshotMissing = false;
   let sources: SheetSource[];
+  // VFY-19: what the print left out (document id → the code it recorded),
+  // and whether the snapshot records left-outs at all.
+  const leftOutAtPrint = new Map<string, string>();
+  let recordsLeftOut = false;
   const printConfirmed = !!printId;
   if (printId) {
     const { data: printData, error: printErr } = await sb
@@ -142,7 +154,12 @@ export async function GET(req: NextRequest) {
     if (print) {
       printedAt = print.printed_at ?? null;
       const raw = Array.isArray(print.sheets) ? (print.sheets as Array<Record<string, unknown>>) : [];
-      sources = raw.map((s) => ({
+      recordsLeftOut = raw.some((s) => typeof s.printed === "boolean");
+      for (const s of raw) {
+        if (s.printed !== false || !s.documentId) continue;
+        leftOutAtPrint.set(String(s.documentId), isPackLeftOutCode(s.leftOutCode) ? s.leftOutCode : "left_out");
+      }
+      sources = raw.filter((s) => s.printed !== false).map((s) => ({
         document_id: String(s.documentId ?? ""),
         version_id: (s.versionId as string | null) ?? null,
         rev_label: (s.revLabel as string | null) ?? null,
@@ -267,10 +284,11 @@ export async function GET(req: NextRequest) {
   // hold — DEC-65 §1). A refused sheet would be left out of a
   // re-print too: listed with why, never "stale". What stays in notInPack is
   // an in-force sheet with no document_holds row and a PDF on file. (A fetch
-  // that failed at print, or a PDF pdf-lib could not parse, is not visible
-  // here: the snapshot does not record the builder's skips — VFY-19.)
-  const notPrintable: Array<{ label: string; reason: NotPrintableReason }> = [];
-  const notInPack: Array<{ label: string }> = [];
+  // that failed at print, or a PDF pdf-lib could not parse, stays here; a
+  // snapshot that records its left-out sheets only adds WHEN — VFY-19.)
+  type WhenMissing = { leftOutAtPrint?: string; addedSincePrint?: true };
+  const notPrintable: Array<{ label: string; reason: NotPrintableReason } & WhenMissing> = [];
+  const notInPack: Array<{ label: string } & WhenMissing> = [];
   const offPaper = offPaperIds.map((id) => {
     const d = byId.get(id);
     const standing = documentStanding(d?.status);
@@ -310,9 +328,11 @@ export async function GET(req: NextRequest) {
       if (!f?.file_url) reason = "no_file";
       else if (!isPdfFile(f.file_url, f.file_type ?? null)) reason = "not_pdf";
     }
+    const atPrint = leftOutAtPrint.get(o.id);
+    const when: WhenMissing = !recordsLeftOut ? {} : atPrint ? { leftOutAtPrint: atPrint } : { addedSincePrint: true };
     const label = labelOf(o.id, null);
-    if (reason) notPrintable.push({ label, reason });
-    else notInPack.push({ label });
+    if (reason) notPrintable.push({ label, reason, ...when });
+    else notInPack.push({ label, ...when });
   }
 
   const staleCount = sheets.filter((s) => NOT_GOOD_STATES.has(s.state)).length;

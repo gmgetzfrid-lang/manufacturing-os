@@ -373,6 +373,7 @@ app/api/share/file/route.ts:130-140 quoted (the `source:` key at :139); supabase
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Assigned:** document-control P8 FIELD (running; reconciled at its merge) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** document-control P15 SURFACE REMAINDERS (done-when 3's last consumer: `components/documents/InspectorPanel.tsx`'s stale-holder banner reads `getDocumentRecall`'s `unavailable` as a gap, never as "nobody is stale") — by the integrator, 2026-10-01 (P8 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1089-1091`, `supabase/schema.sql:1031-1034`, `lib/staleCopies.ts:33-113`, `lib/staleCopies.ts:125-180`, `lib/downloads.ts:123-146`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Contrast the sibling three lines above it, supabase/schema.sql:1086-1087, where audit_logs gets a separate `audit_logs_insert ... WITH CHECK (user_id = auth.uid())`; download_audits got no such treatment. Since lib/staleCopies.ts:33-113 and :125-180 derive both the personal stale-copy list and the per-document recall roster entirely from this table, a self-targeted DELETE erases the holder from the recall evidence base with no trace.
@@ -409,6 +410,8 @@ supabase/schema.sql:1090-1091 quoted verbatim (FOR ALL, USING only); schema.sql:
 
 **Scope / residual.** `supabase/schema.sql` still shows the original `FOR ALL` policy and the nine-column table: `P10 EDGES` owns that file (`PKG-14`, the bootstrap census reconciled with `migrationSourceOfTruth.test.ts`), so it is not edited here — the numbered sequence is the source of truth and the census test reads it that way. `types/schema.ts` `DownloadAudit` (`P7`'s file) is not extended; `lib/staleCopies.ts` reads raw rows. `app/(protected)/requests/[id]/page.tsx:606/688` insert `ticket_id`, `attachment_id`, `attachment_type`, `filename`, `watermark_text` — columns that exist in no migration — that is drafting-flow `EVID-5` / public-surfaces `PHYS-8`'s requests limb (the plan points it at this migration for the columns it DOES add: `source` now exists; the rest is theirs). `app/api/share/file/route.ts`'s `source` key now has a column (`DIST-7` / `SHR-5` first done-when), and its attribution to `share_id` instead of `created_by` is `P1 SHARE`'s (`DIST-7` dw2), as is `TRX-9`'s `transmittal_portal` write. This migration is the prerequisite for both — land it first among the Round F document-control migrations. `DEC-44` records the design.
 
+
+*Reconciled at the P8 merge (integrator, 2026-10-01): done-when 2 now holds. `lib/downloads.ts` `logDownloadAudit` destructures and checks `{ error }` and returns `{ recorded }`; P8 FIELD's `EGR-6` is RESOLVED. The finding stays OPEN for done-when 3's third consumer only: `InspectorPanel.tsx` still reads the gap as nobody stale (verified at the merge), so DC P15 owns it. Done-when 1 is pending `20261068`.*
 ---
 
 <a id="dist-10"></a>

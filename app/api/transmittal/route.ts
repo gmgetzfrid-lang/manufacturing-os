@@ -17,19 +17,40 @@
 // as-issued revision and transmittal number in the footer and a /verify QR
 // bound to the exact version served (the /api/share/file treatment for the
 // same audience). A file that cannot be stamped still goes out through this
-// route, recorded as unstamped.
+// route, recorded as unstamped with the reason (DEC-61 §5) — a file that is
+// not a PDF, a PDF over the stamping bound, or one pdf-lib cannot load or
+// stamp (encrypted — owner-password / permission-restricted vendor PDFs
+// included — or malformed).
+//
+// TRX-15 (document-control P8 FIELD): when a PDF leaves UNSTAMPED the issuer
+// is TOLD — a bell and an email, once per transmittal and document — so an
+// unmarked copy in an outside party's hands is never a silent one. The
+// stricter rule, "a PDF goes out stamped or not at all" (422 "unstampable",
+// on the issuer's trail as TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED), is
+// SEQUENCED behind the issue-time stampability check (TRX-16, P7 /
+// lib/transmittals.ts): it binds only an item that check recorded as
+// stampable at issue (`stampable: true` on the item), so a transmittal
+// already issued and live is never refused at download for a file nobody
+// checked when it was issued. Until TRX-16 lands no item carries the mark
+// and §5 holds for every item; the rule change itself awaits the user's
+// ratification of a §5 amendment (DEC-61 landed note).
 //
 // Size: the response is a STREAMED body handed out in 1 MiB chunks, never one
 // buffered body — the platform caps a buffered function response at ~4.5 MB
 // (app/api/admin/restore/begin/route.ts), and a multi-sheet drawing set is
 // routinely larger. A file up to PORTAL_STAMP_MAX_BYTES is held once in
 // memory, verified, stamped (a PDF) and streamed. A larger one is never held
-// whole: a first read hashes it chunk by chunk, and only when the digest
-// matches is a second read — pinned to the verified object by If-Match on its
-// ETag, so the bytes cannot change between the check and the send — piped
-// through to the recipient. It goes out unstamped (stamping would need the
-// whole document in memory twice) and its distribution row says so, with the
-// reason, exactly like a PDF that cannot be stamped.
+// whole: for an item armed for refusal (above) its first bytes say whether
+// it is a PDF (refused without reading the rest); anything else is hashed
+// chunk by chunk, and only when the digest matches is a second read — pinned
+// to the verified object by If-Match on its ETag, so the bytes cannot change
+// between the check and the send — piped through to the recipient, unstamped
+// and recorded so (`oversize` for a PDF, `not_pdf` otherwise).
+//
+// TRX-15: the portal page saves a file by navigating a hidden frame here with
+// `&nav=1`, so the browser streams the attachment straight to disk and the
+// page never holds it in memory; in that mode a refusal is plain text (it
+// renders inside the frame, where the page reads it back).
 //
 // TRX-9: every portal pull is a download_audits row BEFORE the bytes leave —
 // user_id NULL, transmittal_id set, the served version_id, source
@@ -47,6 +68,8 @@ import { PDFDocument } from "pdf-lib";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
+import { effectiveStatusFor } from "@/lib/effectiveDate";
+import { isPdfFile } from "@/lib/verifyVerdict";
 
 export const runtime = "nodejs";
 // The download is streamed through the function, so the function lives while
@@ -57,7 +80,10 @@ export const maxDuration = 300;
 /** Above this the portal does not stamp (and never holds the file whole):
  *  pdf-lib keeps the parsed document and writes a second copy, and a drawing
  *  set beyond this would spend the function's memory and time stamping
- *  instead of delivering. Stated bound (DEC-61 §5). */
+ *  instead of delivering. Stated bound (DEC-61 §5): a file above it is
+ *  verified and piped through unstamped, recorded so — a PDF among them
+ *  with the issuer told (TRX-15) — unless the item is armed for refusal
+ *  (`refusesUnstampable`), when a PDF above it is refused. */
 const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;
 /** The streamed body's chunk size. */
 const STREAM_CHUNK_BYTES = 1024 * 1024;
@@ -76,9 +102,15 @@ function chunkedStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
+const looksLikePdf = (b: Uint8Array) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
+
 /** SHA-256 of an object body read chunk by chunk (constant memory), plus its
- *  first bytes (to tell a PDF from anything else). */
-async function hashBody(body: unknown): Promise<{ sha256: string; head: Uint8Array }> {
+ *  first bytes (to tell a PDF from anything else). TRX-15: with `stopIfPdf`
+ *  (an item armed for refusal) the read stops — and the body is released —
+ *  as soon as the first bytes say PDF (`stoppedAtPdf`; the digest is then
+ *  meaningless): such a PDF over the bound is refused, so the rest of it is
+ *  never read. */
+async function hashBody(body: unknown, opts?: { stopIfPdf?: boolean }): Promise<{ sha256: string; head: Uint8Array; stoppedAtPdf: boolean }> {
   const h = createHash("sha256");
   let head = new Uint8Array();
   for await (const chunk of body as AsyncIterable<Uint8Array>) {
@@ -88,16 +120,30 @@ async function hashBody(body: unknown): Promise<{ sha256: string; head: Uint8Arr
       next.set(head);
       next.set(take, head.length);
       head = next;
+      if (opts?.stopIfPdf && looksLikePdf(head)) {
+        try { (body as { destroy?: () => void }).destroy?.(); } catch { /* already closed */ }
+        return { sha256: "", head, stoppedAtPdf: true };
+      }
     }
     h.update(chunk);
   }
-  return { sha256: h.digest("hex"), head };
+  return { sha256: h.digest("hex"), head, stoppedAtPdf: false };
 }
-
-const looksLikePdf = (b: Uint8Array) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
+}
+
+/** A GET refusal. TRX-15: in the portal page's frame-navigation mode
+ *  (`&nav=1` on a file request) it is plain text — it renders inside a hidden
+ *  frame, never a browser JSON viewer — and carries the status, so the page
+ *  can read it back; otherwise the JSON answer every caller already reads. */
+function portalRefusal(nav: boolean, body: Record<string, unknown>, status: number): NextResponse {
+  if (!nav) return NextResponse.json(body, { status });
+  return new NextResponse(JSON.stringify({ ...body, status }), {
+    status,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
 async function loadByToken(token: string) {
@@ -114,7 +160,22 @@ type Item = {
   documentId?: string; number?: string; title?: string | null; rev?: string | null;
   versionId?: string | null; version_id?: string | null;
   fileHash?: string | null; fileSize?: number | null; statusAsSent?: string | null; effectiveDate?: string | null;
+  /** TRX-16: the issue-time stampability check's verdict on this item's PDF
+   *  (true = it loaded and stamped at issue). Absent on every item issued
+   *  before that check exists. */
+  stampable?: boolean | null;
 };
+
+/** TRX-15 / TRX-16: whether "a PDF goes out stamped or not at all" binds
+ *  this item — only when the issue-time check recorded it stampable, so the
+ *  issuer was told at issue, not by the recipient's refusal. Every other
+ *  item keeps DEC-61 §5: a PDF that cannot be stamped goes out recorded as
+ *  unstamped, with the reason, and the issuer is told. (`items` is
+ *  browser-written on a draft, but a forged mark can only make the portal
+ *  STRICTER for that item — refuse rather than release unmarked.) */
+function refusesUnstampable(item: Item): boolean {
+  return item.stampable === true;
+}
 
 type Resolved =
   | { ok: true; key: string; versionId: string; label: string | null; fileHash: string | null }
@@ -182,26 +243,247 @@ async function bumpUse(id: string, kind: "open" | "download"): Promise<void> {
   }
 }
 
+/** TRX-15: every row a filtered read returns, paged past PostgREST's
+ *  max-rows (each next window starts where the rows returned end, until an
+ *  empty page), at most `maxPages` windows. A page that errors ends the read
+ *  with the rows already in hand: every row is a fact. `complete` says
+ *  whether the read reached its end (an empty page) — false after an error,
+ *  a throw or the page cap, so the caller never reads "not seen" as "no". */
+async function readPaged<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+  maxPages = 10,
+): Promise<{ rows: T[]; complete: boolean }> {
+  const out: T[] = [];
+  const size = 1000;
+  try {
+    for (let from = 0, n = 0; n < maxPages; n++) {
+      const { data, error } = await page(from, from + size - 1);
+      if (error) return { rows: out, complete: false };
+      const rows = (data as T[] | null) ?? [];
+      if (rows.length === 0) return { rows: out, complete: true };
+      out.push(...rows);
+      from += rows.length;
+    }
+  } catch { /* the rows in hand stand */ }
+  return { rows: out, complete: false };
+}
+
+/** TRX-15: the documents of this transmittal a copy of which LEFT the portal
+ *  without the UNCONTROLLED marking, with why when the trail says so. The
+ *  page saves through a hidden frame and cannot read the response's
+ *  X-Transmittal-Stamped header, so what only the download learns — a PDF
+ *  the stamper refused (`stamp_failed`: a permission-restricted or damaged
+ *  file), or one over the bound whose size was never recorded — is read back
+ *  here once it has happened:
+ *    · the distribution record (`download_audits.source =
+ *      'transmittal_portal_unstamped'`, a CHECKED write made before the bytes
+ *      leave) says THAT a copy left unmarked;
+ *    · the issuer's trail (`TRANSMITTAL_PORTAL_DOWNLOAD`, `details.stamped`
+ *      false) says WHY (`unstampedReason`) — and stands in for the record on a
+ *      database without the 20261068 columns.
+ *  Any copy counts, not only the latest pull: a later stamped pull does not
+ *  recall an unmarked copy already in the recipient's hands. A read that
+ *  fails (or is cut short) sets `readFailed`: a document it did not flag is
+ *  then UNKNOWN (`releasedUnmarked: null` — the page's standing note covers
+ *  it), never "nothing says so" (false). */
+async function unmarkedCopiesOut(transmittalId: string): Promise<{
+  copies: Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>; readFailed: boolean;
+}> {
+  const out = new Map<string, "not_pdf" | "oversize" | "stamp_failed" | null>();
+  const pulls = await readPaged<{ document_id?: string | null }>((from, to) => supabaseAdmin
+    .from("download_audits").select("document_id")
+    .eq("transmittal_id", transmittalId)
+    .eq("source", "transmittal_portal_unstamped")
+    .order("id", { ascending: true })
+    .range(from, to));
+  for (const p of pulls.rows) if (p.document_id) out.set(String(p.document_id), null);
+  const trail = await readPaged<{ details?: Record<string, unknown> | null }>((from, to) => supabaseAdmin
+    .from("audit_logs").select("details")
+    .eq("action", "TRANSMITTAL_PORTAL_DOWNLOAD")
+    .eq("resource_type", "transmittal").eq("resource_id", transmittalId)
+    .eq("details->>stamped", "false")
+    .order("id", { ascending: true })
+    .range(from, to));
+  for (const row of trail.rows) {
+    const d = row.details ?? {};
+    if (d.stamped !== false || typeof d.documentId !== "string") continue;
+    const why = d.unstampedReason;
+    const reason = why === "not_pdf" || why === "oversize" || why === "stamp_failed" ? why : null;
+    out.set(d.documentId, reason ?? out.get(d.documentId) ?? null);
+  }
+  return { copies: out, readFailed: !pulls.complete || !trail.complete };
+}
+
+/** TRX-15: how long after the portal's last recorded use (an open or a
+ *  download — `portal_last_used_at`, which every download bumps) the page's
+ *  `&recheck=1` re-read is taken as that visit's own, not counted as an open.
+ *  The page re-reads when a download settles and 45 s later; outside this
+ *  window a recheck IS an open, so a client that always sends it cannot keep
+ *  the issuer's open count at zero. */
+const RECHECK_WINDOW_MS = 10 * 60 * 1000;
+
+/** TRX-15: is this snapshot GET the page's post-download re-read? Only with
+ *  `&recheck=1` AND within RECHECK_WINDOW_MS of the portal's last recorded
+ *  use; a row without the 20261133 column, or a stamp that does not parse,
+ *  counts the GET as an open. */
+function isPortalRecheck(recheckParam: string | null, lastUsedAt: unknown, now: number = Date.now()): boolean {
+  if (recheckParam !== "1" || typeof lastUsedAt !== "string") return false;
+  const at = Date.parse(lastUsedAt);
+  return Number.isFinite(at) && now - at >= 0 && now - at <= RECHECK_WINDOW_MS;
+}
+
+/** TRX-15: the bell kind of an unstampable-PDF notice (refused or released
+ *  unmarked) — and what the once-per-(transmittal, document) dedupe reads. */
+const UNSTAMPABLE_NOTICE_KIND = "transmittal_unstampable";
+
+/** TRX-15: whether the issuer already HAS a notice of this (transmittal,
+ *  document) — a bell row that was actually written, never merely a trail
+ *  row (a notice whose insert failed must not silence every later one). An
+ *  unreadable notification set answers "no" (a second notice beats
+ *  silence). */
+async function issuerAlreadyTold(transmittalId: string, documentId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("notifications").select("id")
+      .eq("kind", UNSTAMPABLE_NOTICE_KIND)
+      .eq("resource_type", "transmittal").eq("resource_id", transmittalId)
+      .eq("metadata->>documentId", documentId)
+      .limit(1);
+    if (error) return false;
+    return ((data as unknown[] | null) ?? []).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** TRX-15: the issuer is TOLD when a PDF could not be stamped for its
+ *  recipient — a bell and an email, once per (transmittal, document):
+ *    · `released` (DEC-61 §5, every item TRX-16 did not check at issue): it
+ *      went out as issued WITHOUT the UNCONTROLLED marking, recorded so —
+ *      an unmarked copy in an outside party's hands is never a silent one;
+ *    · `refused` (an item the issue-time check marked stampable): the
+ *      recipient does not have it, while the register reads it issued.
+ *  The route's own issuer path (the receipt below writes the same two rows):
+ *  lib/notify's emit() runs on the signed-in browser client and cannot be
+ *  called from this service-role route. The likeliest cause is named — a PDF
+ *  saved with security / permission restrictions (common for vendor and
+ *  certified drawings), which pdf-lib will not load. Both inserts are
+ *  CHECKED (a refusal is logged, never read as delivered); the queue is
+ *  kicked on the configured public origin (`publicOrigin()`), never on an
+ *  address the request names. Best-effort: it never blocks the download or
+ *  the refusal, and never throws. */
+async function tellIssuerUnstampable(
+  t: Record<string, unknown>,
+  item: Item,
+  reason: "oversize" | "stamp_failed",
+  outcome: "released" | "refused",
+): Promise<void> {
+  const issuer = (t.created_by as string | null) ?? null;
+  if (!issuer || !item.documentId) return;
+  try {
+    if (await issuerAlreadyTold(String(t.id), item.documentId)) return;
+    const orgId = t.org_id as string;
+    const label = `${item.number || "a document"}${item.rev ? ` Rev ${item.rev}` : ""}`;
+    const why = reason === "oversize"
+      ? `it is larger than the portal can mark (${Math.round(PORTAL_STAMP_MAX_BYTES / (1024 * 1024))} MB)`
+      : "it could not be marked UNCONTROLLED — most often a PDF saved with security or permission restrictions (common for vendor and certified drawings), otherwise a damaged file";
+    const title = outcome === "released"
+      ? `Transmittal ${String(t.number ?? "")}: ${label} went to the recipient WITHOUT the UNCONTROLLED marking`
+      : `Transmittal ${String(t.number ?? "")}: ${label} was refused to the recipient`;
+    const body = outcome === "released"
+      ? `The recipient downloaded ${label} through the portal, but ${why}, so it left as issued — without the UNCONTROLLED ` +
+        "marking, the as-issued footer or the verify QR — and the delivery is recorded as unstamped. Printed, it cannot be " +
+        "told from a controlled copy: tell the recipient it is uncontrolled, or re-save it without restrictions (or split it) " +
+        "and issue a new transmittal."
+      : `The recipient tried to download ${label} through the portal and was refused: ${why}. ` +
+        "It was checked as stampable when this transmittal was issued, and a PDF that passed that check leaves the portal " +
+        "stamped or not at all, so they do not have it. Re-save it without restrictions (or split it), then issue a new " +
+        "transmittal — this one still reads issued on the register.";
+    const { error: bellErr } = await supabaseAdmin.from("notifications").insert({
+      org_id: orgId, user_id: issuer,
+      kind: UNSTAMPABLE_NOTICE_KIND,
+      title, body,
+      link: "/transmittals",
+      resource_type: "transmittal", resource_id: String(t.id),
+      metadata: { documentId: item.documentId, reason, outcome },
+    });
+    if (bellErr) console.error("[transmittal portal] the issuer's bell notice of an unstamped PDF was refused", bellErr.message);
+    const { data: member, error: memberErr } = await supabaseAdmin
+      .from("org_members").select("email")
+      .eq("org_id", orgId).eq("uid", issuer)
+      .maybeSingle();
+    if (memberErr) console.error("[transmittal portal] the issuer's email address could not be read for an unstamped-PDF notice", memberErr.message);
+    const email = (member as { email?: string | null } | null)?.email ?? null;
+    if (!email) return;
+    const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert({
+      org_id: orgId,
+      to_user_id: issuer,
+      to_email: email,
+      subject: title,
+      body_text: body,
+      resource_id: String(t.id),
+      // Not a per-category toggle (an unmarked or refused delivery is never muted).
+      event_type: outcome === "released" ? "transmittal_unstamped" : "transmittal_refused",
+      status: "queued",
+    });
+    if (mailErr) {
+      console.error("[transmittal portal] the issuer's email notice of an unstamped PDF could not be queued", mailErr.message);
+      return;
+    }
+    const cronSecret = process.env.CRON_SECRET;
+    const origin = publicOrigin();
+    if (cronSecret && origin) {
+      void fetch(`${origin}/api/notifications/send-queued`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      }).catch(() => undefined);
+    }
+  } catch (e) {
+    console.warn("[transmittal portal] the issuer could not be told of an unstamped PDF", (e as Error)?.message);
+  }
+}
+
 export async function GET(req: NextRequest) {
   const token = (req.nextUrl.searchParams.get("token") ?? "").trim();
-  const t = await loadByToken(token);
-  if (!t) return NextResponse.json({ error: "notfound" }, { status: 404 });
-  const refusal = portalRowRefusal(t);
-  if (refusal) return NextResponse.json({ error: refusal.error }, { status: refusal.status });
-
   const fileDoc = req.nextUrl.searchParams.get("file");
+  const nav = !!fileDoc && req.nextUrl.searchParams.get("nav") === "1";
+  const refuse = (body: Record<string, unknown>, status: number) => portalRefusal(nav, body, status);
+  const t = await loadByToken(token);
+  if (!t) return refuse({ error: "notfound" }, 404);
+  const refusal = portalRowRefusal(t);
+  if (refusal) return refuse({ error: refusal.error }, refusal.status);
+
   const items = (Array.isArray(t.items) ? t.items : []) as Item[];
   const orgId = t.org_id as string;
 
   if (fileDoc) {
     const item = items.find((i) => i.documentId === fileDoc);
-    if (!item) return bad("That document is not on this transmittal.", 403);
+    if (!item) return refuse({ error: "That document is not on this transmittal." }, 403);
     const file = await fileKeyForItem(item, orgId, (t.issued_at as string | null) ?? null);
-    if (!file.ok) return bad(file.error, file.status);
+    if (!file.ok) return refuse({ error: file.error }, file.status);
     if (!portalKeyAllowed(file.key, orgId)) {
       console.error("[transmittal portal] refused a storage key outside the transmittal's workspace", { transmittal: t.id, document: fileDoc });
-      return bad("The as-sent file for this document isn't available — contact the issuer.", 404);
+      return refuse({ error: "The as-sent file for this document isn't available — contact the issuer." }, 404);
     }
+
+    // TRX-15 / TRX-16: an item the issue-time check marked stampable leaves
+    // stamped or not at all — a PDF the portal then cannot stamp is refused
+    // with the reason, on the issuer's trail, nothing recorded as delivered,
+    // and the issuer is told (once per transmittal and document). Every other
+    // item keeps DEC-61 §5 (released unstamped, recorded, issuer told).
+    const armed = refusesUnstampable(item);
+    const refuseUnstampable = async (reason: "oversize" | "stamp_failed", detail: string | null) => {
+      console.warn("[transmittal portal] a PDF that cannot be stamped was refused", { transmittal: t.id, document: fileDoc, reason, detail });
+      const { error: trailErr } = await supabaseAdmin.from("audit_logs").insert({
+        action: "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED",
+        resource_type: "transmittal", resource_id: String(t.id),
+        org_id: orgId, user_id: (t.created_by as string | null) ?? null,
+        details: { number: t.number, documentId: fileDoc, versionId: file.versionId, reason, detail, maxStampBytes: PORTAL_STAMP_MAX_BYTES },
+      });
+      if (trailErr) console.error("[transmittal portal] the unstampable refusal could not be put on the issuer's trail", trailErr.message);
+      await tellIssuerUnstampable(t, item, reason, "refused");
+      return refuse({ error: "unstampable", reason }, 422);
+    };
 
     // Pull the bytes server-side (no presigned URL leaves this route). A file
     // up to the stamping bound is held once in memory; a larger one is only
@@ -211,6 +493,7 @@ export async function GET(req: NextRequest) {
     let etag: string | null = null;
     let servedSha256: string;
     let head: Uint8Array;
+    let oversizePdf = false;
     try {
       const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: file.key }));
       objectType = (obj.ContentType as string | undefined) ?? null;
@@ -218,7 +501,7 @@ export async function GET(req: NextRequest) {
       if (size !== null && size > PORTAL_STAMP_MAX_BYTES) {
         etag = (obj.ETag as string | undefined) ?? null;
         if (!obj.Body || !etag) throw new Error("large object without a body or an ETag");
-        ({ sha256: servedSha256, head } = await hashBody(obj.Body));
+        ({ sha256: servedSha256, head, stoppedAtPdf: oversizePdf } = await hashBody(obj.Body, { stopIfPdf: armed }));
       } else {
         const bytes = await obj.Body?.transformToByteArray();
         if (!bytes) throw new Error("empty object body");
@@ -228,8 +511,9 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[transmittal portal] file fetch failed", (e as Error).message);
-      return bad("The file couldn't be fetched right now — try again shortly.", 502);
+      return refuse({ error: "The file couldn't be fetched right now — try again shortly." }, 502);
     }
+    if (oversizePdf) return refuseUnstampable("oversize", null);
 
     // TRX-8: the bytes must be the bytes that were issued — the hash the
     // database wrote onto the item at issue, or (an item issued before
@@ -243,7 +527,7 @@ export async function GET(req: NextRequest) {
         org_id: orgId, user_id: (t.created_by as string | null) ?? null,
         details: { number: t.number, documentId: fileDoc, versionId: file.versionId, recordedSha256: recorded, servedSha256 },
       }).then(() => undefined, () => undefined);
-      return bad("This file no longer matches the one recorded when the transmittal was issued, so it was not released. Contact the issuer.", 409);
+      return refuse({ error: "This file no longer matches the one recorded when the transmittal was issued, so it was not released. Contact the issuer." }, 409);
     }
 
     // TRX-5 / EGR-8: stamp a PDF the way /api/share/file does for the same
@@ -257,7 +541,8 @@ export async function GET(req: NextRequest) {
     const isPdf = looksLikePdf(head);
     let outBytes: Uint8Array | null = source;
     let stamped = false;
-    let unstampedReason: "not_pdf" | "stamp_failed" | "oversize" | null = !isPdf ? "not_pdf" : source ? null : "oversize";
+    let unstampedReason: "not_pdf" | "oversize" | "stamp_failed" | null = !isPdf ? "not_pdf" : source ? null : "oversize";
+    if (isPdf && !source && armed) return refuseUnstampable("oversize", null);
     if (isPdf && source) {
       try {
         const pdfDoc = await PDFDocument.load(source);
@@ -270,10 +555,12 @@ export async function GET(req: NextRequest) {
         });
         outBytes = await pdfDoc.save();
         stamped = true;
-        unstampedReason = null;
       } catch (e) {
+        if (armed) return refuseUnstampable("stamp_failed", (e as Error).message || null);
+        // DEC-61 §5: released unstamped, recorded with the reason — and the
+        // issuer told once the copy has left (below).
         unstampedReason = "stamp_failed";
-        console.warn("[transmittal portal] stamping failed — delivering unstamped", (e as Error).message);
+        console.warn("[transmittal portal] stamping failed — delivering unstamped, recorded so (DEC-61 §5)", (e as Error).message);
       }
     }
 
@@ -291,7 +578,7 @@ export async function GET(req: NextRequest) {
         piped = { stream, release: () => { try { body?.destroy?.(); } catch { /* already closed */ } } };
       } catch (e) {
         console.warn("[transmittal portal] verified large file could not be re-read for the send", (e as Error).message);
-        return bad("The file couldn't be fetched right now — try again shortly.", 502);
+        return refuse({ error: "The file couldn't be fetched right now — try again shortly." }, 502);
       }
     }
 
@@ -322,7 +609,7 @@ export async function GET(req: NextRequest) {
       console.error("[transmittal portal] download_audits insert failed — portal download refused, nothing left the building", {
         transmittal: t.id, document: fileDoc, version: file.versionId, message: recordError.message,
       });
-      return NextResponse.json({ error: "unrecorded" }, { status: 503 });
+      return refuse({ error: "unrecorded" }, 503);
     }
 
     // The issuer's accountability trail (EGR-1 attribution), now with the
@@ -338,6 +625,10 @@ export async function GET(req: NextRequest) {
       },
     }).then(() => undefined, () => undefined);
     await bumpUse(String(t.id), "download");
+    // TRX-15: a PDF that left without the marking is never a silent one.
+    if (unstampedReason === "oversize" || unstampedReason === "stamp_failed") {
+      await tellIssuerUnstampable(t, item, unstampedReason, "released");
+    }
 
     const safe = (s: string) => s.replace(/[^\w.\-]+/g, "_");
     const ext = stamped ? ".pdf" : (file.key.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? "");
@@ -356,7 +647,55 @@ export async function GET(req: NextRequest) {
 
   // The snapshot the portal renders — nothing beyond this transmittal.
   const { data: org } = await supabaseAdmin.from("orgs").select("name").eq("id", orgId).maybeSingle();
-  await bumpUse(String(t.id), "open");
+  // TRX-15: the page re-reads the snapshot after a download (`&recheck=1`)
+  // to learn whether the copy left unmarked — that re-read is not an open,
+  // but only within minutes of the portal's last recorded use
+  // (`isPortalRecheck`); any other GET, flagged or not, is counted.
+  if (!isPortalRecheck(req.nextUrl.searchParams.get("recheck"), t.portal_last_used_at)) await bumpUse(String(t.id), "open");
+  // TRX-15: the page saves a file without reading the response, so it can no
+  // longer see the X-Transmittal-Stamped header — it says up front which
+  // pinned files leave without the UNCONTROLLED marking: a file that is not a
+  // PDF, and a PDF over the stamping bound on an item not armed for refusal
+  // (one read per 150 pins; null = unknown, and the page's standing note
+  // covers it). The read is scoped to the transmittal's org exactly as the
+  // download's own resolver is (`fileKeyForItem`): a version row outside it —
+  // a legacy row with no org_id among them — is never served, so there is
+  // nothing to flag. What only a download learns (a PDF the stamper refuses,
+  // an oversize file with no recorded size) is read back from the record
+  // once a copy has left (`unmarkedCopiesOut`).
+  const pinnedIds = [...new Set(items.map((i) => i.versionId ?? i.version_id ?? null).filter((v): v is string => !!v))];
+  const fileByVersion = new Map<string, { file_url: string | null; file_type: string | null; size: number | null }>();
+  for (let i = 0; i < pinnedIds.length; i += 150) {
+    const { data: fileRows, error: fileErr } = await supabaseAdmin
+      .from("document_versions").select("id, file_url, file_type, size").in("id", pinnedIds.slice(i, i + 150)).eq("org_id", orgId);
+    if (fileErr) continue; // this chunk's items stay unknown
+    for (const v of (fileRows as Array<{ id: string; file_url: string | null; file_type?: string | null; size?: number | null }> | null) ?? []) {
+      fileByVersion.set(String(v.id), { file_url: v.file_url ?? null, file_type: v.file_type ?? null, size: typeof v.size === "number" ? v.size : null });
+    }
+  }
+  const { copies: copiesOut, readFailed: copiesUnread } = await unmarkedCopiesOut(String(t.id));
+  const fromFile = (i: Item): "not_pdf" | "oversize" | null | undefined => {
+    const f = fileByVersion.get(String(i.versionId ?? i.version_id ?? ""));
+    if (!f?.file_url) return undefined; // unknown
+    if (!isPdfFile(f.file_url, f.file_type)) return "not_pdf";
+    const size = typeof i.fileSize === "number" ? i.fileSize : f.size;
+    return !refusesUnstampable(i) && typeof size === "number" && size > PORTAL_STAMP_MAX_BYTES ? "oversize" : null;
+  };
+  // `releasedUnmarked`: true — it leaves (or a copy already left) WITHOUT the
+  // marking; false — nothing says so; null — unknown (its file, or — when the
+  // record / trail read failed — whether a copy already left unmarked).
+  // `unmarkedReason`: why, when known (null with `true` = a copy left
+  // unmarked, cause not on the trail).
+  const unmarked = (i: Item): { releasedUnmarked: boolean | null; unmarkedReason: "not_pdf" | "oversize" | "stamp_failed" | null } => {
+    const known = fromFile(i);
+    if (i.documentId && copiesOut.has(i.documentId)) {
+      const why = copiesOut.get(i.documentId) ?? null;
+      return { releasedUnmarked: true, unmarkedReason: why ?? (known === "not_pdf" || known === "oversize" ? known : null) };
+    }
+    if (known === undefined) return { releasedUnmarked: null, unmarkedReason: null };
+    if (known === null && copiesUnread) return { releasedUnmarked: null, unmarkedReason: null };
+    return { releasedUnmarked: known !== null, unmarkedReason: known };
+  };
   return NextResponse.json({
     number: t.number,
     subject: t.subject,
@@ -371,12 +710,23 @@ export async function GET(req: NextRequest) {
     recipientName: t.recipient_name,
     recipientCompany: t.recipient_company,
     portalExpiresAt: (t.portal_expires_at as string | null) ?? null,
-    items: items.map((i) => ({
-      documentId: i.documentId, number: i.number, title: i.title ?? null, rev: i.rev ?? null,
-      // TRX-3 / TRX-8: what was sent, as the database recorded it at issue.
-      statusAsSent: i.statusAsSent ?? null, effectiveDate: i.effectiveDate ?? null, fileHash: i.fileHash ?? null,
-      fileSize: typeof i.fileSize === "number" ? i.fileSize : null,
-    })),
+    items: items.map((i) => {
+      const flag = unmarked(i);
+      return {
+        documentId: i.documentId, number: i.number, title: i.title ?? null, rev: i.rev ?? null,
+        // TRX-3 / TRX-8: what was sent, as the database recorded it at issue.
+        statusAsSent: i.statusAsSent ?? null, effectiveDate: i.effectiveDate ?? null, fileHash: i.fileHash ?? null,
+        // REV-9: "not yet in force" decided in the facility's calendar (the one
+        // shared "today"), not in the recipient's browser or in UTC.
+        notYetInForce: effectiveStatusFor(i.effectiveDate ?? null) === "pending",
+        // TRX-15: not a PDF, a PDF over the stamping bound, or a copy the
+        // record shows already left unmarked (a stamper refusal included —
+        // DEC-61 §5) → released as issued, without the marking (null = unknown).
+        releasedUnmarked: flag.releasedUnmarked,
+        unmarkedReason: flag.unmarkedReason,
+        fileSize: typeof i.fileSize === "number" ? i.fileSize : null,
+      };
+    }),
   });
 }
 

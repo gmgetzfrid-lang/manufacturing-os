@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 156,
+    "findings": 157,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 69,
-      "LOW": 14
+      "LOW": 15
     },
     "by_status": {
-      "RESOLVED": 131,
-      "OPEN": 25
+      "RESOLVED": 136,
+      "OPEN": 21
     }
   },
   "status_vocabulary": [
@@ -1090,7 +1090,7 @@
       "id": "HLD-4",
       "title": "buildAndDownloadDocPack assembles held drawings into the field pack with no hold marking and reports \"all current, all stamped\"",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1222,7 +1222,7 @@
       "id": "PKG-7",
       "title": "A member document the requester cannot read is silently erased from every work-package computation — it reads as never-drifted, its pin is NULLed on refresh, and it vanishes from the pack while the cover sheet still lists it",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1277,7 +1277,7 @@
       "id": "PKG-9",
       "title": "Doc packs bypass the hard read-&-understood acknowledgment gate that every single-document download and print enforces",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1303,7 +1303,7 @@
       "id": "PKG-10",
       "title": "Downloading a SUPERSEDED revision stamps the CURRENT revision number on it and names the file after the current revision",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3884,7 +3884,7 @@
       "id": "EGR-6",
       "title": "Share revocation and every download-audit write ignore supabase-js {error} — a revoked link can stay live and a failed distribution record reads as success",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -4229,6 +4229,33 @@
       ],
       "refuted": false,
       "summary": "A 90 MiB drawing-set PDF is issued on TR-0107. The contractor downloads it from the portal: it carries no UNCONTROLLED marking and no as-issued footer, so a printed copy is indistinguishable from a controlled one. On a low-memory device the page's res.blob() may fail outright for very large files.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/06-transmittals.md"
+    },
+    {
+      "id": "TRX-16",
+      "title": "A PDF the portal cannot stamp is accepted at issue and refused only when the recipient downloads it",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; the download-time refusal it follows is pinned in `lib/__tests__/transmittalPortalRoute.test.ts` \"TRX-15 — …\")",
+      "blast_radius": "document-control delivery (an issued transmittal its recipient cannot receive)",
+      "related": [
+        "TRX-15",
+        "TRX-5",
+        "DEC-61"
+      ],
+      "locations": [
+        "lib/transmittals.ts",
+        "app/api/transmittal/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl issues TR-0107 carrying a permission-restricted vendor datasheet. The external contractor clicks Download and is refused (\"could not be marked … Contact the issuer\"). The issuer hears of it then, re-saves the file without restrictions and issues again — a day lost on a transmittal the register showed as issued.",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
     }

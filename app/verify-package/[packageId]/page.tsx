@@ -16,6 +16,7 @@ import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, Loader2, ShieldQuestion, OctagonAlert, RefreshCw } from "lucide-react";
 import { notPrintableText, presentPackVerdict, sheetLabel, type PackVerifyResult } from "@/lib/verifyPresent";
+import { missingSheetWhen } from "@/lib/packLeftOut";
 
 export default function VerifyPackagePage() {
   const params = useParams<{ packageId: string }>();
@@ -120,7 +121,12 @@ export default function VerifyPackagePage() {
               {(result.notInPack?.length ?? 0) > 0 && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-red-700 leading-relaxed">
                   <div className="font-black">In the package but NOT in this pack:</div>
-                  {result.notInPack!.map((a, i) => <div key={i} className="truncate">{a.label}</div>)}
+                  {result.notInPack!.map((a, i) => (
+                    <div key={i} className="truncate">
+                      {a.label}
+                      {missingSheetWhen(a) && <span className="font-normal"> — {missingSheetWhen(a)}</span>}
+                    </div>
+                  ))}
                 </div>
               )}
               {(result.notPrintable?.length ?? 0) > 0 && (
@@ -128,7 +134,10 @@ export default function VerifyPackagePage() {
                   <div className="font-black">In the package, not in this pack — cannot be printed now:</div>
                   {result.notPrintable!.map((a, i) => (
                     <div key={i} className="flex items-center justify-between gap-2">
-                      <span className="truncate">{a.label}</span>
+                      <span className="truncate">
+                        {a.label}
+                        {missingSheetWhen(a) && <span className="font-normal"> — {missingSheetWhen(a)}</span>}
+                      </span>
                       <span className="shrink-0 font-black uppercase">{notPrintableText(a.reason)}</span>
                     </div>
                   ))}

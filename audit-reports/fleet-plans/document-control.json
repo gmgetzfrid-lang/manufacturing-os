@@ -488,7 +488,9 @@
     "RET-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"Stays OPEN for the register column\" (:489). The register must surface the scheduled end-of-life action. HEAD app/(protected)/register/page.tsx:175 renders only RetentionPill (status) from row fields that carry no policy chain.)",
     "RG-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"Stays OPEN for done-when 2 only\" (:469): \"the promote and its bookkeeping in ONE transactional RPC so current_version_id can never point at a row still marked in_review\".)",
     "roles-and-permissions GAP-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built. types/schema.ts:209-234 ReviewControl has reviewer/alternate/draftViewer fields and no owner slot. Needs an optional owner-must-approve slot on ReviewControl, with openReviewRoster, reviewCompletionForDraft's \u2026)",
-    "roles-and-permissions GAP-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Scope \"In\" also lists \"a staleness state derived from a configurable interval\" (reuse the review-cycle pattern, rendered beside AckPill/ReviewPill/EffectivePill), which is not built (no verification-staleness code exists). The \u2026)"
+    "roles-and-permissions GAP-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Scope \"In\" also lists \"a staleness state derived from a configurable interval\" (reuse the review-cycle pattern, rendered beside AckPill/ReviewPill/EffectivePill), which is not built (no verification-staleness code exists). The \u2026)",
+    "DRLS-10 (added at the P8 merge 2026-10-01: done-when 3's database half \u2014 a trigger on work_package_documents UPDATE OF pinned_version_id recording a direct re-pin by the owner or a controller)",
+    "PKG-9's handed-off residual (added at the P8 merge 2026-10-01; not an open finding): lib/acknowledgments.ts recomputeDocumentAck's effectiveAckPolicyForDocument call reads the folder / library ack_policy unchecked, so a failed read can leave a roster unassigned \u2014 check it like lib/downloads.ts readEffectiveAckPolicy does"
    ],
    "files": [
     "app/api/storage/delete/route.ts (RET-2's current-revision limb, beside P11's helpers) + lib/__tests__/storageDeleteRoute.test.ts",
@@ -511,7 +513,10 @@
     "public-surfaces SHR-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3: \"The modal's mint gate asks the same predicate and says why instead of offering the Create box\". canMintShare should call rpc('user_download_denied', {p_acl_index, p_uid: self, p_org}), and the modal and \u2026)",
     "public-surfaces VFY-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 2: \"reason_code (constrained) + reason_text (never public), or close the 'Other\u2026' path\". On HEAD, HoldStrip.tsx:11 and :252 still offer the \"Other\" free-text reason.)",
     "public-surfaces VFY-20 (remainder re-owned by the integrator 2026-10-01, orphan sweep: All three done-when are open. A DEC must settle the vocabulary: either the editors stop offering \"IFC\" (and existing IFC rows move), or \"IFC\" is added to DocumentStatus, filterPackDocs and IN_FORCE_STATUSES together. A test \u2026)",
-    "XEDGE-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"The dependency move (above) \u2014 the finding stays OPEN for it\" (:550). Move off xlsx@0.18.5 to SheetJS >=0.20.2 (vendored tgz) or exceljs, with the lockfile reflecting it. HEAD package.json:36 is \"xlsx\": \"^0.18.5\" and \u2026)"
+    "XEDGE-12 (remainder re-owned by the integrator 2026-10-01, orphan sweep: \"The dependency move (above) \u2014 the finding stays OPEN for it\" (:550). Move off xlsx@0.18.5 to SheetJS >=0.20.2 (vendored tgz) or exceljs, with the lockfile reflecting it. HEAD package.json:36 is \"xlsx\": \"^0.18.5\" and \u2026)",
+    "DIST-9 (added at the P8 merge 2026-10-01: done-when 3's last consumer \u2014 components/documents/InspectorPanel.tsx's stale-holder banner must read getDocumentRecall's unavailable as a gap, never as 'nobody is stale')",
+    "TRX-16 (opened by P8 FIELD 2026-10-01: an issue-time stampability check \u2014 a size bound plus a pdf-lib load in lib/transmittals.ts issue \u2014 so the issuer is refused or warned at issue, not the recipient at download)",
+    "TRX-15 (added at the P8 merge 2026-10-01: done-when 1 closes with TRX-16 and the user's ratification of the DEC-61 \u00a75 amendment; done-when 2's device check \u2014 one hidden-frame download on iOS Safari and Firefox \u2014 is the user's)"
    ],
    "files": [
     "components/documents/ShareLinkModal.tsx + lib/documentShares.ts canMintShare / createShareLink (SHR-14 done-when 3: rpc user_download_denied, after 20261140)",
@@ -541,6 +546,8 @@
   "DRLS-3": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "DRLS-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "REV-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
-  "TRX-14": "ratify DEC-64 \u00a71 (or reject it, which turns the remainder back into code work)"
+  "TRX-14": "ratify DEC-64 \u00a71 (or reject it, which turns the remainder back into code work)",
+  "PKG-12": "ratify DEC-70 \u00a72 (or change PACK_MAX_SHEETS / PAGES / BYTES), then set NEXT_PUBLIC_FIELD_PACK_BUDGET=on and rebuild",
+  "REV-9": "set NEXT_PUBLIC_FACILITY_TIME_ZONE in every deployment (closes public-surfaces VFY-4 too)"
  }
 }

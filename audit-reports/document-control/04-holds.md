@@ -87,6 +87,29 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 
 **Scope / residual.** Stays OPEN until the remaining owners record their limbs.
 
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD — the download / doc-pack limb (done-when 2), through `lib/holdGate.ts` as P5 handed it over (`readActiveHolds` + `decideHoldGate`). Reproduced at `55e281d`: `grep -n "holdGate\|document_holds" lib/downloads.ts components/viewers/MultiDocViewer.tsx` returned nothing. A held document downloaded or printed with an ordinary "Rev N at time of issue" footer, and its checkout holder got the raw, unstamped controlled pass-through.
+- **Download and print** (`lib/downloads.ts`): `readCopyHoldState(documentId)` asks the shared gate when the copy is taken; it never throws, and an unreadable hold set is a hold. Then:
+  - `copyControlState` makes a held copy UNCONTROLLED, even for the checkout holder.
+  - `holdFooterLine` leads the footer: "ON HOLD at time of issue (<reasons>) — work from this document is stopped until Document Control releases the hold.", or "HOLD STATUS UNKNOWN at time of issue — treat this document as ON HOLD …".
+  - `copyWatermark` reads "ON HOLD — DO NOT USE", or "UNCONTROLLED — HOLD STATUS UNKNOWN".
+  - The download proceeds stamped rather than refused. A person may need the held drawing at their desk; what must not happen is a held copy that does not say so.
+- **The book viewer's merged book** (`MultiDocViewer` `assembleStampedBook`) stamps each held sheet the same way.
+- **The doc pack** keeps refusing a held sheet (`PKG-4`, unchanged; `HLD-4`).
+- Tests: `dcRoundFField.test.ts`:
+  - "HLD-1: a held document's copy is STAMPED with the hold — even for the checkout holder";
+  - "HLD-1: an UNREADABLE hold state is a hold (fail closed)";
+  - "an unheld holder still gets the controlled pass-through (unchanged)";
+  - "buildFooterNotice leads with the hold line";
+  - the book viewer's source pin.
+
+**Done-when (this limb).** (2) ✓ The download and doc-pack paths stamp a HOLD banner (download, print, book) or refuse (pack) — never silently proceed. (1) and (3) are unchanged by this pass.
+
+**Scope / residual.** Stays OPEN for two limbs that are not this package's files:
+1. `lib/retention.ts` `disposeDocument` still reads `lib/holds.ts` `listActiveHoldsForDocument` (P9's dispose gate; see the 2026-09-29 integration note). Done-when 1 names `disposeDocument` among the shared helper's callers. Owner: the next package on `lib/retention.ts`.
+2. `components/viewers/FullScreenViewer.tsx`'s markup export calls `applyStampToPdfDoc` directly, so a held document's redlined export carries no hold line. Its plain download and print go through `lib/downloads.ts` and do. Owner: the next package on `FullScreenViewer.tsx`.
+
+Every other door now calls the shared gate. The share link (P1) and the transmittal issue (P7, `issueTransmittal` → `assertNotOnHold`) were verified at the branch; `correctRevisionLabel`, `renumberDocument` and `reverseRenumber` are P3's; distribution-ack assignment is P5's.
+
 ---
 
 <a id="hld-2"></a>
@@ -188,7 +211,7 @@ app/api/verify/route.ts:89-90 — `const docRetired = d.status === "Superseded" 
 ## HLD-4 · buildAndDownloadDocPack assembles held drawings into the field pack with no hold marking and reports "all current, all stamped"
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/docPack.ts:50-53`, `lib/docPack.ts:90-105`, `app/(protected)/assets/[tag]/page.tsx:129-142`, `app/(protected)/assets/[tag]/page.tsx:215`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every element of the claim verified verbatim, including the banner text. The page does render a hold badge per row (page.tsx:215 `{(holdsByDoc.get(d.id) ?? 0) > 0 && <span ...> hold</span>}`) — but that is display-only: it feeds neither the Doc Pack button's disabled state nor buildAndDownloadDocPack's input, which is `docs.map((d) => d.id)` unfiltered (page.tsx:133).
@@ -210,6 +233,19 @@ lib/docPack.ts:92-94 — `const holderWarning = d.checked_out_by && (` `  \` ACT
 - [ ] buildAndDownloadDocPack loads active holds for the requested documentIds and either skips held documents with reason "on hold" or stamps an unmissable HOLD banner on every page of a held sheet
 - [ ] The "all current, all stamped" success copy is suppressed whenever any packed document carried a hold
 - [ ] The assets page passes its already-loaded holdsByDoc map into the pack call rather than re-deriving nothing
+
+**Resolution (2026-10-01, document-control Round F wave 2).** Record-only (the fleet plan's `recordOnlyCloses`: "HLD-4": "P8"). Closed by `PKG-4` (Phase 7, 2026-08-24), verified at the branch, and tightened by this package:
+- `lib/docPack.ts` `filterPackDocs` refuses a sheet under an active `document_holds` hold ("under an active hold — work from this document should stop", code `on_hold`). An unreadable hold state refuses every sheet ("hold status could not be verified"). Both `assessPackDocs` and `buildAndDownloadDocPack` run it before anything is fetched or recorded.
+- The asset hub's "all current, all stamped" copy is shown only when nothing was left out. A held sheet is always left out, so the claim can no longer be made over one. Since P8 the same note also reports a copy missing from the distribution record (`EGR-6`).
+- P8 (`HLD-1`'s download / footer limb): a single-document download or print of a held document, and the book viewer's merged book, are stamped "ON HOLD — DO NOT USE" with the hold in the footer, never handed over as a controlled pass-through.
+- Tests: `lib/__tests__/docPackFilter.test.ts` (PKG-4: the held sheet refused, fail-closed on a read error); `dcRoundFField.test.ts` "HLD-1 / PKG-10 / EGR-6 — the single-document copy".
+
+**Done-when.**
+1. ✓ `buildAndDownloadDocPack` loads the active holds for the requested documents and skips a held one with the reason "on hold".
+2. ✓ The "all current, all stamped" copy is suppressed whenever a held document was asked for: it was skipped, so the note lists it as left out.
+3. ✓ in substance. The assets page does not pass its `holdsByDoc` map. The builder reads the holds itself, at print time and failing closed, which is fresher than a map loaded when the page opened. Passing the map would add a second, staler source rather than a stronger gate.
+
+**Scope / residual.** None for this finding. `HLD-1`'s remaining limbs are recorded there.
 
 ---
 

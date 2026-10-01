@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**156 findings** — 19 CRITICAL, 54 HIGH, 69 MEDIUM, 14 LOW.
+**157 findings** — 19 CRITICAL, 54 HIGH, 69 MEDIUM, 15 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 
@@ -255,7 +255,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | 03 | [The review gate & e-signatures](./03-review-gate.md) | 13 |  |
 | 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
 | 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 15 |  |
-| 06 | [Transmittals & the external portal](./06-transmittals.md) | 15 | `TRX-15` opened at the P7 merge, 2026-10-01 |
+| 06 | [Transmittals & the external portal](./06-transmittals.md) | 16 | `TRX-15` opened at the P7 merge, 2026-10-01; `TRX-16` (LOW) opened at the P8 merge, 2026-10-01 |
 | 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 14 |  |
 | 08 | [Retention, legal hold, archive & restore](./08-retention.md) | 14 |  |
 | 09 | [Content egress](./09-egress.md) | 8 |  |

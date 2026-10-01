@@ -363,6 +363,7 @@ lib/revisions.ts:83 — `if (err.code === "PGRST202" || err.code === "42883") re
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** the user — the operator sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` in every deployment (one step closes this and public-surfaces `VFY-4`) — by the integrator, 2026-10-01 (P8 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/effectiveDate.ts:16`, `lib/effectiveDate.ts:23-24`, `lib/effectiveDate.ts:33-34`, `lib/effectiveDate.ts:45`, `lib/effectiveDate.ts:49`, `lib/effectiveDate.ts:62-63`, `app/api/verify/route.ts:93-94`, `lib/__tests__/effectiveDate.test.ts:5`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Claim verified exactly: for a UTC-5 publisher at 20:30 on 21 Aug choosing effective date 2026-08-22, todayISO() is already '2026-08-22', so suppress is true, effective_notified_at is stamped at publish, and scanEffectiveDates (:62-63) can never pick the doc up — while effectiveStatusFor() (local) still renders the 'pending' badge. lib/__tests__/effectiveDate.test.ts:5 bakes the same UTC assumption into the fixtures, so the suite would not catch it. Downgraded to LOW: the bug only bites on the exact one-day boundary (effective date == UTC-today but local-tomorrow), and the only lost artifact is one in-app 'now in effect' notification — the revision itself is served correctly and the badge/register still show it.
@@ -410,6 +411,14 @@ lib/effectiveDate.ts:91 — `const todayISO = () => new Date().toISOString().sli
 3. ✓ unchanged (P3).
 
 **Scope / residual.** Stays OPEN for the deployment-zone limb only — the operator sets `NEXT_PUBLIC_FACILITY_TIME_ZONE` in every deployment (or an org / library zone lands, `VFY-15`). Not flipped on the code half alone. Public-surfaces `VFY-4` (done-when 2) stays OPEN on the same limb since PS-VERIFY's second review fix pass (2026-10-01), so the two records agree; one operator step closes both.
+
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD — the REV-9 consumers in this package's files. `/api/verify` was already swapped by PS-VERIFY (above). Searching P8's files for an inline UTC "today" deciding an effective date found one: the transmittal portal page (`app/transmittal/[token]/page.tsx`) decided "not yet in force" by `i.effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10)` — UTC, in the recipient's browser. It now renders a `notYetInForce` flag that `/api/transmittal` computes with `effectiveStatusFor(effectiveDate)`, i.e. `effectiveTodayISO()` in the facility's zone. No parallel helper was added.
+- The other date reads in P8's files are not effective-date decisions. `lib/docPack.ts`'s `DocPack_<label>_<date>.pdf` filename date and the portal's `issuedOn` footer date are labels, not "in effect" decisions; they are unchanged.
+- Tests: `lib/__tests__/transmittalPortalRoute.test.ts` "REV-9 — the portal's 'not yet in force' is decided in the facility's calendar …": with `America/Chicago`, 20:30 local on 21 Aug for a 22 Aug date is not yet in force (already 22 Aug in UTC), and 01:00 local on 22 Aug is in force; a source pin shows the page carries no inline UTC today.
+
+**Done-when (this pass).** 1. ◐ unchanged: every app path now shares the one calendar (P3, PS-VERIFY and this pass), but the deployment zone (`NEXT_PUBLIC_FACILITY_TIME_ZONE`) is still the operator's step. 2. and 3. ✓ unchanged.
+
+**Scope / residual.** Stays OPEN for the deployment-zone limb only, as above (one operator step; `99-fix-sequencing.md` rule 2).
 
 ---
 

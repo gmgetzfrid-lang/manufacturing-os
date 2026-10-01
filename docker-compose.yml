@@ -21,6 +21,8 @@ services:
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
         # The facility's IANA time zone for effective dates (lib/effectiveDate.ts).
         NEXT_PUBLIC_FACILITY_TIME_ZONE: ${NEXT_PUBLIC_FACILITY_TIME_ZONE:-}
+        # The field-pack budget switch (lib/docPack.ts, PKG-12): off unless "on".
+        NEXT_PUBLIC_FIELD_PACK_BUDGET: ${NEXT_PUBLIC_FIELD_PACK_BUDGET:-}
     image: manufacturing-os/app:latest
     container_name: manufacturing-os
     restart: unless-stopped
