@@ -18,8 +18,13 @@
 //   * LNK-5 / LNK-6 — private connection skills do not run; the bounded
 //              pattern subset (a filter — the worker runner's deadline is the
 //              guarantee: lib/__tests__/customSkillRunner.test.ts); a skill
-//              whose match overruns is switched off with the reason on the
-//              row; without a bounded matcher no custom skill runs.
+//              whose match never returns is switched off with the reason on
+//              the row, a slow page skips its document (fix pass 2), every
+//              skill gets a fair share of the run's budget; without a
+//              bounded matcher no custom skill runs.
+//   * fix pass 2 — a pending row is refreshed when its revision or evidence
+//              moved on (LNK-1); an unreadable rulebook runs no detector
+//              (LNK-7); the sweep route's writer tier is ADMIN_SURFACES'.
 //   * LNK-3 / IRLS-2 / WIRE-2 — provable links apply against the plain
 //              index (once, carried by the lower document number); a failed
 //              apply is an ERROR and the draft falls back to the queue.
@@ -229,7 +234,7 @@ describe("LNK-6 — the bounded pattern subset (the same rules as 20261125 skill
   });
 });
 
-describe("LNK-6 — a per-document time budget", () => {
+describe("LNK-6 — a per-text time budget (in-thread)", () => {
   it("runCustomSkill stops and reports the overrun instead of holding the run", () => {
     let clock = 0;
     const { regexes } = compileSkillPatterns(["\\bWO-\\d{5}\\b"]);
@@ -464,7 +469,7 @@ describe("LNK-8 / LNK-5 — dismissals block one skill; private skills do not ru
   });
 });
 
-describe("LNK-6 — an overrunning skill is switched off with the reason, never silently skipped", () => {
+describe("LNK-6 — a match that never returns switches its skill off with the reason; a slow page is a note", () => {
   const setup = (pattern: string, text: string) => {
     t("documents").push(docRow("a", "DOC-A"), docRow("b", "WO-10023"));
     t("link_rules").push({ id: "r1", org_id: ORG, builtin_key: null, name: "Work orders", kind: "reference",
@@ -480,30 +485,84 @@ describe("LNK-6 — an overrunning skill is switched off with the reason, never 
     expect(Date.now() - t0).toBeLessThan(8_000);
     const rule = t("link_rules").find((r) => r.id === "r1")!;
     expect(rule.enabled).toBe(false);
-    expect(String(rule.disabled_reason)).toMatch(/one match ran for more than \d+ ms on one document and was stopped/);
+    expect(String(rule.disabled_reason)).toMatch(/one match ran for \d+ ms on one page of indexed text without finishing and was stopped/);
     expect(run.disabledSkills).toEqual(["Work orders"]);
-    expect(run.notes.join(" ")).toMatch(/overran its time budget/);
+    expect(run.notes.join(" ")).toMatch(/without finishing and was stopped — the skill was switched off/);
     expect(pending().filter((r) => String(r.proposer).startsWith("rule:"))).toHaveLength(0);
   }, 20_000);
-  it("a soft overrun (read between matches) says how long it took", async () => {
+  it("fix pass 2: a soft overrun (one slow page) skips that document for the skill, keeps the skill on and says so", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
     const soft: SkillMatcherFactory = () => ({
-      match: async () => ({ found: [], overBudget: { index: 0, ms: 73, hard: false }, budgetSpent: false, error: null }),
+      match: async () => ({ found: [], terminated: null, skipped: [{ index: 0, ms: 73 }], budgetSpent: false, error: null }),
       close: async () => {},
     });
-    await runLinkProposers(admin(), ORG, { matcher: soft });
-    expect(String(t("link_rules").find((r) => r.id === "r1")!.disabled_reason)).toMatch(/it took 73 ms on one document \(the budget is 50 ms\)/);
+    const run = await runLinkProposers(admin(), ORG, { matcher: soft });
+    const rule = t("link_rules").find((r) => r.id === "r1")!;
+    expect(rule.enabled).toBe(true);
+    expect(rule.disabled_reason).toBeUndefined();
+    expect(run.disabledSkills).toEqual([]);
+    expect(run.notes.join(" ")).toMatch(/“Work orders” was slow on 1 document \(up to 73 ms on one page; the budget is 50 ms per page\) — the rest of that document was not read for it this pass/);
   });
-  it("the run's budget reached inside a skill keeps what it found and says the rest runs next time", async () => {
+  it("fix pass 2: a skill whose share of the budget ran out keeps what it found and says what it did not read — no promise of a next time", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
     const spent: SkillMatcherFactory = () => ({
-      match: async () => ({ found: [["WO-10023"]], overBudget: null, budgetSpent: true, error: null }),
+      match: async () => ({ found: [["WO-10023"]], terminated: null, skipped: [], budgetSpent: true, error: null }),
       close: async () => {},
     });
     const run = await runLinkProposers(admin(), ORG, { matcher: spent });
     expect(t("link_rules").find((r) => r.id === "r1")!.enabled).toBe(true);
-    expect(run.notes.join(" ")).toMatch(/ran part of the text; it and the remaining skills run next time/);
+    expect(run.notes.join(" ")).toMatch(/“Work orders” read 1 of 1 indexed pages before its share of this pass's 15 s ran out — the rest of the text was not read for it this pass/);
+    expect(run.notes.join(" ")).not.toMatch(/next time/);
     expect(pending().map((r) => r.proposer)).toContain("rule:r1");
+  });
+  it("fix pass 2: every skill gets a fair share of what is left, so a heavy first skill cannot keep the next from running", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    t("link_rules").push({ id: "r2", org_id: ORG, builtin_key: null, name: "Permits", kind: "reference",
+      config: { patterns: ["\\bPTW-\\d{4}\\b"] }, enabled: true, visibility: "org", created_by: "u1" });
+    const budgets: number[] = [];
+    let clock = 0;
+    const heavy: SkillMatcherFactory = () => ({
+      match: async (_src, limits) => {
+        budgets.push(limits.budgetMs);
+        clock += limits.budgetMs; // each skill spends its whole share
+        return { found: [], terminated: null, skipped: [], budgetSpent: true, error: null };
+      },
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: heavy, now: () => clock });
+    expect(budgets).toEqual([7_500, 7_500]);
+    expect(run.notes.join(" ")).toMatch(/“Work orders” read 0 of 1/);
+    expect(run.notes.join(" ")).toMatch(/“Permits” read 0 of 1/);
+  });
+  it("fix pass 2: skills the run's budget never reached are named as not run this pass", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    t("link_rules").push({ id: "r2", org_id: ORG, builtin_key: null, name: "Permits", kind: "reference",
+      config: { patterns: ["\\bPTW-\\d{4}\\b"] }, enabled: true, visibility: "org", created_by: "u1" });
+    let clock = 0;
+    const overrun: SkillMatcherFactory = () => ({
+      match: async () => { clock += 16_000; return { found: [], terminated: null, skipped: [], budgetSpent: true, error: null }; },
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: overrun, now: () => clock });
+    expect(run.notes.join(" ")).toMatch(/Custom skills stopped after 15 s this pass — not run this pass: “Permits”\./);
+  });
+  it("fix pass 2 (pre-20261125): a skill the engine must switch off is switched off even without the disabled_reason column", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    db.ref.beforeUpdate!.link_rules = (next, old) => {
+      if ("disabled_reason" in next && !("disabled_reason" in old)) {
+        throw { code: "PGRST204", message: "Could not find the 'disabled_reason' column of 'link_rules' in the schema cache" };
+      }
+      return next;
+    };
+    const hung: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [], terminated: { index: 0, ms: 1_004 }, skipped: [], budgetSpent: false, error: null }),
+      close: async () => {},
+    });
+    const run = await runLinkProposers(admin(), ORG, { matcher: hung });
+    const rule = t("link_rules").find((r) => r.id === "r1")!;
+    expect(rule.enabled).toBe(false);
+    expect("disabled_reason" in rule).toBe(false);
+    expect(run.notes.join(" ")).toMatch(/one match ran for 1004 ms on one page without finishing and was stopped — the skill was switched off/);
   });
   it("without a bounded matcher no member-authored pattern runs, and the run says so", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
@@ -515,7 +574,7 @@ describe("LNK-6 — an overrunning skill is switched off with the reason, never 
   it("a worker that cannot run is a note, never a crash", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
     const broken: SkillMatcherFactory = () => ({
-      match: async () => ({ found: [], overBudget: null, budgetSpent: false, error: "the custom-skill worker could not start (x)" }),
+      match: async () => ({ found: [], terminated: null, skipped: [], budgetSpent: false, error: "the custom-skill worker could not start (x)" }),
       close: async () => {},
     });
     const run = await runLinkProposers(admin(), ORG, { matcher: broken });
@@ -852,5 +911,108 @@ describe("20261126 — the paste contract and what it builds", () => {
   it("probes read deparsed text with no bare casts", () => {
     const tail = body.slice(body.indexOf("COMMIT;"));
     for (const m of tail.matchAll(/(?:qual|with_check|indexdef) (?:NOT )?LIKE '([^']|'')*'/g)) expect(m[0]).not.toMatch(/::/);
+  });
+});
+
+// ── fix pass 2 ────────────────────────────────────────────────────────────
+describe("fix pass 2 — LNK-1 / LNK-12: a queued proposal is refreshed when what the reviewer reads moved on", () => {
+  const d = (over: Partial<ProposalDraft> = {}): ProposalDraft => ({
+    documentId: "a", targetDocumentId: "b", proposer: "opc", tier: "strong", confidence: 0.6,
+    evidence: { summary: "Off-page connector 3 continues onto P-13", page: 2, sourceDocumentId: "a" }, sourceRev: "C", ...over,
+  });
+  const queued = (over: Record<string, unknown> = {}) => new Map([["a|b|opc", {
+    tier: "strong" as const, confidence: 0.6, sourceRev: "C",
+    evidence: { summary: "Off-page connector 3 continues onto P-13", page: 2, sourceDocumentId: "a" }, ...over,
+  }]]);
+  it("identical in tier, confidence, revision and evidence: not new work", () => {
+    expect(dropAlreadyQueued([d()], queued())).toHaveLength(0);
+  });
+  it("a new revision, a row with no recorded source, another evidence line or page: refreshed", () => {
+    expect(dropAlreadyQueued([d()], queued({ sourceRev: "B" }))).toHaveLength(1);
+    expect(dropAlreadyQueued([d()], queued({ evidence: { summary: "Off-page connector 3 continues onto P-13", page: 2 } }))).toHaveLength(1);
+    expect(dropAlreadyQueued([d()], queued({ evidence: null }))).toHaveLength(1);
+    expect(dropAlreadyQueued([d()], queued({ evidence: { summary: "Off-page connector 7 continues onto P-13", page: 2, sourceDocumentId: "a" } }))).toHaveLength(1);
+    expect(dropAlreadyQueued([d()], queued({ evidence: { summary: "Off-page connector 3 continues onto P-13", page: 4, sourceDocumentId: "a" } }))).toHaveLength(1);
+  });
+  it("a draft with no revision or source (answered-together) matches a row with none", () => {
+    const co = d({ proposer: "co_citation", sourceRev: undefined, evidence: { summary: "Answered 2 questions together" } });
+    const q = new Map([["a|b|co_citation", { tier: "strong" as const, confidence: 0.6, sourceRev: null, evidence: { summary: "Answered 2 questions together" } }]]);
+    expect(dropAlreadyQueued([co], q)).toHaveLength(0);
+  });
+  it("end to end: a legacy pending row (no recorded source, an old revision) gains the source and the current revision, then rests", async () => {
+    t("documents").push(docRow("sheet", "P-12", "C"), docRow("b1", "P-13"), docRow("b2", "P-13"));
+    mirror("sheet", { refs: ["P-13"] });
+    for (const target of ["b1", "b2"]) {
+      // stored smallest-id-first: "b1" / "b2" sort before "sheet"
+      t("proposed_links").push({ id: `legacy-${target}`, org_id: ORG, document_id: target,
+        target_document_id: "sheet", proposer: "opc", tier: "strong", confidence: 0.6,
+        status: "pending", source_rev: "B", evidence: { summary: "Sheet references drawing P-13", page: 1 } });
+    }
+    const r1 = await runLinkProposers(admin(), ORG);
+    expect(r1.proposed).toBe(2);
+    expect(t("proposed_links")).toHaveLength(2); // refreshed in place
+    for (const row of t("proposed_links")) {
+      expect(row.source_rev).toBe("C");
+      expect((row.evidence as { sourceDocumentId?: string }).sourceDocumentId).toBe("sheet");
+    }
+    const r2 = await runLinkProposers(admin(), ORG);
+    expect(r2.proposed).toBe(0);
+  });
+});
+
+describe("fix pass 2 — LNK-7 / HUB-2: a rulebook that cannot be read runs no detector (fail closed)", () => {
+  const failingRules = () => {
+    const orig = makeFakeSupabase(db.ref);
+    const failed: unknown = new Proxy({}, { get: (_x, q: string) => (q === "then"
+      ? (res: (x: unknown) => void) => res({ data: null, error: { code: "XX000", message: "rules boom" } })
+      : () => failed) });
+    return { ...orig, from: (tbl: string) => (tbl === "link_rules" ? failed : orig.from(tbl)) } as unknown as SupabaseClient;
+  };
+  it("a controller switched Shared equipment off; the rulebook read fails; nothing is queued and the run says why as an error", async () => {
+    t("documents").push(docRow("a", null), docRow("b", null));
+    shareTags(["a", "b"], ["E-1", "E-2", "E-3"]);
+    const run = await runLinkProposers(failingRules(), ORG);
+    expect(run.proposed).toBe(0);
+    expect(pending()).toHaveLength(0);
+    expect(run.errors.join(" ")).toMatch(/Connection Skills could not be read \(rules boom\) — no detector ran this pass/);
+    expect(run.more).toBe(false);
+    expect(run.notes.join(" ")).not.toMatch(/ran with defaults/);
+  });
+  it("a missing table (the migration never ran) still runs the built-in detectors with their defaults", async () => {
+    t("documents").push(docRow("a", null), docRow("b", null));
+    shareTags(["a", "b"], ["E-1", "E-2", "E-3"]);
+    const orig = makeFakeSupabase(db.ref);
+    const missingTable: unknown = new Proxy({}, { get: (_x, q: string) => (q === "then"
+      ? (res: (x: unknown) => void) => res({ data: null, error: { code: "42P01", message: "relation \"link_rules\" does not exist" } })
+      : () => missingTable) });
+    const client = { ...orig, from: (tbl: string) => (tbl === "link_rules" ? missingTable : orig.from(tbl)) } as unknown as SupabaseClient;
+    const run = await runLinkProposers(client, ORG);
+    expect(run.errors).toEqual([]);
+    expect(run.notes.join(" ")).toMatch(/Built-in detectors ran with defaults/);
+    expect(pending().map((r) => r.proposer)).toEqual(["tag"]);
+  });
+});
+
+describe("fix pass 2 — DEC-35: the sweep route reads the proposal-writer tier from ADMIN_SURFACES", () => {
+  it("no role literal in the route; the surface's writes are the set proposed_links_write admits (20261046)", async () => {
+    const route = repo("app/api/links/invalidate/route.ts");
+    expect(route).toContain('const PROPOSAL_WRITER_ROLES = adminSurface("proposed-links")?.writes ?? [];');
+    expect(route).not.toMatch(/"Admin"|"DocCtrl"|"Manager"|"Supervisor"/);
+    const { adminSurface } = await import("@/lib/adminSurfaces");
+    const m46 = mig("20261046_rp_phase6_sweep_authority_by_collection.sql");
+    const row = m46.match(/\('proposed_links',\s*'proposed_links_write',\s*ARRAY\[([^\]]*)\]\)/);
+    expect(row).not.toBeNull();
+    const sqlRoles = row![1].split(",").map((r) => r.trim().replace(/^'|'$/g, ""));
+    expect([...(adminSurface("proposed-links")?.writes ?? [])].sort()).toEqual(sqlRoles.sort());
+  });
+});
+
+describe("fix pass 2 — LNK-6: the drafting prompt states the bounded subset", () => {
+  it("the skill-assist system prompt names the rules the engine enforces, and its examples pass them", () => {
+    const src = repo("app/api/links/skill-assist/route.ts");
+    expect(src).toMatch(/Stay inside the engine's bounded subset or the pattern is refused/);
+    expect(src).toMatch(/at most 2 unbounded repeats/);
+    for (const p of ["\\d{4,6}", "[A-Z]{2,4}", "\\d{1,6}-\\d{1,6}"]) expect(patternSafetyIssue(p), p).toBeNull();
+    expect(patternSafetyIssue("\\d+-?\\d+")).not.toBeNull();
   });
 });

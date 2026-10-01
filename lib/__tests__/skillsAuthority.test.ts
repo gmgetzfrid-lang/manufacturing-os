@@ -25,6 +25,14 @@
 //     tier for ANOTHER user is is_org_controller_for (is_org_controller's
 //     body, lineDiff-pinned); the controllers' new read of private skills is
 //     declared and counted.
+//   * fix pass 2 — a member's PRIVATE skill stays theirs: through the new
+//     read a controller approves or declines its share request and nothing
+//     else (the guards' rule, TRANSCRIBED below and pinned to both guard
+//     functions; the DELETE policy admits a controller on org-wide rows
+//     only); nobody changes a skill's author. Before 20261125 is applied
+//     the client writes still work: a database that refuses the new
+//     columns (PGRST204) creates, publishes and re-enables skills, and a
+//     share request that cannot be recorded says so.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -45,7 +53,10 @@ import {
   createAnswerSkill, seedBuiltinAnswerSkills, setAnswerSkillEnabled, deleteAnswerSkill, answerSkillIssue,
   setAnswerSkillVisibility,
 } from "@/lib/answerSkills";
-import { createLinkRule, seedBuiltinRules, setLinkRuleEnabled, deleteLinkRule } from "@/lib/linkRules";
+import {
+  createLinkRule, seedBuiltinRules, setLinkRuleEnabled, deleteLinkRule, setLinkRuleVisibility, setLinkRuleShareRequest,
+  refusedSkillPatterns,
+} from "@/lib/linkRules";
 import { buildAnswerSkillsBlock, loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
 import { BUILTIN_SKILLS } from "@/lib/linkProposalLogic";
@@ -73,13 +84,30 @@ const policy = {
   updateCheck: (r: SkillRow, v: Viewer) =>
     (v.controller && (r.builtin_key === null || r.created_by === null))
     || (r.builtin_key === null && r.created_by === v.uid && r.visibility === "private"),
-  delete: (r: SkillRow, v: Viewer) => r.builtin_key === null && (v.controller || (r.created_by === v.uid && v.active)),
+  delete: (r: SkillRow, v: Viewer) => r.builtin_key === null && ((v.controller && r.visibility === "org") || (r.created_by === v.uid && v.active)),
 };
-/** An UPDATE through PostgREST: USING on the old row, WITH CHECK on the new
- *  one, and the SELECT policy on both (the updated row is returned). */
+/** Both guards' person rules (20261125 link_rules_guard / answer_skills_guard,
+ *  BEFORE UPDATE, pinned to the SQL below): a skill's author and built-in
+ *  key are fixed; a private custom row changes, for anyone but its author,
+ *  only in visibility / share_requested (the database stamps shared_by,
+ *  shared_at and updated_at). */
+const SHARE_DECISION_COLUMNS = ["visibility", "share_requested", "shared_by", "shared_at", "updated_at"];
+const guardAdmits = (old: SkillRow, next: SkillRow, v: Viewer) => {
+  if (next.builtin_key !== old.builtin_key) return false;
+  if (next.builtin_key === null && next.created_by !== old.created_by) return false;
+  if (old.builtin_key === null && old.created_by !== v.uid && (old.visibility !== "org" || next.visibility !== "org")) {
+    const rest = (r: SkillRow) => JSON.stringify(Object.fromEntries(Object.entries(r).filter(([k]) => !SHARE_DECISION_COLUMNS.includes(k)).sort()));
+    if (rest(next) !== rest(old)) return false;
+  }
+  return true;
+};
+/** An UPDATE through PostgREST: USING on the old row, the guard, WITH CHECK
+ *  on the new one, and the SELECT policy on both (the updated row is
+ *  returned). */
 const updateAdmitted = (old: SkillRow, patch: Partial<SkillRow>, v: Viewer) => {
   const next = { ...old, ...patch };
-  return policy.updateUsing(old, v) && policy.select(old, v) && policy.updateCheck(next, v) && policy.select(next, v);
+  return policy.updateUsing(old, v) && policy.select(old, v) && guardAdmits(old, next, v)
+    && policy.updateCheck(next, v) && policy.select(next, v);
 };
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -100,7 +128,7 @@ describe("20261125 — the transcription above IS the policy text", () => {
       expect(policyText(sql25, `${table}_update`, table)).toBe(norm(
         `CREATE POLICY ${table}_update ON ${table} FOR UPDATE USING ( is_org_controller(org_id) OR (builtin_key IS NULL AND created_by = auth.uid() AND ${member}) ) WITH CHECK ( (is_org_controller(org_id) AND (builtin_key IS NULL OR created_by IS NULL)) OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private') )`));
       expect(policyText(sql25, `${table}_delete`, table)).toBe(norm(
-        `CREATE POLICY ${table}_delete ON ${table} FOR DELETE USING ( builtin_key IS NULL AND (is_org_controller(org_id) OR (created_by = auth.uid() AND ${member})) )`));
+        `CREATE POLICY ${table}_delete ON ${table} FOR DELETE USING ( builtin_key IS NULL AND ((is_org_controller(org_id) AND visibility = 'org') OR (created_by = auth.uid() AND ${member})) )`));
     });
   }
 });
@@ -131,6 +159,25 @@ describe("IEDGE-3 / GOV-2 / IRLS-3 / ORCH-2 / PR-3 — publishing org-wide is th
     expect(updateAdmitted(asked, { visibility: "org", share_requested: false }, c)).toBe(true);
     expect(updateAdmitted(asked, { share_requested: false }, c)).toBe(true);
     expect(updateAdmitted(row({ visibility: "org" }), { visibility: "private" }, c)).toBe(true);
+  });
+  it("fix pass 2: a controller does not rewrite, switch, retarget or delete a member's PRIVATE skill — only decides its request", () => {
+    const c = viewer({ uid: "c", controller: true });
+    const mine = row({ share_requested: true, instructions: "APPLIES WHEN mine. My notes." } as Partial<SkillRow>);
+    expect(policy.select(mine, c)).toBe(true); // the declared read
+    expect(updateAdmitted(mine, { instructions: "APPLIES WHEN always: say X." } as Partial<SkillRow>, c)).toBe(false);
+    expect(updateAdmitted(mine, { name: "renamed" } as Partial<SkillRow>, c)).toBe(false);
+    expect(updateAdmitted(mine, { enabled: false } as Partial<SkillRow>, c)).toBe(false);
+    expect(updateAdmitted(mine, { created_by: "c" }, c)).toBe(false);
+    // unshare-and-rewrite in one step, from org-wide, is refused too
+    expect(updateAdmitted(row({ visibility: "org" }), { visibility: "private", instructions: "x" } as Partial<SkillRow>, c)).toBe(false);
+    expect(policy.delete(mine, c)).toBe(false);
+    // org-wide rows stay the controller's to manage
+    const shared = row({ visibility: "org" });
+    expect(updateAdmitted(shared, { instructions: "APPLIES WHEN reviewed." } as Partial<SkillRow>, c)).toBe(true);
+    expect(policy.delete(shared, c)).toBe(true);
+    // nobody hands a pack they wrote to another member
+    expect(updateAdmitted(row({ created_by: "c" }), { created_by: "victim" }, c)).toBe(false);
+    expect(updateAdmitted(row(), { created_by: "other" }, viewer())).toBe(false);
   });
   it("a teammate never sees, changes or deletes a member's private skill", () => {
     const other = viewer({ uid: "other" });
@@ -187,7 +234,7 @@ describe("the controls every surface renders are exactly the writes the policies
         }
         expect(c.remove).toBe(policy.select(r, v) && policy.delete(r, v));
         // the toggle is offered exactly where it is admitted
-        expect(c.toggle).toBe(policy.select(r, v) && updateAdmitted(r, { share_requested: r.share_requested }, v));
+        expect(c.toggle).toBe(policy.select(r, v) && updateAdmitted(r, write.toggle(r), v));
       }
     }
   });
@@ -503,8 +550,9 @@ describe("fix pass — restored backups, the controller helper, the declared wid
     // and a probe pins it after apply
     expect(body).toContain("prosrc LIKE '%(role IN (''Admin'', ''DocCtrl'') OR roles && ARRAY[''Admin'', ''DocCtrl'']::text[])%'");
   });
-  it("the controllers' new read of private skills is declared in the header and counted per table", () => {
-    expect(sql25).toMatch(/WIDENS ONE READ: controllers \(the\s+-- is_org_controller tier\) now read every PRIVATE skill of their org/);
+  it("the controllers' new read of private skills — and the one decision it admits — is declared in the header and counted per table", () => {
+    expect(sql25).toMatch(/WIDENS ONE READ AND ONE DECISION:\s+-- controllers \(the is_org_controller tier\) now read every PRIVATE skill of\s+-- their org/);
+    expect(sql25).toMatch(/That write is held to the share decision: approve\s+-- \(visibility -> 'org'\) or decline \(share_requested -> false\)/);
     expect(sql25).not.toMatch(/nobody gains/);
     const inventory = body.slice(0, body.indexOf("BEGIN;"));
     expect(inventory).toMatch(/'answer_skills private custom packs newly readable by controllers \(WIDENING[^']*', COUNT\(\*\)\s+FROM answer_skills WHERE builtin_key IS NULL AND visibility = 'private'/);
@@ -560,7 +608,7 @@ describe("byte-fidelity — the re-created policies differ from 20261015 / 20261
     it(`${table}_update / _delete keep the controller term`, () => {
       expect(policyBlock(old, `${table}_update`)).toContain("is_org_controller(org_id) OR created_by = auth.uid()");
       expect(policyBlock(sql25, `${table}_update`)).toContain("is_org_controller(org_id)\n  OR (builtin_key IS NULL AND created_by = auth.uid()");
-      expect(policyBlock(sql25, `${table}_delete`)).toContain("builtin_key IS NULL\n  AND (is_org_controller(org_id)");
+      expect(policyBlock(sql25, `${table}_delete`)).toContain("builtin_key IS NULL\n  AND ((is_org_controller(org_id) AND visibility = 'org')");
     });
   }
 });
@@ -589,6 +637,26 @@ describe("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmat
     expect(page).toMatch(/<SkillActions row=\{r\} controls=\{skillControls\(r,/);
     expect(panel).toMatch(/const controls = skillControls\(r, \{ uid: uid \?\? null, isController \}\);/);
   });
+  it("fix pass 2: a failed first read is an answer — the panel renders its error and the library stops waiting", () => {
+    expect(panel).toMatch(/if \(!loadedRef\.current\) \{\s+loadedRef\.current = true;\s+setRules\(\[\]\); onRulesChange\?\.\(\[\]\);/);
+    // the compact box shows the error without being opened; the shelf renders past the early return
+    expect(panel).toContain('{errorBox && <div className="px-3.5 pb-3">{errorBox}</div>}');
+    expect(page).toContain("setRskills((cur) => cur ?? []);");
+  });
+  it("fix pass 2: the card names a pattern the engine refuses; the Studio says when a share request could not be recorded", () => {
+    expect(panel).toContain("const refused = r.builtin_key ? [] : refusedSkillPatterns(patterns);");
+    expect(refusedSkillPatterns(["\\b\\d+-[A-Z]+-\\d+\\b", "\\bWO-\\d{5}\\b"])).toEqual([
+      "Pattern not allowed (more than 2 unbounded repeats): \\b\\d+-[A-Z]+-\\d+\\b",
+    ]);
+    expect(studio).toMatch(/if \(note\) await appAlert\(\{ title: "Saved as yours", message: note \}\);/);
+  });
+  it("fix pass 2: on a member's private skill a controller is offered the share decision only", () => {
+    const c = { uid: "c", isController: true };
+    expect(skillControls({ builtin_key: null, visibility: "private", created_by: "m", share_requested: true }, c))
+      .toEqual({ toggle: false, share: true, unshare: false, requestShare: false, withdrawRequest: false, declineShare: true, remove: false });
+    expect(skillControls({ builtin_key: null, visibility: "org", created_by: "m", share_requested: false }, c))
+      .toMatchObject({ toggle: true, unshare: true, remove: true });
+  });
   it("DEC-35: no role literal decides skill authority on these surfaces", () => {
     for (const s of [page, panel, studio]) {
       expect(s).not.toMatch(/"Admin"|'Admin'|"DocCtrl"|'DocCtrl'/);
@@ -600,5 +668,115 @@ describe("HUB-8 / HUB-2 — one list, one seeding entry per table, one confirmat
     expect(studio).not.toMatch(/useState<LinkRuleVisibility>\("org"\)/);
     expect(studio).toMatch(/the engine does not run it until it is shared org-wide/);
     expect(studio).toMatch(/answerSkillIssue\(instructions\) !== null/);
+  });
+});
+
+// ── fix pass 2 ────────────────────────────────────────────────────────────
+describe("fix pass 2 — the guards' person rules ARE the transcription above (both guards)", () => {
+  const body = sql25.replace(/--[^\n]*/g, "");
+  const fnOf = (fn: string) => {
+    const start = body.indexOf(`CREATE OR REPLACE FUNCTION ${fn}()`);
+    return body.slice(start, body.indexOf("$$;", start));
+  };
+  for (const [fn, table] of [["link_rules_guard", "link_rules"], ["answer_skills_guard", "answer_skills"]] as const) {
+    it(fn, () => {
+      const f = fnOf(fn);
+      for (const line of [
+        "IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key",
+        "OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN",
+        `RAISE EXCEPTION '${table}_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';`,
+        "IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()",
+        "AND (OLD.visibility IS DISTINCT FROM 'org' OR NEW.visibility IS DISTINCT FROM 'org')",
+        `AND (to_jsonb(NEW) - ARRAY[${SHARE_DECISION_COLUMNS.map((c) => `'${c}'`).join(", ")}])`,
+        `IS DISTINCT FROM (to_jsonb(OLD) - ARRAY[${SHARE_DECISION_COLUMNS.map((c) => `'${c}'`).join(", ")}]) THEN`,
+        `RAISE EXCEPTION '${table}_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'`,
+      ]) expect(f, line).toContain(line);
+      // a person's rule: after the service role's early return, so the
+      // engine (switching a skill off) and the restore are not held to it
+      expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf(`${table}_author`));
+      // and after the sharing stamp, whose columns it lets change
+      expect(f.indexOf("IF NEW.visibility = 'private' THEN")).toBeLessThan(f.indexOf(`${table}_private`));
+    });
+  }
+  it("publishing a connection skill re-checks its patterns (a legacy private skill cannot be approved past the subset)", () => {
+    expect(fnOf("link_rules_guard")).toMatch(/IF TG_OP = 'INSERT' OR NEW\.config IS DISTINCT FROM OLD\.config\s+OR \(NEW\.visibility = 'org' AND OLD\.visibility IS DISTINCT FROM 'org'\) THEN\s+IF jsonb_typeof\(NEW\.config\)/);
+  });
+  it("probes pin the rules after apply; the inventory counts the legacy patterns the subset refuses", () => {
+    const tail = body.slice(body.indexOf("COMMIT;"));
+    expect(tail).toContain("prosrc LIKE '%- ARRAY[''visibility'', ''share_requested'', ''shared_by'', ''shared_at'', ''updated_at'']%'");
+    expect(tail).toContain("AND qual LIKE '%''org''%' AND qual LIKE '%created_by = auth.uid()%'");
+    expect(tail).toMatch(/'inventory \(after\): custom connection skills holding a pattern the bounded subset refuses[^']*', NULL,\s+\(SELECT COUNT\(DISTINCT r\.id\)/);
+    expect(tail).toMatch(/'inventory \(after\): org-wide, switched-on custom connection skills whose every pattern the subset refuses[^']*'/);
+    // jsonb_array_elements_text never sees a non-array
+    expect(tail.match(/jsonb_array_elements_text\(CASE WHEN jsonb_typeof\(r\.config->'patterns'\) = 'array'/g)).toHaveLength(3);
+  });
+});
+
+describe("fix pass 2 — before 20261125 is applied, the skill writes still work (a database that refuses the new columns)", () => {
+  // The columns 20261015 / 20261016 created; PostgREST answers PGRST204 for any other.
+  const PRE = {
+    link_rules: ["id", "org_id", "builtin_key", "name", "description", "kind", "config", "enabled", "visibility", "created_by", "created_by_name", "created_at", "updated_at"],
+    answer_skills: ["id", "org_id", "builtin_key", "name", "description", "instructions", "enabled", "visibility", "created_by", "created_by_name", "created_at", "updated_at"],
+  } as const;
+  const refuseUnknown = (table: keyof typeof PRE) => (r: Record<string, unknown>) => {
+    for (const k of Object.keys(r)) {
+      if (!(PRE[table] as readonly string[]).includes(k)) {
+        throw { code: "PGRST204", message: `Could not find the '${k}' column of '${table}' in the schema cache` };
+      }
+    }
+    return r;
+  };
+  beforeEach(() => {
+    for (const table of ["link_rules", "answer_skills"] as const) {
+      db.ref.beforeInsert![table] = refuseUnknown(table);
+      db.ref.beforeUpdate![table] = (next) => refuseUnknown(table)(next);
+    }
+  });
+  it("a member creates a private skill of either kind", async () => {
+    expect(await createLinkRule({ orgId: ORG, name: "WO", patterns: ["\\bWO-\\d{5}\\b"], visibility: "private", userId: "me" })).toEqual({ note: null });
+    expect(await createAnswerSkill({ orgId: ORG, name: "T", instructions: "APPLIES WHEN torque values are asked. Otherwise ignore.", visibility: "private", userId: "me" })).toEqual({ note: null });
+    expect(t("link_rules")).toHaveLength(1);
+    expect(t("answer_skills")).toHaveLength(1);
+  });
+  it("a share request is saved as the author's private skill, and the author is told the request could not be recorded", async () => {
+    const a = await createLinkRule({ orgId: ORG, name: "WO", patterns: ["\\bWO-\\d{5}\\b"], visibility: "private", shareRequested: true, userId: "me" });
+    const b = await createAnswerSkill({ orgId: ORG, name: "T", instructions: "APPLIES WHEN torque values are asked. Otherwise ignore.", visibility: "private", shareRequested: true, userId: "me" });
+    for (const r of [a, b]) expect(r.note).toMatch(/Saved as your private skill\. Share requests arrive with the skills-authority migration \(20261125\)/);
+    expect(t("link_rules")[0]).toMatchObject({ visibility: "private", created_by: "me" });
+    expect("share_requested" in t("link_rules")[0]).toBe(false);
+  });
+  it("a controller publishes, unshares, switches and re-enables skills (no new column is named)", async () => {
+    t("link_rules").push({ id: "r1", org_id: ORG, builtin_key: null, name: "WO", kind: "reference", config: { patterns: ["\\bWO-\\d{5}\\b"] }, enabled: false, visibility: "private", created_by: "me" });
+    t("answer_skills").push({ id: "s1", org_id: ORG, builtin_key: null, name: "T", instructions: "APPLIES WHEN x. Otherwise ignore.", enabled: false, visibility: "private", created_by: "me" });
+    await setLinkRuleVisibility("r1", "org");
+    await setLinkRuleEnabled("r1", true);
+    await setAnswerSkillVisibility("s1", "org");
+    await setAnswerSkillEnabled("s1", true);
+    await setAnswerSkillVisibility("s1", "private");
+    expect(t("link_rules")[0]).toMatchObject({ visibility: "org", enabled: true });
+    expect(t("answer_skills")[0]).toMatchObject({ visibility: "private", enabled: true });
+  });
+  it("asking to share an existing skill says the feature needs the migration, in words", async () => {
+    t("link_rules").push({ id: "r1", org_id: ORG, builtin_key: null, name: "WO", kind: "reference", config: {}, enabled: true, visibility: "private", created_by: "me" });
+    await expect(setLinkRuleShareRequest("r1", true)).rejects.toThrow(/Share requests arrive with the skills-authority migration \(20261125\)/);
+  });
+  it("the share-request control is not offered on a row with no share_requested column", () => {
+    const legacy = { builtin_key: null, visibility: "private", created_by: "me" };
+    expect(skillControls(legacy, { uid: "me", isController: false }).requestShare).toBe(false);
+    expect(skillControls({ ...legacy, share_requested: false }, { uid: "me", isController: false }).requestShare).toBe(true);
+  });
+  it("a controller's seed the old insert policy refuses (42501: unowned built-in) is no error banner — the service role seeds", async () => {
+    db.ref.refuseWrites.add("link_rules");
+    db.ref.refuseWrites.add("answer_skills");
+    expect(await seedBuiltinRules(ORG)).toEqual({ seeded: 0, error: null });
+    expect(await seedBuiltinAnswerSkills(ORG)).toEqual({ seeded: 0, error: null });
+  });
+  it("the client libraries never name disabled_reason, and name share_requested only for a request", () => {
+    for (const f of ["lib/linkRules.ts", "lib/answerSkills.ts"]) {
+      const src = repo(f).replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "");
+      expect(src, f).not.toMatch(/disabled_reason:/);
+      expect(src, f).not.toMatch(/share_requested: false/);
+      expect(src.match(/share_requested = true|share_requested: requested/g)?.length, f).toBe(2);
+    }
   });
 });

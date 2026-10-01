@@ -423,9 +423,13 @@ export function proposeCustomReferences(
   return runCustomSkill(rule, occurrences, identityIndex).drafts;
 }
 
-/** LNK-6 (DEC-55): the time one skill may spend on one document's text,
- *  read between matches. The hard ceiling on a single match that never
- *  returns is the worker runner's (lib/customSkillRunner.ts). */
+/** LNK-6 (DEC-55): the time one skill may spend on ONE indexed text (a
+ *  page / chunk), read between matches. Per text, not per document, so it
+ *  measures backtracking rather than how long a manual is; a skill that
+ *  passes it skips the rest of that document this pass (it is not switched
+ *  off). The hard ceiling on a single match that never returns — the only
+ *  overrun that switches a skill off — is the worker runner's
+ *  (lib/customSkillRunner.ts). */
 export const SKILL_DOC_BUDGET_MS = 50;
 
 /** Fold the matches one skill found in one text into the best draft per
@@ -488,13 +492,13 @@ export function customSkillDrafts(
   return [...best.values()];
 }
 
-/** proposeCustomReferences under a per-document time budget and a run
- *  deadline, both read between matches on THIS thread: a skill whose time
- *  on one document passes the budget stops there and reports the overrun
- *  (the caller switches it off with a note); one that reaches `deadline`
- *  (in `now()` units) stops and says so. Neither can interrupt a single
- *  match — the engine therefore runs custom skills through the worker
- *  runner, which can; this in-thread form serves the author's live tester. */
+/** proposeCustomReferences under a per-text time budget and a run
+ *  deadline, both read between matches on THIS thread — the worker
+ *  runner's rule: a skill whose time on one text passes the budget skips
+ *  the rest of that document (`skipped`; `overBudget` is the first) and
+ *  goes on; one that reaches `deadline` (in `now()` units) stops and says
+ *  so. Neither can interrupt a single match — the engine therefore runs
+ *  custom skills through the worker runner, which can. */
 export function runCustomSkill(
   rule: { id: string; name: string; regexes: RegExp[] },
   occurrences: TextOccurrence[],
@@ -503,23 +507,30 @@ export function runCustomSkill(
 ): {
   drafts: ProposalDraft[];
   overBudget: { documentId: string; ms: number } | null;
+  skipped: Array<{ documentId: string; ms: number }>;
   deadlineHit: boolean;
 } {
   const budget = opts?.budgetMs ?? Number.POSITIVE_INFINITY;
   const deadline = opts?.deadline ?? Number.POSITIVE_INFINITY;
   const now = opts?.now ?? (() => Date.now());
-  const spent = new Map<string, number>();
+  const skipped: Array<{ documentId: string; ms: number }> = [];
   const best = new Map<string, ProposalDraft>();
+  const out = (deadlineHit: boolean) =>
+    ({ drafts: [...best.values()], overBudget: skipped[0] ?? null, skipped, deadlineHit });
   for (const occ of occurrences) {
+    if (skipped.some((x) => x.documentId === occ.documentId)) continue;
     const started = now();
     const stop = (): { documentId: string; ms: number } | "deadline" | null => {
       const t = now();
-      const ms = (spent.get(occ.documentId) ?? 0) + (t - started);
+      const ms = t - started;
       if (ms > budget) return { documentId: occ.documentId, ms: Math.round(ms) };
       return t >= deadline ? "deadline" : null;
     };
+    // A text's matches count only once the text is finished under budget.
+    const local = new Map(best);
     const seen = new Set<string>();
-    for (const re of rule.regexes) {
+    let late: ReturnType<typeof stop> = null;
+    scan: for (const re of rule.regexes) {
       re.lastIndex = 0;
       let m: RegExpExecArray | null;
       let count = 0;
@@ -527,18 +538,18 @@ export function runCustomSkill(
         count += 1;
         // Zero-width safety: never loop in place.
         if (m.index === re.lastIndex) re.lastIndex += 1;
-        const late = stop();
-        if (late === "deadline") return { drafts: [...best.values()], overBudget: null, deadlineHit: true };
-        if (late) return { drafts: [...best.values()], overBudget: late, deadlineHit: false };
-        addSkillMatch(best, rule, occ, m[0], seen, identityIndex);
+        late = stop();
+        if (late) break scan;
+        addSkillMatch(local, rule, occ, m[0], seen, identityIndex);
       }
-      const o = stop();
-      if (o === "deadline") return { drafts: [...best.values()], overBudget: null, deadlineHit: true };
-      if (o) return { drafts: [...best.values()], overBudget: o, deadlineHit: false };
+      late = stop();
+      if (late) break;
     }
-    spent.set(occ.documentId, (spent.get(occ.documentId) ?? 0) + (now() - started));
+    if (late === "deadline") return out(true);
+    if (late) { skipped.push(late); continue; }
+    for (const [k, v] of local) best.set(k, v);
   }
-  return { drafts: [...best.values()], overBudget: null, deadlineHit: false };
+  return out(false);
 }
 
 // ── Co-citation: questions answered from two documents together ──────────
@@ -627,8 +638,14 @@ export interface KnownPairs {
   /** LNK-8: `a|b|proposer` a person dismissed — blocks only that skill's
    *  opinion of the pair, never another skill's different evidence. */
   dismissed?: Set<string>;
-  /** LNK-12: `a|b|proposer` already waiting in the queue, with what it said. */
-  pending?: Map<string, { tier: ProposalTier; confidence: number }>;
+  /** LNK-12: `a|b|proposer` already waiting in the queue, with what it said
+   *  — its tier and confidence, and (LNK-1) the revision and evidence the
+   *  reviewer reads. `evidence` undefined: the caller did not read them. */
+  pending?: Map<string, {
+    tier: ProposalTier; confidence: number;
+    sourceRev?: string | null;
+    evidence?: { summary?: string; page?: number; sourceDocumentId?: string } | null;
+  }>;
 }
 
 /** Drop anything already linked, approved, or dismissed for the same skill
@@ -646,12 +663,24 @@ export function filterDrafts(drafts: ProposalDraft[], known: KnownPairs): Propos
 }
 
 /** LNK-12: a draft identical to the proposal already queued for its (pair,
- *  skill) is not new work — writing it again only re-counted it. */
+ *  skill) is not new work — writing it again only re-counted it. LNK-1: a
+ *  queued row is refreshed when what the reviewer reads has moved on — the
+ *  revision it was read at, the document it was read from (a row written
+ *  before the proposers recorded it gains it here), the evidence line or
+ *  its page — so a re-issued sheet never leaves an old reading pending. */
 export function dropAlreadyQueued(drafts: ProposalDraft[], pending: KnownPairs["pending"]): ProposalDraft[] {
   if (!pending || pending.size === 0) return drafts;
+  const same = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
   return drafts.filter((d) => {
     const q = pending.get(`${d.documentId}|${d.targetDocumentId}|${d.proposer}`);
-    return !q || q.tier !== d.tier || Math.abs(q.confidence - d.confidence) > 1e-6;
+    if (!q) return true;
+    if (q.tier !== d.tier || Math.abs(q.confidence - d.confidence) > 1e-6) return true;
+    if (q.evidence === undefined) return false;
+    const e = q.evidence ?? {};
+    return !same(q.sourceRev, d.sourceRev)
+      || !same(e.sourceDocumentId, d.evidence.sourceDocumentId)
+      || !same(e.summary, d.evidence.summary)
+      || !same(e.page, d.evidence.page);
   });
 }
 

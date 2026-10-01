@@ -6,14 +6,16 @@
 // can still backtrack for seconds on one pathological chunk (`\w+a\w+X`
 // over a long run of letters), and V8 cannot interrupt a single RegExp exec.
 // So the matching runs in a worker thread and this module is the clock:
-//   * the worker reads its own clock between matches and stops a skill
-//     whose time on one document passes the per-document budget (the same
-//     rule as runCustomSkill, measured where the regex runs);
+//   * the worker reads its own clock between matches; a skill whose time on
+//     ONE TEXT (a page of indexed text) passes the per-text budget skips the
+//     rest of that document and goes on with the next one (the same rule
+//     as runCustomSkill, measured where the regex runs). The budget is per
+//     text so it measures backtracking, not how long a manual is;
 //   * this thread terminates the worker when one text has been running for
 //     longer than `hardDocMs` (a single exec that never returns), or when
-//     the run's budget is spent — whatever the regex is doing.
+//     the skill's budget is spent — whatever the regex is doing.
 // A terminated worker is replaced on the next skill (the texts are sent
-// again); a skill that only reported a soft overrun keeps the worker.
+// again); a skill that only skipped documents keeps the worker.
 //
 // Server-only (node:worker_threads). The engine (lib/linkProposerServer.ts)
 // is also reachable from browser bundles through the publish pipeline, so it
@@ -28,9 +30,9 @@ export const SKILL_DOC_HARD_MS = 1_000;
 const WORKER_START_MS = 10_000;
 
 export interface SkillMatchLimits {
-  /** Per-document budget, read between matches inside the worker. */
+  /** Per-text budget, read between matches inside the worker. */
   softDocMs: number;
-  /** What remains of the run's budget for custom skills, from now. */
+  /** What this skill may spend, from now (its share of the run's budget). */
   budgetMs: number;
   /** Matches kept per pattern per text. */
   maxMatches: number;
@@ -38,12 +40,17 @@ export interface SkillMatchLimits {
 
 export interface SkillMatchOutcome {
   /** found[i]: the strings matched in text i, in match order — set for
-   *  every text the skill finished; unset for texts it never reached. */
+   *  every text the skill finished; unset for texts it never reached or
+   *  skipped. */
   found: string[][];
-  /** The skill overran on one text: `hard` when the worker had to be
-   *  terminated (a match that did not return), soft when it stopped itself. */
-  overBudget: { index: number; ms: number; hard: boolean } | null;
-  /** The run's budget ran out while this skill was running. */
+  /** One text ran past the hard ceiling — a match that did not return — and
+   *  the worker was terminated there. */
+  terminated: { index: number; ms: number } | null;
+  /** Soft overruns: on text `index` the skill passed the per-text budget,
+   *  so the rest of that document was skipped for this skill (one entry
+   *  per document). */
+  skipped: Array<{ index: number; ms: number }>;
+  /** The skill's budget ran out while it was running. */
   budgetSpent: boolean;
   /** The worker could not run the skill at all (start-up failure, crash). */
   error: string | null;
@@ -55,7 +62,7 @@ export interface SkillMatcher {
 }
 
 /** Opens a matcher over one run's texts; `keys[i]` is the document text i
- *  belongs to (a document's pages share one per-document budget). */
+ *  belongs to (a soft overrun skips the rest of that document). */
 export type SkillMatcherFactory = (texts: readonly string[], keys: readonly string[]) => SkillMatcher;
 
 // The worker's whole program. Plain CommonJS, evaluated from this string, so
@@ -67,9 +74,9 @@ let keys = [];
 parentPort.on("message", (msg) => {
   if (msg.t === "load") { texts = msg.texts; keys = msg.keys; parentPort.postMessage({ t: "ready" }); return; }
   const res = msg.sources.map((src) => new RegExp(src, "gi"));
-  const spent = new Map();
+  const skipped = new Set();
   for (let i = 0; i < texts.length; i++) {
-    const before = spent.get(keys[i]) || 0;
+    if (skipped.has(keys[i])) continue;
     const t0 = performance.now();
     const found = [];
     let over = false;
@@ -81,13 +88,11 @@ parentPort.on("message", (msg) => {
         n++;
         if (m.index === re.lastIndex) re.lastIndex++;
         found.push(m[0]);
-        if (before + performance.now() - t0 > msg.softDocMs) { over = true; break; }
+        if (performance.now() - t0 > msg.softDocMs) { over = true; break; }
       }
-      if (over || before + performance.now() - t0 > msg.softDocMs) { over = true; break; }
+      if (over || performance.now() - t0 > msg.softDocMs) { over = true; break; }
     }
-    const ms = before + performance.now() - t0;
-    if (over) { parentPort.postMessage({ t: "over", i, ms }); return; }
-    spent.set(keys[i], ms);
+    if (over) { skipped.add(keys[i]); parentPort.postMessage({ t: "over", i, ms: performance.now() - t0 }); continue; }
     parentPort.postMessage({ t: "doc", i, found });
   }
   parentPort.postMessage({ t: "done" });
@@ -151,8 +156,9 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
       async match(sources, limits) {
         const deadline = Date.now() + Math.max(0, limits.budgetMs);
         const found: string[][] = [];
+        const skipped: SkillMatchOutcome["skipped"] = [];
         const empty = (over: Partial<SkillMatchOutcome>): SkillMatchOutcome =>
-          ({ found, overBudget: null, budgetSpent: false, error: null, ...over });
+          ({ found, terminated: null, skipped, budgetSpent: false, error: null, ...over });
         if (Date.now() >= deadline) return empty({ budgetSpent: true });
         const startError = await start(deadline);
         if (startError) return empty({ error: startError });
@@ -162,6 +168,7 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
         return new Promise<SkillMatchOutcome>((resolve) => {
           let last = -1;
           let beat = Date.now();
+          const skippedKeys = new Set<string>();
           let timer: ReturnType<typeof setTimeout> | null = null;
           let settled = false;
           function finish(out: Partial<SkillMatchOutcome>, terminate: boolean) {
@@ -174,24 +181,27 @@ export function workerSkillMatcher(opts?: { hardDocMs?: number }): SkillMatcherF
             if (terminate) kill();
             resolve(empty(out));
           }
-          // The watchdog: re-armed on every text the worker finishes.
+          // The watchdog: re-armed on every text the worker finishes or skips.
+          // The text it is stuck on is the next one it has not reported
+          // (texts of a skipped document are passed over).
           function arm() {
             if (timer) clearTimeout(timer);
             const wait = Math.max(0, Math.min(beat + hardDocMs, deadline) - Date.now());
             timer = setTimeout(() => {
               const t = Date.now();
-              if (t >= deadline) finish({ budgetSpent: true }, true);
-              else finish({ overBudget: { index: last + 1, ms: t - beat, hard: true } }, true);
+              if (t >= deadline) { finish({ budgetSpent: true }, true); return; }
+              let stuck = last + 1;
+              while (stuck < keys.length && skippedKeys.has(keys[stuck])) stuck += 1;
+              finish({ terminated: { index: stuck, ms: t - beat } }, true);
             }, wait);
           }
           function onMessage(m: WorkerMessage) {
-            if (m.t === "doc") {
-              found[m.i] = m.found;
+            if (m.t === "doc" || m.t === "over") {
+              if (m.t === "doc") found[m.i] = m.found;
+              else { skipped.push({ index: m.i, ms: Math.round(m.ms) }); skippedKeys.add(keys[m.i]); }
               last = m.i;
               beat = Date.now();
               arm();
-            } else if (m.t === "over") {
-              finish({ overBudget: { index: m.i, ms: Math.round(m.ms), hard: false } }, false);
             } else if (m.t === "done") {
               finish({}, false);
             }

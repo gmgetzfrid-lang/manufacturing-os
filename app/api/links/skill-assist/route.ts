@@ -96,6 +96,13 @@ export async function POST(req: NextRequest) {
     "- Anchor with \\b where sensible; be specific enough not to match prose. Never write a " +
     "pattern that can match empty text or a bare number with no shape.\n" +
     "- Prefer ONE tight pattern per identifier form; 1–4 patterns total.\n" +
+    // LNK-6 (DEC-55): the engine refuses patterns outside its bounded
+    // subset (patternSafetyIssue) — a draft written outside it is dropped.
+    "- Stay inside the engine's bounded subset or the pattern is refused: give every repeat an upper " +
+    "bound of 10 or less where you can (\\d{4,6}, [A-Z]{2,4}); at most 2 unbounded repeats (+, *, {n,}) " +
+    "in a pattern, never two of them next to each other or separated only by optional characters " +
+    "(write \\d{1,6}-\\d{1,6}, not \\d+-?\\d+); no repeated group that holds a repeat or an " +
+    "alternation; no lookarounds, backreferences or named groups; no .* or .+.\n" +
     "- For each pattern include a short realistic sample line of document text it should match.\n" +
     "Also write a 2–6 word name and a one-sentence description of what the skill connects.\n" +
     "Return STRICT JSON: {\"name\":\"…\",\"description\":\"…\",\"patterns\":[\"…\"],\"samples\":[\"…\"]}";

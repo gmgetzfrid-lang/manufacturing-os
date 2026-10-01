@@ -44,7 +44,19 @@ export interface LinkRule {
 const missing = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
 
+/** A column this database does not have yet: 20261125 adds share_requested,
+ *  shared_by, shared_at and disabled_reason, and PostgREST answers PGRST204
+ *  (Postgres 42703) for a write that names one. So a write names a new
+ *  column only when it carries information the database cannot supply
+ *  itself (the docClass / costDocs convention) — sharing and the engine's
+ *  note are stamped by 20261125's guard, not sent by the client. */
+export const missingSkillColumn = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === "PGRST204" || e.code === "42703");
+
 const REFUSED = "That change was not made — this skill is not yours to change (org-wide and built-in skills are managed by document controllers).";
+
+/** A share request needs 20261125's share_requested column. */
+export const SHARE_NEEDS_MIGRATION = "Share requests arrive with the skills-authority migration (20261125), which this database does not have yet.";
 
 /** Skills visible to this member (org-wide plus their own; a controller
  *  reads every skill of the org). Returns null when the table is missing
@@ -94,8 +106,15 @@ export async function seedBuiltinRules(orgId: string): Promise<{ seeded: number;
       created_by: null,
     })),
   );
-  if (insErr && insErr.code !== "23505") return { seeded: 0, error: insErr.message };
-  return { seeded: insErr ? 0 : want.length, error: null };
+  // 42501: the database does not admit this person's unowned built-in —
+  // before 20261125 the insert policy requires created_by = auth.uid(), and
+  // after it the person is not a controller to the database. Nothing is
+  // wrong for the viewer either way: the engine seeds the missing built-ins
+  // on the service role on every run. Never fall back to an owned seed
+  // (HUB-2: that made the viewer the built-in's manager).
+  if (insErr && (insErr.code === "23505" || insErr.code === "42501")) return { seeded: 0, error: null };
+  if (insErr) return { seeded: 0, error: insErr.message };
+  return { seeded: want.length, error: null };
 }
 
 export async function createLinkRule(input: {
@@ -110,12 +129,12 @@ export async function createLinkRule(input: {
   shareRequested?: boolean;
   userId: string;
   userName?: string;
-}): Promise<void> {
+}): Promise<{ note: string | null }> {
   const { errors } = compileSkillPatterns(input.patterns);
   if (errors.length > 0) throw new Error(errors[0]);
   const patterns = input.patterns.map((p) => p.trim()).filter(Boolean);
   if (patterns.length === 0) throw new Error("Add at least one pattern.");
-  const { error } = await supabase.from("link_rules").insert({
+  const row: Record<string, unknown> = {
     org_id: input.orgId,
     name: input.name.trim(),
     description: (input.description ?? "").trim() || null,
@@ -123,31 +142,45 @@ export async function createLinkRule(input: {
     config: { patterns },
     enabled: true,
     visibility: input.visibility,
-    share_requested: input.visibility === "private" && !!input.shareRequested,
     created_by: input.userId,
     created_by_name: input.userName ?? null,
-  });
+  };
+  // The column defaults to false: it is named only for a request.
+  if (input.visibility === "private" && input.shareRequested) row.share_requested = true;
+  let { error } = await supabase.from("link_rules").insert(row);
+  let note: string | null = null;
+  if (error && missingSkillColumn(error) && "share_requested" in row) {
+    // Before 20261125: the skill is saved as the author's own; the request
+    // cannot be recorded, and the author is told so.
+    delete row.share_requested;
+    ({ error } = await supabase.from("link_rules").insert(row));
+    if (!error) note = `Saved as your private skill. ${SHARE_NEEDS_MIGRATION} Ask again once it is applied.`;
+  }
   if (error) {
     if (error.code === "42501") throw new Error("Only a document controller can publish a skill org-wide — save it as yours and ask for it to be shared.");
     throw new Error(error.message);
   }
+  return { note };
 }
 
 async function checkedUpdate(id: string, patch: Record<string, unknown>): Promise<void> {
   const { data, error } = await supabase.from("link_rules")
     .update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(missingSkillColumn(error) && "share_requested" in patch ? SHARE_NEEDS_MIGRATION : error.message);
   if (((data as unknown[] | null) ?? []).length === 0) throw new Error(REFUSED);
 }
 
+/** Re-enabling clears the engine's switch-off note — 20261125's guard does
+ *  it on the flip, so the client names no column the database may lack. */
 export async function setLinkRuleEnabled(id: string, enabled: boolean): Promise<void> {
-  await checkedUpdate(id, enabled ? { enabled, disabled_reason: null } : { enabled });
+  await checkedUpdate(id, { enabled });
 }
 
 /** 'org' is a controller act (publishing, or approving a share request);
- *  an author may always take their own skill back to 'private'. */
+ *  an author may always take their own skill back to 'private'. Publishing
+ *  clears the share request — 20261125's guard does it on the flip. */
 export async function setLinkRuleVisibility(id: string, visibility: LinkRuleVisibility): Promise<void> {
-  await checkedUpdate(id, visibility === "org" ? { visibility, share_requested: false } : { visibility });
+  await checkedUpdate(id, { visibility });
 }
 
 /** The author asks (or stops asking) a controller to share it; a controller
@@ -160,6 +193,13 @@ export async function deleteLinkRule(id: string): Promise<void> {
   const { data, error } = await supabase.from("link_rules").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
   if (((data as unknown[] | null) ?? []).length === 0) throw new Error(REFUSED);
+}
+
+/** LNK-6: the engine's refusals of a skill's patterns (a pattern outside
+ *  the bounded subset — one written before it, say — is skipped at run),
+ *  for the skill card to show the way it shows an engine switch-off. */
+export function refusedSkillPatterns(patterns: string[]): string[] {
+  return compileSkillPatterns(patterns).errors;
 }
 
 /** Live tester for the wizard: run draft patterns over sample text and show

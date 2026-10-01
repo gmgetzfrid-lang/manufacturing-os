@@ -17,7 +17,7 @@
 // SkillActions / SkillByline are exported so the Reasoning shelf renders the
 // same controls from the same authority.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Puzzle, Plus, Loader2, Eye, EyeOff, Trash2, ChevronDown, AlertTriangle,
@@ -29,7 +29,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   listLinkRules, seedBuiltinRules, setLinkRuleEnabled, setLinkRuleVisibility,
-  setLinkRuleShareRequest, deleteLinkRule, type LinkRule,
+  setLinkRuleShareRequest, deleteLinkRule, refusedSkillPatterns, type LinkRule,
 } from "@/lib/linkRules";
 import { isSkillController, skillControls, type SkillControls, type SkillRowLike } from "@/lib/skillAuthority";
 
@@ -191,13 +191,24 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const loadedRef = useRef(false);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try {
       const next = await listLinkRules(activeOrgId);
+      loadedRef.current = true;
       setRules(next); onRulesChange?.(next); setError(null);
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      setError((e as Error).message);
+      // HUB-8: a first read that fails is still an answer — the list renders
+      // its error (and the Skill Library stops waiting on it) instead of
+      // rendering nothing. A later failure keeps the list already shown.
+      if (!loadedRef.current) {
+        loadedRef.current = true;
+        setRules([]); onRulesChange?.([]);
+      }
+    }
   }, [activeOrgId, onRulesChange]);
 
   // HUB-2 / HUB-8: the one client seeding entry for Connection Skills, and
@@ -240,6 +251,9 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
     const KindIcon = meta.icon;
     const controls = skillControls(r, { uid: uid ?? null, isController });
     const patterns = r.config?.patterns ?? [];
+    // LNK-6: what the engine will refuse of a custom skill's patterns (one
+    // written before the bounded subset) — said on the card, as a switch-off is.
+    const refused = r.builtin_key ? [] : refusedSkillPatterns(patterns);
     const compact = mode === "compact";
     return (
       <div key={r.id}
@@ -269,6 +283,12 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
           {r.disabled_reason && !r.enabled && (
             <p className="text-[11px] text-amber-700 flex items-start gap-1">
               <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {r.disabled_reason}
+            </p>
+          )}
+          {refused.length > 0 && (
+            <p className="text-[11px] text-amber-700 flex items-start gap-1">
+              <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+              {refused.length === 1 ? "A pattern does not run" : `${refused.length} patterns do not run`} — {refused[0]}
             </p>
           )}
           {patterns.length > 0 && (
@@ -340,9 +360,9 @@ export default function ConnectionSkillsPanel({ mode = "compact", onRulesChange 
         <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
+      {errorBox && <div className="px-3.5 pb-3">{errorBox}</div>}
       {open && rules !== null && (
         <div className="px-3.5 pb-3.5 space-y-1.5 border-t border-[var(--color-border)] pt-3">
-          {errorBox}
           {shown.map(card)}
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={() => setWizardOpen(true)}

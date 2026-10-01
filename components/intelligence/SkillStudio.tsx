@@ -27,6 +27,7 @@ import { supabase } from "@/lib/supabase";
 import { createLinkRule, testSkillPatterns } from "@/lib/linkRules";
 import { createAnswerSkill, answerSkillIssue } from "@/lib/answerSkills";
 import { useRole } from "@/components/providers/RoleContext";
+import { appAlert } from "@/components/providers/DialogProvider";
 import {
   isSkillController, studioSharingChoices, sharingColumns, type StudioSharing,
 } from "@/lib/skillAuthority";
@@ -121,11 +122,11 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
     setSaving(true); setError(null);
     try {
       const { visibility, share_requested: shareRequested } = sharingColumns(choices.includes(sharing) ? sharing : "private");
-      if (kind === "reasoning") {
-        await createAnswerSkill({ orgId, name, description, instructions, visibility, shareRequested, userId, userName });
-      } else {
-        await createLinkRule({ orgId, name, description, patterns, visibility, shareRequested, userId, userName });
-      }
+      const { note } = kind === "reasoning"
+        ? await createAnswerSkill({ orgId, name, description, instructions, visibility, shareRequested, userId, userName })
+        : await createLinkRule({ orgId, name, description, patterns, visibility, shareRequested, userId, userName });
+      // Saved, but the share request could not be recorded (before 20261125).
+      if (note) await appAlert({ title: "Saved as yours", message: note });
       onCreated();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }

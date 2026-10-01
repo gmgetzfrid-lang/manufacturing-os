@@ -52,7 +52,9 @@ const READ_CAP = {
 export const MAX_PENDING_INFERRED = 150;
 /** LNK-6: the wall-clock all custom skills together may spend in one run —
  *  enforced by the matcher's watchdog, inside a skill as well as between
- *  skills. */
+ *  skills. Each skill gets a fair share of what is left (what is left over
+ *  divided by the skills still to run), so one heavy skill cannot keep the
+ *  skills after it from running. */
 export const CUSTOM_RUN_BUDGET_MS = 15_000;
 const QUESTION_WINDOW = 400;
 
@@ -112,24 +114,29 @@ type PgError = { code?: string; message: string };
 const isMissingTable = (e: PgError | null | undefined) =>
   !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
 
-/** Load the org's Connection Skills, seeding any missing built-ins. Returns
- *  null when the table is missing (the migration hasn't run) or unreadable —
- *  the engine then runs the built-in detectors with defaults. The two cases
- *  say different things (IRLS-12). Built-ins are seeded with no author:
- *  they belong to the org and only controllers manage them (HUB-2 / LNK-7). */
+/** Load the org's Connection Skills, seeding any missing built-ins.
+ *  `missing`: the table is not there (the migration hasn't run) — the
+ *  engine runs the built-in detectors with their defaults. `unreadable`:
+ *  the read failed — whether a controller switched a built-in off is
+ *  unknown, so NO built-in detector runs and no custom skill runs (fail
+ *  closed), and the failure is an error on the run (IRLS-12: the two cases
+ *  say different things). Built-ins are seeded with no author: they belong
+ *  to the org and only controllers manage them (HUB-2 / LNK-7). */
 async function loadRules(
-  admin: SupabaseClient, orgId: string, notes: string[],
-): Promise<RuleRow[] | null> {
+  admin: SupabaseClient, orgId: string, notes: string[], errors: string[],
+): Promise<RuleRow[] | "missing" | "unreadable"> {
   const res = await admin
     .from("link_rules")
     .select("id, builtin_key, name, kind, config, enabled, visibility")
     .eq("org_id", orgId)
     .limit(200);
   if (res.error) {
-    notes.push(isMissingTable(res.error)
-      ? "Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults."
-      : `Connection Skills could not be read (${res.error.message}) — built-in detectors ran with defaults and no custom skill ran.`);
-    return null;
+    if (isMissingTable(res.error)) {
+      notes.push("Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
+      return "missing";
+    }
+    errors.push(`Connection Skills could not be read (${res.error.message}) — no detector ran this pass, so none a controller switched off ran by default.`);
+    return "unreadable";
   }
   const rows = (res.data as RuleRow[]) ?? [];
   const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
@@ -218,10 +225,14 @@ export async function runLinkProposers(
   };
 
   // ── The org's rulebook. Built-ins seed themselves; a disabled skill is
-  // simply skipped. Pre-migration orgs run the classic defaults.
-  const rules = await loadRules(admin, orgId, notes);
+  // simply skipped. Pre-migration orgs run the classic defaults; a rulebook
+  // that cannot be read runs nothing (its switches are unknown).
+  const loaded = await loadRules(admin, orgId, notes, errors);
+  const rules = Array.isArray(loaded) ? loaded : null;
   const builtinEnabled = (key: string): boolean =>
-    rules === null ? true : (rules.find((r) => r.builtin_key === key)?.enabled ?? true);
+    loaded === "missing" ? true
+      : loaded === "unreadable" ? false
+      : (loaded.find((r) => r.builtin_key === key)?.enabled ?? true);
   // LNK-5 (DEC-55): only ORG-WIDE custom skills run. A private skill is its
   // author's draft — proven in the Studio's live tester — until a controller
   // shares it; it never runs over the org's corpus and its name never lands
@@ -245,6 +256,8 @@ export async function runLinkProposers(
     scanned: inputs.documents, proposed: 0, autoApplied: 0, skipped: 0, evidenceLost: 0,
     more: false, heldInferred: 0, fellBackToQueue: 0, disabledSkills: [], notes, errors, inputs,
   });
+  // Fail closed: with the rulebook unreadable, no detector runs this pass.
+  if (loaded === "unreadable") return emptyRun();
 
   // ── Controlled documents: identity index + revision, excluding anything
   // carved out of AI reading. ai_excluded is a young column; if it isn't
@@ -442,48 +455,65 @@ export async function runLinkProposers(
   const customDrafts: ProposalDraft[] = [];
   const disabledSkills: string[] = [];
   if (customRules.length > 0 && textOccurrences.length > 0 && opts?.matcher) {
-    // LNK-6: the patterns run in a worker under a per-document budget, a
-    // hard per-text ceiling and the run's budget — the matcher terminates
-    // the worker whatever the regex is doing, so one pattern cannot hold
-    // the request.
+    // LNK-6: the patterns run in a worker under a per-text budget (a slow
+    // page skips its document), a hard per-text ceiling (a match that never
+    // returns switches the skill off) and a fair share of the run's budget —
+    // the matcher terminates the worker whatever the regex is doing, so one
+    // pattern cannot hold the request or starve the skills after it.
     const matcher = opts.matcher(textOccurrences.map((o) => o.text), textOccurrences.map((o) => o.documentId));
     const customStarted = now();
+    const pages = textOccurrences.length;
     try {
-      for (const rule of customRules) {
+      for (let k = 0; k < customRules.length; k++) {
+        const rule = customRules[k];
         const left = CUSTOM_RUN_BUDGET_MS - (now() - customStarted);
         if (left <= 0) {
-          notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — the remaining skills run next time.`);
+          notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — not run this pass: ${customRules.slice(k).map((r) => `“${r.name}”`).join(", ")}.`);
           break;
         }
         const { regexes, errors: compileErrors } = compileSkillPatterns(rule.config?.patterns ?? []);
         if (compileErrors.length > 0) notes.push(`Skill “${rule.name}”: ${compileErrors[0]}`);
         if (regexes.length === 0) continue;
+        // A fair share of what is left: every skill gets its turn this pass.
+        const share = left / (customRules.length - k);
         const res = await matcher.match(regexes.map((r) => r.source), {
-          softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: left, maxMatches: MAX_MATCHES_PER_TEXT,
+          softDocMs: SKILL_DOC_BUDGET_MS, budgetMs: share, maxMatches: MAX_MATCHES_PER_TEXT,
         });
         if (res.error) {
-          notes.push(`Custom skills did not run to the end — ${res.error}.`);
+          notes.push(`Custom skills did not run to the end — ${res.error}. Not run this pass: ${customRules.slice(k).map((r) => `“${r.name}”`).join(", ")}.`);
           break;
         }
-        if (res.overBudget) {
-          // LNK-6: never silently skipped — switched off, with the reason on
-          // the skill itself, and said here. Its partial output is not queued.
-          const reason = res.overBudget.hard
-            ? `Switched off by the engine: one match ran for more than ${res.overBudget.ms} ms on one document and was stopped (the budget is ${SKILL_DOC_BUDGET_MS} ms per document). Simplify the pattern, then switch it back on.`
-            : `Switched off by the engine: it took ${res.overBudget.ms} ms on one document (the budget is ${SKILL_DOC_BUDGET_MS} ms). Simplify the pattern, then switch it back on.`;
-          const { error: offErr } = await admin.from("link_rules")
+        if (res.terminated) {
+          // LNK-6: a match that never returned — the one overrun that switches
+          // a skill off, with the reason on the skill itself, and said here.
+          // Its partial output is not queued.
+          const reason = `Switched off by the engine: one match ran for ${res.terminated.ms} ms on one page of indexed text without finishing and was stopped. Simplify the pattern, then switch it back on.`;
+          let { error: offErr } = await admin.from("link_rules")
             .update({ enabled: false, disabled_reason: reason })
             .eq("id", rule.id).eq("org_id", orgId);
+          if (offErr && (offErr.code === "PGRST204" || offErr.code === "42703")) {
+            // Before 20261125 there is no disabled_reason column: switch it off
+            // all the same; the reason is in this run's notes.
+            ({ error: offErr } = await admin.from("link_rules")
+              .update({ enabled: false }).eq("id", rule.id).eq("org_id", orgId));
+          }
           disabledSkills.push(rule.name);
           notes.push(offErr
-            ? `Skill “${rule.name}” overran its time budget and did not run to the end; it could not be switched off (${offErr.message}).`
-            : `Skill “${rule.name}” overran its time budget on one document and was switched off.`);
+            ? `Skill “${rule.name}”: one match never finished and was stopped; it could not be switched off (${offErr.message}).`
+            : `Skill “${rule.name}”: one match ran for ${res.terminated.ms} ms on one page without finishing and was stopped — the skill was switched off.`);
           continue;
         }
         customDrafts.push(...customSkillDrafts({ id: rule.id, name: rule.name }, textOccurrences, res.found, identityIndex));
+        if (res.skipped.length > 0) {
+          // A slow page is not a broken skill: the rest of that document was
+          // not read for it this pass, and the run says so.
+          const n = res.skipped.length;
+          const slowest = Math.max(...res.skipped.map((x) => x.ms));
+          notes.push(`Skill “${rule.name}” was slow on ${n} document${n === 1 ? "" : "s"} (up to ${slowest} ms on one page; the budget is ${SKILL_DOC_BUDGET_MS} ms per page) — the rest of ${n === 1 ? "that document was" : "those documents were"} not read for it this pass. Simplify the pattern if this repeats.`);
+        }
         if (res.budgetSpent) {
-          notes.push(`Custom skills stopped after ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s this pass — “${rule.name}” ran part of the text; it and the remaining skills run next time.`);
-          break;
+          const read = res.found.filter(Array.isArray).length;
+          notes.push(`Skill “${rule.name}” read ${read} of ${pages} indexed pages before its share of this pass's ${Math.round(CUSTOM_RUN_BUDGET_MS / 1000)} s ran out — the rest of the text was not read for it this pass.`);
         }
       }
     } finally {
@@ -564,10 +594,13 @@ export async function runLinkProposers(
   // id finds all of its rows.
   const firstIds = [...new Set(drafts.map((d) => d.documentId))];
   await inChunks(firstIds, async (slice) => {
-    type Prior = { document_id: string; target_document_id: string; proposer: string; status: string; tier: ProposalTier; confidence: number };
+    type Prior = {
+      document_id: string; target_document_id: string; proposer: string; status: string; tier: ProposalTier; confidence: number;
+      source_rev: string | null; evidence: { summary?: string; page?: number; sourceDocumentId?: string } | null;
+    };
     const r = await readPaged<Prior>((from, to) => admin
       .from("proposed_links")
-      .select("document_id, target_document_id, proposer, status, tier, confidence")
+      .select("document_id, target_document_id, proposer, status, tier, confidence, source_rev, evidence")
       .eq("org_id", orgId)
       .in("document_id", slice)
       .order("id", { ascending: true })
@@ -577,12 +610,15 @@ export async function runLinkProposers(
       const pair = `${x.document_id}|${x.target_document_id}`;
       if (!candidatePairs.has(pair)) continue;
       // LNK-1: approved settles the pair; dismissed blocks that skill's
-      // opinion only (LNK-8); pending is already queued (LNK-12); STALE is
+      // opinion only (LNK-8); pending is already queued (LNK-12) — and is
+      // refreshed when its revision or evidence moved on (LNK-1); STALE is
       // none of these — its revision was superseded, so it is re-derived.
       if (x.status === "approved") known.decided.add(pair);
       else if (x.status === "dismissed") known.dismissed.add(`${pair}|${x.proposer}`);
       else if (x.status === "pending") {
-        known.pending.set(`${pair}|${x.proposer}`, { tier: x.tier, confidence: Number(x.confidence) });
+        known.pending.set(`${pair}|${x.proposer}`, {
+          tier: x.tier, confidence: Number(x.confidence), sourceRev: x.source_rev ?? null, evidence: x.evidence ?? null,
+        });
       }
     }
     return [];

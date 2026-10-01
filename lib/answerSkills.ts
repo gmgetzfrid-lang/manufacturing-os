@@ -40,6 +40,16 @@ const missing = (e: { code?: string; message?: string } | null) =>
  *  of reporting a change that never happened (checked writes). */
 const REFUSED = "That change was not made — this skill is not yours to change (org-wide and built-in skills are managed by document controllers).";
 
+/** A column this database does not have yet (20261125 adds share_requested,
+ *  shared_by, shared_at): PostgREST answers PGRST204 (Postgres 42703) for a
+ *  write that names one. A write names a new column only when it carries
+ *  information the database cannot supply itself — sharing is stamped by
+ *  20261125's guard, not sent by the client (lib/linkRules does the same). */
+const missingColumn = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === "PGRST204" || e.code === "42703");
+
+const SHARE_NEEDS_MIGRATION = "Share requests arrive with the skills-authority migration (20261125), which this database does not have yet.";
+
 /** Skills visible to this member. Returns null when the table is missing
  *  (the migration hasn't run) — an empty library is [] (IRLS-12 limb). */
 export async function listAnswerSkills(orgId: string): Promise<AnswerSkill[] | null> {
@@ -86,8 +96,14 @@ export async function seedBuiltinAnswerSkills(orgId: string): Promise<{ seeded: 
       created_by: null,
     })),
   );
-  if (insErr && insErr.code !== "23505") return { seeded: 0, error: insErr.message };
-  return { seeded: insErr ? 0 : want.length, error: null };
+  // 42501: the database does not admit this person's unowned built-in —
+  // before 20261125 the insert policy requires created_by = auth.uid(), and
+  // after it the person is not a controller to the database. Nothing is
+  // wrong for the viewer either way: the answer pipeline seeds the missing
+  // built-ins on the service role. Never fall back to an owned seed (HUB-2).
+  if (insErr && (insErr.code === "23505" || insErr.code === "42501")) return { seeded: 0, error: null };
+  if (insErr) return { seeded: 0, error: insErr.message };
+  return { seeded: want.length, error: null };
 }
 
 /** The rules every pack is held to, here and at the database (20261125
@@ -112,31 +128,42 @@ export async function createAnswerSkill(input: {
   shareRequested?: boolean;
   userId: string;
   userName?: string;
-}): Promise<void> {
+}): Promise<{ note: string | null }> {
   const instructions = input.instructions.trim();
   const issue = answerSkillIssue(instructions);
   if (issue) throw new Error(issue);
-  const { error } = await supabase.from("answer_skills").insert({
+  const row: Record<string, unknown> = {
     org_id: input.orgId,
     name: input.name.trim(),
     description: (input.description ?? "").trim() || null,
     instructions,
     enabled: true,
     visibility: input.visibility,
-    share_requested: input.visibility === "private" && !!input.shareRequested,
     created_by: input.userId,
     created_by_name: input.userName ?? null,
-  });
+  };
+  // The column defaults to false: it is named only for a request.
+  if (input.visibility === "private" && input.shareRequested) row.share_requested = true;
+  let { error } = await supabase.from("answer_skills").insert(row);
+  let note: string | null = null;
+  if (error && missingColumn(error) && "share_requested" in row) {
+    // Before 20261125: the skill is saved as the author's own; the request
+    // cannot be recorded, and the author is told so.
+    delete row.share_requested;
+    ({ error } = await supabase.from("answer_skills").insert(row));
+    if (!error) note = `Saved as your private skill. ${SHARE_NEEDS_MIGRATION} Ask again once it is applied.`;
+  }
   if (error) {
     if (error.code === "42501") throw new Error("Only a document controller can publish a skill org-wide — save it as yours and ask for it to be shared.");
     throw new Error(error.message);
   }
+  return { note };
 }
 
 async function checkedUpdate(id: string, patch: Record<string, unknown>): Promise<void> {
   const { data, error } = await supabase.from("answer_skills")
     .update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(missingColumn(error) && "share_requested" in patch ? SHARE_NEEDS_MIGRATION : error.message);
   if (((data as unknown[] | null) ?? []).length === 0) throw new Error(REFUSED);
 }
 
@@ -145,9 +172,10 @@ export async function setAnswerSkillEnabled(id: string, enabled: boolean): Promi
 }
 
 /** 'org' is a controller act (publishing, or approving a share request);
- *  an author may always take their own skill back to 'private'. */
+ *  an author may always take their own skill back to 'private'. Publishing
+ *  clears the share request — 20261125's guard does it on the flip. */
 export async function setAnswerSkillVisibility(id: string, visibility: AnswerSkillVisibility): Promise<void> {
-  await checkedUpdate(id, visibility === "org" ? { visibility, share_requested: false } : { visibility });
+  await checkedUpdate(id, { visibility });
 }
 
 /** The author asks (or stops asking) a controller to share it; a controller

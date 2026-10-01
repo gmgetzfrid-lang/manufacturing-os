@@ -31,11 +31,15 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callerScopedClient } from "@/lib/serverAuth";
 import { invalidateProposalsForRevision } from "@/lib/linkProposerServer";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { adminSurface } from "@/lib/adminSurfaces";
 
 export const runtime = "nodejs";
 
-/** The tier proposed_links_write admits (20261046, caller_holds_any_role). */
-const PROPOSAL_WRITER_ROLES = ["Admin", "DocCtrl", "Manager", "Supervisor"];
+/** The tier that decides proposals — the proposed-links surface's `writes`
+ *  (ADMIN_SURFACES, DEC-35: no role list at the call site), which is the
+ *  set proposed_links_write admits (20261046, caller_holds_any_role; a
+ *  test pins the two together). */
+const PROPOSAL_WRITER_ROLES = adminSurface("proposed-links")?.writes ?? [];
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 

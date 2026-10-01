@@ -20,7 +20,12 @@
 --      skill of the org) approve (visibility -> 'org', stamped shared_by /
 --      shared_at) or decline. An author may unshare or delete their own row; changing an
 --      org-wide row is a controller act (a reviewed pack cannot be rewritten
---      by its author afterwards).
+--      by its author afterwards). A member's PRIVATE skill stays theirs: a
+--      controller approves or declines its share request (visibility /
+--      share_requested) and changes nothing else while it is private — the
+--      guards refuse any other change by someone who is not its author —
+--      and deletes only org-wide custom rows. Nobody changes a skill's
+--      author or built-in key.
 --   2. Built-ins belong to nobody: created_by NULL, managed by controllers,
 --      never deleted by a person (every seeder restores a missing one — turn
 --      it off instead). Built-ins already carrying a member's uid are
@@ -50,11 +55,12 @@
 --          of '.'; no two unbounded repeats with only optional atoms between
 --          them; at most 2 unbounded repeats; no repeat bound over 100.
 --          minCoCitations is 1-50. A PATCH of config can no longer bypass
---          the Studio's validation (LNK-6). The subset is a filter, not a
+--          the Studio's validation (LNK-6), and publishing a skill (its
+--          visibility becoming 'org') re-checks its patterns. The subset is a filter, not a
 --          proof of linear time: the engine runs patterns in a worker it
 --          terminates on a hard deadline (lib/customSkillRunner.ts).
---   6. link_rules.disabled_reason — the engine's note when a skill overran
---      its per-document time budget and was switched off (LNK-6).
+--   6. link_rules.disabled_reason — the engine's note when a skill's match
+--      ran past the worker's hard ceiling and was switched off (LNK-6).
 --   7. Audit (PR-3, LNK-7, GOV-2): every person-initiated create / change /
 --      delete of a skill writes an audit_logs row naming the actor, the skill
 --      and what changed — with the pack text or patterns whenever they are
@@ -65,11 +71,21 @@
 --      count.
 --
 -- NARROWS (members lose org-wide publishing and built-in management;
--- controllers lose built-in DELETE) and WIDENS ONE READ: controllers (the
--- is_org_controller tier) now read every PRIVATE skill of their org — the
--- share requests are theirs to decide, and a decision that leaves a row
--- private must read back. The inventory counts, per table, the private
--- custom skills that become controller-readable. Pre-apply inventory
+-- controllers lose built-in DELETE) and WIDENS ONE READ AND ONE DECISION:
+-- controllers (the is_org_controller tier) now read every PRIVATE skill of
+-- their org — the share requests are theirs to decide, and a decision that
+-- leaves a row private must read back — and so, for the first time, their
+-- UPDATE reaches a member's private row (before, it matched nothing: the
+-- read hid the row). That write is held to the share decision: approve
+-- (visibility -> 'org') or decline (share_requested -> false). The guards
+-- refuse any other change to a private skill by someone who is not its
+-- author — no rewrite of its text or patterns, no switching it, no new
+-- author — and the DELETE policy admits a controller on org-wide custom
+-- rows only. The inventory counts, per table, the private custom skills
+-- that become controller-readable; after apply it also counts the custom
+-- connection skills holding a pattern the bounded subset refuses (that
+-- pattern stops running) and the org-wide, switched-on ones left with
+-- none. Pre-apply inventory
 -- (DEC-30) is captured into a TEMP TABLE before the transaction: aggregate
 -- counts only. The inventory runs before is_org_controller_for exists, so
 -- it spells the controller predicate out; a probe pins that text to
@@ -208,12 +224,13 @@ CREATE POLICY answer_skills_update ON answer_skills FOR UPDATE USING (
   OR (builtin_key IS NULL AND created_by = auth.uid() AND visibility = 'private')
 );
 
--- A built-in is never deleted by a person (turn it off); a custom row by a
--- controller or its author.
+-- A built-in is never deleted by a person (turn it off); an org-wide
+-- custom row by a controller; any custom row by its author. A member's
+-- private row is theirs — a controller declines its request instead.
 DROP POLICY IF EXISTS answer_skills_delete ON answer_skills;
 CREATE POLICY answer_skills_delete ON answer_skills FOR DELETE USING (
   builtin_key IS NULL
-  AND (is_org_controller(org_id)
+  AND ((is_org_controller(org_id) AND visibility = 'org')
        OR (created_by = auth.uid()
            AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = answer_skills.org_id
                        AND m.uid = auth.uid() AND m.status = 'active')))
@@ -251,7 +268,7 @@ CREATE POLICY link_rules_update ON link_rules FOR UPDATE USING (
 DROP POLICY IF EXISTS link_rules_delete ON link_rules;
 CREATE POLICY link_rules_delete ON link_rules FOR DELETE USING (
   builtin_key IS NULL
-  AND (is_org_controller(org_id)
+  AND ((is_org_controller(org_id) AND visibility = 'org')
        OR (created_by = auth.uid()
            AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = link_rules.org_id
                        AND m.uid = auth.uid() AND m.status = 'active')))
@@ -351,7 +368,25 @@ BEGIN
   END IF;
   -- The service role (built-in seeding, the org restore) is not a person.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
-  IF TG_OP = 'INSERT' OR NEW.config IS DISTINCT FROM OLD.config THEN
+  -- A person never changes a skill's author or built-in key (a controller
+  -- could otherwise retarget a private skill onto one member).
+  IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
+       OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN
+    RAISE EXCEPTION 'link_rules_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+  END IF;
+  -- A member's PRIVATE skill is theirs: anyone else (RLS admits only a
+  -- controller) approves or declines its share request and changes nothing
+  -- more while it is private, before or after the change.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()
+     AND (OLD.visibility IS DISTINCT FROM 'org' OR NEW.visibility IS DISTINCT FROM 'org')
+     AND (to_jsonb(NEW) - ARRAY['visibility', 'share_requested', 'shared_by', 'shared_at', 'updated_at'])
+         IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['visibility', 'share_requested', 'shared_by', 'shared_at', 'updated_at']) THEN
+    RAISE EXCEPTION 'link_rules_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'
+      USING ERRCODE = '42501';
+  END IF;
+  -- A new or changed config, and a skill being published, is held to the subset.
+  IF TG_OP = 'INSERT' OR NEW.config IS DISTINCT FROM OLD.config
+     OR (NEW.visibility = 'org' AND OLD.visibility IS DISTINCT FROM 'org') THEN
     IF jsonb_typeof(NEW.config) IS DISTINCT FROM 'object' THEN
       RAISE EXCEPTION 'link_rules_config: config must be a JSON object' USING ERRCODE = '23514';
     END IF;
@@ -415,6 +450,22 @@ BEGIN
     IF auth.uid() IS NOT NULL THEN NEW.shared_by := auth.uid(); NEW.shared_at := now(); END IF;
   END IF;
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  -- A person never changes a skill's author or built-in key (a controller
+  -- could otherwise retarget a private pack onto one member's prompts).
+  IF TG_OP = 'UPDATE' AND (NEW.builtin_key IS DISTINCT FROM OLD.builtin_key
+       OR (NEW.builtin_key IS NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)) THEN
+    RAISE EXCEPTION 'answer_skills_author: the author and built-in key of a skill are fixed' USING ERRCODE = '42501';
+  END IF;
+  -- A member's PRIVATE pack is theirs (it rides only their prompts): anyone
+  -- else (RLS admits only a controller) approves or declines its share
+  -- request and changes nothing more while it is private, before or after.
+  IF TG_OP = 'UPDATE' AND OLD.builtin_key IS NULL AND OLD.created_by IS DISTINCT FROM auth.uid()
+     AND (OLD.visibility IS DISTINCT FROM 'org' OR NEW.visibility IS DISTINCT FROM 'org')
+     AND (to_jsonb(NEW) - ARRAY['visibility', 'share_requested', 'shared_by', 'shared_at', 'updated_at'])
+         IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['visibility', 'share_requested', 'shared_by', 'shared_at', 'updated_at']) THEN
+    RAISE EXCEPTION 'answer_skills_private: a private skill belongs to its author; a controller approves or declines its share request and changes nothing else'
+      USING ERRCODE = '42501';
+  END IF;
   IF TG_OP = 'INSERT' OR NEW.instructions IS DISTINCT FROM OLD.instructions
      OR (NEW.visibility = 'org' AND OLD.visibility IS DISTINCT FROM 'org') THEN
     IF length(btrim(NEW.instructions)) < 40 OR length(NEW.instructions) > 4000 THEN
@@ -552,10 +603,11 @@ SELECT 'UPDATE: controllers manage (built-ins stay unowned); an author keeps the
            AND with_check LIKE '%''private''%' AND with_check LIKE '%created_by IS NULL%'),
        NULL
 UNION ALL
-SELECT 'DELETE: never a built-in; a custom row by a controller or its author',
+SELECT 'DELETE: never a built-in; an org-wide custom row by a controller; any custom row by its author',
        (SELECT COUNT(*) = 2 FROM pg_policies
          WHERE tablename IN ('answer_skills', 'link_rules') AND policyname = tablename || '_delete'
-           AND qual LIKE '%builtin_key IS NULL%' AND qual LIKE '%is_org_controller(org_id)%'),
+           AND qual LIKE '%builtin_key IS NULL%' AND qual LIKE '%is_org_controller(org_id)%'
+           AND qual LIKE '%''org''%' AND qual LIKE '%created_by = auth.uid()%'),
        NULL
 UNION ALL
 SELECT 'SELECT: org rows and your own; controllers read every skill of the org (the share requests are theirs)',
@@ -647,6 +699,18 @@ SELECT 'answer_skills_guard requires APPLIES WHEN and 40-4000 characters on a ne
           FROM pg_proc WHERE proname = 'answer_skills_guard'),
        NULL
 UNION ALL
+SELECT 'both guards: a member''s private skill is approved or declined by a controller and changed no further; nobody changes a skill''s author or built-in key; publishing a connection skill re-checks its patterns',
+       (SELECT COUNT(*) = 2 FROM pg_proc
+         WHERE proname IN ('link_rules_guard', 'answer_skills_guard')
+           AND prosrc LIKE '%OLD.created_by IS DISTINCT FROM auth.uid()%'
+           AND prosrc LIKE '%- ARRAY[''visibility'', ''share_requested'', ''shared_by'', ''shared_at'', ''updated_at'']%'
+           AND prosrc LIKE '%NEW.created_by IS DISTINCT FROM OLD.created_by%'
+           AND prosrc LIKE '%USING ERRCODE = ''42501''%')
+       AND (SELECT prosrc LIKE '%IF TG_OP = ''INSERT'' OR NEW.config IS DISTINCT FROM OLD.config%'
+                   AND prosrc LIKE '%OR (NEW.visibility = ''org'' AND OLD.visibility IS DISTINCT FROM ''org'') THEN%'
+              FROM pg_proc WHERE proname = 'link_rules_guard'),
+       NULL
+UNION ALL
 SELECT 'skills_audit records person-initiated SKILL_CREATED / SKILL_UPDATED / SKILL_DELETED; the text only while the row is org-visible, a private skill''s words withheld',
        (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NULL; END IF;%'
                AND prosrc LIKE '%''SKILL_CREATED''%' AND prosrc LIKE '%''SKILL_DELETED''%' AND prosrc LIKE '%''SKILL_UPDATED''%'
@@ -669,4 +733,21 @@ SELECT 'inventory (after): reasoning-skill share requests waiting for a controll
        (SELECT COUNT(*) FROM answer_skills WHERE share_requested)::text
 UNION ALL
 SELECT 'inventory (after): connection-skill share requests waiting for a controller', NULL,
-       (SELECT COUNT(*) FROM link_rules WHERE share_requested)::text;
+       (SELECT COUNT(*) FROM link_rules WHERE share_requested)::text
+UNION ALL
+SELECT 'inventory (after): custom connection skills holding a pattern the bounded subset refuses (that pattern no longer runs; the skill card names it)', NULL,
+       (SELECT COUNT(DISTINCT r.id)
+          FROM link_rules r,
+               jsonb_array_elements_text(CASE WHEN jsonb_typeof(r.config->'patterns') = 'array'
+                                              THEN r.config->'patterns' ELSE '[]'::jsonb END) AS p(pattern)
+         WHERE r.builtin_key IS NULL AND skill_pattern_issue(p.pattern) IS NOT NULL)::text
+UNION ALL
+SELECT 'inventory (after): org-wide, switched-on custom connection skills whose every pattern the subset refuses (they no longer find anything)', NULL,
+       (SELECT COUNT(*)
+          FROM link_rules r
+         WHERE r.builtin_key IS NULL AND r.visibility = 'org' AND r.enabled
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(r.config->'patterns') = 'array'
+                                                                    THEN r.config->'patterns' ELSE '[]'::jsonb END))
+           AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(r.config->'patterns') = 'array'
+                                                                        THEN r.config->'patterns' ELSE '[]'::jsonb END) AS p(pattern)
+                            WHERE skill_pattern_issue(p.pattern) IS NULL))::text;

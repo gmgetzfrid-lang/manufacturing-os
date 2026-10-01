@@ -14,6 +14,10 @@
 //     to share (share_requested); a controller approves or declines;
 //   * an org-wide row is changed by a controller; its author may unshare or
 //     delete it, never rewrite or re-enable it while it is org-wide;
+//   * a member's PRIVATE skill is theirs: a controller reads it (to decide a
+//     share request) and approves or declines that request — nothing else.
+//     It does not rewrite, switch or delete the row while it is private
+//     (20261125's guards refuse it);
 //   * built-ins belong to nobody: controllers switch them on and off, nobody
 //     deletes them, nobody shares or unshares them.
 //
@@ -65,17 +69,21 @@ export function skillControls(
   const mine = viewer.uid !== null && row.created_by === viewer.uid;
   const org = row.visibility === "org";
   const requested = !!row.share_requested;
+  // Before 20261125 the row has no share_requested column at all, and a
+  // request could not be recorded — the control is not offered.
+  const sharingInstalled = row.share_requested !== undefined;
   if (viewer.isController) {
+    // A member's private skill: the controller decides its share request —
+    // approve or decline — and nothing else (20261125's guards).
+    if (!mine && !org) return { ...NONE, share: true, declineShare: requested };
     return {
       ...NONE,
       toggle: true,
       share: !org,
       unshare: org,
-      // A controller's own private draft is simply shared; a request from a
-      // member can also be turned down.
+      // A controller's own private draft is simply shared.
       requestShare: false,
       withdrawRequest: mine && !org && requested,
-      declineShare: !mine && !org && requested,
       remove: true,
     };
   }
@@ -84,7 +92,7 @@ export function skillControls(
     ...NONE,
     toggle: !org,
     unshare: org,
-    requestShare: !org && !requested,
+    requestShare: sharingInstalled && !org && !requested,
     withdrawRequest: !org && requested,
     remove: true,
   };

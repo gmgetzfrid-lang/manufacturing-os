@@ -65,7 +65,12 @@ export default function SkillLibraryPage() {
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     try { setRskills(await listAnswerSkills(activeOrgId)); setError(null); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) {
+      setError((e as Error).message);
+      // A first read that fails is still an answer: the error shows above
+      // an empty shelf instead of an endless spinner (HUB-8).
+      setRskills((cur) => cur ?? []);
+    }
   }, [activeOrgId]);
 
   // HUB-2: the one client seeding entry for Reasoning Skills, and only for a
