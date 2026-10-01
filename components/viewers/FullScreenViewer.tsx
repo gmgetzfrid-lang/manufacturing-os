@@ -1274,11 +1274,18 @@ export default function FullScreenViewer({
             </button>
             {phoneQrOpen && (
               <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
-                <QrBadge
-                  value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
-                  size={150}
-                  caption="Scan to open this drawing on your phone"
-                />
+                {/* Built on publicOrigin() like every other QR (PHYS-13): a
+                    preview deploy's host would dead-end the phone on Vercel's
+                    login. Rendered only after the click, so client-side. */}
+                {publicOrigin() ? (
+                  <QrBadge
+                    value={`${publicOrigin()}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
+                    size={150}
+                    caption="Scan to open this drawing on your phone"
+                  />
+                ) : (
+                  <p className="w-[150px] text-[11px] text-slate-600">No public site URL is configured (NEXT_PUBLIC_SITE_URL), so there is no link a phone could open.</p>
+                )}
               </div>
             )}
           </div>

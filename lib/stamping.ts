@@ -39,7 +39,27 @@ import {
   fallbackInk, titleBlockReserve, type PageInk, type Corner,
 } from "@/lib/stampLayout";
 
+/** PHYS-9: what a stamped copy IS. A stamped copy is never a controlled copy
+ *  — a controlled copy is the unstamped pass-through to the checkout holder
+ *  (lib/downloads.ts determineControlState) — so there is no "controlled"
+ *  member and no stamp can call itself CONTROLLED COPY. "review" marks a draft
+ *  handed out for review. */
+export type StampControlState = "uncontrolled" | "review";
+
+const CONTROL_STATE_LABEL: Record<StampControlState, string> = {
+  uncontrolled: "UNCONTROLLED COPY",
+  review: "UNCONTROLLED COPY — REVIEW ONLY",
+};
+const CONTROL_STATE_WATERMARK: Record<StampControlState, string> = {
+  uncontrolled: "UNCONTROLLED COPY",
+  review: "REVIEW ONLY — DO NOT DISTRIBUTE",
+};
+
 export type StampOptions = {
+  /** PHYS-9: the copy's control state (default "uncontrolled"). It drives
+   *  the footer's main line and, when no watermarkText is given, the
+   *  watermark — one value for both marks, so they cannot contradict. */
+  controlState?: StampControlState;
   userLabel?: string;
   email?: string;
   timestamp?: Date;
@@ -64,9 +84,45 @@ function formatDate(d?: Date | null) {
   return d.toLocaleString();
 }
 
+/** PHYS-9: the footer's main line, DERIVED from the control state (it used to
+ *  be a hardcoded literal that ignored every caller): "UNCONTROLLED COPY •
+ *  Downloaded: <when> • Do Not Distribute". With no timestamp the
+ *  "Downloaded:" segment is left out rather than printed empty. */
+export function stampMainLine(state: StampControlState | undefined, timestamp?: Date | null): string {
+  const label = CONTROL_STATE_LABEL[state ?? "uncontrolled"] ?? CONTROL_STATE_LABEL.uncontrolled;
+  const parts = [label];
+  if (timestamp) parts.push(`Downloaded: ${formatDate(timestamp)}`);
+  parts.push("Do Not Distribute");
+  return parts.join(" • ");
+}
+
+/** PHYS-11 / SHR-11: a page never tells its reader to scan a QR it does not
+ *  carry. The share and transmittal routes already word their footer on
+ *  whether a verify URL exists; this is the backstop for every caller — and
+ *  for a QR whose generation failed. With no QR on the page an instruction
+ *  to scan is removed (its sentence, or the clause after an em dash) and one
+ *  plain instruction to confirm the revision takes its place. */
+const SCAN_INSTRUCTION = /\bscan\s+(?:the\s+|this\s+)?(?:qr\b|code\b|to\s+verify\b)/i;
+export function withoutScanInstruction(notice: string): string {
+  if (!SCAN_INSTRUCTION.test(notice)) return notice;
+  const kept: string[] = [];
+  for (const sentence of notice.split(/(?<=[.!?])\s+/)) {
+    if (!SCAN_INSTRUCTION.test(sentence)) { kept.push(sentence); continue; }
+    // "<facts> — scan the QR to …": keep the facts.
+    const clauses = sentence.split(/\s+[—–]\s+/);
+    const at = clauses.findIndex((c) => SCAN_INSTRUCTION.test(c));
+    const head = at > 0 ? clauses.slice(0, at).join(" — ").trim() : "";
+    if (head) kept.push(/[.!?]$/.test(head) ? head : `${head}.`);
+  }
+  kept.push("Confirm the current revision before use.");
+  return kept.join(" ");
+}
+
 function buildStampText(opts: StampOptions) {
   const parts = [];
-  if (opts.watermarkText) parts.push(opts.watermarkText);
+  const watermarkText = opts.watermarkText
+    ?? (CONTROL_STATE_WATERMARK[opts.controlState ?? "uncontrolled"] ?? CONTROL_STATE_WATERMARK.uncontrolled);
+  if (watermarkText) parts.push(watermarkText);
   if (opts.userLabel) parts.push(opts.userLabel);
   if (opts.email) parts.push(opts.email);
   if (opts.timestamp) parts.push(`Downloaded: ${formatDate(opts.timestamp)}`);
@@ -245,7 +301,7 @@ function drawFooter(input: {
   const maxLineW = Math.max(width * 0.25, width - marginX * 2 - qrReserve - reserveRight);
   const xStart = marginX + (qrOnThisEdge && qrOnLeft ? qrReserve : 0);
 
-  const mainText = `UNCONTROLLED COPY • Downloaded: ${formatDate(opts.timestamp)} • Do Not Distribute`;
+  const mainText = stampMainLine(opts.controlState, opts.timestamp);
   const mainLines = wrapToWidth(mainText, maxLineW, (s) => font.widthOfTextAtSize(s, mainSize));
   const noticeLines = opts.footerNotice
     ? wrapToWidth(opts.footerNotice, maxLineW, (s) => font.widthOfTextAtSize(s, noticeSize))
@@ -295,7 +351,18 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
     } catch (e) {
       console.warn("[stamping] QR generation failed (stamp continues without it)", e);
     }
+  } else {
+    // PHYS-11 / SHR-11: never a silent QR-less copy. The usual cause is no
+    // public origin (lib/publicOrigin.ts returned "").
+    console.warn(
+      "[stamping] no verifyUrl — this copy carries no verify QR and no instruction to scan one. " +
+      "If the cause is no public origin, set NEXT_PUBLIC_SITE_URL (lib/publicOrigin.ts).",
+    );
   }
+  // With no QR on the page, the footer may not tell anyone to scan one.
+  const footerOpts: StampOptions = qrImage || !opts.footerNotice
+    ? opts
+    : { ...opts, footerNotice: withoutScanInstruction(opts.footerNotice) };
 
   // Per-page emptiness analysis — where does this sheet have room?
   const ink = opts.sourceBytes ? await analyzePageInk(opts.sourceBytes) : null;
@@ -318,7 +385,7 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
     const qrCorner = qrImage ? pickQrCorner(pageInk.corners) : null;
     const footerEdge = pickFooterEdge(pageInk.topBand, pageInk.bottomBand);
     drawFooter({
-      frame, font, opts, edge: footerEdge, qrCorner,
+      frame, font, opts: footerOpts, edge: footerEdge, qrCorner,
       reserveRight: measured ? 0 : titleBlockReserve(width),
     });
 

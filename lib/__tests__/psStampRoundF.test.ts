@@ -4,11 +4,27 @@
 //     footer, verify QR), names the file _markup_UNCONTROLLED and records an
 //     uncontrolled copy, the checkout holder included: markups are never the
 //     controlled master.
+//   * PHYS-11 / SHR-11 — publicOrigin(): NEXT_PUBLIC_SITE_URL, else Vercel's
+//     PRODUCTION domain (never VERCEL_URL), else — in a browser only — the
+//     page's own origin unless it is a *.vercel.app host, else "". A stamp
+//     with no verify URL logs a warning, and a page with no QR never carries
+//     an instruction to scan one. .env.example documents the variable as
+//     required.
+//   * TRX-14 / XEDGE-5 — the transmittal portal link is built only on the
+//     CONFIGURED origin, in a browser as on the server.
+//   * PHYS-9 substrate — StampOptions.controlState drives the footer's main
+//     line (and the default watermark); no stamp can say CONTROLLED COPY.
+//   * PHYS-13 — the viewer's phone QR is built on publicOrigin().
 //
-// The rotation fixture (PHYS-12 / DC PKG-13) lives in stampingRotation.test.ts.
+// The rotation fixture (PHYS-12 / DC PKG-13) and the title-block fixture
+// (SHR-8) live in stampingRotation.test.ts.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
+import { PDFDocument, PDFPage } from "pdf-lib";
+import { publicOrigin, configuredPublicOrigin, isVercelDeploymentHost } from "@/lib/publicOrigin";
+import { applyStampToPdfDoc, stampMainLine, withoutScanInstruction } from "@/lib/stamping";
+import { transmittalPortalUrl, portalOriginConfigured } from "@/lib/transmittals";
 
 const src = (p: string) => readFileSync(p, "utf8");
 
@@ -81,5 +97,236 @@ describe("SHR-8 — the share route no longer claims a placement parity it canno
     expect(s).toContain("reserveRight: measured ? 0 : titleBlockReserve(width),");
     expect(s).not.toMatch(/FALLBACK_INK/);
     expect(src("lib/stampLayout.ts")).not.toMatch(/corners: \{ br: 0,/);
+  });
+});
+
+
+// ─── PHYS-11 / SHR-11 / XEDGE-5: the public-origin contract ────────────────
+const ORIGIN_ENV = ["NEXT_PUBLIC_SITE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"] as const;
+function env(vars: Partial<Record<(typeof ORIGIN_ENV)[number], string>>) {
+  for (const k of ORIGIN_ENV) vi.stubEnv(k, vars[k] ?? "");
+}
+function browserAt(origin: string) {
+  vi.stubGlobal("window", { location: { origin, hostname: new URL(origin).hostname } });
+}
+
+describe("PHYS-11 — publicOrigin(): configured, else production, never a preview host", () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it("NEXT_PUBLIC_SITE_URL wins, trailing slashes stripped — on the server and in a browser", () => {
+    env({ NEXT_PUBLIC_SITE_URL: "https://app.example.com/", VERCEL_PROJECT_PRODUCTION_URL: "prod.example.com" });
+    expect(typeof window).toBe("undefined");
+    expect(publicOrigin()).toBe("https://app.example.com");
+    browserAt("https://mfgos-git-feature-team.vercel.app");
+    expect(publicOrigin()).toBe("https://app.example.com");
+  });
+
+  it("server, NEXT_PUBLIC_SITE_URL unset: Vercel's PRODUCTION domain (always set on Vercel, previews included), given https", () => {
+    env({ VERCEL_PROJECT_PRODUCTION_URL: "app.example.com", VERCEL_URL: "mfgos-abc123-team.vercel.app" });
+    expect(publicOrigin()).toBe("https://app.example.com");
+    env({ VERCEL_PROJECT_PRODUCTION_URL: "https://app.example.com/" });
+    expect(publicOrigin()).toBe("https://app.example.com");
+  });
+
+  it("never VERCEL_URL — a preview deployment's own host — and with nothing configured the server answers \"\" (no link)", () => {
+    env({ VERCEL_URL: "mfgos-git-feature-team.vercel.app" });
+    expect(publicOrigin()).toBe("");
+    expect(configuredPublicOrigin()).toBe("");
+    env({});
+    expect(publicOrigin()).toBe("");
+  });
+
+  it("browser, nothing configured: the page's own origin off Vercel, but NEVER a *.vercel.app host", () => {
+    env({});
+    browserAt("https://mfgos.plant.example");
+    expect(publicOrigin()).toBe("https://mfgos.plant.example");
+    browserAt("https://mfgos-git-feature-team.vercel.app");
+    expect(publicOrigin()).toBe("");
+    browserAt("https://mfgos-k3j2h1-team.vercel.app");
+    expect(publicOrigin()).toBe("");
+  });
+
+  it("browser on a preview host with the production domain exposed: the production origin", () => {
+    env({ NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL: "app.example.com" });
+    browserAt("https://mfgos-git-feature-team.vercel.app");
+    expect(publicOrigin()).toBe("https://app.example.com");
+  });
+
+  it("configuredPublicOrigin() never answers with the page's own host", () => {
+    env({});
+    browserAt("https://mfgos.plant.example");
+    expect(configuredPublicOrigin()).toBe("");
+    env({ NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL: "app.example.com" });
+    expect(configuredPublicOrigin()).toBe("https://app.example.com");
+  });
+
+  it("isVercelDeploymentHost recognises vercel.app hosts only", () => {
+    expect(isVercelDeploymentHost("mfgos-git-x-team.vercel.app")).toBe(true);
+    expect(isVercelDeploymentHost("vercel.app")).toBe(true);
+    expect(isVercelDeploymentHost("app.example.com")).toBe(false);
+    expect(isVercelDeploymentHost("notvercel.app.example.com")).toBe(false);
+  });
+
+  it(".env.example: the variable is required for the physical bridge, and the fallback it documents is the one implemented", () => {
+    const e = src(".env.example");
+    const misc = e.slice(e.indexOf("# ─── Misc (optional)"));
+    expect(misc).not.toContain("NEXT_PUBLIC_SITE_URL");
+    expect(e).toContain("# ─── Public origin (REQUIRED for the physical bridge)");
+    expect(e).toContain("(VERCEL_PROJECT_PRODUCTION_URL) — never VERCEL_URL");
+    expect(e).not.toMatch(/falls back\s*\n?#?\s*to VERCEL_URL/);
+    expect(e).toMatch(/\nNEXT_PUBLIC_SITE_URL=\n/);
+    expect(src("lib/publicOrigin.ts")).not.toMatch(/process\.env\.VERCEL_URL/);
+  });
+});
+
+// ─── TRX-14 / XEDGE-5: the transmittal link, browser half ──────────────────
+describe("TRX-14 / XEDGE-5 — the portal link needs a configured origin in a browser too", () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it("a browser with nothing configured builds NO link (null) — on a preview host and off Vercel alike", () => {
+    env({});
+    browserAt("https://mfgos-git-feature-team.vercel.app");
+    expect(transmittalPortalUrl("tok")).toBeNull();
+    browserAt("https://mfgos.plant.example");
+    expect(transmittalPortalUrl("tok")).toBeNull();
+    expect(portalOriginConfigured()).toBe(false);
+  });
+
+  it("on a preview deploy the link is the PRODUCTION link, the same one the server emails", () => {
+    env({ NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL: "app.example.com", VERCEL_PROJECT_PRODUCTION_URL: "app.example.com" });
+    browserAt("https://mfgos-git-feature-team.vercel.app");
+    const fromBrowser = transmittalPortalUrl("tok");
+    vi.unstubAllGlobals();
+    expect(typeof window).toBe("undefined");
+    expect(transmittalPortalUrl("tok")).toBe(fromBrowser);
+    expect(fromBrowser).toBe("https://app.example.com/transmittal/tok");
+    expect(portalOriginConfigured()).toBe(true);
+  });
+
+  it("lib/transmittals builds the link on configuredPublicOrigin, and the issue toast no longer promises a browser-address link", () => {
+    const t = src("lib/transmittals.ts");
+    expect(t).toContain('import { configuredPublicOrigin } from "@/lib/publicOrigin";');
+    expect(t).toContain("try { origin = configuredPublicOrigin(); } catch { origin = \"\"; }");
+    expect(t).toContain("return !!configuredPublicOrigin();");
+    const page = src("app/(protected)/transmittals/page.tsx");
+    expect(page).toContain("no public site URL is configured (NEXT_PUBLIC_SITE_URL), so no portal link can be built — the cover sheet carries none");
+    expect(page).not.toContain("so the link uses this browser's address — if this is a preview deploy the recipient cannot open it");
+  });
+});
+
+// ─── PHYS-11 / SHR-11: no QR → no instruction to scan one; never silent ────
+describe("PHYS-11 / SHR-11 — the stamp never tells a reader to scan a QR it does not carry", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("withoutScanInstruction removes the instruction (sentence or em-dash clause) and keeps the facts", () => {
+    expect(withoutScanInstruction("T-12 deliverable Rev 3 at time of printing — scan the QR to confirm it is still the latest."))
+      .toBe("T-12 deliverable Rev 3 at time of printing. Confirm the current revision before use.");
+    expect(withoutScanInstruction("SUPERSEDED REVISION — Rev 2. This is NOT the current revision; do not use for construction. Scan to verify."))
+      .toBe("SUPERSEDED REVISION — Rev 2. This is NOT the current revision; do not use for construction. Confirm the current revision before use.");
+    expect(withoutScanInstruction("2002-D-1 Rev 4 at time of download — a share always serves the current revision. Scan the QR to confirm it is still current."))
+      .toBe("2002-D-1 Rev 4 at time of download — a share always serves the current revision. Confirm the current revision before use.");
+    expect(withoutScanInstruction("Scan the QR to confirm it is still current.")).toBe("Confirm the current revision before use.");
+  });
+
+  it("leaves a notice without a scan instruction byte-identical — including a document number that contains SCAN", () => {
+    for (const n of [
+      "Rev 4 at time of issue — verify current revision before use.",
+      "SCAN-001 Rev 3 at time of issue — verify current revision before use.",
+      "Confirm the current revision with the issuer before use.",
+    ]) expect(withoutScanInstruction(n)).toBe(n);
+  });
+
+  async function stampTexts(opts: Parameters<typeof applyStampToPdfDoc>[1]) {
+    const texts: string[] = [];
+    const proto = PDFPage.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const orig = proto.drawText;
+    vi.spyOn(proto, "drawText").mockImplementation(function (this: PDFPage, ...a: unknown[]) { texts.push(a[0] as string); return orig.apply(this, a); });
+    const d = await PDFDocument.create();
+    d.addPage([1224, 792]);
+    const pdf = await PDFDocument.load(await d.save());
+    await applyStampToPdfDoc(pdf, opts);
+    return texts.join("\n");
+  }
+
+  it("no verifyUrl (no public origin): a warning is logged, no QR caption, no scan instruction, a plain one instead", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const all = await stampTexts({
+      timestamp: new Date(), watermarkText: "UNCONTROLLED COPY",
+      footerNotice: "T-12 deliverable Rev 3 at time of download — scan the QR to confirm it is still the latest.",
+    });
+    expect(warn.mock.calls.some((c) => /no verifyUrl — this copy carries no verify QR/.test(String(c[0])))).toBe(true);
+    expect(all).not.toMatch(/scan the QR/i);
+    expect(all).not.toContain("SCAN TO VERIFY");
+    expect(all).toContain("Confirm the current revision before use.");
+  });
+
+  it("a QR that could not be generated also drops the instruction", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(PDFDocument.prototype, "embedPng").mockRejectedValueOnce(new Error("png"));
+    const all = await stampTexts({
+      timestamp: new Date(), verifyUrl: "https://app.example.com/verify/d?v=v",
+      footerNotice: "X Rev 4 as issued on transmittal TR-1. Scan the QR to confirm it is still current.",
+    });
+    expect(all).not.toMatch(/Scan the QR/);
+    expect(all).not.toContain("SCAN TO VERIFY");
+  });
+
+  it("with a verify URL the QR, its caption and the caller's instruction all stay", async () => {
+    const all = await stampTexts({
+      timestamp: new Date(), verifyUrl: "https://app.example.com/verify/d?v=v",
+      footerNotice: "X Rev 4 as issued on transmittal TR-1. Scan the QR to confirm it is still current.",
+    });
+    expect(all).toContain("SCAN TO VERIFY");
+    expect(all).toContain("Scan the QR to confirm it is still current.");
+  });
+});
+
+// ─── PHYS-9 substrate: one control state drives both marks ─────────────────
+describe("PHYS-9 substrate — StampOptions.controlState drives the footer's main line", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("the default main line is the one every existing caller already gets", () => {
+    const t = new Date("2026-10-01T10:00:00Z");
+    expect(stampMainLine(undefined, t)).toBe(`UNCONTROLLED COPY • Downloaded: ${t.toLocaleString()} • Do Not Distribute`);
+    expect(stampMainLine("uncontrolled", t)).toBe(stampMainLine(undefined, t));
+  });
+  it("review copies say so; no timestamp drops the empty 'Downloaded:' segment", () => {
+    expect(stampMainLine("review", null)).toBe("UNCONTROLLED COPY — REVIEW ONLY • Do Not Distribute");
+    expect(stampMainLine(undefined, undefined)).toBe("UNCONTROLLED COPY • Do Not Distribute");
+  });
+  it("no control state can produce the words CONTROLLED COPY without UN-", () => {
+    for (const st of ["uncontrolled", "review", "controlled"] as Array<Parameters<typeof stampMainLine>[0]>) {
+      expect(stampMainLine(st, new Date())).not.toMatch(/(^|[^N])CONTROLLED COPY/);
+    }
+  });
+  it("controlState with no watermarkText drives the watermark too, so the two marks agree", async () => {
+    const texts: Array<{ t: string; o: Record<string, unknown> }> = [];
+    const proto = PDFPage.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const orig = proto.drawText;
+    vi.spyOn(proto, "drawText").mockImplementation(function (this: PDFPage, ...a: unknown[]) { texts.push({ t: a[0] as string, o: a[1] as Record<string, unknown> }); return orig.apply(this, a); });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const d = await PDFDocument.create();
+    d.addPage([1224, 792]);
+    const pdf = await PDFDocument.load(await d.save());
+    await applyStampToPdfDoc(pdf, { controlState: "review", timestamp: new Date() });
+    const watermark = texts.find((x) => x.o.opacity === 0.15)!.t;
+    const footer = texts.filter((x) => x.o.opacity === 0.85).map((x) => x.t).join(" ");
+    expect(watermark.startsWith("REVIEW ONLY — DO NOT DISTRIBUTE")).toBe(true);
+    expect(footer.startsWith("UNCONTROLLED COPY — REVIEW ONLY")).toBe(true);
+  });
+  it("the footer's main line is derived, never the old hardcoded literal", () => {
+    const s = src("lib/stamping.ts");
+    expect(s).toContain("const mainText = stampMainLine(opts.controlState, opts.timestamp);");
+    expect(s).not.toContain("const mainText = `UNCONTROLLED COPY • Downloaded:");
+  });
+});
+
+// ─── PHYS-13: the viewer's phone QR ────────────────────────────────────────
+describe("PHYS-13 — FullScreenViewer's phone QR is built on publicOrigin()", () => {
+  it("no window.location.origin left in the viewer; the QR value is publicOrigin()-rooted, and a missing origin says so", () => {
+    const v = src("components/viewers/FullScreenViewer.tsx");
+    expect(v).not.toMatch(/window\.location\.origin/);
+    expect(v).toContain("value={`${publicOrigin()}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}");
+    expect(v).toContain("No public site URL is configured (NEXT_PUBLIC_SITE_URL), so there is no link a phone could open.");
   });
 });

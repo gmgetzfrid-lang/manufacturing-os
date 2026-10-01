@@ -76,7 +76,7 @@ function issueToast(outcome: IssueOutcome): { type: "success" | "warning"; title
   else if (t.recipientEmail?.trim()) notes.push(`the email was NOT sent (${outcome.email.reason ?? "unknown reason"}) — copy the portal link instead`);
   else notes.push("no recipient email — copy the portal link to send it");
   if (outcome.portal === "ready" && !portalOriginConfigured()) {
-    notes.push("NEXT_PUBLIC_SITE_URL is not set, so the link uses this browser's address — if this is a preview deploy the recipient cannot open it");
+    notes.push("no public site URL is configured (NEXT_PUBLIC_SITE_URL), so no portal link can be built — the cover sheet carries none");
   }
   if (outcome.auditError) notes.push(`the audit record could not be written (${outcome.auditError})`);
   const clean = outcome.portal === "ready" && (outcome.email.sent || !t.recipientEmail?.trim()) && portalOriginConfigured() && !outcome.auditError;

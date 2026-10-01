@@ -32,7 +32,7 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { openPrintWindow } from "@/lib/evidencePack";
-import { publicOrigin } from "@/lib/publicOrigin";
+import { configuredPublicOrigin } from "@/lib/publicOrigin";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { assertNotOnHold, type HoldGateClient } from "@/lib/holdGate";
 import { isSafeStorageKey } from "@/lib/storageKey";
@@ -677,22 +677,23 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
   return top + 1;
 }
 
-/** TRX-14 / XEDGE-5: the external portal link, built on the PUBLIC origin
- *  (lib/publicOrigin.ts — NEXT_PUBLIC_SITE_URL, or the page's own origin in a
- *  browser). Returns null when there is no origin at all — on the SERVER with
- *  NEXT_PUBLIC_SITE_URL unset — so a caller refuses to email or print a
- *  hostless `/transmittal/<token>` instead of sending one. */
+/** TRX-14 / XEDGE-5: the external portal link, built on the deployment's
+ *  CONFIGURED public origin (lib/publicOrigin.ts configuredPublicOrigin —
+ *  NEXT_PUBLIC_SITE_URL, else Vercel's production domain; never the page's
+ *  own host, so the browser and the server build the same link). Returns null
+ *  when there is no configured origin — in a browser as on the server — so a
+ *  caller refuses to email or print a hostless or preview-host link. */
 export function transmittalPortalUrl(token: string): string | null {
   let origin = "";
-  try { origin = publicOrigin(); } catch { origin = ""; }
+  try { origin = configuredPublicOrigin(); } catch { origin = ""; }
   return origin ? `${origin}/transmittal/${token}` : null;
 }
 
-/** TRX-14 dw3: true when the deployment names its public origin. Without it a
- *  browser builds the link on whatever host it is on — a preview deploy mints
- *  a link the recipient cannot open — so the issue flow warns. */
+/** TRX-14 dw3: true when the deployment names its public origin
+ *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain). Without it no
+ *  portal link can be built, so the issue flow says so. */
 export function portalOriginConfigured(): boolean {
-  return !!(process.env.NEXT_PUBLIC_SITE_URL || "").trim();
+  return !!configuredPublicOrigin();
 }
 
 /** Every transmittal that carries a given document — the "who did we send
