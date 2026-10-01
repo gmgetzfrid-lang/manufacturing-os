@@ -926,3 +926,146 @@ export async function runChunkedRestore(params: {
   }
   return result;
 }
+
+// ── Reading a backup archive (BKP-7) ─────────────────────────────────────
+// ONE archive layout, written by both producers (lib/exportRunner.ts — the
+// server ZIP — and lib/clientBackup.ts — the browser-built Full ZIP, in
+// parts): manifest.json + tables/<table>.json carry the records (part 1),
+// files/<storage-key> the binaries (any part), files-manifest.json their
+// hashes. Archives the browser wrote before that layout carry the whole
+// envelope as data.json instead; they are still read. Anything else is
+// refused with a message that says why — a backup is never half-read.
+
+/** The minimal JSZip surface the reader needs. */
+export interface BackupZipLike {
+  files: Record<string, { dir: boolean }>;
+  file(path: string): { async(type: "string"): Promise<string> } | null;
+}
+
+export interface BackupArchiveRead {
+  envelope: RestoreEnvelopeLike;
+  /** Which layout carried the records. */
+  layout: "manifest+tables" | "data.json";
+  /** The dropped part (by name) that carries the records. */
+  recordsPart: string;
+  /** Every embedded binary across the dropped parts — the first copy of a key wins. */
+  files: Array<{ zip: number; entry: string; key: string }>;
+  /** What the archive itself says is missing or incomplete. */
+  warnings: string[];
+}
+
+const depthOf = (p: string) => p.split("/").length;
+const insideFilesDir = (p: string) => /(^|\/)files\//i.test(p);
+
+/** Read the records and the file list out of one backup's ZIP part(s). Throws
+ *  an Error whose message is shown to the admin as is. */
+export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip: BackupZipLike }>): Promise<BackupArchiveRead> {
+  if (parts.length === 0) throw new Error("Drop the backup's ZIP part(s).");
+  const readJson = async (zip: BackupZipLike, entry: string, what: string): Promise<unknown> => {
+    const f = zip.file(entry);
+    if (!f) throw new Error(`${what} is missing.`);
+    try { return JSON.parse(await f.async("string")); }
+    catch { throw new Error(`${what} is unreadable — this archive is damaged. Nothing was restored.`); }
+  };
+
+  type Found = { index: number; name: string; prefix: string; layout: "manifest+tables" | "data.json"; entry: string };
+  const found: Found[] = [];
+  const prefixes: string[] = [];
+  for (const [index, { name, zip }] of parts.entries()) {
+    const entries = Object.keys(zip.files).filter((p) => !zip.files[p].dir);
+    const shallowest = (re: RegExp) => entries.filter((p) => re.test(p) && !insideFilesDir(p)).sort((a, b) => depthOf(a) - depthOf(b))[0];
+    const manifest = shallowest(/(^|\/)manifest\.json$/i);
+    const dataJson = shallowest(/(^|\/)data\.json$/i);
+    const partMarker = shallowest(/(^|\/)backup-part\.json$/i);
+    const anchor = manifest ?? dataJson ?? partMarker;
+    const prefix = anchor ? anchor.slice(0, anchor.lastIndexOf("/") + 1) : "";
+    prefixes.push(prefix);
+    if (manifest) found.push({ index, name, prefix, layout: "manifest+tables", entry: manifest });
+    else if (dataJson) found.push({ index, name, prefix, layout: "data.json", entry: dataJson });
+  }
+  if (found.length === 0) {
+    throw new Error(
+      "None of the dropped files carries the backup's records (manifest.json with tables/, or data.json in an older backup). " +
+      "Drop part 1 — it carries the records — together with the other parts.",
+    );
+  }
+  if (found.length > 1) {
+    throw new Error(`More than one backup's records were dropped (${found.map((f) => f.name).join(", ")}). Drop the parts of ONE backup.`);
+  }
+  const rec = found[0];
+  const recZip = parts[rec.index].zip;
+
+  let envelope: RestoreEnvelopeLike;
+  if (rec.layout === "manifest+tables") {
+    const manifest = (await readJson(recZip, rec.entry, `${rec.name}: manifest.json`)) as RestoreEnvelopeLike["manifest"];
+    const tables: Record<string, unknown[]> = {};
+    const tableRe = new RegExp(`^${rec.prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}tables/([^/]+)\\.json$`, "i");
+    for (const entry of Object.keys(recZip.files)) {
+      const m = entry.match(tableRe);
+      if (!m || recZip.files[entry].dir) continue;
+      const rows = await readJson(recZip, entry, `${rec.name}: tables/${m[1]}.json`);
+      if (!Array.isArray(rows)) throw new Error(`${rec.name}: tables/${m[1]}.json is not a list of rows — this archive is damaged. Nothing was restored.`);
+      tables[m[1]] = rows;
+    }
+    envelope = { manifest, tables };
+  } else {
+    envelope = (await readJson(recZip, rec.entry, `${rec.name}: data.json`)) as RestoreEnvelopeLike;
+  }
+  if (!envelope?.manifest?.orgId || !envelope?.tables || typeof envelope.tables !== "object") {
+    throw new Error("Not a recognizable backup: missing manifest/tables.");
+  }
+
+  // Parts that say which backup they belong to must agree with the records.
+  const warnings: string[] = [];
+  const seenParts = new Set<number>();
+  type BackupReport = { cancelled?: boolean; notAttempted?: unknown[]; parts?: unknown[]; complete?: boolean | null };
+  let report: BackupReport | null = null;
+  for (const [index, { name, zip }] of parts.entries()) {
+    const marker = zip.file(`${prefixes[index]}backup-part.json`);
+    if (marker) {
+      const info = (await readJson(zip, `${prefixes[index]}backup-part.json`, `${name}: backup-part.json`)) as { orgId?: string; exportedAt?: string; part?: number };
+      const exportedAt = (envelope.manifest as { exportedAt?: string }).exportedAt;
+      if ((info.orgId && info.orgId !== envelope.manifest.orgId) || (info.exportedAt && exportedAt && info.exportedAt !== exportedAt)) {
+        throw new Error(`${name} belongs to a different backup (exported ${info.exportedAt ?? "?"}) than the records in ${rec.name} — drop the parts of ONE backup. Nothing was restored.`);
+      }
+      if (typeof info.part === "number") seenParts.add(info.part);
+    }
+    if (zip.file(`${prefixes[index]}backup-report.json`)) {
+      report = (await readJson(zip, `${prefixes[index]}backup-report.json`, `${name}: backup-report.json`)) as BackupReport;
+    }
+  }
+  if (report?.cancelled) {
+    warnings.push(`This backup was CANCELLED before every file was packed: ${Array.isArray(report.notAttempted) ? report.notAttempted.length : "some"} file(s) are in no part of it and cannot be put back.`);
+  }
+  if (Array.isArray(report?.parts) && report.parts.length > parts.length) {
+    warnings.push(`The backup has ${report.parts.length} part(s); ${parts.length} were dropped — files in the missing part(s) will not be put back.`);
+  } else if (seenParts.size > 0) {
+    const max = Math.max(...seenParts);
+    const missing = Array.from({ length: max }, (_, i) => i + 1).filter((n) => !seenParts.has(n));
+    if (missing.length) warnings.push(`Part(s) ${missing.join(", ")} of this backup were not dropped — their files will not be put back.`);
+  }
+
+  // Every binary, from every part: files/<storage-key> under the part's root.
+  const files: BackupArchiveRead["files"] = [];
+  const seenKeys = new Set<string>();
+  for (const [index, { zip }] of parts.entries()) {
+    const root = `${prefixes[index]}files/`;
+    for (const entry of Object.keys(zip.files)) {
+      if (zip.files[entry].dir || !entry.toLowerCase().startsWith(root.toLowerCase())) continue;
+      const key = entry.slice(root.length);
+      if (!key || seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      files.push({ zip: index, entry, key });
+    }
+  }
+  // Part 1 cannot know how many parts follow it, but the manifest knows how
+  // many files the backup references: name the shortfall.
+  const listed = envelope.manifest.files?.count ?? 0;
+  if (listed > files.length) {
+    warnings.push(
+      `The backup lists ${listed} file(s); the dropped part(s) carry ${files.length}. The rest are in part(s) not dropped, ` +
+      "were archived offline, or were never packed (backup-report.json in the last part says which) — they will not be put back.",
+    );
+  }
+  return { envelope, layout: rec.layout, recordsPart: rec.name, files, warnings };
+}

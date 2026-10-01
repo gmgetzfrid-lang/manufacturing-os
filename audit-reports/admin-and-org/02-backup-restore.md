@@ -249,7 +249,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 ## BKP-7 · The "Full ZIP with binaries" the export page produces cannot be read by the restore page — two admin pages emit two incompatible archive formats
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:117-145`, `app/(protected)/admin/data-export/page.tsx:136-143`, `app/(protected)/admin/restore/page.tsx:111-125`, `lib/exportRunner.ts:132-162`, `app/(protected)/admin/storage/page.tsx:738-762`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Two admin pages emit two archive layouts and only the storage page's is loadable by /admin/restore. Confirmed by reading both writers and the reader.
@@ -275,6 +275,17 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 - [ ] one archive layout is documented and both producers emit it
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-3` closes by pointer when this lands; it adds a round-trip test (the entry names `clientBackup` writes satisfy the restore page's manifest / tables patterns) and a documented multi-part procedure.*
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P1, with `BKP-10`. Reproduced on HEAD `bcbf3e8`: `lib/clientBackup.ts:124` wrote the envelope as `data.json` and no `manifest.json` / `tables/`; `/admin/restore` threw "No manifest.json — this doesn't look like a manufacturing-os backup ZIP." for anything else (`restore/page.tsx:114-115`), took one file (`:270`, `:314`) and read binaries only from that one ZIP (`:229`). The new round-trip test fails 6 of 9 against HEAD's `clientBackup`. Fix — ONE archive layout, documented at the head of `lib/clientBackup.ts` (`BACKUP_ARCHIVE_ENTRIES`) and in `DEC-44 (A&O P1)` §6: part 1 carries `manifest.json` + `tables/<table>.json` (the layout `lib/exportRunner.ts` already writes for the server ZIP and `/about` advertises); every part carries `files/<storage-key>`, `files-manifest.json` and `backup-part.json` (which backup, which part); the last part carries `backup-report.json`. The browser backup now writes that layout (the envelope's 24-hour presigned URLs are no longer copied into the archive). The reader is ONE function, `lib/dataRestore.ts readBackupArchive`, used by the page: it takes every dropped part of one backup in any order, finds the records part (`manifest.json` + `tables/`, or `data.json` in a browser backup written before this change — still restored), never takes an entry inside `files/` for the records, refuses with a message — before anything is planned or written — a set with no records part, two records parts, a part whose `backup-part.json` names another backup, or a table file that does not parse, and returns every part's `files/` entries for "Put the files back" (which now uploads from every part). It warns when the dropped parts carry fewer files than the manifest lists, and when `backup-report.json` says the run was cancelled. `/admin/restore` accepts several files at once (drop or picker).
+- Files: `lib/clientBackup.ts`, `lib/dataRestore.ts` (`readBackupArchive`, `BackupZipLike`, `BackupArchiveRead`), `app/(protected)/admin/restore/page.tsx` (`handleFiles`, `zipsRef`, `archiveFilesRef`, `putFilesBack`).
+- Tests: `lib/__tests__/restoreArchiveRoundTrip.test.ts` — the REAL producers end to end: `runOrgExport` → `runFullBackup` (two parts) → `readBackupArchive` → `/begin` + `/apply-table` into another workspace ("both parts dropped together: records restore into another workspace and every file is found"), the server ZIP through `buildAndDeliverExport` the same way, the single-shot `/apply` with the same envelope, an older browser backup (`data.json`) restoring records and files, and the refusals; the entry names satisfy the page's former manifest / tables patterns (intelligence `ILIFE-3`'s round-trip check); page pins. `lib/__tests__/helpers/restoreMemoryDb.ts` is the shared in-memory engine.
+
+**Done-when.**
+- [x] /admin/restore accepts `data.json` (envelope form) inside a ZIP as well as `manifest.json` + `tables/`, and keeps the ZIP so "Put the files back" works for browser-built parts ✓.
+- [x] the restore page accepts a multi-part backup (part1..partN) rather than a single file ✓ — dropped together, any order; missing parts are named by the shortfall warning.
+- [x] one archive layout is documented and both producers emit it ✓ — `manifest.json` + `tables/` + `files/` + `files-manifest.json` from both; the browser adds `backup-part.json` / `backup-report.json`, the server ZIP its `README.md` / `schema/` / `files-omitted.json` (`lib/exportRunner.ts` unchanged — admin-and-org P3's file).
+
+**Scope / residual.** "Put the files back" does not yet verify each file's bytes against `files-manifest.json` before uploading (document-control `RET-14` did that for the ticket-archive restore, `lib/restoreVerify.ts`); the hashes are now in every part, so it is a page-local follow-up. A restore of a large multi-part backup still holds every dropped part in browser memory at once. Intelligence `ILIFE-3` can close by pointer (its four criteria hold here; the multi-part procedure is the clientBackup header and the drop-zone copy: drop every part together, part 1 carries the records).
 
 ---
 
@@ -346,7 +357,7 @@ lib/dataExport.ts:330-360 is the complete list of `add(...)` calls — document_
 ## BKP-10 · A cancelled backup still downloads a final part whose report says "Every file verified by SHA-256" — with no cancellation flag and no file total
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:126-145`, `lib/clientBackup.ts:149-150`, `lib/clientBackup.ts:183-188`, `app/(protected)/admin/data-export/page.tsx:259-263`, `components/archive/BackupViewer.tsx:88-110`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The misleading report note and the missing cancellation flag are real and correctly cited. But the claim's core sting — 'nothing in the ZIP records that 8,800 files are missing' — is false: part 1's data.json holds the full file list and count. Discoverable-but-unflagged omission, so LOW rather than MEDIUM.
@@ -371,6 +382,18 @@ lib/clientBackup.ts:135-137 `note: progress.errors.length > 0 ? "Files listed un
 - [ ] the "Every file verified" note only appears when filesPacked === filesTotal and errors is empty
 - [ ] the report also carries `manifest.complete` and `manifest.notes` from the envelope so an INCOMPLETE dump is visible in the archive itself
 - [ ] files-manifest.json is written into EVERY part, not only the last one — today parts 1..N-1 carry no hashes at all
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P1, with `BKP-7`. Reproduced on HEAD `bcbf3e8`: the file loop broke on cancel (`lib/clientBackup.ts:150`) and fell through to `finalizePart(true)` (`:186`), whose `backup-report.json` carried no `cancelled`, no `filesTotal` and no list of unattempted files, and whose note read "Every file verified by SHA-256 in files-manifest.json." whenever `errors` was empty (`:135-137`); `files-manifest.json` was written only into the last part (`:127-128`). Fix in `runFullBackup`: the run counts the files it attempted; the last part's `backup-report.json` records `cancelled`, `filesTotal`, `filesPacked`, `notAttempted` (every path never tried — in no part), `errors`, and the export's own `complete` and `manifestNotes`; the part is named `…-partN-INCOMPLETE.zip` when the run was cancelled; the note says "Every file verified by SHA-256 in files-manifest.json." ONLY when nothing was cancelled, nothing failed and every file was packed — otherwise it says what is missing ("INCOMPLETE — the backup was cancelled after N of M file(s) …" / "Files listed under errors are NOT in this backup …"). `files-manifest.json` (every file packed so far, with its part) and `backup-part.json` go into EVERY part. The run's result carries `cancelled`, `filesTotal`, `notAttempted`; the phase is `cancelled` exactly when files were left unattempted. `/admin/restore` (via `readBackupArchive`) warns from the report when a backup was cancelled.
+- Files: `lib/clientBackup.ts`.
+- Tests: `lib/__tests__/restoreArchiveRoundTrip.test.ts` "cancelled: the last part is …-INCOMPLETE.zip and its report records cancelled, filesTotal and the files never attempted — never 'Every file verified'", "a failed file: the note names the gap; a clean run alone says every file is verified, and the report carries manifest.complete / notes", and the multi-part test (hashes in part 1 already, cumulative in part 2).
+
+**Done-when.**
+- [x] backup-report.json records `cancelled`, `filesTotal`, and the files never attempted, and finalizePart names the part `…-INCOMPLETE.zip` when the run was cancelled ✓.
+- [x] the "Every file verified" note only appears when filesPacked === filesTotal and errors is empty ✓ (and the run was not cancelled).
+- [x] the report also carries `manifest.complete` and `manifest.notes` from the envelope ✓ (`complete`, `manifestNotes`).
+- [x] files-manifest.json is written into EVERY part ✓ (cumulative, each entry naming its part).
+
+**Scope / residual.** The chain reaction lives in files this package does not own and is handed over unedited: `app/(protected)/admin/data-export/page.tsx:259-263` prints "Backup complete — … every file SHA-256 verified" on `phase === "done"` without reading `errors` or `manifest.complete` (admin-and-org P3); `components/providers/BackupIndicator.tsx:76-80` prints "Every file SHA-256 verified — manifest in the last part." for a `cancelled` run with no errors (notifications N7). Both can now read `BackupResult.cancelled` / `notAttempted` or the progress phase.
 
 ---
 

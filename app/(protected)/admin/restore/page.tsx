@@ -2,8 +2,10 @@
 
 // /admin/restore — bring a workspace back from a backup, end to end.
 //
-//   1. Drop a backup — the Full ZIP (records + binaries) or the JSON export.
-//      Parsed IN THE BROWSER; the plan below is computed locally, zero writes.
+//   1. Drop a backup — the Full ZIP part(s) (records + binaries) or the JSON
+//      export. Parsed IN THE BROWSER (lib/dataRestore.ts readBackupArchive —
+//      the one archive layout, plus the older data.json parts); the plan below
+//      is computed locally, zero writes.
 //   2. Review the plan — user reconciliation by email, org-name collision,
 //      exactly which tables import.
 //   3. Restore records — a read-only check first (how many backup rows
@@ -12,9 +14,10 @@
 //      under request limits. A restore only ADDS (DEC-44 (A&O P1)): an
 //      existing row is kept as it is, and the run STOPS at the first table
 //      that fails (lib/dataRestore.ts runChunkedRestore).
-//   4. Put files back (ZIP only) — re-uploads the ZIP's /files payload to
-//      storage under the (org-remapped) original keys, skipping files that
-//      are already present and ones that belong to offline space archives.
+//   4. Put files back (ZIP only) — re-uploads the /files payload of every
+//      dropped part to storage under the (org-remapped) original keys,
+//      skipping files that are already present and ones that belong to
+//      offline space archives.
 
 import React, { useCallback, useRef, useState } from "react";
 import Link from "next/link";
@@ -26,8 +29,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE,
+  planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
+  type BackupArchiveRead,
 } from "@/lib/dataRestore";
 
 type ZipLike = {
@@ -79,7 +83,9 @@ export default function RestorePage() {
   // The parsed backup. Held in refs — these can be tens of MB and never need
   // to drive a render on their own.
   const envelopeRef = useRef<RestoreEnvelopeLike | null>(null);
-  const zipRef = useRef<ZipLike | null>(null);
+  // BKP-7: every dropped part, and every binary across them.
+  const zipsRef = useRef<ZipLike[]>([]);
+  const archiveFilesRef = useRef<BackupArchiveRead["files"]>([]);
   const [fileEntryCount, setFileEntryCount] = useState(0);
 
   const [applyProgress, setApplyProgress] = useState<ApplyProgress>({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
@@ -95,42 +101,38 @@ export default function RestorePage() {
   }, []);
 
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
-  const handleFile = useCallback(async (file: File) => {
-    if (!activeOrgId) return;
-    setError(null); setPlan(null); setFileName(file.name); setApplyResult(null); setPreview(null);
+  const handleFiles = useCallback(async (dropped: File[]) => {
+    if (!activeOrgId || dropped.length === 0) return;
+    setError(null); setPlan(null); setApplyResult(null); setPreview(null);
+    setFileName(dropped.length === 1 ? dropped[0].name : `${dropped.length} files: ${dropped.map((f) => f.name).join(", ")}`);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
-    envelopeRef.current = null; zipRef.current = null; setFileEntryCount(0);
+    envelopeRef.current = null; zipsRef.current = []; archiveFilesRef.current = []; setFileEntryCount(0);
     idRemapRef.current = null;
 
-    const isZip = /\.zip$/i.test(file.name);
-    const isJson = /\.json$/i.test(file.name);
-    if (!isZip && !isJson) {
-      setError("Drop the Full ZIP backup or the JSON export.");
+    const zips = dropped.filter((f) => /\.zip$/i.test(f.name));
+    const jsons = dropped.filter((f) => /\.json$/i.test(f.name));
+    if (zips.length + jsons.length !== dropped.length || (jsons.length > 0 && dropped.length > 1)) {
+      setError("Drop the Full ZIP backup — every part of it together — or one JSON export.");
       return;
     }
     setBusy(true);
     try {
       let envelope: RestoreEnvelopeLike;
-      if (isZip) {
+      let archiveWarnings: string[] = [];
+      if (zips.length > 0) {
         const JSZip = (await import("jszip")).default;
-        const zip = await JSZip.loadAsync(file) as unknown as ZipLike;
-        const entryNames = Object.keys(zip.files);
-        const manifestPath = entryNames.find((p) => /(^|\/)manifest\.json$/i.test(p));
-        if (!manifestPath) throw new Error("No manifest.json — this doesn't look like a manufacturing-os backup ZIP.");
-        const manifest = JSON.parse(await zip.file(manifestPath)!.async("string"));
-        const tables: Record<string, unknown[]> = {};
-        const tablePaths = entryNames.filter((p) => /(^|\/)tables\/[^/]+\.json$/i.test(p) && !zip.files[p].dir);
-        for (const p of tablePaths) {
-          const name = (p.split("/").pop() || "").replace(/\.json$/i, "");
-          try { tables[name] = JSON.parse(await zip.file(p)!.async("string")) as unknown[]; }
-          catch { tables[name] = []; }
-        }
-        envelope = { manifest, tables };
-        zipRef.current = zip;
-        setFileEntryCount(entryNames.filter((p) => /^\/?files\//i.test(p) && !zip.files[p].dir).length);
+        const loaded = await Promise.all(zips.map(async (f) => ({ name: f.name, zip: await JSZip.loadAsync(f) as unknown as ZipLike })));
+        // The one archive layout (manifest.json + tables/), or an older
+        // browser backup's data.json — refused with the reason otherwise.
+        const read = await readBackupArchive(loaded);
+        envelope = read.envelope;
+        archiveWarnings = read.warnings;
+        zipsRef.current = loaded.map((l) => l.zip);
+        archiveFilesRef.current = read.files;
+        setFileEntryCount(read.files.length);
       } else {
-        const text = await file.text();
+        const text = await jsons[0].text();
         envelope = JSON.parse(text) as RestoreEnvelopeLike;
       }
       if (!envelope?.manifest?.orgId || !envelope?.tables) {
@@ -150,7 +152,7 @@ export default function RestorePage() {
         members,
       });
       envelopeRef.current = envelope;
-      setPlan(p);
+      setPlan({ ...p, warnings: [...archiveWarnings, ...p.warnings] });
       setKeepName("current");
     } catch (e) {
       setError((e as Error).message);
@@ -204,10 +206,11 @@ export default function RestorePage() {
 
   // ── 4. Put files back (ZIP only) ───────────────────────────────────────────
   const putFilesBack = async () => {
-    const zip = zipRef.current;
-    if (!activeOrgId || !zip) return;
+    const zips = zipsRef.current;
+    if (!activeOrgId || zips.length === 0) return;
     const orgPairs = Object.entries(idRemapRef.current?.orgId ?? {}).filter(([o, n]) => o && n && o !== n) as Array<[string, string]>;
-    const entries = Object.keys(zip.files).filter((p) => /^\/?files\//i.test(p) && !zip.files[p].dir);
+    // Every part's files/<storage-key> entries (BKP-7: multi-part backups).
+    const entries = archiveFilesRef.current;
     if (entries.length === 0) return;
     setFilesProgress({ running: true, done: 0, total: entries.length, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
     const token = await authToken();
@@ -215,12 +218,11 @@ export default function RestorePage() {
     const counters = { done: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 };
     const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null });
 
-    const uploadOne = async (entryPath: string) => {
+    const uploadOne = async (item: BackupArchiveRead["files"][number]) => {
       try {
         // Zip entries live under files/<storage-key>; the key must follow the
         // org remap so it lands under THIS workspace's prefix.
-        const rawKey = entryPath.replace(/^\/?files\//i, "");
-        const key = remapOrgPath(rawKey, orgPairs);
+        const key = remapOrgPath(item.key, orgPairs);
 
         // Skip what's already live; never resurrect space-archived binaries —
         // those intentionally live in their own offline zips.
@@ -231,7 +233,7 @@ export default function RestorePage() {
         if (check.ok && state?.archived === false) { counters.skipped++; return; }
         if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
 
-        const blob = await zip.file(entryPath)!.async("blob");
+        const blob = await zips[item.zip].file(item.entry)!.async("blob");
         const up = await fetch(`/api/storage/upload-url`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -266,8 +268,8 @@ export default function RestorePage() {
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void handleFile(f);
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    if (dropped.length) void handleFiles(dropped);
   };
 
   if (!isAdmin) {
@@ -310,15 +312,15 @@ export default function RestorePage() {
           dragging ? "border-[var(--color-accent)] bg-[var(--color-accent)]/5" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
         }`}
       >
-        <input ref={inputRef} type="file" accept=".json,.zip,application/json,application/zip" className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+        <input ref={inputRef} type="file" multiple accept=".json,.zip,application/json,application/zip" className="hidden"
+          onChange={(e) => { const dropped = Array.from(e.target.files ?? []); if (dropped.length) void handleFiles(dropped); }} />
         {busy ? (
           <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading backup &amp; planning…</div>
         ) : (
           <>
             <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">{fileName ?? "Drop a backup .zip or .json here, or click to choose"}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">The Full ZIP restores records <b>and</b> can put the files back. Read locally in your browser.</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">{fileName ?? "Drop a backup's .zip part(s) or a .json export here, or click to choose"}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">The Full ZIP restores records <b>and</b> can put the files back — drop every part together (part 1 carries the records). Read locally in your browser.</div>
           </>
         )}
       </div>
@@ -368,7 +370,7 @@ export default function RestorePage() {
             <Stat icon={UserCheck} tint="text-emerald-600" value={plan.counts.matchedUsers} label="users re-linked" />
             <Stat icon={UserPlus} tint="text-blue-600" value={plan.counts.newUsers} label="restored placeholders" />
             <Stat icon={Database} tint="text-[var(--color-accent)]" value={preview ? preview.wouldInsert : plan.counts.totalRows} label={preview ? `new records (${fmtNum(preview.existing)} already here, kept as they are)` : "records to import"} />
-            <Stat icon={FolderArchive} tint="text-violet-600" value={fileEntryCount || plan.counts.files} label={fileEntryCount ? "files in this ZIP" : "files referenced"} />
+            <Stat icon={FolderArchive} tint="text-violet-600" value={fileEntryCount || plan.counts.files} label={fileEntryCount ? "files in the dropped part(s)" : "files referenced"} />
           </div>
 
           {/* Users */}
@@ -438,7 +440,7 @@ export default function RestorePage() {
               <div className="flex items-start gap-3">
                 <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> {RESTORE_ADDITIVE_NOTE} Before anything is written, the restore checks how many records already exist here and shows you both counts. It stops at the first table that fails. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup — use the Full ZIP to also restore files."}
+                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> {RESTORE_ADDITIVE_NOTE} Before anything is written, the restore checks how many records already exist here and shows you both counts. It stops at the first table that fails. Restored users are created inactive (no seat).{zipsRef.current.length > 0 ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup — use the Full ZIP to also restore files."}
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-end">
@@ -457,7 +459,7 @@ export default function RestorePage() {
                 <FolderArchive className="w-4 h-4 text-violet-600" /> Put the files back
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Re-uploads this ZIP&apos;s <b>{fmtNum(fileEntryCount)}</b> embedded file(s) to live storage under their original keys, so drawings open normally instead of prompting for an archive. Files already in storage are skipped; files that belong to offline space archives stay offline by design.
+                Re-uploads the <b>{fmtNum(fileEntryCount)}</b> file(s) embedded in the dropped part(s) to live storage under their original keys, so drawings open normally instead of prompting for an archive. Files already in storage are skipped; files that belong to offline space archives stay offline by design.
               </p>
               {filesProgress.total > 0 && (
                 <div className="mb-3">
