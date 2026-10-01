@@ -76,6 +76,19 @@ export interface KnowledgeDocument {
   sourceRev: string | null;
   /** Pages that had no text layer and were read by AI vision instead. */
   visionPages: number;
+  /** Pages with no extractable text at all — the running count the engine
+   *  keeps on the row (`empty_pages`, ING-11). 0 on a database without
+   *  20261122, and for documents indexed before it. */
+  emptyPages: number;
+  /** Pages AI vision failed to read, waiting on a retry — or, once a
+   *  controller accepted the partial index, the pages accepted unread
+   *  (`vision_failed_pages`, ING-6). */
+  visionFailedPages: number[];
+  /** A controller accepted the index with the unread pages still listed. */
+  visionPartialAccepted: boolean;
+  /** The chunker that wrote this document's index (1 or 2), null before its
+   *  first batch or on a database without 20261122 (ING-4). */
+  chunkVersion: number | null;
 }
 
 /** Library answers cite (document, page, verbatim quote); internet answers
@@ -389,6 +402,14 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
   sourceDocumentId: (r.source_document_id as string | null) ?? null,
   sourceRev: (r.source_rev as string | null) ?? null,
   visionPages: (r.vision_pages as number | null) ?? 0,
+  // The 20261122 columns ride the same select("*"); absent keys (a database
+  // without it) read as nothing recorded.
+  emptyPages: Number(r.empty_pages ?? 0) || 0,
+  visionFailedPages: Array.isArray(r.vision_failed_pages)
+    ? (r.vision_failed_pages as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    : [],
+  visionPartialAccepted: r.vision_partial_accepted === true,
+  chunkVersion: typeof r.chunk_version === "number" ? r.chunk_version : null,
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
@@ -397,6 +418,93 @@ export async function listKnowledgeDocuments(libraryId: string): Promise<Knowled
     .order("created_at", { ascending: true });
   if (error) return [];
   return (data ?? []).map(mapDocument);
+}
+
+// ── The browser-side PDF check (ING-9) ────────────────────────────────────
+// The ingest engine reads a stored file's first KB before pdf.js sees it and
+// refuses another format (sniffBytes / notPdfMessage in lib/knowledgeIngest,
+// which is server-only). The same rule runs here, in the browser, BEFORE
+// anything is uploaded: a renamed spreadsheet never makes a round trip to
+// storage and back, and the refusal names where the file belongs. Both are
+// pinned to the engine's own by lib/__tests__/knowledgeUploadSniff.test.ts.
+// Like the engine, a head with no "%PDF-" that carries no other format's
+// signature is NOT refused here: pdf.js opens a PDF behind a preamble, and
+// the server refuses such a file only once pdf.js has failed (nothing is
+// left behind either way).
+
+export type UploadHeadKind = "pdf" | "office" | "text" | "image" | "unknown";
+
+/** Classify a file by its leading bytes — the engine's sniffBytes, as is. */
+export function sniffUploadHead(head: Uint8Array): UploadHeadKind {
+  const at = (sig: number[], off = 0) => sig.every((b, i) => head[off + i] === b);
+  const ascii = String.fromCharCode(...head.subarray(0, 1024));
+  if (ascii.includes("%PDF-")) return "pdf";
+  if (at([0x50, 0x4b, 0x03, 0x04]) || at([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) return "office";
+  if (at([0x89, 0x50, 0x4e, 0x47]) || at([0xff, 0xd8, 0xff]) || at([0x49, 0x49, 0x2a, 0x00]) || at([0x4d, 0x4d, 0x00, 0x2a])) return "image";
+  const sample = head.subarray(0, 512);
+  if (sample.length > 0) {
+    let printable = 0;
+    for (const b of sample) if (b === 9 || b === 10 || b === 13 || (b >= 32 && b < 127) || b >= 0x80) printable++;
+    if (printable / sample.length > 0.95) return "text";
+  }
+  return "unknown";
+}
+
+/** The refusal for a non-PDF, naming where the file belongs — the engine's
+ *  notPdfMessage, word for word. */
+export function notPdfUploadMessage(name: string, kind: UploadHeadKind): string {
+  const head = `Only PDF files can be indexed — "${name}" is not a PDF`;
+  switch (kind) {
+    case "office":
+    case "text":
+      return `${head} (it looks like ${kind === "office" ? "an Excel or Word file" : "a text or CSV file"}). ` +
+        "To load an equipment list, open Operating areas and use Import CSV — it takes .xlsx, .xls and .csv. " +
+        "For a document, save it as PDF and add it again.";
+    case "image":
+      return `${head} (it looks like an image). Save or scan it to PDF, then add it again.`;
+    default:
+      return `${head}. Save it as PDF, then add it again.`;
+  }
+}
+
+const EXTENSION_KIND: Record<string, UploadHeadKind> = {
+  xlsx: "office", xlsm: "office", xls: "office", docx: "office", doc: "office",
+  csv: "text", tsv: "text", txt: "text",
+  png: "image", jpg: "image", jpeg: "image", tif: "image", tiff: "image", gif: "image", bmp: "image", heic: "image",
+};
+
+/** Why a file must not be uploaded to a knowledge library, or null when it
+ *  may go (the server still has the last word). A name without ".pdf" is
+ *  refused, as it always was, now naming the right destination; a ".pdf"
+ *  whose first bytes carry another format's signature (a spreadsheet, a Word
+ *  file, an image) is refused before upload. `head` is the file's first KB
+ *  (readUploadHead); null when it could not be read. */
+export function pdfUploadRefusal(name: string, head: Uint8Array | null): string | null {
+  const sniffed = head && head.length > 0 ? sniffUploadHead(head) : "unknown";
+  if (!/\.pdf$/i.test(name)) {
+    if (sniffed === "pdf") return `"${name}" is a PDF without the .pdf ending — rename it to end in .pdf, then add it again.`;
+    const ext = (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? "").toLowerCase();
+    const kind = EXTENSION_KIND[ext] ?? (sniffed === "office" || sniffed === "image" || sniffed === "text" ? sniffed : "unknown");
+    return notPdfUploadMessage(name, kind);
+  }
+  return sniffed === "office" || sniffed === "image" ? notPdfUploadMessage(name, sniffed) : null;
+}
+
+/** A file's first KB, read in the browser; null when it cannot be read. */
+export async function readUploadHead(file: Blob): Promise<Uint8Array | null> {
+  try {
+    const part = file.slice(0, 1024);
+    if (typeof part.arrayBuffer === "function") return new Uint8Array(await part.arrayBuffer());
+    // An engine without Blob.arrayBuffer (older Safari) still has FileReader.
+    return await new Promise<Uint8Array | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result instanceof ArrayBuffer ? new Uint8Array(reader.result) : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsArrayBuffer(part);
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** Upload the PDF to R2, register the document row, and drive the ingest
@@ -445,16 +553,23 @@ export function isIngestActive(documentId: string): boolean {
   return activeIngests.has(documentId);
 }
 
+/** `retryNow` marks the run as a PERSON's explicit re-run — the library
+ *  page's Resume button and nothing else (ING-8, DEC-58 item 3). Every POST
+ *  of the run carries it, so a first answer that only met `busy` does not
+ *  drop it; the route records it (KNOWLEDGE_DOC_RETRY_NOW) only for the
+ *  batch the engine lets past a failed batch's back-off and performs. The
+ *  page's automatic loop and the app-shell indicator never pass it. */
 export async function ingestKnowledgeDocument(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
+  opts: { retryNow?: boolean } = {},
 ): Promise<void> {
   // Another loop in this tab already owns the document — let it finish.
   // Progress lives on the row, so the caller's refreshes still see movement.
   if (activeIngests.has(documentId)) return;
   activeIngests.add(documentId);
   try {
-    await ingestLoop(documentId, onIndex);
+    await ingestLoop(documentId, onIndex, opts.retryNow === true);
   } finally {
     activeIngests.delete(documentId);
   }
@@ -470,6 +585,7 @@ const INGEST_BUSY_WAIT_MS = 30_000;
 async function ingestLoop(
   documentId: string,
   onIndex?: (indexed: number, total: number | null, progress?: IngestProgress) => void,
+  retryNow = false,
 ): Promise<void> {
   // Bounded loop. Vision-read pages advance in small batches (render +
   // transcribe is seconds per page), so the round budget is generous.
@@ -487,7 +603,11 @@ async function ingestLoop(
   // stall: the loop waits `retryAfterMs` and asks again, and only a long run
   // of busy answers ends it, with the true reason. A vision retry that
   // re-reads failed pages does not move `pagesIndexed`; a fall in
-  // `visionFailedPages` (or a rise in `pagesReadable`) is progress too.
+  // `visionFailedPages` (or a rise in `pagesReadable`) is progress too. So is
+  // a retry batch whose tries all failed (`visionRetryAttempts` > 0): it
+  // moved them to the back of the queue, the next batch tries the pages
+  // behind, and the batch that completes the round answers 409 with the
+  // real reason — never a false "stalled" (ING-6).
   let visionPages = 0;
   let lastIndexed = -1;
   let lastFailed: number | null = null;
@@ -500,10 +620,10 @@ async function ingestLoop(
       done: boolean; pageCount: number; pagesIndexed: number;
       visionPages?: number; visionSkipReason?: string | null;
       busy?: boolean; retryAfterMs?: number | null;
-      visionFailedPages?: number[]; pagesReadable?: number;
+      visionFailedPages?: number[]; pagesReadable?: number; visionRetryAttempts?: number;
     };
     try {
-      out = await apiPost("/api/knowledge/ingest", { documentId });
+      out = await apiPost("/api/knowledge/ingest", retryNow ? { documentId, retryNow: true } : { documentId });
       transientFailures = 0;
     } catch (e) {
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
@@ -534,7 +654,8 @@ async function ingestLoop(
     const readable = typeof out.pagesReadable === "number" ? out.pagesReadable : -1;
     const progressed = out.pagesIndexed > lastIndexed
       || (failed !== null && lastFailed !== null && failed < lastFailed)
-      || readable > lastReadable;
+      || readable > lastReadable
+      || (typeof out.visionRetryAttempts === "number" && out.visionRetryAttempts > 0);
     noProgressRounds = progressed ? 0 : noProgressRounds + 1;
     lastIndexed = Math.max(lastIndexed, out.pagesIndexed);
     if (failed !== null) lastFailed = failed;
@@ -548,6 +669,75 @@ async function ingestLoop(
     }
   }
   throw new Error("Indexing did not finish — reopen the library to resume.");
+}
+
+/** ING-6's explicit exit: a controller accepts a document whose remaining
+ *  pages AI vision could not read. The route takes the document's claim,
+ *  audits the acceptance FIRST (an acceptance it cannot record changes
+ *  nothing) and makes the document 'ready' with those pages still listed.
+ *  Every refusal (409: being indexed, already accepted, not at the end yet,
+ *  changed underneath; 500: not recorded) is thrown with its message. */
+export async function acceptPartialIndex(documentId: string): Promise<{ acceptedPages: number[] }> {
+  const out = await apiPost<{ acceptedPages?: unknown }>("/api/knowledge/ingest", { documentId, action: "accept-partial" });
+  return { acceptedPages: Array.isArray(out.acceptedPages) ? out.acceptedPages.map(Number) : [] };
+}
+
+/** What a table-aware re-index of a library would do (the route's dry run —
+ *  nothing is changed): its documents, the ones it would reset, and the AI-
+ *  vision pages those hold, which are read and billed again (ING-4). */
+export interface TableAwareReindexPlan { documents: number; toReset: number; visionPagesToReread: number }
+
+export async function planTableAwareReindex(libraryId: string): Promise<TableAwareReindexPlan> {
+  const out = await apiPost<{ documents?: unknown; toReset?: unknown; visionPagesToReread?: unknown }>(
+    "/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2, dryRun: true },
+  );
+  return {
+    documents: Number(out.documents ?? 0), toReset: Number(out.toReset ?? 0),
+    visionPagesToReread: Number(out.visionPagesToReread ?? 0),
+  };
+}
+
+/** Run the re-index (chunker 2). Each call resets documents until the
+ *  route's invocation deadline and answers `remaining`; it is called again
+ *  while documents remain AND the last call reset something — a call that
+ *  reset nothing means what is left is busy (mid-batch elsewhere) or failed,
+ *  and running it again later picks those up. Every call is audited by the
+ *  route before it resets anything. */
+export async function runTableAwareReindex(libraryId: string): Promise<{
+  reset: number; busy: number; errors: string[]; remaining: number;
+}> {
+  let reset = 0;
+  let last = { busy: 0, remaining: 0 };
+  const errors: string[] = [];
+  for (let round = 0; round < 200; round++) {
+    const out = await apiPost<{ reset?: unknown; busy?: unknown; errors?: unknown; remaining?: unknown }>(
+      "/api/knowledge/ingest", { action: "reindex", libraryId, chunker: 2 },
+    );
+    const did = Number(out.reset ?? 0);
+    reset += did;
+    last = { busy: Number(out.busy ?? 0), remaining: Number(out.remaining ?? 0) };
+    if (Array.isArray(out.errors)) errors.push(...out.errors.map(String));
+    if (last.remaining <= 0 || did === 0) break;
+  }
+  return { reset, busy: last.busy, errors: errors.slice(0, 20), remaining: last.remaining };
+}
+
+/** The confirmation before a table-aware re-index: what the dry run counts
+ *  (documents reset, AI-vision pages read and billed again) and what it does
+ *  not — every document it resets has its passages deleted and drops out of
+ *  Ask until it is re-indexed, which for a library read by AI vision can
+ *  take days when no controller keeps the app open (ING-4 / ING-7). */
+export function tableAwareReindexMessage(plan: TableAwareReindexPlan): string {
+  const docs = `${plan.toReset} of ${plan.documents} document${plan.documents === 1 ? "" : "s"}`;
+  const vision = plan.visionPagesToReread > 0
+    ? `AI vision reads ${plan.visionPagesToReread} page${plan.visionPagesToReread === 1 ? "" : "s"} again, billed to the AI key of whoever indexes them.`
+    : "No page needs AI vision again.";
+  return `${docs} will be re-read with table-aware chunking: a table stays one passage with a row per line, `
+    + "and a sentence that runs over a page break is kept whole. "
+    + `${vision} `
+    + "What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits "
+    + "in the indexing queue — until it is re-indexed. Indexing runs while an Admin or Doc Control member has the app "
+    + "open, otherwise on the nightly maintenance run, so a library read by AI vision can take days to come back in full.";
 }
 
 /** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed
