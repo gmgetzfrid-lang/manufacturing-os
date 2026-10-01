@@ -97,6 +97,7 @@ about the system.
 | [DEC-61](#dec-61) | A transmittal is a **formal issue**: members draft, the `transmittal.issue` capability (default Admin + DocCtrl, per item library) issues / voids / revokes / records receipt; the database writes the as-sent snapshot — of the document's **current** revision only — and freezes it; nothing issued is deleted; the portal link expires (90 days) and is revocable without voiding; the portal serves stamped, hash-verified, recorded bytes | medium | `TRX-1`–`TRX-14`, `EGR-8`, `XEDGE-5` |
 | [DEC-62](#dec-62) | **Only a controller publishes a skill org-wide**; members author private skills and ask for one to be shared, and an approval binds to the version shown; built-ins have no author and are never deleted; custom link patterns stay inside a safe subset with a hard deadline; the link engine remembers decisions (a stale proposal re-enters, a dismissal blocks only the pair and proposer that produced it); a link is read only by whoever can read both documents | medium | `IEDGE-3`, `GOV-2`, `IRLS-3`, `ORCH-2`, `PR-3`, `HUB-2`, `HUB-8`, `LNK-1`–`LNK-13`, `IRLS-2`, `IRLS-4`, `IRLS-15`, `WIRE-2` |
 | [DEC-63](#dec-63) | The documents-table rails: the version pointers are **trigger-enforced references**, not declared FKs (the restore replays documents first); a creation may **issue** only with publish authority and a review policy that does not require sign-off; a reversal restores only the **recorded** prior status; one effective-date calendar decides "in effect" | medium | `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-3`, `DRLS-13`, `DRLS-14` |
+| [DEC-44 (provisional)](#dec-44-quality-signoff) | A quality sign-off is **granted per project** (`quality.sign_off`, the capability policy's resource dimension), **separated** from the record's author whenever someone else could sign, and **signed** with the existing e-signature ceremony — the database binds the signature to the completion or acceptance | medium | `QUAL-4`, `QUAL-14` |
 
 ---
 
@@ -519,6 +520,8 @@ threshold.
 
 *Landed 2026-09-29 (projects Round G): the same derivation on change orders — `decideChangeOrder` (`lib/changeOrders.ts`) refuses a proposer's own decision while the org has another eligible decider (active controller-tier holders plus the project owner, minus the actor), allows and MARKS it when nobody else can, and `enforce_change_order_decision_guard` (`20261094`) applies the rule at the database for the SIGNED-IN caller (`auth.uid()`, which must be the recorded `decided_by`; the recorded decider only for a service write) against a proposer pinned at insert (`created_by = auth.uid()`) and never rewritten. Counted from the eligible-decider set rather than the raw active-member count, since only controllers and the owner can decide a CO. See `COST-6`, `DEC-50`.*
 
+*Landed 2026-10-01 (projects Round G, J2b): the same derivation on the quality sign-off — the author of a checklist (the creator of a turnover item) is refused their own completion (acceptance) while another member could sign it off, counted per project from the eligible set (controller tier, the project owner, holders of `quality.sign_off` for the project who can see it — `quality_other_signers`, `20261136`), and allowed and MARKED single-signer when nobody else can; `DEC-37`'s per-slot reading (one record's author against its signer, not hats). Enforced by `project_checklists_signoff_rail` / `turnover_items_signoff_rail` for the signed-in caller, mirrored by `signoffSeparation` in `lib/checklists.ts`. See `QUAL-4`, `DEC-44` (provisional).*
+
 <a id="dec-13"></a>
 ## DEC-13 · Does `policyAllows` gain a resource dimension?
 
@@ -563,6 +566,8 @@ model worse. See `GAP-1`.
 *Landed 2026-09-17 (roles-and-permissions Round E): stage 3. `ticket.engineer_gate_exempt` ("Approve own request without an engineer", default `["Admin","Manager","Supervisor","Engineer","DocCtrl"]` — byte-identical to the hardcoded test, pinned over every role × collection; the id lists the EXEMPT roles in the `ticket.*` namespace the evaluators share, rather than the sketched `requests.requires_engineer_approval`) is consulted by `engineerApprovalRequired` / `requiresEngineerApproval` in `lib/workflow.ts` alongside the `DEC-16` disjunction — snapshot OR current still fails closed; the capability only decides which roles are exempt, and a personal grant or a request-type override of it is honoured. Migration `20261057` re-creates `org_capability_allows_for` from `20261052` with the one added CASE row (lineDiff-pinned); the WF-23 census in `rpPhase4Migration.test.ts` now reads the newest evaluator and pins `20261038` as historical. Tests: `sweepRoundE_policyServer.test.ts`.*
 
 *Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the resource dimension decides transmit authority. `transmittal.issue` (default `["Admin","DocCtrl"]`) is evaluated once per item's `libraryId` — by `trg_transmittals_guard` through `org_capability_allows_for` (20261133; the CASE row is 20261132, re-created from 20261063 and lineDiff-pinned), and by `mayTransmit` / `evaluateTransmitAuthority` in `lib/transmittals.ts` for the page and the routes — so an org can say "only DocCtrl may transmit from the IFC library". See `TRX-1`, `DEC-61`.*
+
+*Landed 2026-10-01 (projects Round G, J2b): the resource dimension gains a fifth key, `projectId` — `RESOURCE_KEYS` / `CapabilityResource` in `lib/capabilityPolicy.ts` and both rule passes of `org_capability_allows_for` (`20261136`, re-created from `20261132` with the two key lists widened and the `quality.sign_off` CASE row, lineDiff-pinned) — so a rule can name one project: "Safety signs this project's quality records". A stored rule that named `projectId` before read as unconditional in SQL; the migration's inventory counts them (expect 0). Personal grants stay unscoped (WF-13 row 6). The console preserves a project-scoped rule but cannot author one yet (`QUAL-14`). See `QUAL-4`.*
 
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
@@ -1338,6 +1343,8 @@ facility with no configuration must keep working exactly as it does today.
 *Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the transmittals register and both transmittal routes carry no role list — the email route's hardcoded `Admin` / `DocCtrl` test became the `transmittal.issue` capability's default, the page draws its controls from the capability policy (per item library) and the role collection (`isControllerPrincipal`), and the database decides. See `TRX-1`, `TRX-7`, `DEC-61`.*
 *Landed 2026-09-30 (intelligence Round G, I-08): skill authority names no role. Publishing a Reasoning or Connection Skill org-wide, and managing a built-in, is the controller tier — `is_org_controller` in `20261125`'s policies, `isSkillController` (`isControllerRole` over the held collection) on the Skill Library, the Connection Skills list and the Studio, which no longer carry an `"Admin"` / `"DocCtrl"` literal. Where the question is about ANOTHER user (is a skill's author a controller?), `20261125` adds `is_org_controller_for(p_org, p_uid)` — `is_org_controller`'s body with `p_uid` for `auth.uid()`, not executable by clients — and its data step and restore guard use it; the pre-apply inventory, which runs before the helper exists, spells the predicate out and a probe pins that text to both functions. See `DEC-62`, `IEDGE-3`, `HUB-2`.*
 *Landed 2026-09-30 (intelligence Round G, I-08 fix pass 3): `/api/links/propose` names no role — it gates on the controller tier as `isControllerRole` defines it (`ALL_ROLES.filter(isControllerRole)`, by the held collection) — and the review page's "Find connections" control is the same tier (`isSkillController`). The page's Approve / Dismiss / Reopen keep the role set SURF-9 requires every admin page to spell, which `roundE_D_rolesAdmin.test.ts` pins to `ADMIN_SURFACES` (a registry change fails until the page follows, so the two cannot drift); a test pins it to the proposed-links surface's writers too. See `LNK-1`.*
+
+*Landed 2026-10-01 (projects Round G, J2b): the quality program names no discipline. Who may record and sign off a project's checklists, turnover and punch is the `quality.sign_off` capability (default the controller pair; the project owner by identity) — a Safety, Operations or Maintenance lead is GRANTED it (the role grid, a personal grant, or a rule scoped to one project), never named in `lib/checklists.ts`, `lib/turnover.ts` or `components/projects/QualityTab.tsx` (pinned by `qualitySignoff.test.ts`), and `project_members.role` is not widened. See `QUAL-4`, `DEC-44` (provisional).*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -3797,3 +3804,69 @@ the order is in `document-control/99-fix-sequencing.md`).
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, third review fix): §2's "recorded" now holds for every creation path — `createDocumentWithFile` writes `DOCUMENT_CREATED` with the initial status, the policy decision and the actor, and returns a refused write (`REV-11`). The reversal (§3) is two-phase: every restored document is proved restorable before any write, the parks / restores / lineage delete roll back whole, and the review voids and link revocations run only after (`REV-6`, `REV-12`). A merge into a held existing target with no rev-up is no longer refused (authority and the lock only — `HLD-2`), so no section removes a write path the database allows. §4's unset zone is logged and its worst case stated as 26 hours (`REV-9`). `REV-13` is back to OPEN: its every-door half is `20261131`'s rail, not yet pasteable.*
 
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, fourth review fix): the controller's force over a hold reaches the UI — the Split and Merge wizards read the sources' active holds and, for a controller (the role collection), require "Proceed over the active hold … carried to every new sheet / the merge target", lock the carry on and pass `force`; anyone else is refused before submit and never told to release the hold (fix pass 3 left the force API-only, so the UI route was to release the hold, which carries nothing — the HLD-2 failure by another route, wrongly called fail-safe). `DOC_SPLIT` / `DOC_MERGED` name the holds proceeded over. A reversal that would park a held document takes the same explicit decision and carries the hold back onto every restored document (§3; `REV-12`), and a park or restore whose answer was lost is re-read before the rollback decides (`REV-6`). §2's require-mode refusal of a non-controller is app-side only; the database rule is `REV-17` (open). DEC-46's Landed line gains its RLS caveat (`REV-10`). See `HLD-2`, `REV-6`, `REV-10`, `REV-11`, `REV-12`, `REV-17`.*
+
+
+<a id="dec-44-quality-signoff"></a>
+## DEC-44 (provisional) · Who signs off a quality record, apart from whom, and what the signature binds
+
+*Provisional number (projects Round G, package J2b, 2026-10-01): DEC-44 to DEC-63 are taken on the integration branch; the integrator renumbers.*
+
+**Decision. Three defaults the plan named for `QUAL-4`, each the reading that fails safe for a PSM-regulated quality record:**
+
+1. **Authority is a per-project capability grant, not a roster role.**
+   `quality.sign_off` (default `["Admin","DocCtrl"]` — today's writers; the
+   project owner keeps the owner disjunct, identity rather than a token) is
+   resolved per project through the capability policy's resource dimension
+   (`projectId`, `DEC-13`). A discipline reviewer is granted it — org-wide
+   (the role grid, a personal grant) or for one project (a scoped rule) —
+   and may then write that project's checklists, turnover and punch under
+   every J2 rail. `project_members.role` is not widened (SURF-11's roster
+   semantics stand). A grant never opens a private project to someone who
+   cannot see it.
+2. **Separation is derived from who else could sign, per record.** The
+   author of a checklist (the creator of a turnover item) does not complete
+   (accept) it while another member is eligible on that project; with
+   nobody else, the sign-off is allowed and **marked** single-signer on the
+   record — never silently allowed, never a dead end (`DEC-12`, `DEC-37`).
+   The author is the database's stamp at insert, never a client value.
+3. **The bound identity is an `e_signatures` row from the existing
+   ceremony, not a new table.** A completion and an acceptance are signed
+   through `/api/signatures/sign` (`20261050`: re-authentication verified
+   server-side, signer named from `org_members`, row minted with the service
+   key), on the record (`project_checklist` / `turnover_item`, intent
+   `Reviewed`); the database requires the caller's own signature on THAT
+   record, made in the last 15 minutes and after its last status change,
+   and records the completer and the signature id itself.
+
+**Rationale.** A PSSR requires the operating and maintenance
+representatives' confirmation; the program let only controllers and the
+owner record anything, and let one uid author, sign, complete and accept
+alone, with an email prefix as the identity. The capability chassis, the
+`DEC-12` derivation and the signing ceremony already existed for documents
+— reusing them adds no parallel authority system, no toggle and no new
+evidence table.
+
+**Implementation.** `lib/capabilityPolicy.ts` (`quality.sign_off`,
+`projectId`); `20261136` (the evaluator re-created from `20261132`, the
+`quality_signoff_*` helpers, the four write policies replaced with one
+added disjunct, `project_checklists_signoff_rail` / `turnover_items_signoff_rail`);
+`lib/checklists.ts` (`loadSignoffAuthority`, `signoffSeparation`,
+`captureQualitySignoff`, `setChecklistStatus`), `lib/turnover.ts`
+(`reviewTurnoverItem`), `components/projects/QualityTab.tsx` (controls from
+`quality_signoff_status`, the ceremony on "Mark complete" and "Accept").
+
+**Acceptance.** A Safety member granted on project A writes A's checklist
+and not project B's; the owner who created a checklist cannot complete it
+while a controller exists, and can when alone (marked); a completion or
+acceptance without the signer's fresh signature on that record is refused
+by the database; the tab shows controls exactly to those the policies admit.
+
+**Reversal.** Per default: a facility that wants a stricter rule (a second
+signature even when alone, a named role slot per checklist kind) adds it as
+configuration; per-item e-signatures are a follow-on. None may fall below
+"the author is never the only signer when someone else could sign".
+
+**Risk:** medium — the owner can no longer complete their own checklist or
+accept turnover they seeded while a controller (or a granted reviewer) is on
+the project; until `20261136` is applied the database grants no one new
+and does not bind the signature (the lib already signs and separates).
