@@ -55,9 +55,20 @@ vi.mock("@/lib/knowledgePageRender", () => ({
     pages.slice(0, Math.min(max, state.images)).map((page) => ({ page, mediaType: "image/png", base64: "" }))),
 }));
 vi.mock("@/lib/pdfPageCount", () => ({ countPdfPages: vi.fn(async () => state.pagesTotal) }));
+// PERF-6 (J12): the route's deadline, pulled in by a test to stand for a
+// slow render / a slow model.
+const dl = vi.hoisted(() => ({ leftMs: null as number | null }));
+vi.mock("@/lib/routeDeadline", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/routeDeadline")>();
+  return { ...real, routeDeadline: (s: number) => (dl.leftMs == null ? real.routeDeadline(s) : Date.now() + dl.leftMs) };
+});
 vi.mock("@/lib/docFileServer", () => ({ resolveDocumentFile: vi.fn(async () => ({ ok: true, file: { documentId: "doc1", fileKey: "orgs/o1/manual.pdf", label: "QM-1" } })) }));
 
 import { POST as readCostDoc } from "@/app/api/projects/cost-docs/route";
+import { governedAiCall } from "@/lib/ai/governedCall";
+import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { tooLargeToReadMessage } from "@/lib/routeDeadline";
+import { validateParsedInvoice, closedProjectReadMessage, INVOICE_MAX_LINES } from "@/lib/costDocParse";
 import { POST as evaluateManual } from "@/app/api/companies/quality-manual/route";
 
 const post = (fn: (req: NextRequest) => Promise<Response>, url: string, body: unknown) => fn(new NextRequest(url, {
@@ -69,6 +80,9 @@ const auditDetails = () => (state.calls.find((c) => c.table === "audit_logs" && 
 beforeEach(() => {
   state.user = { id: "u1", email: "u1@x.io" }; state.calls = []; state.updateErrorsOnce = null; state.images = 8; state.pagesTotal = 14;
   ai.duringCall = null;
+  dl.leftMs = null;
+  vi.mocked(governedAiCall).mockClear();
+  vi.mocked(renderKnowledgePages).mockClear();
   state.rows = {
     org_members: [{ org_id: "o1", uid: "u1", role: "DocCtrl", roles: ["DocCtrl"], status: "active" }],
     projects: [{ id: "pr1", org_id: "o1", owner_user_id: "someone-else" }],
@@ -318,5 +332,177 @@ describe("POST /api/projects/cost-docs — a total typed before any read can sti
     const src = readFileSync("components/projects/cost/QuotesPanel.tsx", "utf8");
     expect(src).toMatch(/function typedTotalUnread\(doc: CostDocument\): boolean \{\n\s+return doc\.status === "parsed" && doc\.parsed == null;/);
     expect(src.match(/typedTotalUnread\(doc\) && \(\s*(<div className="mt-0\.5">)?<ReadButton busy=\{busy === doc\.id\} onClick=\{\(\) => void readDoc\(doc\)\} \/>/g)).toHaveLength(2);
+  });
+});
+
+// ── projects Round G J12 ────────────────────────────────────────────────────
+const read = () => post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+
+describe("PM-1 — a closed project's documents are not read", () => {
+  for (const status of ["completed", "cancelled", "archived"]) {
+    it(`${status}: 409 with the sentence, before the file is rendered and before the caller's key is spent`, async () => {
+      state.rows.projects[0].status = status;
+      const res = await read();
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe(closedProjectReadMessage(status));
+      expect(renderKnowledgePages).not.toHaveBeenCalled();
+      expect(governedAiCall).not.toHaveBeenCalled();
+      expect(updatePatch()).toHaveLength(0);
+    });
+  }
+  it("an active or paused project reads as before", async () => {
+    for (const status of ["active", "paused"]) {
+      state.rows.projects[0].status = status; state.calls = [];
+      expect((await read()).status).toBe(200);
+    }
+    expect(closedProjectReadMessage("completed")).toBe("This project is completed — its cost records are read-only, so nothing is read into them. An Admin / Document Control can reopen it.");
+  });
+});
+
+describe("PERF-6 — the read answers inside the function's own limit, with a readable 504", () => {
+  it("the model's budget is what is left of the deadline, capped at 90 s", async () => {
+    expect((await read()).status).toBe(200);
+    const opts = vi.mocked(governedAiCall).mock.calls[0][0] as { timeoutMs: number };
+    expect(opts.timeoutMs).toBe(90_000);
+    dl.leftMs = 40_000; vi.mocked(governedAiCall).mockClear(); state.calls = [];
+    expect((await read()).status).toBe(200);
+    const tight = (vi.mocked(governedAiCall).mock.calls[0][0] as { timeoutMs: number }).timeoutMs;
+    expect(tight).toBeLessThanOrEqual(40_000);
+    expect(tight).toBeGreaterThan(30_000);
+  });
+  it("a render that cannot finish before the deadline is a 504 naming the page cap — the model is never called", async () => {
+    dl.leftMs = 30;
+    vi.mocked(renderKnowledgePages).mockImplementationOnce(() => new Promise(() => undefined));
+    const res = await read();
+    expect(res.status).toBe(504);
+    expect((await res.json()).error).toBe(tooLargeToReadMessage(8));
+    expect(governedAiCall).not.toHaveBeenCalled();
+    expect(updatePatch()).toHaveLength(0);
+  });
+  it("too little time left for the model after the render: 504 before the key is spent", async () => {
+    dl.leftMs = 5_000;
+    const res = await read();
+    expect(res.status).toBe(504);
+    expect((await res.json()).error).toMatch(/too large to read in time — try fewer pages/);
+    expect(governedAiCall).not.toHaveBeenCalled();
+  });
+  it("a model call that times out is a 504 with the same sentence, never a bare 502", async () => {
+    vi.mocked(governedAiCall).mockRejectedValueOnce(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }));
+    const res = await read();
+    expect(res.status).toBe(504);
+    expect((await res.json()).error).toBe(tooLargeToReadMessage(8));
+    expect(updatePatch()).toHaveLength(0);
+  });
+  it("a page count that never answers is UNKNOWN (null) after its own short budget — never a refusal, and the model keeps its time", async () => {
+    const { countPdfPages } = await import("@/lib/pdfPageCount");
+    vi.mocked(countPdfPages).mockImplementationOnce(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const p = read();
+      await vi.advanceTimersByTimeAsync(10_001);
+      const res = await p;
+      expect(res.status).toBe(200);
+      expect((await res.json()).pagesTotal).toBeNull();
+      expect(auditDetails().truncated).toBeNull();
+      // 105 s of route time minus the 10 s the count was given: the 90 s cap still holds
+      expect((vi.mocked(governedAiCall).mock.calls[0][0] as { timeoutMs: number }).timeoutMs).toBe(90_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("PR-2 criterion 3 — the invoice's extraction is validated before it is stored", () => {
+  beforeEach(() => { state.rows.cost_documents[0].kind = "invoice"; });
+  it("only the schema's fields are stored, typed and bounded; a non-calendar date and junk keys are dropped", async () => {
+    state.aiText = JSON.stringify({
+      vendorName: "  Gulf Mechanical  ", docNumber: "INV-1042", docDate: "2026-02-30", total: 41250, currency: "usd",
+      lineItems: [{ description: "Repipe", total: 41250, sneaky: "x" }, "junk", { description: "", total: null }],
+      injected: "<script>", total_amount: 1,
+    });
+    const res = await read();
+    expect(res.status).toBe(200);
+    const [patch] = updatePatch();
+    expect(patch.parsed).toEqual({
+      vendorName: "Gulf Mechanical", docNumber: "INV-1042", docDate: null, total: 41250, currency: "USD",
+      lineItems: [{ description: "Repipe", total: 41250 }],
+    });
+    expect(patch.total_amount).toBe(41250);
+    expect(patch).not.toHaveProperty("doc_date");
+    expect(patch.doc_number).toBe("INV-1042");
+    expect(patch.vendor_name).toBe("Gulf Mechanical");
+  });
+  it("an amount due that is not a positive number (a string, zero, missing) is a 422 and nothing is stored", async () => {
+    for (const total of ["41250", 0, -5, null]) {
+      state.calls = [];
+      state.aiText = JSON.stringify({ vendorName: "X", total });
+      const res = await read();
+      expect(res.status).toBe(422);
+      expect((await res.json()).error).toBe("Couldn't read an amount due from the invoice.");
+      expect(updatePatch()).toHaveLength(0);
+    }
+  });
+  it("validateParsedInvoice caps the billed lines and the free text", () => {
+    const v = validateParsedInvoice({ total: 10, vendorName: "v".repeat(500), docNumber: "n".repeat(100), docDate: "2026-02-28",
+      lineItems: Array.from({ length: 500 }, (_, i) => ({ description: `L${i}`, total: 1 })) });
+    expect(v.lineItems).toHaveLength(INVOICE_MAX_LINES);
+    expect(v.vendorName).toHaveLength(200);
+    expect(v.docNumber).toHaveLength(60);
+    expect(v.docDate).toBe("2026-02-28");
+    expect(() => validateParsedInvoice("not an object")).toThrow(/amount due/);
+    expect(() => validateParsedInvoice({ total: Number.POSITIVE_INFINITY })).toThrow(/amount due/);
+  });
+});
+
+describe("COST-3 done-when 2 — a read links the quote to the ONE Known Company its vendor name binds to", () => {
+  const linkWrites = () => updatePatch().filter((p) => "company_id" in p);
+  beforeEach(() => { Object.assign(state.rows.cost_documents[0], { company_id: null, vendor_name: "Gulf Mechanical", party_id: null }); });
+
+  it("an exact (or uniquely normalised) name is linked by its own guarded write; the response and the audit row say so", async () => {
+    const res = await read();
+    expect(res.status).toBe(200);
+    expect((await res.json()).companyLinked).toEqual({ id: "c1", name: "Gulf Mechanical" });
+    expect(linkWrites()).toEqual([{ company_id: "c1" }]);
+    // the read's own save never carries the link; the link write is guarded on "still unlinked"
+    expect(updatePatch()[0]).not.toHaveProperty("company_id");
+    const i = state.calls.findIndex((c) => c.table === "cost_documents" && c.method === "update" && "company_id" in (c.args[0] as object));
+    expect(state.calls.slice(i, i + 6).map((c) => [c.method, ...c.args])).toContainEqual(["is", "company_id", null]);
+    expect(auditDetails().companyLinked).toEqual({ id: "c1", name: "Gulf Mechanical", by: "vendor name" });
+    // "Gulf Mechanical, Inc." normalises to the same single row
+    state.calls = []; Object.assign(state.rows.cost_documents[0], { vendor_name: "Gulf Mechanical, Inc." });
+    await read();
+    expect(linkWrites()).toEqual([{ company_id: "c1" }]);
+  });
+  it("ambiguity never binds: two rows the name could be → no link", async () => {
+    state.rows.companies.push({ id: "c2", org_id: "o1", name: "GULF MECHANICAL" });
+    const res = await read();
+    expect(res.status).toBe(200);
+    expect((await res.json()).companyLinked).toBeUndefined();
+    expect(linkWrites()).toHaveLength(0);
+  });
+  it("a row already linked, a contractor already linked, or a row without the column is left alone — no registry read", async () => {
+    state.rows.cost_documents[0].company_id = "c-human";
+    await read();
+    expect(linkWrites()).toHaveLength(0);
+
+    state.calls = []; state.rows.cost_documents[0].company_id = null; state.rows.cost_documents[0].party_id = "pp1";
+    state.rows.project_parties = [{ id: "pp1", company_id: "c9" }];
+    await read();
+    expect(linkWrites()).toHaveLength(0);
+    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
+
+    state.calls = []; delete state.rows.cost_documents[0].company_id; state.rows.cost_documents[0].party_id = null;
+    await read();
+    expect(linkWrites()).toHaveLength(0);
+    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
+  });
+  it("an unknown vendor links nothing; an invoice is never linked by this read", async () => {
+    state.rows.cost_documents[0].vendor_name = "Nobody Known";
+    await read();
+    expect(linkWrites()).toHaveLength(0);
+    state.calls = []; Object.assign(state.rows.cost_documents[0], { kind: "invoice", vendor_name: "Gulf Mechanical" });
+    state.aiText = JSON.stringify({ vendorName: "Gulf Mechanical", total: 10 });
+    await read();
+    expect(linkWrites()).toHaveLength(0);
   });
 });
