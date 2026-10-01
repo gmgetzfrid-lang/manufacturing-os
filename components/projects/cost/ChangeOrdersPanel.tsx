@@ -327,7 +327,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         </select>
         <select value={partyId} onChange={(e) => setPartyId(e.target.value)}
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Contractor / vendor…</option>
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"

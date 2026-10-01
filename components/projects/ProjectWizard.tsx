@@ -27,6 +27,7 @@ import { listCompanies, type Company } from "@/lib/companies";
 import { Field } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 import {
   prepareBudgetRows, runWizardFollowUpWrites, summarizeWizardFailures, retainedRowLines,
   type WizardWriteDeps, type WizardWriteFailure, type WizardWriteInput, type WizardWriteStep,
@@ -39,7 +40,7 @@ const STEPS = [
   { key: "sow", label: "Summary of Work", icon: FileText },
   { key: "budget", label: "Budget", icon: CircleDollarSign },
   { key: "schedule", label: "Schedule", icon: Flag },
-  { key: "team", label: "Team & contractors", icon: HardHat },
+  { key: "team", label: "Contractors", icon: HardHat },
 ] as const;
 type StepKey = (typeof STEPS)[number]["key"];
 
@@ -472,7 +473,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {failures.length === 0 && step === 3 && (
             <>
-              <StepIntro text="Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast." />
+              <StepIntro text="Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the spend curve, and the finish-cost forecast." />
               <div className="space-y-2">
                 {budgetRows.map((r, i) => (
                   <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
@@ -502,47 +503,47 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {failures.length === 0 && step === 4 && (
             <>
-              <StepIntro text="A few dated milestones are enough to start — they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Schedule tab." />
+              <StepIntro text="A few dated tasks are enough to start — they unlock the schedule board, overdue alerts, and the planned-pace line on the spend curve. Import a full P6/MS Project XML later from the Schedule tab." />
               <div className="space-y-2">
                 {milestoneRows.map((r, i) => (
                   <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { name: e.target.value }))}
-                      aria-label={`Milestone ${i + 1} name`} placeholder={i === 0 ? "e.g. Mobilize" : i === 1 ? "e.g. Demo complete" : "Milestone"}
+                      aria-label={`Task ${i + 1} name`} placeholder={i === 0 ? "e.g. Mobilize" : i === 1 ? "e.g. Demo complete" : "Task"}
                       className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <input type="date" value={r.date} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { date: e.target.value }))}
-                      aria-label={`Milestone ${i + 1} planned date`} className="flex-1 sm:flex-none min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
-                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove milestone ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                      aria-label={`Task ${i + 1} planned date`} className="flex-1 sm:flex-none min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
+                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove task ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add milestone</button>
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add task</button>
               </div>
             </>
           )}
 
           {failures.length === 0 && step === 5 && (
             <>
-              <StepIntro text="Who's working this job? Pick from your Known Companies registry (their performance record follows them) or type a new name. Teammate invites live on the project's Members tab." />
+              <StepIntro text="Which contractors are on this job — trade contractors, vendors, rental houses, internal crews? Pick from your Known Companies registry (their performance record follows them) or type a new name. Teammate invites live on the project's Members tab." />
               <div className="space-y-2">
                 {partyRows.map((r, i) => (
                   <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                     <input value={r.name} onChange={(e) => setPartyRows(rows(partyRows, i, { name: e.target.value }))}
-                      list="wizard-companies" aria-label={`Company ${i + 1} name`} placeholder="Company name"
+                      list="wizard-companies" aria-label={`Contractor ${i + 1} name`} placeholder="Company name"
                       className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <select value={r.kind} onChange={(e) => setPartyRows(rows(partyRows, i, { kind: e.target.value }))}
-                      aria-label={`Company ${i + 1} kind`} className="min-w-0 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
-                      {["contractor", "vendor", "rental", "internal"].map((k) => <option key={k} value={k}>{k}</option>)}
+                      aria-label={`Contractor ${i + 1} kind`} className="min-w-0 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]">
+                      {COMPANY_KINDS.map((k) => <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>)}
                     </select>
                     <input value={r.trade} onChange={(e) => setPartyRows(rows(partyRows, i, { trade: e.target.value }))}
-                      aria-label={`Company ${i + 1} trade`} placeholder="Trade" className="flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove company ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                      aria-label={`Contractor ${i + 1} trade`} placeholder="Trade" className="flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
+                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove contractor ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-companies">
                   {companies.map((c) => <option key={c.id} value={c.name} />)}
                 </datalist>
                 <button onClick={() => setPartyRows([...partyRows, { name: "", kind: "contractor", trade: "" }])}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add company</button>
+                  className="inline-flex items-center gap-1 text-xs font-bold text-[var(--color-accent)]"><Plus className="w-3.5 h-3.5" /> Add contractor</button>
               </div>
             </>
           )}

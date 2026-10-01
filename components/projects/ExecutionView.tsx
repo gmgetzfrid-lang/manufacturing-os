@@ -843,7 +843,7 @@ export default function ExecutionView({
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
         <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
         <div className="text-sm font-semibold text-[var(--color-text)]">No dated tasks yet</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule or add a milestone to populate the execution board.</div>
+        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule or add a task to populate the execution board.</div>
       </div>
     );
   }
@@ -1684,10 +1684,10 @@ function Legend({ calendarLabel }: { calendarLabel: string }) {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-blue-500 overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
-          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A phase — a summary task that rolls up its sub-tasks">
+          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase (rolls up sub-tasks)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a task with no duration: a single date the schedule marks (shown as a diamond, never a bar)">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${calendarLabel}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>

@@ -139,7 +139,7 @@ export async function runWizardFollowUpWrites(
       name: r.name, planned_at: new Date(`${r.date}T12:00:00`).toISOString(),
       status: "planned", created_by: input.actorUserId,
     })));
-    if (error) failures.push({ step: "schedule", label: plural(input.milestones.length, "milestone"), message: describe(error, "milestones") });
+    if (error) failures.push({ step: "schedule", label: plural(input.milestones.length, "schedule task"), message: describe(error, "schedule tasks") });
   }
 
   if (wants("team") && input.parties.length > 0) {
@@ -154,7 +154,7 @@ export async function runWizardFollowUpWrites(
       // Pre-migration: company_id doesn't exist yet — save without the link.
       ({ error } = await deps.insertRows("project_parties", rows.map(({ company_id: _c, ...rest }) => rest)));
     }
-    if (error) failures.push({ step: "team", label: plural(input.parties.length, "company", "companies"), message: describe(error, "companies on the job") });
+    if (error) failures.push({ step: "team", label: plural(input.parties.length, "contractor"), message: describe(error, "contractors") });
   }
 
   if (wants("turnover")) {
@@ -201,7 +201,7 @@ export function retainedRowLines(input: WizardWriteInput, step: WizardWriteStep,
   }
 }
 
-/** One line naming what did not save: "4 budget lines and 2 milestones". */
+/** One line naming what did not save: "4 budget lines and 2 schedule tasks". */
 export function summarizeWizardFailures(failures: WizardWriteFailure[]): string {
   const labels = failures.map((f) => f.label);
   if (labels.length === 0) return "";

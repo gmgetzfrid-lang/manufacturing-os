@@ -69,6 +69,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import Link from "next/link";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
+import { TURNOVER_STATUS_MEANING } from "@/lib/projectVocabulary";
 
 /** A11Y-8: a decision control is never under 24 px, and on a coarse
  *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
@@ -1061,7 +1062,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const startWaive = async (item: TurnoverItem) => {
     const note = await promptReason(
       `Waive "${item.name}"`,
-      "Why is this not required for this job? A waiver is a signed sign-off: it goes on the record with your e-signature — and a waived item is counted apart from an accepted one.",
+      "Why can this job go without it? A waiver is a signed sign-off: it goes on the record with your e-signature — and a waived item is counted apart from an accepted one.",
       "Reason (at least 10 characters)",
     );
     if (note === null) return;
@@ -1099,6 +1100,13 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
       </div>
 
       {notice && <div className="px-4 pt-3"><Notice notice={notice} onClose={() => setNotice(null)} /></div>}
+
+      {/* UX-15: the turnover words, said where they are used. */}
+      {!loadError && items.length > 0 && (
+        <p data-turnover-key className="px-4 pt-2 text-[10px] text-[var(--color-text-muted)]">
+          <b>Accepted</b> — {TURNOVER_STATUS_MEANING.accepted} · <b>Waived</b> — {TURNOVER_STATUS_MEANING.waived} · <b>Rejected</b> — {TURNOVER_STATUS_MEANING.rejected}.
+        </p>
+      )}
 
       {!loadError && historyError && items.length > 0 && (
         <div role="alert" className="px-4 pt-2 text-[10px] font-bold text-rose-700 dark:text-rose-300">

@@ -238,7 +238,7 @@ describe("COST-12 — the award base is resolved PER PARTY", () => {
     // $100k over a base of $800k = 12.5% (the whole-company switch read $100k over $500k = 20%, score 0).
     expect(cost.detail).toMatch(/^13% cost growth over bid/);
     expect(cost.score).toBe(37.5);
-    expect(cost.detail).toContain("awards from posted commitments on 1 party and the typed contract value on 1");
+    expect(cost.detail).toContain("awards from posted commitments on 1 project and the typed contract value on 1");
   });
 
   it("a party whose posted commitments exist never adds its typed contract_value on top", async () => {
@@ -320,7 +320,7 @@ describe("PERF-1 — every batched read pages past PostgREST's 1000-row cap", ()
     }));
     const p = await gatherCompanyProfile(gulf);
     const schedule = p.scorecard.dimensions.find((d) => d.key === "schedule")!;
-    expect(schedule.detail).toBe("800/1200 milestones on time");
+    expect(schedule.detail).toBe("800/1200 tasks on time");
     const msOr = state.calls.find((c) => c.table === "milestones" && c.method === "or")!;
     // The comma in the name is quoted so it stays one value; "Gulf Mechanical" (another row's text) is not theirs.
     expect(msOr.args[0]).toBe('responsible_party.ilike."*Gulf Mechanical, Inc.*"');

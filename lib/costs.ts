@@ -158,7 +158,7 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
 export async function listParties(orgId: string, projectId: string): Promise<CostParty[]> {
   const { data, error } = await supabase.from("project_parties").select("*")
     .eq("org_id", orgId).eq("project_id", projectId).order("name");
-  if (error) throw new Error(`Couldn't load contractors & vendors: ${userFacingReadError(error, "listParties")}`);
+  if (error) throw new Error(`Couldn't load the contractors: ${userFacingReadError(error, "listParties")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapParty);
 }
 
@@ -184,7 +184,7 @@ export async function saveParty(input: {
     await audit("COST_PARTY_UPDATED", input.orgId, input.id, input.actor, { patch: input.patch });
     return { ok: true };
   }
-  if (!row.name) return { ok: false, error: "Party name is required." };
+  if (!row.name) return { ok: false, error: "Contractor name is required." };
   const { data, error } = await supabase.from("project_parties")
     .insert({ org_id: input.orgId, project_id: input.projectId, created_by: input.actor.uid, ...row })
     .select("id").single();
@@ -231,7 +231,7 @@ export async function saveAccount(input: {
     });
     return { ok: true };
   }
-  if (!row.name) return { ok: false, error: "Account name is required." };
+  if (!row.name) return { ok: false, error: "Budget line name is required." };
   const { data, error } = await supabase.from("cost_accounts")
     .insert({ org_id: input.orgId, project_id: input.projectId, budget: 0, created_by: input.actor.uid, ...row })
     .select("id").single();

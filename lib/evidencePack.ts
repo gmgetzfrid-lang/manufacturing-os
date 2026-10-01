@@ -237,7 +237,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   ${data.members.length === 0 ? '<div class="empty">No members.</div>' : `<table><thead><tr><th>Member</th><th>Role</th><th>Responsibility</th><th>Joined</th></tr></thead><tbody>${join(memberRows)}</tbody></table>`}
 
   <h2>Schedule (${data.milestones.length})</h2>
-  ${data.milestones.length === 0 ? '<div class="empty">No milestones.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
+  ${data.milestones.length === 0 ? '<div class="empty">No schedule tasks.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
 
   <h2>Transmittals — formal document issues (${data.transmittals.length})</h2>
   ${data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}

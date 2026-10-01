@@ -122,7 +122,7 @@ describe("REL-3 — the Projects and Companies libraries route through it", () =
     const r = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex" }, actor: { uid: "u1", email: null } });
     expect(r).toEqual({ ok: false, error: "You don't have permission to do this — nothing was changed." });
     db.next = { data: null, error: { message: 'relation "public.project_parties" does not exist', code: "42P01" } };
-    await expect(listParties("o1", "p1")).rejects.toThrow("Couldn't load contractors & vendors: This needs the latest database migration applied.");
+    await expect(listParties("o1", "p1")).rejects.toThrow("Couldn't load the contractors: This needs the latest database migration applied.");
     db.next = { data: null, error: { message: 'insert or update on table "cost_entries" violates foreign key constraint "x"', code: "23503" } };
     const e = await addEntry({ orgId: "o1", projectId: "p1", costAccountId: "a1", entryType: "actual", amount: 10, entryDate: "2026-10-01", actor: { uid: "u1", email: null } });
     expect(e.ok).toBe(false);

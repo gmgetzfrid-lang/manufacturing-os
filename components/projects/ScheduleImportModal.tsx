@@ -375,7 +375,7 @@ export default function ScheduleImportModal({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold text-[var(--color-text)] truncate">{filename}</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} task{parseResult.rows.length === 1 ? "" : "s"} found</div>
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); invalidatePlan(); }}

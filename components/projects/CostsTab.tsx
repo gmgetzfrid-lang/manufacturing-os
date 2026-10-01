@@ -35,6 +35,7 @@ import { scheduleSpanFromMilestones } from "@/lib/costSeries";
 import { vizCat } from "@/components/dashboard/viz";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
+import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
@@ -275,11 +276,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <CircleDollarSign className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Cost accounts</span>
+          <span className="text-sm font-bold text-[var(--color-text)]">Budget lines</span>
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{accounts.length}</span>
           {canManage && (
             <button onClick={() => setShowNewAccount((v) => !v)} className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-              <Plus className="w-3 h-3" /> New account
+              <Plus className="w-3 h-3" /> New budget line
             </button>
           )}
         </div>
@@ -296,9 +297,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         {rollup.accounts.length === 0 ? (
           <div className="px-4 py-10 text-center">
             <CircleDollarSign className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">No cost accounts yet</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">No budget lines yet</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-              An account is a budget line — &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
+              A budget line (a cost account, in accounting terms) is one slice of the budget — &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
               {canManage ? " Create the first one above." : " Document Control sets these up."}
             </div>
           </div>
@@ -361,12 +362,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         )}
       </div>
 
-      {/* ── Parties ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      {/* ── Contractors (UX-15: never "party" on screen) ── */}
+      <div data-panel="contractors" className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <button onClick={() => setShowParties((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
           {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
           <HardHat className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Contractors &amp; vendors</span>
+          <span className="text-sm font-bold text-[var(--color-text)]">Contractors</span>
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
@@ -447,7 +448,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
       note = await appPrompt({
         title: `Reverse ${c.coNumber}`,
         message: "No cost entry of this change order remains on the ledger, so reversing marks it void on the record (the approver stays visible). Why?",
-        placeholder: "e.g. Its commitment was voided by hand in the accounts below",
+        placeholder: "e.g. Its commitment was voided by hand in the budget lines below",
       });
       if (note === null) return;
     } else if (!(await appConfirm({ message: `Link ${c.coNumber} to the selected commitment? Its amount then counts in the revised budget. The action is audited.` }))) return;
@@ -547,7 +548,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
     setBusy(a.id);
     const res = await saveAccount({ orgId, projectId, id: a.id, patch: { wbsMilestoneId: v || null }, actor });
     setBusy(null);
-    if (!res.ok) setErr(res.error ?? "Couldn't pin the milestone."); else onChanged();
+    if (!res.ok) setErr(res.error ?? "Couldn't pin the task."); else onChanged();
   };
 
   return (
@@ -674,8 +675,8 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
         className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
       {parties.length > 0 && (
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Party…</option>
+        <select value={party} onChange={(e) => setParty(e.target.value)} aria-label="Contractor" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
@@ -707,7 +708,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!name.trim()) { setError("Account name is required."); return; }
+    if (!name.trim()) { setError("Budget line name is required."); return; }
     const b = budget ? Number(budget) : 0;
     if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
     setSaving(true); setError(null);
@@ -717,7 +718,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
       actor,
     });
     setSaving(false);
-    if (!res.ok) { setError(res.error ?? "Couldn't create the account."); return; }
+    if (!res.ok) { setError(res.error ?? "Couldn't create the budget line."); return; }
     onDone();
   };
 
@@ -725,7 +726,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
         <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (e.g. 01-200)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono" />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Account name (required)" autoFocus className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs md:col-span-2" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Budget line name (required)" autoFocus className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs md:col-span-2" />
         <select value={type} onChange={(e) => setType(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
@@ -735,8 +736,8 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
             {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </span>
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Party…</option>
+        <select value={party} onChange={(e) => setParty(e.target.value)} aria-label="Contractor" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
@@ -780,7 +781,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
       actor,
     });
     setSaving(false);
-    if (!res.ok) { setError(res.error ?? "Couldn't add the party."); return; }
+    if (!res.ok) { setError(res.error ?? "Couldn't add the contractor."); return; }
     setName(""); setTrade(""); setContract("");
     onChanged();
   };
@@ -793,7 +794,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
             <li key={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
+                {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[p.kind as keyof typeof COMPANY_KIND_LABEL] ?? p.kind}</span>}
                 {p.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
@@ -807,9 +808,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
         <div className="pt-1 flex items-end gap-2 flex-wrap">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-            <option value="contractor">contractor</option>
-            <option value="vendor">vendor</option>
-            <option value="internal">internal</option>
+            {COMPANY_KINDS.map((k) => <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>)}
           </select>
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />

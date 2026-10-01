@@ -168,13 +168,13 @@ export default function CompanyProfilePage() {
                   <> Fewer than {MIN_EVIDENCE_FOR_BAND} evidence points — the band is <b>provisional</b>, not a grade.</>
                 )}
                 {profile && profile.partiesLinked === 0 && (
-                  <> <b>Unlinked:</b> no project party points at this registry row, so awards, change orders, turnover and punch evidence cannot reach it — link a party on a project&apos;s Costs tab.</>
+                  <> <b>Unlinked:</b> no project&apos;s contractor is linked to this company, so awards, change orders, turnover and punch evidence cannot reach it — link the contractor on that project&apos;s Costs tab.</>
                 )}
                 {profile && profile.awardsSource === "contract_value" && (
                   <> Awards come from a typed contract value, not posted commitments.</>
                 )}
                 {profile && profile.awardsSource === "mixed" && (
-                  <> Awards on some parties come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
+                  <> Awards on some projects come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
                 )}
               </div>
             )}

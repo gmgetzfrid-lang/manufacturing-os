@@ -496,6 +496,13 @@ export default function ProjectDetailPage() {
                 }}
               />
             )}
+            {/* UX-15: the four exports, told apart where they sit. */}
+            <HelpTooltip label="What each export contains" placement="bottom">
+              <b>Export CSV</b> — a spreadsheet of this project&rsquo;s record, its documents and their checkouts, to open in Excel.
+              <b className="block mt-1">Evidence pack</b> — a printable record for an auditor: the team, the schedule, formal document issues (transmittals) and the audit trail.
+              <b className="block mt-1">Report</b> — a printable brief for management: money and forecast, schedule, quality and closeout, and the contractors on the job.
+              {canManage && <><b className="block mt-1">Lessons learned</b> — drafted from this project&rsquo;s history for you to edit and save; the Report prints it.</>}
+            </HelpTooltip>
             {project.id && project.orgId && uid && (
               <>
                 <WatchButton
@@ -565,8 +572,8 @@ export default function ProjectDetailPage() {
             <div className="ml-1 pb-2">
               <HelpTooltip>
                 <b>Documents</b> — the project&rsquo;s document register (checked-out, attached and approved contractor documents, each marked current or not), then every checkout taken under the project (active + released). The badge counts distinct documents.
-                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
-                <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
+                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, tasks finished.
+                <b className="block mt-1">Schedule</b> — tasks with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
                 <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>

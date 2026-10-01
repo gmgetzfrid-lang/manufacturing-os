@@ -1187,7 +1187,7 @@ const RECORD_COUNT_LABELS: Array<[keyof ProjectRecordCounts, string, string]> = 
   ["costEntries", "cost entry", "cost entries"],
   ["costDocuments", "quote / invoice", "quotes / invoices"],
   ["changeOrders", "change order", "change orders"],
-  ["parties", "company on the job", "companies on the job"],
+  ["parties", "contractor", "contractors"],
   ["checklists", "checklist", "checklists"],
   ["checklistItems", "checklist item", "checklist items"],
   ["turnoverItems", "turnover item", "turnover items"],

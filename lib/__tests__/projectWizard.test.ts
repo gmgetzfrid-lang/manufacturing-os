@@ -94,7 +94,7 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
   it("the milestones insert binds its error instead of .then(() => undefined, () => undefined)", async () => {
     const { d } = deps({ milestones: { message: "null value in column \"planned_at\"", code: "23502" } });
     const { failures } = await runWizardFollowUpWrites(input(), d);
-    expect(failures).toEqual([{ step: "schedule", label: "2 milestones", message: "null value in column \"planned_at\"" }]);
+    expect(failures).toEqual([{ step: "schedule", label: "2 schedule tasks", message: "null value in column \"planned_at\"" }]);
   });
 
   it("a turnover seed that returns { ok: false } is a failure, not a swallowed catch", async () => {
@@ -126,7 +126,7 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
     });
     const { failures } = await runWizardFollowUpWrites(input(), d);
     expect(failures.map((f) => f.step)).toEqual(["budget", "schedule", "turnover"]);
-    expect(summarizeWizardFailures(failures)).toBe("4 budget lines, 2 milestones and the turnover package seeds");
+    expect(summarizeWizardFailures(failures)).toBe("4 budget lines, 2 schedule tasks and the turnover package seeds");
   });
 
   it("the retry re-runs ONLY the refused steps with the retained rows", async () => {

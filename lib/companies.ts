@@ -49,12 +49,9 @@ export interface CompanyEvent {
   createdByName: string | null;
 }
 
-export const COMPANY_KIND_LABEL: Record<Company["kind"], string> = {
-  contractor: "Contractor",
-  vendor: "Vendor",
-  rental: "Rental / equipment",
-  internal: "Internal crew",
-};
+/** The kinds' labels live with the Projects vocabulary (UX-15) — one list
+ *  for the wizard, the Costs tab and the registry. */
+export { COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 
 export const EVENT_KIND_LABEL: Record<CompanyEvent["kind"], string> = {
   recordable: "Recordable injury",

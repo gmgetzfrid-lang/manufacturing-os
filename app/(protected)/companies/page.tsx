@@ -32,8 +32,9 @@ import { scoreBand } from "@/lib/companyScore";
 import { readExtent } from "@/lib/bidTab";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
+import { COMPANY_KINDS } from "@/lib/projectVocabulary";
 
-const KIND_FILTERS = ["all", "contractor", "vendor", "rental", "internal"] as const;
+const KIND_FILTERS = ["all", ...COMPANY_KINDS] as const;
 
 // The registry is paged and filtered SERVER-SIDE (PERF-1 / GAP-409): one
 // page of COMPANY_PAGE_SIZE companies sorted by name, search by ILIKE on
@@ -286,8 +287,8 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
           </span>
         )}
         {profile && profile.partiesLinked === 0 && (
-          <span className="inline-flex items-center gap-1 italic" title="No project party is linked to this registry row — awards, change orders, turnover and punch evidence cannot reach it until one is. Link a party on a project's Costs tab.">
-            <Briefcase className="w-3 h-3" /> unlinked — no project party yet
+          <span className="inline-flex items-center gap-1 italic" title="No project's contractor is linked to this company — awards, change orders, turnover and punch evidence cannot reach it until one is. Link the contractor on that project's Costs tab.">
+            <Briefcase className="w-3 h-3" /> unlinked — on no project yet
           </span>
         )}
         {bidsTotal > 0 && (

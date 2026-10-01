@@ -91,9 +91,9 @@ export const SNAPSHOT_READS = {
   costAccounts: "cost accounts",
   costEntries: "cost entries",
   costDocuments: "cost documents",
-  parties: "companies on the job",
+  parties: "contractors",
   changeOrders: "change orders",
-  milestones: "milestones",
+  milestones: "schedule tasks",
   checklists: "checklists",
   checklistItems: "checklist items",
   turnover: "turnover items",
@@ -312,19 +312,19 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (known(R.costAccounts) && budgetNow <= 0) add({
     id: "budget", kind: "cost", weight: 100,
     title: "Add a budget (2 min)",
-    payoff: "Unlocks the burn bar, the S-curve, and the finish-cost forecast.",
+    payoff: "Unlocks the burn bar, the spend curve, and the finish-cost forecast.",
     href: `${base}?tab=costs`,
   });
   if (known(R.milestones) && s.milestoneCount === 0) add({
     id: "schedule", kind: "schedule", weight: 95,
-    title: "Add a schedule — import a file or type a few milestones",
+    title: "Add a schedule — import a file or type a few dated tasks",
     payoff: "Unlocks the execution board, overdue alerts, and schedule health (SPI).",
     href: `${base}?tab=schedule`,
   });
   if (s.pendingCostDocs > 0) add({
     id: "confirm-docs", kind: "cost", weight: 92,
     title: `${s.pendingCostDocs} read document${s.pendingCostDocs === 1 ? "" : "s"} waiting on you`,
-    payoff: "Read quotes are already in the bid comparison — award the winner; read invoices post as spend when you post them as actual.",
+    payoff: "Read quotes are already in the bid comparison — award the winner; read invoices count toward Spent once you post them as actual.",
     href: `${base}?tab=costs`,
   });
   if (known(RFQ_GROUPS_NOT_MIGRATED) && s.quoteCount > 0 && s.unawardedRfqGroups > 0) add({

@@ -291,7 +291,7 @@ describe("A11Y-12 — decision-critical knowledge is never hover-only", () => {
     expect(cost).toContain('{ENTRY_TYPES.find((t) => t.v === type)?.hint}');
     expect(cost).toContain("Earned value (EV) = this line&apos;s budget × the pinned task&apos;s % complete.");
     expect(src("components/projects/cost/ChangeOrdersPanel.tsx")).toContain("The reason code scores both sides:");
-    expect(src("components/projects/ScheduleTab.tsx")).toContain("<b>Weight</b> is how much this milestone counts in the % complete");
+    expect(src("components/projects/ScheduleTab.tsx")).toContain("<b>Weight</b> is how much this task counts in the % complete");
     expect(src("app/(protected)/companies/[id]/page.tsx")).toContain('<p id="company-status-help"');
   });
 

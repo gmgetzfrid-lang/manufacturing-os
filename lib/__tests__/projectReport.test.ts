@@ -222,7 +222,7 @@ describe("the report reads the same schedule rows as the Costs tab (MON-5 at P6 
     expect(d.rollup.cpi).toBe(tab.cpi);
 
     const html = renderReportHtml(d);
-    expect(html).toContain("100/600 milestones complete");
+    expect(html).toContain("100/600 tasks complete");
     expect(html).toContain("600 imported from the schedule file");
     expect(html).not.toMatch(/first \d+ of/);
   });
@@ -235,7 +235,7 @@ describe("the report reads the same schedule rows as the Costs tab (MON-5 at P6 
     const html = renderReportHtml(d);
     expect(html).toContain(`first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} by planned date`);
     const draft = await draftLessonsLearned("org1", "p1");
-    expect(draft).toContain(`the first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} activities by planned date`);
+    expect(draft).toContain(`the first ${PROJECT_MILESTONE_READ_LIMIT} of ${PROJECT_MILESTONE_READ_LIMIT + 200} tasks by planned date`);
   });
 
   it("the report's bound is the snapshot's bound — and the Costs tab's (source pin)", async () => {
@@ -484,12 +484,12 @@ describe("a refused read is said, never printed as zero (REL-2 consumer)", () =>
     onLedgerCoFixture();
     state.errors.milestones = "permission denied for table milestones";
     const d = await gatherReportData("org1", "p1");
-    expect(d.readFailures).toEqual(["milestones"]);
+    expect(d.readFailures).toEqual(["schedule tasks"]);
     const html = renderReportHtml(d);
     expect(html).not.toContain("No schedule loaded");
-    expect(html).toContain("Could not read the milestones");
+    expect(html).toContain("Could not read the schedule");
     expect(html).toMatch(/Cost performance \(CPI\)<\/td><td><span class="muted">Could not read<\/span>/);
-    expect(await draftLessonsLearned("org1", "p1")).toContain("SCHEDULE: Could not read the milestones");
+    expect(await draftLessonsLearned("org1", "p1")).toContain("SCHEDULE: Could not read the schedule");
   });
 
   it("a refused punch read is not 'Clear', and the draft never writes 'Clean job' over it", async () => {

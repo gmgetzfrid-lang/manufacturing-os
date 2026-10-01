@@ -257,7 +257,7 @@ export default function TaskDetailPanel({
                     <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
                     <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
                   </div>
-                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-tasks come along)"}</span>
                 </div>
               )}
 
@@ -335,7 +335,7 @@ export default function TaskDetailPanel({
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
-                    Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
+                    Dot = set status · ◀ ▶ = move this sub-task a day earlier/later (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => {
@@ -368,14 +368,14 @@ export default function TaskDetailPanel({
                           <span className="shrink-0 flex items-center gap-0.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
-                              title="Move this step 1 day earlier"
+                              title="Move this sub-task 1 day earlier"
                               className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
-                              title="Move this step 1 day later"
+                              title="Move this sub-task 1 day later"
                               className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />

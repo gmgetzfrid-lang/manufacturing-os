@@ -492,7 +492,7 @@ describe("PM-6 / QUAL-3 — deleting a project counts, audits and refuses", () =
     expect(c.turnoverItems).toBeNull();
     expect(regulatedRecordTotal(c)).toBeNull();
     expect(describeProjectRecords(c)).toEqual([
-      "3 budget lines", "14 cost entries", "4 change orders", "2 companies on the job", "1 checklist",
+      "3 budget lines", "14 cost entries", "4 change orders", "2 contractors", "1 checklist",
       "120 checklist items", "turnover items: could not be counted", "40 punch items",
     ]);
     expect(regulatedRecordTotal({ ...c, turnoverItems: 0 })).toBe(3 + 14 + 4 + 1 + 120 + 40);

@@ -134,16 +134,16 @@ describe("REL-10 / REL-2 · a failed FIRST load shows a failure state — never 
     expect(host.querySelector('[data-mark="watermark"]')).toBeNull();
     expect(host.querySelector("svg[role=img]")).toBeNull();
     // REL-2: none of the new-project empty state — no money figure at all, no
-    // "No cost accounts yet … Create the first one", no New account button,
+    // "No budget lines yet … Create the first one", no New budget line button,
     // and no panel that draws from the read.
     expect(host.textContent).not.toMatch(/\$\s?\d/);
     expect(host.textContent).not.toMatch(/Available|uncommitted|Budget burn/);
-    expect(host.textContent).not.toContain("No cost accounts yet");
+    expect(host.textContent).not.toContain("No budget lines yet");
     expect(host.textContent).not.toContain("Create the first one");
-    expect(button("New account")).toBeUndefined();
+    expect(button("New budget line")).toBeUndefined();
     expect(host.querySelector('[data-panel="quotes"]')).toBeNull();
     expect(host.querySelector('[data-panel="change-orders"]')).toBeNull();
-    expect(host.textContent).not.toContain("Contractors & vendors");
+    expect(host.querySelector('[data-panel="contractors"]')).toBeNull();
 
     // Retry: the read succeeds and the real tab replaces the failure panel.
     reads.listAccounts.mockResolvedValueOnce([account]);
@@ -155,7 +155,8 @@ describe("REL-10 / REL-2 · a failed FIRST load shows a failure state — never 
     expect(host.textContent).toContain("$2,000,000");
     expect(host.querySelector('[data-panel="quotes"]')).not.toBeNull();
     expect(host.querySelector('[data-panel="change-orders"]')).not.toBeNull();
-    expect(button("New account")).toBeTruthy();
+    expect(button("New budget line")).toBeTruthy();
+    expect(host.querySelector('[data-panel="contractors"]')).not.toBeNull();
     expect(host.textContent).not.toMatch(/example/i);
   });
 
@@ -177,7 +178,7 @@ describe("REL-10 / REL-2 · a failed FIRST load shows a failure state — never 
     await mount();
     expect(host.querySelector('[data-empty="cost-data"]')).toBeNull();
     expect(host.textContent).toContain("No budget lines or entries yet");
-    expect(host.textContent).toContain("No cost accounts yet");
+    expect(host.textContent).toContain("No budget lines yet");
     expect(host.querySelectorAll('[data-mark="watermark"]').length).toBeGreaterThanOrEqual(2);
   });
 });

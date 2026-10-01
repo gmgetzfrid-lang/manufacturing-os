@@ -172,7 +172,7 @@ describe("gatherProjectSnapshot — an honest gap, not a silent zero", () => {
     state.errors.turnover_items = "relation does not exist";
     const snap = await gatherProjectSnapshot("org1", "p1");
     expect(snap.milestoneCount).toBe(0);
-    expect(snap.readFailures).toEqual(expect.arrayContaining(["milestones", "turnover items"]));
+    expect(snap.readFailures).toEqual(expect.arrayContaining(["schedule tasks", "turnover items"]));
     expect(snap.readFailures).not.toContain("punch items");
   });
 
@@ -208,7 +208,7 @@ describe("gatherProjectSnapshot — an honest gap, not a silent zero", () => {
     state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 100, currency: "USD", wbs_milestone_id: "m1" }];
     const snap = await gatherProjectSnapshot("org1", "p1");
     const health = computeProjectHealth(snap);
-    expect(health.parts.find((p) => p.label === "Schedule")).toEqual({ label: "Schedule", score: null, detail: "Could not read milestones" });
+    expect(health.parts.find((p) => p.label === "Schedule")).toEqual({ label: "Schedule", score: null, detail: "Could not read schedule tasks" });
     // A pinned account's earned value comes from the milestones it could not read.
     expect(health.parts.find((p) => p.label === "Cost")!.score).toBeNull();
     const ids = buildCoachItems(snap, "p1").map((i) => i.id);

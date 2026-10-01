@@ -231,7 +231,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         : `Couldn't link the company: ${userFacingError(error)}`);
       return;
     }
-    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, declined or voided) or removed since this table loaded. Refresh to see the latest."); return; }
+    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, not selected or voided) or removed since this table loaded. Refresh to see the latest."); return; }
     const { error: auditErr } = await supabase.from("audit_logs").insert({
       action: "COST_DOC_COMPANY_LINKED", resource_type: "cost", resource_id: doc.id,
       org_id: orgId, user_id: actor.uid, user_email: actor.email,
@@ -374,7 +374,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <ScanSearch className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          Drop vendor quote PDFs — the system reads them and compares price, manpower, and scope.
+          Drop bidders&apos; quote PDFs — the system reads them and compares price, manpower, and scope.
         </span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
@@ -414,7 +414,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No quotes yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload the PDFs vendors sent you (same RFQ group name = compared side by side), or send
+            Upload the PDFs bidders sent you (same RFQ group name = compared side by side), or send
             contractors a quote link and their submissions land here on their own.
           </div>
         </div>
@@ -435,7 +435,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="px-4 py-2.5 flex items-center gap-2">
           <Receipt className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">Read → review → post as actual spend.</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">Read → review → post as actual.</span>
         </div>
         {canManage && (
           <UploadRow orgId={orgId} projectId={projectId} actor={actor} kind="invoice"
@@ -642,7 +642,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     }
 
     const warnings = [
-      expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the vendor.` : null,
+      expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the bidder.` : null,
       extent.truncated ? `The AI ${extent.label} — the total may come from an incomplete read.` : null,
       !extent.known && quote && !quote.priceOnly ? "The read extent of this document is unknown — the total may come from an incomplete read." : null,
       quote?.totalSource === "human" && quote.extractedTotal != null ? `Total corrected by hand from the AI's ${fmtMoney(quote.extractedTotal, isoCurrency(quote.extractedCurrency) ?? cur)}.` : null,
@@ -657,7 +657,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       confirmedTotal = await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`);
       if (confirmedTotal == null) return;
     } else if (!(await appConfirm({
-      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
@@ -765,7 +765,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                   <tr className="text-left text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                     <th className="px-3 py-2">Bidder</th>
                     <th className="px-3 py-2 text-right">Price</th>
-                    <th className="px-3 py-2 text-right" title="Labor hours the bid offers — vendor-stated, AI-extracted">Labor hrs</th>
+                    <th className="px-3 py-2 text-right" title="Labor hours the bid offers — bidder-stated, AI-extracted">Labor hrs</th>
                     <th className="px-3 py-2 text-right" title="Total price ÷ labor hours — lower buys more hands">Price / hr</th>
                     <th className="px-3 py-2 text-right" title="Largest crew size stated">Peak crew</th>
                     <th className="px-3 py-2" title="Quote validity date as printed">Valid until</th>
@@ -866,7 +866,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           <td className="px-3 py-2 text-right tabular-nums">
                             {e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span>
                               : e.laborHours > 0 ? (
-                                <span title={manpowerScored ? "Vendor-stated, AI-extracted" : `Vendor-stated, AI-extracted — shown, not scored: ${notCorroborated}.`}>
+                                <span title={manpowerScored ? "Bidder-stated, AI-extracted" : `Bidder-stated, AI-extracted — shown, not scored: ${notCorroborated}.`}>
                                   {e.laborHours.toLocaleString()}
                                   {e.implausibleHours && (
                                     <span className="block text-[9px] font-bold text-amber-700 dark:text-amber-300"
@@ -884,7 +884,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">—</span> : e.peakHeadcount ?? "—"}</td>
                           <td className="px-3 py-2 tabular-nums">
                             {quote?.validUntil
-                              ? <span className={expired ? "font-black text-rose-700 dark:text-rose-300" : ""} title={expired ? "This quote's validity date has passed" : "Vendor-stated validity date"}>{quote.validUntil}{expired ? " · expired" : ""}</span>
+                              ? <span className={expired ? "font-black text-rose-700 dark:text-rose-300" : ""} title={expired ? "This quote's validity date has passed" : "Bidder-stated validity date"}>{quote.validUntil}{expired ? " · expired" : ""}</span>
                               : <span className="text-[var(--color-text-faint)]">—</span>}
                           </td>
                           <td className="px-3 py-2 text-right">
@@ -930,7 +930,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             <td colSpan={colCount} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
                                 {quote?.notes && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Vendor note printed on the quote">
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Bidder's note printed on the quote">
                                     note: {quote.notes}
                                   </span>
                                 )}
@@ -963,9 +963,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
               {currency.mixed ? (
                 <>This field mixes currencies, so no bid is scored or ranked — each price is shown in its own currency.</>
               ) : manpowerScored ? (
-                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.{hasTypedTotal ? " A typed-total bid (price only) has no hours, so it is not scored on manpower and carries no value score here — its price still counts against every rival's." : ""}</>
+                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are bidder-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.{hasTypedTotal ? " A typed-total bid (price only) has no hours, so it is not scored on manpower and carries no value score here — its price still counts against every rival's." : ""}</>
               ) : (
-                <>Value score = price alone: labor hours are vendor-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown, nobody&apos;s manpower is scored, and every bid{hasTypedTotal ? " — typed totals included —" : ""} is scored on price.</>
+                <>Value score = price alone: labor hours are bidder-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown, nobody&apos;s manpower is scored, and every bid{hasTypedTotal ? " — typed totals included —" : ""} is scored on price.</>
               )}
               {" "}Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
               {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : manpowerScored ? " The cheapest bid doesn't automatically win — manpower counts too, and the exclusions are yours to weigh. You make the call." : " On price alone the cheapest bid ranks first — its exclusions and check prompts are yours to weigh. You make the call."}
@@ -1238,13 +1238,13 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
         <input type="file" accept=".pdf,application/pdf" className="sr-only"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
       </label>
-      <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
+      <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name (or let the AI read it)"
         className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {parties.length > 0 && (
-        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Project party this document came from"
-          title="Which project party sent this — the link that lets it reach their company scorecard"
+        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor this document came from"
+          title="Which of this project's contractors sent this — the link that lets it reach their company scorecard"
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs max-w-48">
-          <option value="">Party (optional)…</option>
+          <option value="">Contractor (optional)…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}

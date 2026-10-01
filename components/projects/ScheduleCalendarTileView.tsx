@@ -296,7 +296,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                 key={id}
                 onClick={() => setShowSubtasks(id === "subtasks")}
                 className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${(id === "subtasks") === showSubtasks ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-                title={id === "subtasks" ? "Break every task into its sub-items so you can drag each one onto its own day" : "Show parent tasks; click a task's ▸ arrow to reach its sub-items"}
+                title={id === "subtasks" ? "Break every task into its sub-tasks so you can drag each one onto its own day" : "Show parent tasks; click a task's ▸ arrow to reach its sub-tasks"}
               >
                 {label}
               </button>
@@ -329,9 +329,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks ? (
-          <span><b className="text-[var(--color-text)]">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-[var(--color-text-muted)]" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
+          <span><b className="text-[var(--color-text)]">Sub-task mode:</b> each sub-task is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-[var(--color-text-muted)]" /> handle to another day to move just that sub-task — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
+          <span><b className="text-[var(--color-text)]">To move one sub-task:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its sub-tasks, then use each sub-task&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-tasks</b> to spread every sub-task across the grid as draggable chips.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-[var(--color-text-faint)]">
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
@@ -344,7 +344,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
       {/* Marks legend */}
       <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-[var(--color-text-muted)]">
-        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span> expand a task to its sub-tasks</span>
         <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
         <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
@@ -507,7 +507,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               ))}
             </ul>
             <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
-              Dot = set status · ◀ ▶ = move this step a day (others stay put; the parent span follows).
+              Dot = set status · ◀ ▶ = move this sub-task a day (others stay put; the parent span follows).
             </div>
           </div>
         </div>
@@ -632,7 +632,7 @@ function Chip({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
-            title={isExpanded ? "Hide sub-items" : "Show this task's sub-items"}
+            title={isExpanded ? "Hide sub-tasks" : "Show this task's sub-tasks"}
             className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)]"}`}
           >
             <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
