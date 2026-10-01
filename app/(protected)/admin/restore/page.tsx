@@ -30,6 +30,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
+  RESTORE_HELD_ELSEWHERE_NOTE, restoreRefusalLabel,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
@@ -179,7 +180,8 @@ export default function RestorePage() {
       setApplyProgress({ ...p });
     try {
       // BKP-5: before anything is written, how many backup rows already exist
-      // here (kept as they are) and how many would be new. Read-only.
+      // here (kept as they are), how many ids another workspace holds (cannot
+      // be restored here) and how many would be new. Read-only.
       const check = await previewChunkedRestore({ orgId: activeOrgId, envelope, plan, post, onProgress });
       setPreview(check);
       setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
@@ -189,6 +191,9 @@ export default function RestorePage() {
           `Write ${fmtNum(check.wouldInsert)} new record(s) into this workspace. ` +
           (check.existing > 0
             ? `${fmtNum(check.existing)} record(s) in the backup already exist here and will be KEPT EXACTLY AS THEY ARE — not overwritten, not repaired. `
+            : "") +
+          (check.heldElsewhere > 0
+            ? `${fmtNum(check.heldElsewhere)} record(s) will NOT be restored: ${RESTORE_HELD_ELSEWHERE_NOTE} `
             : "") +
           `${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). ${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.`,
         tone: "danger",
@@ -370,7 +375,7 @@ export default function RestorePage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat icon={UserCheck} tint="text-emerald-600" value={plan.counts.matchedUsers} label="users re-linked" />
             <Stat icon={UserPlus} tint="text-blue-600" value={plan.counts.newUsers} label="restored placeholders" />
-            <Stat icon={Database} tint="text-[var(--color-accent)]" value={preview ? preview.wouldInsert : plan.counts.totalRows} label={preview ? `new records (${fmtNum(preview.existing)} already here, kept as they are)` : "records to import"} />
+            <Stat icon={Database} tint="text-[var(--color-accent)]" value={preview ? preview.wouldInsert : plan.counts.totalRows} label={preview ? `new records (${fmtNum(preview.existing)} already here, kept as they are${preview.heldElsewhere > 0 ? ` · ${fmtNum(preview.heldElsewhere)} cannot be restored — ids in use elsewhere` : ""})` : "records to import"} />
             <Stat icon={FolderArchive} tint="text-violet-600" value={fileEntryCount || plan.counts.files} label={fileEntryCount ? "files in the dropped part(s)" : "files referenced"} />
           </div>
 
@@ -407,6 +412,7 @@ export default function RestorePage() {
                   {t.willImport && preview?.tables[t.name] && (
                     <span className="text-[10.5px] text-[var(--color-text-muted)]">
                       {fmtNum(preview.tables[t.name].wouldInsert)} new · {fmtNum(preview.tables[t.name].existing)} already here
+                      {preview.tables[t.name].heldElsewhere > 0 && <span className="text-red-700 font-bold"> · {fmtNum(preview.tables[t.name].heldElsewhere)} ids in use elsewhere</span>}
                     </span>
                   )}
                   {t.willImport
@@ -490,30 +496,44 @@ export default function RestorePage() {
 }
 
 /** BKP-5: what the restore did, said plainly — never a green panel over a
- *  run that stopped, refused rows, or skipped existing ones silently. */
+ *  run that stopped, refused rows, wrote nothing, or met ids another
+ *  workspace holds. */
 function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
   const stopped = result.stoppedAt;
-  const tone = stopped
+  const nothingNew = result.totalInserted === 0;
+  const tone = stopped || result.totalHeldElsewhere > 0
     ? "border-red-200 bg-red-50 text-red-900"
-    : result.totalRefused > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
+    : result.totalRefused > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
   const refusedByTable = result.tables.filter((t) => t.refused.length > 0);
+  const elsewhereByTable = result.tables.filter((t) => t.heldElsewhere > 0);
   return (
     <div className={`rounded-2xl border p-4 ${tone}`}>
       <div className="flex items-center gap-2 text-sm font-black mb-1">
         {stopped
           ? <><AlertTriangle className="w-4 h-4" /> Restore stopped at <span className="font-mono">{stopped.table}</span> — {result.notAttempted.length} table(s) not attempted</>
-          : result.totalRefused > 0
-            ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
-            : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
+          : result.totalHeldElsewhere > 0
+            ? <><AlertTriangle className="w-4 h-4" /> {fmtNum(result.totalHeldElsewhere)} record(s) could NOT be restored — their ids are in use elsewhere</>
+            : nothingNew
+              ? <><AlertTriangle className="w-4 h-4" /> Nothing new was restored</>
+              : result.totalRefused > 0
+                ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
+                : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
       </div>
       <div className="text-[11px] leading-relaxed space-y-1">
         <div>
           Imported <b>{fmtNum(result.totalInserted)}</b> new record(s) · <b>{fmtNum(result.totalExisting)}</b> already here, kept exactly as they were
+          {result.totalHeldElsewhere > 0 && <> · <b>{fmtNum(result.totalHeldElsewhere)}</b> NOT restored (ids in use by another workspace)</>}
           {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
           {result.totalFiltered > 0 && <> · <b>{fmtNum(result.totalFiltered)}</b> comment(s) on tickets archived since the backup left out</>}
           {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
         </div>
         {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}
+        {result.totalHeldElsewhere > 0 && (
+          <div>
+            <b>Not restored:</b> {RESTORE_HELD_ELSEWHERE_NOTE}{" "}
+            {elsewhereByTable.map((t, i) => <React.Fragment key={t.name}>{i > 0 ? ", " : ""}<span className="font-mono">{t.name}</span> ({fmtNum(t.heldElsewhere)})</React.Fragment>)}.
+          </div>
+        )}
         {stopped && (
           <div>
             <b>Why it stopped:</b> {stopped.error}. Tables restore parents-first, so nothing after <span className="font-mono">{stopped.table}</span> was attempted
@@ -524,7 +544,7 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
         {refusedByTable.map((t) => (
           <div key={t.name}>
             <span className="font-mono">{t.name}</span>: {t.refused.length} row(s) refused —{" "}
-            {Array.from(new Set(t.refused.map((r) => r.code))).join(", ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
+            {Array.from(new Set(t.refused.map((r) => restoreRefusalLabel(r.code)))).join("; ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
           </div>
         ))}
         <div>Restored users are inactive — re-invite them to grant access.</div>

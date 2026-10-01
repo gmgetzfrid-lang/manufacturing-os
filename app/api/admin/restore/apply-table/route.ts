@@ -6,17 +6,20 @@
 // so restores of any size fit under serverless request limits.
 //
 // BKP-5: `preview: true` writes nothing and answers how many of these rows
-// already exist under the table's key (kept as they are — a restore only
-// adds) and how many would be new, so the page can show both counts BEFORE
-// the admin applies. An apply answers the same counts for what it did:
-// inserted, existing (skipped — never overwritten), uncounted, refused.
+// already exist in this workspace under the table's key (kept as they are —
+// a restore only adds), how many keys another workspace on this deployment
+// holds (those rows cannot be restored here) and how many would be new, so
+// the page can show the counts BEFORE the admin applies. An apply answers the
+// same counts for what it did: inserted, existing (skipped — never
+// overwritten), heldElsewhere (not restored), uncounted, refused.
 //
 // Security model: the caller is an org Admin who fully controls the row
 // content anyway — the hard boundary enforced here is that every row lands in
 // THEIR org: org_id is overwritten server-side with the authorized org after
 // remapping, the table must be on the export contract (no arbitrary table
-// writes), skip-set tables are refused, and a row of a table with no org_id
-// lands only under a parent of this workspace. All of it lives in ONE shared
+// writes), skip-set tables are refused, and every row's foreign keys to
+// org-scoped tables must name rows of this workspace (a row of a table with
+// no org_id lands only under a parent of it). All of it lives in ONE shared
 // function, lib/dataRestore.ts applyRestoreChunk, which the single-shot
 // /apply route calls too (ORG-1 / BKP-3).
 
@@ -57,16 +60,17 @@ export async function POST(req: NextRequest) {
   if (parsed.preview === true) {
     const p = await previewRestoreChunk(sb, { orgId, table, rows, idRemap });
     if (!p.ok) return NextResponse.json({ error: p.error }, { status: p.status ?? 500 });
-    return NextResponse.json({ ok: true, preview: true, rows: p.rows, existing: p.existing, wouldInsert: p.wouldInsert });
+    return NextResponse.json({ ok: true, preview: true, rows: p.rows, existing: p.existing, heldElsewhere: p.heldElsewhere, wouldInsert: p.wouldInsert });
   }
 
-  // Remap, FORCE the org boundary, filter, bound org-less rows by their
-  // parent, write — the shared function both restore routes call.
+  // Remap, FORCE the org boundary, filter, bound every row by the parents it
+  // names, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, existing, uncounted, filtered, refused } = result;
+  const { inserted, existing, heldElsewhere, uncounted, filtered, refused } = result;
   const counts = {
     inserted,
     ...(existing ? { existing } : {}),
+    ...(heldElsewhere ? { heldElsewhere } : {}),
     ...(uncounted ? { uncounted } : {}),
     ...(filtered ? { filtered } : {}),
     ...(refused.length ? { refused } : {}),
@@ -86,6 +90,7 @@ export async function POST(req: NextRequest) {
     details: {
       table, rowsReceived: rows.length, rowsAfterFilters: result.rowsAfterFilters, inserted,
       ...(existing ? { existing } : {}),
+      ...(heldElsewhere ? { heldElsewhere } : {}),
       ...(uncounted ? { uncounted } : {}),
       ...(refused.length ? { refused } : {}),
       ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),

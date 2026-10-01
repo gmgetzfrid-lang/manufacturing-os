@@ -12,6 +12,15 @@
 // workspace. A browser backup written BEFORE this change (data.json in part
 // 1) still restores; a part set that cannot be restored is refused with a
 // message, before anything is written.
+//
+// P1 fix pass: the engine enforces every FOREIGN KEY the census finds
+// between restorable tables (23503 on an orphan, as Postgres does), and the
+// source org carries the relationships the review named — a checkout session
+// on an episode, a document in a set, a library with an owner team, a
+// knowledge mention and an AI-read flow, a project whose SOW is a document,
+// a hold and a milestone citing a ticket, a version that supersedes another,
+// a sub-folder listed before its parent folder. A fresh-workspace restore of the current export
+// must land every one of them, with no stop and no refusal.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -19,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import JSZip from "jszip";
 import { db, type Row } from "./helpers/restoreMemoryDb";
+import { censusSchema } from "./helpers/schemaKeys";
 
 vi.mock("@/lib/serverAuth", async () => {
   const mem = await import("./helpers/restoreMemoryDb");
@@ -44,7 +54,8 @@ import { runOrgExport, type DataExportEnvelope } from "@/lib/dataExport";
 import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup, BACKUP_ARCHIVE_ENTRIES } from "@/lib/clientBackup";
 import {
-  readBackupArchive, planRestore, runChunkedRestore, remapOrgPath, type RestorePost, type BackupZipLike, type RestoreEnvelopeLike,
+  readBackupArchive, planRestore, runChunkedRestore, remapOrgPath, RESTORE_CONTRACT_TABLES, isSkippedTable,
+  type RestorePost, type BackupZipLike, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
@@ -63,15 +74,64 @@ function seedSource() {
       { org_id: SRC, uid: "u-alice", email: "alice@acme.com", role: "Admin", roles: ["Admin"], status: "active" },
       { org_id: SRC, uid: "u-bob", email: "bob@acme.com", role: "Engineer", roles: ["Engineer"], status: "active" },
     ],
-    libraries: [{ id: "lib-1", org_id: SRC, name: "P&IDs" }],
-    documents: [{ id: "doc-1", org_id: SRC, library_id: "lib-1", title: "P-101", created_by: "u-alice" }],
+    teams: [{ id: "team-1", org_id: SRC, name: "Operations" }],
+    team_members: [{ team_id: "team-1", uid: "u-bob", org_id: SRC }],
+    libraries: [{ id: "lib-1", org_id: SRC, name: "P&IDs", owner_team_id: "team-1" }],
+    document_sets: [{ id: "set-1", org_id: SRC, library_id: "lib-1", name: "Unit 100" }],
+    // a sub-folder the export lists BEFORE the folder it sits in
+    collections: [
+      { id: "col-sub", org_id: SRC, library_id: "lib-1", parent_id: "col-root", name: "Unit 100" },
+      { id: "col-root", org_id: SRC, library_id: "lib-1", parent_id: null, name: "Area 1" },
+    ],
+    documents: [{ id: "doc-1", org_id: SRC, library_id: "lib-1", collection_id: "col-sub", set_id: "set-1", title: "P-101", created_by: "u-alice" }],
     document_versions: [
       { id: "v-1", org_id: SRC, record_id: "doc-1", revision_label: "A", file_url: KEY_A, size: 4, created_by: "u-bob" },
-      { id: "v-2", org_id: SRC, record_id: "doc-1", revision_label: "B", file_url: KEY_B, size: 4, created_by: "u-bob" },
+      { id: "v-2", org_id: SRC, record_id: "doc-1", revision_label: "B", file_url: KEY_B, size: 4, created_by: "u-bob", supersedes_version_id: "v-1" },
     ],
+    projects: [{ id: "proj-1", org_id: SRC, name: "Turnaround", sow_document_id: "doc-1" }],
+    tickets: [{ id: "tk-1", org_id: SRC, title: "Hold for HAZOP" }],
+    document_holds: [{ id: "hold-1", org_id: SRC, document_id: "doc-1", origin_ticket_id: "tk-1", reason: "HAZOP" }],
+    milestones: [{ id: "ms-1", org_id: SRC, project_id: "proj-1", linked_ticket_id: "tk-1", name: "IFC" }],
+    checkout_episodes: [{ id: "ep-1", org_id: SRC, document_id: "doc-1", library_id: "lib-1", status: "closed" }],
+    checkout_sessions: [{ id: "cs-1", org_id: SRC, document_id: "doc-1", library_id: "lib-1", episode_id: "ep-1" }],
+    assets: [{ id: "as-1", org_id: SRC, library_id: "lib-1", tag: "P-101A" }],
+    knowledge_libraries: [{ id: "kl-1", org_id: SRC, name: "Vendor manuals" }],
+    knowledge_sources: [{ id: "ks-1", org_id: SRC, library_id: "kl-1" }],
+    knowledge_documents: [{ id: "kd-1", org_id: SRC, library_id: "kl-1", source_id: "ks-1", source_document_id: "doc-1" }],
+    entity_mentions: [{ id: "em-1", org_id: SRC, asset_id: "as-1", knowledge_document_id: "kd-1", page: 1 }],
+    process_flows: [{ id: "pf-1", org_id: SRC, source_document_id: "kd-1" }],
     document_shares: [{ id: "sh-1", org_id: SRC, document_id: "doc-1", token: "live-share-token", revoked_at: null }],
     audit_logs: [],
   };
+}
+/** Every FOREIGN KEY between restorable tables, as the database enforces it (census of supabase/). */
+function enforceForeignKeys() {
+  const schema = censusSchema();
+  const restorable = new Set([...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)));
+  const fks: typeof db.fks = {};
+  for (const t of restorable) {
+    for (const f of schema.get(t)?.fks ?? []) {
+      if (f.columns.length === 1 && restorable.has(f.parent)) (fks[t] ??= []).push({ column: f.columns[0], parent: f.parent });
+    }
+  }
+  db.fks = fks;
+}
+/** What the source org's backup carries that must land: table → ids. */
+const RELATIONS: Record<string, string[]> = {
+  teams: ["team-1"], libraries: ["lib-1"], collections: ["col-root", "col-sub"], document_sets: ["set-1"], documents: ["doc-1"], document_versions: ["v-1", "v-2"],
+  projects: ["proj-1"], tickets: ["tk-1"], document_holds: ["hold-1"], milestones: ["ms-1"], checkout_episodes: ["ep-1"],
+  checkout_sessions: ["cs-1"], assets: ["as-1"], knowledge_libraries: ["kl-1"], knowledge_sources: ["ks-1"],
+  knowledge_documents: ["kd-1"], entity_mentions: ["em-1"], process_flows: ["pf-1"],
+};
+function expectEveryRelationLanded() {
+  for (const [table, ids] of Object.entries(RELATIONS)) {
+    expect(rowsOf(table).map((r) => r.id).sort(), table).toEqual([...ids].sort());
+    for (const r of rowsOf(table)) expect(r.org_id, `${table} ${String(r.id)}`).toBe(TARGET);
+  }
+  expect(rowsOf("team_members")).toEqual([expect.objectContaining({ team_id: "team-1", org_id: TARGET })]);
+  expect(rowsOf("libraries")[0].owner_team_id).toBe("team-1");
+  expect(rowsOf("checkout_sessions")[0].episode_id).toBe("ep-1");
+  expect(rowsOf("entity_mentions")[0].knowledge_document_id).toBe("kd-1");
 }
 function seedTarget() {
   db.rows = {
@@ -128,6 +188,8 @@ const rowsOf = (t: string): Row[] => db.rows[t] ?? [];
 
 beforeEach(() => {
   db.keys = {}; db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false;
+  db.fks = {}; db.maxRows = 1000;
+  db.keys.team_members = [["team_id", "uid"]];
   seedSource();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -173,10 +235,13 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     expect(remapOrgPath(read.files[0].key, [[SRC, TARGET]])).toMatch(new RegExp(`^orgs/${TARGET}/`));
 
     seedTarget();
+    enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
+    expect(result).toMatchObject({ totalRefused: 0, totalHeldElsewhere: 0, totalExisting: 0 });
     expect(result.idRemap.orgId).toEqual({ [SRC]: TARGET }); // what "Put the files back" remaps keys with
     expect(result.totalInserted).toBeGreaterThanOrEqual(5);
+    expectEveryRelationLanded();
     expect(rowsOf("documents")).toEqual([expect.objectContaining({ id: "doc-1", org_id: TARGET, created_by: "t-alice" })]);
     expect(rowsOf("document_versions").map((v) => v.file_url).sort()).toEqual([
       `orgs/${TARGET}/libraries/lib-1/P-101.pdf`, `orgs/${TARGET}/libraries/lib-1/P-102.pdf`,
@@ -200,14 +265,18 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     expect(read.layout).toBe("manifest+tables");
     expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B]);
     seedTarget();
+    enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
+    expect(result.totalRefused).toBe(0);
     expect(rowsOf("documents")[0]).toMatchObject({ id: "doc-1", org_id: TARGET });
+    expectEveryRelationLanded();
   });
 
   it("the single-shot /apply restores the same envelope too", async () => {
     const envelope = await exportEnvelope();
     seedTarget();
+    enforceForeignKeys();
     const res = await applySingle(new NextRequest(`https://app/api/admin/restore/apply?orgId=${TARGET}`, {
       method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" },
       body: JSON.stringify({ envelope, confirm: true }),
@@ -215,7 +284,9 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.failedTables).toEqual([]);
+    expect((body.tables as Array<{ refused?: unknown[] }>).filter((t) => t.refused)).toEqual([]);
     expect(rowsOf("document_versions")).toHaveLength(2);
+    expectEveryRelationLanded();
   });
 });
 
@@ -239,9 +310,12 @@ describe("BKP-7 — an archive written before this change, and archives that can
     expect(read.layout).toBe("data.json");
     expect(read.files.map((f) => f.key).sort()).toEqual([KEY_A, KEY_B]);
     seedTarget();
+    enforceForeignKeys();
     const result = await restoreInto(read.envelope);
     expect(result.stoppedAt).toBeNull();
+    expect(result.totalRefused).toBe(0);
     expect(rowsOf("document_versions")).toHaveLength(2);
+    expectEveryRelationLanded();
   });
 
   it("a set with no records part, two backups' records, parts of different backups, or a damaged table is refused before anything is written", async () => {

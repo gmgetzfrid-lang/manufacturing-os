@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   planRestore, remapRow, orderTablesForRestore, mergeNewUserUids, type RestoreEnvelopeLike, type CurrentOrgContext,
-  CONFLICT_TARGETS, conflictTargetFor, RESTORE_CONTRACT_TABLES, isSkippedTable,
+  CONFLICT_TARGETS, conflictTargetFor, RESTORE_CONTRACT_TABLES, isSkippedTable, skipReasonFor, isImmutableTable,
+  RESTORE_TABLE_ORDER, RESTORE_PARENT_RULES, RESTORE_FK_PARENT_WAIVERS, ORG_LESS_RESTORE_PARENTS, restoreParentRulesFor,
+  restoreRowsInOrder, restoreTableRefusal,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
@@ -199,5 +201,159 @@ describe("BKP-12 — every restorable table's conflict target is a real key", ()
     expect(stale).toEqual([]);
     // org_configurations is append-only to the restore (SURF-8) but keeps its documented key
     expect(schema.get("org_configurations")?.keys).toContainEqual(["org_id", "key"]);
+  });
+});
+
+// admin-and-org Round G, P1 fix pass. The restore stops at the first table
+// that fails, so a parent restored AFTER its child stops every restore of an
+// org that has such a row (a checkout session with an episode, a document in
+// a set, a library with an owner team, a knowledge mention). The census reads
+// every FOREIGN KEY in supabase/ (inline, table-level, ALTER … ADD) less the
+// ones a later migration drops (intelligence ILIFE-2's done-when 2).
+describe("FK order — every parent is restored before its child (census of supabase/)", () => {
+  const schema = censusSchema();
+  const idx = (t: string) => RESTORE_TABLE_ORDER.indexOf(t);
+
+  it("the census sees foreign keys (sanity): inline, table-level, ALTER … ADD COLUMN, ALTER … ADD CONSTRAINT, and drops", () => {
+    const fk = (t: string, c: string) => schema.get(t)?.fks.find((f) => f.columns.length === 1 && f.columns[0] === c)?.parent;
+    expect(fk("checkout_sessions", "episode_id")).toBe("checkout_episodes");
+    expect(fk("libraries", "owner_team_id")).toBe("teams");               // 20261045: ALTER … ADD CONSTRAINT inside DO $$
+    expect(fk("knowledge_documents", "source_document_id")).toBe("documents"); // 20261122
+    expect(fk("entity_mentions", "knowledge_document_id")).toBe("knowledge_documents");
+    expect(fk("team_members", "team_id")).toBe("teams");
+    expect(fk("documents", "authored_by_link_id")).toBeUndefined();        // 20261104 drops it (restore order)
+    expect(fk("project_intake_links", "project_id")).toBeUndefined();      // 20261104 drops it
+    expect(fk("users", "id")).toBe("auth.users");
+  });
+
+  it("for EVERY foreign key between two tables RESTORE_TABLE_ORDER places, the parent comes first", () => {
+    const inverted: string[] = [];
+    for (const child of RESTORE_TABLE_ORDER) {
+      for (const f of schema.get(child)?.fks ?? []) {
+        if (f.parent === child || idx(f.parent) < 0) continue;
+        if (idx(f.parent) > idx(child)) inverted.push(`${child}.${f.columns.join("+")} -> ${f.parent} (child ${idx(child)}, parent ${idx(f.parent)})`);
+      }
+    }
+    expect(inverted, `parents restored after their children: ${inverted.join("; ")}`).toEqual([]);
+  });
+
+  it("the eight inversions the review named are fixed, and the knowledge layer precedes its referrers (I-01 phase B)", () => {
+    const before = (a: string, b: string) => expect(idx(a), `${a} before ${b}`).toBeLessThan(idx(b));
+    before("checkout_episodes", "checkout_sessions");
+    before("teams", "libraries");
+    before("document_sets", "documents");
+    before("documents", "projects");
+    before("knowledge_documents", "process_flows");
+    before("knowledge_documents", "entity_mentions");
+    before("knowledge_libraries", "knowledge_documents");
+    before("knowledge_sources", "knowledge_documents");
+    before("tickets", "milestones");
+    before("tickets", "document_holds");
+  });
+
+  it("orderTablesForRestore follows the order", () => {
+    expect(orderTablesForRestore(["checkout_sessions", "libraries", "checkout_episodes", "teams", "entity_mentions", "knowledge_documents"]))
+      .toEqual(["teams", "libraries", "knowledge_documents", "entity_mentions", "checkout_episodes", "checkout_sessions"]);
+  });
+});
+
+// ORG-1 (fix pass): forcing org_id bounds a restored ROW; RESTORE_PARENT_RULES
+// bounds what it points at. Every foreign key of a restorable table must be
+// covered: a parent with an org_id by a rule (checked in the target
+// workspace), a parent without one by a written waiver.
+describe("ORG-1 — every restorable foreign key is bounded to the target workspace, or waived in writing", () => {
+  const schema = censusSchema();
+  const restorable = [...RESTORE_CONTRACT_TABLES].filter((t) => !isSkippedTable(t)).sort();
+
+  it("a foreign key to an org-scoped parent has a rule; one to a parent with no org_id names a waived parent", () => {
+    const missing: string[] = [];
+    for (const table of restorable) {
+      for (const f of schema.get(table)?.fks ?? []) {
+        const parentHasOrg = schema.get(f.parent)?.columns.has("org_id") ?? false;
+        if (!parentHasOrg) {
+          if (!Object.prototype.hasOwnProperty.call(RESTORE_FK_PARENT_WAIVERS, f.parent)) missing.push(`${table}.${f.columns.join("+")} -> ${f.parent} (no org_id, no waiver)`);
+          continue;
+        }
+        const covered = f.columns.length === 1 && f.parentColumns.join(",") === "id"
+          && restoreParentRulesFor(table).some((r) => r.column === f.columns[0] && r.parent === f.parent);
+        if (!covered) missing.push(`${table}.${f.columns.join("+")} -> ${f.parent}(${f.parentColumns.join(",")})`);
+      }
+    }
+    expect(missing, `restorable foreign keys with no parent rule (add to RESTORE_PARENT_RULES) or waiver: ${missing.join("; ")}`).toEqual([]);
+  });
+
+  it("every rule is a real foreign key of a restorable table, onto a parent that has org_id (no stale or invented rules)", () => {
+    const stale: string[] = [];
+    for (const [table, rules] of Object.entries(RESTORE_PARENT_RULES)) {
+      if (!restorable.includes(table)) stale.push(`${table} (not restorable)`);
+      for (const r of rules) {
+        const real = schema.get(table)?.fks.some((f) => f.columns.length === 1 && f.columns[0] === r.column && f.parent === r.parent);
+        if (!real) stale.push(`${table}.${r.column} -> ${r.parent}`);
+        if (!schema.get(r.parent)?.columns.has("org_id")) stale.push(`${r.parent} has no org_id`);
+      }
+    }
+    expect(stale).toEqual([]);
+  });
+
+  it("the review's minimum set is covered, and the org-less tables' bounding parents are rules too", () => {
+    const rule = (t: string, c: string, p: string) => expect(restoreParentRulesFor(t), `${t}.${c}`).toContainEqual({ column: c, parent: p });
+    rule("team_members", "team_id", "teams");
+    for (const t of ["checkout_episodes", "checkout_sessions", "document_intents", "revision_branches"]) rule(t, "document_id", "documents");
+    rule("project_documents", "project_id", "projects");
+    rule("project_documents", "document_id", "documents");
+    rule("document_versions", "record_id", "documents");
+    for (const [t, b] of Object.entries(ORG_LESS_RESTORE_PARENTS)) rule(t, b.column, b.parent);
+    expect(Object.keys(RESTORE_FK_PARENT_WAIVERS).sort()).toEqual(["orgs", "users"]);
+  });
+});
+
+describe("restoreRowsInOrder — a self-referencing table's rows go parents first", () => {
+  it("a version chain written newest-first is reordered oldest-first; other rows keep their order", () => {
+    const rows = [
+      { id: "v3", supersedes_version_id: "v2" },
+      { id: "x", supersedes_version_id: null },
+      { id: "v2", supersedes_version_id: "v1" },
+      { id: "v1", supersedes_version_id: null },
+    ];
+    expect(restoreRowsInOrder("document_versions", rows).map((r) => r.id)).toEqual(["v1", "v2", "v3", "x"]);
+  });
+  it("a cycle is broken where it closes (every row is kept once); a table with no self-reference is untouched", () => {
+    const cyc = [{ id: "a", parent_id: "b" }, { id: "b", parent_id: "a" }, { id: "c", parent_id: "a" }];
+    const out = restoreRowsInOrder("collections", cyc).map((r) => r.id);
+    expect([...out].sort()).toEqual(["a", "b", "c"]);
+    expect(out.indexOf("a")).toBeLessThan(out.indexOf("c"));
+    const flat = [{ id: "2" }, { id: "1" }];
+    expect(restoreRowsInOrder("notes", flat)).toEqual(flat);
+  });
+  it("a deep chain (5,000 links) does not overflow the stack", () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => ({ id: `m${i}`, parent_id: i === 0 ? null : `m${i - 1}` })).reverse();
+    const out = restoreRowsInOrder("milestones", rows);
+    expect(out[0].id).toBe("m0");
+    expect(out[4999].id).toBe("m4999");
+  });
+});
+
+// The restore's lookups are own-key only: a name or a value that happens to
+// be an Object.prototype key is data, never a lookup hit.
+describe("prototype keys are plain data to the restore", () => {
+  it("a table named after an Object.prototype key is off contract, never skipped-with-a-function-reason", () => {
+    const env = JSON.parse('{"manifest":{"orgId":"b"},"tables":{"constructor":[{}],"__proto__":[{}],"toString":[{}],"notes":[{}]}}') as RestoreEnvelopeLike;
+    const plan = planRestore(env, { orgId: "c", orgName: "", members: [] });
+    for (const name of ["constructor", "__proto__", "toString"]) {
+      const t = plan.counts.tables.find((x) => x.name === name);
+      expect(t, name).toMatchObject({ willImport: false, offContract: true, reason: "not part of the backup contract — never imported" });
+      expect(isSkippedTable(name), name).toBe(false);
+      expect(isImmutableTable(name), name).toBe(false);
+      expect(skipReasonFor(name), name).toBeNull();
+      expect(restoreTableRefusal(name), name).toMatch(/not part of the backup contract/);
+      expect(conflictTargetFor(name), name).toBe("id");
+      expect(restoreParentRulesFor(name), name).toEqual([]);
+    }
+    expect(plan.counts.totalRows).toBe(1);
+  });
+  it("a text value that is an Object.prototype key is kept, not swapped for a function", () => {
+    const out = remapRow({ id: "n1", org_id: "constructor", body: "toString", tags: ["valueOf", "hasOwnProperty"] }, { orgId: { b: "c" }, uid: {} });
+    expect(out).toMatchObject({ body: "toString", tags: ["valueOf", "hasOwnProperty"] });
+    expect(typeof out.org_id).toBe("string");
   });
 });

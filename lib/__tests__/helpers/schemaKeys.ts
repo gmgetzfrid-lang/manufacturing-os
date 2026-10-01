@@ -6,11 +6,24 @@
 // (inline or table-level, CREATE or ALTER … ADD) and every NON-partial
 // plain-column UNIQUE INDEX still standing after later DROP INDEX statements.
 // A partial or expression index is no ON CONFLICT arbiter, so it is not a key
-// here. Comments are stripped; statements apply in source order within a file.
+// here. And its FOREIGN KEYS still standing — inline `REFERENCES`, table-level
+// `FOREIGN KEY (…) REFERENCES`, `ALTER … ADD COLUMN … REFERENCES` and
+// `ALTER … ADD CONSTRAINT … FOREIGN KEY`, less any later `DROP CONSTRAINT`
+// (by its declared or default `<table>_<cols>_fkey` name) or `DROP COLUMN`.
+// A NOT VALID foreign key still binds every new row, so it counts. Comments
+// are stripped; statements apply in source order within a file.
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-export interface TableShape { columns: Set<string>; keys: string[][] }
+export interface ForeignKey {
+  /** The constraint name (declared, or Postgres's default `<table>_<cols>_fkey`). */
+  name: string;
+  columns: string[];
+  /** The referenced table; `public.` is dropped, any other schema is kept (`auth.users`). */
+  parent: string;
+  parentColumns: string[];
+}
+export interface TableShape { columns: Set<string>; keys: string[][]; fks: ForeignKey[] }
 
 function matchParen(src: string, open: number): number {
   let depth = 0;
@@ -46,7 +59,23 @@ export function censusSchema(root = join(process.cwd(), "supabase")): Map<string
   const files = [join(root, "schema.sql"), ...readdirSync(join(root, "migrations")).filter((n) => /^\d{8}.*\.sql$/.test(n)).sort().map((n) => join(root, "migrations", n))];
   const tables = new Map<string, TableShape>();
   const namedIdx = new Map<string, { table: string; key: string[] }>();
-  const get = (t: string) => { if (!tables.has(t)) tables.set(t, { columns: new Set(), keys: [] }); return tables.get(t)!; };
+  const get = (t: string) => { if (!tables.has(t)) tables.set(t, { columns: new Set(), keys: [], fks: [] }); return tables.get(t)!; };
+  const parentName = (raw: string) => {
+    const n = raw.replace(/"/g, "").trim().toLowerCase();
+    return n.startsWith("public.") ? n.slice("public.".length) : n;
+  };
+  const addFk = (t: string, name: string | undefined, columns: string[], parentRaw: string, parentCols: string | undefined) => {
+    const fk: ForeignKey = {
+      name: (name ?? `${t}_${columns.join("_")}_fkey`).replace(/"/g, "").toLowerCase(),
+      columns,
+      parent: parentName(parentRaw),
+      parentColumns: parentCols ? colList(parentCols) : ["id"],
+    };
+    const s = get(t);
+    s.fks = s.fks.filter((x) => x.name !== fk.name);
+    s.fks.push(fk);
+  };
+  const REF = String.raw`REFERENCES\s+((?:"?[a-z_][a-z0-9_]*"?\.)?"?[a-z_][a-z0-9_]*"?)\s*(?:\(([^)]*)\))?`;
   const addKey = (t: string, k: string[]) => { const s = get(t); if (!s.keys.some((x) => x.length === k.length && x.every((c, i) => c === k[i]))) s.keys.push(k); };
   const colDef = (t: string, def: string) => {
     const m = def.match(/^"?([a-z_][a-z0-9_]*)"?\s+/i);
@@ -55,12 +84,16 @@ export function censusSchema(root = join(process.cwd(), "supabase")): Map<string
     get(t).columns.add(c);
     if (/\bPRIMARY\s+KEY\b/i.test(def)) addKey(t, [c]);
     if (/\bUNIQUE\b/i.test(def) && !/\bUNIQUE\s*\(/i.test(def)) addKey(t, [c]);
+    const ref = def.match(new RegExp(String.raw`(?:CONSTRAINT\s+"?([a-z_][a-z0-9_]*)"?\s+)?` + REF, "i"));
+    if (ref) addFk(t, ref[1], [c], ref[2], ref[3]);
   };
   const constraint = (t: string, def: string) => {
     const pk = def.match(/PRIMARY\s+KEY\s*\(([^)]*)\)/i);
     if (pk) addKey(t, colList(pk[1]));
     const uq = def.match(/\bUNIQUE\s*(?:NULLS\s+NOT\s+DISTINCT\s*)?\(([^)]*)\)/i);
     if (uq) addKey(t, colList(uq[1]));
+    const fk = def.match(new RegExp(String.raw`^(?:ADD\s+)?(?:CONSTRAINT\s+"?([a-z_][a-z0-9_]*)"?\s+)?FOREIGN\s+KEY\s*\(([^)]*)\)\s*` + REF, "i"));
+    if (fk) addFk(t, fk[1], colList(fk[2]), fk[3], fk[4]);
   };
   for (const f of files) {
     const src = readFileSync(f, "utf8").replace(/--[^\n]*/g, "");
@@ -87,7 +120,16 @@ export function censusSchema(root = join(process.cwd(), "supabase")): Map<string
         for (const act of splitTop(m[2])) {
           const add = act.match(/^ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?([\s\S]*)$/i);
           if (add) { colDef(t, add[1]); continue; }
-          if (/^ADD\s+(CONSTRAINT\s+\S+\s+)?(PRIMARY\s+KEY|UNIQUE)\b/i.test(act)) constraint(t, act);
+          if (/^ADD\s+(CONSTRAINT\s+\S+\s+)?(PRIMARY\s+KEY|UNIQUE|FOREIGN\s+KEY)\b/i.test(act)) { constraint(t, act); continue; }
+          const dropCon = act.match(/^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/i);
+          if (dropCon) { const s = get(t); s.fks = s.fks.filter((x) => x.name !== dropCon[1].toLowerCase()); continue; }
+          const dropCol = act.match(/^DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?/i);
+          if (dropCol) {
+            const c = dropCol[1].toLowerCase();
+            const s = get(t);
+            s.columns.delete(c);
+            s.fks = s.fks.filter((x) => !x.columns.includes(c));
+          }
         }
       } });
     }

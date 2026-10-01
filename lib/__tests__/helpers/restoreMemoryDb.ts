@@ -4,8 +4,12 @@
 // the restore and export paths depend on it (admin-and-org Round G, P1): a
 // write statement is atomic; `upsert` with ignoreDuplicates is ON CONFLICT
 // (<target>) DO NOTHING and fails 42P10 when the target is not a declared
-// key; any other declared unique key raises 23505; `count: "exact"` reports
-// the rows actually written; reads filter with eq / in / not-null / is.
+// key; any other declared unique key raises 23505; a declared foreign key
+// raises 23503 when a written row names a parent id no row holds (checked at
+// the end of the statement, as Postgres's RI triggers are, so a row may name
+// another row of the same statement); `count: "exact"` reports the rows
+// actually written; reads filter with eq / in / not-null / is, honour
+// `range`, and are cut at `maxRows` like PostgREST's max-rows setting.
 
 export type Row = Record<string, unknown>;
 
@@ -20,17 +24,23 @@ export const db = {
   attempts: [] as Array<{ table: string; op: string }>,
   /** Simulate a PostgREST that returns no count. */
   countless: false,
+  /** Declared foreign keys per table: `column` names an `id` of `parent`. */
+  fks: {} as Record<string, Array<{ column: string; parent: string }>>,
+  /** PostgREST's max-rows: a read returns at most this many rows. */
+  maxRows: 1000,
 };
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
 const sameKey = (a: Row, b: Row, cols: string[]) => cols.every((c) => a[c] !== undefined && a[c] !== null && String(a[c]) === String(b[c]));
 
-function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean) {
+function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null) {
   const all = (db.rows[table] ??= []);
   if (op === "select") {
     if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
-    const out = all.filter((r) => filters.every((f) => f(r)));
-    return { data: single ? (out[0] ?? null) : out, error: null, count: out.length };
+    const matched = all.filter((r) => filters.every((f) => f(r)));
+    const ranged = range ? matched.slice(range[0], range[1] + 1) : matched;
+    const out = ranged.slice(0, db.maxRows);
+    return { data: single ? (out[0] ?? null) : out, error: null, count: matched.length };
   }
   if (op === "insert" || op === "upsert") {
     const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
@@ -52,6 +62,13 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
       if (clash) return { data: null, error: { code: "23505", message: `duplicate key value violates unique constraint "${table}_${clash.join("_")}_key"` }, count: null };
       staged.push({ ...row });
     }
+    for (const fk of db.fks[table] ?? []) {
+      const parentRows = fk.parent === table ? [...all, ...staged] : (db.rows[fk.parent] ?? []);
+      const orphan = staged.find((r) => r[fk.column] !== null && r[fk.column] !== undefined && !parentRows.some((p) => p.id === r[fk.column]));
+      if (orphan) {
+        return { data: null, error: { code: "23503", message: `insert or update on table "${table}" violates foreign key constraint "${table}_${fk.column}_fkey"` }, count: null };
+      }
+    }
     all.push(...staged);
     db.writes.push({ table, op, n: staged.length });
     return { data: null, error: null, count: opts?.count && !db.countless ? staged.length : null };
@@ -69,6 +86,7 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
 
 export function from(table: string) {
   let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false;
+  let range: [number, number] | null = null;
   const filters: Array<(r: Row) => boolean> = [];
   const b: Record<string, unknown> = {
     select: () => b,
@@ -79,11 +97,12 @@ export function from(table: string) {
     in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return b; },
     not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
-    order: () => b, limit: () => b, range: () => b,
+    order: () => b, limit: () => b,
+    range: (from: number, to: number) => { range = [from, to]; return b; },
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
-      try { res(exec(table, op, payload, opts, filters, single)); } catch (e) { rej(e); }
+      try { res(exec(table, op, payload, opts, filters, single, range)); } catch (e) { rej(e); }
     },
   };
   return b;

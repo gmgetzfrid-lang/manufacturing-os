@@ -9,6 +9,14 @@
 //                  this workspace; the single-shot /apply refuses an
 //                  off-contract table with 400 before any write, and its
 //                  DATA_RESTORE audit row is a checked write (ALOG-8).
+//   ORG-1 (fix)    every foreign key to an org-scoped table must name a row
+//                  of the target workspace (RESTORE_PARENT_RULES): a
+//                  team_members row naming another tenant's team, a checkout
+//                  episode on another tenant's document never land.
+//   BKP-5 (fix)    a key held by ANOTHER workspace is reported as not
+//                  restored, never as "already here"; a row the database
+//                  refuses (a second unique key, an orphan) is isolated and
+//                  reported, and the run goes on.
 //
 // The routes run for real against an in-memory engine that behaves like
 // PostgREST where it matters here: a statement is atomic, `upsert` with
@@ -37,7 +45,8 @@ import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore,
-  previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, type RestorePost, type RestoreEnvelopeLike,
+  previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, ROW_LEVEL_SQLSTATES,
+  type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
@@ -66,6 +75,8 @@ beforeEach(() => {
   db.writes = [];
   db.attempts = [];
   db.countless = false;
+  db.fks = {};
+  db.maxRows = 1000;
 });
 
 describe("ORG-1 / BKP-3 — the single-shot /apply forces the org boundary", () => {
@@ -193,6 +204,7 @@ describe("BKP-3 Done-when 3 — org-less rows are bounded by their parent row", 
 
 describe("BKP-3 Done-when 2 — one shared function, so the two routes cannot diverge", () => {
   it("the same rows land identically through /apply-table and /apply", async () => {
+    db.rows.documents = [{ id: "d1", org_id: ORG }];
     const rows = [
       { id: "s1", org_id: VICTIM, token: "live-token", revoked_at: null, document_id: "d1" },
       { id: "s2", token: "another", revoked_at: null, document_id: "d1" },
@@ -252,6 +264,8 @@ describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is r
 
   it("restoring the same backup twice: the second run skips what exists — zero failed tables, on both routes", async () => {
     db.keys = { ...KEYS };
+    db.rows.documents = [{ id: "d1", org_id: ORG }];
+    db.rows.libraries = [{ id: "lib-1", org_id: ORG }];
     for (const table of Object.keys(KEYS)) {
       const first = await chunk(table, rowsFor[table]);
       expect(first.status, table).toBe(200);
@@ -268,11 +282,11 @@ describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is r
   });
 
   it("an upsert the database rejects is reported with ITS error — no plain-insert retry of the same chunk", async () => {
-    db.writeError = (table, op) => (table === "notes" && op === "upsert" ? { code: "23505", message: 'duplicate key value violates unique constraint "notes_slug_key"' } : null);
-    const r = await chunk("notes", [{ id: "n1", body: "x" }]);
+    db.writeError = (table, op) => (table === "notes" && op === "upsert" ? { code: "42703", message: 'column "slug" of relation "notes" does not exist' } : null);
+    const r = await chunk("notes", [{ id: "n1", body: "x" }, { id: "n2", body: "y" }]);
     expect(r.status).toBe(500);
-    expect(r.body).toMatchObject({ error: 'duplicate key value violates unique constraint "notes_slug_key"', code: "23505", inserted: 0 });
-    expect(db.attempts.filter((a) => a.table === "notes").map((a) => a.op)).toEqual(["upsert"]);
+    expect(r.body).toMatchObject({ error: 'column "slug" of relation "notes" does not exist', code: "42703", inserted: 0 });
+    expect(db.attempts.filter((a) => a.table === "notes").map((a) => a.op)).toEqual(["upsert"]); // not about one row: no bisection either
     expect(rowsOf("notes")).toEqual([]);
   });
 });
@@ -304,9 +318,9 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
     db.rows.codebook_config = [{ org_id: ORG, drawing_number: { live: true } }];
     const env = envelope();
     const check = await previewChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), post: routePost });
-    expect(check.tables.notes).toEqual({ rows: 2, existing: 1, wouldInsert: 1 });
-    expect(check.tables.codebook_config).toEqual({ rows: 1, existing: 1, wouldInsert: 0 }); // keyed on org_id, bound to THIS org
-    expect(check).toMatchObject({ existing: 2, wouldInsert: 1 });
+    expect(check.tables.notes).toEqual({ rows: 2, existing: 1, heldElsewhere: 0, wouldInsert: 1 });
+    expect(check.tables.codebook_config).toEqual({ rows: 1, existing: 1, heldElsewhere: 0, wouldInsert: 0 }); // keyed on org_id, bound to THIS org
+    expect(check).toMatchObject({ existing: 2, heldElsewhere: 0, wouldInsert: 1 });
     expect(db.attempts).toEqual([]); // nothing written, no audit row
   });
 
@@ -343,7 +357,7 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
   });
 
   it("the run STOPS at the first failed table and names the tables it did not attempt (FK order)", async () => {
-    db.writeError = (table, op) => (table === "documents" && op === "upsert" ? { code: "23505", message: 'duplicate key value violates unique constraint "documents_library_uniqueness_uniq"' } : null);
+    db.writeError = (table, op) => (table === "documents" && op === "upsert" ? { code: "42501", message: 'permission denied for table documents' } : null);
     const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: {
@@ -354,7 +368,7 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
       },
     };
     const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
-    expect(result.stoppedAt).toEqual({ table: "documents", error: 'duplicate key value violates unique constraint "documents_library_uniqueness_uniq"' });
+    expect(result.stoppedAt).toEqual({ table: "documents", error: "permission denied for table documents" });
     expect(result.notAttempted).toEqual(["document_versions", "notes"]);
     expect(result.tables.map((t) => t.name)).toEqual(["libraries", "documents"]);
     expect(rowsOf("document_versions")).toEqual([]); // no child of a parent that never landed
@@ -379,7 +393,8 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
     expect(page.indexOf("await appConfirm(")).toBeLessThan(page.indexOf("await runChunkedRestore("));
     expect(page).toMatch(/KEPT EXACTLY AS THEY ARE — not overwritten, not repaired/);
     expect(page).toMatch(/Restore stopped at <span className="font-mono">\{stopped\.table\}<\/span> — \{result\.notAttempted\.length\} table\(s\) not attempted/);
-    expect(page).toMatch(/const tone = stopped\s*\? "border-red-200/);
+    expect(page).toMatch(/const tone = stopped \|\| result\.totalHeldElsewhere > 0\s*\? "border-red-200/);
+    expect(page).toMatch(/result\.totalRefused > 0 \|\| nothingNew \? "border-amber-200/);
     expect(page).not.toMatch(/it&apos;s additive and safe/);
   });
 });
@@ -418,5 +433,257 @@ describe("BKP-11 / BKP-1 (restore halves) — nothing restored can fire or be pr
       expect(row.revoked_at, t).toBeTruthy();
     }
     expect(rowsOf("transmittals")[0]).toMatchObject({ portal_token: null, status: "voided" });
+  });
+});
+
+// ─── admin-and-org Round G, P1 fix pass ─────────────────────────────────────
+
+describe("ORG-1 (fix pass) — what a restored row POINTS AT is bounded to this workspace", () => {
+  const T_MINE = "team-mine";
+  const T_VICTIM = "team-victim";
+  beforeEach(() => {
+    db.keys.team_members = [["team_id", "uid"]];
+    db.rows.teams = [{ id: T_MINE, org_id: ORG }, { id: T_VICTIM, org_id: VICTIM }];
+    db.rows.documents = [{ id: "d-mine", org_id: ORG }, { id: "d-victim", org_id: VICTIM }];
+    db.rows.projects = [{ id: "p-mine", org_id: ORG }, { id: "p-victim", org_id: VICTIM }];
+  });
+
+  it("a team_members row naming another tenant's team is refused and never written — the attacker never joins the victim's team (both routes)", async () => {
+    const r = await chunk("team_members", [
+      { team_id: T_VICTIM, uid: "attacker", org_id: VICTIM },
+      { team_id: T_MINE, uid: "u1" },
+    ]);
+    expect(r.status).toBe(200);
+    expect(rowsOf("team_members")).toEqual([expect.objectContaining({ team_id: T_MINE, uid: "u1", org_id: ORG })]);
+    expect(r.body.refused).toEqual([{ id: `${T_VICTIM}/attacker`, code: "parent_outside_workspace", message: `team_id ${T_VICTIM} is not a teams row of this workspace` }]);
+    db.rows.team_members = [];
+    const { status, body } = await single({ manifest: { orgId: "b" }, tables: { team_members: [{ team_id: T_VICTIM, uid: "attacker" }] } });
+    expect(status).toBe(200);
+    expect(rowsOf("team_members")).toEqual([]);
+    expect((body.tables as Array<Record<string, unknown>>)[0].refused).toEqual([expect.objectContaining({ code: "parent_outside_workspace" })]);
+  });
+
+  it("a checkout episode on another tenant's document never lands (the deployment-wide one-active index stays the victim's)", async () => {
+    const r = await chunk("checkout_episodes", [
+      { id: "ep-1", document_id: "d-victim", status: "active" },
+      { id: "ep-2", document_id: "d-mine", status: "active" },
+    ]);
+    expect(rowsOf("checkout_episodes").map((e) => e.id)).toEqual(["ep-2"]);
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "ep-1", code: "parent_outside_workspace" })]);
+  });
+
+  it("versions, project links, sessions and intents naming another tenant's rows are refused row by row; a NULL foreign key is no reference", async () => {
+    await chunk("document_versions", [{ id: "v-x", record_id: "d-victim" }, { id: "v-ok", record_id: "d-mine", supersedes_version_id: null }]);
+    expect(rowsOf("document_versions").map((v) => v.id)).toEqual(["v-ok"]);
+    await chunk("project_documents", [
+      { id: "pd-1", project_id: "p-victim", document_id: "d-mine" },
+      { id: "pd-2", project_id: "p-mine", document_id: "d-victim" },
+      { id: "pd-3", project_id: "p-mine", document_id: "d-mine" },
+    ]);
+    expect(rowsOf("project_documents").map((x) => x.id)).toEqual(["pd-3"]);
+    await chunk("checkout_sessions", [{ id: "cs-1", document_id: "d-victim" }, { id: "cs-2", document_id: "d-mine", episode_id: null, linked_ticket_id: null }]);
+    await chunk("document_intents", [{ id: "di-1", document_id: "d-victim" }]);
+    expect(rowsOf("checkout_sessions").map((x) => x.id)).toEqual(["cs-2"]);
+    expect(rowsOf("document_intents")).toEqual([]);
+  });
+
+  it("a self-reference may name a NEW row of the same chunk — never a row another workspace holds behind a skipped id", async () => {
+    db.rows.document_versions = [{ id: "v-victim", org_id: VICTIM, record_id: "d-victim" }];
+    const r = await chunk("document_versions", [
+      { id: "v2", record_id: "d-mine", supersedes_version_id: "v1" },  // parent later in the same chunk, new to the deployment
+      { id: "v1", record_id: "d-mine", supersedes_version_id: null },
+      { id: "v-victim", record_id: "d-mine" },                           // skipped: another workspace holds the id
+      { id: "v3", record_id: "d-mine", supersedes_version_id: "v-victim" },
+    ]);
+    expect(r.status).toBe(200);
+    expect(rowsOf("document_versions").filter((v) => v.org_id === ORG).map((v) => v.id).sort()).toEqual(["v1", "v2"]);
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "v3", code: "parent_outside_workspace" })]);
+    expect(r.body.heldElsewhere).toBe(1);
+  });
+
+  it("a long version chain written newest-first restores whole across chunks — rows go parents-first (both routes)", async () => {
+    db.fks.document_versions = [{ column: "supersedes_version_id", parent: "document_versions" }, { column: "record_id", parent: "documents" }];
+    const chain = Array.from({ length: 1200 }, (_, i) => ({ id: `v${i}`, org_id: "backup-org", record_id: "d-mine", supersedes_version_id: i === 0 ? null : `v${i - 1}` })).reverse();
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { document_versions: chain } };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result).toMatchObject({ totalInserted: 1200, totalRefused: 0 });
+    db.rows.document_versions = [];
+    const { status, body } = await single(env);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ totalInserted: 1200, failedTables: [] });
+  });
+
+  it("an unreadable parent table fails the chunk closed — nothing is written on a guess", async () => {
+    db.readError.teams = "permission denied";
+    const r = await chunk("team_members", [{ team_id: T_MINE, uid: "u1" }]);
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/Could not check the teams rows/);
+    expect(rowsOf("team_members")).toEqual([]);
+  });
+});
+
+describe("BKP-5 (fix pass) — a row the database refuses is isolated and reported; the table and the run go on", () => {
+  beforeEach(() => {
+    db.rows.assets = [{ id: "a1", org_id: ORG }];
+    db.rows.knowledge_documents = [{ id: "k1", org_id: ORG }];
+    db.keys.entity_mentions = [["id"], ["asset_id", "knowledge_document_id", "page"]];
+    // re-indexed since the backup: the live mention carries a NEW id
+    db.rows.entity_mentions = [{ id: "m-live", org_id: ORG, asset_id: "a1", knowledge_document_id: "k1", page: 1 }];
+  });
+
+  it("the codes that are about one row", () => {
+    expect([...ROW_LEVEL_SQLSTATES].sort()).toEqual(["23502", "23503", "23505", "23514", "23P01"]);
+  });
+
+  it("a mention colliding on its second unique key is refused (23505) while the rest of its chunk lands", async () => {
+    const rows = [
+      ...Array.from({ length: 6 }, (_, i) => ({ id: `m-new-${i}`, asset_id: "a1", knowledge_document_id: "k1", page: 10 + i })),
+      { id: "m-old", asset_id: "a1", knowledge_document_id: "k1", page: 1 },
+    ];
+    const r = await chunk("entity_mentions", rows);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, inserted: 6, refused: [expect.objectContaining({ id: "m-old", code: "23505" })] });
+    expect(rowsOf("entity_mentions").find((m) => m.id === "m-live")).toBeTruthy(); // the live row is kept
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 6, refused: [expect.objectContaining({ id: "m-old", code: "23505" })] });
+  });
+
+  it("a same-workspace repair restore no longer stops at a re-indexed mention: tickets and notes after it still land", async () => {
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: {
+        entity_mentions: [{ id: "m-old", org_id: "backup-org", asset_id: "a1", knowledge_document_id: "k1", page: 1 }],
+        tickets: [{ id: "t1", org_id: "backup-org" }],
+        notes: [{ id: "n1", org_id: "backup-org" }],
+      },
+    };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result).toMatchObject({ totalInserted: 2, totalRefused: 1 });
+    expect(rowsOf("tickets").map((t) => t.id)).toEqual(["t1"]);
+    expect(rowsOf("notes").map((t) => t.id)).toEqual(["n1"]);
+  });
+
+  it("the child of a refused row is refused too (23503), never written as an orphan", async () => {
+    db.rows.documents = [{ id: "d1", org_id: ORG }];
+    db.keys.document_versions = [["id"], ["record_id", "revision_label"]];
+    db.fks.document_versions = [{ column: "supersedes_version_id", parent: "document_versions" }];
+    db.rows.document_versions = [{ id: "v-live", org_id: ORG, record_id: "d1", revision_label: "A" }];
+    const r = await chunk("document_versions", [
+      { id: "v1", record_id: "d1", revision_label: "A" },
+      { id: "v2", record_id: "d1", revision_label: "B", supersedes_version_id: "v1" },
+      { id: "v3", record_id: "d1", revision_label: "C" },
+    ]);
+    expect(r.status).toBe(200);
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "v1", code: "23505" }), expect.objectContaining({ id: "v2", code: "23503" })]);
+    expect(rowsOf("document_versions").map((v) => v.id).sort()).toEqual(["v-live", "v3"]);
+  });
+});
+
+describe("BKP-5 (fix pass) — a key another workspace holds is 'not restored', never 'already here'", () => {
+  it("before and after: the preview, the chunk, the run totals and the audit row separate held-elsewhere from kept-here", async () => {
+    db.rows.notes = [{ id: "n-theirs", org_id: VICTIM, body: "another workspace's note" }, { id: "n-mine", org_id: ORG, body: "live" }];
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: { notes: [{ id: "n-theirs", org_id: "backup-org" }, { id: "n-mine", org_id: "backup-org" }, { id: "n-new", org_id: "backup-org" }] },
+    };
+    const check = await previewChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), post: routePost });
+    expect(check.tables.notes).toEqual({ rows: 3, existing: 1, heldElsewhere: 1, wouldInsert: 1 });
+    expect(check).toMatchObject({ existing: 1, heldElsewhere: 1, wouldInsert: 1 });
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result.tables[0]).toMatchObject({ name: "notes", inserted: 1, existing: 1, heldElsewhere: 1 });
+    expect(result).toMatchObject({ totalInserted: 1, totalExisting: 1, totalHeldElsewhere: 1 });
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 1, existing: 1, heldElsewhere: 1 });
+    expect(rowsOf("notes").find((n) => n.id === "n-theirs")?.org_id).toBe(VICTIM); // untouched, and not ours
+  });
+
+  it("a backup restored beside its still-live source org: every id is held elsewhere — 0 inserted, and the totals say why (single-shot too)", async () => {
+    db.rows.notes = [{ id: "n1", org_id: VICTIM }, { id: "n2", org_id: VICTIM }];
+    const env: RestoreEnvelopeLike = { manifest: { orgId: VICTIM }, tables: { notes: [{ id: "n1", org_id: VICTIM }, { id: "n2", org_id: VICTIM }] } };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result).toMatchObject({ totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 2, stoppedAt: null });
+    const { body } = await single(env);
+    expect(body).toMatchObject({ totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 2 });
+    expect(String(body.note)).toMatch(/2 record\(s\) were NOT restored: their ids are in use by another workspace/);
+  });
+
+  it("an org-less row belongs to the workspace of its bounding parent", async () => {
+    db.rows.projects = [{ id: "p-mine", org_id: ORG }, { id: "p-victim", org_id: VICTIM }];
+    db.rows.project_members = [{ id: "pm-theirs", project_id: "p-victim", user_id: "x" }, { id: "pm-mine", project_id: "p-mine", user_id: "y" }];
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: { project_members: [{ id: "pm-theirs", project_id: "p-mine", user_id: "x" }, { id: "pm-mine", project_id: "p-mine", user_id: "y" }] },
+    };
+    const check = await previewChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), post: routePost });
+    expect(check.tables.project_members).toEqual({ rows: 2, existing: 1, heldElsewhere: 1, wouldInsert: 0 });
+  });
+
+  it("the page never says 'already here' for them and never paints such a run green", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page).toMatch(/record\(s\) will NOT be restored: \$\{RESTORE_HELD_ELSEWHERE_NOTE\}/);
+    expect(page).toMatch(/could NOT be restored — their ids are in use elsewhere/);
+    expect(page).toMatch(/Nothing new was restored/);
+    expect(RESTORE_HELD_ELSEWHERE_NOTE).toMatch(/could NOT be restored here/);
+    // "Records restored" is the title only for a run that wrote something, met no held id and stopped nowhere
+    const panel = page.slice(page.indexOf("function RestoreResultPanel("));
+    expect(panel.indexOf("Records restored</>")).toBeGreaterThan(panel.indexOf("Nothing new was restored"));
+  });
+});
+
+describe("BKP-5 (fix pass) — the counts hold past the server's row cap (composite keys)", () => {
+  it("10,000 matching favorites under a 1,000-row cap: the check filters on every key column and pages — existing is exact", async () => {
+    db.maxRows = 1000;
+    db.keys.document_favorites = [["user_id", "document_id"]];
+    db.rows.document_favorites = [];
+    for (let u = 0; u < 100; u++) for (let d = 0; d < 100; d++) db.rows.document_favorites.push({ user_id: `u${u}`, document_id: `d${d}`, org_id: ORG });
+    const backup = Array.from({ length: 100 }, (_, i) => ({ user_id: `u${i}`, document_id: `d${i}`, org_id: "backup-org" }))
+      .concat(Array.from({ length: 50 }, (_, i) => ({ user_id: `u${i}`, document_id: `new-${i}`, org_id: "backup-org" })));
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { document_favorites: backup } };
+    const check = await previewChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), post: routePost });
+    expect(check.tables.document_favorites).toEqual({ rows: 150, existing: 100, heldElsewhere: 0, wouldInsert: 50 });
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result).toMatchObject({ totalInserted: 50, totalExisting: 100, totalHeldElsewhere: 0 });
+  });
+});
+
+describe("runChunkedRestore — a request that never gets an answer stops the run, keeping what was written", () => {
+  it("returns the partial outcome, the stop and the org map 'Put the files back' needs", async () => {
+    let applyCalls = 0;
+    const flaky: RestorePost = async (path, body) => {
+      if (path.startsWith("/api/admin/restore/apply-table") && ++applyCalls === 2) throw new TypeError("Failed to fetch");
+      return routePost(path, body);
+    };
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: { tickets: [{ id: "t1", org_id: "backup-org" }], notes: [{ id: "n1", org_id: "backup-org" }], notifications: [{ id: "x1", org_id: "backup-org" }] },
+    };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: flaky });
+    expect(result.idRemap.orgId).toEqual({ "backup-org": ORG });
+    expect(result.tables.map((t) => t.name)).toEqual(["tickets", "notes"]);
+    expect(result.totalInserted).toBe(1);
+    expect(result.stoppedAt).toEqual({ table: "notes", error: expect.stringMatching(/^The connection failed while restoring notes \(Failed to fetch\)/) });
+    expect(result.notAttempted).toEqual(["notifications"]);
+  });
+
+  it("a /begin that cannot be reached still throws — no table was attempted", async () => {
+    const down: RestorePost = async () => { throw new TypeError("Failed to fetch"); };
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { notes: [{ id: "n1" }] } };
+    await expect(runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: down })).rejects.toThrow(/Failed to fetch/);
+    expect(db.attempts).toEqual([]);
+  });
+});
+
+describe("ORG-1 Done-when 4 — an Object.prototype name is off contract too: 400 before any write", () => {
+  it("'constructor' and '__proto__' table keys are refused by the single-shot route", async () => {
+    const raw = '{"envelope":{"manifest":{"orgId":"b"},"tables":{"notes":[{"id":"n1"}],"constructor":[{"x":1}],"__proto__":[{"x":1}]}},"confirm":true}';
+    const res = await applySingle(new NextRequest(`https://app/api/admin/restore/apply?orgId=${ORG}`, {
+      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: raw,
+    }));
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(400);
+    expect([...(body.offContract as string[])].sort()).toEqual(["__proto__", "constructor"]);
+    expect(db.writes).toEqual([]);
+    const r = await chunk("constructor", [{ id: "x" }]);
+    expect(r.status).toBe(400);
   });
 });

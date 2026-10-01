@@ -9,9 +9,10 @@
 //   3. insert every importable table in FK order through the SAME shared
 //      function the chunked /apply-table uses (lib/dataRestore.ts
 //      applyRestoreChunk): uids remapped, org_id FORCED to this workspace,
-//      only export-contract tables, org-less rows bounded by their parent,
-//      all other ids preserved so foreign keys resolve; existing ids are
-//      skipped (additive, re-runnable)
+//      only export-contract tables, every foreign key to an org-scoped table
+//      bounded to this workspace (org-less rows by their parent), all other
+//      ids preserved so foreign keys resolve; existing ids are skipped
+//      (additive, re-runnable), a row the database refuses is reported
 //   4. audit (checked — a restore whose trail cannot be written must not
 //      look complete)
 //
@@ -23,7 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
+import { planRestore, orderTablesForRestore, mergeNewUserUids, applyRestoreChunk, restoreRowsInOrder, type RestoreEnvelopeLike, type CurrentMember, type RestoreRowRefusal, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -90,18 +91,21 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; existing?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
+  const results: Array<{ name: string; inserted: number; existing?: number; heldElsewhere?: number; uncounted?: number; filtered?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
   let totalExisting = 0;
+  let totalHeldElsewhere = 0;
   for (const name of order) {
     const raw = envelope.tables[name];
-    const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
+    // A self-referencing table's rows go parents-first, so no chunk names a row a later one carries.
+    const rows = restoreRowsInOrder(name, (Array.isArray(raw) ? raw : []) as Record<string, unknown>[]);
     if (!rows.length) continue;
-    let inserted = 0; let existing = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
+    let inserted = 0; let existing = 0; let heldElsewhere = 0; let uncounted = 0; let filtered = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
     for (let i = 0; i < rows.length; i += 500) {
       const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
       inserted += r.inserted;
       existing += r.existing;
+      heldElsewhere += r.heldElsewhere;
       uncounted += r.uncounted;
       filtered += r.filtered;
       refused.push(...r.refused);
@@ -109,9 +113,10 @@ export async function POST(req: NextRequest) {
     }
     // Report what actually landed — earlier chunks committed even on failure.
     // BKP-5: and what did not — rows whose key already exists were skipped.
-    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}) });
+    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(heldElsewhere ? { heldElsewhere } : {}), ...(uncounted ? { uncounted } : {}), ...(filtered ? { filtered } : {}), error, ...(refused.length ? { refused } : {}) });
     totalInserted += inserted;
     totalExisting += existing;
+    totalHeldElsewhere += heldElsewhere;
     if (error) {
       // STOP. Tables are FK-ordered parents-before-children: continuing after
       // a parent failure inserts children referencing rows that never landed
@@ -133,9 +138,9 @@ export async function POST(req: NextRequest) {
     user_id: actor.userId, user_email: actor.email,
     details: {
       schemaVersion: plan.schemaVersion, createdUsers,
-      linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting,
+      linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting, totalHeldElsewhere,
       backupOrgId: envelope.manifest.orgId ?? null,
-      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
+      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, ...(r.heldElsewhere ? { heldElsewhere: r.heldElsewhere } : {}), error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
     },
   });
   if (auditErr) {
@@ -152,11 +157,16 @@ export async function POST(req: NextRequest) {
     linkedUsers: plan.counts.matchedUsers,
     totalInserted,
     totalExisting,
+    totalHeldElsewhere,
     tables: results,
     failedTables: failed.map((f) => f.name),
     note:
       "Records restored additively: a row whose key already exists in this workspace was skipped and kept exactly as it is — " +
-      "a restore never overwrites or repairs an existing row. File binaries are not re-uploaded here — " +
+      "a restore never overwrites or repairs an existing row. " +
+      (totalHeldElsewhere > 0
+        ? `${totalHeldElsewhere} record(s) were NOT restored: their ids are in use by another workspace on this deployment. `
+        : "") +
+      "File binaries are not re-uploaded here — " +
       "any referenced file that isn't in storage will prompt for its archive when opened. " +
       "Restored users are inactive placeholders; re-invite them to grant access.",
   });
