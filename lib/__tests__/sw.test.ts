@@ -44,7 +44,7 @@ import ts from "typescript";
 import { postServiceWorkerMessage, clearServiceWorkerSession, announceServiceWorkerSession } from "@/lib/swSession";
 import { resolveBuildId, stampSource, UNSTAMPED } from "../../scripts/stamp-sw-version.mjs";
 import {
-  applyServiceWorkerUpdate, networkSignal, OFFLINE_PILL_TEXT, UPDATE_RELOAD_FALLBACK_MS,
+  applyServiceWorkerUpdate, loadLatestBuild, networkSignal, OFFLINE_PILL_TEXT, UPDATE_RELOAD_FALLBACK_MS,
 } from "@/components/pwa/ServiceWorkerManager";
 
 type Handler = (event: unknown) => void;
@@ -1141,5 +1141,40 @@ describe("OFF-3 / OFF-4 — the page side: honest offline copy, an update button
       applyServiceWorkerUpdate(waiting, sw ? env : { ...env, serviceWorker: null });
       expect(reload).toHaveBeenCalledTimes(1);
     }
+  });
+
+  // Integration fix (2026-10-01): every deploy now leaves a waiting worker, and
+  // UpdatePill's plain reload kept the old one in control — the toast came
+  // straight back after the user had just updated.
+  it("the build-id pill activates the registration's waiting worker, exactly as the toast does", async () => {
+    const { env, listeners, reload } = fakeEnv();
+    const waiting = { postMessage: vi.fn() };
+    await loadLatestBuild({ ...env, getRegistration: async () => ({ waiting }) });
+    expect(waiting.postMessage).toHaveBeenCalledWith("SKIP_WAITING");
+    expect(reload).not.toHaveBeenCalled();
+    listeners.controllerchange!.forEach((cb) => cb());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("the build-id pill still reloads at once with no registration, no waiting worker, no API, or a failed lookup", async () => {
+    const cases = [
+      async () => undefined,
+      async () => ({ waiting: null }),
+      null,
+      async () => { throw new Error("blocked"); },
+    ] as const;
+    for (const getRegistration of cases) {
+      const { env, reload } = fakeEnv();
+      await loadLatestBuild({ ...env, getRegistration });
+      expect(reload).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("UpdatePill's button goes through loadLatestBuild, never a bare reload", () => {
+    const src = readFileSync(resolve(process.cwd(), "components/system/UpdatePill.tsx"), "utf8");
+    expect(src).toMatch(/import \{ loadLatestBuild \} from "@\/components\/pwa\/ServiceWorkerManager";/);
+    expect(src).toMatch(/void loadLatestBuild\(\{/);
+    expect(src).toMatch(/getRegistration: sw \? \(\) => sw\.getRegistration\(\) : null/);
+    expect(src).not.toMatch(/onClick=\{\(\) => window\.location\.reload\(\)\}/);
   });
 });

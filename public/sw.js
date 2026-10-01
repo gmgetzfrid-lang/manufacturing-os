@@ -178,7 +178,9 @@ function reply(event, payload) {
  * own tiny cache so it survives the worker being stopped and restarted. An
  * identity the worker has never seen, or a different one, purges everything
  * cached at runtime. The shell cache (hashed build assets, the offline page)
- * carries no data and is left alone. Everything here is best-effort: a cache
+ * carries no data and is left alone here (sign-out in RoleContext deletes
+ * every cache, the shell included; the next SESSION re-warms it — OFF-8,
+ * OFF-12). Everything here is best-effort: a cache
  * that cannot be read counts as "unknown", which purges. */
 function purgeRuntimeCache() {
   return caches.delete(RUNTIME_CACHE).catch(() => undefined);

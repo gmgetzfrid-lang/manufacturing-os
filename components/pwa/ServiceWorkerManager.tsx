@@ -72,6 +72,24 @@ export function applyServiceWorkerUpdate(waiting: { postMessage: (message: unkno
   }
 }
 
+/** The build-id pill's tap (components/system/UpdatePill.tsx). Every deploy
+ *  now leaves a waiting worker (OFF-4: no install-time takeover; OFF-11: sw.js
+ *  changes per build), and a plain reload keeps the old worker in control, so
+ *  the pill asks the registration for its waiting worker and activates it
+ *  exactly as the toast does — otherwise the toast reappeared right after the
+ *  user updated. No registration, no waiting worker or a failed lookup: reload. */
+export async function loadLatestBuild(
+  env: UpdateEnv & { getRegistration: (() => Promise<{ waiting: { postMessage: (message: unknown) => void } | null } | undefined>) | null },
+): Promise<void> {
+  let waiting: { postMessage: (message: unknown) => void } | null = null;
+  try {
+    waiting = (await env.getRegistration?.())?.waiting ?? null;
+  } catch {
+    waiting = null;
+  }
+  applyServiceWorkerUpdate(waiting, env);
+}
+
 export default function ServiceWorkerManager() {
   const [browserOffline, setBrowserOffline] = React.useState(false);
   const [unreachable, setUnreachable] = React.useState(false);
