@@ -705,13 +705,18 @@ export { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus, isIssueTransition, 
  *  roster write and a roster recompute that stopped on an error
  *  (onDocumentIssuedAck). Empty when every write answered without an error.
  *  A write the database filtered to zero rows answers no error and is not in
- *  the list. */
+ *  the list.
+ *  REV-19 (P14 review fix): `reviewClock: false` leaves the periodic-review
+ *  clock exactly as it is (no onDocumentIssued: last_reviewed_at,
+ *  next_review_date and the review history untouched) and opens only the
+ *  roster — for a status-change issue the retirement stamp cannot place
+ *  (recordStatusIssue). Every other caller omits it. */
 export async function startIssuedDocumentClocks(input: {
-  orgId: string; documentId: string; actorUserId: string; actorName?: string | null;
+  orgId: string; documentId: string; actorUserId: string; actorName?: string | null; reviewClock?: boolean;
 }): Promise<string[]> {
   const writeErrors: string[] = [];
   // Seed the review clock so a new doc picks up any library/folder review cycle.
-  await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName, writeErrors });
+  if (input.reviewClock !== false) await onDocumentIssued({ orgId: input.orgId, documentId: input.documentId, userId: input.actorUserId, userName: input.actorName, writeErrors });
   // Open the read-&-understood roster if an ack policy covers this new doc.
   await onDocumentIssuedAck({ orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorName, writeErrors });
   return writeErrors;
@@ -2266,21 +2271,17 @@ export async function recordStatusIssue(input: {
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
 }): Promise<StatusIssueOutcome> {
   const complianceClockErrors: string[] = [];
-  if (input.putBack === false) {
+  if (input.putBack !== true) {
     try {
       complianceClockErrors.push(...await startIssuedDocumentClocks({
         orgId: input.orgId, documentId: input.documentId, actorUserId: input.actorUserId, actorName: input.actorEmail ?? null,
+        // No evidence (null): the review clock is left as it was; only the
+        // roster for this revision is opened.
+        reviewClock: input.putBack === false,
       }));
     } catch (e) {
       complianceClockErrors.push(`the start failed (${(e as Error).message})`);
     }
-  } else if (input.putBack === null) {
-    // No evidence: the review clock is left as it was; the roster for this
-    // revision is opened (onDocumentIssuedAck reports, never throws).
-    await onDocumentIssuedAck({
-      orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? null,
-      writeErrors: complianceClockErrors,
-    });
   }
   // The policy decision, best-effort: an unreadable policy or roster is
   // recorded as unknown (null), never guessed.
