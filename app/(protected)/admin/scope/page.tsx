@@ -11,19 +11,29 @@
 // columns. Refineries typically have 3–10 plants, 5–50 units per
 // plant, 3–30 systems per unit. A tree fits that shape; column
 // layouts force the eye to track three independent lists.
+//
+// ONE UNIT IDENTITY (GAP-305): each operational unit can be mapped to the
+// Site Codebook unit it is (units.codebook_code — the mapping is data, one
+// codebook unit per operational unit), and the "Unit identity" panel runs
+// the decode that writes documents.unit_code from each drawing number and
+// assets.unit_id from the mapping (POST /api/admin/unit-identity). Numbers
+// that do not decode are listed, never guessed. Unit names in the mapping
+// come from the codebook (DEC-35).
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Loader2, Plus, ChevronRight, ChevronDown, Archive, Pencil,
-  Factory, Layers, Cpu, AlertTriangle, Lock, Save, X,
+  Factory, Layers, Cpu, AlertTriangle, Lock, Save, X, Link2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   getScopeTree, createPlant, createUnit, createSystem,
   updatePlant, updateUnit, updateSystem,
   archivePlant, archiveUnit, archiveSystem,
-  type ScopeNode,
+  setUnitCodebookCode, runUnitIdentityBackfill,
+  type ScopeNode, type UnitIdentityReport,
 } from "@/lib/operationalGraph";
+import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -55,6 +65,21 @@ export default function ScopePage() {
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
   const [addingChildOf, setAddingChildOf] = useState<{ kind: "root" | "plant" | "unit"; parentId?: string } | null>(null);
   const [editing, setEditing] = useState<EditTarget>(null);
+  const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    loadCodebook(activeOrgId).then((b) => { if (alive) setBook(b); }).catch(() => { if (alive) setBook(EMPTY_CODEBOOK); });
+    return () => { alive = false; };
+  }, [activeOrgId]);
+
+  // Codebook code → the operational unit it is mapped to (one each, 20261138).
+  const mappedTo = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const { units } of tree) for (const u of units) if (u.codebookCode) m.set(u.codebookCode, u.unit.id!);
+    return m;
+  }, [tree]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -101,6 +126,17 @@ export default function ScopePage() {
     if (editing.kind === "system") await updateSystem(editing.row.id!, patch, uid);
     setEditing(null);
     await refresh();
+  };
+
+  const onMapUnit = async (unitId: string, code: string | null) => {
+    if (!uid) return;
+    setError(null);
+    try {
+      await setUnitCodebookCode(unitId, code, uid);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
 
   const onArchive = async (kind: "plant" | "unit" | "system", id: string) => {
@@ -156,6 +192,8 @@ export default function ScopePage() {
           <AlertTriangle className="w-3.5 h-3.5" /> {error}
         </div>
       )}
+
+      <UnitIdentityPanel orgId={activeOrgId} canEdit={canEdit} book={book} tree={tree} />
 
       {/* New-plant inline form */}
       {addingChildOf?.kind === "root" && (
@@ -227,7 +265,7 @@ export default function ScopePage() {
                     {units.length === 0 ? (
                       <div className="text-xs text-[var(--color-text-muted)] px-4 py-3">No units in this plant.</div>
                     ) : (
-                      units.map(({ unit, systems }) => {
+                      units.map(({ unit, systems, codebookCode }) => {
                         const unitOpen = expandedUnits.has(unit.id!);
                         return (
                           <div key={unit.id} className="border-t border-[var(--color-border)] first:border-t-0">
@@ -242,6 +280,16 @@ export default function ScopePage() {
                               })}
                               name={unit.name}
                               code={unit.code}
+                              extra={
+                                <UnitMapping
+                                  current={codebookCode}
+                                  book={book}
+                                  takenBy={mappedTo}
+                                  unitId={unit.id!}
+                                  canEdit={canEdit && !unit.archived}
+                                  onChange={(code) => onMapUnit(unit.id!, code)}
+                                />
+                              }
                               badge={`${systems.length} system${systems.length === 1 ? "" : "s"}`}
                               archived={!!unit.archived}
                               canEdit={canEdit}
@@ -307,10 +355,11 @@ export default function ScopePage() {
 // ─── Row component ──────────────────────────────────────────────
 
 function ScopeRow({
-  icon, name, code, badge, archived, indent = 0,
+  icon, name, code, extra, badge, archived, indent = 0,
   open, onToggle, canEdit, onAdd, addLabel, onEdit, onArchive,
 }: {
   icon: React.ReactNode; name: string; code: string | null | undefined;
+  extra?: React.ReactNode;
   badge?: string; archived?: boolean; indent?: number;
   open?: boolean; onToggle?: () => void;
   canEdit?: boolean;
@@ -333,6 +382,7 @@ function ScopeRow({
           <span className="text-sm font-bold text-[var(--color-text)] truncate">{name}</span>
           {code && <span className="text-[10px] font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{code}</span>}
           {archived && <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-slate-200 px-1.5 py-0.5 rounded uppercase">Archived</span>}
+          {extra}
         </div>
       </div>
       {badge && <span className="text-[10px] text-[var(--color-text-muted)] font-mono shrink-0">{badge}</span>}
@@ -353,6 +403,146 @@ function ScopeRow({
               <Archive className="w-3.5 h-3.5" />
             </button>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Unit identity (GAP-305) ────────────────────────────────────
+
+/** Which Site Codebook unit this operational unit IS. A codebook unit maps to
+ *  at most one operational unit, so codes taken elsewhere are disabled. */
+function UnitMapping({
+  current, book, takenBy, unitId, canEdit, onChange,
+}: {
+  current: string | null; book: Codebook; takenBy: Map<string, string>;
+  unitId: string; canEdit: boolean; onChange: (code: string | null) => void;
+}) {
+  const entry = current ? book.units.find((u) => u.code === current) : null;
+  if (!canEdit) {
+    return (
+      <span className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1" title="The Site Codebook unit this operational unit is">
+        <Link2 className="w-3 h-3" />
+        {current ? `Site Codebook ${current}${entry ? ` · ${entry.label}` : " (not in the codebook)"}` : "Not mapped to the Site Codebook"}
+      </span>
+    );
+  }
+  return (
+    <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]" title="The Site Codebook unit this operational unit is">
+      <Link2 className="w-3 h-3" />
+      <select
+        value={current ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="text-[10px] border border-[var(--color-border-strong)] rounded px-1 py-0.5 bg-[var(--color-surface)]"
+        aria-label="Site Codebook unit"
+      >
+        <option value="">Not mapped</option>
+        {current && !entry && <option value={current}>{current} (not in the codebook)</option>}
+        {book.units.map((u) => {
+          const other = takenBy.get(u.code);
+          return (
+            <option key={u.code} value={u.code} disabled={!!other && other !== unitId}>
+              {u.code} · {u.label}{other && other !== unitId ? " (mapped elsewhere)" : ""}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+}
+
+/** The decode: drawing numbers → documents.unit_code, the mapping →
+ *  assets.unit_id. Preview first (writes nothing), then apply. */
+function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
+  orgId: string; canEdit: boolean; book: Codebook; tree: ScopeNode[];
+}) {
+  const [busy, setBusy] = useState<null | "preview" | "apply">(null);
+  const [report, setReport] = useState<UnitIdentityReport | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const units = tree.flatMap((t) => t.units).filter((u) => !u.unit.archived);
+  const mapped = units.filter((u) => u.codebookCode).length;
+
+  const run = async (dryRun: boolean) => {
+    setBusy(dryRun ? "preview" : "apply");
+    setErr(null);
+    try {
+      setReport(await runUnitIdentityBackfill(orgId, { dryRun }));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const d = report?.documents;
+  const a = report?.assets;
+  return (
+    <div className="border border-[var(--color-border)] rounded-xl bg-[var(--color-surface)] px-4 py-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Link2 className="w-4 h-4 text-purple-600" />
+        <span className="text-sm font-bold text-[var(--color-text)]">Unit identity</span>
+        <span className="text-xs text-[var(--color-text-muted)]">
+          {mapped} of {units.length} operational unit{units.length === 1 ? "" : "s"} mapped to the Site Codebook ({book.units.length} codebook unit{book.units.length === 1 ? "" : "s"}).
+        </span>
+        {canEdit && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => run(true)}>
+              {busy === "preview" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Preview the decode
+            </Button>
+            <Button size="sm" disabled={!!busy || !report} onClick={() => run(false)} title={report ? undefined : "Preview first"}>
+              {busy === "apply" ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Decode and write
+            </Button>
+          </div>
+        )}
+      </div>
+      <div className="text-[11px] text-[var(--color-text-muted)]">
+        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment takes the operational unit its codebook unit is mapped to. A number that does not decode is listed here — never guessed.
+      </div>
+      {err && (
+        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5" /> {err}
+        </div>
+      )}
+      {report && d && a && (
+        <div className="text-xs text-[var(--color-text)] space-y-1">
+          <div className="font-bold">{report.dryRun ? "Preview — nothing written" : "Written"}</div>
+          <div>
+            Documents: {d.scanned} read · {d.decoded} decode to a codebook unit · {report.dryRun ? `${d.toWrite} to write` : `${d.written} written`}
+            {d.toClear > 0 ? ` (${d.toClear} cleared — no longer decode)` : ""}
+            {d.refused > 0 ? ` · ${d.refused} refused` : ""}
+          </div>
+          {d.notDecoding.count > 0 && (
+            <details>
+              <summary className="cursor-pointer">{d.notDecoding.count} number{d.notDecoding.count === 1 ? "" : "s"} do not decode</summary>
+              <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                {d.notDecoding.samples.map((s) => (
+                  <li key={s.number}><span className="font-mono">{s.number}</span> — {s.reason}</li>
+                ))}
+                {d.notDecoding.count > d.notDecoding.samples.length && <li>… and {d.notDecoding.count - d.notDecoding.samples.length} more</li>}
+              </ul>
+            </details>
+          )}
+          {d.unknownUnit.count > 0 && (
+            <div>{d.unknownUnit.count} decode to a unit the codebook does not hold: {d.unknownUnit.codes.map((c) => `${c.code} (${c.count})`).join(", ")}</div>
+          )}
+          {d.noUnitSegment > 0 && <div>{d.noUnitSegment} decode, but the number format has no unit segment.</div>}
+          {d.noNumber > 0 && <div>{d.noNumber} have no document number.</div>}
+          {(d.disagreeWithUnitId > 0 || d.unitIdUnmapped > 0) && (
+            <div>
+              {d.disagreeWithUnitId > 0 && `${d.disagreeWithUnitId} decode to a different unit than their operational unit (both are kept). `}
+              {d.unitIdUnmapped > 0 && `${d.unitIdUnmapped} have an operational unit that is not mapped to the Site Codebook, so the two cannot be compared.`}
+            </div>
+          )}
+          <div>
+            Equipment: {a.scanned} read · {report.dryRun ? `${a.toSet} to set, ${a.toRepoint} to re-point, ${a.toClear} to clear` : `${a.written} written`}
+            {a.keptUnmapped > 0 ? ` · ${a.keptUnmapped} kept (point at an unmapped operational unit)` : ""}
+            {a.refused > 0 ? ` · ${a.refused} refused` : ""}
+          </div>
+          {report.mapping.codebookUnitsUnmapped.length > 0 && (
+            <div>Codebook units with no operational unit: {report.mapping.codebookUnitsUnmapped.join(", ")}</div>
+          )}
+          {report.notes.map((n) => <div key={n} className="text-amber-700">{n}</div>)}
         </div>
       )}
     </div>
