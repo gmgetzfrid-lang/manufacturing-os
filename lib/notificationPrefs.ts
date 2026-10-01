@@ -66,9 +66,11 @@ export const PREF_DEFAULTS: Readonly<NotificationPrefs> = Object.freeze({
 
 /** Whether the toast listener reads toast_enabled yet. The listener
  *  (components/providers/NotificationListener.tsx) belongs to N3; until it
- *  calls readToastPreference the settings page does not offer a switch that
- *  would save and do nothing. A test flips with the listener: it fails when the
- *  listener reads the preference and this is still false, and the reverse. */
+ *  reads the preference (readToastPreference, or the column directly) the
+ *  settings page does not offer a switch that would save and do nothing. A
+ *  test flips with the listener: it fails when the listener mentions
+ *  readToastPreference or toast_enabled and this is still false, and the
+ *  reverse — whoever wires the listener flips this in the same change. */
 export const TOAST_PREFERENCE_HONOURED = false;
 
 /** A stored digest_frequency read into the CHECK vocabulary. 'immediate' was
@@ -121,7 +123,10 @@ export function shouldSendForEvent(
 
 /** The whole email preference rule for one recipient's row (null = no row =
  *  the defaults): the master switch, the 'never' cadence, the per-event
- *  toggle. Exported once, for queueEmail's fallback and the digest (N6). */
+ *  toggle. Exported once, for queueEmail's fallback and the digest (N6).
+ *  The master switch and 'never' stop recall and safety email too — GAP-203
+ *  acceptance 2, "no email from any path"; recall / safety are un-mutable by a
+ *  per-category toggle only (DEC-44 (N1) §9, for the integrator to ratify). */
 export function emailAllowedByPrefs(prefs: Record<string, unknown> | null, eventType: string): boolean {
   if (prefs?.email_enabled === false) return false;
   if (prefs?.digest_frequency === "never") return false;

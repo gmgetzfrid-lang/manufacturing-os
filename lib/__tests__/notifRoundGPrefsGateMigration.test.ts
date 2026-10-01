@@ -9,7 +9,10 @@
 //   * email_gate() is NEW (no earlier definition to carry byte-for-byte), is
 //     STABLE SECURITY DEFINER with search_path pinned, refuses a NULL uid that
 //     is not the service role and a signed-in caller who is not an active
-//     member, and is executable by authenticated + service_role only;
+//     member, and is executable by authenticated + service_role only; its
+//     dedupe merges a repeat only (the latest email to the same recipient,
+//     event and resource in 60 s, with the same subject) — emit()'s
+//     event_type is a category, so different messages share it;
 //   * toast_enabled is added NOT NULL DEFAULT TRUE; inapp_enabled is marked
 //     DEPRECATED and NOT dropped (integrator override: a dropped column cannot
 //     be restored, and older backup envelopes carry it); push_enabled, the
@@ -62,7 +65,10 @@ describe("20261148 — one paste, one result set (DEC-30)", () => {
     const subs = [...before.matchAll(/(?<!EXISTS )\(SELECT\s+(\w+)/g)].map((m) => m[1]);
     expect(subs.length).toBeGreaterThanOrEqual(10);
     expect(new Set(subs)).toEqual(new Set(["COUNT"]));
-    expect(before).not.toMatch(/to_email|subject|body_text|body_html/);
+    // message content is never read out: the subject appears only compared row to row
+    const sql = before.replace(/'(?:[^']|'')*'/g, "''");
+    expect(sql.replace(/\b[dex]\.subject (?:=|<>) [dex]\.subject\b/g, "")).not.toMatch(/to_email|subject|body_text|body_html/);
+    expect(sql).toMatch(/d\.subject = e\.subject/);
   });
 
   it("the final SELECT is (check, ok, n): probes carry ok with n NULL, inventory carries n with ok NULL", () => {
@@ -86,8 +92,16 @@ describe("20261148 — email_gate()", () => {
 
   it("is STABLE SECURITY DEFINER with search_path pinned, and returns boolean", () => {
     expect(tx).toMatch(
-      /CREATE OR REPLACE FUNCTION email_gate\(p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text DEFAULT NULL\)\s*RETURNS boolean\s*LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS \$\$/,
+      /CREATE OR REPLACE FUNCTION email_gate\(p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text DEFAULT NULL, p_subject text DEFAULT NULL\)\s*RETURNS boolean\s*LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS \$\$/,
     );
+  });
+
+  it("a paste of the four-argument first draft is dropped first, so exactly one email_gate exists (and the probes count it)", () => {
+    const drop = tx.indexOf("DROP FUNCTION IF EXISTS email_gate(uuid, uuid, text, text);");
+    expect(drop).toBeGreaterThan(-1);
+    expect(drop).toBeLessThan(tx.indexOf("CREATE OR REPLACE FUNCTION email_gate"));
+    expect(code.match(/DROP FUNCTION/g)).toHaveLength(1);
+    expect(after).toMatch(/WHERE n\.nspname = 'public' AND p\.proname = 'email_gate'\) = 1 AS ok,/);
   });
 
   it("a NULL uid passes only as the service role; a signed-in non-member is refused 42501", () => {
@@ -102,18 +116,23 @@ describe("20261148 — email_gate()", () => {
     expect(body.match(/RETURN [^;]+;/g)!.every((r) => /^RETURN (true|false);$/.test(r))).toBe(true);
   });
 
-  it("the dedupe keys on (recipient, resource, event, org) inside 60 s, and never dedupes a resource-less email", () => {
+  it("the dedupe reads the LATEST email to (recipient, resource, event, org) inside 60 s and merges only when its subject is this one; never a resource-less email", () => {
     expect(body).toMatch(/IF p_resource_id ~\* '\^\[0-9a-f\]\{8\}-/);
-    const dedupe = body.slice(body.indexOf("FROM email_notifications e"), body.indexOf("RETURN false;", body.indexOf("FROM email_notifications e")));
+    const dedupe = body.slice(body.indexOf("SELECT e.subject INTO v_last_subject"), body.indexOf("RETURN false;", body.indexOf("FROM email_notifications e")));
+    expect(dedupe).toMatch(/^SELECT e\.subject INTO v_last_subject\s+FROM email_notifications e\s+WHERE/);
     for (const t of ["e.to_user_id = p_to_user", "e.resource_id = v_resource", "e.event_type = p_event_type", "e.org_id = p_org", "e.created_at >= now() - interval '60 seconds'"]) {
       expect(dedupe).toContain(t);
     }
+    expect(dedupe).toMatch(/ORDER BY e\.created_at DESC\s+LIMIT 1;\s*IF v_last_subject = p_subject THEN\s*$/);
+    expect(body).toMatch(/v_last_subject text;/);
+    // a mere EXISTS on the key (any earlier email about the resource) would merge different messages
+    expect(body).not.toMatch(/EXISTS \(SELECT 1 FROM email_notifications/);
   });
 
   it("EXECUTE is revoked from PUBLIC and anon and granted to authenticated and service_role, after the CREATE", () => {
     const created = tx.indexOf("CREATE OR REPLACE FUNCTION email_gate");
-    const revoke = tx.indexOf("REVOKE ALL ON FUNCTION email_gate(uuid, uuid, text, text) FROM PUBLIC, anon;");
-    const grant = tx.indexOf("GRANT EXECUTE ON FUNCTION email_gate(uuid, uuid, text, text) TO authenticated, service_role;");
+    const revoke = tx.indexOf("REVOKE ALL ON FUNCTION email_gate(uuid, uuid, text, text, text) FROM PUBLIC, anon;");
+    const grant = tx.indexOf("GRANT EXECUTE ON FUNCTION email_gate(uuid, uuid, text, text, text) TO authenticated, service_role;");
     expect(revoke).toBeGreaterThan(created);
     expect(grant).toBeGreaterThan(revoke);
   });
@@ -144,7 +163,7 @@ describe("20261148 — the probes can be true", () => {
   it("every prosrc LIKE pattern matches the body this file creates, and every NOT LIKE does not", () => {
     const pos = [...after.matchAll(/p\.prosrc LIKE '((?:[^']|'')*)'/g)].map((m) => m[1]);
     const neg = [...after.matchAll(/p\.prosrc NOT LIKE '((?:[^']|'')*)'/g)].map((m) => m[1]);
-    expect(pos.length).toBeGreaterThanOrEqual(6);
+    expect(pos.length).toBeGreaterThanOrEqual(8);
     expect(neg.length).toBe(2);
     for (const p of pos) expect(body, p).toMatch(like(p));
     for (const p of neg) expect(body, p).not.toMatch(like(p));

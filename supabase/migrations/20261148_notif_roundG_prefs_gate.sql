@@ -15,16 +15,22 @@
 --   RT-10    no user preference could turn pop-up toasts off.
 --
 -- What this file does:
---   · email_gate(p_org, p_to_user, p_event_type, p_resource_id) — NEW,
---     STABLE SECURITY DEFINER, search_path pinned. It answers one question:
---     may this email be queued? FALSE when the recipient's row says email
---     off (email_enabled = false), cadence 'never', or the event's own toggle
---     off (the same cases as lib/notificationPrefs.ts shouldSendForEvent —
---     a recall 'safety_recall', a PSM 'safety_alert', 'system' and anything
---     else have no toggle); FALSE when the same email (recipient, event,
---     resource, org) was queued in the last 60 seconds. No row = the column
---     defaults = TRUE. An email with no resource is never deduped (the old
---     window compared against '' and never matched one either).
+--   · email_gate(p_org, p_to_user, p_event_type, p_resource_id, p_subject)
+--     — NEW, STABLE SECURITY DEFINER, search_path pinned. It answers one
+--     question: may this email be queued? FALSE when the recipient's row says
+--     email off (email_enabled = false), cadence 'never', or the event's own
+--     toggle off (the same cases as lib/notificationPrefs.ts
+--     shouldSendForEvent — a recall 'safety_recall', a PSM 'safety_alert',
+--     'system' and anything else have no toggle; the master switch and 'never'
+--     stop them too, DEC-44 (N1) §9). FALSE when the email is a REPEAT: the
+--     latest email this recipient got for the same (event, resource, org) in
+--     the last 60 seconds has the same subject. event_type is emit()'s
+--     CATEGORY, so two different messages about one document can share it
+--     (a hold placed / released, 'advanced to Rev C' / 'package went stale')
+--     — those are never merged, and neither is a repeat that a different
+--     message has followed (placed, released, placed again). No row = the
+--     column defaults = TRUE. An email with no resource is never deduped (the
+--     old window compared against '' and never matched one either).
 --     Callable by an ACTIVE member of p_org (a signed-in caller who is not
 --     one is refused, 42501) or by the service role (the cron and server
 --     routes carry no uid); a NULL uid that is not the service role is
@@ -44,9 +50,11 @@
 --
 -- WIDENING (DEC-30): any active member may now learn, for a fellow member of
 -- their own org, a yes/no derived from that member's email preferences and
--- recent queue — what queueEmail needs and nothing more (no column, no row,
--- no address is returned). Before this file only the member and the service
--- role could read either. The inventory below counts the rows in reach.
+-- recent queue (whether the latest email about one resource in the last
+-- minute carried a given subject) — what queueEmail needs and nothing more
+-- (no column, no row, no subject, no address is returned). Before this file
+-- only the member, an Admin / Manager (the queue) and the service role could
+-- read either. The inventory below counts the rows in reach.
 --
 -- DEPLOY ORDER: either order is safe. The N1 app tolerates the function's
 -- absence (PGRST202 / 42883 → the old caller-side read, with a warning, and
@@ -98,15 +106,22 @@ SELECT 'BEFORE: emails queued in the last 30 days to a recipient whose row said 
          WHERE e.created_at >= now() - interval '30 days'
            AND (np.email_enabled = false OR np.digest_frequency = 'never'))::text
 UNION ALL
-SELECT 'BEFORE: emails queued in the last 30 days within 60 s of the same (recipient, event, resource) (DELIV-9''s reach)',
+SELECT 'BEFORE: emails queued in the last 30 days that repeat, within 60 s, the latest email to the same (recipient, event, resource) with the same subject (DELIV-9''s reach)',
        (SELECT COUNT(*) FROM email_notifications e
          WHERE e.created_at >= now() - interval '30 days'
            AND e.resource_id IS NOT NULL
            AND EXISTS (SELECT 1 FROM email_notifications d
                         WHERE d.to_user_id = e.to_user_id AND d.resource_id = e.resource_id
-                          AND d.event_type = e.event_type AND d.id <> e.id
+                          AND d.event_type = e.event_type AND d.org_id = e.org_id AND d.id <> e.id
+                          AND d.subject = e.subject
                           AND d.created_at <= e.created_at
-                          AND d.created_at >= e.created_at - interval '60 seconds'))::text;
+                          AND d.created_at >= e.created_at - interval '60 seconds'
+                          AND NOT EXISTS (SELECT 1 FROM email_notifications x
+                                           WHERE x.to_user_id = e.to_user_id AND x.resource_id = e.resource_id
+                                             AND x.event_type = e.event_type AND x.org_id = e.org_id
+                                             AND x.id <> e.id AND x.id <> d.id
+                                             AND x.created_at >= d.created_at AND x.created_at <= e.created_at
+                                             AND x.subject <> e.subject)))::text;
 
 BEGIN;
 
@@ -128,7 +143,11 @@ BEGIN
 END $$;
 
 -- ── 3. email_gate(): the preference rule + the 60-second dedupe ─────────────
-CREATE OR REPLACE FUNCTION email_gate(p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text DEFAULT NULL)
+-- A paste of this file's first draft (four arguments, no subject) is
+-- replaced, not left beside the new one as an overload.
+DROP FUNCTION IF EXISTS email_gate(uuid, uuid, text, text);
+
+CREATE OR REPLACE FUNCTION email_gate(p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text DEFAULT NULL, p_subject text DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -136,6 +155,7 @@ DECLARE
   v_prefs notification_preferences%ROWTYPE;
   v_toggle boolean;
   v_resource uuid;
+  v_last_subject text;
 BEGIN
   IF v_uid IS NULL THEN
     -- Only the service role (the cron, server routes) carries no uid. anon
@@ -174,16 +194,25 @@ BEGIN
     IF v_toggle IS FALSE THEN RETURN false; END IF;
   END IF;
 
-  -- The 60-second dedupe: the same recipient, event and resource. Never for
-  -- an email with no resource (two of those are not the same email).
+  -- The 60-second dedupe merges a REPEAT only: the latest email this
+  -- recipient got for the same event and resource, inside 60 seconds, has
+  -- this subject. event_type is the sender's category, so a different message
+  -- about the same resource (a hold placed, then released) shares it and is
+  -- never merged; nor is a repeat that a different message has followed. A
+  -- NULL subject never matches. Never for an email with no resource (two of
+  -- those are not the same email).
   IF p_resource_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     v_resource := p_resource_id::uuid;
-    IF EXISTS (SELECT 1 FROM email_notifications e
-                WHERE e.to_user_id = p_to_user
-                  AND e.resource_id = v_resource
-                  AND e.event_type = p_event_type
-                  AND e.org_id = p_org
-                  AND e.created_at >= now() - interval '60 seconds') THEN
+    SELECT e.subject INTO v_last_subject
+      FROM email_notifications e
+     WHERE e.to_user_id = p_to_user
+       AND e.resource_id = v_resource
+       AND e.event_type = p_event_type
+       AND e.org_id = p_org
+       AND e.created_at >= now() - interval '60 seconds'
+     ORDER BY e.created_at DESC
+     LIMIT 1;
+    IF v_last_subject = p_subject THEN
       RETURN false;
     END IF;
   END IF;
@@ -192,22 +221,24 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION email_gate(uuid, uuid, text, text) IS
-  'May this email be queued? FALSE when the recipient opted out (master switch, never, or the event toggle) or the same (recipient, event, resource) was queued in the last 60 s. Active members of p_org and the service role only. notifications Round G, 20261148.';
+COMMENT ON FUNCTION email_gate(uuid, uuid, text, text, text) IS
+  'May this email be queued? FALSE when the recipient opted out (master switch, never, or the event toggle) or it repeats, within 60 s, the latest email to the same (recipient, event, resource) with the same subject. Active members of p_org and the service role only. notifications Round G, 20261148.';
 
-REVOKE ALL ON FUNCTION email_gate(uuid, uuid, text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION email_gate(uuid, uuid, text, text) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION email_gate(uuid, uuid, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION email_gate(uuid, uuid, text, text, text) TO authenticated, service_role;
 
 COMMIT;
 
 -- ── Verification + inventory (ONE result set): expect ok = true × 9 ─────────
-SELECT 'email_gate(uuid,uuid,text,text) exists, returns boolean, is STABLE SECURITY DEFINER with search_path pinned' AS check,
+SELECT 'email_gate(uuid,uuid,text,text,text) is the only email_gate, returns boolean, is STABLE SECURITY DEFINER with search_path pinned' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'email_gate'
-                  AND pg_get_function_identity_arguments(p.oid) = 'p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text'
+                  AND pg_get_function_identity_arguments(p.oid) = 'p_org uuid, p_to_user uuid, p_event_type text, p_resource_id text, p_subject text'
                   AND pg_get_function_result(p.oid) = 'boolean'
                   AND p.prosecdef AND p.provolatile = 's'
-                  AND p.proconfig @> ARRAY['search_path=public']) AS ok,
+                  AND p.proconfig @> ARRAY['search_path=public'])
+       AND (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname = 'email_gate') = 1 AS ok,
        NULL::text AS n
 UNION ALL
 SELECT 'email_gate: anon and PUBLIC cannot execute it, authenticated and service_role can',
@@ -237,12 +268,14 @@ SELECT 'email_gate: master switch, never, and the per-event toggles (recall / sa
                   AND p.prosrc NOT LIKE '%safety_alert%'),
        NULL
 UNION ALL
-SELECT 'email_gate: the dedupe is (recipient, resource, event, org) inside 60 seconds',
+SELECT 'email_gate: the dedupe merges only a repeat — the latest email to the same (recipient, resource, event, org) inside 60 seconds, with the same subject',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'email_gate'
                   AND p.prosrc LIKE '%e.resource_id = v_resource%'
                   AND p.prosrc LIKE '%e.event_type = p_event_type%'
-                  AND p.prosrc LIKE '%now() - interval ''60 seconds''%'),
+                  AND p.prosrc LIKE '%now() - interval ''60 seconds''%'
+                  AND p.prosrc LIKE '%ORDER BY e.created_at DESC%LIMIT 1%'
+                  AND p.prosrc LIKE '%IF v_last_subject = p_subject THEN%'),
        NULL
 UNION ALL
 SELECT 'notification_preferences.toast_enabled is boolean NOT NULL DEFAULT true',

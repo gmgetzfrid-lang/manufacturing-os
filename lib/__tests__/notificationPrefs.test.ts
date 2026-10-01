@@ -253,8 +253,10 @@ describe("RT-10 — readToastPreference fails open", () => {
 });
 
 describe("RT-10 — the toast switch is offered exactly when the listener honours it", () => {
-  it("TOAST_PREFERENCE_HONOURED flips with NotificationListener reading readToastPreference (N3 flips both)", () => {
+  it("TOAST_PREFERENCE_HONOURED flips with NotificationListener reading the preference — through readToastPreference or toast_enabled directly (N3 flips both)", () => {
+    // N3 runs in parallel from a base without lib/notificationPrefs.ts, so it
+    // may read the column itself; either spelling counts as reading it.
     const listener = read("components/providers/NotificationListener.tsx");
-    expect(TOAST_PREFERENCE_HONOURED).toBe(/readToastPreference/.test(listener));
+    expect(TOAST_PREFERENCE_HONOURED).toBe(/readToastPreference|toast_enabled/.test(listener));
   });
 });

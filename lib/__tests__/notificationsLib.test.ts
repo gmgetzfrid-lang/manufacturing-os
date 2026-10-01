@@ -28,6 +28,10 @@ import { categoryToEventType, type NotifCategory } from "@/lib/notify/dispatch";
 //   email_gate() — SECURITY DEFINER (20261148): it sees every row whoever
 //     calls it. Its rules are written out here independently of the app's
 //     helper; notificationPrefs.test.ts pins the migration's CASE to them.
+//     Its dedupe merges a repeat only: the latest email to the recipient for
+//     the same (event, resource, org) in 60 s has the same subject.
+//   auth.getSession — the browser carries the actor's session; the service
+//     role (the cron, the intake door) carries none.
 const world = vi.hoisted(() => ({
   actor: "a0000000-0000-4000-8000-000000000001",
   ctx: "client" as "client" | "service",
@@ -36,6 +40,7 @@ const world = vi.hoisted(() => ({
   rpc: "deployed" as "deployed" | "missing" | "missing-42883" | "error",
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   insertError: null as null | { code: string; message: string },
+  sessionThrows: false,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -64,12 +69,26 @@ vi.mock("@/lib/supabase", () => {
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let lim = Infinity;
-    const run = () => visible(table).filter((r) => filters.every((f) => f(r))).slice(0, lim);
+    let sort: { col: string; asc: boolean } | null = null;
+    const run = () => {
+      // insertion order breaks a created_at tie (two inserts in one millisecond)
+      const rows = visible(table).map((r, i) => ({ r, i })).filter(({ r }) => filters.every((f) => f(r)));
+      if (sort) {
+        const { col, asc } = sort;
+        rows.sort((a, b) => {
+          const x = String(a.r[col]), y = String(b.r[col]);
+          const c = x < y ? -1 : x > y ? 1 : a.i - b.i;
+          return asc ? c : -c;
+        });
+      }
+      return rows.map(({ r }) => r).slice(0, lim);
+    };
     const q: Record<string, unknown> = {};
     Object.assign(q, {
       select: () => q,
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       gte: (c: string, v: unknown) => { filters.push((r) => String(r[c]) >= String(v)); return q; },
+      order: (c: string, o?: { ascending?: boolean }) => { sort = { col: c, asc: o?.ascending !== false }; return q; },
       limit: (n: number) => { lim = n; return q; },
       maybeSingle: async () => ({ data: run()[0] ?? null, error: null }),
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
@@ -103,13 +122,17 @@ vi.mock("@/lib/supabase", () => {
     }
     if (args.p_resource_id) {
       const since = Date.now() - 60_000;
-      const dupe = world.emails.some((e) => e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
-        && e.resource_id === args.p_resource_id && e.org_id === args.p_org && Date.parse(e.created_at as string) >= since);
-      if (dupe) return { data: false, error: null };
+      const last = world.emails.filter((e) => e.to_user_id === args.p_to_user && e.event_type === args.p_event_type
+        && e.resource_id === args.p_resource_id && e.org_id === args.p_org && Date.parse(e.created_at as string) >= since).at(-1);
+      if (last && args.p_subject != null && last.subject === args.p_subject) return { data: false, error: null };
     }
     return { data: true, error: null };
   }
-  const client = { from, rpc, auth: { getSession: async () => ({ data: { session: null } }) } };
+  async function getSession() {
+    if (world.sessionThrows) throw new Error("session storage unavailable");
+    return { data: { session: world.ctx === "client" ? { user: { id: world.actor }, access_token: "t" } : null } };
+  }
+  const client = { from, rpc, auth: { getSession } };
   return { supabase: client };
 });
 
@@ -226,6 +249,7 @@ beforeEach(() => {
   world.rpc = "deployed";
   world.rpcCalls.length = 0;
   world.insertError = null;
+  world.sessionThrows = false;
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   err = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -256,7 +280,7 @@ describe("DELIV-2 — an opt-out is honoured whoever queues the email", () => {
   it("the gate is asked through email_gate with the org, the recipient, the event and the resource", async () => {
     await queueEmail(mail());
     expect(world.rpcCalls).toEqual([
-      { fn: "email_gate", args: { p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_resource_id: DOC1 } },
+      { fn: "email_gate", args: { p_org: ORG, p_to_user: B, p_event_type: "comment_mention", p_resource_id: DOC1, p_subject: "Subject" } },
     ]);
   });
 });
@@ -287,6 +311,60 @@ describe("DELIV-9 — the 60-second dedupe sees the recipient's rows", () => {
     expect(world.emails).toHaveLength(2);
     expect(world.rpcCalls.every((c) => c.args.p_resource_id === null)).toBe(true);
   });
+});
+
+// emit() queues with eventType = the CATEGORY (dispatch.ts categoryToEventType),
+// not the notification kind, so different messages about one document share
+// (recipient, event, resource). The dedupe must merge only a repeat.
+describe("DELIV-9 — the dedupe merges a repeat, never a different message about the same resource", () => {
+  const STATUS = categoryToEventType("status");   // lib/holds.ts: hold placed AND hold released
+  const WATCHED = categoryToEventType("watched"); // postPublish 'advanced to Rev' AND workPackages 'went stale'
+  const PLACED = "HOLD placed on DOC-100 — Engineering review";
+  const RELEASED = "Hold released on DOC-100";
+
+  const PATHS = [
+    ["email_gate (after the paste), queued from a browser", () => { world.ctx = "client"; world.rpc = "deployed"; }],
+    ["the pre-paste fallback, under the service role", () => { world.ctx = "service"; world.rpc = "missing"; }],
+  ] as const;
+
+  for (const [path, arrange] of PATHS) {
+    describe(path, () => {
+      beforeEach(() => arrange());
+
+      it("hold A released, then hold B placed on the same document within 60 s: both emails, the last one says stop", async () => {
+        await queueEmail(mail({ eventType: STATUS, subject: RELEASED }));
+        await queueEmail(mail({ eventType: STATUS, subject: PLACED }));
+        expect(world.emails.map((e) => e.subject)).toEqual([RELEASED, PLACED]);
+      });
+
+      it("placed, released, placed again with the same reason within 60 s: all three (a repeat a different message has followed is not a repeat)", async () => {
+        await queueEmail(mail({ eventType: STATUS, subject: PLACED }));
+        await queueEmail(mail({ eventType: STATUS, subject: RELEASED }));
+        await queueEmail(mail({ eventType: STATUS, subject: PLACED }));
+        expect(world.emails.map((e) => e.subject)).toEqual([PLACED, RELEASED, PLACED]);
+      });
+
+      it("two work packages pinning one document go stale: one email per package to their owner", async () => {
+        // workPackages.ts fires one emit per package (void, unawaited): the
+        // second can land after the first is queued, inside the minute.
+        await queueEmail(mail({ eventType: WATCHED, subject: 'Work package "A" went stale' }));
+        await queueEmail(mail({ eventType: WATCHED, subject: 'Work package "B" went stale' }));
+        expect(world.emails.map((e) => e.subject)).toEqual(['Work package "A" went stale', 'Work package "B" went stale']);
+      });
+
+      it("'advanced to Rev C' and 'package went stale' to one owner about the same document: both", async () => {
+        await queueEmail(mail({ eventType: WATCHED, subject: "DOC-100 advanced to Rev C" }));
+        await queueEmail(mail({ eventType: WATCHED, subject: 'Work package "B" went stale' }));
+        expect(world.emails).toHaveLength(2);
+      });
+
+      it("the same message twice within 60 s is still one email", async () => {
+        await queueEmail(mail({ eventType: STATUS, subject: PLACED }));
+        await queueEmail(mail({ eventType: STATUS, subject: PLACED }));
+        expect(world.emails).toHaveLength(1);
+      });
+    });
+  }
 });
 
 describe("REGRESSION — every email queued before the switch is still queued when preferences allow it", () => {
@@ -320,11 +398,40 @@ describe("REGRESSION — every email queued before the switch is still queued wh
     }
   }
 
+  for (const ctx of ["client", "service"] as const) {
+    it(`${ctx} context: on ONE resource within 60 s, each of the ${EVENTS.length} event types queues two different messages as two emails`, async () => {
+      world.ctx = ctx;
+      for (const eventType of EVENTS) {
+        await queueEmail(mail({ eventType, subject: `${eventType}: first` }));
+        await queueEmail(mail({ eventType, subject: `${eventType}: second` }));
+      }
+      expect(world.emails.map((e) => e.subject)).toEqual(EVENTS.flatMap((e) => [`${e}: first`, `${e}: second`]));
+      expect(warn).not.toHaveBeenCalled();
+    });
+  }
+
   it("recall and safety mail ignores every per-category toggle (only the master switch and 'never' stop it)", async () => {
     setPrefs(B, { email_on_mention: false, email_on_assignment: false, email_on_status_change: false, email_on_watched_activity: false, email_on_sla_warning: false });
     await queueEmail(mail({ eventType: categoryToEventType("recall"), resourceId: DOC1 }));
     await queueEmail(mail({ eventType: categoryToEventType("safety"), resourceId: DOC2 }));
     expect(world.emails.map((e) => e.event_type)).toEqual(["safety_recall", "safety_alert"]);
+  });
+
+  it("DEC-44 (N1) §9: the master switch and 'never' stop recall and safety email too, on every path", async () => {
+    // From 20261148 on this includes the browser path, which used to mail a
+    // recall regardless because it could not see the row (DELIV-2). The bell
+    // row is dispatch.ts's and is always written.
+    for (const [ctx, rpc] of [["client", "deployed"], ["service", "deployed"], ["service", "missing"]] as const) {
+      world.ctx = ctx;
+      world.rpc = rpc;
+      setPrefs(B, { email_enabled: false });
+      setPrefs(C, { digest_frequency: "never" });
+      for (const c of ["recall", "safety"] as const) {
+        await queueEmail(mail({ eventType: categoryToEventType(c) }));
+        await queueEmail(mail({ toUserId: C, toEmail: "c@example.test", eventType: categoryToEventType(c) }));
+      }
+    }
+    expect(world.emails).toHaveLength(0);
   });
 });
 
@@ -359,6 +466,24 @@ describe("a gate that cannot answer is never a silent all-on", () => {
     expect(world.emails).toHaveLength(1);
     expect(world.emails[0].metadata).toEqual({ pref_gate: "unverified" });
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/20261148/));
+  });
+
+  it("pre-paste, no row where the read could have seen one is the defaults, not 'unverified': the service role, or the recipient's own session", async () => {
+    world.rpc = "missing";
+    world.ctx = "service";
+    await queueEmail(mail());
+    world.ctx = "client";
+    await queueEmail(mail({ toUserId: world.actor, toEmail: "a@example.test", resourceId: DOC2 }));
+    expect(world.emails.map((e) => [e.to_user_id, e.metadata])).toEqual([[B, null], [world.actor, null]]);
+  });
+
+  it("pre-paste, no row for ANOTHER member from a browser (absent and hidden look alike), or an unreadable session: stamped 'unverified'", async () => {
+    world.rpc = "missing";
+    await queueEmail(mail());
+    world.ctx = "service";
+    world.sessionThrows = true;
+    await queueEmail(mail({ resourceId: DOC2 }));
+    expect(world.emails.map((e) => e.metadata)).toEqual([{ pref_gate: "unverified" }, { pref_gate: "unverified" }]);
   });
 
   it("a refused insert is logged as an error, never reported as queued", async () => {

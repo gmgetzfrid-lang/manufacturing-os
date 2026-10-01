@@ -4,9 +4,10 @@
 // Every workflow event that should notify users goes through queueEmail(),
 // which:
 //   1. Asks email_gate() (20261148, SECURITY DEFINER) whether the RECIPIENT's
-//      preferences allow this email and whether the same email for the same
-//      resource was queued in the last 60 seconds — evaluated where the
-//      recipient's row is visible, whoever is calling (DELIV-2, DELIV-9)
+//      preferences allow this email and whether it repeats, within 60
+//      seconds, the latest email to them about the same resource and event
+//      (same subject) — evaluated where the recipient's row is visible,
+//      whoever is calling (DELIV-2, DELIV-9)
 //   2. Writes a row to `email_notifications` (status='queued')
 //   3. Hits /api/notifications/send-queued to flush new rows immediately
 //      so the recipient sees the email within seconds, not minutes
@@ -60,6 +61,7 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
     p_to_user: input.toUserId,
     p_event_type: input.eventType,
     p_resource_id: input.resourceId || null,
+    p_subject: input.subject,
   });
   if (!error) return data === false ? "suppress" : "send";
   if (isMissingEmailGate(error)) {
@@ -74,10 +76,13 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
   return "unverified";
 }
 
-/** The pre-20261148 gate, unchanged in effect: the recipient's row and the
- *  60-second window read through the CALLER's client. Under the service role
- *  that is authoritative; from a browser RLS hides another member's row, so a
- *  missing row is reported as 'unverified' rather than read as all-on. */
+/** The pre-20261148 gate: the recipient's row and the 60-second window read
+ *  through the CALLER's client, with email_gate()'s dedupe key (a repeat of
+ *  the latest email — same subject — never a different message that shares
+ *  the event and resource). A missing row is the defaults when the read could
+ *  have seen it (callerSeesRecipientRow); from a browser RLS hides another
+ *  member's row, so there a missing row is reported as 'unverified' rather
+ *  than read as all-on. */
 async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
   const { data: prefs, error: prefsErr } = await supabase
     .from("notification_preferences")
@@ -88,17 +93,39 @@ async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
 
   if (input.resourceId) {
     const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
-    const { data: dupes } = await supabase
+    const { data: latest } = await supabase
       .from("email_notifications")
-      .select("id")
+      .select("subject")
       .eq("to_user_id", input.toUserId)
       .eq("event_type", input.eventType)
       .eq("resource_id", input.resourceId)
       .gte("created_at", sixtySecAgo)
+      .order("created_at", { ascending: false })
       .limit(1);
-    if (dupes && dupes.length > 0) return "suppress";
+    const last = (latest as Array<{ subject?: unknown }> | null)?.[0];
+    if (last && last.subject === input.subject) return "suppress";
   }
-  return prefs && !prefsErr ? "send" : "unverified";
+  if (prefsErr) return "unverified";
+  if (prefs) return "send";
+  return (await callerSeesRecipientRow(input.toUserId)) ? "send" : "unverified";
+}
+
+/** Whether a caller-side read of `toUserId`'s preferences row would have
+ *  returned it had it existed — so "no row" really means the defaults. True
+ *  for the recipient's own session (notif_prefs_own shows the caller their
+ *  own row), and with no signed-in session: on the server the shared client
+ *  is then bound to the service role (the cron, the intake door), which sees
+ *  every row, and a client with neither cannot queue at all
+ *  (email_notif_insert is TO authenticated). False for a browser reading
+ *  another member's row, or when the session cannot be read. */
+async function callerSeesRecipientRow(toUserId: string): Promise<boolean> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const uid = data.session?.user?.id ?? null;
+    return uid === null || uid === toUserId;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -109,8 +136,9 @@ async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
  */
 export async function queueEmail(input: QueueEmailInput): Promise<void> {
   try {
-    // The recipient's preferences + the 60-second dedupe (same recipient, same
-    // event, same resource), evaluated by email_gate() where both are visible.
+    // The recipient's preferences + the 60-second dedupe (a repeat of the
+    // latest email to this recipient about the same event and resource: same
+    // subject), evaluated by email_gate() where both are visible.
     const verdict = await evaluateEmailGate(input);
     if (verdict === "suppress") return;
 
