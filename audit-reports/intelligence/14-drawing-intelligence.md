@@ -469,7 +469,7 @@ Now `auditOpcBoxes` (`lib/drawingText.ts`) takes `context.forNow`: every documen
 
 The route maps those ids with `waitsOn(ids)` over `forNow`, so the connector waits on the failed document, labelled "(its indexing failed — re-index it)". That makes it a finding about that document: the box may stand on it. Holders named for the destination's drawing come first.
 
-**2. A sheet no title block declares (the reviewer's minor).** Take `OPC 14: DWG 025-PID-0105 SH 2` into a 0105 whose page 2 was indexed text-only. No self row declares `025-PID-0105-SH2`, so the connector had no owner and was dropped, and the source was filed a settled `passed`. Now a sheet-addressed form with no owner, of a drawing that exactly one other document declares, is paired against that document. The exception is a sheet known not to be in it: the document was read whole, every page declares a number, and it declares sheets of that drawing, none of them this one. The sheet's page is not known, so the connector is never `unreturned`. It is `unpaired`, with either "no page of it declares sheet 2, so which of its pages is the sheet named is not known", or `unread` when the document is not read whole. Two documents declaring the drawing is never guessed between. The source's own document is never paired this way, as before. (Corrected in review fix pass 8: this guess skipped the documents that may hold the sheet. Take per-sheet PDFs of 0105 where SH1's title block read only the base number. While SH2's own PDF was reset by a rebuild, or its re-index failed, SH1 was the sole declarer, so the connector was filed a SETTLED `unpaired` against SH1, the wrong document. A known revision's `passed` became `flagged` for good. The guess now stands only when no other document not read whole for now may hold the sheet; see below.)
+**2. A sheet no title block declares (the reviewer's minor).** Take `OPC 14: DWG 025-PID-0105 SH 2` into a 0105 whose page 2 was indexed text-only. No self row declares `025-PID-0105-SH2`, so the connector had no owner and was dropped, and the source was filed a settled `passed`. Now a sheet-addressed form with no owner, of a drawing that exactly one other document declares, is paired against that document. The exception is a sheet known not to be in it: the document was read whole, every page declares a number, and it declares sheets of that drawing, none of them this one. (Corrected in review fix pass 10: "every page declares a number" was implemented as any number, so a page that declared only the bare drawing number ruled the sheet out. A connector into a combined 0105 whose page 2 gave 025-PID-0105 without its sheet field was dropped, and 0104 was recorded `passed` with its pairing never checked (the reviewer's probe p2). A page now rules the sheet out only when it declares a sheet of that drawing, or only other drawings; see review fix pass 10 below.) The sheet's page is not known, so the connector is never `unreturned`. It is `unpaired`, with either "no page of it declares sheet 2, so which of its pages is the sheet named is not known", or `unread` when the document is not read whole. Two documents declaring the drawing is never guessed between. The source's own document is never paired this way, as before. (Corrected in review fix pass 8: this guess skipped the documents that may hold the sheet. Take per-sheet PDFs of 0105 where SH1's title block read only the base number. While SH2's own PDF was reset by a rebuild, or its re-index failed, SH1 was the sole declarer, so the connector was filed a SETTLED `unpaired` against SH1, the wrong document. A known revision's `passed` became `flagged` for good. The guess now stands only when no other document not read whole for now may hold the sheet; see below.)
 
 **3. A parked document no longer holds any destination.** See DWG-13 item 5: only a document in flight may. A parked document whose title block was read holds its own drawing, or a series it declares two drawings of. (Corrected in review fix pass 8. Held by the settled rule only, a connector into a parked document's unread page under another number of the set's series was dropped, and an unrevised `broken_connectors` was overwritten with a settled `passed`. Also, "in flight" was not what the route implemented: a document still mid-read whose batch had queued a page for AI vision was treated as parked. A parked document now holds any destination in the set's scope as well; see below.)
 
@@ -497,9 +497,9 @@ Each fails against fix pass 6 (`85e1648`).
 
 Residual:
 - A connector into another page of its own combined PDF is not paired, as before.
-- A connector into an undeclared sheet of a drawing that two documents declare is not guessed.
+- A connector into an undeclared sheet of a drawing that two documents declare is not guessed. (Since review fix pass 10 it is `unpaired`, naming both, unless the sheet is known not to be in one of them; it was dropped.)
 - Take a failed document whose filename names an unrelated series, and whose title block the failure cleared. It holds nothing, so a connector into its old number is dropped. No document is in flight, so under `""` that settled verdict is written. (Since review fix pass 8: unless a document is still being read, in flight or parked.)
-- The reference audit's twin is unchanged. A sheet-addressed reference to a sheet no title block declares, of a drawing whose only declaration is its bare number, is filed out of scope. The connector carrying the same destination is now `unpaired`.
+- The reference audit's twin is unchanged. A sheet-addressed reference to a sheet no title block declares, of a drawing whose only declaration is its bare number, is filed out of scope. The connector carrying the same destination is now `unpaired`. (Corrected in review fix pass 10: this understated it. When a title block in the set declares any sheet of that drawing, its series is in scope, and such a reference was filed a settled GAP, "isn't in the set", and the reference back from that sheet one-way; at a known revision neither was ever lowered once the sheet field was read (the reviewer's probe p3). Now a document whose title block gave the drawing number without the sheet answers to the sheet its filename names, and otherwise the reference is unchecked and the reference back is never one-way; see review fix pass 10 below and DWG-13's. Only the case where no title block declares any sheet of the drawing, and no filename names one, is still filed out of scope.)
 
 **Review fix pass 8 (2026-10-01, intelligence Round G).** Fix pass 7's items 2 and 3 above, and its "a reset destination waits", did not hold in three cases. The reviewer reproduced each through the route.
 
@@ -524,12 +524,44 @@ Each fails against fix pass 7 (`c0656fa`) except the positive control.
 
 Residual (this replaces fix pass 7's list):
 - A connector into another page of its own combined PDF is not paired, as before.
-- A connector into an undeclared sheet of a drawing that two documents declare is not guessed.
+- A connector into an undeclared sheet of a drawing that two documents declare is not guessed. (Since review fix pass 10 it is `unpaired`, naming both, unless the sheet is known not to be in one of them; it was dropped.)
 - A connector into a destination outside the set's scope that only a parked document's unread page declares is dropped, as an out-of-scope connector is. At a known revision dropping never raises a verdict. Under `""` a lower verdict waits while that document is parked (DWG-13).
 - Take a failed document whose filename names an unrelated series, and whose title block the failure cleared. It holds nothing, so a connector into its old number is dropped. If no document is being read, under `""` that settled verdict is written.
-- The reference audit's twin is unchanged. A sheet-addressed reference to a sheet no title block declares, of a drawing whose only declaration is its bare number, is filed out of scope. The connector carrying the same destination is `unpaired`.
+- The reference audit's twin is unchanged. A sheet-addressed reference to a sheet no title block declares, of a drawing whose only declaration is its bare number, is filed out of scope. The connector carrying the same destination is `unpaired`. (Corrected in review fix pass 10: this understated it. When a title block in the set declares any sheet of that drawing, its series is in scope, and such a reference was filed a settled GAP, "isn't in the set", and the reference back from that sheet one-way; at a known revision neither was ever lowered once the sheet field was read (the reviewer's probe p3). Now a document whose title block gave the drawing number without the sheet answers to the sheet its filename names, and otherwise the reference is unchecked and the reference back is never one-way; see review fix pass 10 below and DWG-13's. Only the case where no title block declares any sheet of the drawing, and no filename names one, is still filed out of scope.)
 
-**Review fix pass 9 (2026-10-01, intelligence Round G).** Item 2 above made a connector into a parked document's possible destination wait on it. That verdict did not resolve when the parked document stopped waiting without being read: a controller accepted its partial index, or its indexing failed. The row stayed `flagged` at rev C, "already recorded" for good, where the computation was `passed` (the reviewer's probes accept, accept2 and failed). The fix is DWG-13's review fix pass 9 item 1: a provisional row is never "already recorded", and the set's basis names each incomplete document's kind. Pairing is unchanged. A parked document whose number was never read still holds any destination for a connector, and the connector waits on it (only the reference audit changed for such a document; DWG-13 item 2 of that pass).
+**Review fix pass 9 (2026-10-01, intelligence Round G).** Item 2 above made a connector into a parked document's possible destination wait on it. That verdict did not resolve when the parked document stopped waiting without being read: a controller accepted its partial index, or its indexing failed. The row stayed `flagged` at rev C, "already recorded" for good, where the computation was `passed` (the reviewer's probes accept, accept2 and failed). The fix is DWG-13's review fix pass 9 item 1: a provisional row is never "already recorded", and the set's basis names each incomplete document's kind. Pairing is unchanged. A parked document whose number was never read still holds any destination for a connector, and the connector waits on it (only the reference audit changed for such a document; DWG-13 item 2 of that pass). (Corrected in review fix pass 10: no longer. While one unnumbered scan was parked under the cap, every sheet with a connector into a unit the set was never given was filed `flagged`, waiting on it, while the lens listed the same reference as out of scope. Such a document now holds only a destination in the set's scope; see review fix pass 10 below.)
+
+**Review fix pass 10 (2026-10-01, intelligence Round G).** The reviewer found that a title block that gives a drawing's number without its sheet field still made a connector disappear, and that a parked scan still held every connector's destination. Each case was reproduced through the route. The reference audit's side of the first is DWG-13's review fix pass 10 item 1.
+
+**1. A page that declared only the drawing number ruled the sheet out (probe p2, major).** In a combined 025-PID-0105.pdf, page 1 declared 025-PID-0105 and its SH1, page 2 only 025-PID-0105, and page 3 025-PID-0105 and its SH3. `sheetKnownAbsent` counted page 2 as "declares a number", so `OPC 16: DWG 025-PID-0105 SH 2` from 0104 was dropped, whether or not box 16 stood on page 2, and 0104 was recorded `passed`. Now `sheetKnownAbsent` (`auditOpcBoxes`, `lib/drawingText.ts`) asks `pagesMayBeSheet`, which the reference audit shares. A page rules sheet X-SHn out only when it declares a sheet of X, or only other drawings. A page that gave X without a sheet of it, or no number at all, may be the sheet. The connector is `unpaired` against 0105 ("no page of it declares sheet 2, so which of its pages is the sheet named is not known"), and 0104 is `flagged`, settled.
+
+The choice, stated: a page whose title block names only another drawing counts as that drawing's, so it still rules the sheet out. The reviewer's literal rule ("only when it declares some sheet form of that drawing") would have made every combined PDF of two drawings rule nothing out. A title block is taken at its word here, as everywhere else; only a page that names the drawing without the sheet, or names nothing, is in doubt.
+
+**2. Two documents declaring the drawing (the residual "not guessed").** Such a connector was dropped, and its sheet passed with the pairing never checked. The guess now looks at every document that declares the drawing and drops each one the sheet is known not to be in. If one is left, it is guessed, as a sole declarer was. If two or more are left, one `unpaired` names them: "no page in the set declares it, and it may be in A (its sheet number was not read on page(s) 1, 2); B (…)". That finding is settled, unless one of them is not read whole for now, when it waits on it.
+
+**3. The sheet a filename names (the reviewer's preferred fix).** `filenameSheets` (`lib/drawingText.ts`) applies to a document whose title block gave drawing X and no sheet of X. Such a document answers to the X-SHn its filename reads ("025-PID-0105-SH2.pdf", "_SHT2", " Sheet 2"). In `auditOpcBoxes` that is an identity whose pages are the ones declaring X. A box found there pairs. A box missing from there is `unpaired` ("only its filename names 025-PID-0105-SH2 — its title block gave the drawing number without the sheet — and box 16 is not on page 1 of it"), never `unreturned`: a filename is no title block. A filename sheet yields to a title block that declares that sheet, and two filenames naming one sheet name none. A filename never rules a page OUT (`pagesMayBeSheet` ignores it).
+
+**4. A parked scan whose number was never read (probe p4, minor).** In `holdersOf`, a parked candidate holds a destination in the set's scope, or one its number gives it (`holdsByItsNumber`: its own drawing, a combined PDF's series). It never holds anything just because its number was never read. So with Scan_0001.pdf parked under the cap, `OPC 3: DWG 999-PID-0001 SH 1` is dropped, as the reference audit calls it out of scope, and rev C is `passed`. A connector into the set's scope still waits on the scan. A document in flight is unchanged: it may hold anything.
+
+Broken is unchanged from fix pass 6. A sheet named only by a filename never makes a box `unreturned`.
+
+Tests:
+- `lib/__tests__/drawingText.test.ts`, block "DWG-4 — a sheet whose title block gave the drawing number but not the sheet is no gap, no one-way, and no dropped connector (review fix pass 10)":
+  - `filenameSheets`;
+  - probes p2 and p3 (reference audit and connectors);
+  - probe p4.
+- The fix-pass-7 test "a connector naming a sheet no title block declares … is unpaired — never dropped" now expects the two-declarer case `unpaired`, naming both, and gains a case where one declarer accounts for every page and the other is guessed.
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-4 / DWG-13 — … (review fix pass 10)": probes p2 (box 16 and box 99 on page 2), p3 and p4.
+
+Each fails against fix pass 9 (`143cad2`).
+
+Residual (this replaces fix pass 8's list):
+- A connector into another page of its own combined PDF is not paired, as before.
+- A connector into a destination outside the set's scope that only a numbered parked document's unread page declares is dropped. At a known revision dropping never raises a verdict. Under `""` the lower verdict waits while that document is parked (DWG-13).
+- Take a failed document whose filename names an unrelated series, and whose title block the failure cleared. It holds nothing, so a connector into its old number is dropped. If no document is being read, under `""` that settled verdict is written.
+- A connector into a sheet that a page of a document read whole may be, its sheet field unread, is a settled `unpaired`. At a known revision it is never lowered once that sheet field is read, like any settled unchecked finding, unless the document's filename named the sheet (item 3). Re-indexing that drawing with AI vision reads the field.
+- A box missing from a sheet that only a filename names is `unpaired`, never broken.
+- Sheets indexed before the contract have no opc rows.
 ---
 
 <a id="dwg-5"></a>
@@ -709,6 +741,8 @@ Each fails against fix pass 2 (`4e549d0`).
 **Review fix pass 5 (2026-10-01, intelligence Round G).** A missing sheet was filed only against the first six referencing sheets in alphabetical order. `auditDrawingRefs` cut `referencedBy` to six for display, and the record used that list to decide who gets the finding. With eight sheets citing a missing 025-PID-0199, the seventh and eighth were recorded `passed` and stamped covered. The cut was there at the base; fix pass 4's `missingUnread` copied it. Now `auditDrawingRefs` (`lib/drawingText.ts`) also returns `referencedByAll` for `missingInSeries` and `missingUnread`. The record files the finding against every one of them. Only the lens keeps the cut list, and it never ships the whole one. Tests: `lib/__tests__/drawingText.test.ts` "a missing sheet names every referencing sheet for the record — six for display"; `lib/__tests__/drawingAuditLog.test.ts` "eight referencers, eight flagged"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "eight sheets reference 025-PID-0199: all eight are flagged — the lens lists six, the record files eight". The route test fails against fix pass 4 (`b41bdca`).
 
 **Review fix pass 9 (2026-10-01, intelligence Round G).** The series not judged named prose documents. The route counted `sheetIdentities`, whose fallback, when a sheet declares nothing and its filename holds no drawing number, is the filename itself. With 040-TK-0001/0002 beside "Pump Manual.pdf" and "Spec Section 15000.pdf", the lens returned `seriesNotJudged: ["PUMP", "SPEC-SECTION"]` and the panel said "Gaps are not judged in PUMP, SPEC-SECTION — this library holds no more than one drawing number of each of those series". With a parked "Scan_0001.pdf", every recorded row carried `set.seriesNotJudged: ["SCAN_0001.PDF"]`. Two documents named "Pump …" would even have made `PUMP` a held series. This had been in the branch since the first review fix pass (`8ab0582`). Now `sheetDrawingNumbers` (`lib/drawingText.ts`) gives a sheet's REAL drawing numbers: what its title block declared, else what the drawing-number grammar reads in its filename, and nothing otherwise. `sheetIdentities` is that plus the fallback, unchanged for resolving references and for the set digest. The route passes `sheetDrawingNumbers` to `seriesHeldBySet` and `seriesNotJudged`, in the lens (GET) and in `recordAudit`, so both judge the same series. A drawing number in a filename still counts ("030-PID-0201.pdf" alone is named `030-PID`).
+
+**Review fix pass 10 (2026-10-01, intelligence Round G).** `sheetDrawingNumbers` also gives the sheet a filename names, for a drawing the title block declared without any sheet of it (`filenameSheets`, DWG-4 review fix pass 10 item 3). "025-PID-0105-SH2.pdf", whose title block gave only 025-PID-0105, answers to 025-PID-0105-SH2, and so does `sheetIdentities`. That number counts toward the series 025-PID-0105, held or not judged, as a declared SH2 would. In the reference audit a filename sheet yields to a title block that declares it, and two filenames naming one sheet name none (`refResolver`).
 
 Tests:
 - `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "the reviewer's probe notjudged: a prose document's filename names no series 'not judged' — on the lens or on the record";
@@ -1554,7 +1588,7 @@ Now `auditDrawingRefs` (`lib/drawingText.ts`) counts a parked document (still be
 Three things are unchanged:
 - A failed document, or an accepted partial index, whose number was never read still holds anything by the settled rule (a settled unchecked `flagged`).
 - A document in flight still holds anything.
-- For a connector, a parked document whose number was never read still holds any destination, and the connector waits on it (DWG-4).
+- For a connector, a parked document whose number was never read still holds any destination, and the connector waits on it (DWG-4). (Corrected in review fix pass 10: no longer. It holds only a destination in the set's scope, as a failed unnumbered document does; see review fix pass 10 item 3 below.)
 
 **3. Series not judged named prose documents (probe notjudged, minor).** See DWG-6, review fix pass 9: `seriesHeldBySet` and `seriesNotJudged` count real drawing numbers only (`sheetDrawingNumbers`).
 
@@ -1569,7 +1603,7 @@ What waits (provisional, never written over what a row settled):
   - a gap while any document is parked;
   - a connector whose destination no document declares, in three cases:
     - into the set's scope while a document is in flight or parked;
-    - anywhere while a document whose number was never read is in flight or parked;
+    - anywhere while a document whose number was never read is in flight or parked (corrected in review fix pass 10: in flight only; a parked one holds the set's scope);
     - into what a failed document holds by the settled rule (in the set's scope when its number was never read);
   - an undeclared sheet that another document not read whole for now may hold;
   - a sibling under the same key not read whole for now.
@@ -1600,12 +1634,105 @@ All eleven fail against fix pass 8 (`c7272ca`): the three changed sources swappe
 
 Residual (this replaces fix pass 8's list):
 - A `flagged` that waits on nothing transient is settled, and at a known revision it is never lowered. That covers an unpaired box into a text-layer page that is later read by vision, an unchecked check against an accepted partial index, and an unchecked gap that a failed document may hold. The panel shows these under "kept".
-- At a known revision, take a provisional row whose re-judgement settles BELOW what the row settled (something settled changed, such as a sheet added that answers a gap). The row is kept, never lowered, and keeps its provisional marker. It is judged again, and listed under `keptStored`, on every record.
+- At a known revision, take a provisional row whose re-judgement settles BELOW what the row settled (something settled changed, such as a sheet added that answers a gap). The row is kept, never lowered, and keeps its provisional marker. It is judged again, and listed under `keptStored`, on every record. (Corrected in review fix pass 10: its marker, and the finding that waited on a document that no longer waits, stayed on the row for good, judged again and listed as kept on every record (the reviewer's probe p1). Such a row is now written back as what it settled, its marker dropped, and is then "already recorded"; see review fix pass 10 item 2 below.)
 - A finding about a failed document itself waits on it until someone re-indexes or removes that document. That includes a connector into a destination that no document declares and that the failed document may be.
 - A failed document whose title block the failure cleared, under a filename that names something else: a reference into its old number is a gap, settled (a missing sheet never waits on a failed document, DEC-59), and a connector into it is dropped (DWG-4).
 - Under an unknown revision, a lower verdict waits while any document is still being read, in flight or parked. With a parked document that can be until next month under a cap, or until someone re-reads it or accepts its partial index. The response names what the verdict waits on.
 - While any document is parked, every gap in the library is filed provisional, waiting on it. It is shown as a gap, and settles once the parked pages are read, the partial index is accepted, or the document fails.
 - At a known revision, take a first record while a document in flight is the only holder of a series, under an unrelated filename. References into that series are filed out of scope. The set digest names the document, so the sheet is judged again once it is read, and a gap then raises the verdict.
 - `log_audit_completion` (I-04) writes no `provisional` marker and compares by status. A provisional row it meets is just a row at that status, which is never lower than what the row settled, so nothing is lost.
+- (Added in review fix pass 10.) `check_audit_history` (I-04's `lib/orchestrator/tools.ts`) answers "Already audited at this revision. Skip it" for any row at the asked revision, a provisional one included. The route judges a provisional row again on every record until it settles, so the two readers of the record disagree. Handed to I-04: `check_audit_history` must treat a row whose `audit_details.provisional` is set as not settled, report its `waitingOn` and `settledStatus`, and never recommend skipping it.
+- A page skipped for lack of a key or for the cap is not tracked as unread (DWG-7, handed to I-06).
+
+**Review fix pass 10 (2026-10-01, intelligence Round G).** One major and four minors, each reproduced by the reviewer through the route (probes p1 to p4). Fix pass 9's DWG-4 residual said a sheet-addressed reference into a sheet no title block declares is "filed out of scope". That understated it, and its two DWG-4 residual lines are corrected in place.
+
+**1. A sheet whose title block gave the drawing number but not the sheet (probes p2 and p3, major).** Per-sheet PDFs: 025-PID-0105-SH1.pdf declares 025-PID-0105 and its SH1; 025-PID-0105-SH2.pdf's title block gave only 025-PID-0105. 025-PID-0104 (rev C) references 025-PID-0105-SH2. Nothing answered to it, so the series 025-PID-0105 being in scope (SH1 declares a sheet of it), the reference was filed a settled gap, "isn't in the set". SH2's reference back to 0104 was linked but never returned by a link, so it was one-way. Since DWG-6's never-lower rule, a rebuild that read SH2's sheet field left rev C `flagged` for good (`keptStored`). A combined PDF whose page 2 declared only the drawing number did the same, and its connector was dropped (DWG-4 review fix pass 10 item 1).
+
+Changes, in `auditDrawingRefs` (`lib/drawingText.ts`):
+- It takes `pages` (`selfPages`, `pageCounts`). The route passes them in the lens and in `recordAudit`.
+- A sheet-addressed reference (X-SHn) that no title block declares, in scope, that no document not read whole may hold, but that a page of a document READ WHOLE may be, goes to `missingSheetUnread`, never `missingInSeries`. A page may be the sheet when the document answers to X and the page gave X without a sheet of it, or no number at all (`pagesMayBeSheet`, shared with the box pairing). Without page facts, the document may be the sheet when its title block declared no sheet of X. `maybeIn` names the document and the pages.
+- The record files "References 025-PID-0105-SH2, which no title block in the set declares — it may be in 025-PID-0105.pdf (its sheet number was not read on page(s) 2), so whether it is in the set was not checked" under `uncheckedReferences` (`sheetUnread`, `verdictsForSheets`). It is settled, and waits only, as a gap does, on documents parked on AI vision. It is judged inside a held series, as a gap is (`missingWithinHeldSeries`).
+- A link B→A that A never returns, while a sheet-addressed reference of A that resolves to no sheet may be B, goes to `oneWaySheetUnread`, never `oneWay`. B may be it through a page as above, or by being not read whole and holding it. The record files "References A, which references X-SH2 — that may be this sheet (…), so whether it references back was not checked".
+- A document whose page may be the sheet it references itself is unchecked too, never silent.
+- The reviewer's preferred fix: a document whose title block gave X and no sheet of X answers to the sheet its filename names (`filenameSheets`, through `sheetIdentities`). In probe p3 the reference resolves to SH2.pdf: 0104 and SH2 pass, and nothing is kept once the sheet field is read. A filename sheet yields to a title block that declares it, and two filenames naming one sheet name none (`refResolver`). A filename never rules a page out.
+- The lens returns `missingSheetUnread` and `oneWaySheetUnread`, and says so: "N reference(s) could not be checked: they name a sheet no title block in the set declares …".
+
+What is still so: such an unchecked finding is settled. At a known revision it is never lowered once the sheet field is read, like any settled unchecked finding, unless the filename named the sheet. It is truthful now: "not checked", never "isn't in the set".
+
+**2. A provisional row settled below what it settled (probe p1, minor).** At a known revision, `replaceDecision` (`lib/drawingAuditLog.ts`) now returns `"settle"` when a settled computation falls below what a PROVISIONAL row settled. Fix pass 9 returned `"keep"`, which left the row's marker and its waiting finding ("it may be in 030-PID-0201.pdf, not read whole yet") on the row for good, judged again and listed as kept on every record. The route writes the row back as what it settled (`settledFromStored`):
+- its settled status;
+- its findings less the ones that waited, which the row now records by position (`audit_details.waitingFindings`, written with the marker by `verdictRows`);
+- no marker;
+- the computation's coverage.
+
+It is listed under `keptStored`, never counted as recorded, and the next record answers it "already recorded". It never settles on a `skipped` computation, nor on another library's row on the org-wide key (`neverLower`). A row with no `waitingFindings`, which no `recordAudit` wrote, is kept as before. In the probe, r2 writes rev B back as `flagged` with its one-way finding and without the unpaired one, and r3 answers it already recorded.
+
+**3. A parked scan whose number was never read held any connector destination (probe p4, minor).** See DWG-4 review fix pass 10 item 4. The reference audit's parked holders (fix pass 9 item 2) and the box pairing's now agree: by number, or the set's scope for a connector, never anything.
+
+**4. The panel's copy (minor).** The footer of `components/knowledge/DrawingIntelPanel.tsx` adds: "A verdict that waits on a sheet not read whole yet is audited again on every record until it settles." The response carries `stillWaiting`: the recorded sheets written again only because they still wait, provisional at the status they were. The toast and the recorded box count them apart: "Audit recorded for 2 sheet(s) (1 of them unchanged, still waiting on a sheet not read whole yet)".
+
+**5. check_audit_history (minor, handoff).** The I-04 line is added to fix pass 9's residual above and to DEC-59: `check_audit_history` must treat a provisional row as not settled. That file is I-04's and is not edited here.
+
+What waits, and what is settled, now. This replaces fix pass 9's list. It changes three things:
+- an unchecked sheet a page may be is settled, and waits only as a gap does;
+- a parked document whose number was never read holds only the set's scope for a connector;
+- an undeclared sheet that several declarers may hold is unpaired.
+
+What waits (provisional, never written over what a row settled):
+  - a finding about a document in flight, parked or failed;
+  - a sheet the set is missing that a document in flight may hold (any), or that a parked one holds by its number;
+  - a gap while any document is parked, and an unchecked sheet that a page of a document read whole may be, likewise;
+  - a connector whose destination no document declares, in three cases:
+    - into the set's scope while a document is in flight or parked;
+    - anywhere while a document whose number was never read is in flight;
+    - into what a failed document holds by the settled rule (in the set's scope when its number was never read);
+  - an undeclared sheet that another document not read whole for now may hold;
+  - a sibling under the same key not read whole for now.
+
+What is settled:
+  - a gap with no document being read;
+  - a sheet the set is missing that only a failed document or an accepted partial index may hold (unchecked);
+  - a sheet no title block declares that a page of a document read whole may be, and the reference back that may be it (unchecked), with no document parked;
+  - an undeclared sheet guessed into the one document declaring its drawing that may hold it, or named among several that may (`unpaired`);
+  - every finding about a sheet's own index.
+
+Tests:
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-4 / DWG-13 — a sheet whose title block gave its drawing number but not the sheet is never a settled gap, a one-way, or a dropped connector; a provisional row settled below its floor is written back as what it settled; a parked scan holds no destination outside the set (review fix pass 10)":
+  - probe p3: SH2 named by its filename, then the same named for nothing;
+  - probe p2: box 16 and box 99 on page 2;
+  - probes p1 and p4;
+  - `stillWaiting`.
+- The fix-pass-4 test "a sheet not found in what was read of the set is no gap while the sheet that may hold it is parked" is corrected. Once 0105's page 2 is read with no number on it, 025-PID-0105-SH2 is unchecked ("its sheet number was not read on page(s) 2"). Once page 2's title block gives sheet 3, it is a gap. Fix pass 9 filed the gap as soon as page 2 was read.
+- `lib/__tests__/drawingAuditLog.test.ts`, block "a provisional row settled below its floor is written back as what it settled (review fix pass 10)": `waitingFindings`, `"settle"`, `settledFromStored`, and the two new unchecked findings. Two rows of the `replaceDecision` tables now expect `"settle"`.
+- `lib/__tests__/drawingText.test.ts`, block "DWG-4 — a sheet whose title block gave the drawing number but not the sheet … (review fix pass 10)": see DWG-4.
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): "the record says a waiting verdict is audited again on every record, and counts the unchanged ones apart (review fix pass 10)".
+
+All 23 new or changed tests fail against fix pass 9 (`143cad2`): the four changed sources (`lib/drawingText.ts`, `lib/drawingAuditLog.ts`, the route, the panel) were swapped in and restored byte-identical (`cmp`). The reviewer's probes p1 to p4 in `scratchpad/rev-i07-fp9` now give:
+- p1: r2 kept and written back as `flagged`, with no marker and no unpaired finding; r3 already recorded;
+- p2: the connector `unpaired` for box 16 and box 99, and 0104 `flagged`;
+- p3: `passed`, and nothing kept;
+- p4: no unpaired connector, and rev C `passed`.
+
+The fix-pass-8 probes still give fix pass 9's answers. None is committed.
+
+Residual (this replaces fix pass 9's list):
+- A `flagged` that waits on nothing transient is settled, and at a known revision it is never lowered. That covers:
+  - an unpaired box into a text-layer page that is later read by vision;
+  - an unchecked check against an accepted partial index;
+  - an unchecked gap that a failed document may hold;
+  - since this pass, an unchecked reference, or an unpaired connector, into a sheet whose page gave its drawing number without the sheet, once that sheet field is read, unless the filename named the sheet.
+
+  The panel shows these under "kept".
+- A row written back as what it settled keeps the settled findings it had, even one a later change resolves (in probe p1, the one-way finding after 0102 references back). That is the known-revision rule: what a row settled is never lowered.
+- A sheet-addressed reference into a drawing of which no title block declares any sheet, and no filename names one, is still filed out of scope, because the drawing's own series is not in scope. A connector carrying the same destination is `unpaired` (DWG-4).
+- A finding about a failed document itself waits on it until someone re-indexes or removes that document.
+- A failed document whose title block the failure cleared, under a filename that names something else: a reference into its old number is a gap, settled (a missing sheet never waits on a failed document, DEC-59), and a connector into it is dropped (DWG-4).
+- Under an unknown revision, a lower verdict waits while any document is still being read, in flight or parked. With a parked document that can be until next month under a cap. The response names what the verdict waits on.
+- While any document is parked, every gap and every unchecked sheet-unread reference in the library is filed provisional, waiting on it. Each settles once the parked pages are read, the partial index is accepted, or the document fails.
+- At a known revision, take a first record while a document in flight is the only holder of a series, under an unrelated filename. References into that series are filed out of scope. The set digest names the document, so the sheet is judged again once it is read.
+- A provisional row is written again (new `audited_at`) on every record while it waits; the response counts it under `stillWaiting`.
+- Handed to I-04:
+  - `log_audit_completion` writes no `provisional` marker and compares by status;
+  - `check_audit_history` must treat a provisional row as not settled (item 5).
 - A page skipped for lack of a key or for the cap is not tracked as unread (DWG-7, handed to I-06).
 ---
