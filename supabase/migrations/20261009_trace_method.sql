@@ -12,9 +12,21 @@
 --   'vision' — the model's estimate. Approximate; a hint, not a route.
 --
 -- Idempotent. Apply after 20261007.
+--
+-- intelligence Round G (I-07, DWG-9): 20261007_retire_line_traces.sql sorts
+-- BEFORE this file and drops knowledge_line_traces, so replayed in filename
+-- order on a fresh database the bare ALTER raised 42P01 (relation does not
+-- exist) — ADD COLUMN IF NOT EXISTS guards the column, not the table. The
+-- ALTER now runs only while the table exists: unchanged on a database that
+-- applied this before the retirement, a no-op on every database after it.
 
-ALTER TABLE knowledge_line_traces
-  ADD COLUMN IF NOT EXISTS method TEXT,
-  -- Turn count is a cheap sanity signal: a "trace" with implausibly many
-  -- direction changes is line-work wandering, not a pipe run.
-  ADD COLUMN IF NOT EXISTS turns INTEGER;
+DO $$
+BEGIN
+  IF to_regclass('public.knowledge_line_traces') IS NOT NULL THEN
+    ALTER TABLE knowledge_line_traces
+      ADD COLUMN IF NOT EXISTS method TEXT,
+      -- Turn count is a cheap sanity signal: a "trace" with implausibly many
+      -- direction changes is line-work wandering, not a pipe run.
+      ADD COLUMN IF NOT EXISTS turns INTEGER;
+  END IF;
+END $$;

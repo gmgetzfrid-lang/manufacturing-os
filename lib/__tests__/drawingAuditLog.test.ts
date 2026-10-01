@@ -6,9 +6,11 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  verdictsForSheets, sheetsNeedingAudit, verdictRows,
+  verdictsForSheets, sheetsNeedingAudit, verdictRows, RANK, wouldLowerSeverity, sheetsAloneInTheirSeries,
+  AUDIT_SET_LIST_MAX,
   type AuditSheet, type AuditFindings,
 } from "@/lib/drawingAuditLog";
+import { sheetIdentities } from "@/lib/drawingText";
 
 const sheet = (over: Partial<AuditSheet> = {}): AuditSheet => ({
   documentId: "k-1", controlledDocumentId: "d-1",
@@ -142,10 +144,13 @@ describe("sheetsNeedingAudit", () => {
   });
 });
 
+const SCOPE = { libraryId: "kl-1", sheets: ["PID-44-012", "PID-44-013"] };
+
 describe("verdictRows", () => {
-  it("shapes rows for the unique (org, sheet, revision) key", () => {
-    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1");
+  it("shapes rows for the unique (org, library, sheet, revision) key — 20261124", () => {
+    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", SCOPE);
     expect(row.org_id).toBe("org-1");
+    expect(row.library_id).toBe("kl-1");
     expect(row.sheet_number).toBe("PID-44-012");
     expect(row.revision_code).toBe("C");
     expect(row.status).toBe("passed");
@@ -154,11 +159,82 @@ describe("verdictRows", () => {
 
   it("keeps a null controlled document rather than inventing one", () => {
     const verdicts = verdictsForSheets([sheet({ controlledDocumentId: null })], NOTHING);
-    expect(verdictRows("org-1", verdicts, "u-1")[0].document_id).toBeNull();
+    expect(verdictRows("org-1", verdicts, "u-1", SCOPE)[0].document_id).toBeNull();
   });
 
-  it("records who ran it", () => {
-    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1");
-    expect((row.audit_details as { by: string }).by).toBe("u-1");
+  it("records who ran it, when, in which library, and what 'the set' was (DWG-6 / DWG-13)", () => {
+    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", SCOPE, "2026-10-01T00:00:00.000Z");
+    const d = row.audit_details as { by: string; libraryId: string; set: { count: number; sheets: string[]; truncated: boolean } };
+    expect(d.by).toBe("u-1");
+    expect(d.libraryId).toBe("kl-1");
+    expect(d.set).toEqual({ count: 2, sheets: ["PID-44-012", "PID-44-013"], truncated: false });
+    // Written every time: a re-recorded row says when it was decided.
+    expect(row.audited_at).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  it("a very large set keeps its count and says when the list was cut", () => {
+    const many = Array.from({ length: AUDIT_SET_LIST_MAX + 3 }, (_, i) => `S-${String(i).padStart(4, "0")}`);
+    const [row] = verdictRows("org-1", verdictsForSheets([sheet()], NOTHING), "u-1", { libraryId: "kl-1", sheets: many });
+    const set = (row.audit_details as { set: { count: number; sheets: string[]; truncated: boolean } }).set;
+    expect(set.count).toBe(AUDIT_SET_LIST_MAX + 3);
+    expect(set.sheets).toHaveLength(AUDIT_SET_LIST_MAX);
+    expect(set.truncated).toBe(true);
+  });
+});
+
+describe("RANK — a stored verdict is never lowered (DWG-6)", () => {
+  it("orders skipped < passed < flagged < broken_connectors", () => {
+    expect(RANK.skipped).toBeLessThan(RANK.passed);
+    expect(RANK.passed).toBeLessThan(RANK.flagged);
+    expect(RANK.flagged).toBeLessThan(RANK.broken_connectors);
+  });
+  it("refuses to write a less severe verdict over a stored one; an unknown stored status is never overwritten", () => {
+    expect(wouldLowerSeverity("broken_connectors", "skipped")).toBe(true);
+    expect(wouldLowerSeverity("flagged", "passed")).toBe(true);
+    expect(wouldLowerSeverity("skipped", "passed")).toBe(false);
+    expect(wouldLowerSeverity("passed", "passed")).toBe(false);
+    expect(wouldLowerSeverity(null, "skipped")).toBe(false);
+    expect(wouldLowerSeverity("mystery", "broken_connectors")).toBe(true);
+  });
+});
+
+describe("DWG-8 — an unreadable connector keeps a sheet from passing, never makes it broken", () => {
+  it("files the unreadable destination as a finding and the sheet as flagged", () => {
+    const [v] = verdictsForSheets([sheet()], { ...NOTHING, unreadableConnectors: [{ sheet: "PID-44-012.pdf", box: "14" }] });
+    expect(v.status).toBe("flagged");
+    expect(v.details.unreadableConnectors[0]).toMatch(/Connector 14: its destination could not be read/);
+    expect(v.details.brokenConnectors).toEqual([]);
+  });
+});
+
+describe("sheetsAloneInTheirSeries — a verdict needs the set it judges (DWG-6)", () => {
+  const ids = (docs: Array<[string, string, string[]]>) =>
+    new Map(docs.map(([id, name, self]) => [id, sheetIdentities(name, self)]));
+
+  it("a lone mirrored sheet of a series the library does not hold is not recorded", () => {
+    // "Tank Farm Reference": 025-PID-0104 alone from the 025-PID series.
+    const alone = sheetsAloneInTheirSeries(ids([
+      ["a", "x.pdf", ["025-PID-0104"]],
+      ["b", "y.pdf", ["040-TK-0001"]],
+      ["c", "z.pdf", ["040-TK-0002"]],
+    ]));
+    expect([...alone]).toEqual(["a"]);
+  });
+
+  it("sheets that share their series are recorded; a multi-sheet document is a series on its own", () => {
+    const alone = sheetsAloneInTheirSeries(ids([
+      ["a", "x.pdf", ["025-PID-0104"]],
+      ["b", "y.pdf", ["025-PID-0105"]],
+      ["m", "set.pdf", ["2002-D-2001", "2002-D-2001-SH1", "2002-D-2001-SH2"]],
+    ]));
+    expect(alone.size).toBe(0);
+  });
+
+  it("separate sheet documents of one drawing share its series", () => {
+    const alone = sheetsAloneInTheirSeries(ids([
+      ["s1", "a.pdf", ["2002-D-2001", "2002-D-2001-SH1"]],
+      ["s2", "b.pdf", ["2002-D-2001", "2002-D-2001-SH2"]],
+    ]));
+    expect(alone.size).toBe(0);
   });
 });

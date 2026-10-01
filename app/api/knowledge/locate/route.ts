@@ -1,15 +1,27 @@
 // /api/knowledge/locate — where a tag sits on a drawing sheet.
 //
 //   POST { orgId, documentId, page, tags[] }
-//        → [{ tag, nx, ny, source: "text" | "vision" }]
+//        → [{ tag, nx, ny, source: "text" | "vision", approximate?, readOnRevision? }]
+//   POST { orgId, documentId, page, tags: [tag], action: "reject" }
+//        → clears a cached AI ESTIMATE the viewer says is wrong (PR-10)
 //
 // Two sources, one answer shape:
 //   text-layer sheets  — already stored at ingest from the PDF's own
-//                        coordinates. Free, exact, instant.
+//                        coordinates. Free, instant; the viewer maps them
+//                        through the page's /Rotate, CropBox and /UserUnit.
 //   vision-read sheets — the model looks at the rendered page and points.
-//                        Costs one cheap call for the WHOLE page (every
-//                        requested tag at once), then caches forever, so
-//                        the second person to ask pays nothing.
+//                        One call for the WHOLE page (every requested tag at
+//                        once), refined on close-ups, then cached as an
+//                        APPROXIMATE estimate (pos_source 'vision') until
+//                        the sheet is revised or rebuilt (both clear every
+//                        page entity — resetKnowledgeIndex), or a viewer
+//                        rejects it.
+//
+// Every model call one request makes — the coarse pass, each close-up and
+// any relocate round — is metered in ONE ai_usage_events row written after
+// the last of them (DWG-5 / GOV-8), and the monthly cap is re-consulted
+// before each extra call. The cap here counts every op this month, not only
+// knowledge questions — a local gate; lib/ai/aiGates (I-05) unifies it.
 //
 // ACL: the same fail-closed check as every other knowledge read — a mirror
 // of a controlled document the caller can't read never resolves here either.
@@ -19,10 +31,14 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
-import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import {
+  ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, addUsage, ZERO_USAGE, type AiUsage,
+} from "@/lib/ai/pricing";
+import { getCapUsd, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
-import { LOCATE_SYSTEM, buildLocateUser, parseLocateResponse } from "@/lib/drawingLocate";
+import {
+  LOCATE_SYSTEM, buildLocateUser, buildRelocateUser, parseLocateResponse, type TagPosition,
+} from "@/lib/drawingLocate";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
@@ -35,9 +51,43 @@ const LOCATE_BUDGET_MS = 40_000;
 /** Asking for the world would turn one call into a bad transcription job. */
 const MAX_TAGS = 12;
 
+/** The 'where else is this tag' read names what counts as WHERE a tag is:
+ *  the equipment occurrence, or the sheet that declares a drawing number as
+ *  its own. A `ref` (a neighbouring sheet merely citing the number) or an
+ *  `opc` row is never an answer (DWG-12). */
+const ELSEWHERE_KINDS: string[] = ["equipment", "self"];
+
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
+
+/** This user's spend this month across EVERY op (asks, vision indexing,
+ *  locate, …) — the local cap gate until lib/ai/aiGates lands (I-05 / GOV-1).
+ *  Read to exhaustion (PostgREST caps a page at its max-rows). Null when the
+ *  ledger cannot be read: the caller refuses rather than assume $0. */
+async function monthSpendAllOps(orgId: string, userId: string): Promise<number | null> {
+  let total = 0;
+  for (let from = 0; ; ) {
+    const { data, error } = await supabaseAdmin
+      .from("ai_usage_events").select("est_cost_usd")
+      .eq("org_id", orgId).eq("user_id", userId).gte("created_at", monthStartIso())
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (error) return null;
+    const rows = (data ?? []) as Array<{ est_cost_usd: number | null }>;
+    for (const r of rows) total += Number(r.est_cost_usd ?? 0) || 0;
+    if (rows.length === 0) return total;
+    from += rows.length;
+  }
+}
+
+/** A thrown provider call may still carry the usage the provider reported
+ *  (a refusal, an empty answer) — counted when it does. */
+const usageOf = (e: unknown): AiUsage | null => {
+  const u = (e as { usage?: Partial<AiUsage> } | null)?.usage;
+  return u && typeof u.inputTokens === "number" && typeof u.outputTokens === "number"
+    ? { inputTokens: u.inputTokens, outputTokens: u.outputTokens } : null;
+};
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
@@ -46,7 +96,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authErr || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; documentId?: string; page?: number; tags?: string[] };
+  let body: { orgId?: string; documentId?: string; page?: number; tags?: string[]; action?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
   const documentId = String(body.documentId ?? "").trim();
@@ -62,7 +112,7 @@ export async function POST(req: NextRequest) {
 
   const { data: doc } = await supabaseAdmin
     .from("knowledge_documents")
-    .select("id, org_id, library_id, name, file_key, source_document_id, vision_pages")
+    .select("id, org_id, library_id, name, file_key, source_document_id, source_rev, vision_pages")
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) return bad("Sheet not found", 404);
 
@@ -75,6 +125,21 @@ export async function POST(req: NextRequest) {
       return bad("Not permitted", 403);
     }
   }
+
+  // ── A viewer rejects an AI estimate (PR-10) ───────────────────────────
+  // Only a model's estimate can be rejected — a text-layer position is read
+  // from the PDF itself. The row stays (the tag IS on this page); only the
+  // cached point goes, so the next look asks the model afresh.
+  if (body.action === "reject") {
+    const { data: cleared, error: clearErr } = await supabaseAdmin
+      .from("knowledge_page_entities")
+      .update({ nx: null, ny: null, pos_source: null })
+      .eq("document_id", documentId).eq("page", page).in("tag", tags).eq("pos_source", "vision")
+      .select("id");
+    if (clearErr) return bad(`Couldn't clear that position: ${clearErr.message}`, 500);
+    return NextResponse.json({ cleared: (cleared ?? []).length });
+  }
+  if (body.action !== undefined) return bad("Unknown action");
 
   // ── Cached positions ───────────────────────────────────────────────────
   const { data: rows, error: entErr } = await supabaseAdmin
@@ -91,10 +156,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const found = new Map<string, { tag: string; nx: number; ny: number; source: string }>();
+  type Found = { tag: string; nx: number; ny: number; source: string; approximate?: boolean; readOnRevision?: string | null };
+  const found = new Map<string, Found>();
+  // A cached vision point is the model's estimate: said so, with the
+  // revision it was read on (a rev-up clears it — resetKnowledgeIndex).
+  const visionMark = (pos: TagPosition): Found => ({
+    ...pos, source: "vision", approximate: true, readOnRevision: (doc.source_rev as string | null) ?? null,
+  });
   for (const r of (rows ?? []) as Array<{ tag: string; nx: number | null; ny: number | null; pos_source: string | null }>) {
     if (r.nx === null || r.ny === null || found.has(r.tag)) continue;
-    found.set(r.tag, { tag: r.tag, nx: r.nx, ny: r.ny, source: r.pos_source ?? "text" });
+    found.set(r.tag, r.pos_source === "vision"
+      ? visionMark({ tag: r.tag, nx: r.nx, ny: r.ny })
+      : { tag: r.tag, nx: r.nx, ny: r.ny, source: r.pos_source ?? "text" });
   }
   const unlocated = tags.filter((t) => !found.has(t));
   // Only tags this page actually carries are worth a model call — asking it
@@ -114,11 +187,16 @@ export async function POST(req: NextRequest) {
   }> = [];
   if (missingHere.length > 0) {
     try {
+      // Bounded by the caller's tags (≤ MAX_TAGS) and named kinds — a
+      // drawing number cited on hundreds of sheets can no longer fill the
+      // read with references (DWG-12).
       const { data: elseRows } = await supabaseAdmin
         .from("knowledge_page_entities")
         .select("document_id, page, tag")
         .eq("library_id", doc.library_id as string)
         .in("tag", missingHere)
+        .in("kind", ELSEWHERE_KINDS)
+        .order("document_id", { ascending: true }).order("page", { ascending: true })
         .limit(1000);
       const hits = (elseRows ?? []) as Array<{ document_id: string; page: number; tag: string }>;
       const hitDocIds = [...new Set(hits.map((r) => r.document_id))];
@@ -182,16 +260,65 @@ export async function POST(req: NextRequest) {
     });
   }
   const provider = conn.provider as AiProviderId;
-  const [spent, cap] = await Promise.all([getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id)]);
-  if (cap > 0 && spent.spentUsd >= cap) {
+  const model = VISION_MODEL[provider] ?? (conn.model as string);
+
+  // ── Acceptable-use agreement (PR-12, locate limb): pointing sends the
+  //    rendered page to the provider, so the user must have signed — the
+  //    same record the ask route checks. A pre-migration DB (no table)
+  //    skips the gate, as there. The free answer still comes back.
+  {
+    const { data: agree, error: agreeError } = await supabaseAdmin
+      .from("ai_key_agreements").select("id")
+      .eq("org_id", orgId).eq("user_id", user.id)
+      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION)
+      .limit(1);
+    const tableMissing = !!agreeError &&
+      (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
+    if (agreeError && !tableMissing) {
+      return NextResponse.json({
+        positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+        skipped: "Couldn't confirm your AI acceptable-use agreement right now — the sheet still opens at the right page.",
+      });
+    }
+    if (!tableMissing && (agree ?? []).length === 0) {
+      return NextResponse.json({
+        positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+        skipped: "Pointing at AI-read tags sends this page's image to your AI provider. Read and accept the " +
+          "AI acceptable-use agreement first (ask any Knowledge question to see it) — the sheet still opens at the right page.",
+        agreementRequired: true,
+        agreementText: buildAgreementText(provider),
+        agreementVersion: AGREEMENT_VERSION,
+      });
+    }
+  }
+
+  // ── Monthly cap: every op this month counts (local gate, GOV-1's default;
+  //    I-05's aiGates unifies it). A ledger that cannot be read refuses.
+  const [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+  if (spentUsd === null) {
+    return NextResponse.json({
+      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
+      skipped: "Couldn't read your AI usage this month, so nothing was sent — the sheet still opens at the right page.",
+    });
+  }
+  /** Over the cap once this much more is spent. */
+  const overCap = (more: AiUsage) => cap > 0 && spentUsd + estimateCostUsd(model, more) >= cap;
+  if (overCap(ZERO_USAGE)) {
     return NextResponse.json({
       positions: [...found.values()],
       notOnPage: trulyAbsent,
       elsewhere,
-      skipped: `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
+      skipped: `Monthly AI budget reached ($${spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
         "the sheet still opens at the right page.",
     });
   }
+
+  // Every model call this request makes, summed, and metered ONCE after the
+  // last of them (finally — a throw part-way still records what was spent).
+  let spent: AiUsage = ZERO_USAGE;
+  let calls = 0;
+  let failed = false;
+  const meter = (u: AiUsage | null) => { if (u) { spent = addUsage(spent, u); calls++; } };
 
   try {
     ensurePdfPolyfills();
@@ -203,23 +330,29 @@ export async function POST(req: NextRequest) {
       width: 1800,
       canvasImport: () => import("@napi-rs/canvas"),
     });
-    const out = await callAiModel({
-      provider,
-      model: VISION_MODEL[provider] ?? (conn.model as string),
-      apiKey: openAiKey(conn.api_key as string),
-      system: LOCATE_SYSTEM,
-      user: buildLocateUser(toLocate, doc.name as string, page),
-      maxTokens: 500,
-      images: [{ base64: Buffer.from(img as ArrayBuffer).toString("base64"), mediaType: "image/png" }],
-      timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
-    });
-    await recordAskUsage({
-      orgId, userId: user.id, provider,
-      model: VISION_MODEL[provider] ?? (conn.model as string),
-      usage: out.usage, ok: true, op: "drawingLocate",
-    });
+    const pageB64 = Buffer.from(img as ArrayBuffer).toString("base64");
+    /** One metered model call; a throw keeps whatever usage it carries. */
+    const ask = async (userText: string, image: string, maxTokens: number) => {
+      try {
+        const res = await callAiModel({
+          provider, model,
+          apiKey: openAiKey(conn.api_key as string),
+          system: LOCATE_SYSTEM,
+          user: userText,
+          maxTokens,
+          images: [{ base64: image, mediaType: "image/png" }],
+          timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
+        });
+        meter(res.usage);
+        return res;
+      } catch (e) {
+        meter(usageOf(e));
+        throw e;
+      }
+    };
+    const out = await ask(buildLocateUser(toLocate, doc.name as string, page), pageB64, 500);
 
-    const located = parseLocateResponse(out.text, toLocate);
+    let located = parseLocateResponse(out.text, toLocate);
 
     // ── Passes 2-3: refine, zooming in each time. One glance at a whole
     //    E-size sheet gets the model to the right NEIGHBORHOOD; precision
@@ -231,17 +364,28 @@ export async function POST(req: NextRequest) {
     //    "somewhere around here" — on a 34-inch sheet a third is a foot of
     //    paper. The second pass at 1/9 gets it onto the label itself, which
     //    is the difference between a vague circle and a highlighter swipe.
-    //    Bounded per request; a refine that fails keeps the coarser point,
-    //    so this is never worse than the pass before it.
+    //    Bounded per request; a refine that fails on a provider error keeps
+    //    the coarser point, so this is never worse than the pass before it.
+    //
+    //    A close-up that does NOT see the tag is different: it just failed to
+    //    confirm the coarse point — the classic symptom of the model pointing
+    //    at the equipment summary row instead of the drawn vessel. That point
+    //    is not kept: one RELOCATE round asks again on the whole page, told
+    //    where the wrong answer was (buildRelocateUser, DWG-13 / PR-10); if
+    //    that finds nothing either, the tag is reported not visible and
+    //    nothing is cached.
     const REFINE_MAX = 4;
     const CROP_DIVISORS = [3, 9];
+    /** Room each extra call needs to render, call, and still return. */
+    const roomForACall = () => Date.now() - startedAt <= LOCATE_BUDGET_MS - 8_000;
+    const unconfirmed = new Set<string>();
     try {
       const { createCanvas, loadImage } = await import("@napi-rs/canvas");
       const base = await loadImage(Buffer.from(img as ArrayBuffer));
       for (const pos of located.slice(0, REFINE_MAX)) {
         for (const divisor of CROP_DIVISORS) {
-          // Each pass needs room to render, call, and still return in time.
-          if (Date.now() - startedAt > LOCATE_BUDGET_MS - 8_000) break;
+          // The cap is re-consulted before every extra call (DWG-5).
+          if (!roomForACall() || overCap(spent)) break;
           const cw = Math.max(200, Math.round(base.width / divisor));
           const ch = Math.max(200, Math.round(base.height / divisor));
           const cx = Math.min(Math.max(Math.round(pos.nx * base.width - cw / 2), 0), base.width - cw);
@@ -251,40 +395,54 @@ export async function POST(req: NextRequest) {
           const canvas = createCanvas(outW, outH);
           canvas.getContext("2d").drawImage(base, cx, cy, cw, ch, 0, 0, outW, outH);
           const cropB64 = canvas.toBuffer("image/png").toString("base64");
+          let fp: TagPosition | undefined;
           try {
-            const fine = await callAiModel({
-              provider,
-              model: VISION_MODEL[provider] ?? (conn.model as string),
-              apiKey: openAiKey(conn.api_key as string),
-              system: LOCATE_SYSTEM,
-              user:
-                `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +
-                `Locate exactly one tag: ${pos.tag}`,
-              maxTokens: 200,
-              images: [{ base64: cropB64, mediaType: "image/png" }],
-              timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
-            });
-            out.usage.inputTokens += fine.usage.inputTokens;
-            out.usage.outputTokens += fine.usage.outputTokens;
-            const fp = parseLocateResponse(fine.text, [pos.tag])[0];
-            // No sighting in the close-up means the coarse point was off and
-            // the tag isn't in this crop — zooming further would only chase
-            // the error, so stop refining this tag and keep what we had.
-            if (!fp) break;
-            pos.nx = (cx + fp.nx * cw) / base.width;
-            pos.ny = (cy + fp.ny * ch) / base.height;
-          } catch { break; /* keep the coarser point */ }
+            const fine = await ask(
+              `This is a CROPPED CLOSE-UP of one region of "${doc.name}", page ${page}. ` +
+              `Locate exactly one tag: ${pos.tag}`,
+              cropB64, 200,
+            );
+            fp = parseLocateResponse(fine.text, [pos.tag])[0];
+          } catch { break; /* provider error: keep the coarser point */ }
+          if (!fp) {
+            // Not seen up close. The first close-up refutes the coarse
+            // point; a later one only fails to tighten an already-confirmed
+            // one, which is kept.
+            if (divisor === CROP_DIVISORS[0]) unconfirmed.add(pos.tag);
+            break;
+          }
+          pos.nx = (cx + fp.nx * cw) / base.width;
+          pos.ny = (cy + fp.ny * ch) / base.height;
         }
       }
     } catch { /* canvas unavailable — coarse points still ship */ }
 
-    // Cache: the next person to ask this question pays nothing.
+    if (unconfirmed.size > 0) {
+      const wrong: Record<string, [number, number]> = {};
+      for (const p of located) if (unconfirmed.has(p.tag)) wrong[p.tag] = [p.nx, p.ny];
+      let relocated: TagPosition[] = [];
+      if (roomForACall() && !overCap(spent)) {
+        try {
+          const again = await ask(
+            buildRelocateUser([...unconfirmed], doc.name as string, page, wrong), pageB64, 300);
+          relocated = parseLocateResponse(again.text, [...unconfirmed])
+            // The same wrong spot again is not a second opinion.
+            .filter((r) => Math.hypot(r.nx - wrong[r.tag][0], r.ny - wrong[r.tag][1]) > 0.02);
+        } catch { /* no second opinion — the unconfirmed points are dropped below */ }
+      }
+      const byTag = new Map(relocated.map((r) => [r.tag, r]));
+      located = located.flatMap((p) => !unconfirmed.has(p.tag) ? [p] : byTag.has(p.tag) ? [byTag.get(p.tag)!] : []);
+    }
+
+    // Cache, as the model's ESTIMATE (pos_source 'vision' — drawn as
+    // approximate): the next person to ask pays nothing, until a rev-up or
+    // a rebuild clears it, or a viewer rejects it.
     for (const pos of located) {
       await supabaseAdmin.from("knowledge_page_entities")
         .update({ nx: pos.nx, ny: pos.ny, pos_source: "vision" })
         .eq("document_id", documentId).eq("page", page).eq("tag", pos.tag)
         .then(() => undefined, () => undefined);
-      found.set(pos.tag, { ...pos, source: "vision" });
+      found.set(pos.tag, visionMark(pos));
     }
     return NextResponse.json({
       positions: [...found.values()],
@@ -295,6 +453,7 @@ export async function POST(req: NextRequest) {
       notVisible: toLocate.filter((t) => !found.has(t)),
     });
   } catch (e) {
+    failed = true;
     // Locating is an enhancement — never let it break opening the sheet.
     return NextResponse.json({
       positions: [...found.values()],
@@ -302,5 +461,11 @@ export async function POST(req: NextRequest) {
       elsewhere,
       skipped: `Couldn't point at those tags: ${(e as Error).message}`,
     });
+  } finally {
+    // ONE metering row covering every call this request made — written
+    // after the last of them, so nothing spent goes unrecorded (DWG-5).
+    if (calls > 0) {
+      await recordAskUsage({ orgId, userId: user.id, provider, model, usage: spent, ok: !failed, op: "drawingLocate" });
+    }
   }
 }

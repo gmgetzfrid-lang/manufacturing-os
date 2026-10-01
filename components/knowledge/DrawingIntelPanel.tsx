@@ -15,9 +15,61 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import {
-  getDrawingIntel, rebuildDrawingIndex, downloadEquipmentRegister, recordDrawingAudit,
+  getDrawingIntel, downloadEquipmentRegister, recordDrawingAudit,
   type DrawingIntel, type RecordedAuditSheet,
 } from "@/lib/knowledge";
+import { supabase } from "@/lib/supabase";
+
+// What the route returns beyond lib/knowledge's DrawingIntel (intelligence
+// Round G, I-07): whether the counts are whole (DWG-11), connectors whose
+// destination could not be read (DWG-8), whether box pairing had any input
+// (DWG-4), and per sheet: drawing-or-prose (DWG-7), what it waits on (ING-6).
+type SheetRow = NonNullable<DrawingIntel["sheets"]>[number] & {
+  looksLike?: "drawing" | "prose" | null;
+  waiting?: { pages: number[]; reason: string | null; retryAfter: string | null } | null;
+  acceptedUnread?: number[] | null;
+  notCounted?: boolean;
+};
+type Intel = DrawingIntel & {
+  truncated?: boolean;
+  notCounted?: string[];
+  opcUnknown?: Array<{ box: string; sheet: string; page: number; line: string }>;
+  opcPairing?: "ok" | "no-boxes";
+};
+type RecordResult = Awaited<ReturnType<typeof recordDrawingAudit>> & {
+  alreadyRecorded?: Array<{ name: string; sheetNumber: string; revision: string; status: string }>;
+  notRecorded?: Array<{ name: string; sheetNumber: string; revision: string; reason: string }>;
+};
+type RebuildResult = {
+  ok: boolean; docs: number; busy: string[]; errors: string[]; remaining: number; cursor: string | null; error?: string;
+};
+
+/** POST the rebuild — through the ONE reset (resetKnowledgeIndex) — and
+ *  follow its cursor until every document is reset, so a large library is
+ *  never reset (and re-billed) twice by a second press. */
+async function rebuildAll(orgId: string, libraryId: string): Promise<RebuildResult> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  const total: RebuildResult = { ok: true, docs: 0, busy: [], errors: [], remaining: 0, cursor: null };
+  let cursor: string | null = null;
+  for (let round = 0; round < 50; round++) {
+    const res = await fetch("/api/knowledge/drawing", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ orgId, libraryId, action: "rebuild", cursor }),
+    });
+    const data = (await res.json().catch(() => null)) as RebuildResult | null;
+    if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+    total.docs += data.docs;
+    total.busy.push(...data.busy);
+    total.errors.push(...data.errors);
+    total.ok = total.ok && data.ok;
+    total.remaining = data.remaining;
+    if (!data.remaining || !data.cursor) break;
+    cursor = data.cursor;
+  }
+  return total;
+}
 
 export default function DrawingIntelPanel({ orgId, libraryId, isController, refreshKey, onRebuilt }: {
   orgId: string;
@@ -28,13 +80,16 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   onRebuilt: () => void;
 }) {
   const { showToast } = useToast();
-  const [intel, setIntel] = useState<DrawingIntel | null>(null);
+  const [intel, setIntel] = useState<Intel | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"rebuild" | "export" | "record" | null>(null);
   const [recorded, setRecorded] = useState<{
     recorded: number;
     counts: Partial<Record<RecordedAuditSheet["status"], number>>;
+    alreadyRecorded: NonNullable<RecordResult["alreadyRecorded"]>;
+    notRecorded: NonNullable<RecordResult["notRecorded"]>;
   } | null>(null);
+  const [showUnknown, setShowUnknown] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
   const [showScope, setShowScope] = useState(false);
   const [showOneWay, setShowOneWay] = useState(false);
@@ -82,8 +137,19 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
     if (!ok) return;
     setBusy("rebuild");
     try {
-      const res = await rebuildDrawingIndex(orgId, libraryId);
+      const res = await rebuildAll(orgId, libraryId);
       showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+      // Said, never swallowed: documents another indexer held right then,
+      // and any reset step that failed (the row is queued either way).
+      if (res.busy.length > 0) {
+        showToast({
+          type: "warning",
+          title: `${res.busy.length} document(s) were being indexed right then and were left alone — rebuild again once they finish: ${res.busy.slice(0, 4).join(", ")}${res.busy.length > 4 ? "…" : ""}`,
+        });
+      }
+      if (res.errors.length > 0) {
+        showToast({ type: "error", title: `Part of the rebuild failed: ${res.errors.slice(0, 2).join("; ")}` });
+      }
       onRebuilt();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -96,11 +162,15 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
   const record = async () => {
     setBusy("record");
     try {
-      const res = await recordDrawingAudit(orgId, libraryId);
-      setRecorded({ recorded: res.recorded, counts: res.counts });
+      const res = (await recordDrawingAudit(orgId, libraryId)) as RecordResult;
+      setRecorded({
+        recorded: res.recorded, counts: res.counts,
+        alreadyRecorded: res.alreadyRecorded ?? [], notRecorded: res.notRecorded ?? [],
+      });
       showToast({
         type: "success",
-        title: `Audit recorded for ${res.recorded} sheet(s).`,
+        title: `Audit recorded for ${res.recorded} sheet(s)` +
+          ((res.alreadyRecorded?.length ?? 0) > 0 ? ` — ${res.alreadyRecorded!.length} already recorded at this revision.` : "."),
       });
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -127,10 +197,14 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
             <div className="text-xs font-black text-[var(--color-text)]">
               {isDrawingSet ? "Drawing intelligence" : "Library health"}
             </div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">
-              {isDrawingSet
-                ? "Computed from every sheet's extracted tags — counts you can trust, not AI guesses."
-                : "What indexing actually got out of these documents."}
+            <div className={`text-[10px] ${intel.truncated ? "text-rose-600 font-bold" : "text-[var(--color-text-muted)]"}`}>
+              {!isDrawingSet
+                ? "What indexing actually got out of these documents."
+                : intel.truncated
+                  // The exactness promise holds only when every read was
+                  // whole (DWG-11).
+                  ? `PARTIAL — ${intel.notCounted?.length ?? 0} sheet(s) could not be counted; the figures below are incomplete.`
+                  : "Computed from every sheet's extracted tags — counts you can trust, not AI guesses."}
             </div>
           </div>
         </div>
@@ -159,12 +233,26 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
       {recorded && (
         <div className="mb-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2 text-[11px] text-emerald-900 dark:text-emerald-200">
           <b>Audit recorded</b> for {recorded.recorded} sheet{recorded.recorded === 1 ? "" : "s"}
-          {": "}
+          {recorded.recorded > 0 ? ": " : ""}
           {(["passed", "flagged", "broken_connectors", "skipped"] as const)
             .filter((k) => (recorded.counts[k] ?? 0) > 0)
             .map((k) => `${recorded.counts[k]} ${k.replace(/_/g, " ")}`)
             .join(" · ")}
           .
+          {recorded.alreadyRecorded.length > 0 && (
+            <div className="mt-0.5">
+              <b>{recorded.alreadyRecorded.length}</b> already recorded at this revision — not re-audited
+              {" "}({recorded.alreadyRecorded.slice(0, 4).map((a) => `${a.sheetNumber} rev ${a.revision || "—"}: ${a.status.replace(/_/g, " ")}`).join("; ")}
+              {recorded.alreadyRecorded.length > 4 ? "…" : ""}).
+            </div>
+          )}
+          {recorded.notRecorded.length > 0 && (
+            <div className="mt-0.5 text-amber-800 dark:text-amber-300">
+              <b>{recorded.notRecorded.length}</b> not recorded (skipped):{" "}
+              {recorded.notRecorded.slice(0, 3).map((n) => `${n.name} — ${n.reason}`).join("; ")}
+              {recorded.notRecorded.length > 3 ? "…" : ""}
+            </div>
+          )}
           <div className="mt-0.5 opacity-80">
             Sheets already recorded at this revision won&rsquo;t need auditing again until they&rsquo;re revised.
           </div>
@@ -366,6 +454,49 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
         </div>
       )}
 
+      {/* ── Connectors whose destination could not be read (DWG-8) ─────── */}
+      {(intel.opcUnknown?.length ?? 0) > 0 && (
+        <div className="mb-2">
+          <button onClick={() => setShowUnknown((s) => !s)}
+            className="inline-flex items-center gap-1 text-[11px] font-black text-amber-600 hover:underline">
+            {showUnknown ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {intel.opcUnknown!.length} connector(s) whose destination couldn&apos;t be read — not counted as broken
+          </button>
+          {showUnknown && (
+            <div className="mt-1.5 rounded-xl border border-amber-300 dark:border-amber-800 overflow-hidden">
+              <p className="px-3 py-2 text-[10px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+                The stored line for these connectors may have been cut before a drawing number. That is
+                absence of evidence, not a defect — check each one on the sheet.
+              </p>
+              <ul className="divide-y divide-[var(--color-border)] max-h-48 overflow-y-auto">
+                {intel.opcUnknown!.map((o, i) => (
+                  <li key={i} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
+                    <span className="shrink-0 font-mono font-black text-[var(--color-text)] px-1.5 rounded border border-[var(--color-border)]">{o.box}</span>
+                    <span className="min-w-0 text-[var(--color-text-muted)]">
+                      <span className="font-bold text-[var(--color-text)]">{o.sheet}</span> p.{o.page}
+                      <span className="block truncate" title={o.line}>{o.line}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Box pairing with no input says so (DWG-4) ──────────────────── */}
+      {isDrawingSet && intel.opcPairing === "no-boxes" && (
+        <div className="mb-2 text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
+          <Link2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>
+            <b className="text-[var(--color-text)]">Connector pairing needs vision indexing</b> — no connector box
+            numbers were read from this set, so box-to-box pairing has nothing to check (a clean result here would mean
+            nothing). Connectors are still audited through their drawing references above.
+          </span>
+        </div>
+      )}
+
       {/* ── Per-sheet readout: facts, not theories ─────────────────────── */}
       {(intel.sheets?.length ?? 0) > 0 && (
         <div className="mb-2">
@@ -383,13 +514,18 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 <span className="text-right">How read</span>
               </div>
               <ul className="divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
-                {intel.sheets!.map((s) => {
+                {(intel.sheets as SheetRow[]).map((s) => {
                   const badge =
                     s.verdict === "vision" ? { label: "AI vision", cls: "text-sky-700 dark:text-sky-400", Icon: Eye }
                     : s.verdict === "text" ? { label: "Text layer", cls: "text-emerald-700 dark:text-emerald-400", Icon: FileText }
-                    : s.verdict === "text-no-tags" ? { label: "Text, no tags", cls: "text-amber-600", Icon: AlertTriangle }
+                    : s.verdict === "text-no-tags"
+                      // A drawing we got no tags from vs prose that never had any (DWG-7).
+                      ? s.looksLike === "drawing"
+                        ? { label: "Drawing, no tags", cls: "text-amber-600", Icon: AlertTriangle }
+                        : { label: "Prose", cls: "text-[var(--color-text-muted)]", Icon: FileText }
                     : s.verdict === "empty" ? { label: "Nothing read", cls: "text-rose-600", Icon: AlertTriangle }
                     : s.verdict === "error" ? { label: "Error", cls: "text-rose-600", Icon: AlertTriangle }
+                    : s.waiting ? { label: "Waiting on AI vision", cls: "text-amber-600", Icon: Loader2 }
                     : { label: "Indexing…", cls: "text-[var(--color-text-muted)]", Icon: Loader2 };
                   const B = badge.Icon;
                   return (
@@ -406,9 +542,30 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                             ⚠ {s.gapPages!.length} page(s) unread: {s.gapPages!.slice(0, 8).join(", ")}{s.gapPages!.length > 8 ? "…" : ""}
                           </span>
                         )}
+                        {s.waiting && (
+                          // Parked (ING-6 / DEC-58): which pages wait on AI vision, and why.
+                          <span className="block truncate text-[9px] font-bold text-amber-700 dark:text-amber-400"
+                            title={s.waiting.reason ?? undefined}>
+                            ⏳ {s.waiting.pages.length > 0
+                              ? `page(s) ${s.waiting.pages.slice(0, 8).join(", ")}${s.waiting.pages.length > 8 ? "…" : ""} wait on AI vision`
+                              : "waiting to be indexed again"}
+                            {s.waiting.reason ? ` — ${s.waiting.reason}` : ""}
+                          </span>
+                        )}
+                        {(s.acceptedUnread?.length ?? 0) > 0 && (
+                          <span className="block truncate text-[9px] font-bold text-amber-700 dark:text-amber-400"
+                            title="A controller accepted this partial index; these pages were never read by AI vision">
+                            Accepted with page(s) {s.acceptedUnread!.slice(0, 8).join(", ")}{s.acceptedUnread!.length > 8 ? "…" : ""} unread
+                          </span>
+                        )}
+                        {s.notCounted && (
+                          <span className="block truncate text-[9px] font-bold text-rose-600">
+                            Not counted — the index was too large to read whole
+                          </span>
+                        )}
                         {s.declared && (
                           <span className="block truncate font-mono text-[9px] text-[var(--color-text-muted)]"
-                            title="Read from this sheet's own title block">
+                            title="Read from this sheet's own title block — the number its audit is recorded under">
                             ≡ {s.declared}
                           </span>
                         )}
@@ -430,9 +587,10 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                 })}
               </ul>
               <p className="px-3 py-2 text-[10px] text-[var(--color-text-muted)] border-t border-[var(--color-border)]">
-                <b>Text, no tags</b> on an AutoCAD export usually means SHX fonts — the title block extracts,
-                the tags plot as line-work. Turn on <b>Index every page with AI vision</b> in Library AI setup
-                and rebuild; those sheets flip to <b>AI vision</b> and their tags appear.
+                <b>Drawing, no tags</b> on an AutoCAD export usually means SHX fonts — the title block extracts,
+                the tags plot as line-work. Turn on <b>&ldquo;Text doesn&apos;t extract from these files — index every
+                page as an image&rdquo;</b> in Library AI setup and rebuild; those sheets flip to <b>AI vision</b> and
+                their tags appear. <b>Prose</b> documents never carry drawing tags.
               </p>
             </div>
           )}

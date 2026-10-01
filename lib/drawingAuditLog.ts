@@ -13,8 +13,35 @@
 // given is NOT a finding. The audit already separates those, and treating
 // them as defects manufactures alarm about drawings that are probably
 // perfect. Only what's actionable becomes a verdict.
+//
+// The record's key is (org, library, sheet, revision) — 20261124 (DWG-6):
+// the same controlled sheet mirrored into two libraries is audited against
+// two different sets, and one library's verdict must never overwrite the
+// other's. Rows with no library (written before the key, or by the
+// orchestrator's log_audit_completion) are org-wide: library_id NULL, unique
+// among themselves (NULLS NOT DISTINCT).
+
+import { refSeries, seriesMatch } from "@/lib/drawingText";
 
 export type AuditStatus = "passed" | "broken_connectors" | "flagged" | "skipped";
+
+/** Severity order. A stored verdict is never replaced by a LESS severe one
+ *  at the same key (DWG-6): a re-index in progress (`skipped`) must not
+ *  erase a recorded `broken_connectors`. Exported for every writer of
+ *  drawing_audit_logs — the drawing route here, and the orchestrator's
+ *  log_audit_completion. */
+export const RANK: Readonly<Record<AuditStatus, number>> = {
+  skipped: 0, passed: 1, flagged: 2, broken_connectors: 3,
+};
+
+/** True when writing `next` over `stored` would lower the recorded
+ *  severity. An unknown stored status is treated as the most severe —
+ *  never overwritten on a guess. */
+export function wouldLowerSeverity(stored: string | null | undefined, next: AuditStatus): boolean {
+  if (!stored) return false;
+  const was = (RANK as Record<string, number>)[stored];
+  return was === undefined ? true : RANK[next] < was;
+}
 
 /** One sheet as the auditor sees it. `name` must be the same string the
  *  findings refer to it by — the audit reports by display name. */
@@ -44,6 +71,9 @@ export interface AuditFindings {
   missingInSeries: Array<{ ref: string; referencedBy: string[] }>;
   /** Both sheets loaded, target never references back. */
   oneWay: Array<{ from: string; to: string }>;
+  /** Connectors whose stored evidence line may have been cut before a
+   *  drawing number (DWG-8): unknown, so worth a look — never broken. */
+  unreadableConnectors?: Array<{ sheet: string; box: string }>;
 }
 
 export interface SheetVerdict {
@@ -56,6 +86,8 @@ export interface SheetVerdict {
     brokenConnectors: string[];
     missingReferences: string[];
     oneWay: string[];
+    /** Connectors whose destination could not be read (DWG-8). */
+    unreadableConnectors: string[];
   };
 }
 
@@ -94,15 +126,23 @@ export function verdictsForSheets(
   for (const o of findings.oneWay) {
     push(oneWay, o.from, `References ${o.to}, which never references back`);
   }
+  const unreadable = new Map<string, string[]>();
+  for (const c of findings.unreadableConnectors ?? []) {
+    push(unreadable, c.sheet,
+      `Connector ${c.box}: its destination could not be read (the stored line may be cut) — check it on the sheet`);
+  }
 
   return sheets.map((s) => {
     const b = broken.get(s.name) ?? [];
     const m = missing.get(s.name) ?? [];
     const w = oneWay.get(s.name) ?? [];
+    const u = unreadable.get(s.name) ?? [];
+    // An unreadable destination is absence of evidence: it keeps a sheet
+    // from "passing", and never makes it "broken".
     const status: AuditStatus = !s.indexed
       ? "skipped"
       : b.length > 0 ? "broken_connectors"
-      : (m.length > 0 || w.length > 0) ? "flagged"
+      : (m.length > 0 || w.length > 0 || u.length > 0) ? "flagged"
       : "passed";
     return {
       documentId: s.documentId,
@@ -110,9 +150,36 @@ export function verdictsForSheets(
       sheetNumber: s.sheetNumber,
       revision: s.revision,
       status,
-      details: { brokenConnectors: b, missingReferences: m, oneWay: w },
+      details: { brokenConnectors: b, missingReferences: m, oneWay: w, unreadableConnectors: u },
     };
   });
+}
+
+/**
+ * Sheets whose drawing series this library does not actually hold (DWG-6).
+ *
+ * A verdict is a statement about a SET: "references 025-PID-0107, which
+ * isn't in the set" is only true of a library that holds the 025-PID
+ * series. A reference library holding one mirrored sheet of it would file
+ * a gap against a set that is complete elsewhere. So a sheet whose series
+ * no OTHER sheet in the library shares is not recorded at all — unless the
+ * document itself declares several sheets (a multi-sheet PDF is a series on
+ * its own). `identities`: each document's numbers (sheetIdentities).
+ */
+export function sheetsAloneInTheirSeries(identities: ReadonlyMap<string, readonly string[]>): Set<string> {
+  const seriesOf = new Map<string, string[]>();
+  for (const [doc, ids] of identities) {
+    seriesOf.set(doc, [...new Set(ids.map((t) => refSeries(t)).filter(Boolean))]);
+  }
+  const alone = new Set<string>();
+  for (const [doc, ids] of identities) {
+    if (ids.filter((t) => /-SH\d+$/.test(t)).length > 1) continue;
+    const mine = seriesOf.get(doc) ?? [];
+    const shared = [...seriesOf].some(([other, theirs]) =>
+      other !== doc && theirs.some((t) => mine.some((m) => seriesMatch(m, t))));
+    if (!shared) alone.add(doc);
+  }
+  return alone;
 }
 
 /**
@@ -136,14 +203,44 @@ export function sheetsNeedingAudit(
   return sheets.filter((s) => !done.has(`${s.sheetNumber}@${s.revision}`));
 }
 
-/** Rows ready for upsert into drawing_audit_logs. */
-export function verdictRows(orgId: string, verdicts: readonly SheetVerdict[], byUserId: string) {
+/** The set a verdict was computed against (DWG-6): which library, and
+ *  which sheets "the set" meant — so a reader can tell what "isn't in the
+ *  set" referred to. */
+export interface AuditScope {
+  libraryId: string;
+  /** Every sheet number in the library when the verdict was computed. */
+  sheets: readonly string[];
+}
+
+/** At most this many sheet numbers are stored per row; the count is
+ *  always stored, and `truncated` says when the list was cut. */
+export const AUDIT_SET_LIST_MAX = 500;
+
+/** Rows ready for upsert into drawing_audit_logs, keyed (org, library,
+ *  sheet, revision) — 20261124. `audited_at` is written every time: a
+ *  re-recorded row (a `skipped` sheet now read) carries when it was decided,
+ *  not when it was first skipped. */
+export function verdictRows(
+  orgId: string, verdicts: readonly SheetVerdict[], byUserId: string,
+  scope: AuditScope, auditedAt: string = new Date().toISOString(),
+) {
+  const sheets = [...new Set(scope.sheets)].sort();
+  const set = {
+    count: sheets.length,
+    sheets: sheets.slice(0, AUDIT_SET_LIST_MAX),
+    truncated: sheets.length > AUDIT_SET_LIST_MAX,
+  };
   return verdicts.map((v) => ({
     org_id: orgId,
+    library_id: scope.libraryId,
     document_id: v.controlledDocumentId,
     sheet_number: v.sheetNumber,
     revision_code: v.revision,
     status: v.status,
-    audit_details: { ...v.details, by: byUserId, knowledgeDocumentId: v.documentId },
+    audited_at: auditedAt,
+    audit_details: {
+      ...v.details, by: byUserId, knowledgeDocumentId: v.documentId,
+      libraryId: scope.libraryId, set,
+    },
   }));
 }
