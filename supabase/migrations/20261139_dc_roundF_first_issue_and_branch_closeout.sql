@@ -48,8 +48,12 @@
 -- — a trigger's function privilege is checked when the trigger is created,
 -- never when it fires (exercised: the guard still refuses after the revoke).
 -- HOW TO APPLY: after 20261105 (the guard's base) and 20261061 (the
--- policy's base); independent of 20261129 / 20261130 / 20261131. Do not
--- re-paste 20261105 after this one (it would drop the REV-17 block).
+-- policy's base); it pastes cleanly before or after 20261129 / 20261130 /
+-- 20261131, BUT REV-17's refusal is complete only once 20261131's
+-- trg_document_insert_pointer_rail is live too: this guard fires BEFORE
+-- UPDATE, so until then a member can INSERT a document already pointing at a
+-- revision and reach the issue as a non-first pointer move. Do not re-paste
+-- 20261105 after this one (it would drop the REV-17 block).
 -- Single paste: temp-table inventory -> BEGIN/DDL/COMMIT -> one SELECT
 -- (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.

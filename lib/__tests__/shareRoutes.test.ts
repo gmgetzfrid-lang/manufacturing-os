@@ -380,7 +380,10 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     // and the response only after all of them (the route awaited each before returning)
     expect(state.seq).toEqual(["r2", "stamp", "insert:download_audits", "insert:document_share_accesses"]);
   });
-  it("with no configured origin the verify QR is built on the request's OWN origin — the deployment the recipient reached (SHR-11 off Vercel)", async () => {
+  it("with no configured origin the verify QR is built on the request URL's origin when it carries a public host (Vercel's custom domain; SHR-11)", async () => {
+    // Only a runtime that builds req.nextUrl from the host the recipient
+    // reached (Vercel, or next.config experimental.trustHostHeader) gets
+    // here; `next start` never does — see the next case.
     state.origin = "";
     const res = await fileGet({}, "https://docs.plant.example");
     expect(res.status).toBe(200);
@@ -391,6 +394,33 @@ describe("GET /api/share/file — refuses before any byte leaves", () => {
     state.origin = "https://app.example.com"; stamp.calls = [];
     await fileGet({}, "https://docs.plant.example");
     expect(stamp.calls[0].verifyUrl).toBe("https://app.example.com/verify/docA?v=v-cur");
+  });
+  it("self-hosted under `next start` (the Docker image) with NEXT_PUBLIC_SITE_URL unset: the request URL is the BIND address, so every share download is refused LOUDLY until the variable is set (SHR-11)", async () => {
+    // Next 16's router builds the request URL as
+    // `${protocol}://${opts.hostname || "localhost"}:${opts.port}${req.url}`
+    // (next/dist/server/lib/router-utils/resolve-routes.js) and never reads
+    // the Host header unless experimental.trustHostHeader is set. So what
+    // `next start` hands this route — whatever host the recipient typed — is
+    // http://localhost:3000 (or 0.0.0.0 with -H 0.0.0.0): never a fallback,
+    // always the refusal, and the Host / X-Forwarded-Host headers are ignored.
+    state.origin = "";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const base of ["http://localhost:3000", "http://0.0.0.0:3000"]) {
+      state.inserts = []; stamp.calls = []; r2.send.mockClear(); err.mockClear();
+      const res = await fileGet({ host: "docs.plant.example", "x-forwarded-host": "docs.plant.example", "x-forwarded-proto": "https" }, base);
+      expect(res.status, base).toBe(503);
+      const body = await res.json();
+      expect(body.error).toBe("unverifiable");
+      // the recipient is not told anyone was notified — nobody is
+      expect(body.message).not.toMatch(/has been told/);
+      expect(body.message).toMatch(/Ask the person who shared it to contact their Document Control/);
+      expect(r2.send).not.toHaveBeenCalled();
+      expect(stamp.calls).toHaveLength(0);
+      expect(inserted("download_audits")).toHaveLength(0);
+      expect(inserted("document_share_accesses")).toEqual([expect.objectContaining({ kind: "refused", reason: "unverifiable", share_id: "s1" })]);
+      expect(String(err.mock.calls[0]?.[0])).toMatch(/NEXT_PUBLIC_SITE_URL[\s\S]*bind address/);
+    }
+    err.mockRestore();
   });
   it("with no configured origin on a host an outsider cannot open (*.vercel.app, loopback), the download is refused LOUDLY — no bytes read, no copy, no record, the refusal on the access trail (SHR-11)", async () => {
     state.origin = "";

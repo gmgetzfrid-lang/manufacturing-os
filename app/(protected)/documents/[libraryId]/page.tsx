@@ -2496,8 +2496,9 @@ export default function LibraryExplorerPage() {
       });
 
       // ── Upload + insert one file ─────────────────────────────────
-      // DOCUMENT_CREATED rows the audit table refused (those files landed).
-      const creationAuditFailures: string[] = [];
+      // What a LANDED file left undone (its creation record, its review clock /
+      // acknowledgment roster) — reported with the batch, never as a failure.
+      const landedShortfalls: string[] = [];
       const uploadOne = async (entry: { item: StagedItem; docNumber: string }) => {
         const { item, docNumber } = entry;
         const file = item.file;
@@ -2508,6 +2509,7 @@ export default function LibraryExplorerPage() {
         // write) — asked BEFORE anything is uploaded or inserted, so a refusal
         // leaves nothing half-created; the decision goes on the creation record.
         const { isControlledIssueStatus, resolveCreationReviewGate, startIssuedDocumentClocks } = await import("@/lib/revisions");
+        const { logAuditAction } = await import("@/lib/audit");
         const issues = isControlledIssueStatus(item.status || "Issued");
         const gate = issues
           ? await resolveCreationReviewGate({
@@ -2593,9 +2595,12 @@ export default function LibraryExplorerPage() {
         if (ptrErr || !promoted || promoted.length === 0) {
           throw new Error(`${docNumber} was created but its file could not be attached (${ptrErr?.message ?? "the write was refused"}) — ask Doc Control to remove it or attach its file.`);
         }
+        // ── The document, its file and its pointer are COMMITTED. Nothing
+        // below may reject this file: the batch would report a landed
+        // document as "did NOT upload" and a re-stage would mint a duplicate
+        // controlled document. Each shortfall is a note on the batch instead.
         // The creation is on the record — with, for an issue, the review
         // policy decision and who made it (createDocumentWithFile's row).
-        const { logAuditAction } = await import("@/lib/audit");
         const { error: creationAuditError } = await logAuditAction({
           action: "DOCUMENT_CREATED",
           resourceId: newDoc.id,
@@ -2610,11 +2615,17 @@ export default function LibraryExplorerPage() {
             via: "bulk_upload",
           },
         });
-        if (creationAuditError) creationAuditFailures.push(`${docNumber} (${creationAuditError})`);
+        if (creationAuditError) landedShortfalls.push(`the creation record of ${docNumber} could not be written (${creationAuditError})`);
         // REV-15: an issued first revision starts its review clock and its
         // read-&-understood roster — the one call createDocumentWithFile makes.
+        // A failure is caught here, as split / merge catch it
+        // (complianceClockWarnings): the document stands.
         if (issues) {
-          await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+          try {
+            await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });
+          } catch (e) {
+            landedShortfalls.push(`the review clock / acknowledgment roster of ${docNumber} did not start (${(e as Error)?.message ?? String(e)}) — Document Control can set it from the document`);
+          }
         }
       };
 
@@ -2661,8 +2672,8 @@ export default function LibraryExplorerPage() {
       if (notStarted > 0) {
         notes.push(`${notStarted} file${notStarted === 1 ? " was" : "s were"} not started because you stopped the upload.`);
       }
-      if (creationAuditFailures.length > 0) {
-        notes.push(`The creation record of ${creationAuditFailures.length} uploaded document${creationAuditFailures.length === 1 ? "" : "s"} could not be written: ${creationAuditFailures.slice(0, 3).join("; ")}. Tell Document Control so the record can be completed.`);
+      if (landedShortfalls.length > 0) {
+        notes.push(`${landedShortfalls.length} follow-up step${landedShortfalls.length === 1 ? "" : "s"} did not complete on documents that DID upload — do not re-upload them: ${landedShortfalls.slice(0, 3).join("; ")}${landedShortfalls.length > 3 ? `, +${landedShortfalls.length - 3} more` : ""}. Tell Document Control so they can be completed.`);
       }
       if (failures.length > 0 || notStarted > 0) {
         if (failures.length > 0) {

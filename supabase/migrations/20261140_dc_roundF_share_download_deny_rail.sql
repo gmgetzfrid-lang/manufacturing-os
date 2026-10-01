@@ -14,9 +14,11 @@
 --           1. user_download_denied(p_acl_index, p_uid, p_org) — the SQL twin
 --              of lib/downloadDeny.ts (downloadDeniedTo + memberDownloadDenied):
 --              a deny names the uid, ANY role in the member's active role
---              collection (role + roles; an empty collection reads as
---              Viewer), or any team the uid is on; controllers are NOT
---              exempt. STABLE SECURITY DEFINER, search_path pinned. A
+--              collection (role + roles, keeping only roles the app knows —
+--              role_rank(r) > 0, 20261046's table, pinned to ALL_ROLES by
+--              test — as normalizeRoles keeps only ALL_ROLES; a collection
+--              with none reads as Viewer), or any team the uid is on;
+--              controllers are NOT exempt. STABLE SECURITY DEFINER, search_path pinned. A
 --              signed-in caller may ask only about themself (it reads a
 --              member's roles and teams, so it is no oracle); the service
 --              role (auth.uid() NULL) may ask about anyone, and anon may not
@@ -33,8 +35,9 @@
 -- a download deny names by uid, by role or by team — they already answer
 -- 410 (authority lapsed) at serve time and are kept for the record; revoke
 -- them from Admin -> Share links (DIST-15) if wanted.
--- HOW TO APPLY: after 20261080 (the policy's base). Independent of
--- 20261139. Single paste: temp-table inventory -> BEGIN/DDL/COMMIT -> one
+-- HOW TO APPLY: after 20261080 (the policy's base); role_rank comes from
+-- 20261046 (R&P Round B, live long before — a probe below checks it).
+-- Independent of 20261139. Single paste: temp-table inventory -> BEGIN/DDL/COMMIT -> one
 -- SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -52,7 +55,7 @@ SELECT 'inventory (before apply): live share rows whose creator a download deny 
    AND jsonb_typeof(d.acl_index -> 'deny' -> 'users' -> 'download') = 'array'
    AND (d.acl_index -> 'deny' -> 'users' -> 'download') ? s.created_by::text
 UNION ALL
-SELECT 'inventory (before apply): live share rows whose creator a download deny names by a role in their collection (an empty collection read as Viewer)', COUNT(*)::text
+SELECT 'inventory (before apply): live share rows whose creator a download deny names by a role in their collection (no known role read as Viewer)', COUNT(*)::text
   FROM document_shares s JOIN documents d ON d.id = s.document_id
  WHERE s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > now())
    AND jsonb_typeof(d.acl_index -> 'deny' -> 'roles' -> 'download') = 'array'
@@ -60,7 +63,7 @@ SELECT 'inventory (before apply): live share rows whose creator a download deny 
      SELECT 1
        FROM (SELECT COALESCE(NULLIF(ARRAY(SELECT DISTINCT r
                                             FROM unnest(COALESCE(m.roles, ARRAY[]::text[]) || m.role) AS r
-                                           WHERE r IS NOT NULL AND btrim(r) <> ''), ARRAY[]::text[]),
+                                           WHERE r IS NOT NULL AND role_rank(r) > 0), ARRAY[]::text[]),
                              ARRAY['Viewer']) AS held
                FROM (SELECT 1) AS one
                LEFT JOIN org_members m ON m.org_id = s.org_id AND m.uid = s.created_by AND m.status = 'active') AS c,
@@ -100,13 +103,16 @@ BEGIN
     RETURN true;
   END IF;
   -- By ANY role in the active collection (CHAIN-1: a restriction binds
-  -- whether or not a higher role sits above it); none reads as Viewer.
+  -- whether or not a higher role sits above it). Only roles the app knows
+  -- count — role_rank(r) > 0 is 20261046's table of the nineteen, as
+  -- normalizeRoles keeps only ALL_ROLES — and a collection with none (no
+  -- membership, an empty one, or only unknown strings) reads as Viewer.
   SELECT m.role, m.roles INTO v_role, v_roles
     FROM org_members m
    WHERE m.org_id = p_org AND m.uid = p_uid AND m.status = 'active'
    LIMIT 1;
   v_roles := ARRAY(SELECT DISTINCT r FROM unnest(COALESCE(v_roles, ARRAY[]::text[]) || v_role) AS r
-                    WHERE r IS NOT NULL AND btrim(r) <> '');
+                    WHERE r IS NOT NULL AND role_rank(r) > 0);
   IF cardinality(v_roles) = 0 THEN
     v_roles := ARRAY['Viewer'];
   END IF;
@@ -178,13 +184,18 @@ SELECT 'SHR-14: user_download_denied(jsonb, uuid, uuid) exists, SECURITY DEFINER
                   AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public']) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'SHR-14: user_download_denied reads the uid, every role in the collection (Viewer when none) and the teams; a signed-in caller asks about themself only',
+SELECT 'SHR-14: user_download_denied reads the uid, every KNOWN role in the collection (Viewer when none) and the teams; a signed-in caller asks about themself only',
        (SELECT prosrc LIKE '%(v_deny -> ''users'' -> ''download'') ? p_uid::text%'
+           AND prosrc LIKE '%WHERE r IS NOT NULL AND role_rank(r) > 0);%'
            AND prosrc LIKE '%v_roles := ARRAY[''Viewer''];%'
            AND prosrc LIKE '%(v_deny -> ''roles'' -> ''download'') ? r%'
            AND prosrc LIKE '%(v_deny -> ''teams'' -> ''download'') ? t.team_id::text%'
            AND prosrc LIKE '%IF auth.uid() IS NOT NULL AND p_uid IS DISTINCT FROM auth.uid() THEN%'
           FROM pg_proc WHERE proname = 'user_download_denied'),
+       NULL
+UNION ALL
+SELECT 'SHR-14: role_rank (20261046) knows the app''s roles and ranks an unknown string 0 (the known-role filter user_download_denied applies)',
+       role_rank('Viewer') > 0 AND role_rank('DocCtrl') > 0 AND role_rank('Contractor') > 0 AND role_rank('not-an-app-role') = 0,
        NULL
 UNION ALL
 SELECT 'SHR-14: anon may not execute user_download_denied; authenticated may (the INSERT policy runs as the caller)',

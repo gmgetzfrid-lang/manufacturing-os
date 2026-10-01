@@ -37,12 +37,22 @@
 //
 // The verify QR's origin (SHR-11 off Vercel, DEC-64 §1): the configured
 // public origin (NEXT_PUBLIC_SITE_URL, else Vercel's production domain);
-// else the request's OWN origin — what the recipient just reached, so the
-// QR on their copy opens the same deployment — unless that host is one an
-// outside party cannot open (a *.vercel.app deployment host or loopback,
-// refused exactly as recipientOrigin() refuses them); else the download is
-// refused loudly (503 "unverifiable", logged, on the access trail) rather
-// than shipping a copy nobody can verify.
+// else the origin of the request URL AS THE SERVER SEES IT, unless its host
+// is one an outside party cannot open (a *.vercel.app deployment host or
+// loopback, refused exactly as recipientOrigin() refuses them); else the
+// download is refused loudly (503 "unverifiable", logged, on the access
+// trail) rather than shipping a copy nobody can verify.
+//
+// What that request URL is depends on the runtime. On Vercel it carries the
+// host the recipient reached (a custom domain is used; a *.vercel.app host
+// is refused). Under `next start` — the Docker image's CMD — Next builds it
+// from the server's BIND address, not the Host header (http://localhost:3000
+// unless -H is given; the Host header is read only with
+// experimental.trustHostHeader), so a self-hosted deployment with
+// NEXT_PUBLIC_SITE_URL unset REFUSES EVERY share download until the variable
+// is set (a build argument of the Docker image; 99-fix-sequencing.md). That
+// refusal is the intended loud failure, not a fallback. The Host /
+// X-Forwarded-Host headers are never trusted here.
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -79,13 +89,13 @@ export async function GET(req: NextRequest) {
   // read, so an unverifiable copy is never produced.
   const origin = verifyOrigin(req);
   if (!origin) {
-    console.error("[share/file] no public origin for the verify QR — share download refused. Set NEXT_PUBLIC_SITE_URL to the deployment's public address (a build argument for the Docker image); the request host is a Vercel deployment host or loopback, which an outside recipient cannot open.", {
+    console.error("[share/file] no public origin for the verify QR — share download refused. Set NEXT_PUBLIC_SITE_URL to the deployment's public address (a build argument for the Docker image); the request host is a Vercel deployment host or loopback (under `next start` it is the server's bind address), which an outside recipient cannot open.", {
       share: share.id, document: doc.id, host: req.nextUrl.hostname,
     });
     await recordShareAccess(sb, { share, documentId: doc.id, versionId: version.id, kind: "refused", reason: "unverifiable", ...meta });
     return NextResponse.json({
       error: "unverifiable",
-      message: "This shared copy can't be issued right now: the site has no public address to put on its verification QR. The organisation that shared it has been told.",
+      message: "This shared copy can't be issued right now: the site has no public address to put on its verification QR. Ask the person who shared it to contact their Document Control.",
     }, { status: 503 });
   }
 
@@ -184,9 +194,12 @@ export async function GET(req: NextRequest) {
 }
 
 /** SHR-11 (off Vercel) / DEC-64 §1: the configured public origin, else the
- *  request's own origin when an outside recipient can open its host (never a
+ *  request URL's origin when an outside recipient can open its host (never a
  *  *.vercel.app deployment host or loopback — recipientOrigin()'s rule,
- *  isUnreachableRecipientHost), else "" (the caller refuses loudly). */
+ *  isUnreachableRecipientHost), else "" (the caller refuses loudly). Under
+ *  `next start` req.nextUrl is built from the bind address (localhost:3000
+ *  by default), so off Vercel this answers "" until NEXT_PUBLIC_SITE_URL is
+ *  set; no request header is consulted. */
 function verifyOrigin(req: NextRequest): string {
   const configured = configuredPublicOrigin();
   if (configured) return configured;

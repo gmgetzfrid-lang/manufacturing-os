@@ -50,6 +50,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 
 const state = vi.hoisted(() => ({
@@ -1793,9 +1794,65 @@ describe("REV-15 — split / merge sheets and the bulk upload start the review c
     const clocks = at("await startIssuedDocumentClocks({ orgId: activeOrgId, documentId: newDoc.id, actorUserId: uid, actorName: userEmail ?? null });");
     expect(rec).toBeGreaterThan(ptr);
     expect(clocks).toBeGreaterThan(rec);
-    expect(body).toMatch(/if \(issues\) \{\s*await startIssuedDocumentClocks\(/);
-    // a refused creation record is reported with the batch, never dropped
-    expect(page).toMatch(/if \(creationAuditFailures\.length > 0\) \{\s*notes\.push\(`The creation record of/);
+    expect(body).toMatch(/if \(issues\) \{\s*try \{\s*await startIssuedDocumentClocks\(/);
+    // a refused creation record and an unstarted clock are reported with the batch, never dropped
+    expect(page).toMatch(/if \(landedShortfalls\.length > 0\) \{\s*notes\.push\(`\$\{landedShortfalls\.length\} follow-up step/);
+    expect(page).toMatch(/did not complete on documents that DID upload — do not re-upload them/);
+  });
+
+  it("the bulk upload (uploadOne): once the pointer write has landed NOTHING can reject the file — a clock that fails to start, or a refused creation record, is a note, never a 'did NOT upload' (no duplicate on re-stage)", () => {
+    const file = "app/(protected)/documents/[libraryId]/page.tsx";
+    const sf = ts.createSourceFile(file, src(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let fn: ts.ArrowFunction | null = null;
+    const find = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && n.name.getText() === "uploadOne" && n.initializer && ts.isArrowFunction(n.initializer)) fn = n.initializer;
+      if (!fn) ts.forEachChild(n, find);
+    };
+    find(sf);
+    expect(fn, "uploadOne not found").not.toBeNull();
+    const stmts = ((fn as unknown as ts.ArrowFunction).body as ts.Block).statements;
+    const ptrCheck = stmts.findIndex((st) => ts.isIfStatement(st) && st.expression.getText() === "ptrErr || !promoted || promoted.length === 0");
+    expect(ptrCheck, "the checked pointer write").toBeGreaterThan(0);
+    // the pointer write's own refusal still throws (nothing landed for that file)
+    expect((stmts[ptrCheck] as ts.IfStatement).thenStatement.getText()).toMatch(/^\{\s*throw new Error\(/);
+    const after = stmts.slice(ptrCheck + 1);
+    expect(after.length).toBeGreaterThanOrEqual(3);
+    const insideTry = (n: ts.Node, stop: ts.Node): boolean => {
+      for (let p: ts.Node | undefined = n; p && p !== stop; p = p.parent) {
+        if (p.parent && ts.isTryStatement(p.parent) && p.parent.tryBlock === p && p.parent.catchClause) return true;
+      }
+      return false;
+    };
+    const awaited: string[] = [];
+    for (const st of after) {
+      const scan = (n: ts.Node): void => {
+        expect(ts.isThrowStatement(n), `a throw after the pointer write: ${n.getText()}`).toBe(false);
+        if (ts.isAwaitExpression(n)) {
+          const callee = ts.isCallExpression(n.expression) ? n.expression.expression.getText() : n.expression.getText();
+          awaited.push(callee);
+          // logAuditAction never throws (pinned below); every other await is caught
+          if (callee !== "logAuditAction") expect(insideTry(n, st), `uncaught await after the pointer write: ${n.getText().slice(0, 80)}`).toBe(true);
+        }
+        if (ts.isTryStatement(n)) {
+          const handler = n.catchClause!.block.getText();
+          expect(handler).toMatch(/landedShortfalls\.push\(/);
+          expect(handler).not.toMatch(/\bthrow\b|\bawait\b/);
+        }
+        ts.forEachChild(n, scan);
+      };
+      scan(st);
+    }
+    expect(awaited).toEqual(["logAuditAction", "startIssuedDocumentClocks"]);
+    // no dynamic import after the commit point either (a chunk-load failure would reject the file)
+    expect(after.map((st) => st.getText()).join("\n")).not.toMatch(/import\(/);
+    // logAuditAction answers { error } and never throws: its whole body is one try / catch that returns
+    const audit = ts.createSourceFile("lib/audit.ts", src("lib/audit.ts"), ts.ScriptTarget.Latest, true);
+    let logBody: ts.Block | undefined;
+    audit.forEachChild((n) => { if (ts.isFunctionDeclaration(n) && n.name?.text === "logAuditAction") logBody = n.body; });
+    expect(logBody!.statements).toHaveLength(1);
+    const only = logBody!.statements[0];
+    expect(ts.isTryStatement(only) && !!only.catchClause).toBe(true);
+    expect((only as ts.TryStatement).catchClause!.block.getText()).toMatch(/return \{ error: /);
   });
 });
 

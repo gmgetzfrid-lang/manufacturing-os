@@ -178,7 +178,7 @@ export default function ShareLinksAdminPage() {
               onPick={(id, name) => void runRevoke({ kind: "library", libraryId: id }, `Every live link to a document in ${name}`)} />
           </div>
           {truncated && (
-            <p className="text-xs text-amber-700">Showing the newest {SHARE_INVENTORY_LIMIT} links; older ones are not listed here.</p>
+            <p className="text-xs text-amber-700">Every live link is listed. Of the expired and revoked links, only the newest {SHARE_INVENTORY_LIMIT} are shown.</p>
           )}
 
           {loading ? (

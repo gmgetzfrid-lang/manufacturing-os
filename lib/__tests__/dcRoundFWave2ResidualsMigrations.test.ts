@@ -16,7 +16,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { WORK_IN_PROGRESS_STATUSES, isControlledIssueStatus } from "@/lib/revisions";
-import { downloadDeniedTo } from "@/lib/downloadDeny";
+import { memberDownloadDenied, type DownloadDenyClient } from "@/lib/downloadDeny";
+import { ALL_ROLES } from "@/types/schema";
 
 const dir = join(process.cwd(), "supabase", "migrations");
 const mig = (f: string) => readFileSync(join(dir, f), "utf8");
@@ -25,6 +26,7 @@ const M140 = mig("20261140_dc_roundF_share_download_deny_rail.sql");
 const M105 = mig("20261105_prj_roundG_intake_review_and_attempts.sql");
 const M061 = mig("20261061_rp_roundE_branch_resolution_authority.sql");
 const M080 = mig("20261080_dc_roundF_share_minting_and_revocation.sql");
+const M046 = mig("20261046_rp_phase6_sweep_authority_by_collection.sql");
 
 function between(text: string, from: string, to: string): string {
   const a = text.indexOf(from);
@@ -240,38 +242,67 @@ describe("20261140 — SHR-14: user_download_denied mirrors lib/downloadDeny.ts"
   it("reads the same three buckets the TypeScript rule reads, every role in the ACTIVE collection, an empty collection as Viewer, controllers not exempt", () => {
     expect(fn).toMatch(/\(v_deny -> 'users' -> 'download'\) \? p_uid::text/);
     expect(fn).toMatch(/WHERE m\.org_id = p_org AND m\.uid = p_uid AND m\.status = 'active'/);
-    expect(fn).toMatch(/unnest\(COALESCE\(v_roles, ARRAY\[\]::text\[\]\) \|\| v_role\)/);
+    expect(fn).toMatch(/unnest\(COALESCE\(v_roles, ARRAY\[\]::text\[\]\) \|\| v_role\) AS r\s*\n\s*WHERE r IS NOT NULL AND role_rank\(r\) > 0\);/);
     expect(fn).toMatch(/IF cardinality\(v_roles\) = 0 THEN\s*\n\s*v_roles := ARRAY\['Viewer'\];/);
     expect(fn).toMatch(/EXISTS \(SELECT 1 FROM unnest\(v_roles\) AS r WHERE \(v_deny -> 'roles' -> 'download'\) \? r\)/);
     expect(fn).toMatch(/FROM team_members t\s*\n\s*WHERE t\.uid = p_uid AND \(v_deny -> 'teams' -> 'download'\) \? t\.team_id::text/);
     expect(fn).not.toMatch(/is_org_controller|Admin|DocCtrl/);
     // the TypeScript side: the same buckets, the Viewer default, no controller exemption
     const ts = readFileSync(join(process.cwd(), "lib/downloadDeny.ts"), "utf8");
+    expect(ts).toMatch(/const roles: string\[\] = normalizeRoles\(mem\?\.roles, mem\?\.role\);/);
     expect(ts).toMatch(/if \(roles\.length === 0\) roles\.push\("Viewer"\);/);
     expect(ts).toMatch(/\.eq\("status", "active"\)/);
     expect(ts).toMatch(/sb\.from\("team_members"\)\.select\("team_id"\)\.eq\("uid", input\.uid\)/);
   });
 
-  it("the two rules agree on a table of cases (the SQL transcribed as a pure function over the same inputs)", () => {
-    // A transcription of the plpgsql above, pinned to it by the regexes in the case before.
-    const sqlRule = (idx: unknown, uid: string, member: { role: string | null; roles: string[] | null } | null, teams: string[]): boolean => {
+  /** 20261046's role_rank table, as SQL: role -> rank, ELSE 0. */
+  const rankTable = (() => {
+    const fnSql = between(M046, "CREATE OR REPLACE FUNCTION role_rank(p_role text)", "\n$$;");
+    expect(fnSql).toMatch(/ELSE 0 END;/);
+    return new Map([...fnSql.matchAll(/WHEN '([A-Za-z0-9-]+)' THEN (\d+)/g)].map((m) => [m[1], Number(m[2])]));
+  })();
+  const roleRank = (r: string | null) => (r == null ? 0 : rankTable.get(r) ?? 0);
+
+  it("the known-role filter (role_rank(r) > 0) is exactly ALL_ROLES — the set normalizeRoles keeps — and 20261046 is role_rank's only definition", () => {
+    expect([...rankTable.keys()].sort()).toEqual([...ALL_ROLES].sort());
+    for (const r of ALL_ROLES) expect(roleRank(r), r).toBeGreaterThan(0);
+    for (const r of ["Contractor-legacy", "admin", "", " Viewer"]) expect(roleRank(r), r).toBe(0);
+    const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
+    expect(files.filter((f) => /CREATE OR REPLACE FUNCTION role_rank\(/.test(stripComments(mig(f))))).toEqual(["20261046_rp_phase6_sweep_authority_by_collection.sql"]);
+    // the inventory's role count reads the same filter
+    const inv = between(M140, "CREATE TEMP TABLE dc_round_f_140_before", "\nBEGIN;");
+    expect(inv).toMatch(/WHERE r IS NOT NULL AND role_rank\(r\) > 0\), ARRAY\[\]::text\[\]\),\s*\n\s*ARRAY\['Viewer'\]\) AS held/);
+  });
+
+  it("the two rules agree on a table of cases (the SQL transcribed as a pure function; the TypeScript side is the REAL memberDownloadDenied)", async () => {
+    type Member = { role: string | null; roles: string[] | null } | null;
+    // A transcription of the plpgsql above, pinned to it by the regexes in the cases before.
+    const sqlRule = (idx: unknown, uid: string, member: Member, teams: string[]): boolean => {
       const deny = (idx as { deny?: unknown } | null)?.deny as Record<string, Record<string, unknown>> | undefined;
       if (!deny || typeof deny !== "object" || Array.isArray(deny)) return false;
       const arr = (b: string) => (Array.isArray(deny[b]?.download) ? (deny[b].download as string[]) : null);
       if (arr("users")?.includes(uid)) return true;
-      let roles = [...new Set([...(member?.roles ?? []), member?.role].filter((r): r is string => !!r && r.trim() !== ""))];
+      let roles = [...new Set([...(member?.roles ?? []), member?.role ?? null].filter((r): r is string => r != null && roleRank(r) > 0))];
       if (roles.length === 0) roles = ["Viewer"];
       if (arr("roles") && roles.some((r) => arr("roles")!.includes(r))) return true;
       if (arr("teams") && teams.some((t) => arr("teams")!.includes(t))) return true;
       return false;
     };
-    const tsRule = (idx: unknown, uid: string, member: { role: string | null; roles: string[] | null } | null, teams: string[]) => {
-      const roles = [...new Set([...(member?.roles ?? []), ...(member?.role ? [member.role] : [])])];
-      if (roles.length === 0) roles.push("Viewer");
-      return downloadDeniedTo(idx as never, { uid, roles, teamIds: teams });
+    /** The share routes' path: memberDownloadDenied over a client answering this member and these teams. */
+    const tsRule = async (idx: unknown, uid: string, member: Member, teams: string[]) => {
+      const chain = (result: unknown) => {
+        const c: Record<string, unknown> = {
+          select: () => c, eq: () => c,
+          maybeSingle: async () => ({ data: member, error: null }),
+          then: (resolve: (v: unknown) => void) => resolve(result),
+        };
+        return c;
+      };
+      const sb = { from: (t: string) => chain(t === "team_members" ? { data: teams.map((team_id) => ({ team_id })), error: null } : { data: null, error: null }) };
+      return (await memberDownloadDenied(sb as unknown as DownloadDenyClient, { orgId: "o1", uid, aclIndex: idx as never })).denied;
     };
     const U = "u-1";
-    const cases: Array<[unknown, { role: string | null; roles: string[] | null } | null, string[]]> = [
+    const cases: Array<[unknown, Member, string[]]> = [
       [null, { role: "Engineer-1", roles: ["Engineer-1"] }, []],
       [{ deny: { users: { download: [U] } } }, { role: "Viewer", roles: null }, []],
       [{ deny: { users: { download: ["someone-else"] } } }, { role: "Viewer", roles: null }, []],
@@ -279,13 +310,20 @@ describe("20261140 — SHR-14: user_download_denied mirrors lib/downloadDeny.ts"
       [{ deny: { roles: { download: ["DocCtrl"] } } }, { role: "DocCtrl", roles: ["DocCtrl"] }, []], // controllers not exempt
       [{ deny: { roles: { download: ["Viewer"] } } }, null, []], // no active membership reads as Viewer
       [{ deny: { roles: { download: ["Viewer"] } } }, { role: null, roles: [] }, []], // an empty collection reads as Viewer
+      [{ deny: { roles: { download: ["Viewer"] } } }, { role: "Contractor-legacy", roles: [] }, []], // only an unknown string: Viewer (the review's case)
+      [{ deny: { roles: { download: ["Viewer"] } } }, { role: "Contractor-legacy", roles: ["Drafter"] }, []], // an unknown string beside a known role: not Viewer
+      [{ deny: { roles: { download: ["Contractor-legacy"] } } }, { role: "Contractor-legacy", roles: [] }, []], // a deny naming an unknown string binds no one
       [{ deny: { roles: { download: ["Viewer"] } } }, { role: "Drafter", roles: ["Drafter"] }, []],
       [{ deny: { teams: { download: ["t1"] } } }, { role: "Drafter", roles: null }, ["t2", "t1"]],
       [{ deny: { teams: { download: ["t1"] } } }, { role: "Drafter", roles: null }, ["t2"]],
       [{ deny: { users: { view: [U] } } }, { role: "Drafter", roles: null }, []], // another action's deny
     ];
-    for (const [idx, member, teams] of cases) {
-      expect(sqlRule(idx, U, member, teams), JSON.stringify([idx, member, teams])).toBe(tsRule(idx, U, member, teams));
+    const expected = [false, true, false, true, true, true, true, true, false, false, false, true, false, false];
+    for (const [i, [idx, member, teams]] of cases.entries()) {
+      const label = JSON.stringify([idx, member, teams]);
+      const sql = sqlRule(idx, U, member, teams);
+      expect(sql, label).toBe(await tsRule(idx, U, member, teams));
+      expect(sql, label).toBe(expected[i]);
     }
   });
 });

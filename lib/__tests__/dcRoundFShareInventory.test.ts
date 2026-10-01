@@ -28,16 +28,44 @@ const s = vi.hoisted(() => ({
   shares: [] as Row[],
   refuse: new Set<string>(),
   audits: [] as Row[],
+  /** PostgREST's max-rows for the service-role reads (Infinity: none). */
+  maxRows: Infinity,
 }));
 
+/** One PostgREST filter term: `col.is.null`, `col.not.is.null`, `col.gt.X`, `col.lte.X`. */
+function term(r: Row, t: string): boolean {
+  const m = t.match(/^(\w+)\.(not\.is|is|gt|lte)\.(.*)$/);
+  if (!m) throw new Error(`unsupported filter term ${t}`);
+  const v = r[m[1]];
+  switch (m[2]) {
+    case "is": return m[3] === "null" && v == null;
+    case "not.is": return m[3] === "null" && v != null;
+    case "gt": return v != null && String(v) > m[3];
+    case "lte": return v != null && String(v) <= m[3];
+  }
+  return false;
+}
 /** The service-role client handed to the route by authorizeOrgRole. */
 function adminChain(table: string) {
   const eqs: Array<[string, unknown]> = [];
   const ins: Array<[string, unknown[]]> = [];
+  const isNull: string[] = [];
+  const gts: Array<[string, string]> = [];
+  const ors: string[] = [];
+  const orders: Array<[string, boolean]> = [];
   let limit = Infinity;
   const rows = () => (s.tables[table] ?? [])
-    .filter((r) => eqs.every(([k, v]) => r[k] === v) && ins.every(([k, vs]) => vs.includes(r[k])))
-    .slice(0, limit);
+    .filter((r) => eqs.every(([k, v]) => r[k] === v) && ins.every(([k, vs]) => vs.includes(r[k]))
+      && isNull.every((k) => r[k] == null) && gts.every(([k, v]) => String(r[k]) > v)
+      && ors.every((o) => o.split(",").some((t) => term(r, t))))
+    .sort((a, b) => {
+      for (const [k, asc] of orders) {
+        const c = String(a[k] ?? "").localeCompare(String(b[k] ?? ""));
+        if (c !== 0) return asc ? c : -c;
+      }
+      return 0;
+    })
+    .slice(0, Math.min(limit, s.maxRows));
   const c: Row = {};
   const h: ProxyHandler<Row> = {
     get(_t, prop: string) {
@@ -47,6 +75,10 @@ function adminChain(table: string) {
         s.calls.push({ table, method: prop, args });
         if (prop === "eq") eqs.push([String(args[0]), args[1]]);
         if (prop === "in") ins.push([String(args[0]), args[1] as unknown[]]);
+        if (prop === "is") { expect(args[1]).toBeNull(); isNull.push(String(args[0])); }
+        if (prop === "gt") gts.push([String(args[0]), String(args[1])]);
+        if (prop === "or") ors.push(String(args[0]));
+        if (prop === "order") orders.push([String(args[0]), (args[1] as { ascending?: boolean } | undefined)?.ascending !== false]);
         if (prop === "limit") limit = Number(args[0]);
         return new Proxy(c, h);
       };
@@ -104,7 +136,7 @@ import { GET } from "@/app/api/share/inventory/route";
 import { revokeShareLink } from "@/lib/documentShares";
 import {
   revokeShareLinks, shareBulkTargets, shareLinkState, sortShareInventory,
-  SHARE_INVENTORY_DENIED, SHARE_INVENTORY_LIMIT, type ShareInventoryRow,
+  SHARE_INVENTORY_DENIED, SHARE_INVENTORY_IN_CHUNK, SHARE_INVENTORY_LIMIT, SHARE_INVENTORY_LIVE_CEILING, type ShareInventoryRow,
 } from "@/lib/shareInventory";
 import { isControllerRole } from "@/lib/permissions";
 import { ALL_ROLES } from "@/types/schema";
@@ -116,7 +148,7 @@ const FUTURE = new Date(Date.now() + 5 * 86_400_000).toISOString();
 const PAST = new Date(Date.now() - 86_400_000).toISOString();
 
 beforeEach(() => {
-  s.actor = null; s.allowedSeen = []; s.calls = []; s.errorTables = new Set();
+  s.actor = null; s.allowedSeen = []; s.calls = []; s.errorTables = new Set(); s.maxRows = Infinity;
   s.tables = {
     document_shares: [
       { id: "s1", org_id: "o1", document_id: "d1", token: "SECRET-1", created_by: "u-gone", created_by_name: "Contractor", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null, revoked_by: null, access_count: 4, access_last_at: "2026-09-25T00:00:00Z", note: "for the fabricator" },
@@ -185,20 +217,108 @@ describe("DIST-15 — GET /api/share/inventory: the listing decision", () => {
     expect((await GET(new NextRequest("http://x/api/share/inventory?orgId=", { headers: { authorization: "Bearer t" } }))).status).toBe(400);
   });
 
-  it("fails closed: a failed read is a 500, never an empty inventory; more rows than the limit say so", async () => {
+  it("fails closed: a failed read is a 500, never an empty inventory", async () => {
     s.actor = { userId: "c1", roles: ["Admin"] };
-    s.errorTables.add("org_members");
-    expect((await get()).status).toBe(500);
-    s.errorTables = new Set(["document_shares"]);
-    expect((await get()).status).toBe(500);
-    s.errorTables = new Set();
-    s.tables.document_shares = Array.from({ length: SHARE_INVENTORY_LIMIT + 1 }, (_, i) => ({
-      id: `b${i}`, org_id: "o1", document_id: "d1", created_by: "u-eng", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
+    for (const t of ["org_members", "documents", "libraries", "document_shares"]) {
+      s.errorTables = new Set([t]);
+      expect((await get()).status, t).toBe(500);
+    }
+  });
+
+  it("EVERY live link is listed, however many expired / revoked rows are newer — only the history is capped, and `truncated` says so (DIST-15 done-when 1)", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    const pad = (i: number) => String(i).padStart(5, "0");
+    // SHARE_INVENTORY_LIMIT + 5 revoked rows, all NEWER than the three live ones
+    const revoked = Array.from({ length: SHARE_INVENTORY_LIMIT + 5 }, (_, i) => ({
+      id: `r${pad(i)}`, org_id: "o1", document_id: "d2", created_by: "u-eng", created_at: `2026-09-28T00:00:00.${pad(i)}Z`,
+      expires_at: FUTURE, revoked_at: "2026-09-29T00:00:00Z",
+    }));
+    const liveOld = ["l1", "l2", "l3"].map((id) => ({
+      id, org_id: "o1", document_id: "d1", created_by: "u-gone", created_at: "2026-01-01T00:00:00Z", expires_at: id === "l3" ? null : FUTURE, revoked_at: null,
+    }));
+    s.tables.document_shares = [...revoked, ...liveOld];
+    const body = await (await get()).json() as { rows: ShareInventoryRow[]; truncated: boolean };
+    const live = body.rows.filter((r) => shareLinkState(r) === "live").map((r) => r.id).sort();
+    expect(live).toEqual(["l1", "l2", "l3"]); // a never-expiring legacy link is live too
+    expect(body.rows.filter((r) => shareLinkState(r) === "revoked")).toHaveLength(SHARE_INVENTORY_LIMIT);
+    expect(body.truncated).toBe(true);
+    // the bulk scope "every live link by u-gone" therefore names all three
+    expect(shareBulkTargets(body.rows, { kind: "creator", createdBy: "u-gone" }).sort()).toEqual(["l1", "l2", "l3"]);
+  });
+
+  it("live links are read in keyset pages until an EMPTY page — never cut at PostgREST's row ceiling, whatever max-rows the project sets", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    const n = 2 * 1000 + 37;
+    s.tables.document_shares = Array.from({ length: n }, (_, i) => ({
+      id: `s${String(i).padStart(5, "0")}`, org_id: "o1", document_id: "d1", created_by: "u-eng", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
     }));
     const body = await (await get()).json() as { rows: ShareInventoryRow[]; truncated: boolean };
-    expect(body.rows).toHaveLength(SHARE_INVENTORY_LIMIT);
-    expect(body.truncated).toBe(true);
-    expect(s.calls.find((c) => c.table === "document_shares" && c.method === "limit")!.args[0]).toBe(SHARE_INVENTORY_LIMIT + 1);
+    expect(body.rows).toHaveLength(n);
+    expect(new Set(body.rows.map((r) => r.id)).size).toBe(n);
+    expect(body.truncated).toBe(false);
+    // live pages of 1000, each after the last id of the one before, until an empty one; then the capped history read
+    const limits = s.calls.filter((c) => c.table === "document_shares" && c.method === "limit").map((c) => c.args[0]);
+    expect(limits).toEqual([1000, 1000, 1000, 1000, SHARE_INVENTORY_LIMIT + 1]);
+    expect(s.calls.filter((c) => c.table === "document_shares" && c.method === "gt").map((c) => c.args)).toEqual([
+      ["id", "s00999"], ["id", "s01999"], ["id", "s02036"],
+    ]);
+    expect(SHARE_INVENTORY_LIVE_CEILING).toBeGreaterThan(n);
+  });
+
+  it("a server whose max-rows is BELOW the page size still yields every live link (a short page is not the end)", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    s.maxRows = 250;
+    const n = 777;
+    s.tables.document_shares = Array.from({ length: n }, (_, i) => ({
+      id: `s${String(i).padStart(5, "0")}`, org_id: "o1", document_id: "d1", created_by: "u-eng", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
+    }));
+    const body = await (await get()).json() as { rows: ShareInventoryRow[] };
+    expect(body.rows).toHaveLength(n);
+  });
+
+  it("past SHARE_INVENTORY_LIVE_CEILING live links the route refuses (500) rather than list a part", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    s.tables.document_shares = Array.from({ length: SHARE_INVENTORY_LIVE_CEILING + 1 }, (_, i) => ({
+      id: `s${String(i).padStart(6, "0")}`, org_id: "o1", document_id: "d1", created_by: "u-eng", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
+    }));
+    const res = await get();
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/more than 50000 live share links/);
+  });
+
+  it("an org with hundreds of shared documents: no `.in()` carries more than SHARE_INVENTORY_IN_CHUNK ids, and every row is still joined (DIST-15 — the URL-length 500)", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    const n = 2 * SHARE_INVENTORY_IN_CHUNK + 13;
+    s.tables.document_shares = Array.from({ length: n }, (_, i) => ({
+      id: `s${i}`, org_id: "o1", document_id: `doc${i}`, created_by: `u${i}`, created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
+    }));
+    s.tables.documents = Array.from({ length: n }, (_, i) => ({ id: `doc${i}`, org_id: "o1", document_number: `N-${i}`, title: "t", status: "Issued", library_id: `L${i}` }));
+    s.tables.libraries = Array.from({ length: n }, (_, i) => ({ id: `L${i}`, org_id: "o1", name: `Lib ${i}` }));
+    s.tables.org_members = Array.from({ length: n }, (_, i) => ({ org_id: "o1", uid: `u${i}`, status: "active" }));
+    const body = await (await get()).json() as { rows: ShareInventoryRow[] };
+    expect(body.rows).toHaveLength(n);
+    for (const r of body.rows) {
+      const i = Number(r.id.slice(1));
+      expect(r).toMatchObject({ documentNumber: `N-${i}`, libraryName: `Lib ${i}`, creatorActive: true });
+    }
+    const ins = s.calls.filter((c) => c.method === "in");
+    for (const t of ["documents", "libraries", "org_members"]) {
+      const calls = ins.filter((c) => c.table === t);
+      expect(calls.length, t).toBe(3);
+      for (const c of calls) expect((c.args[1] as unknown[]).length, t).toBeLessThanOrEqual(SHARE_INVENTORY_IN_CHUNK);
+      expect(calls.flatMap((c) => c.args[1] as unknown[])).toHaveLength(n);
+    }
+  });
+
+  it("a chunk that fails fails the whole inventory closed (a 500, never a partly-joined list)", async () => {
+    s.actor = { userId: "c1", roles: ["Admin"] };
+    s.tables.document_shares = Array.from({ length: SHARE_INVENTORY_IN_CHUNK + 1 }, (_, i) => ({
+      id: `s${i}`, org_id: "o1", document_id: `doc${i}`, created_by: "u-eng", created_at: "2026-09-20T00:00:00Z", expires_at: FUTURE, revoked_at: null,
+    }));
+    s.errorTables = new Set(["documents"]);
+    const res = await get();
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to load the shared documents");
   });
 });
 
@@ -273,6 +393,9 @@ describe("DIST-15 — the page", () => {
     // the four scopes and the leaver mark are offered
     for (const k of ['kind: "selected"', 'kind: "creator"', 'kind: "document"', 'kind: "library"']) expect(page).toContain(k);
     expect(page).toMatch(/no longer an active member/);
+    // truncation is about the history only; every live link is listed
+    expect(page).toMatch(/Every live link is listed\. Of the expired and revoked links, only the newest \{SHARE_INVENTORY_LIMIT\} are shown\./);
+    expect(page).not.toMatch(/older ones are not listed here/);
     // a refused row and a refused audit row are both shown
     expect(page).toMatch(/result\.failed\.length > 0/);
     expect(page).toMatch(/result\.auditWarnings\.length > 0/);

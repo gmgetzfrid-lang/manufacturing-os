@@ -42,13 +42,26 @@ export interface ShareInventoryRow {
 }
 
 export interface ShareInventory {
+  /** EVERY live link in the org, then the newest SHARE_INVENTORY_LIMIT expired or revoked ones. */
   rows: ShareInventoryRow[];
-  /** The server lists at most SHARE_INVENTORY_LIMIT rows, newest first; true when there were more. */
+  /** true when there were more expired / revoked links than SHARE_INVENTORY_LIMIT. Never
+   *  about live links: the server lists every one (or refuses past SHARE_INVENTORY_LIVE_CEILING),
+   *  so the bulk scopes ("every live link by / on / in …") act on the whole set. */
   truncated: boolean;
 }
 
-/** The most rows one inventory read returns (newest first). */
+/** The most EXPIRED or REVOKED rows one inventory read returns (newest first) —
+ *  the record. Live links are never capped by it. */
 export const SHARE_INVENTORY_LIMIT = 1000;
+
+/** Past this many LIVE links the server refuses (500) rather than list a part:
+ *  a partial live set would make "revoke every live link by X" a lie. */
+export const SHARE_INVENTORY_LIVE_CEILING = 50_000;
+
+/** Ids per `.in()` filter in the server's joins — the filter travels in the
+ *  request URL (lib/acknowledgments.ts and lib/reviewControl.ts chunk at 150
+ *  for the same reason). */
+export const SHARE_INVENTORY_IN_CHUNK = 150;
 
 /** Shown when the server refuses a member below the controller tier. */
 export const SHARE_INVENTORY_DENIED =
