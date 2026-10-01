@@ -220,6 +220,16 @@ templates/generate/route.ts:253-255 `} catch { return Object.fromEntries(aiField
 - [ ] the failed-draft branch is distinguishable from a genuinely empty field
 - [ ] documents with empty AI fields cannot be rendered without an explicit override
 
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced: the tolerant parse fell back to `"{}"`, and the catch wrote "" into every AI field. Now `parseDraftFields` refuses four kinds of reply: one with no JSON object, JSON that does not parse (a reply cut off at its length limit), a non-object, or one that leaves a requested field out. The batch then answers 502 naming the row: "The AI's draft for row 7 couldn't be read — … so no document was produced for this batch and nothing was left blank. Draft again to retry." No document with silently blank AI sections reaches the review screen or the render. A field the model wrote as "" (or null) is its answer and is kept. The failed call is still metered as a failed draft, since its tokens were spent. A cap stop part-way returns the rows already drafted (and paid for), and the next slice starts at the stopped row. Tests: `templatesDraftGate.test.ts` ("PR-6 — an unreadable draft fails, it never blanks").
+
+**Done-when.**
+1. ✓ in substance. The failed document never reaches the response, so the UI cannot render it. The batch is refused rather than one document flagged, because `GenerateModal` reads only `documents` and errors.
+2. ✓ A failed draft is distinguishable from a genuinely empty field.
+3. ✗ Not done here. Refusing to render a document with a genuinely empty AI field without an explicit override needs a review-screen control in `components/templates/GenerateModal.tsx`, which no package's plan assigns. A server refusal would block legitimately optional AI fields with no way to override.
+
+**Scope / residual.** OPEN for done-when 3. A slice that fails discards the drafts made before the failing row (they are metered). That is the price of saying the failure where the current UI can show it.
+
 ---
 
 <a id="pr-7"></a>
@@ -396,5 +406,15 @@ Two search shapes confirm the set: `grep -rn ai_key_agreements` and `grep -rn AG
 - [ ] flows/read is rewritten to call governedAiCall with its images instead of duplicating a weaker gate stack, and the two stale 'doesn't carry images' comments are deleted
 - [ ] knowledge/locate and templates/generate check ai_key_agreements before their first provider call, returning 428 with agreementText like the ask route
 - [ ] a test asserts that every route importing callAiModel either goes through governedAiCall or checks AGREEMENT_VERSION
+
+
+**Partial (2026-10-01, intelligence Round G).** `/api/templates/generate` now runs `assertAiGates`: the agreement (428, with the agreement text), own key, the cap over every op, and a per-document reservation. The other two routes belong to other packages. flows/read is I-09's: it moves onto `aiGates` / `governedAiCall` and deletes the two stale "doesn't carry images" comments. knowledge/locate is I-07's. The census test covers done-when 3. Tests: `templatesDraftGate.test.ts`, `aiGateCensus.test.ts`.
+
+**Done-when.**
+1. ✗ I-09's file.
+2. Half. templates/generate ✓ (428 with `agreementText`); knowledge/locate ✗ (I-07).
+3. ✓ A test asserts every route importing a provider call either runs the gates, checks `AGREEMENT_VERSION`, or is named with its owner.
+
+**Scope / residual.** OPEN until I-09 and I-07 land their limbs.
 
 ---

@@ -76,7 +76,7 @@ app/api/knowledge/ask/route.ts:463-468 — `const { data: stamped } = await supa
 ## SEM-2 · Embedding spend is invisible to the monthly cap — every cap check in the embed path reads a number that excludes embeddings
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:57-67`, `lib/ai/usageServer.ts:106-127`, `app/api/knowledge/embed/route.ts:139-149`, `app/api/knowledge/embed/route.ts:178-183`, `lib/knowledgeEmbedDrain.ts:88-95`, `lib/knowledgeEmbedDrain.ts:123-128`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and understated: the same op filter also hides flowRead, drawingLocate and knowledgeVision, and getMonthUsageByUser:70-76 carries it too, so the controllers' team view never shows this spend either — directly contradicting the comment at usageServer.ts:109-111 ('bills as knowledgeVision so the spend is visible as its own line but shares the same cap'). No DB view or trigger aggregates ai_usage_events; these helpers are the whole ledger.
@@ -99,6 +99,17 @@ lib/ai/usageServer.ts:57-67 — `.from("ai_usage_events").select(...).eq("org_id
 - [ ] A cap-exceeded state reached purely by embedding spend blocks the next `/api/knowledge/embed` build pass and the drain's per-library gate
 - [ ] The admin spend view shows embedding and vision spend as their own lines inside the same monthly total
 - [ ] A test asserts that a knowledgeEmbed usage row moves the number `getMonthUsage` returns
+
+
+**Resolution (2026-10-01, intelligence Round G).** Fixed at its root by GOV-1: every op counts in `getMonthUsage` and `getMonthUsageByUser`. Both embed-path gates — `/api/knowledge/embed` and the drain's per-library gate — read `getMonthUsage`, so a cap reached purely by embedding spend refuses the next build pass and holds the drain, with no edit to I-02's files. The usage response breaks spend out per op (`byOp`). The meter shows "Where it went", with the meaning index and vision indexing as their own lines inside one total, and the team table shows each member's breakdown on hover. Tests: `aiUsage.test.ts` ("a knowledgeEmbed row alone moves the number getMonthUsage returns, and can trip the cap", including the gates' legacy shape), `aiUsageRoute.test.ts`, `aiSettingsUsagePanel.test.ts`.
+
+**Done-when.**
+1. ✓ Neither rollup filters on `op`.
+2. ✓ A cap reached by embedding spend alone blocks the next embed pass and the drain's gate.
+3. ✓ The spend view shows embedding and vision as their own lines inside the monthly total.
+4. ✓ Test: a knowledgeEmbed row moves the number `getMonthUsage` returns.
+
+**Scope / residual.** None for this finding.
 
 ---
 

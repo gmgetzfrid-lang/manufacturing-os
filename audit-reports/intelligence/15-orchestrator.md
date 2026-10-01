@@ -179,7 +179,7 @@ execute/route.ts:54-60 — `// Pre-approve exactly this action. The tool's own p
 ## ORCH-5 · The monthly AI spend cap does not count orchestrator spend at all — getMonthUsage reads only op='knowledgeAsk'
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:57`, `lib/ai/usageServer.ts:63`, `lib/ai/usageServer.ts:109`, `app/api/orchestrator/route.ts:105`, `app/api/orchestrator/route.ts:146`, `app/api/orchestrator/route.ts:210`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and broader than claimed: every non-ask op is invisible to the cap — codebookImport, flowRead, templateDraft, drawingLocate, knowledgeVision, knowledgeEmbed, graphShape, checklistAssess, skillAssist. usageServer.ts:109-110 even documents the opposite ('vision indexing bills as knowledgeVision so the spend ... shares the same cap'), which the op filter makes false. getMonthUsageByUser (70-76) carries the identical filter, so the Admin team view undercounts too. Only mitigation worth noting: spend lands on the member's own BYO key (route.ts:69-85), so the loss is the member's, not the org's.
@@ -203,6 +203,16 @@ usageServer.ts:57-67 — `export async function getMonthUsage(orgId, userId) { c
 - [ ] getMonthUsage (and getMonthUsageByUser) count every billable op — either drop the .eq('op', …) filter or replace it with an explicit allowlist of billable ops that includes 'orchestrator'
 - [ ] a test inserts an ai_usage_events row with op='orchestrator' and asserts it appears in the rolled-up spend and can trip the cap
 - [ ] the budget figure returned at route.ts:210 reflects the same total the cap check uses
+
+
+**Resolution (2026-10-01, intelligence Round G).** Fixed at its root by GOV-1: `getMonthUsage` sums every op, so `op: "orchestrator"` rows count toward the cap on the next request and in the team view. The budget the route returns (`monthSoFar.spentUsd` plus the run's cost) is now built from the same total its cap check reads. Test: `aiUsage.test.ts` ("an orchestrator row appears in the rolled-up spend and trips the cap (ORCH-5)").
+
+**Done-when.**
+1. ✓ Both rollups count every billable op (the filter is gone).
+2. ✓ Test: an `op = 'orchestrator'` row appears in the rolled-up spend and can trip the cap.
+3. ✓ The returned budget figure reflects the same total the cap check uses. No route edit was needed — the route reads the same function.
+
+**Scope / residual.** The orchestrator route still runs its own inline gate (I-04 owns the file). Reservation is ORCH-7.
 
 ---
 
@@ -265,6 +275,16 @@ route.ts:105-115 — `const [monthSoFar, capUsd] = await Promise.all([getMonthUs
 - [ ] a run reserves budget (or an in-flight counter) before the first provider call and settles it afterwards, so concurrent runs cannot all pass the same check
 - [ ] per-user concurrent orchestrator runs are limited to a small number, with a clear 429/409 for the rest
 - [ ] a test simulating N simultaneous runs at the cap boundary shows at most one proceeding
+
+
+**Partial (2026-10-01, intelligence Round G).** The reservation and the concurrency limit exist: `reserveWithinCap` / `settleUsage` / `releaseUsage` in `lib/ai/usageServer.ts` (`maxInFlight` → 429), and `assertAiGates(...).reserve` with `maxInFlight` in `lib/ai/aiGates.ts`. The N-simultaneous test shows that of eight racing runs at the cap boundary, at most one proceeds — the earlier reservation wins and the later ones see it. The orchestrator route (I-04's file) does not reserve before its first provider call yet.
+
+**Done-when.**
+1. ✗ I-04: reserve the run's worst case (or per round) before the first call, and settle after.
+2. ✗ I-04: pass `maxInFlight`.
+3. ✓ at the ledger (`aiUsage.test.ts`, "N simultaneous runs at the cap boundary: at most one proceeds (ORCH-7)").
+
+**Scope / residual.** OPEN until I-04 wires it.
 
 ---
 

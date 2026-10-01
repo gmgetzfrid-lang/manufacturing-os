@@ -30,7 +30,7 @@ Where the keys live, what the allowlist enforces, and which calls bypass governa
 ## GOV-1 · The monthly spend cap counts only knowledgeAsk — sixteen other AI ops spend on the same key and are invisible to it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/usageServer.ts:57-67 (getMonthUsage)`, `lib/ai/usageServer.ts:63`, `lib/ai/usageServer.ts:75 (getMonthUsageByUser)`, `lib/ai/usageServer.ts:106-127 (recordAskUsage)`, `lib/ai/governedCall.ts:63-69`, `app/api/knowledge/ask/route.ts:253-262`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. Confirmed with no compensating control anywhere: a repo-wide grep found no other ledger reader. Two corrections. The op count is TWELVE, not sixteen — checklistAssess, checklistSegment, codebookImport, drawingLocate, flowRead, graphShape, knowledgeEmbed, knowledgeVision, orchestrator, qualityManualReview, skillAssist, templateDraft. And the exposure is bounded: spend lands on the member's OWN provider key (governedCall.ts:42-48 forbids a workspace fallback), and knowledgeAsk — the highest-volume surface — is correctly metered. Budget-governance failure, not a breach: HIGH, not CRITICAL.
@@ -84,6 +84,18 @@ The op-label inventory came from `grep -rnE 'op: *"' app lib`, which returned 17
 - [ ] getMonthUsageByUser drops the same filter so the controller team table matches the provider bill
 - [ ] The stale comment at usageServer.ts:109-111 either becomes true or is removed
 - [ ] Optionally: the usage response breaks spend out per-op so a controller can see WHICH feature spent the money
+
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced by reading `lib/ai/usageServer.ts`: both rollups filtered `.eq("op", "knowledgeAsk")`. `getMonthUsage` and `getMonthUsageByUser` now read every row of the member's (or the org's) current UTC month with no op filter, paged past PostgREST's 1,000-row cap (a partial sum would read as headroom that does not exist), and roll them up with `rollupUsage`: `spentUsd` is every op, `asks` the knowledge questions, `calls` every successful call, `byOp` each feature's line. The `recordAskUsage` comment now says what is true — every op line counts against the one monthly cap. `/api/ai/usage` returns `byOp` / `calls`, and the AI settings meter shows "Where it went" for the member and each team member's breakdown on hover. Every existing gate benefits without an edit — the ask, orchestrator, codebook-import, flows/read, locate, ingest and embed routes, both drains and `governedAiCall` all read `getMonthUsage`. Tests: `lib/__tests__/aiUsage.test.ts` ("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month"), `aiUsageRoute.test.ts`, `aiSettingsUsagePanel.test.ts`.
+
+**Done-when.**
+1. ✓ `getMonthUsage` sums all ops for the user / org / month — the read carries no op filter (asserted).
+2. ✓ A fixture with knowledgeAsk + knowledgeVision + knowledgeEmbed + flowRead (and orchestrator) rows equals the sum of all of them.
+3. ✓ `getMonthUsageByUser` drops the same filter; the controllers' team table carries every op.
+4. ✓ The comment is now true.
+5. ✓ (optional) The usage response and the meter break spend out per op.
+
+**Scope / residual.** As the finding predicted, background jobs and heavy features now meet the cap for the first time — correct; a member under the cap sees no change (tested: `governedAiCall` under ordinary mixed spend still answers). `asks` keeps meaning "questions" and `avgPromptTokens` is over questions only. The decision is `DEC-44` (I-05, provisional number) item 1.
 
 ---
 
@@ -167,7 +179,7 @@ Table defaults confirmed at 20261016_reasoning_skills.sql:22-24 (read in full). 
 ## GOV-3 · Setting a monthly cap to $0 disables the cap entirely, while the UI reports 'Cap reached — questions are locked'
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/usage/route.ts:133-136`, `app/api/ai/usage/route.ts:52`, `lib/ai/usageServer.ts:100`, `lib/ai/governedCall.ts:66`, `components/knowledge/AiSettingsModal.tsx:469-476`, `components/knowledge/AiSettingsModal.tsx:534-537`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end, and worse than a single-surface bug: all EIGHT enforcement sites share the `capUsd > 0` short-circuit, so $0 uncaps every AI surface simultaneously. The UI inversion is exact — capUsd 0 forces percent to 100, painting the bar rose and asserting questions are locked at the precise moment nothing is. AiSettingsModal.tsx:476 `if (!Number.isFinite(cap) || cap < 0)` lets the operator type it. HIGH stands.
@@ -206,6 +218,17 @@ const capped = usage.percent >= 100;
 - [ ] If an 'unlimited' setting is genuinely wanted it is an explicit sentinel (null / a checkbox), never the number 0
 - [ ] The usage route's percent calculation and the modal's capped/hot states agree with whatever the server actually enforces
 - [ ] Test: POST capUsd 0, then assert a governed call is refused with 402
+
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced: every gate was written `capUsd > 0 && spent >= capUsd`, so a stored $0 uncapped every surface while the meter said "Cap reached". A $0 cap now LOCKS (`DEC-44` (I-05) item 2). `getCapUsd` returns `LOCKED_CAP_USD` — the smallest positive number, which prints as $0.00 — for a stored 0, and `getMonthUsage` never reads a locked member's month below it. So every gate still shaped `cap > 0 && spent >= cap` (ask, orchestrator, codebook import, flows/read, locate, ingest, embed, both drains) refuses a locked member at $0 spent, with no route edit; `capReached()` — read by `lib/ai/aiGates.ts`, `governedAiCall`, template drafting and the connection probes — refuses it outright. `/api/ai/usage` accepts 0 as the lock ("0 locks AI for that person until it is raised") and returns `locked: true`, `capUsd: 0`, `percent: 100`; AI settings says "Your monthly cap is $0 — AI is locked for you until someone who manages AI caps … raises it", the cap picker offers "$0 lock", and "Cap reached" is said only when the server enforces it. Tests: `aiUsage.test.ts` ("GOV-3 — a $0 cap locks", including "every legacy `cap > 0 && spent >= cap` gate refuses a locked member at $0 spent"), `aiGates.test.ts` ("a $0 cap locks — … POST capUsd 0, then a governed call is refused with 402"), `aiUsageRoute.test.ts` (GOV-3), `aiSettingsUsagePanel.test.ts`.
+
+**Done-when.**
+1. ✓ A cap of 0 allows zero spend — on every gate (outright through `capReached`, and through the lock floor on the gates that still carry the old shape).
+2. ✓ There is no "unlimited" setting; 0 is the lock, never "no cap".
+3. ✓ The usage route's percent / `locked` and the modal's capped and hot states follow what the server enforces.
+4. ✓ Test: a $0 cap, then a governed call → 402 (`aiGates.test.ts`); the route accepts and reports it (`aiUsageRoute.test.ts`).
+
+**Scope / residual.** The floor makes `getMonthUsage` read the cap beside the ledger (two small reads). Caps already stored as $0 change meaning on deploy — `20261137`'s pre-apply inventory counts them (per person and workspace default).
 
 ---
 
@@ -255,6 +278,23 @@ usageServer.ts:65 `if (error) return EMPTY_USAGE;` vs usageServer.ts:96 `if (err
 - [ ] The PGRST204 fallback insert is either removed (schema is a hard precondition) or the resulting cost-less rows are counted as unknown-spend rather than zero-spend
 - [ ] lib/schemaExpectations.ts surfaces the missing ai_usage_events columns as a blocking setup error, not a silent degrade
 - [ ] Test: a mocked ledger error produces a refused governed call, not an allowed one
+
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced: `getMonthUsage` returned `EMPTY_USAGE` on any read error, and the PGRST204 fallback wrote cost-less rows that read as $0. What landed (`DEC-44` (I-05) item 3):
+
+- A ledger read error throws `AiUsageUnavailableError` — a `GovernedCallError`, status 503, "AI usage can't be read right now, so AI calls are refused until it can (…)". Every gate refuses: routes that map `GovernedCallError` answer 503, the others fail with the error instead of proceeding. `getCapUsd` throws too on any read error but a missing table — a cap that cannot be read must not quietly become $10 for someone an Admin locked.
+- Rows with neither a cost nor token counts (the fallback insert) count as `unpricedCalls` — unknown spend, never $0 — and `assertAiGates` / `reserveWithinCap` refuse (503) while any exist this month. Rows with tokens but no cost are priced (an unknown model at frontier rates).
+- `/api/ai/usage` answers 503 with `usageUnavailable: true`, and the AI settings meter shows that sentence with a Retry instead of vanishing.
+
+Tests: `aiUsage.test.ts` ("GOV-4 — the gate fails CLOSED"), `aiGates.test.ts` ("a ledger read error → 503 and no provider call"), `aiUsageRoute.test.ts`, `aiSettingsUsagePanel.test.ts`.
+
+**Done-when.**
+1. ✓ "Zero spend" and "could not read spend" are distinct; the gate refuses on the second.
+2. ✓ The fallback insert is kept (metering never breaks an answer) and its rows are counted as unknown spend.
+3. ✗ Not done here. The `EXPECTED_COLUMNS` row for `ai_usage_events.est_cost_usd` (`20260916`) belongs in `lib/schemaExpectations.ts`, which A&O P2 (the regeneration) and PS-VERIFY own. The blocking behaviour itself holds: every AI call is refused, and AI settings shows the read error, which names the column.
+4. ✓ Test: a mocked ledger error produces a refused governed call.
+
+**Scope / residual.** OPEN until done-when 3's schema-health row lands. On a database without `20260916`'s cost columns every AI call is refused — the columns are a hard precondition.
 
 ---
 
@@ -311,6 +351,17 @@ knowledgeEmbedDrain.ts:90 and knowledgeIngest.ts:512 both call `getMonthUsage`; 
 - [ ] A drain that would exceed the sponsor's remaining headroom stops and leaves the work queued, with a reason surfaced on the library/document
 - [ ] Integration or unit test: a sponsor at 100% of cap produces zero embedding/vision provider calls from the drain
 
+
+**Partial (2026-10-01, intelligence Round G).** The root — GOV-1's op filter — is fixed: `knowledgeEmbed` and `knowledgeVision` rows now count, so both drains' existing gates see their own spend. A sponsor at 100% is held (the embed drain writes `blockedReason: "cap"` until the 1st) or indexed text-only (the ingest drain), and a locked ($0) sponsor is refused at $0 spent (GOV-3). Test: `aiUsage.test.ts` ("a knowledgeEmbed row alone moves the number getMonthUsage returns, and can trip the cap" — the drains' gate shape included).
+
+**Done-when.**
+1. ✗ The in-loop headroom re-check belongs to `lib/knowledgeEmbedDrain.ts` (I-02) and `lib/knowledgeIngest.ts` (I-06). The helpers they need landed here: `reserveWithinCap` / `settleUsage`, or `assertAiGates(...).reserve`.
+2. ✗ Incremental metering per slice / batch — same files; both still meter once, after the loop.
+3. Partly. The embed drain records the cap hold on the library (I-02, SEM-11). The ingest drain's text-only fallback says nothing on the document — I-06.
+4. Partly. The gate a sponsor at 100% meets is proven at the ledger (`aiUsage.test.ts`), and the embed drain's hold at 100% is I-02's `embedDrain.test.ts`; a drain-level "zero provider calls" test for the ingest drain is I-06's.
+
+**Scope / residual.** OPEN until the drains re-check and meter inside their loops (handed to I-02 and I-06).
+
 ---
 
 <a id="gov-6"></a>
@@ -318,7 +369,7 @@ knowledgeEmbedDrain.ts:90 and knowledgeIngest.ts:512 both call `getMonthUsage`; 
 ## GOV-6 · Voyage AI is a third provider outside the allowlist, receiving the full text of every indexed page, while the signed agreement tells the user only Anthropic/OpenAI see their content
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/pricing.ts:21-27`, `lib/ai/pricing.ts:46-56`, `lib/ai/embeddings.ts:31-50`, `lib/ai/embeddings.ts:141-159`, `app/api/ai/connection/route.ts:174-176`, `app/api/ai/connection/route.ts:204-206`, `lib/__tests__/aiPricing.test.ts (ALLOWED_PROVIDERS block)`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The contradiction is real and the code's own absolutist wording is what convicts it: a third provider receives indexed page text through a validation path that structurally bypasses the allowlist, and the signed agreement text is never updated to say so. Lowered from HIGH because the omission is disclosure, not concealment: the user must deliberately pick 'Voyage AI' from a labelled dropdown (embeddings.ts:31-50, hint at :42) and paste a Voyage key, so no content reaches Voyage without an explicit per-user act. MEDIUM.
@@ -371,6 +422,17 @@ Two searches confirm no allowlist check on the embedding path: `grep -rn 'ALLOWE
 - [ ] AGREEMENT_VERSION bumps so existing acceptances are re-signed against the corrected text
 - [ ] The aiPricing test's 'any scope' claim is either made true or rewritten to describe the real two-list model
 
+
+**Resolution (2026-10-01, intelligence Round G).** The plan's default (`DEC-44` (I-05) item 4): keep Voyage, say so, and make it a list. `lib/ai/pricing.ts` now carries two allowlists with the reasoning written beside them: `ALLOWED_PROVIDERS` (a chat key: Anthropic, OpenAI) and `ALLOWED_EMBEDDING_PROVIDERS` (an embeddings key: Voyage AI, OpenAI). `/api/ai/connection` gates the embeddings key's save and test on the second list, and `assertAiGates({ key: "embedding" })` gates every spend of it. The agreement core names every vendor that can receive document text and what each receives ("…sent to your AI provider (Anthropic or OpenAI: whichever key you saved). If you add an embeddings key, the text of every page in the libraries you index is also sent to your embeddings provider (Voyage AI or OpenAI)…"). `buildAgreementText(provider, embeddingProvider)` adds the Voyage paragraph, and `/api/ai/agreement` passes the member's embeddings provider. `AGREEMENT_VERSION` moves 2026-07-v2 → 2026-10-v3, so every member re-signs. Voyage's three offered models are priced from Voyage's published list (voyage-3.5-lite $0.02/M, voyage-3.5 $0.06/M, voyage-3-large $0.18/M); any other Voyage model keeps the conservative family row. Tests: `aiPricing.test.ts` ("the two-list model", "GOV-6 — Voyage at its published rates; the agreement names every vendor; re-sign required"), `aiGates.test.ts` (the 428 text names Voyage), `aiConnectionRoute.test.ts` (GOV-6).
+
+**Done-when.**
+1. ✓ One explicit decision in `pricing.ts`: Voyage on a named embeddings allowlist, with its justification.
+2. ✓ `buildAgreementText` takes the embeddings provider, and every agreement text names every vendor that can receive excerpts.
+3. ✓ `AGREEMENT_VERSION` bumped.
+4. ✓ The "any scope" test now describes the two-list model.
+
+**Scope / residual.** The re-sign is deliberate: every gated call answers 428 until the member signs again (the ask route prompts in place; governed routes say how), and background vision or embedding on a sponsor's key holds until the sponsor re-signs. The meaning-index panel's "estimate — placeholder rate" label reads `isPlaceholderRate` in `lib/ai/embeddings.ts` (I-02's, the SEM-13 input); it can now say the Voyage rate is the published one — handed to I-02 / I-02b. The "does not train on API traffic" sentence for Voyage rests on Voyage's API terms, the plan's default; re-read it if those terms change.
+
 ---
 
 <a id="gov-7"></a>
@@ -378,7 +440,7 @@ Two searches confirm no allowlist check on the embedding path: `grep -rn 'ALLOWE
 ## GOV-7 · /api/ai/connection makes real, repeatable provider calls with no cap check and no metering row
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/connection/route.ts:126-156`, `app/api/ai/connection/route.ts:265-280`, `app/api/ai/connection/route.ts:160-191`, `app/api/ai/connection/route.ts:213-228`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. `action:"test"` is repeatable with no idempotency, no cap read, no ledger insert, and there is no middleware.ts and no rate limiter anywhere in the repo to bound it. The embedding-test path (:177-185) and the save-path embed verify (:215-228) are two more unmetered billed calls the finding does not even count, so if anything it under-states the surface.
@@ -413,6 +475,16 @@ The test path also accepts a caller-supplied `model` while using the SAVED key (
 - [ ] Connection tests write a metering row (a `connectionTest` op) so the ledger is complete
 - [ ] A user already over cap either cannot run a test, or the test is explicitly documented as a de-minimis exemption with a per-hour rate limit
 - [ ] The test path stops honoring a body-supplied model against a saved key, or validates it the same way the save path does
+
+
+**Resolution (2026-10-01, intelligence Round G).** Every live call in `/api/ai/connection` — the test, the embeddings test, and the verify-on-save of a new chat or embeddings key — runs `assertAiGates`: the allowlist for that key's kind, the cap, and a reservation. Each is metered as `connectionTest` with the provider's counts, and a failure as a failed call. A test against the SAVED key uses the saved provider and model; a body-supplied model rides only with a body-supplied key (the pre-save test of a new key). A capped or locked member cannot run a test (402). Verifying a NEW key while saving stays possible, so a key can always be rotated: a documented de-minimis exemption, at most five an hour (counted from the member's own `connectionTest` rows), metered all the same; the sixth answers 429. Tests: `aiConnectionRoute.test.ts` ("GOV-7 — tests are gated and metered").
+
+**Done-when.**
+1. ✓ Connection tests write a `connectionTest` metering row.
+2. ✓ A member at the cap cannot run a test; the save path's verify is a written de-minimis exemption with a per-hour limit (the route's header).
+3. ✓ The saved key is tested on the saved model.
+
+**Scope / residual.** The agreement is waived for these probes only, in writing (GOV-11 done-when 4).
 
 ---
 
@@ -534,7 +606,7 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("chunks say 'vision' with the model t
 ## GOV-10 · Doc Control — not just Admin — can raise anyone's cap, including their own, to $10,000, outside the app's capability-policy layer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/usage/route.ts:25-37`, `app/api/ai/usage/route.ts:107`, `app/api/ai/usage/route.ts:133-136`, `lib/capabilityPolicy.ts`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every element. One nuance the finding's summary omits: an audit_logs row IS written (:157-162, action AI_CAP_CHANGED, with targetUserId and capUsd), so the change is traceable after the fact — but that is a log, not the approval/second-signature/notification the summary says is absent, and the bypass of the capability-policy layer stands.
@@ -568,6 +640,27 @@ authMember read in full (:25-37) — the role set is built inline, not from capa
 - [ ] Raising one's OWN cap is either blocked or requires a second controller's approval
 - [ ] The user-facing copy names the roles that can actually do it
 - [ ] An Admin is notified when a cap is raised, not just audited after the fact
+
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced: `/api/ai/usage` built `isController` from `roles.has("Admin") || roles.has("DocCtrl")` and let any controller set any cap, their own included. Now (`DEC-44` (I-05) item 5):
+
+- Setting a cap is the capability `ai.manage_caps` in `lib/capabilityPolicy.ts`, default `["Admin"]`, read through `loadCapabilityPolicyStrict` + `policyAllows`. A policy that cannot be read refuses (503). Doc Control loses cap-setting unless the policy console grants it, by role or per person.
+- Nobody raises their OWN cap — not by an override, and not by clearing one onto a higher default (403). Lowering it is allowed.
+- Every change writes `AI_CAP_CHANGED` with the previous figure, and a bell notice (`kind: ai_cap_changed`) goes to every other holder and to the person whose cap moved.
+- Controllers still SEE the team table, read-only unless they hold the capability. AI settings shows the editor only to holders and names who can raise a cap ("someone who manages AI caps — an Admin, unless your workspace granted it to others"). The server copy elsewhere ("an Admin can raise the cap", in the ask, orchestrator and embed routes) is now accurate under the default.
+- Migration `20261137` re-creates `org_capability_allows_for` from its newest definition (`20261132`) plus one CASE row, so the SQL evaluator's defaults keep mirroring `CAPABILITY_DEFS`. Under the DRLS-16 rule it takes EXECUTE from PUBLIC and anon and grants it to authenticated and service_role.
+
+Tests: `aiUsageRoute.test.ts` ("GOV-10 — cap changes are the ai.manage_caps capability…"), `aiSettingsUsagePanel.test.ts` (GOV-10), `intelRoundGAiCapsMigration.test.ts` (it finds the newest earlier definer by scanning the sequence and checks exactly one added row, the CASE equal to `CAPABILITY_DEFS`, the DRLS-16 grants and the one-paste shape). Four historical evaluator tests now list the row as a later addition.
+
+**Pending migration:** `supabase/migrations/20261137_intel_roundG_ai_manage_caps.sql`. It follows DEC-30's one-paste protocol. The inventory (Admin members, DocCtrl-not-Admin members, stored policies and grants naming the capability, and caps stored as $0 that now lock) is captured before the transaction. The probes check the row, every earlier default, the untouched wrapper, the search_path pins and the anon revoke. Until it is applied nothing changes for anyone: the app reads the default from `CAPABILITY_DEFS`, and no policy or trigger asks the SQL evaluator for `ai.manage_caps`.
+
+**Done-when.**
+1. ✓ Raising a cap is a capability an org can configure (default Admin).
+2. ✓ Raising one's own cap is blocked.
+3. ✓ The copy names who can actually do it.
+4. ✓ The other holders are notified, as is the person whose cap moved.
+
+**Scope / residual.** Raising the WORKSPACE default lifts every member who follows it, the setter included. It is treated as an org decision — audited, with every holder notified — not as a self-raise. `ai.manage_caps` is not on the policy write guard's critical list (`20261056`), so an org may narrow it like any other capability. J2b's parallel re-creation (`20261136`, `quality.sign_off`) folds into this body at merge, and the shape test follows the newest earlier definer.
 
 ---
 
@@ -611,6 +704,21 @@ Two searches agree on the gate's five locations: `grep -rn 'ai_key_agreements' -
 - [ ] A test enumerates the callAiModel call sites and asserts each is either inside governedCall or carries all five gates
 - [ ] The ai/connection test/verify call is explicitly exempted in writing (it is a key-liveness probe, not a content transmission) — and made to send no org content, which it currently does not
 
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced: five direct-calling routes skipped `ai_key_agreements`. What landed is `lib/ai/aiGates.ts` `assertAiGates`. It runs own key → the allowlist for that key's kind → the signed agreement (428, with `agreementText` / `agreementVersion` in `details`) → the cap over every op, then `reserve()` per call. A route that sends text, page images, embeddings or several calls in a loop can use it. It is wired into `governedAiCall` (signature unchanged), `/api/ai/connection` and `/api/templates/generate`, which now refuses an unsigned member with 428. A census test enumerates every provider caller in `app/` and `lib/`. Tests: `aiGates.test.ts`, `templatesDraftGate.test.ts` ("an unsigned member gets 428 with the agreement text…"), `aiGateCensus.test.ts`.
+
+**Done-when.**
+1. ✓ in substance. `governedAiCall` already carried `images`. `aiGates` is the shared stack for the routes that call the model directly: flows/read, locate and the vision paths.
+2. ✗ Not everywhere yet:
+   - flows/read (I-09) and knowledge/locate (I-07) still skip the agreement.
+   - So does `app/api/knowledge/ingest`'s interactive vision path (I-06), the verifier's sixth route. It reaches the provider through `lib/knowledgeVision`, so the census lists it under that helper.
+   - knowledge/embed checks the agreement locally (I-02: "aiGates when it lands"). Its move onto aiGates is recorded as the I-02b / I-03 follow-up.
+   - ask, orchestrator and codebook/import check it inline.
+3. ✓ The census classifies every caller as GATED, INLINE, PENDING (with its owner) or HELPER; an unclassified provider call fails the suite.
+4. ✓ The connection probes are exempted in writing and send a fixed sentence, never org content.
+
+**Scope / residual.** OPEN until flows/read (I-09), locate (I-07) and the ingest route (I-06) run the agreement gate. Each adopts `assertAiGates` in its own file.
+
 ---
 
 <a id="gov-12"></a>
@@ -618,7 +726,7 @@ Two searches agree on the gate's five locations: `grep -rn 'ai_key_agreements' -
 ## GOV-12 · Provider keys are stored in plaintext whenever EXPORT_ENCRYPTION_KEY is unset, announced only by a console warning
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/keyVault.ts:17-36`, `lib/ai/keyVault.ts:39-43`, `lib/serverCrypto.ts:22-31`, `app/api/ai/connection/route.ts:284`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contradiction is in-repo: lib/serverCrypto.ts:5-7 states the design intent — "If unset, the API endpoints refuse to save credentials — we never want plaintext secrets on disk by accident" — while keyVault deliberately inverts it. lib/__tests__/keyVault.test.ts:31 pins the behavior ("degrades to plaintext storage when EXPORT_ENCRYPTION_KEY is unset"). Repo-wide grep confirms no UI, health check, or schemaExpectations entry ever reports the unconfigured state; console.warn is the only signal.
@@ -658,6 +766,25 @@ keyVault.ts read in full. `cryptoConfigured` at :17-20 checks length only. The c
 - [ ] cryptoConfigured validates hex, not just length
 - [ ] A one-time admin-visible warning (not just a server log) exists wherever unsealed rows are present
 - [ ] The env var is documented on the AI settings page as an AI-key requirement, not only as an export concern
+
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced: `sealAiKey` stored plaintext whenever the key was unset. The fix follows DEC-18's production / development split (`DEC-44` (I-05) item 6):
+
+- `aiKeyCryptoConfigured()` now requires 64 HEX characters.
+- A production server without it refuses to store a key: `sealAiKey` throws `AiKeyStorageError`, and `/api/ai/connection` checks `aiKeyStorageReady()` before any verify call is spent. It answers 503 with an actionable sentence: "…set EXPORT_ENCRYPTION_KEY (64 hex characters…) and save the key again. Nothing was saved."
+- Development still stores the key, with a warning that never prints it.
+- Existing rows keep working: sealed ones decrypt and plaintext ones pass through. A plaintext row (chat or embeddings key) is re-sealed on its owner's next save, new key or not.
+- The GET reports `keyStorage`: whether storage is encrypted, whether plaintext is refused, the member's own unsealed keys and, for controllers, the org's count (counted in the database). AI settings and AI setup show it (`KeyStorageNotice`) and name EXPORT_ENCRYPTION_KEY as an AI-key requirement.
+
+Tests: `keyVault.test.ts`, `aiConnectionRoute.test.ts` ("GOV-12 — keys at rest"), `aiSettingsUsagePanel.test.ts` ("KeyStorageNotice").
+
+**Done-when.**
+1. ✓ An unconfigured production server refuses with an actionable error; a development server reports "UNENCRYPTED" and the settings page shows it.
+2. ✓ The key must be hex, not just 64 characters long.
+3. ✓ An admin-visible warning appears wherever unsealed rows exist (the org count, for controllers).
+4. ✓ The env var is documented on the AI settings page.
+
+**Scope / residual.** A production deployment that never set the key keeps serving its existing plaintext keys, and cannot save new ones until it does.
 
 ---
 
@@ -701,6 +828,24 @@ All 11 gate sites share the pattern (enumerated via `grep -rn 'getCapUsd|spentUs
 - [ ] The gate compares against remaining headroom and clamps the call's maxTokens (or refuses) when the worst-case cost of the pending call would exceed it
 - [ ] Concurrent calls cannot each consume the same headroom — a reservation row, an advisory lock, or a post-hoc reconciliation that locks the user out immediately on overshoot
 - [ ] Multi-round paths (orchestrator loop, locate refine, ingest batches) re-check headroom between rounds rather than only at entry
+
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced: every gate was read-then-call, a `>=` on dollars already spent. What landed (`DEC-44` (I-05) item 7):
+
+- `reserveWithinCap` writes the worst case of the pending call as a ledger row BEFORE the call. `worstCaseCostUsd` counts text at 3 characters a token, 1,600 tokens per image, and output at the full `maxTokens`.
+- It then re-reads the month with that row in. The reservation is judged against settled spend plus the reservations made before it (by `created_at`, then `id`), so of two racing calls the earlier proceeds and the later one sees it.
+- A call whose worst case does not fit the headroom is refused (402: "This call could cost up to $X and $Y is left of your $Z monthly AI cap").
+- `settleUsage` replaces the reservation with the provider's counts, and `releaseUsage` drops a refused one. An optional per-user in-flight limit answers 429.
+- aiGates' `reserve()` wraps it. `governedAiCall`, template drafting (per document) and the connection probes all reserve.
+
+Tests: `aiUsage.test.ts` ("GOV-13 / ORCH-7 — reserve, then call": $9.99 of $10 refused; of N simultaneous runs at most one proceeds), `aiGates.test.ts` (`governedAiCall` reserved and settled, images priced), `templatesDraftGate.test.ts` (a cap stop part-way keeps the rows already drafted).
+
+**Done-when.**
+1. ✓ for every caller of aiGates / `governedAiCall` (it refuses rather than clamping). The ask (I-03, ASK-7), orchestrator (I-04), flows/read (I-09), locate (I-07) and ingest (I-06) routes adopt it in their own files.
+2. ✓ for the same callers (reservation rows).
+3. ✗ Multi-round paths — the orchestrator loop (I-04), locate's refine passes (I-07), the ingest batches (I-06) — re-check between rounds by reserving per round in their own files.
+
+**Scope / residual.** OPEN until the multi-round paths reserve per round. A reservation whose run dies is kept at its worst case: over-counted, never under.
 
 ---
 
@@ -757,5 +902,21 @@ setEmbedBuildMarker read in full (knowledgeEmbedCore.ts:138-149) — it writes t
 - [ ] getCapUsd stops interpolating userId into a filter string — use two queries, or an `.in()` with bound values
 - [ ] The consent stamp records enough to be auditable (who stamped it, when, from which request) rather than being a bare userId a controller can hand-edit
 - [ ] A user can see and revoke the background builds running on their key
+
+
+**Partial (2026-10-01, intelligence Round G).** This package's limb: `getCapUsd` no longer splices the user id into an `.or()` filter string. It makes two bound reads — the member's override with `.eq("user_id", …)` and the org default with `.is("user_id", null)` — so a hostile id is only ever a value. Test: `aiUsage.test.ts` ("GOV-14 — the cap read binds the user id; nothing is spliced into a filter string").
+
+Already landed elsewhere, and verified in current code:
+- The drain validates the marker's uuid shape and an active org_members row before spending (`lib/knowledgeEmbedDrain.ts`, I-02 SEM-11).
+- Only the service role may change `ai_features.embedBuild` (`trg_knowledge_libraries_embed_build_guard`, `20261121`, I-02), so a controller can no longer hand-edit the consent.
+- The payer can Stop a build from the library's meaning-index panel.
+
+**Done-when.**
+1. ✓ (I-02.)
+2. ✓ (here).
+3. Partly. The stamp is server-written only and records who (the requester's uid) and when (`at`). No audit row names the request that stamped it — that is I-02's embed route.
+4. Partly. A member sees and stops a build on each library's page, but there is no one place listing every build running on their key — I-02 / I-02b.
+
+**Scope / residual.** OPEN for done-when 3–4 (I-02's files).
 
 ---
