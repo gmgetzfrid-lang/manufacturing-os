@@ -212,7 +212,7 @@ Tests:
 ## ING-4 · Tables are never atomic: splitTables/chunkPageText's whole table path is unreachable from ingestion
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeText.ts:305`, `lib/knowledgeText.ts:53-86`, `lib/knowledgeText.ts:88-127`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeVision.ts:49-51`, `lib/__tests__/knowledgeText.test.ts:312-345`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The code claim is exactly right and decisive. Severity lowered because the finding missed a live guard: the safety net splitTables' own comment claims to have retired ('the answer prompt then had to carry a standing disclaimer … needs no disclaimer') is STILL in the prompt — app/api/knowledge/ask/route.ts:1501-1502 requires a '**Check:**' line 'whenever a value comes from a table, because PDF table extraction jumbles numbers'. Answers built on jumbled tables are therefore still flagged to the reader, making this a serious quality regression rather than an unguarded wrong-value path.
@@ -278,9 +278,36 @@ Tests:
 **Scope / residual.**
 - Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (the two `chunk_version` columns). Without it the action answers 424 naming the migration, and every library stays on chunker 1.
 - The "Re-index with table-aware chunking" button on the knowledge library page (`app/(protected)/knowledge/[id]/page.tsx`) is I-02's file. It is handed over with the API contract above: a dry run to show `visionPagesToReread`, then the run, repeated while `remaining` > 0 and the last run reset something. Until it lands, the action is reachable through the API only. The button's copy should also say what the dry run does not count. Every document it resets is `stale` with its chunks gone, so the library drops out of Ask until each one is re-indexed. For a vision library on the daily cron, that can take days.
+  *Landed (2026-10-01, I-02b):* the button is on the library page beside "Re-index all", for controllers (the route's own bar), while any indexed document is still on chunker 1. It runs the dry run first (`planTableAwareReindex`). It then confirms with `tableAwareReindexMessage`: the documents reset, the AI-vision pages read and billed again, and what that count leaves out (each reset document drops out of Ask until it is re-indexed, which for a library read by AI vision can take days). Last, it runs (`runTableAwareReindex`) while `remaining` > 0 and the last call reset something.
 - OPEN until `20261122` is applied and the I-02 button ships.
+  *Landed (2026-10-01, I-02b): the button shipped. The finding is RESOLVED for the code (DEC-30), pending `20261122`; see the Resolution below.*
 - The meaning index re-embeds the new chunks through its own pipeline. Re-arming it after ingestion is I-02's SEM-8.
 - The answer prompt's table-value "Check:" line (`app/api/knowledge/ask/route.ts`, I-03) is left as is, because chunker 1 libraries still need it.
+
+**Resolution (2026-10-01, intelligence Round G).** Package I-02b closes the last code limb, the button this record handed to the library page. What landed:
+
+- **The button.** In `app/(protected)/knowledge/[id]/page.tsx`, "Re-index with table-aware chunking" sits in the Documents header beside "Re-index all". It is shown to a controller (`hasAnyRole(["Admin", "DocCtrl"])`, the route's own `memberHoldsAny` bar) while any indexed document is still on chunker 1 (`pagesIndexed > 0 && chunkerVersionOf(chunkVersion) !== 2`, the route's own selector). A document a run found busy keeps the button on screen, so the next run picks that document up.
+- **The dry run first.** `planTableAwareReindex` (`lib/knowledge.ts`) posts `{ action: "reindex", libraryId, chunker: 2, dryRun: true }`, which changes nothing. With nothing to reset, the page says so and asks nothing. On a database without `20261122` the dry run answers 424, and the page shows that message, which names the migration, without asking anything.
+- **The confirmation says what the count leaves out.** `tableAwareReindexMessage` reads: "N of M documents will be re-read with table-aware chunking … AI vision reads P pages again, billed to the AI key of whoever indexes them. What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits in the indexing queue — until it is re-indexed. Indexing runs while an Admin or Doc Control member has the app open, otherwise on the nightly maintenance run, so a library read by AI vision can take days to come back in full."
+- **The run.** `runTableAwareReindex` posts the real run and calls again while `remaining` > 0 and the last call reset something. The route audits each call before it resets anything. A call that resets nothing means what is left is mid-batch or failed. The toast says how many were reset and how many are left to run again; on an error it names the first one. The page's own indexing loop waits while the run is in progress, then starts on the reset documents.
+- `KnowledgeDocument` now carries `chunkVersion`, `emptyPages`, `visionFailedPages` and `visionPartialAccepted` from the row the page already selects.
+
+Tests:
+- `lib/__tests__/ingestLoopClient.test.ts`: "the dry run changes nothing and asks only for the plan"; "the run repeats while documents remain and the last run reset something …"; "a run whose documents are all reset ends at once"; "a migration the run needs (424) is said, not swallowed"; "the confirmation says what the dry run counts AND what it leaves out …".
+- `lib/__tests__/knowledgePageIngestUi.test.ts`, on the rendered page: "the dry run comes first; the confirmation is the full message — counts and the Ask outage; then the run"; "cancelled after the dry run, nothing is reset"; "documents a run found busy are said, with the way to finish"; "a run that could reset nothing … says so"; "a database without the migration answers the dry run with the reason, and nothing is asked"; "not offered once every indexed document is on table-aware chunking"; "a member who is not a controller sees … no re-index". Against the base page every one of these fails except "not offered once …".
+
+**Done-when.** As the decision (`DEC-58` item 4) frames them: chunker 2 is a library's choice, never automatic, and chunker 1 stays the default byte for byte.
+- ✓ (chunker 2) `splitPageIntoSections` keeps line structure, so `splitTables` sees real rows (I-06, unchanged).
+- ✓ (chunker 2) A test asserts on the FULL ingest path over real PDFs (I-06, unchanged).
+- ✓ (chunker 2) A vision-transcribed table with ` | ` separators comes out of the ingest path as ONE chunk with `\n` between its rows (I-06, unchanged).
+- ✓ The I-06 record's fourth line ("not yet active anywhere") was the missing way in. A controller can now move a library from the library page, and sees the dry run's numbers and the Ask outage first. By decision, no library moves until someone does.
+
+**Scope / residual.**
+- Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (the two `chunk_version` columns). Until it is applied, the button's dry run answers 424 naming the migration, and every library stays on chunker 1. This finding is resolved for the code (DEC-30). No library is on chunker 2 until the paste lands and a controller presses the button for it.
+- The answer prompt's table-value "Check:" line (`app/api/knowledge/ask/route.ts`, I-03) is left as is, because chunker 1 libraries still need it.
+- Re-arming the meaning index after a re-index is SEM-8's (I-02, merged).
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -404,6 +431,7 @@ Tests:
 
 **Done-when.**
 - ✓ Failed pages are recorded per document (`vision_failed_pages`). They are surfaced on the ingest response's `visionSkipReason` ("N pages could not be read by AI vision (…) — retried automatically…"), which the app-shell indicator renders directly under "N pages read by AI vision". Showing it permanently on the library's document list is `app/(protected)/knowledge/[id]/page.tsx`, I-02's file; the column is on every row it already reads.
+  *Landed (2026-10-01, I-02b):* the library's document list shows them on every row that has them, next to "N pages read by AI vision": "N pages AI vision could not read yet (p. …)" while they wait, and "N pages accepted unread — AI vision could not read p. …" after an acceptance (`app/(protected)/knowledge/[id]/page.tsx`; test: `lib/__tests__/knowledgePageIngestUi.test.ts` "the pages AI vision could not read stay listed …").
 - ✓ The pages are re-queued, not committed as read. The document does not reach `ready` while any remain, except by an explicit, audited acceptance. It is never pushed out of retrieval meanwhile: a retry that cannot run, or fails again, leaves it `indexing` with the reason on the row, never `error`. Every waiting page gets its try: the queue rotates, and a pass backs off only after a whole round (review fix pass 3; before it, pages behind four persistent failures were never retried).
 - ✗ Not done here. The DRAWING FACTS prompt block is in `app/api/knowledge/ask/route.ts` (I-03 is its sole owner). The count it needs is `knowledge_documents.vision_failed_pages`.
 
@@ -413,9 +441,33 @@ Handoffs, since none of these files is this package's:
 
 *Integrator (2026-10-01, at the I-02 merge): I-02 ran in parallel at the same base and never saw the handoffs addressed to it below. The `ingestLoop` limb landed at that merge (see its bullet); the page, Resume, indicator, chunker-button, `.pdf` check and empty-pages limbs are now the intelligence fleet plan's package **I-02b KNOWLEDGE UI HANDOFFS** (`audit-reports/fleet-plans/intelligence.json`).*
 - **I-02, `app/(protected)/knowledge/[id]/page.tsx`.** The "accept the partial index" exit is reachable through the API only. Its button, and showing `error` on a document that is still `indexing`, belong on this page. It shows `error` only for status `error` today. Its Resume button (`resumeIndex`) is also to pass `retryNow: true` through `ingestKnowledgeDocument` (ING-8), so a person's click skips a failed batch's back-off; the page's automatic loop must not.
+  *Landed (2026-10-01, I-02b):* the "Accept partial index" button posts the route's `accept-partial` action (`acceptPartialIndex` in `lib/knowledge.ts`). It is offered to a controller, the route's own bar, only where the route takes it: the main pass is at the end, pages are waiting, and nobody has accepted yet. It asks first, naming the pages and the audit record, and shows the route's refusal as given. `error` is shown in full, beside the row's progress, on any row that is not `error` or `ready`: an `indexing` row parked for AI vision, or a queued row whose failed batch is waiting out its back-off. Resume passes `retryNow` (ING-8). Tests: `lib/__tests__/knowledgePageIngestUi.test.ts`, the ING-6 / ING-8 block (sixteen of the file's nineteen cases fail against the base page).
 - **I-02, `lib/knowledge.ts` `ingestLoop`.** The stall detector must count a successful vision retry as progress; see "The API contract" above. Until then, the library page's resume can throw a false "stalled" on a document with more than about twelve failed pages while the retries succeed. It must also count `visionRetryAttempts > 0` as activity: a batch whose tries all failed moves neither `pagesIndexed` nor `visionFailedPages`, but it rotated the queue, and the next batch tries other pages. The `busy` handoff (under ING-2) is the same loop. *Landed (2026-10-01, at the I-02 merge): a fall in `visionFailedPages` or a rise in `pagesReadable` counts as progress (`lib/__tests__/ingestLoopClient.test.ts` "a vision retry that re-reads failed pages … is progress").*
+  *Landed (2026-10-01, I-02b): the second limb. A batch with `visionRetryAttempts` > 0 is activity. Reproduced first: with twenty failed pages that fail every time, the loop threw "Indexing stalled at page 40 of 40 … then rebuild" on its fourth answer, one batch before the round's 409. Now the loop walks the round and stops on the 409's reason. A batch that tried nothing still counts toward the stall. Tests: `lib/__tests__/ingestLoopClient.test.ts` "twenty failed pages that fail every time …" and "a batch that tried nothing and moved nothing still counts toward the stall".*
 - **`components/providers/KnowledgeIndexIndicator.tsx`: owner named here as I-02**, the knowledge-UI package; it is in no package's file list. A parked document (failed pages that cannot be retried now, or are backing off) stays `indexing`, and so does one whose failed batch is backing off (ING-8). The app-shell indicator polls every `indexing` row every 120 s in every controller tab. It calls `setHidden(false)` and shows "Indexing <doc>", then "Knowledge indexing caught up — 0 documents indexed", over and over, even after the user dismisses it. Each poll is a POST that costs about eight queries and answers 409. Its queue should leave out rows with `vision_retry_after` set or `error` non-null, and it should re-show the card only when a batch made progress. It must never pass `retryNow` (ING-8), which is for a person's Resume.
+  *Landed (2026-10-01, I-02b), with one deliberate difference from the letter of this bullet,* in `components/providers/KnowledgeIndexIndicator.tsx`:
+  - The query leaves out a back-off in force (`vision_retry_after` in the future) and puts unstamped work first, as the cron drain orders it. A database without `20261122` falls back to the plain queue.
+  - A row with `error` set or a lapsed stamp is NOT left out entirely. Its message promises another try "while an Admin or Doc Control member has the app open" (`NEXT_INDEXING_PASS`; ING-8's done-when says the same). Leaving such rows out would make that false and leave their retries to the nightly run alone. So the indicator tries such a row once per state per tab, the state being the row's `error` and stamp as read, and does not POST it again while the row is unchanged.
+  - A keyless park writes nothing on a repeat (ING-6), so it is POSTed once per tab, not every two minutes. A row someone moves (the drain's re-stamp, a new failure) is tried once more. The cost of this: a controller who adds an AI key after their tab tried a keyless-parked row gets its retry from Resume, from the library page's own loop, or after a reload. The indicator waits for the row to move.
+  - The card shows only when a batch made progress: pages indexed past where the row stood, or pages read by AI vision. A dismissed card stays dismissed while the queue holds only parked or busy documents.
+  - It never passes `retryNow`.
+
+  Test: `lib/__tests__/knowledgeIndexIndicator.test.ts` (eight of its ten cases fail against the base component).
 - **I-07, `app/api/knowledge/drawing/route.ts`.** The drawing lens shows a parked document's sheets as "indexing" for as long as the document is parked. It should say which sheets wait on AI vision, and why, from `vision_failed_pages` and `error`.
+
+**Partial (2026-10-01, intelligence Round G).** Package I-02b landed the UI handoffs above:
+- the acceptance button;
+- `error` on a row still `indexing`;
+- the unread pages on the document list;
+- the loop's `visionRetryAttempts` limb;
+- the indicator's parked filter.
+
+Resume's `retryNow` is recorded under ING-8. The second criterion's "except by an explicit, audited acceptance" now has its way in on the library page. Still open:
+- the third criterion, the DRAWING FACTS count (`app/api/knowledge/ask/route.ts`, I-03);
+- the drawing lens's parked sheets (`app/api/knowledge/drawing/route.ts`, I-07);
+- the `fileBehind` drain test that the I-06 merge carried here.
+
+The engine's park message still reads "ask an admin to accept the partial index" (`visionRetryMessage` in `lib/knowledgeIngest.ts`, not this package's file). It stays true, because the button is a controller's (Admin or Doc Control).
 
 ---
 
@@ -424,7 +476,7 @@ Handoffs, since none of these files is this package's:
 ## ING-7 · Chunk boundaries are page-scoped: a provision spanning a page break is never in one chunk, and the 160-char overlap does not cross pages
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:123`, `lib/knowledgeIngest.ts:316-328`, `lib/knowledgeText.ts:140-161`, `lib/knowledgeIngest.ts:119`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. True by construction, and slightly understated — chunking is per SECTION SEGMENT within a page (knowledgeIngest.ts:316-321), so a provision straddling a section heading is split too. I searched for a mitigation and found none: the ask route has no neighbouring-page expansion, the orchestrator has no read-page tool, and the per-document cap of 3 in fuseTier (ask/route.ts:526-533) actively reduces the chance both sides of a page break are retrieved together.
@@ -473,6 +525,22 @@ Tests:
 - ✗ Not yet active anywhere (see ING-4).
 
 **Scope / residual.** Activation, the pending migration and the UI button are ING-4's. Neighbour-chunk expansion at retrieval time was not built; it was not asked for. A carried tail places up to 400 characters of page N's prose in a chunk cited as page N+1, and the marker says so. The mention indexer (`lib/mentionIndexer.ts`, I-08's file) reads chunks page by page. A tag named inside a carried prose sentence is therefore also counted on page N+1. The handoff: strip the `[cont. from p. N] …` line (`hasCarriedMarker` in `lib/knowledgeText.ts`) before matching. Drawing sheets never carry, so their tag lists are unaffected. OPEN until ING-4 is activated.
+
+*Landed (2026-10-01, I-02b): ING-4's button shipped. See the Resolution below.*
+
+**Resolution (2026-10-01, intelligence Round G).** The carry is part of chunker 2. Its last open limb was ING-4's: a way for a controller to move a library onto it. Package I-02b shipped that, the "Re-index with table-aware chunking" button on the library page (`app/(protected)/knowledge/[id]/page.tsx`: dry run, confirmation, run; see ING-4). The confirmation says what switching on this finding's carry costs: every document it resets drops out of Ask until it is re-indexed. The engine and its tests are I-06's and are unchanged.
+
+**Done-when.**
+- ✓ (chunker 2) Ingestion carries a tail of the previous prose page's text into the first chunk of the next page, the same way `last_section` is carried, including across batch boundaries (I-06, unchanged).
+- ✓ (chunker 2) A test asserts that a sentence straddling a page break appears intact in at least one chunk (I-06, unchanged).
+- ✓ The I-06 record's "not yet active anywhere" was the missing way in. A controller can now take it from the library page (ING-4). No library moves until someone does, by decision (`DEC-58` item 4).
+
+**Scope / residual.**
+- Pending migration: `20261122_intel_roundG_ingest_integrity.sql`, as for ING-4. Until it is applied, no library can be on chunker 2. This finding is resolved for the code (DEC-30).
+- Neighbour-chunk expansion at retrieval time was not built; it was not asked for.
+- The mention-indexer handoff stands: `lib/mentionIndexer.ts` (I-08's) should strip the `[cont. from p. N] …` line before matching.
+
+**Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
 ---
 
@@ -565,6 +633,8 @@ The range clear before the insert is checked the same way (DWG-1).
   A separate column for the failed batch's back-off would end the aliasing; `20261122` is still unapplied. It would also change every reader of `vision_retry_after`, including the filter handed to I-02, so it was left out (DEC-31).
 
   The engine takes it as `ingestKnowledgeDocBatch(…, { retryNow })`. **Handoff to I-02:** the library page's Resume (`resumeIndex` in `app/(protected)/knowledge/[id]/page.tsx`, through `ingestKnowledgeDocument` in `lib/knowledge.ts`) is to pass `retryNow: true`. The page's automatic loop and the app-shell indicator never do. Until Resume passes it, Resume inside a back-off answers the 409 with the reason and when the retry comes.
+
+  *Landed (2026-10-01, I-02b):* Resume (`resumeIndex`) passes `{ retryNow: true }` through `ingestKnowledgeDocument(documentId, onIndex, opts)` in `lib/knowledge.ts`, a new optional parameter. Every POST of that run carries it, so a first answer that only met `busy` does not drop the person's intent. The route still records only the batch the engine lets through and performs. The page's automatic loop and the indicator never pass it. Tests: `lib/__tests__/ingestLoopClient.test.ts` (the ING-8 block), `lib/__tests__/knowledgePageIngestUi.test.ts` "Resume passes retryNow …", `lib/__tests__/knowledgeIndexIndicator.test.ts` "no automatic call ever passes retryNow".
 - **At the bound, the document is `error`, for a person.** On the third failure in a row, the message says "indexing failed 3 times in a row; re-run it once the cause is fixed". The back-off is cleared, so a person's re-run is never held back. A person's re-run is one more attempt: if it fails again, the document goes straight back to `error`.
 
   **This takes the whole document out of Ask until someone re-runs it.** For a persistent failure on one batch of an 800-page document, that is all 800 indexed pages. The reviewer pointed out that this is the outcome DEC-58 item 3 avoids for a vision retry. It is recorded as an accepted risk in DEC-58 item 3, for now. The alternative would keep the queued status, stop the automatic retries, and wait for a person's `retryNow`. It needs two things from the library page (I-02's):
@@ -572,6 +642,8 @@ The range clear before the insert is checked the same way (DWG-1).
   - a Resume that passes `retryNow`.
 
   Until both land, such a document would read "Indexing 800 / 1000 pages…" indefinitely, with no visible cause and no way to re-run it. An `error` row shows its message, and Resume re-runs it. Revisit once I-02 lands both.
+
+  *Landed (2026-10-01, I-02b): both have landed. The library page shows the failure on an `indexing` (or queued) row, and Resume passes `retryNow`. So the reversal in DEC-58 item 3 (keep the queued status at the bound and hold the document for a person's `retryNow`) can now be seen and acted on. It is not taken here. `markIngestFailed` and `failureBackoffUntil` are in `lib/knowledgeIngest.ts`, which is not this package's file, so the accepted risk stands until the engine's owner takes it.*
 - **No retry for a damaged PDF.** A file that carries the PDF header but that pdf.js cannot open (`IngestBatchError.permanent`) goes straight to `error`, as ING-9 describes. Retrying cannot mend it.
 - **The bound is on re-billing.** The throw comes after the page loop. Each retry reads the batch's vision pages again, up to its four-page budget. So a failure that recurs with no work in between costs at most three batches' worth. The count restarts only after a batch that made progress, and a document has finitely many pages to progress through. The back-off also stops the app-shell indicator (every open tab, every two minutes) and the library page from hot-retrying a failure.
 - **Every write stays a compare-and-set.** The write compares what the batch read: the file, the version, the resume point, and now the failure count. It still lands only on the row the batch read (ING-1), and two failures cannot count as one.
@@ -639,6 +711,8 @@ Each was mutation-checked. Removing any of these makes its test fail:
 - for a controller without a key, on a document parked for vision, the engine's park rewrote the row on every poll, and that write was one of the resets above.
 
 Now the keyless park skips its UPDATE when the row already carries the same message and a stamp that has passed, so only the claim and its release touch the row (test above). Since review fix pass 5 the skip also needs the stamp to be under half an hour old. An older one is written again, at most once per half hour per document, so the cron's queue keeps rotating (ING-6). The card re-show and the per-poll query cost remain. They are in the I-02 handoff under ING-6: leave out rows with `vision_retry_after` in the future or `error` non-null, and re-show the card only when a batch made progress. For a document parked for vision this goes on until someone accepts the partial index, which has no button yet. The integrator may gate the merge on that filter.
+
+*Landed (2026-10-01, I-02b):* the card re-show and the per-poll cost are gone. A back-off in force is not read, a parked row is POSTed once per state per tab, and the card shows only on progress (ING-6 has the detail). "Within minutes while a controller in its org has the app open" still holds for a failed batch whose back-off lapsed: the indicator tries it once in that state.
 
 **The drawing rebuild** (`app/api/knowledge/drawing/route.ts`, I-07's file). It resets `status`, `pages_indexed`, `page_count` and `error`, but not `ingest_failures` or `vision_retry_after`.
 - A failure back-off no longer outlives it. The back-off holds only while the row carries the failure's message (`failureBackoffUntil`), and the rebuild nulls that message (probe B, now a test). Before, a rebuilt document in a back-off answered `failureRetryBlocked`, with a generic message, for up to 30 minutes.
@@ -710,6 +784,8 @@ Also `lib/__tests__/ingestLock.test.ts`: "ING-9 — the cron drain refuses a non
 - ✓ The error for a spreadsheet names the right destination (Operating areas → Import CSV) instead of a pdf.js internal message.
 
 **Scope / residual.** No migration. The browser-side `.pdf` check on the knowledge page is unchanged; that file is I-02's.
+
+*Landed (2026-10-01, I-02b):* the browser-side check runs the engine's own rule before anything is uploaded. It is `pdfUploadRefusal`, which reads the file's first KB (`readUploadHead`) in `lib/knowledge.ts`, called from the page's `onFiles`. A ".pdf" whose bytes carry another format's signature (an Excel or Word container, an image) is refused with the engine's message, which names Operating areas → Import CSV. Nothing is uploaded and no row is made. A name without ".pdf" is refused as before, now naming where the file belongs. A head with no header and no other signature goes on, because pdf.js opens a late header and the server decides. The engine's `sniffBytes` and `notPdfMessage` are in a server-only module, so the browser carries a copy. `lib/__tests__/knowledgeUploadSniff.test.ts` pins it to them, byte for byte and word for word. Rendered: `lib/__tests__/knowledgePageIngestUi.test.ts` (the ING-9 block).
 
 **Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
@@ -789,6 +865,8 @@ Tests: `lib/__tests__/ingestLock.test.ts` ("empty pages accumulate across batche
 - ✓ The criterion's second branch holds: the route header's promise is replaced by what is true (the row column plus `emptyPagesTotal` on every response).
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. Documents indexed before it report 0 until their next re-index. Rendering "N of M pages had no extractable text" on the library's document list is `app/(protected)/knowledge/[id]/page.tsx`, I-02's file; the column is on every row that page already selects.
+
+*Landed (2026-10-01, I-02b):* the library's document list shows "N of M pages had no extractable text" for a ready document (M its page count), and "N of M pages indexed so far had no extractable text" while it indexes (`app/(protected)/knowledge/[id]/page.tsx`, from `empty_pages`; test: `lib/__tests__/knowledgePageIngestUi.test.ts`, the ING-11 block).
 
 **Pending build (DEC-29 item 4).** On this branch, `npx tsc --noEmit`, `npx eslint --max-warnings=0` on every changed file, and the full `npx vitest run` pass. `next build` was not run: the fleet's standing rule leaves it to the integrator, who runs it before merging and records it in the round section. This status stands on that build. If the build fails, the finding returns to OPEN.
 
