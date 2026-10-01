@@ -163,6 +163,12 @@ export async function POST(req: NextRequest) {
   let visionModel = "";
   let vision: VisionContext | undefined;
   let visionSkipReason: string | null = null;
+  // GOV-11 / GOV-4: the reason vision was withheld when it is NOT the missing
+  // key or budget the engine's own "retrying needs an AI key" sentence names
+  // — so pages waiting on AI vision are parked (on the row, and in the 409)
+  // with the cause the person can act on, never "add a key" to a member who
+  // has one but has not accepted the agreement.
+  let noVisionReason: string | null = null;
   {
     const { data: conn } = await supabaseAdmin
       .from("ai_connections").select("provider, model, api_key")
@@ -189,8 +195,10 @@ export async function POST(req: NextRequest) {
     } else if (agreement === "unsigned") {
       visionSkipReason = "Accept the AI acceptable-use agreement to read pages that have no text layer — they are sent " +
         "to your AI provider as images (ask any question in Knowledge to be prompted).";
+      noVisionReason = visionSkipReason;
     } else if (agreement === "unreadable") {
       visionSkipReason = "Your AI acceptable-use agreement can't be checked right now, so pages without a text layer were skipped.";
+      noVisionReason = visionSkipReason;
     } else {
       // GOV-4: a ledger that cannot be read refuses the AI step only — the
       // text layer still indexes (no headroom is text-only, never a failure).
@@ -202,6 +210,7 @@ export async function POST(req: NextRequest) {
       if (!spent) {
         visionSkipReason = "AI usage can't be read right now, so pages without a text layer were skipped — " +
           "they index automatically once it can.";
+        noVisionReason = visionSkipReason;
       } else if (cap > 0 && spent.spentUsd >= cap) {
         visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
           "pages without a text layer were skipped. They index automatically once the cap resets or is raised.";
@@ -241,12 +250,13 @@ export async function POST(req: NextRequest) {
       // unclaimed on a pre-20261122 database.
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
     };
-    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, retry);
+    const batchOpts = { ...retry, noVisionReason };
+    let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, batchOpts);
     // The loser WAITS (ING-2): the other driver holds the claim for one batch
     // at most. Look again until it lets go, while a batch still fits.
     while (res.busy && Date.now() + BUSY_POLL_MS + MIN_BATCH_MS < deadlineMs) {
       await new Promise((r) => setTimeout(r, BUSY_POLL_MS));
-      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs, retry);
+      res = await ingestKnowledgeDocBatch(row, vision, deadlineMs, batchOpts);
     }
     if (res.retryNowError) {
       return bad(`The re-run could not be recorded, so nothing was run: ${res.retryNowError}`, 500);

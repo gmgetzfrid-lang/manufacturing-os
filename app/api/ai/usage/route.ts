@@ -34,10 +34,16 @@
 // the caller's own cap was decided from — the workspace default, their own
 // override — is guarded by the figure it was decided from (a figure that
 // changed underneath answers 409 and changes nothing); and after every
-// write that can move the caller's own cap the route reads it again — one
-// that ended above where it started is put back, audited `compensated`,
-// and answered 409. What the response says about the setter's own cap
-// (`selfHeldAtUsd`) is that re-read, never the intent.
+// write that can move the caller's own cap — taking a hold back out after
+// a default write that did not land included — the route reads it again:
+// one that ended above where it started is put back, audited `compensated`
+// (the other holders told: it can undo a raise one of them made in the
+// same instant), and answered 409; one that cannot be read back is audited
+// `unverified` and answered 503, never a plain success. A hold whose
+// default write did not land comes back out only while the default is no
+// higher than it (another request may be counting on it). What the
+// response says about the setter's own cap (`selfHeldAtUsd`) is that
+// re-read, never the intent.
 // Every change is audited and notifies the other holders and the person
 // whose cap moved. A cap table that cannot be read refuses (503) — the team
 // view and the "previous figure" never fall back to $10.
@@ -295,9 +301,15 @@ export async function GET(req: NextRequest) {
 
 /** Bell notice to every OTHER holder of ai.manage_caps, and to the person
  *  whose own cap moved (GOV-10 done-when 4). Best-effort: the change and its
- *  audit row are already written. */
+ *  audit row are already written. Two notices are about the actor's OWN cap
+ *  after a change of theirs (so they go to the other holders only):
+ *  `putBack` — the route put it back at `capUsd` from `previousCapUsd`
+ *  because it rose, which can undo a raise another holder made in the same
+ *  instant, so they are told (with `error` when it could not be put back);
+ *  `unverified` — it could not be read back, so nobody has checked it. */
 async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPolicy, change: {
   targetUserId: string | null; capUsd: number | null; previousCapUsd: number | null;
+  putBack?: { error: string | null }; unverified?: boolean;
 }) {
   const others = await otherCapsHolders(orgId, auth, policy);
   const recipients = new Set(others.ok ? others.uids : []);
@@ -306,18 +318,35 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
   if (recipients.size === 0) return;
   const what = change.targetUserId ? "a person's monthly AI cap" : "the workspace's default monthly AI cap";
   const fmt = (v: number | null) => (v === null ? "the workspace default" : v === 0 ? "$0 (locked)" : `$${v}`);
+  const own = `${auth.name}'s own monthly AI cap`;
+  const together = "a cap change of theirs and another change landed at the same moment";
+  const body = change.putBack?.error
+    ? `${own} rose from ${fmt(change.capUsd)} to ${fmt(change.previousCapUsd)} when ${together}, and it could not be put back (${change.putBack.error}). Nobody raises their own cap — check it in AI settings.`
+    : change.putBack
+      ? `${own} was put back from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}: ${together} and raised it, and nobody raises their own cap. If you had raised it, raise it again.`
+      : change.unverified
+        ? `${own} could not be read back after a cap change of theirs, so nobody has checked that it stayed at ${fmt(change.previousCapUsd)}. Nobody raises their own cap — check it in AI settings.`
+        : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}.`;
+  const title = (uid: string) => change.putBack?.error ? "A monthly AI cap could not be put back"
+    : change.putBack ? "A monthly AI cap was put back"
+      : change.unverified ? "A monthly AI cap needs checking"
+        : uid === change.targetUserId ? "Your monthly AI cap changed" : "A monthly AI cap changed";
   await supabaseAdmin.from("notifications").insert([...recipients].map((uid) => ({
     org_id: orgId,
     user_id: uid,
     kind: "ai_cap_changed",
-    title: uid === change.targetUserId ? "Your monthly AI cap changed" : "A monthly AI cap changed",
-    body: `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}.`,
+    title: title(uid),
+    body,
     link: "/intelligence/setup",
     resource_type: "ai_usage_limit",
     resource_id: orgId,
     actor_user_id: auth.userId,
     actor_name: auth.name,
-    metadata: { targetUserId: change.targetUserId, capUsd: change.capUsd, previousCapUsd: change.previousCapUsd },
+    metadata: {
+      targetUserId: change.targetUserId, capUsd: change.capUsd, previousCapUsd: change.previousCapUsd,
+      ...(change.putBack ? { putBack: true, ...(change.putBack.error ? { putBackError: change.putBack.error } : {}) } : {}),
+      ...(change.unverified ? { unverified: true } : {}),
+    },
   }))).then(() => undefined, () => undefined);
 }
 
@@ -393,6 +422,43 @@ export async function POST(req: NextRequest) {
     return { ok: true, sole: others.uids.length === 0 };
   };
   let soleHolder = false;
+  /** GOV-10: after EVERY write that can move the caller's own cap — their
+   *  own override, the workspace default, and taking a hold back out — read
+   *  it again (once more if the read fails). One that ended ABOVE
+   *  `ownBeforeUsd`, for a caller who is not the sole holder, is put back
+   *  there (`holdOwnCapAt`), audited `compensated` (`notApplied` too when
+   *  the put-back fails), and the other holders are told: the put-back can
+   *  undo a raise one of them made in the same instant. One that cannot be
+   *  read back is audited `unverified` and said — never a plain success the
+   *  route could not check. A sole holder's own raise needs nobody, so it is
+   *  not checked. */
+  const recheckOwnCap = async (ownBeforeUsd: number): Promise<
+    | { kind: "ok"; ownAfterUsd: number | null }
+    | { kind: "compensated"; ownAfterUsd: number; holdError: string | null; ownNowUsd: number | null }
+    | { kind: "unverified" }
+  > => {
+    if (soleHolder) return { kind: "ok", ownAfterUsd: null };
+    const ownAfterUsd = (await readOwnCap(orgId, auth)) ?? (await readOwnCap(orgId, auth));
+    if (ownAfterUsd !== null && ownAfterUsd <= ownBeforeUsd) return { kind: "ok", ownAfterUsd };
+    // Risen, or unknown: is there a second signature the caller answers to?
+    // (A roster that cannot be read is never "nobody else".)
+    const v = await soleHolderVerdict();
+    if (v.ok && v.sole) return { kind: "ok", ownAfterUsd };
+    if (ownAfterUsd === null) {
+      await auditCapChange(orgId, auth, { targetUserId: auth.userId, previousCapUsd: ownBeforeUsd, unverified: true });
+      await notifyCapChange(orgId, auth, caps.policy, { targetUserId: auth.userId, capUsd: null, previousCapUsd: ownBeforeUsd, unverified: true });
+      return { kind: "unverified" };
+    }
+    const holdError = await holdOwnCapAt(orgId, auth, ownBeforeUsd);
+    await auditCapChange(orgId, auth, {
+      targetUserId: auth.userId, capUsd: ownBeforeUsd, previousCapUsd: ownAfterUsd, compensated: true,
+      ...(holdError ? { notApplied: true, error: holdError } : {}),
+    });
+    await notifyCapChange(orgId, auth, caps.policy, {
+      targetUserId: auth.userId, capUsd: ownBeforeUsd, previousCapUsd: ownAfterUsd, putBack: { error: holdError },
+    });
+    return { kind: "compensated", ownAfterUsd, holdError, ownNowUsd: await readOwnCap(orgId, auth) };
+  };
 
   // Clearing a per-user override — the person falls back to the org default.
   if (targetUserId && body.capUsd === null) {
@@ -547,63 +613,97 @@ export async function POST(req: NextRequest) {
     const why = saveError?.message || "the cap changed while this was being saved";
     // The audit row already says it happened: say it did not.
     if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: why });
-    // The setter's hold was written for a default raise that did not happen:
-    // take it back out (only as written — a figure someone has changed since
-    // is theirs), and say so on the log.
+    let status = conflict ? 409 : 500;
+    let ownSaid = "";
+    const ownExtra: Record<string, unknown> = {};
+    // The setter's hold was written for a default raise that did not happen.
+    // GOV-10: it comes back out only while the default would leave them no
+    // higher than the hold. Another request may have raised the default
+    // since — the same holder's second raise writes no hold of its own when
+    // it finds this one, and counts on it — and taking it out then would
+    // raise the setter's own cap: so it stays, said on the log (`holdKept`).
+    // Taking it out is itself a write that can move their cap, so it is
+    // checked like every other (`recheckOwnCap`): read again, put back if it
+    // rose (the default can move between the read and the delete). Only as
+    // written — a figure someone has changed since is theirs.
     if (pinnedSelfAtUsd !== null) {
-      const { error: undoError } = await supabaseAdmin.from("ai_usage_limits").delete()
-        .eq("org_id", orgId).eq("user_id", auth.userId).eq("monthly_cap_usd", pinnedSelfAtUsd);
-      await auditCapChange(orgId, auth, {
-        targetUserId: auth.userId, capUsd: pinnedSelfAtUsd, previousCapUsd: pinnedSelfAtUsd, heldOnDefaultRaise: true,
-        ...(undoError ? { defaultNotRaised: true, holdKept: undoError.message } : { notApplied: true }), error: why,
-      });
+      const held = { targetUserId: auth.userId, capUsd: pinnedSelfAtUsd, previousCapUsd: pinnedSelfAtUsd, heldOnDefaultRaise: true };
+      const now = await readOrgDefault(orgId);
+      const keptFor = !now.ok ? `the default cap can't be read (${now.error})`
+        : now.capUsd > pinnedSelfAtUsd ? `the default now reads ${fmtCap(now.capUsd)}` : null;
+      if (keptFor) {
+        await auditCapChange(orgId, auth, { ...held, defaultNotRaised: true, holdKept: keptFor, error: why });
+        ownSaid = ` Your own cap stays held at ${fmtCap(pinnedSelfAtUsd)}: ${keptFor}, and nobody raises their own cap.`;
+        ownExtra.holdKept = true;
+      } else {
+        const { error: undoError } = await supabaseAdmin.from("ai_usage_limits").delete()
+          .eq("org_id", orgId).eq("user_id", auth.userId).eq("monthly_cap_usd", pinnedSelfAtUsd);
+        await auditCapChange(orgId, auth, {
+          ...held, ...(undoError ? { defaultNotRaised: true, holdKept: undoError.message } : { notApplied: true }), error: why,
+        });
+        const before = ownBeforeUsd ?? pinnedSelfAtUsd;
+        const check = undoError ? null : await recheckOwnCap(before);
+        if (check?.kind === "compensated") {
+          const rose = ` Taking your hold back out let your own cap rise to ${fmtCap(check.ownAfterUsd)} — another change landed at the same time`;
+          ownSaid = check.holdError
+            ? `${rose} — and it could not be put back at ${fmtCap(before)} (${check.holdError}). Tell another person who manages AI caps.`
+            : `${rose} — so it was put back at ${fmtCap(before)}.`;
+          if (check.holdError) status = 500;
+          Object.assign(ownExtra, { compensated: true, ...(check.ownNowUsd !== null ? { selfCapUsd: check.ownNowUsd } : {}) });
+        } else if (check?.kind === "unverified") {
+          ownSaid = " Your own cap could not be read back after your hold was taken out, so nobody has checked it — tell another person who manages AI caps if yours rose.";
+          status = 503;
+          ownExtra.unverified = true;
+        }
+      }
     }
     if (conflict) {
+      const head = targetUserId
+        ? "That cap changed while you were saving it (another change landed at the same time)"
+        : "The workspace default changed while you were saving it (another change landed at the same time)";
       return bad(
-        targetUserId
-          ? "That cap changed while you were saving it (another change landed at the same time), so nothing was changed — reload the caps and try again."
-          : "The workspace default changed while you were saving it (another change landed at the same time), so nothing was changed — reload the caps and try again.",
-        409, { conflict: true },
+        ownSaid ? `${head}, so it was not changed.${ownSaid} Reload the caps and try again.`
+          : `${head}, so nothing was changed — reload the caps and try again.`,
+        status, { conflict: true, ...ownExtra },
       );
     }
-    return bad(`Couldn't save the cap: ${why}`, 500);
+    return bad(`Couldn't save the cap: ${why}${ownSaid ? `.${ownSaid}` : ""}`, status, ownExtra);
   }
 
   if (!soleHolder) await auditCapChange(orgId, auth, details);
+  // The change has landed: the other holders and the person whose cap moved
+  // are told, whatever the check below finds about the setter's own cap.
+  await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
   // GOV-10: every write that can move the caller's own cap is checked by
-  // reading it again. One that ended ABOVE where it started — another
-  // change took the hold out between this request's steps — is put back at
-  // the starting figure and answered 409 (unless the caller is the sole
-  // holder, whose raise needs nobody). What the response says about the
-  // setter's own cap is this re-read, never the intent.
+  // reading it again (recheckOwnCap). One that ended ABOVE where it started
+  // — another change took the hold out between this request's steps — is
+  // put back at the starting figure and answered 409; one that cannot be
+  // read back is answered 503 (the change landed; the setter's own cap is
+  // unchecked). What the response says about the setter's own cap is this
+  // re-read, never the intent.
   let ownAfterUsd: number | null = null;
-  if (!targetUserId || selfTarget) {
-    ownAfterUsd = await readOwnCap(orgId, auth);
-    if (ownAfterUsd !== null && ownBeforeUsd !== null && ownAfterUsd > ownBeforeUsd && !soleHolder) {
-      const v = await soleHolderVerdict();
-      if (!(v.ok && v.sole)) {
-        const holdError = await holdOwnCapAt(orgId, auth, ownBeforeUsd);
-        await auditCapChange(orgId, auth, {
-          targetUserId: auth.userId, capUsd: ownBeforeUsd, previousCapUsd: ownAfterUsd, compensated: true,
-          ...(holdError ? { notApplied: true, error: holdError } : {}),
-        });
-        const ownNowUsd = await readOwnCap(orgId, auth);
-        await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
-        const saved = targetUserId ? "Your cap was saved" : `The default monthly cap is now ${fmtCap(capUsd)}`;
-        const moved = `${saved}, but your own cap rose to ${fmtCap(ownAfterUsd)} while it was being saved — another cap change landed at the same time`;
-        return bad(
-          holdError
-            ? `${moved}, and it could not be put back at ${fmtCap(ownBeforeUsd)} (${holdError}). Tell another person who manages AI caps.`
-            : `${moved} — so it was put back at ${fmtCap(ownBeforeUsd)}. Nobody raises their own cap; reload the caps, and ask another person who manages AI caps if yours should be higher.`,
-          holdError ? 500 : 409,
-          { conflict: true, compensated: true, capUsd, ...(ownNowUsd !== null ? { selfCapUsd: ownNowUsd } : {}) },
-        );
-      }
+  if ((!targetUserId || selfTarget) && ownBeforeUsd !== null) {
+    const check = await recheckOwnCap(ownBeforeUsd);
+    const saved = targetUserId ? "Your cap was saved" : `The default monthly cap is now ${fmtCap(capUsd)}`;
+    if (check.kind === "compensated") {
+      const moved = `${saved}, but your own cap rose to ${fmtCap(check.ownAfterUsd)} while it was being saved — another cap change landed at the same time`;
+      return bad(
+        check.holdError
+          ? `${moved}, and it could not be put back at ${fmtCap(ownBeforeUsd)} (${check.holdError}). Tell another person who manages AI caps.`
+          : `${moved} — so it was put back at ${fmtCap(ownBeforeUsd)}. Nobody raises their own cap; reload the caps, and ask another person who manages AI caps if yours should be higher.`,
+        check.holdError ? 500 : 409,
+        { conflict: true, compensated: true, capUsd, ...(check.ownNowUsd !== null ? { selfCapUsd: check.ownNowUsd } : {}) },
+      );
     }
+    if (check.kind === "unverified") {
+      return bad(
+        `${saved}, but your own cap could not be read back afterwards, so nobody has checked that it did not rise with the change — reload the caps, and tell another person who manages AI caps if yours rose.`,
+        503, { saved: true, unverified: true, capUsd },
+      );
+    }
+    ownAfterUsd = check.ownAfterUsd;
   }
-
-  await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
   return NextResponse.json({
     ok: true, capUsd, locked: capUsd === 0,

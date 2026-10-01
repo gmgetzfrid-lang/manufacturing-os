@@ -861,11 +861,20 @@ export const VISION_RETRY_BACKOFF_MS = 30 * 60_000;
  *  partial index has no button yet (I-02's library page), so it is named as
  *  something to ask an admin for, not an action. The provider's message is
  *  cut to fit the row's `error` (ERROR_MAX_CHARS), never the cadence or the
- *  way out that follow it. */
-export function visionRetryMessage(pages: number[], cause: string | null): string {
+ *  way out that follow it. `noVision` (no `cause`): why the driver had no
+ *  vision context when it is not the missing key or budget the default
+ *  sentence names — the route's own reason (GOV-11: the acceptable-use
+ *  agreement; GOV-4: a ledger that cannot be read), which is the one the
+ *  person can act on. */
+export function visionRetryMessage(pages: number[], cause: string | null, noVision?: string | null): string {
   const list = pages.slice(0, 12).join(", ") + (pages.length > 12 ? ", …" : "");
   const what = `AI vision could not read ${pages.length} page${pages.length === 1 ? "" : "s"} (p. ${list})`;
   const meanwhile = "The rest of the document is searchable meanwhile.";
+  if (!cause && noVision) {
+    const head = `${what}, and ${pages.length === 1 ? "it" : "they"} can't be retried for you now: `;
+    const tail = ` ${meanwhile} If ${pages.length === 1 ? "it stays" : "they stay"} unread, ask an admin to accept the partial index.`;
+    return head + fitCause(noVision, ERROR_MAX_CHARS - head.length - tail.length) + tail;
+  }
   if (!cause) {
     return `${what}, and retrying needs an AI key with budget left. ${meanwhile} Add one in AI settings and re-run indexing, or ask an admin to accept the partial index.`;
   }
@@ -944,6 +953,13 @@ export async function ingestKnowledgeDocBatch(
      *  why it could not record, or null; a record that fails (or throws)
      *  gives the claim back and runs nothing (`retryNowError`). */
     onRetryNow?: (row: Record<string, unknown>, backoffUntil: string) => Promise<string | null>;
+    /** Why the caller passed no `vision`, when it is not the missing key or
+     *  budget the default "retrying needs an AI key" sentence names (the
+     *  interactive route: an unsigned acceptable-use agreement, GOV-11, or an
+     *  unreadable ledger, GOV-4). Pages waiting on AI vision are then parked
+     *  (and a re-run refused) with this reason — on the row and in the
+     *  answer — instead of being sent to add a key that is already saved. */
+    noVisionReason?: string | null;
   } = {},
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
@@ -1110,11 +1126,11 @@ export async function ingestKnowledgeDocBatch(
             released = await releaseIngestLease(doc.id, driver);
             return idle(claimed, {
               failureRetryBlocked: true,
-              failureRetryMessage: visionRetryMessage(waiting, null),
+              failureRetryMessage: visionRetryMessage(waiting, null, opts.noVisionReason),
               failureRetryAfter: failureHold,
             });
           }
-          return await park(visionRetryMessage(waiting, null), new Date().toISOString());
+          return await park(visionRetryMessage(waiting, null, opts.noVisionReason), new Date().toISOString());
         }
       }
     }
@@ -1544,7 +1560,7 @@ export async function ingestKnowledgeDocBatch(
       //    pages whose vision call failed. No key = nothing can retry them
       //    here: said on the row, never an error (normally caught above,
       //    before the download).
-      if (!vision) return await park(visionRetryMessage(pageList(queueBefore), null), new Date().toISOString());
+      if (!vision) return await park(visionRetryMessage(pageList(queueBefore), null, opts.noVisionReason), new Date().toISOString());
       const backoff = () => new Date(Date.now() + VISION_RETRY_BACKOFF_MS).toISOString();
       // Least recently tried first; a page that already failed this round
       // waits for the next one.

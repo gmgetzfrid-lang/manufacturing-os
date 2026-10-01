@@ -61,7 +61,7 @@ vi.mock("@/lib/ai/usageServer", async () => {
 
 import { POST as ingestPOST } from "@/app/api/knowledge/ingest/route";
 import { POST as codebookPOST } from "@/app/api/codebook/import/route";
-import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
+import { drainKnowledgeIngestQueue, visionRetryMessage } from "@/lib/knowledgeIngest";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { callAiModel } from "@/lib/ai/providerCall";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
@@ -179,6 +179,57 @@ describe("GOV-11 — the interactive ingest route sends page images only for a m
     // (this suite's provider refuses every page — the reason is that, not the agreement)
     expect(String(body.visionSkipReason ?? "")).not.toMatch(/agreement/);
     expect(vi.mocked(transcribePageImage)).toHaveBeenCalled();
+  });
+
+  it("a document waiting on AI vision: a member with a working key who has not accepted is told to accept — in the 409 and on the row — never to add the key they saved", async () => {
+    // The vision-retry stage: the main pass is through, page 1 waits on AI
+    // vision. The engine parks it for want of a vision context; it used to
+    // say "retrying needs an AI key with budget left … Add one in AI
+    // settings" whatever the route's reason was.
+    const atRetryStage = async () => {
+      seed([docRow("kd-1", { status: "indexing", pages_indexed: 2, page_count: 2, vision_failed_pages: [1] })]);
+      db.tables.knowledge_chunks = [{ id: "c-2", document_id: "kd-1", org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "bolting text" }];
+      r2.objects.set(KEY("kd-1"), await makePdf([null, prosePage("bolting")]));
+      vi.mocked(transcribePageImage).mockClear();
+    };
+    ledger.down = false;
+    await atRetryStage();
+    db.tables.ai_key_agreements = [];
+    const res = await ingest();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.visionRetryBlocked).toBe(true);
+    expect(body.visionSkipReason).toMatch(/^Accept the AI acceptable-use agreement/);
+    expect(body.error).toBe(visionRetryMessage([1], null, "Accept the AI acceptable-use agreement to read pages that have no text layer — they are sent " +
+      "to your AI provider as images (ask any question in Knowledge to be prompted)."));
+    expect(body.error).toMatch(/^AI vision could not read 1 page \(p\. 1\), and it can't be retried for you now: Accept the AI acceptable-use agreement to read pages/);
+    expect(body.error).not.toMatch(/AI key|AI settings/);
+    expect(docOf("kd-1")).toMatchObject({ status: "indexing", error: body.error, vision_failed_pages: [1] });
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+
+    // A ledger that cannot be read is named the same way (GOV-4).
+    await atRetryStage();
+    ledger.down = true;
+    const down = await (await ingest()).json();
+    expect(down.error).toMatch(/can't be retried for you now: AI usage can't be read right now/);
+    expect(docOf("kd-1").error).toBe(down.error);
+
+    // No key at all: the engine's own sentence still fits, and is kept.
+    await atRetryStage();
+    ledger.down = false;
+    db.tables.ai_connections = [];
+    const keyless = await (await ingest()).json();
+    expect(keyless.error).toBe(visionRetryMessage([1], null));
+    expect(keyless.visionSkipReason).toMatch(/^Add your AI key in AI settings/);
+  });
+
+  it("the route's reason is cut to fit the row's error, never the way out that follows it", () => {
+    const pages = Array.from({ length: 30 }, (_, i) => i + 1);
+    const m = visionRetryMessage(pages, null, `Accept the agreement. ${"x".repeat(900)}`);
+    expect(m.length).toBeLessThanOrEqual(500);
+    expect(m).toMatch(/^AI vision could not read 30 pages \(p\. 1, 2, .*, …\), and they can't be retried for you now: Accept the agreement\. x+… The rest of the document is searchable meanwhile\. If they stay unread, ask an admin to accept the partial index\.$/);
+    // a cause (the provider's refusal) still wins over the route's reason
+    expect(visionRetryMessage([1], "provider 529 overloaded", "Accept the agreement.")).toBe(visionRetryMessage([1], "provider 529 overloaded"));
   });
 });
 
