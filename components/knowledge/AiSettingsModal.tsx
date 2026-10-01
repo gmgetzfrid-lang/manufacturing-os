@@ -85,8 +85,9 @@ type UsageView = AiUsageSummary & {
 /** What POST /api/ai/usage answers beyond lib/knowledge's AiCapSetResult
  *  (GOV-10): after a default raise, the setter's own cap when it is no
  *  longer where it started — `selfCapSetByAnother` when the figure that
- *  applies now is one another holder set (their raise, never a hold). */
-type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean };
+ *  applies now is one another holder set (their raise, never a hold), and
+ *  `selfCapOwnLowering` when it is the setter's own lowering of one. */
+type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean };
 
 /** The meter line each feature writes, named for a person (GOV-1: every
  *  line counts against the one cap). An unknown op shows as itself. */
@@ -625,7 +626,9 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       showToast({ type: "success", title: cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
         : typeof res.selfCapUsd === "number"
-          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap is now ${fmtUsd(res.selfCapUsd)}${res.selfCapSetByAnother === true ? " — set by another person who manages AI caps" : ""}.`
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap is now ${fmtUsd(res.selfCapUsd)}${res.selfCapSetByAnother !== true ? ""
+            : res.selfCapOwnLowering === true ? " — your own lowering of a figure another person who manages AI caps set"
+              : " — set by another person who manages AI caps"}.`
         : typeof res.selfHeldAtUsd === "number"
           ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(res.selfHeldAtUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
           : res.soleHolder === true

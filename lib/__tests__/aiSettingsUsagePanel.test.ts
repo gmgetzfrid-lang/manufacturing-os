@@ -159,6 +159,17 @@ describe("UsagePanel", () => {
     kn.getAiUsage.mockReset();
   });
 
+  it("GOV-10 (tenth review): your own LOWERING of a figure another holder set is said as that — never as their figure, never as a hold", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 100, locked: false, selfCapUsd: 55, selfCapSetByAnother: true, selfCapOwnLowering: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    await setDefaultCap("100");
+    expect(lastToast()).toBe("Default monthly cap set to $100.00 per person. Your own cap is now $55.00 — your own lowering of a figure another person who manages AI caps set.");
+    expect(lastToast()).not.toMatch(/stays at|set by another person/);
+    kn.getAiUsage.mockReset();
+  });
+
   it("GOV-10: a SOLE holder is told the default raise includes their own cap, and that it is recorded — not sent to a person who doesn't exist", async () => {
     const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
     kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true, soleCapsHolder: true });
