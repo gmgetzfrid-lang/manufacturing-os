@@ -81,7 +81,7 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 ## DELIV-2 · Every client-initiated email ignores the recipient's opt-out — queueEmail reads notification_preferences under the ACTOR's RLS, which only exposes the actor's own row
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:52-61`, `supabase/migrations/20260605_rls_policies_new_tables.sql:110-115`, `lib/supabase.ts:110`, `app/(protected)/settings/notifications/page.tsx:126-135`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Holds, and the scope qualifier is right: lib/supabase.ts:110/136 hands the browser the anon client, and every emit() producer (postPublish, holds, projects, workPackages, branches, transitionIn, revisionImpact, CheckInPanel, requests/new) runs client-side. The server paths are genuinely exempt — app/api/tickets/comment/route.ts:283-300 and workflow-action/route.ts:349-367 re-read prefs with supabaseAdmin, and the cron swaps in the service-role client (lib/supabase.ts:123) — so the finding does not overreach.
@@ -124,6 +124,33 @@ CREATE POLICY "notif_prefs_own" ON notification_preferences
 - [ ] queueEmail distinguishes "no prefs row exists" from "prefs row hidden by RLS" — a null result from a client context must not silently mean all-on
 - [ ] lib/notify/dispatch.ts's comment at 105 is corrected or the guarantee is made real
 - [ ] A test asserts that queueEmail called from a non-service-role client for a user with email_enabled=false does not insert
+
+**Resolution (2026-10-01, notifications Round G).** Package N1 PREFS-GATE, commit `31b3eb7`. **Reproduced first** on `cd8a93a` with `lib/__tests__/notificationsLib.test.ts` "DELIV-2 — an opt-out is honoured whoever queues the email". It models the two RLS policies as they are: `notif_prefs_own` shows a caller only their own row, and `email_notif_select_own_or_admin` (20261047) shows rows addressed to the caller. Both opt-out tests failed on the old `queueEmail`: a recipient with `email_enabled = false`, and one with a per-event toggle off, were still mailed when another member queued the email from a browser. **Fix:** `queueEmail` (`lib/notifications.ts:110`) asks the new `email_gate(p_org, p_to_user, p_event_type, p_resource_id)` (`evaluateEmailGate`, :57). That function is in migration `20261148_notif_roundG_prefs_gate.sql`:
+- `STABLE SECURITY DEFINER`, `SET search_path = public`;
+- callable by an active member of `p_org` or by the service role. A NULL uid that is not the service role is refused, and a signed-in non-member is refused with 42501;
+- EXECUTE is REVOKEd from PUBLIC and anon, and GRANTed to authenticated and service_role.
+
+It evaluates the recipient's row where the row is visible. The rule is the master switch, then 'never', then the event's toggle, and it is the same rule as `shouldSendForEvent`. That function moved, unchanged, to `lib/notificationPrefs.ts:103`, beside `emailAllowedByPrefs` (:125), which the compliance digest (N6) imports. A test pins the function's CASE equal to it, event by event. **Failure semantics** (`DEC-44 (N1)`, provisional number):
+- **The function is not deployed** (PGRST202, or 42883 naming it — `isMissingEmailGate`, :149): today's caller-side read runs, with a `console.warn`. The app deploy may precede the paste. A missing row on that path is stamped `metadata.pref_gate = 'unverified'`, because it cannot tell absent from hidden.
+- **Any other error:** the email is still queued, stamped `metadata.pref_gate = 'unverified'`, with a warning. A dropped compliance email is worse than an unwanted one.
+
+**Regression pin.** Every event type the producers use (every `categoryToEventType` output plus the ticket and digest types — 13 types) queues exactly the row it queued before, field for field, in the browser and service contexts, with no row and with an all-on row. Recall and safety mail still ignores every per-category toggle. The insert's `{ error }` is now checked and logged; it used to be dropped.
+- Files: `lib/notifications.ts`, `lib/notificationPrefs.ts` (new), `supabase/migrations/20261148_notif_roundG_prefs_gate.sql` (new).
+- Tests: `lib/__tests__/notificationsLib.test.ts` (DELIV-2, the regression matrix, "a gate that cannot answer is never a silent all-on"); `lib/__tests__/notificationPrefs.test.ts` "DELIV-2 — one rule, evaluated in the app and in email_gate()"; `lib/__tests__/notifRoundGPrefsGateMigration.test.ts` (the paste's shape, grants, NULL-uid and membership branches, and that every probe in the final SELECT can match the body); `lib/__tests__/dcHotfixAnonExecute.test.ts` and `lib/__tests__/searchPathPin.test.ts` pass with the new function; `lib/__tests__/lifeSweep.test.ts` reads the moved switch.
+- Verified: Loop on `fleet/N1-prefs-gate`: `npx tsc --noEmit` exit 0; `npx eslint` on the 8 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 298 files, 6282 passed, 5 expected-fail. `next build` is the integrator's.
+- **Pending migration:** `supabase/migrations/20261148_notif_roundG_prefs_gate.sql`. It is applied by hand (DEC-30): one paste, expect `ok = true` × 9. Until it is applied, a browser-queued email still cannot see another member's opt-out. That is the old behaviour, now with a warning and an `unverified` stamp on the row. Either deploy order is safe.
+
+**Done-when.**
+- ✓ Preferences for OTHER users are resolved server-side, by a `SECURITY DEFINER` RPC (`email_gate`). This takes effect once `20261148` is pasted.
+- ✓ `queueEmail` tells "no row" from "row hidden by RLS". The definer function sees the row, so a NULL there really means "no row" (the defaults). Where the gate cannot answer — the function errors, or before the paste the caller-side read finds nothing — the email is never a silent all-on: it is stamped `pref_gate = 'unverified'` with a warning.
+- ✓ `lib/notify/dispatch.ts`'s guarantee ("queueEmail already checks notification_preferences + dedupes within a 60s window", now at :115) is made real once `20261148` is applied. The comment is not edited: `dispatch.ts` belongs to N5 in this round.
+- ✓ A test asserts that `queueEmail`, called from a non-service-role client for a user with `email_enabled = false`, does not insert.
+
+**Scope / residual.**
+- Email is still queued from the browser. Moving it server-side is the `DELIV-1` / `OS-1` work: N5 and N6, per GAP-203's "Do not".
+- The ticket routes build their own rows with their own preference read, which already used `supabaseAdmin` (N6).
+- The compliance digest still checks only `email_enabled` (`NEDGE-9`, N6), and now has `emailAllowedByPrefs` to call.
+- Master-switch semantics are unchanged: master off or 'never' stops every email, recall and safety included, exactly as the service-role path always did. The bell row for a recall is always written.
 
 ---
 
@@ -428,7 +455,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 ## DELIV-9 · The 60-second burst dedupe in queueEmail never fires from the browser — same RLS blindness — so a single workflow event mails each person once per producer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:64-75`, `supabase/migrations/20260605_rls_policies_new_tables.sql:120-124`, `lib/notify/dispatch.ts:107-129`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by the same RLS fact that carries DELIV-1/2/4: no SELECT policy exists on email_notifications in any migration, and the browser client is the anon client (lib/supabase.ts:110). The dedupe only functions where the shared client has been swapped to service role (the cron, lib/supabase.ts:123). dispatch.ts:67-79 does dedupe recipients, so the residual duplication is across independent producers, exactly as the finding scopes it.
@@ -464,6 +491,23 @@ export async function notify(input: NotificationInput): Promise<void> {
 - [ ] Dedupe is enforced where it can see the rows: a partial unique index / ON CONFLICT on (to_user_id, event_type, resource_id, time-bucket), or a service-role route
 - [ ] Or a SELECT policy scoped to `to_user_id = auth.uid()` plus a server-side path for cross-user checks
 - [ ] The `?? []`-style silent-empty result is distinguished from a real empty queue
+
+**Resolution (2026-10-01, notifications Round G).** Package N1 PREFS-GATE, commit `31b3eb7`. **Reproduced first** on `cd8a93a` with `lib/__tests__/notificationsLib.test.ts` "the same event for the same resource twice within 60 s from the browser: one email". It failed on the old `queueEmail` with two rows. One correction to the mechanism since the audit: `20261047` (SURF-18) added `email_notif_select_own_or_admin`, so the browser window does now see the caller's OWN rows, and an Admin / Manager sees every row. For an ordinary member mailing anyone else it was still blind, which is the case the test models.
+
+**Fix.** The 60-second window is evaluated inside `email_gate()` (`20261148`, `SECURITY DEFINER`), which sees every row. It matches the same recipient, event and resource in the same org, with `created_at >= now() - interval '60 seconds'`, and it uses the `email_notifications_dedupe_idx` that was built for this query.
+
+**What the dedupe does not merge.** Two DIFFERENT resources, two different events, and two recipients are separate emails, each pinned by a test. An email with no resource is never deduped: the old window compared `resource_id` with `''` and never matched one. The pre-paste fallback keeps the old read, minus that never-matching `''` probe.
+- Files: `lib/notifications.ts`, `supabase/migrations/20261148_notif_roundG_prefs_gate.sql` (new).
+- Tests: `lib/__tests__/notificationsLib.test.ts` "DELIV-9 — the 60-second dedupe sees the recipient's rows" (four cases), the regression matrix (a distinct resource per event: every email still queued), and `lib/__tests__/notifRoundGPrefsGateMigration.test.ts` "the dedupe keys on (recipient, resource, event, org) inside 60 s, and never dedupes a resource-less email".
+- Verified: Loop on `fleet/N1-prefs-gate`: `npx tsc --noEmit` exit 0; `npx eslint` on the 8 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 298 files, 6282 passed, 5 expected-fail. `next build` is the integrator's.
+- **Pending migration:** `supabase/migrations/20261148_notif_roundG_prefs_gate.sql` (DEC-30). Its inventory row "emails queued in the last 30 days within 60 s of the same (recipient, event, resource)" measures how often the blind window let a duplicate through.
+
+**Done-when.**
+- ✓ The dedupe is enforced where it can see the rows. It uses the done-when's "service-role route" option, as a `SECURITY DEFINER` function callable by active members and the service role. It is NOT a partial unique index, so two producers racing in the same instant can still both pass the check. That race existed before too, and an index on a time bucket would refuse legitimate re-sends.
+- ✓ (alternative) No own-row SELECT policy is added. `20261047` already has one, and the definer function covers the cross-user case.
+- ✓ The silent-empty result is told apart from a real empty queue. The gate returns an explicit boolean. An error is never read as "no duplicates": the email is queued and stamped `pref_gate = 'unverified'`, with a warning.
+
+**Scope / residual.** The duplicates that come from two independent producers (the failure scenario's `notifySuperseded` / `notifyPackagesOfRetirement`) collapse only when they share an event type. Different event types for one action are different emails by design. Unifying them is producer work (N8 / N9), not the gate's.
 
 ---
 
@@ -568,7 +612,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 ## DELIV-12 · The notification preferences page cannot save in its default state — it writes digest_frequency:'immediate' against a CHECK constraint that only accepts 'instant'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/settings/notifications/page.tsx:29-40`, `app/(protected)/settings/notifications/page.tsx:80-90`, `app/(protected)/settings/notifications/page.tsx:152`, `supabase/schema.sql:660`, `supabase/migrations/20260529_phase_b_notifications.sql:77-78`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide grep: 'immediate' appears only in the page (lines 30/40/69/151) and 'instant' only in the two schema definitions — no migration ever widens the CHECK, and no mapping layer translates the two. First save from the default state raises 23514 and is surfaced raw via `setError((e as Error).message)` (line 91). The user can only save by first selecting Hourly/Daily/Never.
@@ -607,6 +651,18 @@ export async function notify(input: NotificationInput): Promise<void> {
 - [ ] The UI value is 'instant' (or the CHECK is widened and the constraint/UI agree), verified by a test that upserts DEFAULTS against the real constraint
 - [ ] The Prefs type is derived from a single shared constant so UI and schema cannot drift again
 - [ ] Hourly/Daily are either implemented or removed rather than offered with a disclaimer
+
+**Resolution (2026-10-01, notifications Round G).** The same fix as `NEDGE-2` (08), commit `31b3eb7`; reproduced on `cd8a93a` by the same rendered-page test. 'instant' is the one spelling (the CHECK's; no migration). `lib/notificationPrefs.ts` derives the page's `Prefs` type (`NotificationPrefs`, `DigestFrequency`) from the single constant `DIGEST_FREQUENCIES`, which a test pins to the CHECK text, and Hourly / Daily are removed from the offered set (`OFFERED_DIGEST_FREQUENCIES`); a stored Hourly / Daily is shown as Immediately with a note. Decision: `DEC-44 (N1)` (provisional number).
+- Files: `lib/notificationPrefs.ts` (new), `app/(protected)/settings/notifications/page.tsx`.
+- Tests: `lib/__tests__/notificationSettingsPage.test.ts`, `lib/__tests__/notificationPrefs.test.ts` (see `NEDGE-2`).
+- Verified: Loop on `fleet/N1-prefs-gate`: `npx tsc --noEmit` exit 0; `npx eslint` on the 8 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 298 files, 6282 passed, 5 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The UI value is 'instant'. The page test upserts the defaults and checks the payload against the constraint read from `20260529_phase_b_notifications.sql:77-78`. There is no live database here, so the check is against the constraint's text, not a real INSERT (DEC-30).
+- ✓ The Prefs type comes from one shared constant (`DIGEST_FREQUENCIES as const` → `DigestFrequency` → `NotificationPrefs`). The page declares no cadence literal of its own, and a test pins that.
+- ✓ Hourly / Daily are removed from the offered set rather than offered with a disclaimer. The CHECK keeps admitting them, so no stored row breaks.
+
+**Scope / residual.** Nothing batches email by cadence. The only digest is `NEDGE-9`'s (N6).
 
 ---
 

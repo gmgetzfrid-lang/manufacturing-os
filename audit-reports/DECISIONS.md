@@ -4476,3 +4476,49 @@ against.
 **Risk:** low for the crew, real for a few printers. Paper changes: a legacy empty-status sheet, a hidden member and a hard-gated sheet no longer print into a pack (each named in the toast); a sheet whose sign-off status cannot be read is left out of a pack too (`ack_unknown`); the budget changes nothing until it is switched on after the user's ratification (§2 — shipped off), and from then a pack over it is refused with a split — so a pack that printed before (a package or asset tag over 150 printable sheets, or whose sheets together pass 1000 pages or 150 MB), on a desktop as on a tablet, may be refused, with no override — and a single file over 150 MB or 1000 pages refuses a work package's pack, naming it (the asset hub leaves it out and names it); the verify door's verdicts are not changed by P8; `20261143`'s MEASURE rows give an upper bound for the sheet and size cases (not the page case: page counts are not stored), read at the paste, before the switch; a held copy is watermarked ON HOLD and an old revision's SUPERSEDED; a print whose record cannot be written stops instead of shipping.
 
 *Corrected 2026-10-01 (document-control Round F wave 2, P8 FIELD's fifth fix pass): §1's fail-closed claim, written at the fourth pass, covered the pending-acknowledgment read and the policy-module load. It did not cover a failed folder or library policy read: `lib/acknowledgments.ts` `effectiveAckPolicyForDocument` does not check `{ error }`, so such a read resolved as "no policy" and was memoized for a minute. The gate now reads those levels itself, checked (`PKG-9`). §2's switch could not reach a Docker self-host, because the build had no arg for it; it is now wired (`PKG-12`).*
+
+<a id="dec-44-n1"></a>
+## DEC-44 (N1) · Notification preferences: one spelling, one email rule evaluated where the recipient is visible, and what "in-app" means
+
+*Minted by notifications Round G, package N1 PREFS-GATE (2026-10-01), as a provisional "DEC-44 (N1)". It is distinct from the download record's DEC-44, and DEC-44 to DEC-70 are taken on the integration branch. The integrator renumbers it at merge; every "DEC-44 (N1)" in the notifications records refers to this entry.*
+
+**Decision.** The preferences page is the escape hatch for every attention-grabbing feature that follows (GAP-204/205/206), so each rule below fails safe for it:
+
+1. **One spelling: `'instant'`.** That is the CHECK's own value (`20260529_phase_b_notifications.sql:77-78`); the UI labels it "Immediately". The CHECK is not widened to also accept `'immediate'`, because two spellings of one value is how `NEDGE-2` happened. `lib/notificationPrefs.ts` `DIGEST_FREQUENCIES` is the CHECK list, and a test pins it to the SQL text. A legacy value is mapped when it is loaded and never stored.
+2. **Hourly and Daily are not offered.** Nothing batches email by cadence; every reader treats them as `'instant'`. The CHECK keeps admitting them, so a stored row still validates. The page shows such a row as Immediately and says the choice was never implemented. What the page offers is Immediately / Never.
+3. **The email rule lives in one place, plus its database copy.** The rule is: master switch, then `'never'`, then the event's own toggle. Recall (`safety_recall`), PSM (`safety_alert`), `system` and the digest have no toggle. The app's copy is `lib/notificationPrefs.ts` `emailAllowedByPrefs` / `shouldSendForEvent`, which the compliance digest (N6) also imports. The database's copy is `email_gate()` (`20261148`), a `SECURITY DEFINER` function that sees the recipient's row whoever calls it. A test pins the two equal, event by event.
+4. **When the gate cannot answer, the email is still sent — and the row says so.**
+   - A dropped compliance email is worse than an unwanted one. If `email_gate()` errors, the email is queued, stamped `metadata.pref_gate = 'unverified'`, with a warning.
+   - If the function is not deployed yet (PGRST202, or 42883 naming it), the old caller-side read runs, with a warning, so the app may deploy before the paste.
+   - Nothing reads a hidden row as "all on" silently.
+5. **Who may ask.** `email_gate()` answers to an active member of the org or to the service role, and only with a boolean. A member asking about someone outside their org gets TRUE without that person's row being read. EXECUTE is revoked from PUBLIC and anon.
+6. **What the dedupe merges.** It merges only the same recipient, event and resource in the same org within 60 seconds. Two different resources are two emails, and an email with no resource is never deduped.
+7. **"In-app" means the toast, never the bell.**
+   - Bell rows are always written: a durable obligation is never suppressible.
+   - The member's in-app switch is `toast_enabled` (pop-up toasts only). Its reader, `readToastPreference`, fails open.
+   - `inapp_enabled` is never read and is marked DEPRECATED. It is **kept, not dropped**, by integrator override of the plan's default, because a dropped column cannot be restored and older backup envelopes carry it.
+   - `push_enabled` is the push channel's (N10) and is untouched.
+8. **No inert switch.** The settings page offers the pop-up switch only once the toast listener reads it (`TOAST_PREFERENCE_HONOURED`). A test ties that flag to the listener's source, so the switch and its effect ship together.
+
+**Rationale.** The page that could not save (`NEDGE-2`) had a twin: once a row did exist, every browser-initiated email ignored it (`DELIV-2`), because the read ran under the sender's RLS. GAP-203 is explicit that "preferences that save and are then ignored is a worse bug than preferences that fail loudly". So the vocabulary fix and the gate ship together, and every degraded path is visible rather than silent.
+
+**Implementation.**
+- `lib/notificationPrefs.ts` (new).
+- `lib/notifications.ts`: `queueEmail`, `evaluateEmailGate`, `legacyEmailGate`.
+- `app/(protected)/settings/notifications/page.tsx`.
+- `supabase/migrations/20261148_notif_roundG_prefs_gate.sql`: `email_gate()`, `toast_enabled`, and the `inapp_enabled` deprecation comment.
+
+**Acceptance.**
+- `lib/__tests__/notificationPrefs.test.ts`
+- `lib/__tests__/notificationsLib.test.ts`
+- `lib/__tests__/notificationSettingsPage.test.ts`
+- `lib/__tests__/notifRoundGPrefsGateMigration.test.ts`
+
+**Reversal.**
+- **Offering a cadence.** Offering Hourly / Daily again is one constant (`OFFERED_DIGEST_FREQUENCIES`). It should come with a batcher, or the page lies again.
+- **Fail-closed delivery.** Making the gate fail closed is one line in `queueEmail`: return on `'unverified'`. Only do it for a non-safety event type.
+- **The deprecated column.** Dropping `inapp_enabled` needs a migration plus a backup-envelope reader that tolerates the missing column.
+
+**Risk:** low.
+- After the paste, members who opted out stop receiving browser-initiated email, which is the intended change. `20261148`'s inventory counts their rows and the last 30 days of email that ignored them.
+- Before the paste, behaviour is unchanged, apart from a warning and an `unverified` stamp on rows whose recipient could not be checked.

@@ -363,6 +363,26 @@ if (staleIds.length > 0) {
 - [ ] `NotificationListener` reads those preferences before calling `showToast`, and re-reads them when they change
 - [ ] the settings page renders the in-app column alongside the email column so the copy 'always on' is either true and stated, or false and configurable — not silently contradicted
 
+**Partial (2026-10-01, notifications Round G).** Package N1 PREFS-GATE, commit `31b3eb7`. **Reproduced** on `cd8a93a`. `notification_preferences` had no toast column (`20260529` + `20260723` add only email toggles plus `inapp_enabled` / `push_enabled`), and a repo-wide search found no reader of `inapp_enabled`. The settings page's `Prefs` was email-only, and `NotificationListener` toasted every row.
+
+**What landed:**
+- **The column.** `20261148_notif_roundG_prefs_gate.sql` adds `notification_preferences.toast_enabled BOOLEAN NOT NULL DEFAULT TRUE`. Existing rows read TRUE, so nothing changes.
+- **`inapp_enabled`.** It is marked `DEPRECATED` with `COMMENT ON COLUMN` and **kept, not dropped**. This is the integrator's override of the plan's default: a dropped column cannot be restored, and older backup envelopes carry it. Bell rows stay always on — a durable obligation is never suppressible (`DEC-44 (N1)`, provisional number).
+- **The reader.** `lib/notificationPrefs.ts` `readToastPreference(uid)` (:157) is for the toast listener. It fails OPEN: no row, a column the database does not have yet, or any read error all mean "show toasts".
+- **The page.** The settings page has an In-app card stating that bell notifications are always on. The "Pop-up toasts" switch row is built and renders once `TOAST_PREFERENCE_HONOURED` (`lib/notificationPrefs.ts:72`) is true. It saves `toast_enabled` and retries without it before the paste.
+- **Why the switch is gated.** The flag is false today because the listener does not read the preference yet. A switch that saves and does nothing is the defect this page had (GAP-203). `lib/__tests__/notificationPrefs.test.ts` pins the flag to whether `components/providers/NotificationListener.tsx` calls `readToastPreference`, so whichever side changes first, the test fails until the other side does.
+
+- Files: `supabase/migrations/20261148_notif_roundG_prefs_gate.sql`, `lib/notificationPrefs.ts`, `app/(protected)/settings/notifications/page.tsx`.
+- Tests: `lib/__tests__/notificationPrefs.test.ts` "RT-10 — readToastPreference fails open" and "the toast switch is offered exactly when the listener honours it"; `lib/__tests__/notificationSettingsPage.test.ts` "RT-10 — the in-app card" (4 cases); `lib/__tests__/notifRoundGPrefsGateMigration.test.ts` "the columns".
+- **Pending migration:** `supabase/migrations/20261148_notif_roundG_prefs_gate.sql` (DEC-30).
+
+**Done-when.**
+- ✓ (master switch) `toast_enabled` is added by a checked-in migration. **Not done: per-category toast toggles.** A category for a toast needs the kind → category mapping that the kind registry (N2, GAP-207 / TAX-5) is building. Adding a seventh hand-maintained classification here is what TAX-5 forbids.
+- **Not done (N3):** `NotificationListener` does not yet read the preference before `showToast`, or re-read it when it changes. That file is N3's (TAX-9 dw1 / RT-10 consumer). N3 calls `readToastPreference`, which fails open when the column is absent, and flips `TOAST_PREFERENCE_HONOURED` to `true`; the tripwire test fails until both are done.
+- ✓ (copy) The settings page now states that bell rows are always on: "Bell notifications are always on — they are the record of what needs your attention, and nothing here turns them off". The page subtitle already said so, so the copy is true and stated. The configurable toast column renders with N3.
+
+**Scope / residual.** RT-2's org-wide checkout-message toasts, which are the real source of the noise, belong to N3.
+
 ---
 
 <a id="rt-11"></a>
