@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { EXPECTED_TABLES, EXPECTED_COLUMNS } from "@/lib/schemaExpectations";
+import { EXPECTED_TABLES, EXPECTED_COLUMNS, EXPECTED_FUNCTIONS } from "@/lib/schemaExpectations";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -21,10 +21,18 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
+// PostgREST answers an absent table with PGRST205 ("Could not find the table
+// … in the schema cache") on current versions, 42P01 on older ones — both
+// mean missing (BKP-14 / intelligence ILIFE-12: matching 42P01 alone read a
+// missing table as present).
 const missingTable = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
+  !!e && (e.code === "42P01" || e.code === "PGRST205" || /does not exist|could not find the table/i.test(e.message ?? ""));
 const missingColumn = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === "42703" || /column .* does not exist/i.test(e.message ?? ""));
+// An RPC PostgREST cannot resolve (PGRST202), or Postgres cannot find (42883).
+// Any other answer — the probe's own 22P02 included — means it is there.
+const missingFunction = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === "PGRST202" || e.code === "42883" || /could not find the function|function .* does not exist/i.test(e.message ?? ""));
 
 export async function GET(req: NextRequest) {
   const orgId = (req.nextUrl.searchParams.get("orgId") ?? "").trim();
@@ -64,7 +72,19 @@ export async function GET(req: NextRequest) {
     columnResults.push({ ...c, ok: !missingColumn(e) && !missingTable(e) });
   }));
 
-  const missingTables = tableResults.filter((t) => !t.ok).sort((a, b) => a.migration.localeCompare(b.migration));
+  // public-surfaces SHR-12: the functions routes call by RPC. Each probe's
+  // arguments are refused by the parameter's type, so nothing is executed.
+  const functionResults = await Promise.all(EXPECTED_FUNCTIONS.map(async (f) => {
+    const { error: e } = await supabaseAdmin.rpc(f.fn, f.probeArgs);
+    return { signature: f.signature, migration: f.migration, feature: f.feature, ok: !missingFunction(e) };
+  }));
+
+  // A missing function is listed with the missing tables (the panel lists
+  // database objects by name and the file that supplies them), marked as one.
+  const missingTables = [
+    ...tableResults.filter((t) => !t.ok).map((t) => ({ ...t, kind: "table" as const })),
+    ...functionResults.filter((f) => !f.ok).map((f) => ({ table: f.signature, migration: f.migration, feature: f.feature, ok: false, kind: "function" as const })),
+  ].sort((a, b) => a.migration.localeCompare(b.migration));
   const missingColumns = columnResults.filter((c) => !c.ok).sort((a, b) => a.migration.localeCompare(b.migration));
   // The actionable output: which migration FILES need running, in order.
   const migrationsToRun = [...new Set([
@@ -75,6 +95,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     checkedTables: tableResults.length,
     checkedColumns: columnResults.length,
+    checkedFunctions: functionResults.length,
     healthy: missingTables.length === 0 && missingColumns.length === 0,
     missingTables,
     missingColumns,
