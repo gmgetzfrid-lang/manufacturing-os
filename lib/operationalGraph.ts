@@ -240,7 +240,7 @@ export function codebookReleaseConfirm(input: {
     return {
       title: `Archive ${input.unitName}?`,
       message: `${input.unitName} is ${cb(input.code, input.label)}. Archiving it releases that mapping. ${items}${kept} `
-        + `Restoring the unit later does NOT bring the mapping back: it stays unmapped until someone maps it again on this page. `
+        + `Archiving cannot be undone on this page, and an archived unit holds no mapping — to keep ${input.code} on the map, map it to another operational unit instead. `
         + `Documents that reference the unit keep it; the row is hidden from picker UIs.`,
       confirmLabel: "Archive and release the mapping",
     };

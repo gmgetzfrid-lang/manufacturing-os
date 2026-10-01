@@ -68,6 +68,7 @@ to and reads from, where each fact carries three things it does not carry today:
 | [GAP-311](#gap-311) | Tag lookup in ⌘K — the five-second question | **BUILD_NARROW** | S | `GAP-310` |
 | [GAP-312](#gap-312) | The drafting request gets an equipment field | **BUILD** | M | `GAP-304`, `GAP-311` |
 | [GAP-313](#gap-313) | A server-assembled graph (GM-12's follow-up) | **BUILD** | M | a per-caller document ACL on the server (I-12) |
+| [GAP-314](#gap-314) | The unit decode at create time — `documents.unit_code` stays current without a run | **BUILD_NARROW** | S | `GAP-305` |
 
 ---
 
@@ -340,7 +341,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` (one node, 2 hops, the guard test "each 
 3. ✓ The graph emits one unit node per real unit (given the mapping a person sets — an unmapped operational unit is a different unit).
 4. ✓ A number that does not decode, decodes with no unit segment, or names a unit the codebook does not hold is reported (count, sample numbers, the codebook's reason; the unknown codes with counts) and left empty — never guessed.
 
-**Scope / residual.** Freshness: equipment is current without a run — the database projects `assets.unit_id` on every insert, refile and mapping change (third review fix); a unit set by hand that disagrees with the filing is kept and counted, and since the column records no provenance, one that equals the old filing's projection is treated as the projection: it moves on a refile, and it is cleared when its unit's code is released (unmapped, remapped or archived — the release confirmation counts it among the items that lose the unit). A document created or renumbered after a run has no decode until the next run; the create-time decode belongs with the writers that already decode (I-11's Bridge at ingest; document-control's `lib/documentLifecycle`). `lib/schemaExpectations.ts` (A&O's) may list `documents.unit_code` / `units.codebook_code` in the health panel when it is next regenerated (ILIFE-12 / BKP-14). The decode's READ phase is not bounded per call (each call re-reads every document and equipment item before its bounded writes; only the writes are bounded within the function's 60 s) and the panel captures its access token once for the whole loop — fine for the org sizes in view, worth bounding when a site's register passes ~100,000 rows. The route's reads page to an empty window, so they hold under any max-rows; the scope page's `listCodebookUnits` and `listCodebookMappings` page through `lib/orgGraph.ts` `pageRows`, which stops at a short window and so assumes max-rows of at least 1,000 (PostgREST's default) — the graph's own reads share that assumption (GM-3's residual). Not closed here (DEC-31): the operational tables themselves (`plants`, `units`, `systems`) are still `FOR ALL` to any active member (`*_member_all`, 20260606), so a member outside the scope writer tier can still rename a unit or archive / delete an UNMAPPED one through the API; the mapping is guarded, the rows around it are not.
+**Scope / residual.** Freshness: equipment is current without a run — the database projects `assets.unit_id` on every insert, refile and mapping change (third review fix); a unit set by hand that disagrees with the filing is kept and counted, and since the column records no provenance, one that equals the old filing's projection is treated as the projection: it moves on a refile, and it is cleared when its unit's code is released (unmapped, remapped or archived — the release confirmation counts it among the items that lose the unit). A document created or renumbered after a run has no decode until the next run; the create-time decode belongs with the writers that already decode (I-11's Bridge at ingest; document-control's `lib/documentLifecycle`) — tracked as [`GAP-314`](#gap-314) (integration, 2026-10-01). `lib/schemaExpectations.ts` (A&O's) may list `documents.unit_code` / `units.codebook_code` in the health panel when it is next regenerated (ILIFE-12 / BKP-14). The decode's READ phase is not bounded per call (each call re-reads every document and equipment item before its bounded writes; only the writes are bounded within the function's 60 s) and the panel captures its access token once for the whole loop — fine for the org sizes in view, worth bounding when a site's register passes ~100,000 rows. The route's reads page to an empty window, so they hold under any max-rows; the scope page's `listCodebookUnits` and `listCodebookMappings` page through `lib/orgGraph.ts` `pageRows`, which stops at a short window and so assumes max-rows of at least 1,000 (PostgREST's default) — the graph's own reads share that assumption (GM-3's residual). Not closed here (DEC-31): the operational tables themselves (`plants`, `units`, `systems`) are still `FOR ALL` to any active member (`*_member_all`, 20260606), so a member outside the scope writer tier can still rename a unit or archive / delete an UNMAPPED one through the API; the mapping is guarded, the rows around it are not.
 
 ---
 
@@ -633,7 +634,7 @@ different fields. **Ship them together or the form gets edited twice.**
 <a id="gap-313"></a>
 ## GAP-313 · A server-assembled graph
 
-**Verdict: BUILD** · Effort: **M** · Depends on: a per-caller document ACL on the server (I-12's chain work) · *Opened 2026-10-01 (intelligence Round G, I-13) as the follow-up of [`GM-12`](./07-graph-model.md#gm-12) (WONTFIX for now).*
+**Verdict: BUILD** · Effort: **M** · Depends on: a per-caller document ACL on the server (the DOCUMENT ACL BOUNDARY package's chain work) · *Opened 2026-10-01 (intelligence Round G, I-13) as the follow-up of [`GM-12`](./07-graph-model.md#gm-12) (WONTFIX for now).*
 
 The org graph is assembled in the browser on every mount — about fourteen requests for a typical org, up to ~56 at the caps — and the sessionStorage snapshot that hides it is skipped above 2 MB, which is exactly the orgs that need it. A server route could assemble once, page every table to completion, cache per caller, and reach the service-role-only edges the client never can (knowledge_page_entities' sheets — [`GM-14`](./07-graph-model.md#gm-14)).
 
@@ -647,6 +648,28 @@ The org graph is assembled in the browser on every mount — about fourteen requ
 1. One route assembles the graph (and a scoped graph — `lib/scope.ts`) under the caller's own document visibility; a test compares a controller's and a granted-nothing member's payloads with the client assembly's for the same org.
 2. The page loads one payload, and says when a cached snapshot was skipped.
 3. The page comment matches the real request count.
+
+---
+
+<a id="gap-314"></a>
+## GAP-314 · The unit decode at create time
+
+**Verdict: BUILD_NARROW** · Effort: **S** · Depends on: `GAP-305` (20261138: `documents.unit_code` and its decode-only guard) · *Opened 2026-10-01 by the integrator at the intelligence Round G I-13 merge, from the final review of [`GAP-305`](#gap-305): its acceptance 2 is met by a person's run of the unit-identity decode on /admin/scope, so a document created or renumbered after a run stays undecoded, and the relation goes stale with no signal.*
+
+`documents.unit_code` is written only by `POST /api/admin/unit-identity` (the one-off backfill, service role). The two places a document number is born or changes — the Bridge at ingest (I-11's files) and `lib/documentLifecycle` / `lib/revisions.ts` creation and renumber (document-control's) — do not decode it, so `GPV-3`'s document→unit edge and `lib/scope.ts`'s decoded rule miss every document numbered since the last run.
+
+### Do not
+
+- **Do not guess.** The decode is the codebook's own parser (`parseDrawingNumber`); a number that does not decode stays empty and is reported, as the backfill does.
+- **Do not write `unit_code` from the browser.** 20261138's guard makes it decode-only (service role); the create-time decode runs server-side, through the same planner the backfill uses.
+
+### Acceptance
+
+1. A document created (any door: upload, intake, split / merge, CSV import) or renumbered carries `unit_code` as the codebook decodes its number, or NULL with the reason recorded, without anyone running the backfill.
+2. The /admin/scope panel says how many documents are undecoded since the last run (the staleness is visible).
+3. A test creates and renumbers a document and asserts the decode.
+
+**Owners:** intelligence I-11 (the Bridge at ingest) and document-control P13 (the creation and renumber paths it already edits) — recorded in both fleet-plan entries.
 
 ---
 

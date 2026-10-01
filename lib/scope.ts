@@ -184,6 +184,10 @@ export async function resolveScope(orgId: string, ref: ScopeRef): Promise<Resolv
     for (const f of folders) {
       const r = await pageRows<{ id: string }>("collections", "id", orgId, RESOLVE_CAP, (q) => q.contains("path_ids", [f]));
       if (r.error) fail("Its pinned folders", r.error);
+      if (r.capped) {
+        notes.push(`Its pinned folders: more than ${RESOLVE_CAP.toLocaleString("en-US")} subfolders — this scope is incomplete.`);
+        complete = false;
+      }
       for (const row of r.rows) sub.add(String(row.id));
     }
     for (const id of await idsIn("documents", "Documents in its pinned folders", "collection_id", [...sub])) pinned.add(id);

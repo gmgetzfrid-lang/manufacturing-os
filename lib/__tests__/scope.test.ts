@@ -20,7 +20,7 @@ vi.mock("@/lib/supabase", async () => {
 
 import { buildOrgGraph, GRAPH_CAPS } from "@/lib/orgGraph";
 import { computeInsights } from "@/lib/graphInsights";
-import { resolveScope, parseScopeParam, formatScopeParam, scopeMembership, type ResolvedScope } from "@/lib/scope";
+import { resolveScope, parseScopeParam, formatScopeParam, scopeMembership, RESOLVE_CAP, type ResolvedScope } from "@/lib/scope";
 
 const ORG = "org-1";
 const o = <T extends Row>(r: T): T & { org_id: string } => ({ org_id: ORG, ...r });
@@ -150,6 +150,16 @@ describe("resolveScope — containment, not hops", () => {
     expect(s.unitIds).toEqual([]);
     expect(s.truncations.join("\n")).toMatch(/20261138\) is not applied/);
     expect(s.documents).toContain("dGov-1"); // the relation still places paper
+  });
+
+  it("a pinned folder with more subfolders than the cap marks the scope incomplete and says so (never a silent cut)", async () => {
+    const t = fixFolderIds(bigPlant());
+    const F = "f2000000-0000-4000-8000-000000000000";
+    for (let i = 0; i <= RESOLVE_CAP; i++) t.collections.push(o({ id: `deep-${pad(i, 5)}`, path_ids: [F] }));
+    reset(t);
+    const s = await resolveScope(ORG, { kind: "unit", code: "20" });
+    expect(s.complete).toBe(false);
+    expect(s.truncations.join("\n")).toMatch(/Its pinned folders: more than 10,000 subfolders — this scope is incomplete\./);
   });
 
   it("an unknown unit resolves to nothing, and says so", async () => {

@@ -741,7 +741,8 @@ describe("the mapping on /admin/scope — data, and every write checked", () => 
     expect(archive.title).toBe("Archive Crude Unit?");
     expect(archive.message).toMatch(/Crude Unit is Site Codebook unit 20 · Crude\. Archiving it releases that mapping\./);
     expect(archive.message).toMatch(/14 equipment items filed under 20 point at Crude Unit and lose that operational unit — they stay filed under 20/);
-    expect(archive.message).toMatch(/Restoring the unit later does NOT bring the mapping back/);
+    expect(archive.message).toMatch(/Archiving cannot be undone on this page, and an archived unit holds no mapping/);
+    expect(archive.message).not.toMatch(/Restor/); // there is no restore control to promise
     // never the old promise
     expect(archive.message).not.toMatch(/equipment that reference it keep(s)? (its|their) data/i);
     expect(archive.confirmLabel).toMatch(/release the mapping/);
@@ -799,9 +800,13 @@ describe("20261138 — one paste, counts only, every object new", () => {
   });
 
   it("captures the inventory in a TEMP table BEFORE the transaction, aggregate counts only", () => {
-    const temp = code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _intel_g38_before AS");
+    const temp = code.indexOf("CREATE TEMP TABLE _intel_g38_before AS");
     const begin = code.indexOf("BEGIN;");
     expect(temp).toBeGreaterThan(-1);
+    // a re-paste in the same session reads THIS paste's counts, never the first's
+    const drop = code.indexOf("DROP TABLE IF EXISTS pg_temp._intel_g38_before;");
+    expect(drop).toBeGreaterThan(-1);
+    expect(drop).toBeLessThan(temp);
     expect(temp).toBeLessThan(begin);
     const inventory = code.slice(temp, begin);
     const selects = inventory.match(/SELECT\s+'[^']*(?:''[^']*)*'[^;]*?FROM/g) ?? [];

@@ -115,7 +115,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
-CREATE TEMP TABLE IF NOT EXISTS _intel_g38_before AS
+-- A re-paste in the same session reads THIS paste's counts, never the first's.
+DROP TABLE IF EXISTS pg_temp._intel_g38_before;
+CREATE TEMP TABLE _intel_g38_before AS
 SELECT 'documents carrying an operational unit (documents.unit_id) — what the decode is compared against' AS what, COUNT(*) AS n
   FROM documents WHERE unit_id IS NOT NULL
 UNION ALL
@@ -131,7 +133,7 @@ SELECT 'operational units whose code equals a Site Codebook unit code (a hint fo
  WHERE NOT u.archived
    AND EXISTS (SELECT 1 FROM codebook_entries c WHERE c.org_id = u.org_id AND c.kind = 'unit' AND c.code = u.code)
 UNION ALL
-SELECT 'assets with assets.unit_id set (kept as they are — no unit is mapped yet, so none of them is a projection; the decode and the triggers below fill only an EMPTY unit_id)', COUNT(*)
+SELECT 'assets with assets.unit_id set (the decode and the triggers below fill only an EMPTY unit_id; a set value is kept, except a projection — equipment pointing at the unit mapped to the code it is filed under — which follows a mapping change, 7.)', COUNT(*)
   FROM assets WHERE unit_id IS NOT NULL
 UNION ALL
 SELECT 'assets filed under a Site Codebook unit (assets.unit_code set)', COUNT(*)
