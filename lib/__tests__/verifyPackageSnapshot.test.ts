@@ -10,8 +10,9 @@
 // package in the pack. A package sheet missing from the paper that could be
 // printed now makes the pack red ("in the package but not in this pack" —
 // never "added since printing": the snapshot cannot prove that, VFY-19); one
-// that cannot be printed now (the print gate's refusals: not issued,
-// withdrawn, held, no current file, a file that is not a PDF) makes an
+// that cannot be printed now (the print gate's refusals and only those: not
+// issued, status not recognised, withdrawn, a document_holds hold, no current
+// file, a file that is not a PDF — never a legal hold alone) makes an
 // otherwise current pack amber "incomplete", never stale. A legacy QR (no
 // print id) is never green.
 
@@ -242,21 +243,54 @@ describe("VFY-2 review fix — a package sheet the print gate could not print is
     expect(v.blurb).toContain("Every sheet in this pack is current, but 1 sheet in the package is not in it and cannot be printed now (not issued)");
     expect(allText(r)).not.toMatch(/added|stale/i);
   });
-  it("the same with a member under an ACTIVE HOLD → 'incomplete', reason on_hold; a legally held member too", async () => {
+  it("the same with a member under an ACTIVE document_holds HOLD → 'incomplete', reason on_hold", async () => {
     state.print = printAt([sheetV2]);
     member(DOC2);
     state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
-    let r = await verify(true);
+    const r = await verify(true);
     expect(r.verdict).toBe("incomplete");
     expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold" }]);
     expect(r.heldCount).toBe(0); // the printed sheet is not held — the pack is not "on hold"
     expect(allText(r)).toContain("(on hold)");
     expect(allText(r)).not.toMatch(/added|stale/i);
-    state.holds = [];
-    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, legal_hold: true } : d));
+  });
+  it("integration fix — a LEGAL hold alone is not a print-gate refusal: a legally held member with a PDF is notInPack (red); a document_holds member is on_hold (amber)", async () => {
+    state.print = printAt([sheetV2]);
+    member(DOC2, { legal_hold: true });
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102__rev1__1.pdf", file_type: "application/pdf" }];
+    // preservation, not stop-work: filterPackDocs never refuses it, so a re-print carries it
+    let r = await verify(true);
+    expect(r.notInPack).toEqual([{ label: "P-102" }]);
+    expect(r.notPrintable).toEqual([]);
+    expect(r.verdict).toBe("stale");
+    expect(view(r).headline).toBe("PACK IS MISSING SHEETS");
+    expect(view(r).bg).toBe("bg-red-600");
+    // its file was read like any other printable member's
+    expect(state.selects.filter((x) => x.table === "document_versions" && x.cols.includes("file_url")).length).toBe(1);
+    // a document_holds row (stop-work) IS a refusal — with or without the legal hold
+    state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
     r = await verify(true);
     expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold" }]);
+    expect(r.notInPack).toEqual([]);
     expect(r.verdict).toBe("incomplete");
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, legal_hold: false } : d));
+    r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold" }]);
+    // a legally held member the gate refuses for ANOTHER reason is listed with that reason
+    state.holds = [];
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, legal_hold: true } : d));
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102__rev1__1.dwg", file_type: null }];
+    r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf" }]);
+    // the gate itself: lib/docPack.ts reads no legal hold (if it ever refuses one, this split must follow)
+    expect(readFileSync(join(process.cwd(), "lib/docPack.ts"), "utf8")).not.toMatch(/legal_hold|legalHold/);
+  });
+  it("a PRINTED sheet under a legal hold still reads held — the integration fix changes only the off-paper split", async () => {
+    state.print = printAt([sheetV2]);
+    state.docs = [docRow({ legal_hold: true })];
+    const r = await verify(true);
+    expect(states(r)).toEqual(["held"]);
+    expect(r.verdict).toBe("held");
   });
   it("each PKG-4 refusal has its reason: withdrawn (Void), no current file, a document that cannot be read, an unknown hold state", async () => {
     state.print = printAt([sheetV2]);
@@ -445,7 +479,44 @@ describe("VFY-2 third review fix — a sheet the print gate can NEVER print (no 
     expect(isPdfFile("a/b/c.pdf.dwg", "application/octet-stream")).toBe(false);
     // a doubtful file leans to "a PDF" — a sheet a re-print would carry (the red side), never amber
     expect(isPdfFile("https://h/x/c.dwg?f=.pdf", null)).toBe(true);
-    expect(isPdfFile(null, null)).toBe(false);
+  });
+  it("isPdfFile (integration fix) — NOT a PDF only on positive evidence: a known non-PDF extension or a specific non-PDF MIME type", () => {
+    // every listed non-PDF extension, untyped or generically typed, in either case, and on an http URL's path
+    for (const ext of ["dwg", "dxf", "dgn", "xlsx", "xls", "docx", "doc", "png", "jpg", "jpeg", "tif", "tiff", "gif", "bmp", "zip"]) {
+      expect(isPdfFile(`org/lib/P-102__rev1__1.${ext}`, null), ext).toBe(false);
+      expect(isPdfFile(`org/lib/P-102__rev1__1.${ext.toUpperCase()}`, "application/octet-stream"), ext).toBe(false);
+      expect(isPdfFile(`https://h/x/P-102.${ext}?token=1#p=2`, ""), ext).toBe(false);
+    }
+    // a specific non-PDF MIME type with no extension to go on
+    for (const t of ["image/png", "image/vnd.dwg", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword", "application/zip", "application/x-dwg", "text/plain; charset=utf-8"]) {
+      expect(isPdfFile("org/lib/P-102__rev1__1700000000000", t), t).toBe(false);
+    }
+    // NO positive evidence → a PDF (the red side): no recognisable extension and an empty, generic or absent type
+    for (const t of [null, "", "application/octet-stream", "binary/octet-stream", "application/x-download"]) {
+      expect(isPdfFile("org/lib/P-102__rev1__1700000000000", t), String(t)).toBe(true);
+      expect(isPdfFile("org/lib/P-102__rev1__1.xyz", t), `xyz ${String(t)}`).toBe(true);
+      expect(isPdfFile("https://h/x/download?id=1", t), `url ${String(t)}`).toBe(true);
+    }
+    expect(isPdfFile("org/lib.v2/P-102", null)).toBe(true); // a dot in a folder name is not an extension
+    expect(isPdfFile(null, null)).toBe(true); // nothing to go on (the route asks only with a path: no path is "no current file")
+    // PDF evidence still wins over a non-PDF signal
+    expect(isPdfFile("org/lib/P-102.dwg", "application/pdf; charset=binary")).toBe(true);
+    expect(isPdfFile("org/lib/P-102.pdf", "image/png")).toBe(true);
+  });
+  it("a member whose file has no recognisable extension and an empty or octet-stream type is read as a PDF — notInPack, red, never amber", async () => {
+    for (const version of [
+      { file_url: "org/lib/P-102__rev1__1700000000000", file_type: "application/octet-stream" },
+      { file_url: "org/lib/P-102__rev1__1700000000000", file_type: "" },
+      { file_url: "org/lib/P-102__rev1__1700000000000", file_type: null },
+    ]) {
+      state.liveMembers = [{ document_id: DOC, pinned_version_id: "v2", pinned_rev_label: "4" }];
+      state.docs = [docRow()];
+      withMember(version);
+      const r = await verify(true);
+      expect(r.notInPack, String(version.file_type)).toEqual([{ label: "P-102" }]);
+      expect(r.notPrintable).toEqual([]);
+      expect(r.verdict).toBe("stale");
+    }
   });
 });
 
@@ -463,6 +534,35 @@ describe("VFY-1 / PKG-8 — the shared allow-list decides every sheet", () => {
     state.print = printAt([sheetV2]);
     state.docs = [docRow({ status: "Locked" })];
     expect((await verify(true)).verdict).toBe("current");
+  });
+  it.each(["IFC", "Approved", " Issued"])(
+    "integration fix — a status the vocabulary does not know (%j) is 'status_unrecognised' on the pack page too — counted with the not-issued sheets, the verdict and its colour unchanged",
+    async (status) => {
+      state.print = printAt([sheetV2]);
+      state.docs = [docRow({ status })];
+      const r = await verify(true);
+      expect(states(r)).toEqual(["status_unrecognised"]);
+      expect((r.sheets as Array<Record<string, unknown>>)[0].fresh).toBe(false);
+      expect(r.verdict).toBe("stale");
+      expect(r.staleCount).toBe(1);
+      expect(r.notIssuedCount).toBe(1);
+      const v = presentPackVerdict(r as unknown as PackVerifyResult);
+      expect(v.bg).toBe("bg-red-600");
+      expect(v.headline).toBe("PACK HAS UNISSUED SHEETS");
+    });
+  it("integration fix — a package member left out for an unrecognised status is listed 'status not recognised' (amber, as before)", async () => {
+    state.print = printAt([sheetV2]);
+    state.liveMembers.push({ document_id: DOC2, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "IFC" }));
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "status_unrecognised" }]);
+    expect(r.verdict).toBe("incomplete");
+    const v = presentPackVerdict(r as unknown as PackVerifyResult);
+    expect(v.bg).toBe("bg-amber-500");
+    expect(v.blurb).toContain("(status not recognised)");
+    // In Review and an empty status are named by the vocabulary: still "not issued"
+    state.docs = [docRow(), docRow({ id: DOC2, document_number: "P-102", current_version_id: "w1", rev: "1", status: "In Review" })];
+    expect((await verify(true)).notPrintable).toEqual([{ label: "P-102", reason: "not_issued" }]);
   });
   it("a current revision whose effective date has not arrived → not_yet_effective, not green (PKG-8 done-when 3)", async () => {
     state.print = printAt([sheetV2]);
@@ -489,7 +589,7 @@ describe("VFY-1 / PKG-8 — the shared allow-list decides every sheet", () => {
   });
   it("the route imports the shared decision and never spells a status list", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
-    expect(src).toContain('import { documentStanding, isPdfFile, isUndefinedColumnError } from "@/lib/verifyVerdict";');
+    expect(src).toContain('import { documentStanding, isPdfFile, isRecognisedStatus, isUndefinedColumnError } from "@/lib/verifyVerdict";');
     expect(src).not.toMatch(/status === "Superseded"|status === "Void"|status === "Archived"/);
   });
 });

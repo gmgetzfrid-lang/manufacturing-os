@@ -308,6 +308,27 @@ describe("VFY-10 / PHYS-10 — the hold card says what the scan answers", () => 
   });
 });
 
+describe("VFY-2 / VFY-8 / VFY-11 — the pack cover says what the scan answers", () => {
+  it("the legend names every verdict colour /verify-package can show (green, amber, grey, red); each line fits the cover's text column left of the QR", async () => {
+    const { COVER_SCAN_LINES, COVER_TEXT_WIDTH } = await import("@/lib/physicalBridge");
+    expect(COVER_SCAN_LINES.map((l) => l.split(" = ")[0])).toEqual(["GREEN", "AMBER", "GREY", "RED"]);
+    expect(COVER_SCAN_LINES[0]).toContain("every sheet is current");
+    expect(COVER_SCAN_LINES[2]).toContain("check with Document Control before work");
+    expect(COVER_SCAN_LINES[3]).toMatch(/^RED = stop — .*held.*missing/);
+    // the old two-colour legend is gone (and its red line, drawn at x 428 in 8pt, ran past the 612pt page)
+    const bridge = src("lib/physicalBridge.ts");
+    expect(bridge).not.toContain('"No login needed. Green = this pack is current."');
+    expect(bridge).not.toContain('"Red = a sheet changed since printing — get the new one."');
+    // drawn with the same font, size and column the cover uses
+    expect(bridge).toContain("fit(line, regular, 9, COVER_TEXT_WIDTH), { x: 52, y: 102 - i * 12, size: 9, font: regular");
+    const doc = await PDFDocument.create();
+    const regular = await doc.embedFont(StandardFonts.Helvetica);
+    for (const line of COVER_SCAN_LINES) expect(regular.widthOfTextAtSize(line, 9), line).toBeLessThanOrEqual(COVER_TEXT_WIDTH);
+    // the column ends left of the QR plate's caption (x 428)
+    expect(52 + COVER_TEXT_WIDTH).toBeLessThan(428);
+  });
+});
+
 describe("PKG-12 — the cover lists every sheet", () => {
   it("coverContentsChunks covers every index exactly once, in order", async () => {
     const { coverContentsChunks, COVER_FIRST_PAGE_ROWS, COVER_CONTINUATION_ROWS } = await import("@/lib/physicalBridge");

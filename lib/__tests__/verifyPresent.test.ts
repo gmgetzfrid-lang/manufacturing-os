@@ -157,8 +157,8 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
     expect(presentPackVerdict(pack({ verdict: "incomplete" })).blurb).not.toMatch(/\b0 sheet/);
   });
   it("notPrintableText names every reason; an unknown one reads 'cannot be printed'", () => {
-    expect(["not_issued", "withdrawn", "on_hold", "hold_unknown", "unavailable", "no_file", "not_pdf"].map(notPrintableText)).toEqual([
-      "not issued", "withdrawn", "on hold", "hold status unknown", "no longer available", "no current file", "not a printable PDF",
+    expect(["not_issued", "status_unrecognised", "withdrawn", "on_hold", "hold_unknown", "unavailable", "no_file", "not_pdf"].map(notPrintableText)).toEqual([
+      "not issued", "status not recognised", "withdrawn", "on hold", "hold status unknown", "no longer available", "no current file", "not a printable PDF",
     ]);
     expect(notPrintableText("brand_new")).toBe("cannot be printed");
     expect(notPrintableText(null)).toBe("cannot be printed");
@@ -185,9 +185,22 @@ describe("presentPackVerdict — /verify-package/[packageId]", () => {
     expect(sheetLabel({ label: "x", printedRev: "4", currentRev: "4", fresh: true, retired: false, state: "fresh" })).toEqual({ text: "Rev 4 ✓", ok: true });
     expect(sheetLabel({ label: "x", printedRev: "4", currentRev: "4", fresh: false, retired: false, state: "held", holdReasons: ["Client Review"] }).text).toBe("ON HOLD · Client Review");
     expect(sheetLabel({ label: "x", printedRev: null, currentRev: "4", fresh: false, retired: false, state: "unconfirmed" }).text).toBe("now Rev 4 · printing unknown");
-    for (const st of ["void", "draft", "not_issued", "removed", "missing", "stale", "not_yet_effective"] as const) {
+    for (const st of ["void", "draft", "not_issued", "status_unrecognised", "removed", "missing", "stale", "not_yet_effective"] as const) {
       expect(sheetLabel({ label: "x", printedRev: "3", currentRev: "4", fresh: false, retired: false, state: st }).ok, st).toBe(false);
     }
+  });
+  it("integration fix — a sheet whose status the vocabulary does not know reads 'STATUS NOT RECOGNISED', as /verify says, never 'NOT ISSUED' (VFY-20); the pack verdict and its colour are unchanged", () => {
+    const row = { label: "x", printedRev: "3", currentRev: "3", fresh: false, retired: false };
+    expect(sheetLabel({ ...row, state: "status_unrecognised" })).toEqual({ text: "STATUS NOT RECOGNISED", ok: false });
+    // the same words the single-sheet page uses for that status
+    expect(presentDocVerdict(doc({ verdict: "not_issued", isCurrent: false, docStatus: "IFC" })).headline).toBe("STATUS NOT RECOGNISED");
+    // a status the vocabulary names keeps its own label
+    expect(sheetLabel({ ...row, state: "not_issued" }).text).toBe("NOT ISSUED");
+    expect(sheetLabel({ ...row, state: "draft" }).text).toBe("DRAFT — NOT ISSUED");
+    // the pack around it: still red, still counted with the not-issued sheets
+    const view = presentPackVerdict(pack({ verdict: "stale", staleCount: 1, notIssuedCount: 1, sheetCount: 2, sheets: [{ ...row, state: "status_unrecognised" }] }));
+    expect(view.bg).toBe("bg-red-600");
+    expect(view.headline).toBe("PACK HAS UNISSUED SHEETS");
   });
 });
 

@@ -21,16 +21,17 @@
 // one that could be printed makes the pack red (`notInPack` — "in the
 // package but not in this pack"; the snapshot does not record what the print
 // gate left out, so the route never claims it was "added since printing" —
-// VFY-19); one that cannot be printed now (not issued, withdrawn, held, no
-// current file, a file that is not a PDF — the print gate's refusals) is
-// listed with why and makes an otherwise current pack amber "incomplete",
-// never stale: a re-print would leave it out too.
+// VFY-19); one that cannot be printed now (not issued, status not
+// recognised, withdrawn, under a document hold, no current file, a file that
+// is not a PDF — the print gate's refusals, and only those: a legal hold
+// alone is not one) is listed with why and makes an otherwise current pack
+// amber "incomplete", never stale: a re-print would leave it out too.
 // A cover QR with no print id cannot say which printing it is and is never
 // green (VFY-2's fail-safe default, 2026-09-17).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { documentStanding, isPdfFile, isUndefinedColumnError } from "@/lib/verifyVerdict";
+import { documentStanding, isPdfFile, isRecognisedStatus, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { publicHoldReason } from "@/lib/holds";
 import { checkVerifyRate, clientIp, verifyJson, verifyRateLimitedResponse } from "@/lib/verifyRateLimit";
@@ -62,12 +63,13 @@ interface SheetSource { document_id: string; version_id: string | null; rev_labe
 
 const WITHDRAWN_STATES: ReadonlySet<SheetState> = new Set(["void", "archived", "superseded", "retired"]);
 const NOT_GOOD_STATES: ReadonlySet<SheetState> = new Set([
-  "stale", "void", "archived", "superseded", "retired", "draft", "not_issued", "missing", "removed",
+  "stale", "void", "archived", "superseded", "retired", "draft", "not_issued", "status_unrecognised", "missing", "removed",
 ]);
 /** Not an issued revision at all — says nothing about "since printing" (a
  *  legacy no-status sheet can be printed that way), so the page counts these
- *  apart from the changed / withdrawn ones. */
-const NOT_ISSUED_STATES: ReadonlySet<SheetState> = new Set(["draft", "not_issued"]);
+ *  apart from the changed / withdrawn ones. A status the vocabulary does not
+ *  know ("IFC", a free value — VFY-20) is not Issued / Locked either. */
+const NOT_ISSUED_STATES: ReadonlySet<SheetState> = new Set(["draft", "not_issued", "status_unrecognised"]);
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -227,6 +229,9 @@ export async function GET(req: NextRequest) {
     let state: SheetState;
     if (!d) state = "missing";
     else if (held) state = "held";
+    // A non-empty status outside the vocabulary is not in force, but the page
+    // cannot say what it meant — "STATUS NOT RECOGNISED", as /verify says.
+    else if (standing === "not_issued" && !isRecognisedStatus(d.status)) state = "status_unrecognised";
     else if (standing !== "in_force") state = standing;
     else if (!printConfirmed) state = "unconfirmed";
     else if (!s.version_id || s.version_id !== d.current_version_id) state = "stale";
@@ -246,19 +251,24 @@ export async function GET(req: NextRequest) {
     };
   });
   // Each package sheet missing from the paper, by what is true of it NOW.
-  // Not printable now — the print gate's own refusals, read the way every
-  // verify surface reads them: lib/docPack.ts filterPackDocs refuses a status
-  // outside Issued / Locked (the shared allow-list here, so an empty status
-  // is "not issued" — VFY-17) and a hold or an unreadable hold state (the
-  // legal hold is a hold); buildAndDownloadDocPack then skips a current
+  // Not printable now — the print gate's own refusals and no others:
+  // lib/docPack.ts filterPackDocs refuses a status outside Issued / Locked
+  // (read through the shared allow-list here, so an empty status is "not
+  // issued" — VFY-17 — and a status the vocabulary does not know is "status
+  // not recognised" — VFY-20), an active document_holds row (stop-work) and
+  // an unreadable hold state; buildAndDownloadDocPack then skips a current
   // revision with no file on record ("no current file") and a file pdf-lib
   // cannot load — a DWG, XLSX, DOCX or image (`not_pdf`, isPdfFile); an
-  // unreadable document is never packed either. Such a sheet would be left
-  // out of a re-print too: listed with why, never "stale". What stays in
-  // notInPack is an in-force, hold-free sheet with a PDF on file — one a
-  // re-print would carry. (A fetch that failed at print, or a PDF pdf-lib
-  // could not parse, is not visible here: the snapshot does not record the
-  // builder's skips — VFY-19.)
+  // unreadable document is never packed either. The document's LEGAL hold is
+  // not a refusal: it is preservation, not stop-work, and the gate never
+  // reads it, so a legally held sheet with a PDF on file is one a re-print
+  // carries — notInPack, like any printable sheet missing from the pack (on
+  // the paper it then reads "held": a field scan is never green under a legal
+  // hold — DEC-44 (PS-VERIFY) §1). A refused sheet would be left out of a
+  // re-print too: listed with why, never "stale". What stays in notInPack is
+  // an in-force sheet with no document_holds row and a PDF on file. (A fetch
+  // that failed at print, or a PDF pdf-lib could not parse, is not visible
+  // here: the snapshot does not record the builder's skips — VFY-19.)
   const notPrintable: Array<{ label: string; reason: NotPrintableReason }> = [];
   const notInPack: Array<{ label: string }> = [];
   const offPaper = offPaperIds.map((id) => {
@@ -267,7 +277,8 @@ export async function GET(req: NextRequest) {
     let reason: NotPrintableReason | null = null;
     if (!d) reason = "unavailable";
     else if (holdsUnreadable) reason = "hold_unknown";
-    else if (d.legal_hold === true || (holdsByDoc.get(id)?.length ?? 0) > 0) reason = "on_hold";
+    else if ((holdsByDoc.get(id)?.length ?? 0) > 0) reason = "on_hold";
+    else if (standing === "not_issued" && !isRecognisedStatus(d.status)) reason = "status_unrecognised";
     else if (standing === "draft" || standing === "not_issued") reason = "not_issued";
     else if (standing !== "in_force") reason = "withdrawn";
     else if (!d.current_version_id) reason = "no_file";

@@ -12,7 +12,8 @@
 //   * Ticket travelers     — one-pager that rides the paper folder;
 //     scanning shows live ticket status.
 //   * Package cover sheets — job-folder cover; scanning shows the live
-//     FRESH/STALE verdict for the whole pack.
+//     verdict for the whole pack (green / amber / grey / red —
+//     COVER_SCAN_LINES says what each means).
 //
 // Frictionless rules: every generator is ONE call with data the app
 // already has — no options to configure, sensible layout defaults, and the
@@ -285,6 +286,27 @@ export function coverContentsChunks(count: number): Array<[number, number]> {
   return out;
 }
 
+/** The cover's scan legend (VFY-2 / VFY-8 / VFY-11 / PHYS-1) — what the
+ *  crew follows, so it states the verdict set /verify-package answers
+ *  (lib/verifyPresent.ts presentPackVerdict): green only "current"; amber
+ *  "not yet in effect" and "incomplete" (a package sheet not in this pack
+ *  that cannot be printed now); grey "closed", "empty", "can't confirm which
+ *  printing", "can't verify"; red "held" and "stale" (changed / withdrawn /
+ *  removed, not an issued revision, a sheet no longer available, a package
+ *  sheet a re-print would carry missing from this pack). The old two-colour
+ *  legend (green "this pack is current", red "a sheet changed since
+ *  printing") knew neither amber nor grey, and its red line, at x 428, ran
+ *  past the page edge. */
+export const COVER_SCAN_LINES: readonly string[] = [
+  "GREEN = every sheet is current — work from this pack.",
+  "AMBER = do only what the screen says — a sheet is not yet in effect or not in this pack.",
+  "GREY = the scan cannot confirm this pack — check with Document Control before work.",
+  "RED = stop — a sheet changed, was withdrawn, is held, is not issued or is missing.",
+];
+/** The cover's text column left of the QR plate (x 52 → 420; the plate's
+ *  caption starts at x 428). */
+export const COVER_TEXT_WIDTH = 368;
+
 export interface PackageCoverInput {
   packageId: string;
   /** The immutable print-snapshot id (PKG-2). When present the QR verifies
@@ -299,7 +321,7 @@ export interface PackageCoverInput {
 }
 
 /** Cover page (returned as a PDFDocument so callers can prepend it to the
- *  merged drawing pack). Scan → live FRESH/STALE verdict. */
+ *  merged drawing pack). Scan → the live pack verdict (COVER_SCAN_LINES). */
 export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDocument> {
   const doc = await PDFDocument.create();
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -354,8 +376,12 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
   if (qr) {
     page.drawImage(qr, { x: 440, y: 80, width: 130, height: 130 });
     page.drawText("SCAN BEFORE STARTING WORK", { x: 428, y: 66, size: 9, font: bold, color: AMBER });
-    page.drawText("No login needed. Green = this pack is current.", { x: 428, y: 54, size: 8, font: regular, color: MUTED });
-    page.drawText("Red = a sheet changed since printing — get the new one.", { x: 428, y: 44, size: 8, font: regular, color: MUTED });
+    page.drawText("No login needed.", { x: 428, y: 54, size: 8, font: regular, color: MUTED });
+    // The legend, left of the QR plate and below the contents (which end at
+    // y 212 on the first page): every verdict colour the scan can answer.
+    COVER_SCAN_LINES.forEach((line, i) => {
+      page.drawText(fit(line, regular, 9, COVER_TEXT_WIDTH), { x: 52, y: 102 - i * 12, size: 9, font: regular, color: MUTED });
+    });
   }
   return doc;
 }

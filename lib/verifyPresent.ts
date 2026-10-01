@@ -129,9 +129,14 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
 export type PackVerdict =
   | "current" | "not_yet_effective" | "incomplete" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable";
 
+/** One printed sheet's state. `not_issued` is a status outside the
+ *  allow-list that the vocabulary names (In Review, an empty status);
+ *  `status_unrecognised` is a non-empty status it does not know ("IFC", a
+ *  free value — VFY-20): not in force either, but the page cannot say what it
+ *  meant, so it says so — as /verify does (isRecognisedStatus). */
 export type SheetState =
   | "fresh" | "not_yet_effective" | "stale" | "held"
-  | "void" | "archived" | "superseded" | "retired" | "draft" | "not_issued"
+  | "void" | "archived" | "superseded" | "retired" | "draft" | "not_issued" | "status_unrecognised"
   | "missing" | "removed" | "unconfirmed";
 
 export interface PackSheetRow {
@@ -146,17 +151,22 @@ export interface PackSheetRow {
 }
 
 /** Why a sheet of the package that is not in this pack cannot be printed
- *  NOW — the same refusals the print gate applies (document-control PKG-4,
+ *  NOW — exactly the refusals the print gate applies (document-control PKG-4,
  *  lib/docPack.ts filterPackDocs, then buildAndDownloadDocPack): not issued,
- *  withdrawn, under a hold (or a hold state that could not be read), no
- *  longer readable, a current revision with no file on record, a file that
- *  is not a PDF (a DWG, a spreadsheet, an image — the builder can only stamp
- *  a PDF). Present tense on purpose: the route knows what is true of the
+ *  a status the vocabulary does not know, withdrawn, under an active
+ *  document_holds hold (or a hold state that could not be read), no longer
+ *  readable, a current revision with no file on record, a file that is not a
+ *  PDF (a DWG, a spreadsheet, an image — the builder can only stamp a PDF).
+ *  Not the document's legal hold: the gate does not refuse it (preservation,
+ *  not stop-work), so a legally held sheet a re-print would carry is in
+ *  `notInPack`. Present tense on purpose: the route knows what is true of the
  *  sheet now, not what the print gate saw — a re-print would leave it out too. */
-export type NotPrintableReason = "not_issued" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf";
+export type NotPrintableReason =
+  | "not_issued" | "status_unrecognised" | "withdrawn" | "on_hold" | "hold_unknown" | "unavailable" | "no_file" | "not_pdf";
 
 const NOT_PRINTABLE_TEXT: Record<NotPrintableReason, string> = {
   not_issued: "not issued",
+  status_unrecognised: "status not recognised",
   withdrawn: "withdrawn",
   on_hold: "on hold",
   hold_unknown: "hold status unknown",
@@ -182,7 +192,8 @@ export interface PackVerifyResult {
    *  missing, or not an issued revision at all (back-compat total). */
   staleCount: number;
   /** Of those, the sheets that are not an issued, controlled revision
-   *  (draft / not issued) — which says nothing about "since printing". */
+   *  (draft / not issued / status not recognised) — which says nothing about
+   *  "since printing". */
   notIssuedCount?: number;
   heldCount?: number;
   /** Sheets in the package that are NOT in this pack and could be printed
@@ -244,10 +255,10 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
     }
     case "incomplete": {
       // Every printed sheet is current; the package also holds sheets that
-      // cannot be printed now (not issued, withdrawn, held, no file, not a
-      // PDF …). A re-print would leave them out too, so this is not "stale"
-      // — but it is not green either: part of the package's scope is not in
-      // the crew's hands.
+      // cannot be printed now (not issued, withdrawn, under a document hold,
+      // no file, not a PDF …). A re-print would leave them out too, so this
+      // is not "stale" — but it is not green either: part of the package's
+      // scope is not in the crew's hands.
       const left = r.notPrintable ?? [];
       const k = left.length;
       const why = [...new Set(left.map((s) => notPrintableText(s.reason)))];
@@ -289,6 +300,7 @@ export function sheetLabel(s: PackSheetRow): { text: string; ok: boolean } {
     case "retired": return { text: "RETIRED", ok: false };
     case "draft": return { text: "DRAFT — NOT ISSUED", ok: false };
     case "not_issued": return { text: "NOT ISSUED", ok: false };
+    case "status_unrecognised": return { text: "STATUS NOT RECOGNISED", ok: false };
     case "missing": return { text: "NO LONGER AVAILABLE", ok: false };
     case "removed": return { text: "REMOVED FROM PACKAGE", ok: false };
     case "unconfirmed": return { text: `now Rev ${s.currentRev ?? "—"} · printing unknown`, ok: false };
