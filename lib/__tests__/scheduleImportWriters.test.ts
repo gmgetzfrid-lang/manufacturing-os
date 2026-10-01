@@ -566,7 +566,10 @@ describe("SCH-3 · position rows the OLD importer stored (in any browser zone): 
     const ms = performance.now() - t0;
     expect(res.plan).toMatchObject({ added: 4990, positionAdopted: 10, positionRepeated: 4990, notInFile: 4990 });
     expect(ms).toBeLessThan(1000);
-  });
+    // The plan's own time is the guard above; seeding and parsing 5,000 rows
+    // around it is fixture work, so the test's overall timeout is generous —
+    // under a loaded machine the 5 s default timed out on the fixture alone.
+  }, 30_000);
 });
 
 describe("SCH-16 · structure is set to exactly what the file says for the rows it carries", () => {
