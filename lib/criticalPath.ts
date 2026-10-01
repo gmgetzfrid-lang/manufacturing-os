@@ -30,35 +30,37 @@
 //
 // Every gap, lag and float is measured on a WORKING clock
 // (scheduleReflow.workingClock): Monday to Friday, the clock stopped over the
-// weekend — plus the weekend DAYS that carry unfinished work FOR THAT
-// HAND-OFF. Measured in calendar days, a Friday finish followed by a Monday
-// start is two days of "float", so every weekly hand-off broke the chain and
-// the path stopped at the last weekend. Measured Mon–Fri only, weekend work
+// weekend — plus the weekend DAYS the hand-off's own two tasks work.
+// Measured in calendar days, a Friday finish followed by a Monday start is
+// two days of "float", so every weekly hand-off broke the chain and the path
+// stopped at the last weekend. Measured Mon–Fri only, weekend work
 // weighed nothing: every weekend instant collapses onto Friday 24:00, so a
 // Saturday task with a day of slack, or an unlinked Saturday-morning job, read
 // as critical. Float is reported in working days.
 //
 // With no project calendar the worked weekend days are INFERRED, day by day,
-// and each hand-off is measured on its SUCCESSOR's clock:
+// and each hand-off is measured on the clock of its OWN two tasks:
 //   * a leaf's own weekend days: an unfinished leaf that starts or finishes on
 //     a Saturday or Sunday (wall-clock-as-UTC) is worked on weekends, so every
 //     Saturday and Sunday it spans counts — a weekend shutdown, a Sat → Tue
 //     outage task. A leaf whose both ends fall on weekdays says nothing about
 //     the weekend it spans (a six-working-day task runs Monday to Monday), so
 //     it marks no weekend day. A finished leaf marks nothing;
-//   * a link p → s is measured on s's clock: Monday to Friday plus the weekend
-//     days of s and of every task s waits for (its predecessors, through any
-//     chain of links). A weekend day counts for a hand-off only when the
-//     successor, or work that leads up to it, is planned on that day: a 7-day
-//     outage (Sat → Sun → Mon) gives the Friday task feeding its Monday
-//     restart the weekend as float, while a Saturday job anywhere else in the
-//     plan — on a parallel branch, after a shared start milestone, into a
-//     shared finish milestone — gives a Mon–Fri chain no float at its
-//     Friday-to-Monday hand-offs (the clock is never the plan's, nor a linked
-//     network's);
-//   * the hand-off to the finish is measured on the clock of the leaves that
-//     set the finish (with everything they wait for), so an unlinked Saturday
-//     job in a weekend shutdown is weighed against the Sunday finish.
+//   * a link p → s is measured Monday to Friday plus the weekend days of p and
+//     of s — never those of any other task. A predecessor's days end on the
+//     day it finishes and a successor's begin on the day it starts, so a day
+//     counts inside a hand-off only as the rest of a weekend day p finishes
+//     on, or the part of a weekend day before s starts on it: a weekend
+//     crew's Sat 17:00 → Sun 08:00 overnight is 15 hours, while a Friday task
+//     feeding a Monday restart is critical (0 float) whatever weekend work
+//     also feeds that restart — P6's and MS Project's answer for a Mon–Fri
+//     task — and a Saturday job anywhere in the plan never gives a Mon–Fri
+//     chain float (the clock is never the plan's, a linked network's, nor a
+//     successor's inputs'). For a date-only plan every hand-off is Mon–Fri;
+//   * the hand-off to the finish is measured the same way, on the leaf's own
+//     days and those of the leaves that set the finish, so an unlinked
+//     Saturday-morning job in a weekend shutdown is weighed against the
+//     Sunday finish across both days.
 //
 // The PATH is the chain of DRIVING links traced back from the finish —
 // Primavera's "longest path": start from the unfinished leaves that are ready
@@ -71,11 +73,13 @@
 //
 // No project calendar: holidays are not skipped. A leaf with no links only
 // counts when it ends at the finish. Summaries are envelopes: a link to or
-// from a phase applies to every leaf inside it. A loop in the links is
+// from a phase applies to every leaf inside it — so a task linked to a phase
+// it sits in (or a phase to its own task) would wait for itself, and is a
+// loop, as the link checks and the cascade read it. A loop in the links is
 // reported and left out. Pure.
 
 import type { Milestone } from "@/types/schema";
-import { DAY_MS, fsReadyMs, isWeekendUtcDay, lagWorkingMs, reflowNodesFromMilestones, workingClock, workingTimeMs } from "@/lib/scheduleReflow";
+import { DAY_MS, fsReadyMs, isWeekendUtcDay, lagWorkingMs, reflowNodesFromMilestones, workingTimeMs } from "@/lib/scheduleReflow";
 import { leafPercent } from "@/lib/scheduleProgress";
 
 export interface CriticalPathResult {
@@ -87,8 +91,8 @@ export interface CriticalPathResult {
   remainingHours: number;
   /** Total float per unfinished leaf, in working days: the least, over its
    *  chains of links to the finish, of the gaps along the chain — each
-   *  measured Monday to Friday plus the weekend days its successor, or the
-   *  work leading up to it, is planned on (leaves in a loop are absent). */
+   *  measured Monday to Friday plus the weekend days the link's own two
+   *  tasks are planned on (leaves in a loop are absent). */
   floatDays: Map<string, number>;
   /** The clock the PATH was measured on: "mon-fri" when none of its tasks
    *  and hand-offs counts a weekend day; else "worked-weekends": Monday to
@@ -166,6 +170,12 @@ export function computeCriticalPath(
   for (const n of reflowNodesFromMilestones(milestones)) lagOf.set(n.id, n.lagHours ?? null);
   const succ = new Map<string, Map<string, number>>(); // pred leaf → (succ leaf → lag, working hours)
   const hasPred = new Set<string>();
+  // A leaf that would wait for ITSELF through a phase — a task linked to a
+  // phase it sits in, or a phase linked to a task inside it — is in a loop,
+  // as the link checks and the cascade read it (scheduleReflow linkCyclePath
+  // / planCascade): reported and left out, never read as "waits for the rest
+  // of the phase" (sixth review pass: the three read that link three ways).
+  const selfLoop = new Set<string>();
   let linked = false;
   for (const m of milestones) {
     if (!m.id) continue;
@@ -173,7 +183,7 @@ export function computeCriticalPath(
       if (!byId.has(pred)) continue;
       const lagH = lagOf.get(m.id)?.[pred] ?? 0;
       for (const p of leavesOf(pred)) for (const s of leavesOf(m.id)) {
-        if (p === s) continue;
+        if (p === s) { selfLoop.add(s); continue; }
         const row = succ.get(p) ?? new Map<string, number>();
         row.set(s, Math.max(row.get(s) ?? -Infinity, lagH));
         succ.set(p, row);
@@ -186,7 +196,7 @@ export function computeCriticalPath(
   // Reverse topological order (Kahn over the successor edges); a leaf left
   // over is inside a loop of links and is reported, not guessed at.
   const indeg = new Map<string, number>();
-  for (const id of leafIds) indeg.set(id, 0);
+  for (const id of leafIds) indeg.set(id, selfLoop.has(id) ? 1 : 0); // a self-loop never clears
   for (const [, row] of succ) for (const s of row.keys()) if (indeg.has(s)) indeg.set(s, indeg.get(s)! + 1);
   const order: string[] = [];
   const q = leafIds.filter((id) => indeg.get(id) === 0);
@@ -229,10 +239,11 @@ export function computeCriticalPath(
     }
     return out;
   };
-  // The days a hand-off INTO a leaf counts: its own weekend days and those of
-  // every task it waits for (its predecessors, through any chain of links) —
-  // the work that leads up to it. Kept as ascending day lists, shared (read
-  // only) wherever a leaf adds nothing to its one input.
+  // The days a hand-off counts: the weekend days of its OWN two ends — the
+  // predecessor's and the successor's — and never those of any other task
+  // (sixth review pass: the successor's inputs counted too, so one Saturday
+  // delivery feeding W5 gave W4, and every week behind it, a day of float
+  // and took the whole Mon–Fri chain off the path). Ascending day lists.
   const NONE: readonly number[] = [];
   const union = (a: readonly number[], b: readonly number[]): readonly number[] => {
     if (a.length === 0 || a === b) return b;
@@ -246,15 +257,9 @@ export function computeCriticalPath(
     }
     return out;
   };
-  const ownDays = new Map<string, number[]>();
-  const inputDays = new Map<string, readonly number[]>();
-  for (const id of order) {
-    const own = workedDaysOf(id);
-    ownDays.set(id, own);
-    let days: readonly number[] = own;
-    for (const { p } of preds.get(id) ?? []) days = union(days, inputDays.get(p) ?? NONE);
-    inputDays.set(id, days);
-  }
+  const ownDays = new Map<string, readonly number[]>();
+  for (const id of order) ownDays.set(id, workedDaysOf(id));
+  const own = (id: string): readonly number[] => ownDays.get(id) ?? NONE;
   // The days of an ascending list that overlap [from, to).
   const workedIn = (days: readonly number[], from: number, to: number): number[] => {
     const out: number[] = [];
@@ -290,23 +295,24 @@ export function computeCriticalPath(
   const open = (id: string) => unfinished(id) && inOrder.has(id);
   // The finish the float is measured against: the latest ready instant of an
   // UNFINISHED leaf (a completed task's planned date gates nothing). The
-  // hand-off to it is measured on the clock of the leaves that set it (with
-  // everything they wait for) — the finish's own inputs.
+  // hand-off to it is measured, like a link, on its two ends' days: the
+  // leaf's own and those of the leaves that set the finish.
   let projectReady = -Infinity;
   for (const id of order) if (open(id)) projectReady = Math.max(projectReady, ready.get(id)!);
   let finishDays: readonly number[] = NONE;
-  for (const id of order) if (open(id) && ready.get(id) === projectReady) finishDays = union(finishDays, inputDays.get(id) ?? NONE);
-  const finishClock = workingClock(finishDays);
-  const toFinishMs = (id: string) => finishClock(projectReady) - finishClock(ready.get(id)!);
+  for (const id of order) if (open(id) && ready.get(id) === projectReady) finishDays = union(finishDays, own(id));
+  const toFinishDays = (id: string) => union(own(id), finishDays);
+  const toFinishMs = (id: string) => gapOn(toFinishDays(id), ready.get(id)!, projectReady);
   // A link's gap: from the predecessor being ready (+ lag) to the successor's
-  // start, on the SUCCESSOR's clock.
+  // start, on the clock of the link's own two ends.
+  const linkDays = (p: string, s: string) => union(own(p), own(s));
   const gapMs = (p: string, s: string, lag: number) =>
-    gapOn(inputDays.get(s) ?? NONE, ready.get(p)!, start.get(s)!) - lagWorkingMs(lag);
+    gapOn(linkDays(p, s), ready.get(p)!, start.get(s)!) - lagWorkingMs(lag);
 
   // Total float, backward: the least, over the leaf's chains of links to the
-  // finish, of the gaps along the chain (each on its successor's clock) plus
-  // the last leaf's hand-off to the finish. A finished successor, or one
-  // inside a loop, does not constrain.
+  // finish, of the gaps along the chain (each on its own two ends' clock)
+  // plus the last leaf's hand-off to the finish. A finished successor, or
+  // one inside a loop, does not constrain.
   const floatMs = new Map<string, number>();
   for (let i = order.length - 1; i >= 0; i--) {
     const id = order[i];
@@ -351,12 +357,12 @@ export function computeCriticalPath(
     for (const d of workedIn(days, from, to)) pathDays.add(d);
   };
   for (const id of ids) {
-    for (const d of ownDays.get(id) ?? []) pathDays.add(d);
+    for (const d of own(id)) pathDays.add(d);
     for (const { p, lag } of preds.get(id) ?? []) {
-      if (ids.has(p) && gapMs(p, id, lag) < tolerance) countWithin(inputDays.get(id) ?? NONE, ready.get(p)!, start.get(id)!);
+      if (ids.has(p) && gapMs(p, id, lag) < tolerance) countWithin(linkDays(p, id), ready.get(p)!, start.get(id)!);
     }
   }
-  for (const id of atFinish) countWithin(finishDays, ready.get(id)!, projectReady);
+  for (const id of atFinish) countWithin(toFinishDays(id), ready.get(id)!, projectReady);
   const calendar: PathCalendar = pathDays.size > 0 ? "worked-weekends" : "mon-fri";
   let remainingHours = 0;
   for (const id of ids) {

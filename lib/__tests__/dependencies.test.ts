@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   cascadeDependents, wouldCreateCycle, dependentsClosure, linkCyclePath, fsLagHours, reflowNodesFromMilestones,
   CascadeRefusedError, afterLagMs, fsReadyMs, WORK_DAY_HOURS, DAY_MS, type ReflowNode,
-  planCascade, computeTreeMove, isLocked,
+  planCascade, computeTreeMove, isLocked, outlineLoop,
 } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
@@ -381,18 +381,22 @@ describe("SCH-4 / SCH-9 · a loop through a phase: refused when the link is made
     expect(dependentsClosure(other, "Z").has("Q")).toBe(true);
   });
 
-  it("a phase may not wait for its own work, or for a task that waits for its work; a task may wait for its own phase", () => {
+  it("a phase may not wait for its own work, or for a task that waits for its work; nor may a task wait for its own phase", () => {
     const nodes: ReflowNode[] = [
       N("P", null, "06-01", "06-05"), N("c", "P", "06-01", "06-02"), N("d", "P", "06-03", "06-05"),
       N("X", null, "06-08", "06-09", ["c"]),
     ];
     expect(linkCyclePath(nodes, "P", "c")).toEqual(["P", "c", "P"]);
     expect(linkCyclePath(nodes, "P", "X")).toEqual(["P", "c", "X", "P"]); // P carries c, X waits for c
-    expect(linkCyclePath(nodes, "d", "P")).toBeNull(); // a link from a phase to its own task: its stored finish
+    // Sixth review pass: a task linked to its own phase waits for itself (P
+    // finishes when d does) — it was accepted, and every move then pushed d
+    // past its own finish again.
+    expect(linkCyclePath(nodes, "d", "P")).toEqual(["d", "P", "d"]);
+    expect(wouldCreateCycle(nodes, "d", "P")).toBe(true);
     expect(linkCyclePath(nodes, "X", "P")).toBeNull();
     const closure = dependentsClosure(nodes, "P");
     expect([...closure].sort()).toEqual(["P", "X", "c", "d"]);
-    expect([...dependentsClosure(nodes, "d")].sort()).toEqual(["d"]); // P is d's own phase: it may be d's predecessor
+    expect([...dependentsClosure(nodes, "d")].sort()).toEqual(["P", "d"]); // the picker no longer offers d's own phase
   });
 
   it("a loop of plain task links the move reaches but never pushes round is still left alone — and a sub-task its own link pushed is carried only by the rest", () => {
@@ -454,5 +458,125 @@ describe("SCH-4 / SCH-9 · a loop through a phase: refused when the link is made
     }
     expect(compared).toBeGreaterThan(1000);
     expect({ refused, closureMismatch, branchMismatch }).toEqual({ refused: 0, closureMismatch: 0, branchMismatch: 0 });
+  });
+});
+
+// PT SCH-4 / SCH-9 (sixth review pass): a task linked to its own phase. The
+// link check accepted it and the cascade read the phase at its stored finish
+// — the envelope round the task itself — so every move pushed the task past
+// it again: the reviewer's probe wrote t1 Jun 6–7, Jun 8–9, Jun 10–11 for
+// three one-day drags of its sibling, and Jun 11–12 for a drag of t1 one day
+// EARLIER. It is a loop (the phase finishes when its work does) and is now
+// refused when it is made and whenever a move reaches a stored one.
+describe("SCH-4 / SCH-9 · a task linked to its own phase is a loop", () => {
+  const N = (id: string, parentId: string | null, s: string, f: string, deps: string[] = []): ReflowNode =>
+    ({ id, parentId, plannedStartAt: d(`2026-${s}`), plannedAt: d(`2026-${f}`), dependsOn: deps, status: "planned" });
+  const drag = (nodes: ReflowNode[], id: string, delta: number) => {
+    const primary = computeTreeMove(nodes, id, delta, "defer");
+    const by = new Map(primary.map((c) => [c.id, c]));
+    const updated = nodes.map((n) => (by.has(n.id) ? { ...n, plannedStartAt: by.get(n.id)!.plannedStartAt, plannedAt: by.get(n.id)!.plannedAt } : n));
+    return { primary, plan: planCascade(updated, primary.map((c) => c.id)) };
+  };
+  const refusal = (fn: () => unknown) => {
+    try { fn(); } catch (e) { return e; }
+    return null;
+  };
+  // The reviewer's plan: phase P (Jun 1–4) holds t1 (Jun 1–2) and t2 (Jun 3–4).
+  const plan = (t1Deps: string[] = []): ReflowNode[] => [
+    N("P", null, "06-01", "06-04"), N("t1", "P", "06-01", "06-02", t1Deps), N("t2", "P", "06-03", "06-04"),
+  ];
+
+  it("the link is refused when it is made, named through the phases between (the picker and updateMilestone)", () => {
+    expect(linkCyclePath(plan(), "t1", "P")).toEqual(["t1", "P", "t1"]); // was null: saved
+    expect(dependentsClosure(plan(), "t1").has("P")).toBe(true);
+    // Nested: t inside Q inside P — waiting for either phase is a loop.
+    const nested: ReflowNode[] = [N("P", null, "06-01", "06-09"), N("Q", "P", "06-01", "06-05"), N("t", "Q", "06-01", "06-02")];
+    expect(linkCyclePath(nested, "t", "P")).toEqual(["t", "Q", "P", "t"]);
+    expect(linkCyclePath(nested, "t", "Q")).toEqual(["t", "Q", "t"]);
+    expect([...dependentsClosure(nested, "t")].sort()).toEqual(["P", "Q", "t"]);
+    // A phase linked to its own parent phase is the same loop.
+    expect(linkCyclePath(nested, "Q", "P")).toEqual(["Q", "P", "Q"]);
+  });
+
+  it("a stored one: a sibling's drag is refused with the loop named, not written two days out (the probe)", () => {
+    const err = refusal(() => drag(plan(["P"]), "t2", 1));
+    expect(err).toBeInstanceOf(CascadeRefusedError); // was: t1 written Jun 6–7
+    expect((err as CascadeRefusedError).kind).toBe("cycle");
+    expect((err as CascadeRefusedError).edges.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["t1>P:within", "P>t1:link"]);
+    // ExecutionView renders the "within" step as "(its phase)": “t1” → (its phase) “P” → “t1”.
+  });
+
+  it("…and a drag of the task itself, earlier or later, is refused (it was written one day LATER for a drag earlier)", () => {
+    for (const delta of [-1, 1]) {
+      const err = refusal(() => drag(plan(["P"]), "t1", delta));
+      expect(err).toBeInstanceOf(CascadeRefusedError);
+      expect((err as CascadeRefusedError).edges.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["t1>P:within", "P>t1:link"]);
+    }
+  });
+
+  it("without the link the same drag writes t2 and the phase only", () => {
+    const { primary, plan: p } = drag(plan(), "t2", 1);
+    expect(primary.map((c) => c.id).sort()).toEqual(["P", "t2"]);
+    expect(p.changes).toEqual([]);
+  });
+
+  it("a successor OUTSIDE the phase still waits for all the work inside it", () => {
+    const nodes = [...plan(), N("S", null, "06-05", "06-06", ["P"])];
+    const { plan: p } = drag(nodes, "t2", 2);
+    expect(p.changes.map((c) => `${c.id} ${day(c.plannedStartAt).slice(5)}→${day(c.plannedAt).slice(5)}`)).toEqual(["S 06-07→06-08"]);
+  });
+});
+
+// PT SCH-4 / SCH-9 (sixth review pass): a loop through a phase can be made
+// without any new link — by putting a task inside a phase whose successor it
+// already leads up to (the board's "Group under a parent → Use existing").
+// outlineLoop is the check groupTasksUnderParent runs on the outline as it
+// would be.
+describe("SCH-4 / SCH-9 · outlineLoop: a regroup that would close a loop through a phase", () => {
+  const N = (id: string, parentId: string | null, s: string, f: string, deps: string[] = []): ReflowNode =>
+    ({ id, parentId, plannedStartAt: d(`2026-${s}`), plannedAt: d(`2026-${f}`), dependsOn: deps, status: "planned" });
+  // The reviewer's probe: manual phase P holds p1; X waits for P; t waits for X.
+  const before = (): ReflowNode[] => [
+    N("P", null, "06-01", "06-05"), N("p1", "P", "06-01", "06-05"),
+    N("X", null, "06-08", "06-09", ["P"]), N("t", null, "06-10", "06-11", ["X"]),
+  ];
+  const regroup = (nodes: ReflowNode[], ids: string[], parentId: string) =>
+    nodes.map((n) => (ids.includes(n.id) ? { ...n, parentId } : n));
+
+  it("grouping t under P closes X → t → (its phase) P → X; before it, there is none", () => {
+    expect(outlineLoop(before(), ["t"])).toBeNull();
+    const loop = outlineLoop(regroup(before(), ["t"], "P"), ["t"]);
+    expect(loop?.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["t>P:within", "P>X:link", "X>t:link"]);
+  });
+
+  it("…which every move reaching it would refuse — the probe's p1 one day earlier, written before the regroup", () => {
+    const move = (nodes: ReflowNode[]) => {
+      const primary = computeTreeMove(nodes, "p1", -1, "defer");
+      const by = new Map(primary.map((c) => [c.id, c]));
+      const updated = nodes.map((n) => (by.has(n.id) ? { ...n, plannedStartAt: by.get(n.id)!.plannedStartAt, plannedAt: by.get(n.id)!.plannedAt } : n));
+      return planCascade(updated, primary.map((c) => c.id));
+    };
+    expect(move(before()).changes).toEqual([]);
+    expect(() => move(regroup(before(), ["t"], "P"))).toThrow(CascadeRefusedError);
+  });
+
+  it("a regroup that closes nothing is clear, a task that waits for its new phase is a loop, and plain-link loops are not its business", () => {
+    // Q is unrelated to X / t: grouping t under it is fine.
+    expect(outlineLoop(regroup([...before(), N("Q", null, "06-01", "06-02")], ["t"], "Q"), ["t"])).toBeNull();
+    // t waits for Q; grouping t under Q makes t wait for itself.
+    const own = regroup([...before(), N("Q", null, "06-01", "06-02"), N("u", null, "06-01", "06-01")].map((n) => (n.id === "t" ? { ...n, dependsOn: ["Q"] } : n)), ["t"], "Q");
+    expect(outlineLoop(own, ["t"])?.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["t>Q:within", "Q>t:link"]);
+    // An old loop of plain links downstream is left to the cascade's relaxation.
+    const plain = [...before(), N("b", null, "07-01", "07-02", ["t", "c"]), N("c", null, "07-03", "07-04", ["b"])];
+    expect(outlineLoop(plain, ["t"])).toBeNull();
+  });
+
+  it("each moved task's whole subtree is checked: grouping a phase whose sub-task leads up to the target's successor", () => {
+    const nodes: ReflowNode[] = [
+      N("P", null, "06-01", "06-05"), N("X", null, "06-08", "06-09", ["P"]),
+      N("G", null, "06-10", "06-12"), N("g1", "G", "06-10", "06-11", ["X"]),
+    ];
+    expect(outlineLoop(nodes, ["G"])).toBeNull();
+    expect(outlineLoop(regroup(nodes, ["G"], "P"), ["G"])?.map((e) => `${e.from}>${e.to}:${e.via}`)).toEqual(["g1>P:within", "P>X:link", "X>g1:link"]);
   });
 });

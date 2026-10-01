@@ -18,7 +18,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
-import { reflowAllAncestors, startForDuration, linkCyclePath, type ReflowNode } from "@/lib/scheduleReflow";
+import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
 import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
@@ -2241,6 +2241,50 @@ export interface GroupTasksResult {
   errors: string[];
 }
 
+/** Why putting `childIds` under the EXISTING phase `parentId` would make the
+ *  outline loop — or null (PT SCH-4 / SCH-9, sixth review pass). Grouping
+ *  changes no link, but a successor of a phase waits for all the work inside
+ *  it, so a task (or anything inside it) that already leads up to the
+ *  phase's successor closes a loop through the phase the moment it is put
+ *  inside — and every move that reaches it is then refused (planCascade) —
+ *  and a phase grouped under its own sub-task puts itself inside itself.
+ *  Checked over EVERY row of the project, read here (paged past PostgREST's
+ *  1,000-row cap, as updateMilestone's link check), on the outline as it
+ *  would be. A selected row that IS the target stays where it is (it is
+ *  skipped below, never made its own parent). */
+async function groupingLoopRefusal(projectId: string, parentId: string, parentName: string, childIds: string[]): Promise<string | null> {
+  const rows: Array<{ id: string; name: string; parent_id: string | null; depends_on: string[] | null }> = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error } = await supabase.from("milestones").select("id, name, parent_id, depends_on")
+      .eq("project_id", projectId).order("id").range(from, from + 999);
+    if (error) return `Couldn't check the grouping for loops (${error.message}). Nothing was grouped.`;
+    const got = (page ?? []) as typeof rows;
+    rows.push(...got);
+    if (got.length < 1000) break;
+  }
+  const nameOf = new Map(rows.map((r) => [r.id, r.name]));
+  const label = (id: string) => `“${nameOf.get(id) ?? id}”`;
+  const parentOf = new Map(rows.map((r) => [r.id, r.parent_id ?? null]));
+  const moving = new Set(childIds.filter((id) => id !== parentId));
+  // The target inside one of the selected tasks: that task would end up
+  // inside itself.
+  const seen = new Set<string>();
+  for (let at = parentOf.get(parentId) ?? null; at && !seen.has(at); at = parentOf.get(at) ?? null) {
+    seen.add(at);
+    if (moving.has(at)) {
+      return `“${parentName}” sits inside ${label(at)}, one of the selected tasks — grouping ${label(at)} under it would put ${label(at)} inside itself. Nothing was grouped; pick a parent outside the selected tasks.`;
+    }
+  }
+  // A loop through a phase on the regrouped outline.
+  const nodes: ReflowNode[] = rows.map((r) => ({
+    id: r.id, parentId: moving.has(r.id) ? parentId : (r.parent_id ?? null), plannedAt: "", dependsOn: r.depends_on ?? [],
+  }));
+  const loop = outlineLoop(nodes, [...moving]);
+  if (!loop) return null;
+  const path = [label(loop[0].from), ...loop.map((e) => `${e.via === "contains" ? "(contains) " : e.via === "within" ? "(its phase) " : ""}${label(e.to)}`)].join(" → ");
+  return `Grouping under “${parentName}” would leave a loop in the links: ${path}. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.`;
+}
+
 export async function groupTasksUnderParent(input: GroupTasksInput): Promise<GroupTasksResult> {
   const errors: string[] = [];
   if (input.childIds.length === 0) {
@@ -2291,6 +2335,14 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
       return { parentId: "", parentName: "", childCount: 0, errors };
     }
     parentName = parentRow.name;
+    // The outline may not loop: refused, named, before any write (PT SCH-4 /
+    // SCH-9). A NEW parent needs no check — it has no links and holds only
+    // the selected tasks, so it can close no loop.
+    const loop = await groupingLoopRefusal(input.projectId, parentId, parentName, input.childIds);
+    if (loop) {
+      errors.push(loop);
+      return { parentId: "", parentName: "", childCount: 0, errors };
+    }
   } else {
     // Create a new summary parent. Use the EARLIEST child's planned
     // date as the parent's planned date (so the parent appears
@@ -2342,7 +2394,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   // Reparent the children. RLS handles org-scoping.
   let updated = 0;
   for (const cid of input.childIds) {
-    if (cid === parentId) continue; // safety
+    if (cid === parentId) continue; // the target itself, if selected, stays where it is
     const { error } = await supabase
       .from("milestones")
       .update({

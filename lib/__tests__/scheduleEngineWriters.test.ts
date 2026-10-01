@@ -8,7 +8,9 @@
 //     groupTasksUnderParent refuse it; status / progress / who did the work
 //     stay editable.
 //   PT SCH-9  — a new dependency is checked for loops over EVERY milestone of
-//     the project, read from the database, and the loop is named.
+//     the project, read from the database, and the loop is named; so is a
+//     grouping under an existing phase (sixth review pass), which can close a
+//     loop through the phase without adding a link.
 //   PT SCH-18 / SCH-7 — applyMilestoneMoves reads back each moved row's new
 //     updated_at: the lock an Undo of that move sends.
 //   PT SCH-17 — deleting a phase promotes its children, removes every link to
@@ -350,6 +352,82 @@ describe("SCH-9 · a new link is checked for loops over the WHOLE project, from 
     expect(err).toBeInstanceOf(DependencyCycleError); // was saved: the check walked task-level links only
     expect((err as Error).message).toMatch(/That link would make a loop: Weld → Spool 12 → Hydrotest → Weld/);
     expect(db.writes.filter((w) => w.method === "update")).toEqual([]);
+  });
+});
+
+// PT SCH-4 / SCH-9 (sixth review pass): grouping under an EXISTING phase
+// re-parented the tasks with no loop check, so it could close a loop through
+// the phase without adding a link — and every move reaching it was then
+// refused — or put a phase inside its own sub-task.
+describe("SCH-4 / SCH-9 · grouping under an existing phase is checked for loops, over the whole project, before any write", () => {
+  // The reviewer's probe: manual phase "Mechanical" holds a fit-up; Hydrotest
+  // waits for Mechanical; a punch rework task waits for Hydrotest.
+  const seed = (extra: Row[] = []) => {
+    db.tables.milestones = [
+      row({ id: "P", name: "Mechanical", is_summary: true, parent_id: null, planned_start_at: "2026-06-01T00:00:00Z", planned_at: "2026-06-05T00:00:00Z" }),
+      row({ id: "p1", name: "Spool fit-up", parent_id: "P", planned_start_at: "2026-06-01T00:00:00Z", planned_at: "2026-06-05T00:00:00Z" }),
+      row({ id: "X", name: "Hydrotest", parent_id: null, planned_start_at: "2026-06-08T00:00:00Z", planned_at: "2026-06-09T00:00:00Z", depends_on: ["P"] }),
+      row({ id: "t", name: "Punch rework", parent_id: null, planned_start_at: "2026-06-10T00:00:00Z", planned_at: "2026-06-11T00:00:00Z", depends_on: ["X"] }),
+      ...extra,
+    ];
+  };
+  const updates = () => db.writes.filter((w) => w.method === "update" || w.method === "insert");
+
+  it("the probe: putting the rework task under Mechanical would close a loop through the phase — refused, named, nothing written", async () => {
+    seed();
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "P", childIds: ["t"], actorUserId: USER });
+    expect(grp.errors).toEqual([
+      "Grouping under “Mechanical” would leave a loop in the links: “Punch rework” → (its phase) “Mechanical” → “Hydrotest” → “Punch rework”. A task cannot (even indirectly) wait for itself, and every move that reached it would be refused. Nothing was grouped — remove one of these links first, or pick another parent.",
+    ]); // was: grouped, and every later drag in Mechanical refused
+    expect(grp.childCount).toBe(0);
+    expect(updates()).toEqual([]);
+    expect(ms().find((r) => r.id === "t")!.parent_id).toBeNull();
+    expect(audited.some((a) => a.action === "TASKS_GROUPED")).toBe(false);
+  });
+
+  it("a phase grouped under its own sub-task is refused (it would sit inside itself)", async () => {
+    seed([row({ id: "Q", name: "Insulation", is_summary: true, parent_id: "p1", planned_at: "2026-06-04T00:00:00Z" })]);
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["P"], actorUserId: USER });
+    expect(grp.errors[0]).toBe("“Insulation” sits inside “Mechanical”, one of the selected tasks — grouping “Mechanical” under it would put “Mechanical” inside itself. Nothing was grouped; pick a parent outside the selected tasks.");
+    expect(updates()).toEqual([]);
+  });
+
+  it("a grouping that closes nothing is written; a selected row that IS the target stays where it is", async () => {
+    seed([row({ id: "Q", name: "Insulation", is_summary: true, parent_id: null, planned_at: "2026-06-04T00:00:00Z" })]);
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["t", "Q"], actorUserId: USER });
+    expect(grp.errors).toEqual([]);
+    expect(grp.childCount).toBe(1);
+    expect(ms().find((r) => r.id === "t")!.parent_id).toBe("Q");
+    expect(ms().find((r) => r.id === "Q")!.parent_id).toBeNull();
+  });
+
+  it("on a 2,500-row project the loop through rows past #1,000 is still caught (the read is paged)", async () => {
+    const filler = Array.from({ length: 2497 }, (_, i) => row({ id: `f${String(i).padStart(4, "0")}`, name: `F${i}`, planned_at: "2026-06-01T00:00:00Z" }));
+    db.tables.milestones = [
+      ...filler,
+      row({ id: "zP", name: "Mechanical", is_summary: true, parent_id: null, planned_at: "2026-06-05T00:00:00Z" }),
+      row({ id: "zX", name: "Hydrotest", parent_id: null, planned_at: "2026-06-09T00:00:00Z", depends_on: ["zP"] }),
+      row({ id: "zt", name: "Punch rework", parent_id: null, planned_at: "2026-06-11T00:00:00Z", depends_on: ["zX"] }),
+    ];
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "zP", childIds: ["zt"], actorUserId: USER });
+    expect(grp.errors[0]).toMatch(/“Punch rework” → \(its phase\) “Mechanical” → “Hydrotest” → “Punch rework”/);
+    expect(updates()).toEqual([]);
+  });
+
+  it("a failed read of the project refuses the grouping — nothing written", async () => {
+    seed([row({ id: "Q", name: "Insulation", is_summary: true, parent_id: null, planned_at: "2026-06-04T00:00:00Z" })]);
+    let n = 0;
+    db.failSelect = (table) => (table === "milestones" && ++n === 3 ? { message: "statement timeout" } : null); // the selected rows, the parent, then the project
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["t"], actorUserId: USER });
+    expect(grp.errors).toEqual(["Couldn't check the grouping for loops (statement timeout). Nothing was grouped."]);
+    expect(updates()).toEqual([]);
+  });
+
+  it("a NEW parent needs no check (no links, only the selected tasks): the rework task is grouped", async () => {
+    seed();
+    const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentName: "Rework", childIds: ["t"], actorUserId: USER });
+    expect(grp.errors).toEqual([]);
+    expect(grp.childCount).toBe(1);
   });
 });
 

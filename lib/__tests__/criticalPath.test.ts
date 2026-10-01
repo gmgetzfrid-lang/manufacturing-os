@@ -32,10 +32,18 @@
 // ([W2, W3]). Each hand-off is now measured on its SUCCESSOR's clock: Mon–Fri
 // plus the weekend days of the successor and of the work leading up to it.
 // The captions count only the weekend days the path itself was measured with.
+//
+// Sixth fix pass: the successor's clock counted the weekend days of every
+// task it waits for, so one Saturday delivery feeding W5 gave W4 — and every
+// week behind it — a day of float, and the highlighted path became [S, W5].
+// Each hand-off is now measured on its OWN two tasks' weekend days only, so a
+// Mon–Fri task feeding a Monday start is critical whatever weekend work also
+// feeds it (P6 / MS Project). A task linked to its own phase is a loop here,
+// as in the link check and the cascade.
 
 import { describe, it, expect } from "vitest";
 import { computeCriticalPath, pathCalendarLabel } from "@/lib/criticalPath";
-import { afterLagMs, lagWorkingMs, workingGapMs, workingTimeMs, DAY_MS } from "@/lib/scheduleReflow";
+import { afterLagMs, lagWorkingMs, linkCyclePath, planCascade, reflowNodesFromMilestones, workingGapMs, workingTimeMs, CascadeRefusedError, DAY_MS } from "@/lib/scheduleReflow";
 import type { Milestone } from "@/types/schema";
 
 const mk = (o: Partial<Milestone>): Milestone => ({
@@ -207,7 +215,11 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
 
   // Review (third pass) probes: on the Mon–Fri clock both came back with
   // tasks that have real slack at 0 float — [Z, P, Y, X] and [Q, B, A].
-  it("a 7-day outage (Sat → Sun → Mon) counts its weekend: a Friday predecessor with two days of slack is not critical", () => {
+  // Sixth pass, restated: P is a Mon–Fri task (Thu–Fri) feeding Z's Monday
+  // start; the outage crew's weekend is not P's, so P has no float — P6 and
+  // MS Project report it critical (TF 0) on its own calendar. The third to
+  // fifth passes gave it the outage's weekend (2 d).
+  it("a 7-day outage (Sat → Sun → Mon): the weekend chain drives, and the Friday task feeding the Monday restart is critical too", () => {
     const ms: Milestone[] = [
       mk({ id: "X", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-06") }), // Sat
       mk({ id: "Y", plannedStartAt: d("2026-06-07"), plannedAt: d("2026-06-07"), dependsOn: ["X"] }), // Sun
@@ -217,8 +229,8 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     const r = computeCriticalPath(ms);
     expect(r.calendar).toBe("worked-weekends");
     expect(r.workedWeekendDays).toEqual(["2026-06-06", "2026-06-07"]);
-    expect([...r.ids].sort()).toEqual(["X", "Y", "Z"]);
-    expect(r.floatDays.get("P")).toBe(2); // Saturday and Sunday
+    expect([...r.ids].sort()).toEqual(["P", "X", "Y", "Z"]);
+    expect(r.floatDays.get("P")).toBe(0); // was 2 (Saturday and Sunday, the outage crew's)
     expect(r.floatDays.get("X")).toBe(0);
     expect(r.floatDays.get("Y")).toBe(0);
   });
@@ -237,23 +249,27 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     expect(r.floatDays.get("B")).toBe(0);
   });
 
-  it("a lag counts a weekend day the successor's inputs work, in the backward pass and the driving test alike", () => {
+  it("a lag counts only the weekend days its own link's two tasks work, in the backward pass and the driving test alike", () => {
     const ms: Milestone[] = [
       mk({ id: "X", externalRef: "msp:1", plannedStartAt: d("2026-06-05"), plannedAt: d("2026-06-05") }), // Fri, ready Sat 00:00
       mk({ id: "W", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-06"), dependsOn: ["X"] }), // Sat
-      // Z waits for W too, so its clock works that Saturday: +1 working day from Sat 00:00
-      // is the Saturday → Mon 00:00; Z starts Tue: one day of float, not driving.
+      // Z waits for W too, but W's Saturday is neither X's nor Z's (sixth
+      // pass: it counted as Z's input): +1 working day from Sat 00:00 spends
+      // Monday, and Z starts Tue — exactly on it, so X drives Z.
       mk({ id: "Z", externalRef: "msp:2", plannedStartAt: d("2026-06-09"), plannedAt: d("2026-06-09"), dependsOn: ["X", "W"], attributes: { source_links: "FS msp:1 +8h" } }),
     ];
     const r = computeCriticalPath(ms);
-    expect([...r.ids]).toEqual(["Z"]);
-    expect(r.floatDays.get("X")).toBe(1);
+    expect([...r.ids].sort()).toEqual(["X", "Z"]);
+    expect(r.floatDays.get("X")).toBe(0); // was 1
     expect(r.floatDays.get("W")).toBe(1); // ready Sun 00:00 → Tue 00:00: Monday
-    expect(r.calendar).toBe("mon-fri"); // the path (Z, a Tuesday) counts no weekend day
+    expect(r.calendar).toBe("mon-fri"); // the path (X, Z: Friday, Tuesday) counts no weekend day
+    // Z on the Monday: on X's and Z's clock (Mon–Fri) the +8 h lag from
+    // Friday night is not met by Monday 00:00 — a working day short, as P6
+    // reports a lag on the predecessor's calendar.
     const tight = computeCriticalPath(ms.map((m) => (m.id === "Z" ? { ...m, plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-08") } : m)));
     expect([...tight.ids].sort()).toEqual(["W", "X", "Z"]);
-    expect(tight.floatDays.get("X")).toBe(0);
-    expect(tight.calendar).toBe("worked-weekends");
+    expect(tight.floatDays.get("X")).toBe(-1); // was 0: W's Saturday paid the lag
+    expect(tight.calendar).toBe("worked-weekends"); // W, on the path, works its Saturday
     expect(tight.workedWeekendDays).toEqual(["2026-06-06"]);
     // With the Saturday job done, nobody works that Saturday: the lag spends
     // Monday, and the Tuesday start is exactly on it.
@@ -327,16 +343,16 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
       mk({ id: "S", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-06"), dependsOn: ["W1"] }), // Sat
       mk({ id: "W2", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-12"), dependsOn: ["S"] }),
       mk({ id: "W3", plannedStartAt: d("2026-06-15"), plannedAt: d("2026-06-19"), dependsOn: ["W2"] }),
-      // A parallel Friday task feeding W2 has the network's Saturday as float.
+      // A parallel Friday task feeding W2.
       mk({ id: "F", plannedStartAt: d("2026-06-05"), plannedAt: d("2026-06-05") }),
     ];
     const withF = ms.map((m) => (m.id === "W2" ? { ...m, dependsOn: ["S", "F"] } : m));
     const r = computeCriticalPath(withF);
-    expect([...r.ids].sort()).toEqual(["S", "W1", "W2", "W3"]);
+    expect([...r.ids].sort()).toEqual(["F", "S", "W1", "W2", "W3"]);
     for (const id of ["W1", "S", "W2", "W3"]) expect(r.floatDays.get(id)).toBe(0);
-    // W2 waits for S, so its clock works that Saturday: F, feeding W2 in
-    // parallel, may slip into it (the outage rule).
-    expect(r.floatDays.get("F")).toBe(1);
+    // F (a Friday task) feeding W2 (Monday) is critical: S's Saturday is not
+    // F's or W2's (sixth pass: W2's clock counted it, F had 1 d).
+    expect(r.floatDays.get("F")).toBe(0);
     expect(r.calendar).toBe("worked-weekends");
     expect(r.workedWeekendDays).toEqual(["2026-06-06"]);
   });
@@ -413,19 +429,79 @@ describe("computeCriticalPath — CPM over the finish-to-start links", () => {
     expect(r.floatDays.get("W1")).toBe(1.3); // was 2.3
     expect(r.calendar).toBe("mon-fri");
   });
-  it("the outage rule, pinned: weekend work that feeds the SAME successor gives its weekday predecessor the weekend as float", () => {
-    // W2 (Mon) waits for W1 (Mon–Fri) and for a weekend job S (Sat → Sun):
-    // the plan works that weekend towards W2, so W1 may slip into it. A
-    // Saturday job that feeds W3 instead leaves W1 → W2 on Mon–Fri ((a) above).
+  it("weekend work that feeds the SAME successor gives its weekday predecessor no float (the fifth pass's outage rule, withdrawn)", () => {
+    // W2 (Mon) waits for W1 (Mon–Fri) and for a weekend job S (Sat → Sun).
+    // W1 runs Mon–Fri: if it slips a working day, W2 slips. The fifth pass
+    // gave W1 the weekend as float (2 d) and took it off the path.
     const ms = [
       ...weeks().map((m) => (m.id === "W2" ? { ...m, dependsOn: ["W1", "S"] } : m)),
       mk({ id: "S", plannedStartAt: d("2026-06-06"), plannedAt: d("2026-06-07") }),
     ];
     const r = computeCriticalPath(ms);
-    expect([...r.ids].sort()).toEqual(["S", "W2", "W3"]);
-    expect(r.floatDays.get("W1")).toBe(2);
+    expect([...r.ids].sort()).toEqual(["S", "W1", "W2", "W3"]);
+    expect(r.floatDays.get("W1")).toBe(0);
     expect(r.floatDays.get("S")).toBe(0);
     expect(r.workedWeekendDays).toEqual(["2026-06-06", "2026-06-07"]);
+  });
+
+  // Review (sixth pass) probe: on the successor's inputs' clock this gave
+  // [S, W5], W1–W4 at 1 d of float each ("plus the 1 weekend day").
+  it("a Saturday delivery the weekend before the install week does not take the Mon–Fri chain behind it off the path", () => {
+    const at = (ms: number) => new Date(ms).toISOString();
+    const mon = Date.UTC(2026, 5, 1);
+    const W = [0, 1, 2, 3, 4].map((w) => mk({ id: `W${w + 1}`, plannedStartAt: at(mon + w * 7 * DAY_MS), plannedAt: at(mon + w * 7 * DAY_MS + 4 * DAY_MS), dependsOn: w ? [`W${w}`] : [] }));
+    const sat = mon + 3 * 7 * DAY_MS + 5 * DAY_MS; // Sat Jun 27
+    const ms = [...W.map((m) => (m.id === "W5" ? { ...m, dependsOn: ["W4", "S"] } : m)), mk({ id: "S", plannedStartAt: at(sat), plannedAt: at(sat) })];
+    const r = computeCriticalPath(ms);
+    expect([...r.ids].sort()).toEqual(["S", "W1", "W2", "W3", "W4", "W5"]);
+    for (const id of ["W1", "W2", "W3", "W4", "W5", "S"]) expect(r.floatDays.get(id)).toBe(0);
+    expect(r.workedWeekendDays).toEqual(["2026-06-27"]); // S's own Saturday, on the path
+    const without = computeCriticalPath(W);
+    expect([...without.ids].sort()).toEqual(["W1", "W2", "W3", "W4", "W5"]);
+    expect(without.calendar).toBe("mon-fri");
+  });
+
+  it("a weekend crew's overnight counts both crews' days; a weekday task into a Sunday start counts the Sunday morning only", () => {
+    // A (Sat 08–17) → B (Sun 08–17): the rest of A's Saturday and B's Sunday
+    // morning, 15 h. F (Fri 08–17) → B: F's Friday evening and B's Sunday
+    // morning, 15 h; F's calendar has no Saturday.
+    const ms: Milestone[] = [
+      mk({ id: "A", plannedStartAt: "2026-06-06T08:00:00Z", plannedAt: "2026-06-06T17:00:00Z" }),
+      mk({ id: "F", plannedStartAt: "2026-06-05T08:00:00Z", plannedAt: "2026-06-05T17:00:00Z" }),
+      mk({ id: "B", plannedStartAt: "2026-06-07T08:00:00Z", plannedAt: "2026-06-07T17:00:00Z", dependsOn: ["A", "F"] }),
+    ];
+    const r = computeCriticalPath(ms);
+    expect(r.floatDays.get("A")).toBe(0.6);
+    expect(r.floatDays.get("F")).toBe(0.6);
+    expect([...r.ids].sort()).toEqual(["A", "B", "F"]);
+  });
+
+  // PT SCH-4 (sixth pass): the link check, the cascade and the path read a
+  // task linked to its own phase the same way — a loop. The path read it as
+  // "waits for every sibling", so one such task was analysed and two were
+  // reported as a loop of each other.
+  it("a task linked to a phase it sits in is a loop — reported and left out, as the link check and the cascade read it", () => {
+    const phase = (deps: Record<string, string[]>): Milestone[] => [
+      mk({ id: "P", isSummary: true, plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-05") }),
+      mk({ id: "t1", parentId: "P", plannedStartAt: d("2026-06-01"), plannedAt: d("2026-06-02"), dependsOn: deps.t1 ?? [] }),
+      mk({ id: "t2", parentId: "P", plannedStartAt: d("2026-06-03"), plannedAt: d("2026-06-05"), dependsOn: deps.t2 ?? [] }),
+      mk({ id: "S", plannedStartAt: d("2026-06-08"), plannedAt: d("2026-06-09"), dependsOn: ["P"] }),
+    ];
+    const one = computeCriticalPath(phase({ t1: ["P"] }));
+    // Was null: t1 read as waiting for t2. S waits for all of P, t1 included,
+    // so it sits downstream of the loop and is left out with it, as with any loop.
+    expect(one.cycle?.sort()).toEqual(["S", "t1"]);
+    expect(one.floatDays.has("t1")).toBe(false);
+    expect([...one.ids]).toEqual(["t2"]);
+    const nodes = reflowNodesFromMilestones(phase({}));
+    expect(linkCyclePath(nodes, "t1", "P")).toEqual(["t1", "P", "t1"]);
+    expect(() => planCascade(reflowNodesFromMilestones(phase({ t1: ["P"] })), ["t2"])).toThrow(CascadeRefusedError);
+    const two = computeCriticalPath(phase({ t1: ["P"], t2: ["P"] }));
+    expect(two.cycle?.sort()).toEqual(["S", "t1", "t2"]); // S waits for both; downstream of a loop is left out too
+    // A phase linked to a task inside it is the same loop.
+    const back = computeCriticalPath(phase({}).map((m) => (m.id === "P" ? { ...m, dependsOn: ["t1"] } : m)));
+    expect(back.cycle).not.toBeNull();
+    expect(back.cycle).toContain("t1");
   });
 
   it("empty-safe", () => {
