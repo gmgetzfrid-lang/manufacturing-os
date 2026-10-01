@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import type { AiProviderId } from "@/lib/ai/providerCall";
+import { chunkerVersionOf, CHUNKER_TABLE_AWARE, type ChunkerVersion } from "@/lib/knowledgeText";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -793,8 +794,11 @@ export async function runTableAwareReindex(libraryId: string): Promise<{
 
 /** The engine's mark on a document it reset whose old index it could not
  *  fully delete (`resetKnowledgeIndex` in lib/knowledgeIngest.ts): reset,
- *  queued, and cleared by its first re-index batch. */
-const RESET_WITH_LEFTOVERS = /\(the row is queued; /;
+ *  queued, and cleared by its first re-index batch. The route returns its
+ *  problems as free text, so this is matched against the engine's own
+ *  wording; lib/__tests__/reindexLeftoversCoupling.test.ts ties the two
+ *  together (structured leftovers are ING-13's). */
+export const RESET_WITH_LEFTOVERS = /\(the row is queued; /;
 
 /** Whether THIS person's own AI key could read pages with AI vision right
  *  now, by the ingest route's own test (app/api/knowledge/ingest): a saved
@@ -825,20 +829,72 @@ export async function ownVisionKeyProblem(orgId: string): Promise<string | null>
 
 const pagesLabel = (n: number) => `${n} page${n === 1 ? "" : "s"}`;
 
+/** A row's AI-vision page count as far as its current index stands behind
+ *  it: none on a row with no pages indexed (a reset row keeps the last
+ *  generation's count until its first batch commits), and never more than
+ *  the pages indexed or the page count — ING-12 records `vision_pages`
+ *  already inflated past the page count on existing rows. The library page's
+ *  row counter and the table-aware re-index's figure both read it. */
+export function clampedVisionPages(d: Pick<KnowledgeDocument, "visionPages" | "pagesIndexed" | "pageCount">): number {
+  if (!(d.pagesIndexed > 0)) return 0;
+  return Math.max(0, Math.min(d.visionPages, d.pagesIndexed, d.pageCount ?? d.pagesIndexed));
+}
+
+/** The AI-vision pages a table-aware re-index's confirmation names (ING-4).
+ *  The route's dry run sums `vision_pages` raw over the documents it would
+ *  reset, so a row ING-12 inflated past its page count inflates the sum. The
+ *  page sums its own documents by the route's selector (pages indexed, on a
+ *  chunker other than `chunker`), each clamped as its row counter is
+ *  (clampedVisionPages), and the smaller of the two is the figure shown: it
+ *  never names more pages than either count stands behind. It is a floor on
+ *  what the run re-reads, not a ceiling — see tableAwareReindexMessage. */
+export function reindexVisionPages(
+  plan: TableAwareReindexPlan,
+  documents: ReadonlyArray<Pick<KnowledgeDocument, "visionPages" | "pagesIndexed" | "pageCount" | "chunkVersion">>,
+  chunker: ChunkerVersion = CHUNKER_TABLE_AWARE,
+): number {
+  const own = documents
+    .filter((d) => d.pagesIndexed > 0 && chunkerVersionOf(d.chunkVersion) !== chunker)
+    .reduce((n, d) => n + clampedVisionPages(d), 0);
+  return Math.max(0, Math.min(Number(plan.visionPagesToReread) || 0, own));
+}
+
+/** Who reads a page with AI vision once the run has reset its document, and
+ *  on whose key. The interactive drivers read on the indexing person's own
+ *  key (the ingest route: a saved connection on an allowed provider, under
+ *  its cap); the nightly drain on the uploader's (`loadSponsorVision` in
+ *  lib/knowledgeIngest.ts: the same gates plus a signed AI agreement). */
+const reindexVisionDrivers = (yours: string): string =>
+  `${yours}; after that, an Admin or Doc Control member with the app open indexes on their own key, and the nightly `
+  + "maintenance run on the uploader's key — only if they have one with budget left and have signed the AI agreement "
+  + "(a doc-control mirror has no uploader)";
+
 /** The confirmation before a table-aware re-index: what the dry run counts
  *  (documents reset, AI-vision pages read and billed again), on what
- *  condition those pages are read again at all, and what the count leaves
- *  out — every document it resets has its passages deleted and drops out of
- *  Ask until it is re-indexed (ING-4 / ING-7).
+ *  condition AI vision reads a page at all, and what the count leaves out —
+ *  every document it resets has its passages deleted and drops out of Ask
+ *  until it is re-indexed (ING-4 / ING-7). `plan.visionPagesToReread` is the
+ *  figure the page shows (reindexVisionPages), not the route's raw sum.
  *
- *  AI vision reads a page only on a usable key (one with budget left):
- *  interactively the indexing person's, on the nightly run the uploader's.
- *  A batch with neither commits the page with its text layer only and
- *  records nothing to retry. The page asks this only after it checked the
- *  clicking person's own key (ownVisionKeyProblem), since its own loop
- *  indexes first. A library that reads every page with AI vision
- *  (`visionAllPages`) is never indexed by the nightly run without a
- *  sponsored key, and a doc-control mirror has no uploader to sponsor it. */
+ *  AI vision reads a page only on a usable key: interactively the indexing
+ *  person's, on the nightly run the uploader's (which also needs a signed AI
+ *  agreement). A batch with no usable key commits the page with its text
+ *  layer only and records nothing to retry. The page asks this only after it
+ *  checked the clicking person's own key (ownVisionKeyProblem) wherever the
+ *  dry run counts AI-vision pages or the library reads every page with AI
+ *  vision, since its own loop indexes first.
+ *
+ *  The count is of pages AI vision read AND kept (`vision_pages`). The
+ *  engine reads with AI vision every page that needs it (`pageNeedsVision`:
+ *  no usable text layer) wherever the batch has a usable key — including a
+ *  page indexed before with no key, one AI vision read and found blank (a
+ *  billed read that is not counted), and one it could not read — so the
+ *  re-index can read, and bill, more pages than the count, even when it is
+ *  zero. A library that reads every page with AI vision (`visionAllPages`)
+ *  is never indexed by the nightly run without a sponsored key
+ *  (`fileBehind`), and a doc-control mirror has no uploader to sponsor it;
+ *  but a keyless Admin or Doc Control member with the app open still
+ *  indexes such a document, text-only (ING-13). */
 export function tableAwareReindexMessage(
   plan: TableAwareReindexPlan, opts: { visionAllPages?: boolean } = {},
 ): string {
@@ -849,26 +905,40 @@ export function tableAwareReindexMessage(
     `${docs} will be re-read with table-aware chunking: a table stays one passage with a row per line, `
       + "and a sentence that runs over a page break is kept whole.",
   ];
-  if (p > 0 || allPages) {
-    const what = p > 0
-      ? `${pagesLabel(p)} ${p === 1 ? "was" : "were"} read by AI vision. ${p === 1 ? "It is" : "They are"} read again, and billed,`
-      : "This library reads every page with AI vision. Its pages are read again, and billed,";
+  const noKey = "A page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD "
+    + "sheet, nothing — and AI vision does not read it again until the document is re-indexed on a key (Re-index all).";
+  if (allPages) {
+    const counted = p > 0 ? ` ${pagesLabel(p)} of them ${p === 1 ? "was" : "were"} read by AI vision before.` : "";
     parts.push(
-      `${what} only where whoever indexes them has an AI key with budget left: this page starts on your key as soon `
-      + "as you confirm; after that, an Admin or Doc Control member with the app open indexes on their own key, and the "
-      + "nightly maintenance run on the uploader's key (a doc-control mirror has no uploader). A page indexed with no "
-      + "such key comes back with only what its text layer holds — for a scan or a CAD sheet, nothing — and AI vision "
-      + "does not read it again until the document is re-indexed on a key (Re-index all).",
+      `This library reads every page with AI vision.${counted} Every page of those documents is read, and billed, only `
+      + `where whoever indexes it has an AI key with budget left: ${reindexVisionDrivers("this page starts on your key as soon as you confirm")}. `
+      + noKey,
     );
-    if (allPages) {
-      parts.push(
-        "Because this library reads every page with AI vision, the nightly run never indexes a document whose uploader "
-        + "has no AI key with budget left — every doc-control mirror among them: those stay out of Ask until an Admin "
-        + "or Doc Control member with a key indexes them from the app.",
-      );
-    }
+    parts.push(
+      "Because this library reads every page with AI vision, the nightly run never indexes a document whose uploader "
+      + "has no AI key with budget left and a signed AI agreement — every doc-control mirror among them. Until a driver "
+      + "with a usable key reaches those documents, the nightly run skips them, but any Admin or Doc Control member with "
+      + "the app open and no usable key of their own indexes them text-only.",
+    );
+  } else if (p > 0) {
+    parts.push(
+      `${pagesLabel(p)} of them ${p === 1 ? "was" : "were"} read by AI vision. ${p === 1 ? "It is" : "They are"} read `
+      + "again, and billed, only where whoever indexes them has an AI key with budget left: "
+      + `${reindexVisionDrivers("this page starts on your key as soon as you confirm")}. ${noKey}`,
+    );
+    parts.push(
+      "That count is only the pages AI vision read and kept: a page that needs AI vision and is not in it — one indexed "
+      + "before with no key, one AI vision found blank, or one it could not read — is read, and billed, on the same terms.",
+    );
   } else {
-    parts.push("No page needs AI vision again.");
+    parts.push(
+      "No page of those documents is counted as read by AI vision. Even so, a page that needs AI vision — one with no "
+      + "usable text layer, such as a scan or a CAD sheet, that was indexed before with no key, or that AI vision found "
+      + "blank or could not read — may still be read, and billed, on the re-index, but only where whoever indexes it has "
+      + "an AI key with budget left: "
+      + `${reindexVisionDrivers("this page starts as soon as you confirm, on your key if you have one with budget left")}. `
+      + "With no such key it comes back with its text layer only.",
+    );
   }
   parts.push(
     "What that count leaves out: each document it resets drops out of Ask — its passages are deleted and it waits "
@@ -883,8 +953,16 @@ export function tableAwareReindexMessage(
  *  resets on their key at once, and with no usable key those AI-vision
  *  pages would come back with their text layer only, not read by AI vision
  *  again until the document is re-indexed on a key. */
-export function tableAwareReindexKeyRefusal(plan: TableAwareReindexPlan, problem: string): string {
-  const what = plan.visionPagesToReread > 0 ? `${pagesLabel(plan.visionPagesToReread)} of this library` : "every page of this library";
+export function tableAwareReindexKeyRefusal(
+  plan: TableAwareReindexPlan, problem: string, opts: { visionAllPages?: boolean } = {},
+): string {
+  // The figure is the page's (reindexVisionPages). The page asks for a key on
+  // the route's raw sum, so a page figure of 0 can still meet a refusal: the
+  // pages are then named without a count. A library that reads every page
+  // with AI vision re-reads every page of what it resets, counted or not.
+  const p = plan.visionPagesToReread;
+  const what = opts.visionAllPages === true ? "every page of the documents it resets"
+    : p > 0 ? `${pagesLabel(p)} of this library` : "the AI-vision pages of the documents it resets";
   return `Nothing was reset. This re-index re-reads ${what} with AI vision, and this page starts indexing what it `
     + `resets on your key as soon as it runs — but ${problem}. Indexed with no usable key, those pages would come back `
     + "with only their text layer, and AI vision would not read them again until the document is re-indexed on a key.";
