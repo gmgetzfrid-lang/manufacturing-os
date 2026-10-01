@@ -15,7 +15,7 @@ import type { SigningCredential } from "@/lib/eSignatures";
 import AckPill from "@/components/documents/AckPill";
 import {
   resolveEffectiveAckPolicy, listRoster, recordAcknowledgment, waiveAcknowledgment,
-  nudgeAcknowledgment, setAckPolicy, openAckReport,
+  nudgeAcknowledgment, setAckPolicy, openAckReport, AckRosterRecomputeError,
   type AckRosterRow, type AckSummary,
 } from "@/lib/acknowledgments";
 import { listTeams, type Team } from "@/lib/teams";
@@ -148,20 +148,30 @@ export default function AckSection({ doc, orgId, canManage }: {
   }, [mode, userQuery, orgId]);
 
   const targetId = scope === "document" ? doc.id : scope === "collection" ? doc.collectionId : doc.libraryId;
+  // PKG-9 (P14 final review): a refused save, or a save whose rosters were not
+  // all recomputed, is said in the panel — never an unhandled rejection. The
+  // latter SAVED the policy, so the panel leaves the editor and re-reads it.
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const policyFailed = async (e: unknown) => {
+    setPolicyError((e as Error)?.message || "The read-&-understood policy could not be saved.");
+    if (e instanceof AckRosterRecomputeError) { setMode("view"); await load(); }
+  };
   const saveEdit = async () => {
     if (!targetId) return;
     setBusy(true);
+    setPolicyError(null);
     try {
       const policy: AckPolicy = { enabled, assigneeIds: people.map((p) => p.uid), assigneeRoles: roles, assigneeTeamIds: teamIds, hardGate };
       await setAckPolicy({ level: scope, id: targetId, orgId, policy, actorId: uid, actorName: userEmail });
       setMode("view"); await load();
-    } finally { setBusy(false); }
+    } catch (e) { await policyFailed(e); } finally { setBusy(false); }
   };
   const clearPolicy = async () => {
     if (!targetId) return;
     setBusy(true);
+    setPolicyError(null);
     try { await setAckPolicy({ level: scope, id: targetId, orgId, policy: null, actorId: uid, actorName: userEmail }); setMode("view"); await load(); }
-    finally { setBusy(false); }
+    catch (e) { await policyFailed(e); } finally { setBusy(false); }
   };
   const toggleRole = (r: Role) => setRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
   const toggleTeam = (id: string) => setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -228,6 +238,10 @@ export default function AckSection({ doc, orgId, canManage }: {
                 ))}
               </div>
             </div>
+          )}
+
+          {policyError && (
+            <div role="alert" className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{policyError}</div>
           )}
 
           {/* Manage entry-point */}

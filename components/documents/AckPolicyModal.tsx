@@ -9,7 +9,7 @@ import React, { useEffect, useState } from "react";
 import { ClipboardCheck, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
-import { setAckPolicy } from "@/lib/acknowledgments";
+import { setAckPolicy, AckRosterRecomputeError } from "@/lib/acknowledgments";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type AckPolicy, type Role } from "@/types/schema";
 
@@ -25,6 +25,9 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
 }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // PKG-9 (P14 final review): a refused save, or a save whose rosters were
+  // not all recomputed, is said here — never an unhandled rejection.
+  const [error, setError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [hardGate, setHardGate] = useState(false);
   const [people, setPeople] = useState<OrgUser[]>([]);
@@ -74,8 +77,16 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   const toggleRole = (r: Role) => setRoles((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
   const toggleTeam = (id: string) => setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
 
+  /** A save that landed but did not recompute every roster still saved the
+   *  policy: the parent is told (onSaved) and the dialog stays open on the
+   *  message; any other failure saved nothing. */
+  const failed = (e: unknown) => {
+    if (e instanceof AckRosterRecomputeError) onSaved?.();
+    setError((e as Error)?.message || "The read-&-understood policy could not be saved.");
+  };
   const save = async () => {
     setBusy(true);
+    setError(null);
     try {
       const policy: AckPolicy = {
         enabled,
@@ -86,12 +97,13 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
       };
       await setAckPolicy({ level, id, orgId, policy, actorId: uid, actorName: userName });
       onSaved?.(); onClose();
-    } finally { setBusy(false); }
+    } catch (e) { failed(e); } finally { setBusy(false); }
   };
   const remove = async () => {
     setBusy(true);
+    setError(null);
     try { await setAckPolicy({ level, id, orgId, policy: null, actorId: uid, actorName: userName }); onSaved?.(); onClose(); }
-    finally { setBusy(false); }
+    catch (e) { failed(e); } finally { setBusy(false); }
   };
 
   const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
@@ -165,6 +177,10 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
 
                 {nobody && <div className="text-[11px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}
               </>
+            )}
+
+            {error && (
+              <div role="alert" className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{error}</div>
             )}
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
