@@ -845,6 +845,25 @@
         "the API contract in audit-reports/intelligence/01-ingestion.md (pagesIndexed, pagesReadable, visionFailedPages, busy / retryAfterMs, the 409 reasons)"
       ],
       "sequencingNotes": "Added by the integrator at the I-02 merge (2026-10-01). Small and UI-only; schedule before I-03 so the ask route and the page meet one contract."
+    },
+    {
+      "name": "I-06b INGEST ROUTE FOLLOW-UPS — a server-side vision-key gate on the table-aware re-index and on keyless drivers, structured leftovers, the owed drain test",
+      "findings": [
+        "ING-13 (opened 2026-10-01 at the I-02b integration: the reindex action and keyless drivers have no server-side vision-key gate; the route's leftovers are free text)",
+        "ING-6 (the fileBehind drain test the I-06 merge left owed; ING-6's other open limbs are I-03's and I-07's)"
+      ],
+      "files": [
+        "app/api/knowledge/ingest/route.ts (reindex(): refuse 409 when visionPagesToReread > 0 or visionAllPages and the caller fails the vision test; structured leftovers next to errors)",
+        "lib/knowledgeIngest.ts (a keyless batch of a regenerated document records its needs-vision pages rather than committing them text-only as complete; the fileBehind drain test)",
+        "lib/knowledge.ts (consume the structured leftovers; drop the RESET_WITH_LEFTOVERS free-text parse once the route returns them)",
+        "lib/__tests__/ingestLock.test.ts / ingestLoopClient.test.ts (extend)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-06 INGESTION and I-02b merged (both own the files above; narrow edits)",
+        "I-05 merged — the vision test is lib/ai/aiGates.ts assertAiGates when it exists; never a parallel copy"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 from the I-02b final review (DEC-31 remainder)."
     }
   ],
   "crossAreaFileOverlaps": [
