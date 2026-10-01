@@ -197,6 +197,7 @@ const RAIL = prosrcOf(M131, "CREATE OR REPLACE FUNCTION enforce_document_registe
 const SYNC = prosrcOf(M131, "CREATE OR REPLACE FUNCTION sync_current_version_label()");
 const DEL = prosrcOf(M131, "CREATE OR REPLACE FUNCTION enforce_document_versions_pointer_rail()");
 const WRITABLE = prosrcOf(M131, "CREATE OR REPLACE FUNCTION supersession_writable(p_org uuid, p_superseded uuid, p_replacement uuid)");
+const INS = prosrcOf(M131, "CREATE OR REPLACE FUNCTION enforce_document_insert_pointer_rail()");
 
 describe("20261131 — DRLS-3 / DRLS-14 register rail", () => {
   it("fires on exactly the register and pointer columns, BEFORE UPDATE", () => {
@@ -227,6 +228,28 @@ describe("20261131 — DRLS-3 / DRLS-14 register rail", () => {
     expect(M131).toMatch(/CREATE CONSTRAINT TRIGGER trg_document_versions_pointer_rail\n  AFTER DELETE ON document_versions\n  NOT DEFERRABLE INITIALLY IMMEDIATE\n  FOR EACH ROW EXECUTE FUNCTION enforce_document_versions_pointer_rail\(\);/);
     expect(DEL).toContain("IF EXISTS (SELECT 1 FROM documents d WHERE d.current_version_id = OLD.id) THEN");
     expect(DEL).toContain("UPDATE documents SET pending_version_id = NULL WHERE pending_version_id = OLD.id;");
+  });
+  it("DRLS-14: a signed-in INSERT is born with no pointers (BEFORE INSERT); the service role is exempt for the restore", () => {
+    expect(M131).toContain("CREATE TRIGGER trg_document_insert_pointer_rail\n  BEFORE INSERT ON documents\n  FOR EACH ROW EXECUTE FUNCTION enforce_document_insert_pointer_rail();");
+    expect(M131).toContain("CREATE OR REPLACE FUNCTION enforce_document_insert_pointer_rail()\nRETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    const svc = INS.indexOf("IF auth.uid() IS NULL THEN\n    RETURN NEW;\n  END IF;");
+    const refuse = INS.indexOf("IF NEW.current_version_id IS NOT NULL OR NEW.pending_version_id IS NOT NULL THEN");
+    expect(svc).toBeGreaterThan(0);
+    expect(refuse).toBeGreaterThan(svc);
+    expect(INS).toContain("USING ERRCODE = 'foreign_key_violation';");
+  });
+  it("REV-13: a pointer move copies the new current revision's effective date (every caller — before the service-role return); the caller's own date change is what the tier check reads", () => {
+    const copy = RAIL.indexOf("NEW.effective_date := v_eff;");
+    const svc = RAIL.indexOf("IF v_actor IS NULL THEN");
+    const tier = RAIL.indexOf("OR v_eff_moved)");
+    expect(copy).toBeGreaterThan(0);
+    expect(copy).toBeLessThan(svc);
+    expect(tier).toBeGreaterThan(svc);
+    expect(RAIL).toContain("v_eff_moved boolean := NEW.effective_date IS DISTINCT FROM OLD.effective_date;");
+    expect(RAIL).toContain("IF v_ptr_moved THEN\n    SELECT v.effective_date INTO v_eff\n      FROM document_versions v WHERE v.id = NEW.current_version_id;");
+    expect(RAIL).toContain("IF v_eff IS NULL OR v_eff < (now() AT TIME ZONE 'UTC')::date - 1 THEN\n      NEW.effective_notified_at := now();\n    ELSE\n      NEW.effective_notified_at := NULL;\n    END IF;");
+    // the DECLARE-time capture precedes the copy, so the tier check never sees the copy
+    expect(RAIL).not.toContain("OR NEW.effective_date IS DISTINCT FROM OLD.effective_date)");
   });
   it("the version pointers are NOT declared FOREIGN KEYs — the restore replays documents before document_versions (the P3 LIFECYCLE decision)", () => {
     expect(stripComments(M131)).not.toMatch(/ALTER TABLE documents[^;]*REFERENCES/);
@@ -290,6 +313,7 @@ describe("20261131 — DRLS-13 / REV-14 supersession map", () => {
       "CREATE OR REPLACE FUNCTION enforce_document_register_rail()\nRETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
       "CREATE OR REPLACE FUNCTION sync_current_version_label()\nRETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
       "CREATE OR REPLACE FUNCTION enforce_document_versions_pointer_rail()\nRETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
+      "CREATE OR REPLACE FUNCTION enforce_document_insert_pointer_rail()\nRETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$",
       "RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$",
     ]) expect(M131).toContain(head);
   });
@@ -299,13 +323,15 @@ describe("20261131 — DRLS-13 / REV-14 supersession map", () => {
     expect(inv).toMatch(/pending_version_id names no revision \(DRLS-14 dangling\)/);
     expect(inv).toMatch(/rev differs from the current revision''s label \(DRLS-3/);
     expect(inv).toMatch(/duplicate document_supersessions pairs \(REV-14/);
+    expect(inv).toMatch(/effective_date differs from their current revision''s \(REV-13/);
   });
   it("every prosrc probe can match the body it reads", () => {
     const n = checkProsrcProbes(M131, {
       enforce_document_register_rail: RAIL, sync_current_version_label: SYNC,
       enforce_document_versions_pointer_rail: DEL, supersession_writable: WRITABLE,
+      enforce_document_insert_pointer_rail: INS,
     });
-    expect(n).toBeGreaterThanOrEqual(10);
+    expect(n).toBeGreaterThanOrEqual(12);
   });
 });
 
@@ -313,20 +339,30 @@ describe("20261131 — DRLS-13 / REV-14 supersession map", () => {
 // Each transcription mirrors the SQL line for line; the pins below fail if
 // the SQL moves without the transcription.
 
-type Doc = { id: string; org_id: string; rev: string | null; revision: string | null; document_number: string | null; effective_date: string | null; current_version_id: string | null; pending_version_id: string | null };
-type Ver = { id: string; record_id: string; revision_label: string; base_rev?: string | null; review_state?: string | null };
-type Ctx = { actor: string | null; publisher: boolean; versions: Ver[] };
+type Doc = { id: string; org_id: string; rev: string | null; revision: string | null; document_number: string | null; effective_date: string | null; effective_notified_at?: string | null; current_version_id: string | null; pending_version_id: string | null };
+type Ver = { id: string; record_id: string; revision_label: string; base_rev?: string | null; review_state?: string | null; effective_date?: string | null };
+type Ctx = { actor: string | null; publisher: boolean; versions: Ver[]; utcToday?: string };
 const trim = (s: string | null | undefined) => (s ?? "").trim();
+const dayBefore = (iso: string) => new Date(Date.parse(`${iso}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
-/** enforce_document_register_rail(), transcribed. Throws the RAISE. */
-function registerRail(NEW: Doc, OLD: Doc, ctx: Ctx): void {
+/** enforce_document_register_rail(), transcribed. Throws the RAISE; returns
+ *  NEW as the trigger rewrites it (REV-13). */
+function registerRail(NEW: Doc, OLD: Doc, ctx: Ctx): Doc {
+  NEW = { ...NEW };
   const ptrMoved = NEW.current_version_id !== OLD.current_version_id;
   const revMoved = NEW.rev !== OLD.rev || NEW.revision !== OLD.revision;
+  const effMoved = NEW.effective_date !== OLD.effective_date;
   const own = (vid: string) => ctx.versions.some((v) => v.id === vid && v.record_id === NEW.id);
   if (ptrMoved && NEW.current_version_id && !own(NEW.current_version_id)) throw new Error("current_version_id must name a revision of this document.");
   if (NEW.pending_version_id !== OLD.pending_version_id && NEW.pending_version_id && !own(NEW.pending_version_id)) throw new Error("pending_version_id must name a revision of this document.");
-  if (ctx.actor === null) return;
-  if ((revMoved || NEW.document_number !== OLD.document_number || NEW.effective_date !== OLD.effective_date) && !ctx.publisher) {
+  if (ptrMoved) {
+    const eff = ctx.versions.find((v) => v.id === NEW.current_version_id)?.effective_date ?? null;
+    NEW.effective_date = eff;
+    const utcToday = ctx.utcToday ?? new Date().toISOString().slice(0, 10);
+    NEW.effective_notified_at = eff === null || eff < dayBefore(utcToday) ? "now()" : null;
+  }
+  if (ctx.actor === null) return NEW;
+  if ((revMoved || NEW.document_number !== OLD.document_number || effMoved) && !ctx.publisher) {
     throw new Error("Only a publisher on this library (or the document's owner) may change its revision label, number or effective date.");
   }
   if (NEW.current_version_id && (ptrMoved || revMoved)) {
@@ -339,6 +375,14 @@ function registerRail(NEW: Doc, OLD: Doc, ctx: Ctx): void {
       if (!revOk || revisionBad) throw new Error(`The document's revision label must match its current revision (Rev ${label}).`);
     }
   }
+  return NEW;
+}
+/** enforce_document_insert_pointer_rail(), transcribed. */
+function insertRail(NEW: Pick<Doc, "current_version_id" | "pending_version_id">, actor: string | null): void {
+  if (actor === null) return;
+  if (NEW.current_version_id !== null || NEW.pending_version_id !== null) {
+    throw new Error("A new document is created without a current or pending revision; its first revision is attached once the document exists.");
+  }
 }
 /** enforce_document_versions_pointer_rail(), transcribed. */
 function deleteVersion(docs: Doc[], versionId: string): void {
@@ -346,12 +390,45 @@ function deleteVersion(docs: Doc[], versionId: string): void {
   for (const d of docs) if (d.pending_version_id === versionId) d.pending_version_id = null;
 }
 
+/** The document_supersessions policies as 20261131 writes them, read from
+ *  the SQL text and evaluated. Each atom is a predicate the migration uses;
+ *  an expression outside them throws, so the test cannot pass on a policy it
+ *  does not understand. */
+type Actor = { activeMember: boolean; controller: boolean; publisherOn: Set<string> };
+type SupRow = { org_id: string; superseded_doc_id: string; replacement_doc_id: string };
+const POLICY_ATOMS: Record<string, (a: Actor, r: SupRow) => boolean> = {
+  "is_org_controller(org_id)": (a) => a.controller,
+  "supersession_writable(org_id, superseded_doc_id, replacement_doc_id)": (a, r) =>
+    a.activeMember && (a.controller || a.publisherOn.has(r.superseded_doc_id)),
+  "EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = document_supersessions.org_id AND m.uid = auth.uid() AND m.status = 'active')": (a) => a.activeMember,
+};
+function evalPolicyExpr(expr: string, a: Actor, r: SupRow): boolean {
+  const e = expr.replace(/\s+/g, " ").trim();
+  const atom = POLICY_ATOMS[e];
+  if (atom) return atom(a, r);
+  throw new Error(`unknown policy expression: ${e}`);
+}
+function supersessionPolicyAllows(cmd: string, a: Actor, r: SupRow): boolean {
+  const body = stripComments(M131);
+  const policies = [...body.matchAll(/CREATE POLICY (\w+) ON document_supersessions\s+FOR (\w+) TO authenticated\s+(?:USING \(([\s\S]*?)\))?\s*(?:WITH CHECK \(([\s\S]*?)\))?;/g)]
+    .map((m) => ({ name: m[1], cmd: m[2], using: m[3], check: m[4] }));
+  expect(policies.map((p) => p.cmd).sort()).toEqual(["DELETE", "INSERT", "SELECT", "UPDATE"]);
+  // permissive policies OR together; a command no policy names is refused
+  return policies.filter((p) => p.cmd === cmd || p.cmd === "ALL").some((p) => {
+    const u = p.using === undefined || evalPolicyExpr(p.using, a, r);
+    const c = p.check === undefined || evalPolicyExpr(p.check, a, r);
+    return cmd === "INSERT" ? c : cmd === "UPDATE" ? u && c : u;
+  });
+}
+
 describe("the rails, exercised (transcriptions pinned to 20261131)", () => {
   it("the transcription's branches are the SQL's", () => {
     expect(RAIL).toContain("v_ptr_moved boolean := NEW.current_version_id IS DISTINCT FROM OLD.current_version_id;");
     expect(RAIL).toContain("v_rev_moved boolean := (NEW.rev IS DISTINCT FROM OLD.rev) OR (NEW.revision IS DISTINCT FROM OLD.revision);");
     expect(RAIL).toContain("OR NEW.document_number IS DISTINCT FROM OLD.document_number");
-    expect(RAIL).toContain("OR NEW.effective_date IS DISTINCT FROM OLD.effective_date)");
+    expect(RAIL).toContain("OR v_eff_moved)");
+    expect(RAIL).toContain("NEW.effective_date := v_eff;");
+    expect(INS).toContain("IF NEW.current_version_id IS NOT NULL OR NEW.pending_version_id IS NOT NULL THEN");
     expect(RAIL).toContain("IF NEW.current_version_id IS NOT NULL AND (v_ptr_moved OR v_rev_moved) THEN");
     expect(RAIL).toContain("IF NOT (btrim(COALESCE(NEW.rev, '')) = v_label\n              OR (v_promote AND btrim(COALESCE(NEW.rev, '')) = v_base))");
     expect(RAIL).toContain("OR (NEW.revision IS NOT NULL\n             AND (v_ptr_moved OR NEW.revision IS DISTINCT FROM OLD.revision)");
@@ -392,15 +469,77 @@ describe("the rails, exercised (transcriptions pinned to 20261131)", () => {
     // the service role's label writes (restores, the intake door's promote) are the RPC's business
     expect(() => registerRail({ ...base, rev: "x" }, base, svc)).not.toThrow();
   });
+  it("DRLS-14: a signed-in member INSERTing a document already pointing at another document's revision (or a dangling id) is REFUSED; the restore (service role) is not", () => {
+    // the reviewer's case: status Issued, rev 5, current_version_id = another drawing's approved revision
+    expect(() => insertRail({ current_version_id: "other", pending_version_id: null }, "m")).toThrow(/created without a current or pending revision/);
+    expect(() => insertRail({ current_version_id: "ghost", pending_version_id: null }, "m")).toThrow(/created without/);
+    expect(() => insertRail({ current_version_id: null, pending_version_id: "other" }, "m")).toThrow(/created without/);
+    // every genuine creation flow inserts with no pointer, then attaches its first revision by UPDATE (publish guard + register rail)
+    expect(() => insertRail({ current_version_id: null, pending_version_id: null }, "m")).not.toThrow();
+    // the restore replays documents before their versions, as the service role
+    expect(() => insertRail({ current_version_id: "v-restored-later", pending_version_id: null }, null)).not.toThrow();
+    // and the app's creation paths really do insert without a pointer
+    for (const f of ["lib/revisions.ts", "lib/documentLifecycle/common.ts"]) {
+      const src = readFileSync(join(process.cwd(), f), "utf8");
+      for (const m of src.matchAll(/\.from\("documents"\)\s*\.insert\(\{([\s\S]*?)\}\)/g)) {
+        expect(m[1]).not.toMatch(/current_version_id|pending_version_id/);
+      }
+    }
+  });
+  it("REV-13: a pointer move by ANY door (the service-role intake auto-publish included) carries the new revision's effective date — a withdrawn revision's future date never outlives it", () => {
+    const vs: Ver[] = [
+      { id: "v4", record_id: "d1", revision_label: "4", effective_date: "2026-12-01" },
+      { id: "v5", record_id: "d1", revision_label: "5", effective_date: null },
+      { id: "v6", record_id: "d1", revision_label: "6", effective_date: "2026-10-02" },
+      { id: "v7", record_id: "d1", revision_label: "7", effective_date: "2026-09-01" },
+    ];
+    const rev4: Doc = { ...base, rev: "4", revision: "4", current_version_id: "v4", effective_date: "2026-12-01", effective_notified_at: null };
+    const svc: Ctx = { actor: null, publisher: false, versions: vs, utcToday: "2026-10-01" };
+    // the reviewer's case: Rev 4 effective 1 Dec; a vendor submission auto-publishes Rev 5 (no date)
+    const after5 = registerRail({ ...rev4, current_version_id: "v5", rev: "5", revision: "5" }, rev4, svc);
+    expect(after5.effective_date).toBeNull();
+    expect(after5.effective_notified_at).toBe("now()");
+    // a date that may still be ahead in the facility's calendar is left for the scan to announce
+    const after6 = registerRail({ ...rev4, current_version_id: "v6", rev: "6", revision: "6" }, rev4, { ...svc, actor: "p", publisher: true });
+    expect(after6.effective_date).toBe("2026-10-02");
+    expect(after6.effective_notified_at).toBeNull();
+    // today in UTC (yesterday somewhere west) is not pre-stamped either — only a date past in every zone is
+    expect(registerRail({ ...rev4, current_version_id: "v6", rev: "6", revision: "6" }, rev4, { ...svc, utcToday: "2026-10-02" }).effective_notified_at).toBeNull();
+    expect(registerRail({ ...rev4, current_version_id: "v7", rev: "7", revision: "7" }, rev4, svc).effective_notified_at).toBe("now()");
+    // the copy is not the caller's change: a pointer move that leaves the label alone (a re-pointed
+    // same-label row) passes the register tier check even though the copy changed the date — pointer
+    // authority is the publish guard's question, not this rail's
+    const same: Ctx = { actor: "m", publisher: false, versions: [...vs, { id: "v4b", record_id: "d1", revision_label: "4", effective_date: null }], utcToday: "2026-10-01" };
+    const moved = registerRail({ ...rev4, current_version_id: "v4b" }, rev4, same);
+    expect(moved.effective_date).toBeNull();
+    // …while the caller's OWN change to the date is refused for a non-publisher
+    expect(() => registerRail({ ...rev4, effective_date: "2027-01-01" }, rev4, same)).toThrow(/Only a publisher/);
+  });
   it("DRLS-14: deleting the revision a document names as current is REFUSED; deleting its pending draft clears the pointer", () => {
     const docs: Doc[] = [{ ...base, pending_version_id: "v4A" }];
     expect(() => deleteVersion(docs, "v3")).toThrow(/current revision and cannot be deleted/);
     deleteVersion(docs, "v4A");
     expect(docs[0].pending_version_id).toBeNull();
   });
-  it("DRLS-13: a Viewer's DELETE of a supersession row matches no policy (controller-only) — and the app treats zero rows as a failure", () => {
-    const policyAllowsDelete = (isController: boolean) => isController; // USING (is_org_controller(org_id))
-    expect(policyAllowsDelete(false)).toBe(false);
+  it("DRLS-13: the policies, evaluated from the SQL text — a Viewer's DELETE (and INSERT) of a supersession row is refused; a controller's DELETE and a publisher's INSERT pass; and the app treats zero rows as a failure", () => {
+    const row = { org_id: "o", superseded_doc_id: "a", replacement_doc_id: "b" };
+    const viewer: Actor = { activeMember: true, controller: false, publisherOn: new Set() };
+    const publisherOfA: Actor = { activeMember: true, controller: false, publisherOn: new Set(["a"]) };
+    const controller: Actor = { activeMember: true, controller: true, publisherOn: new Set() };
+    const outsider: Actor = { activeMember: false, controller: false, publisherOn: new Set() };
+    const can = (cmd: string, a: Actor) => supersessionPolicyAllows(cmd, a, row);
+    expect(can("DELETE", viewer)).toBe(false);
+    expect(can("DELETE", publisherOfA)).toBe(false);
+    expect(can("DELETE", controller)).toBe(true);
+    expect(can("INSERT", viewer)).toBe(false);
+    expect(can("INSERT", publisherOfA)).toBe(true);
+    expect(can("UPDATE", viewer)).toBe(false);
+    expect(can("SELECT", viewer)).toBe(true);
+    expect(can("SELECT", outsider)).toBe(false);
+    // the evaluator refuses an expression it does not know, so widening a
+    // policy (e.g. DELETE to every active member) changes these answers or
+    // fails here — never passes silently
+    expect(() => evalPolicyExpr("auth.uid() IS NOT NULL", viewer, row)).toThrow(/unknown policy expression/);
     const rev = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
     expect(rev).toMatch(/if \(error \|\| remaining > 0\) \{\n\s*throw new Error\(`The documents were restored, but/);
     const common = readFileSync(join(process.cwd(), "lib/documentLifecycle/common.ts"), "utf8");

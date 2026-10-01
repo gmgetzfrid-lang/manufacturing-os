@@ -39,12 +39,21 @@
 --                passes) refuses while any document names it as current,
 --                and clears a pending pointer to it (SET NULL semantics: a
 --                draft that no longer exists is not pending).
+--              · on INSERT by a signed-in caller, trg_document_insert_pointer_rail
+--                requires both pointers to be NULL: no genuine creation flow
+--                sets them at insert (a version references its document, so
+--                it cannot exist first), and a member could otherwise create
+--                a document already pointing at another document's revision
+--                (or a dangling id) — a write neither the publish guard nor
+--                the register rail (both BEFORE UPDATE) would see. The
+--                service role (auth.uid() NULL) is exempt: the restore
+--                replays documents before their versions.
 --            They are deliberately NOT declared FOREIGN KEYs: the restore
 --            replays `documents` before `document_versions`
 --            (lib/dataRestore.ts RESTORE_TABLE_ORDER — versions reference
 --            their document), so a declared FK would refuse every restored
---            document that has a current revision. INSERT is not railed for
---            the same reason. DEC-44 (P3 LIFECYCLE; provisional number,
+--            document that has a current revision.
+--            DEC-44 (P3 LIFECYCLE; provisional number,
 --            renumbered on merge) records the call.
 --            The child evidence tables now agree: distribution_acks.version_id
 --            goes from ON DELETE CASCADE to NO ACTION, and
@@ -53,7 +62,10 @@
 --            acknowledgment or sign-off evidence is REFUSED instead of
 --            cascading it away (distribution_acks) or orphaning it (the other
 --            two). A whole-document delete still cascades through
---            document_id, as it always did (legal hold governs that). Where
+--            document_id, as it always did (legal hold governs that) — so
+--            the evidence survives a VERSION delete, not a document delete
+--            (DRLS-14 stays open on that half; DRLS-17 records the library
+--            page's delete flow, which this rail now stops part-way). Where
 --            orphaned evidence already exists the FK is added NOT VALID:
 --            every new row is bound, the residue is counted, never deleted.
 --            work_package_documents.pinned_version_id (NO ACTION) and
@@ -67,6 +79,14 @@
 --            authority on the SUPERSEDED document (controller, library
 --            publisher or its effective owner), both documents in the row's
 --            org; DELETE the org's controllers only.
+--   REV-13   documents.effective_date is a copy of the CURRENT revision's:
+--            whenever current_version_id moves — by any door, the
+--            service-role intake auto-publish included — the register rail
+--            copies the new revision's effective_date onto the document and
+--            sets the announcement watermark: stamped when there is nothing
+--            to announce (no date, or a date before yesterday in UTC — past
+--            in every zone), cleared when the date may still be ahead in the
+--            facility's calendar, which the app's scan decides (REV-9).
 --   REV-14   supersedeDocument / markSupersededAndLink write lineage as an
 --            upsert on (superseded_doc_id, replacement_doc_id). The unique
 --            constraint exists in 20260526; if a database lacks it, a unique
@@ -77,9 +97,15 @@
 -- inventories (aggregate counts, captured BEFORE the transaction): dangling
 -- and cross-document pointers (DRLS-14), documents whose rev / revision
 -- differ from their current revision's label (DRLS-3 — they are not
--- rewritten; the rail binds the next change), duplicate supersession pairs
+-- rewritten; the rail binds the next change), documents whose effective date
+-- is not their current revision's (REV-13 — not rewritten; the next pointer
+-- move reconciles), duplicate supersession pairs
 -- (REV-14), orphaned evidence (the NOT VALID world), Superseded documents
 -- with no lineage row (REV-14's visible-warning population).
+-- PREREQUISITES (document-control 99-fix-sequencing.md): the library page's
+-- metadata save stops sending a changed rev and surfaces refusals (DRLS-15),
+-- and its delete flow stops clearing the pointer before deleting versions
+-- (DRLS-17) — or both break, silently / part-way, from this paste on.
 -- HOW TO APPLY: after 20261130. Single paste: temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -120,6 +146,11 @@ SELECT 'inventory (before apply): documents whose revision (when set) differs fr
   FROM documents d JOIN document_versions v ON v.id = d.current_version_id
  WHERE d.revision IS NOT NULL AND btrim(d.revision) <> btrim(COALESCE(v.revision_label, ''))
 UNION ALL
+SELECT 'inventory (before apply): documents whose effective_date differs from their current revision''s (REV-13; not rewritten — the next pointer move reconciles)',
+       COUNT(*)::text
+  FROM documents d JOIN document_versions v ON v.id = d.current_version_id
+ WHERE d.effective_date IS DISTINCT FROM v.effective_date
+UNION ALL
 SELECT 'inventory (before apply): duplicate document_supersessions pairs (REV-14; the pair index is built only at 0)',
        COUNT(*)::text
   FROM (SELECT 1 FROM document_supersessions
@@ -158,14 +189,17 @@ DECLARE
   v_actor     uuid    := auth.uid();   -- NULL for service-role / SQL console
   v_ptr_moved boolean := NEW.current_version_id IS DISTINCT FROM OLD.current_version_id;
   v_rev_moved boolean := (NEW.rev IS DISTINCT FROM OLD.rev) OR (NEW.revision IS DISTINCT FROM OLD.revision);
+  v_eff_moved boolean := NEW.effective_date IS DISTINCT FROM OLD.effective_date;
   v_label     text;
   v_base      text;
   v_state     text;
   v_promote   boolean;
+  v_eff       date;
 BEGIN
   -- DRLS-14: a pointer that MOVES names a revision of THIS document — for
-  -- every caller, the service role included (INSERT is not railed: a restore
-  -- replays documents before their versions).
+  -- every caller, the service role included (a signed-in INSERT is railed by
+  -- trg_document_insert_pointer_rail; a service-role INSERT is not: a
+  -- restore replays documents before their versions).
   IF v_ptr_moved AND NEW.current_version_id IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM document_versions v
                       WHERE v.id = NEW.current_version_id AND v.record_id = NEW.id) THEN
@@ -179,14 +213,34 @@ BEGIN
       USING ERRCODE = 'foreign_key_violation';
   END IF;
 
+  -- REV-13: the document's effective date is its CURRENT revision's — copied
+  -- whenever the pointer moves, by every door (the service-role intake
+  -- auto-publish included), so a withdrawn revision's future date never
+  -- outlives it on the register. The watermark is stamped only when there is
+  -- nothing left to announce: no date, or a date before yesterday in UTC
+  -- (past in every zone). A date that may still be ahead in the facility's
+  -- calendar leaves it clear; the app's scan decides in that calendar
+  -- (REV-9), and applyEffectiveDate re-decides after an app publish.
+  IF v_ptr_moved THEN
+    SELECT v.effective_date INTO v_eff
+      FROM document_versions v WHERE v.id = NEW.current_version_id;
+    NEW.effective_date := v_eff;
+    IF v_eff IS NULL OR v_eff < (now() AT TIME ZONE 'UTC')::date - 1 THEN
+      NEW.effective_notified_at := now();
+    ELSE
+      NEW.effective_notified_at := NULL;
+    END IF;
+  END IF;
+
   IF v_actor IS NULL THEN
     RETURN NEW;
   END IF;
 
-  -- DRLS-3: the register fields are the publisher tier's.
+  -- DRLS-3: the register fields are the publisher tier's (the caller's own
+  -- change to the effective date — not the REV-13 copy above).
   IF (v_rev_moved
       OR NEW.document_number IS DISTINCT FROM OLD.document_number
-      OR NEW.effective_date IS DISTINCT FROM OLD.effective_date)
+      OR v_eff_moved)
      AND NOT is_org_controller(NEW.org_id)
      AND NOT user_can_publish_on_library(NEW.library_id, v_actor::text, NEW.org_id)
      AND NOT user_is_effective_owner(NEW.owner_user_id, NEW.collection_id, NEW.library_id, v_actor) THEN
@@ -222,6 +276,28 @@ DROP TRIGGER IF EXISTS trg_document_register_rail ON documents;
 CREATE TRIGGER trg_document_register_rail
   BEFORE UPDATE OF rev, revision, document_number, effective_date, current_version_id, pending_version_id ON documents
   FOR EACH ROW EXECUTE FUNCTION enforce_document_register_rail();
+
+-- ── DRLS-14: a signed-in INSERT is born with no version pointers ────────────
+CREATE OR REPLACE FUNCTION enforce_document_insert_pointer_rail()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  -- The service role (auth.uid() NULL) is exempt: the restore replays
+  -- documents before the versions their pointers name.
+  IF auth.uid() IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.current_version_id IS NOT NULL OR NEW.pending_version_id IS NOT NULL THEN
+    RAISE EXCEPTION 'A new document is created without a current or pending revision; its first revision is attached once the document exists.'
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_document_insert_pointer_rail ON documents;
+CREATE TRIGGER trg_document_insert_pointer_rail
+  BEFORE INSERT ON documents
+  FOR EACH ROW EXECUTE FUNCTION enforce_document_insert_pointer_rail();
 
 -- ── DRLS-3: a CURRENT revision's corrected label is the document's label ────
 CREATE OR REPLACE FUNCTION sync_current_version_label()
@@ -377,7 +453,7 @@ CREATE POLICY document_supersessions_delete ON document_supersessions
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 9. Inventory rows: n = the aggregate count.
+-- Probes: ok = true × 11. Inventory rows: n = the aggregate count.
 SELECT 'register rail installed on documents (BEFORE UPDATE OF rev, revision, document_number, effective_date, current_version_id, pending_version_id)' AS check,
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_register_rail'
                  AND tgrelid = 'documents'::regclass AND NOT tgisinternal)
@@ -389,6 +465,19 @@ SELECT 'register rail installed on documents (BEFORE UPDATE OF rev, revision, do
                AND prosrc LIKE '%v_state = ''in_review''%'
               FROM pg_proc WHERE proname = 'enforce_document_register_rail') AS ok,
        NULL::text AS n
+UNION ALL SELECT 'REV-13: a pointer move copies the new current revision''s effective date onto the document, the watermark cleared while the date may be ahead',
+       (SELECT prosrc LIKE '%NEW.effective_date := v_eff;%'
+               AND prosrc LIKE '%NEW.effective_notified_at := NULL;%'
+               AND prosrc LIKE '%(now() AT TIME ZONE ''UTC'')::date - 1%'
+               AND prosrc LIKE '%OR v_eff_moved)%'
+              FROM pg_proc WHERE proname = 'enforce_document_register_rail'), NULL
+UNION ALL SELECT 'DRLS-14: a signed-in INSERT may not set current_version_id or pending_version_id (BEFORE INSERT; the service role exempt for the restore)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_insert_pointer_rail'
+                 AND tgrelid = 'documents'::regclass AND NOT tgisinternal
+                 AND pg_get_triggerdef(oid) LIKE '%BEFORE INSERT ON public.documents FOR EACH ROW%')
+       AND (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN%'
+               AND prosrc LIKE '%NEW.current_version_id IS NOT NULL OR NEW.pending_version_id IS NOT NULL%'
+              FROM pg_proc WHERE proname = 'enforce_document_insert_pointer_rail'), NULL
 UNION ALL SELECT 'a corrected label on a CURRENT revision is carried onto its document (AFTER UPDATE OF revision_label)',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_current_version_label'
                  AND tgrelid = 'document_versions'::regclass AND NOT tgisinternal)
@@ -432,8 +521,9 @@ UNION ALL SELECT 'supersession_writable demands publish authority on the superse
        AND has_function_privilege('authenticated', 'supersession_writable(uuid, uuid, uuid)', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'supersession_writable(uuid, uuid, uuid)', 'EXECUTE'), NULL
 UNION ALL SELECT 'every function this paste creates is SECURITY DEFINER with search_path pinned',
-       (SELECT COUNT(*) = 4 FROM pg_proc
+       (SELECT COUNT(*) = 5 FROM pg_proc
          WHERE proname IN ('enforce_document_register_rail', 'sync_current_version_label',
-                           'enforce_document_versions_pointer_rail', 'supersession_writable')
+                           'enforce_document_versions_pointer_rail', 'supersession_writable',
+                           'enforce_document_insert_pointer_rail')
            AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'), NULL
 UNION ALL SELECT inventory, NULL::boolean, n FROM dc_round_f_131_before;
