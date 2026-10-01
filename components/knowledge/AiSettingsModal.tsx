@@ -79,6 +79,8 @@ type UsageView = AiUsageSummary & {
   /** GOV-10: nobody else active holds ai.manage_caps — the viewer's own
    *  raise has no second signature to wait for, so it goes through. */
   soleCapsHolder?: boolean;
+  /** GOV-10: the viewer's uid — their own row in `team`. */
+  selfUserId?: string;
 };
 
 /** The meter line each feature writes, named for a person (GOV-1: every
@@ -749,6 +751,12 @@ export function UsagePanel({ orgId }: { orgId: string }) {
               const presets = [0, 5, 10, 15, 20, 25, 30, 35, 50, 75, 100];
               const lines = opBreakdown(m.byOp);
               if (m.hasOverride && !presets.includes(m.capUsd)) presets.push(m.capUsd);
+              // GOV-10: on the viewer's OWN row, unless nobody else manages
+              // caps, the server refuses a raise and clearing the override
+              // (back to the default) — so neither is offered: only a figure
+              // at or below their cap.
+              const ownRowLimited = usage.selfUserId !== undefined && m.userId === usage.selfUserId && usage.soleCapsHolder !== true;
+              const RAISE_OWN = "Another person who manages AI caps has to raise your own cap or set it back to the default — you can lower it.";
               return (
                 <li key={m.userId} className="flex items-center gap-2 text-[11px]"
                   title={lines.length > 0 ? lines.map((l) => `${l.label} ${fmtUsd(l.spentUsd)}`).join(" · ") : undefined}>
@@ -765,15 +773,18 @@ export function UsagePanel({ orgId }: { orgId: string }) {
                     value={m.hasOverride ? String(m.capUsd) : "default"}
                     disabled={savingUser === m.userId}
                     onChange={(e) => void setMemberCap(m.userId, m.name, e.target.value)}
-                    title={`${m.name}'s monthly cap`}
+                    title={ownRowLimited ? `Your monthly cap. ${RAISE_OWN}` : `${m.name}'s monthly cap`}
                     className={`shrink-0 w-[74px] text-[10px] font-black rounded-lg border px-1 py-0.5 bg-[var(--color-surface)] cursor-pointer disabled:opacity-50 ${
                       m.hasOverride
                         ? "border-[var(--color-accent)] text-[var(--color-accent)]"
                         : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
-                    <option value="default">${usage.orgCapUsd ?? usage.capUsd} def</option>
-                    {presets.sort((a, b) => a - b).map((p) => (
-                      <option key={p} value={String(p)}>{p === 0 ? "$0 lock" : `$${p}`}</option>
-                    ))}
+                    <option value="default" disabled={ownRowLimited} title={ownRowLimited ? RAISE_OWN : undefined}>${usage.orgCapUsd ?? usage.capUsd} def</option>
+                    {presets.sort((a, b) => a - b).map((p) => {
+                      const refused = ownRowLimited && p > m.capUsd;
+                      return (
+                        <option key={p} value={String(p)} disabled={refused} title={refused ? RAISE_OWN : undefined}>{p === 0 ? "$0 lock" : `$${p}`}</option>
+                      );
+                    })}
                   </select>
                   ) : (
                     <span className="shrink-0 w-[74px] text-right text-[10px] font-black text-[var(--color-text-muted)]">

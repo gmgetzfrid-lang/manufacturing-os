@@ -112,6 +112,31 @@ describe("UsagePanel", () => {
     expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Set")).toBe(true);
   });
 
+  it("GOV-10: the viewer's OWN row offers no figure the server refuses — 'def' and presets above their cap are disabled, unless they are the sole holder (the seventh review)", async () => {
+    const team = [
+      { userId: "u1", name: "Ada", spentUsd: 1, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 20, locked: false, hasOverride: true, byOp: {} },
+      { userId: "u2", name: "Eve", spentUsd: 1, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 20, locked: false, hasOverride: true, byOp: {} },
+    ];
+    const optionsOf = (select: HTMLSelectElement) => [...select.options].map((o) => [o.value, o.disabled] as const);
+    kn.getAiUsage.mockResolvedValueOnce({ ...base, orgCapUsd: 50, team, canManageCaps: true, soleCapsHolder: false, selfUserId: "u1" });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    const [own, other] = [...host.querySelectorAll("select")] as HTMLSelectElement[];
+    const ownOptions = optionsOf(own);
+    expect(ownOptions.find(([v]) => v === "default")![1]).toBe(true);
+    expect(ownOptions.filter(([v, d]) => v !== "default" && !d).map(([v]) => Number(v)).every((v) => v <= 20)).toBe(true);
+    expect(ownOptions.filter(([v, d]) => v !== "default" && d).map(([v]) => Number(v))).toEqual([25, 30, 35, 50, 75, 100]);
+    expect(own.title).toMatch(/Another person who manages AI caps has to raise your own cap or set it back to the default — you can lower it\./);
+    // another member's row is untouched
+    expect(optionsOf(other).every(([, d]) => !d)).toBe(true);
+
+    // a SOLE holder's own row offers everything (their raise goes through, recorded)
+    kn.getAiUsage.mockResolvedValueOnce({ ...base, orgCapUsd: 50, team, canManageCaps: true, soleCapsHolder: true, selfUserId: "u1" });
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    expect(optionsOf(host.querySelector("select") as HTMLSelectElement).every(([, d]) => !d)).toBe(true);
+  });
+
   it("GOV-10: a holder who follows the default and raises it is told their own cap stays where it was", async () => {
     const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
     kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });

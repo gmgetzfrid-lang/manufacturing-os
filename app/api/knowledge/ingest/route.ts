@@ -49,7 +49,7 @@ import {
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
-import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import type { AiProviderId } from "@/lib/ai/providerCall";
@@ -148,9 +148,13 @@ export async function POST(req: NextRequest) {
   // ── Vision fallback context ────────────────────────────────────────────
   // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
   // model. It spends THIS user's key — the person who triggered indexing —
-  // metered as its own op and stopped at their monthly cap. No key, no
-  // signed agreement or no headroom just means text-only indexing, never a
-  // failure.
+  // metered as its own op and stopped at their monthly cap. No key or no
+  // headroom just means text-only indexing, never a failure. A reason the
+  // member can fix — an agreement that is unsigned or cannot be read, a
+  // ledger that cannot be read (GOV-11 / GOV-4) — never consumes a page
+  // that needs vision: the engine holds it on the row (`noVisionReason`),
+  // the text layer of the rest still indexes, and a read-every-page library
+  // is not indexed at all (below) — as the cron drain does.
   const orgId = doc.org_id as string;
   // Library option: read EVERY page with vision (drawing sets where even the
   // text layer can't be trusted).
@@ -165,10 +169,12 @@ export async function POST(req: NextRequest) {
   let visionSkipReason: string | null = null;
   // GOV-11 / GOV-4: the reason vision was withheld when it is NOT the missing
   // key or budget the engine's own "retrying needs an AI key" sentence names
-  // — so pages waiting on AI vision are parked (on the row, and in the 409)
-  // with the cause the person can act on, never "add a key" to a member who
-  // has one but has not accepted the agreement.
+  // — so pages that need vision are held, and pages waiting on it are parked
+  // (on the row, and in the 409), with the cause the person can act on,
+  // never "add a key" to a member who has one but has not accepted the
+  // agreement. `allPages` says the same for a read-every-page library.
   let noVisionReason: string | null = null;
+  let heldForVision: { allPages: string; status: 409 | 428; provider?: string } | null = null;
   {
     const { data: conn } = await supabaseAdmin
       .from("ai_connections").select("provider, model, api_key")
@@ -196,24 +202,32 @@ export async function POST(req: NextRequest) {
       visionSkipReason = "Accept the AI acceptable-use agreement to read pages that have no text layer — they are sent " +
         "to your AI provider as images (ask any question in Knowledge to be prompted).";
       noVisionReason = visionSkipReason;
+      heldForVision = {
+        allPages: "accept the AI acceptable-use agreement first: every page is sent to your AI provider as an image " +
+          "(ask any question in Knowledge to be prompted).",
+        status: 428, provider: conn!.provider as string,
+      };
     } else if (agreement === "unreadable") {
-      visionSkipReason = "Your AI acceptable-use agreement can't be checked right now, so pages without a text layer were skipped.";
+      visionSkipReason = "Your AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision.";
       noVisionReason = visionSkipReason;
+      heldForVision = { allPages: "your AI acceptable-use agreement can't be checked right now.", status: 409 };
     } else {
       // GOV-4: a ledger that cannot be read refuses the AI step only — the
-      // text layer still indexes (no headroom is text-only, never a failure).
+      // text layer still indexes, and pages that need vision are held for it.
       const ledger = await Promise.all([
         getMonthUsage(orgId, user.id),
         getCapUsd(orgId, user.id),
       ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
       const [spent, cap] = ledger ?? [null, 0];
       if (!spent) {
-        visionSkipReason = "AI usage can't be read right now, so pages without a text layer were skipped — " +
-          "they index automatically once it can.";
+        visionSkipReason = "AI usage can't be read right now, so pages without a text layer are held for AI vision.";
         noVisionReason = visionSkipReason;
+        heldForVision = { allPages: "AI usage can't be read right now.", status: 409 };
       } else if (cap > 0 && spent.spentUsd >= cap) {
+        // At the cap the pages are indexed from their text layer only, and
+        // nothing reads them again by itself (never promised here).
         visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
-          "pages without a text layer were skipped. They index automatically once the cap resets or is raised.";
+          "pages without a text layer were indexed from their text layer only.";
       } else {
         vision = {
           provider: conn!.provider as AiProviderId,
@@ -232,6 +246,31 @@ export async function POST(req: NextRequest) {
         };
       }
     }
+  }
+
+  // The agreement to accept (GOV-11), carried by every refusal that waits
+  // on it, so the client can prompt as the ask route's 428 does.
+  const agreementFields = heldForVision?.status === 428 ? {
+    agreementRequired: true,
+    agreementText: buildAgreementText(heldForVision.provider),
+    agreementVersion: AGREEMENT_VERSION,
+  } : {};
+  // ── A read-every-page library, and vision withheld for a reason the
+  //    member can fix (GOV-11 / GOV-4): nothing is indexed. Consumed
+  //    text-only, every drawing would be indexed as an empty page and
+  //    nothing would read it again — the drain refuses the same document for
+  //    the same reason (it files it behind and leaves it queued). The row is
+  //    not touched: it keeps its status and its place in the drain's queue,
+  //    which reads it on the uploader's key when it can (a stamp from every
+  //    two-minute poll would keep it at the back of that queue). Unsigned
+  //    answers 428 with the agreement to accept, as every content route does.
+  if (forceAllPages && !vision && heldForVision) {
+    const error = `This library reads every page with AI vision, so nothing was indexed and the document stays queued — ${heldForVision.allPages}`;
+    return NextResponse.json({
+      error, visionSkipReason: error, heldForVision: true,
+      done: false, pageCount: doc.page_count ?? null, pagesIndexed: doc.pages_indexed ?? 0,
+      ...agreementFields,
+    }, { status: heldForVision.status });
   }
 
   try {
@@ -292,7 +331,12 @@ export async function POST(req: NextRequest) {
     // page was indexed with its text layer only, and the note says so.
     if (res.visionFailedPages.length > 0) {
       const n = res.visionFailedPages.length;
-      const note = `${n} page${n === 1 ? "" : "s"} could not be read by AI vision` +
+      // Held for a reason the member can fix (GOV-11 / GOV-4): the reason
+      // leads visionSkipReason already; this says where the pages are.
+      const note = noVisionReason && !res.legacy
+        ? `${n} page${n === 1 ? " waits" : "s wait"} for AI vision on the document — it is not marked ready until ` +
+          `${n === 1 ? "that page is" : "they are"} read or the partial index is accepted.`
+        : `${n} page${n === 1 ? "" : "s"} could not be read by AI vision` +
         (res.visionError ? ` (${res.visionError})` : "") +
         (res.legacy
           ? " — indexed with the text layer only: this database cannot hold them for a retry until migration 20261122 is applied."
@@ -308,7 +352,7 @@ export async function POST(req: NextRequest) {
       // and here. A non-2xx stops the caller's loop with this message instead
       // of a misleading "stalled" one; the document keeps its status.
       return NextResponse.json({
-        ...res, visionSkipReason, visionCostUsd, error: res.visionRetryMessage ?? res.failureRetryMessage,
+        ...res, visionSkipReason, visionCostUsd, error: res.visionRetryMessage ?? res.failureRetryMessage, ...agreementFields,
       }, { status: 409 });
     }
     return NextResponse.json({ ...res, visionSkipReason, visionCostUsd });
