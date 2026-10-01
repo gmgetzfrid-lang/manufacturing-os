@@ -35,7 +35,7 @@
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus, X as XIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -49,14 +49,14 @@ import { getFileUrl } from "@/lib/storage";
 import { publicOrigin } from "@/lib/publicOrigin";
 import {
   type CostDocument, costDocStatusLabel,
-  uploadCostDoc, awardQuote, postInvoice,
+  uploadCostDoc, awardQuote, postInvoice, declineQuote, voidCostDoc,
   parsedQuoteFrom, quoteGroups, normalizeCurrency,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
   companyCandidatesByName, barredCompanyFor,
-  quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
+  quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount, reconcileQuoteTotal,
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -658,7 +658,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       confirmedTotal = await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`);
       if (confirmedTotal == null) return;
     } else if (!(await appConfirm({
-      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      // MON-10: only a GROUPED award declines its rivals (the other open bids
+      // in its RFQ group); an ungrouped quote's award declines nothing, so it
+      // promises nothing of the kind.
+      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}"${doc.rfqGroup?.trim()
+        ? " and marks the other open bids in this RFQ group not selected."
+        : ". This quote has no RFQ group, so no other bid is marked not selected — decline any that competed for this scope."}`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
@@ -685,6 +690,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
 
     setBusy(doc.id);
     let failure: string | null = null;
+    // MON-10: an award that posted can still carry a warning — rivals that
+    // could not be marked not selected, or ungrouped quotes left open.
+    let warning: string | null = null;
     try {
       let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal });
       // The lib found a flag this table did not (an inactive company, or a
@@ -705,10 +713,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
+      else warning = res.warning ?? null;
     } catch (err) {
       failure = userFacingCaughtError(err, { context: "QuotesPanel award" });
     } finally { setBusy(null); }
-    if (failure == null) { onChanged(); return; }
+    // The warning is said AFTER onChanged: the tab's re-read clears its
+    // banner first, so the warning is what stays on screen.
+    if (failure == null) { onChanged(); if (warning) setErr(warning); return; }
     if (overridden) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
@@ -718,6 +729,30 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error, { embed: true })})`;
     }
     setErr(failure);
+  };
+
+  /** MON-10: the explicit, audited "not selected" for an ungrouped bid that
+   *  competed with an award — an ungrouped award declines nothing on its own
+   *  (DEC-50 rule 8), and the award's warning names the quotes left open.
+   *  The reason is optional and recorded. */
+  const decline = async (doc: CostDocument) => {
+    const reason = await appPrompt({
+      title: `Decline ${doc.vendorName ?? doc.fileName ?? "this quote"}?`,
+      message: "It is marked not selected — the contractor's portal shows that — and it can no longer be awarded. A reason (optional) is recorded with it.",
+      placeholder: "Reason (optional) — e.g. awarded to another bidder",
+      confirmLabel: "Decline",
+    });
+    if (reason == null) return;
+    setBusy(doc.id); setErr(null);
+    let failure: string | null = null;
+    try {
+      const res = await declineQuote({ doc, actor, reason: reason.trim() || null });
+      if (!res.ok) failure = res.error ?? "Couldn't decline the quote.";
+    } catch (err) {
+      failure = userFacingCaughtError(err, { context: "QuotesPanel decline" });
+    } finally { setBusy(null); }
+    if (failure) { setErr(failure); return; }
+    onChanged();
   };
 
   const colCount = 7 + (canManage && !awarded ? 1 : 0);
@@ -790,6 +825,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
                     const rowActions = doc && canManage && !awarded && (doc.status === "parsed" || doc.status === "draft");
+                    const totalNote = quote ? quoteTotalNote(quote) : null;
                     return (
                       <React.Fragment key={e.quoteId}>
                         <tr className={isAwarded ? "bg-emerald-500/[0.05]" : isDeclined ? "opacity-55" : undefined}>
@@ -847,6 +883,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             )}
                             {bc.note && (
                               <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title="The quote prints no currency — restate it with a currency code (correct total) if the assumption is wrong">{bc.note}</div>
+                            )}
+                            {/* PR-2: the lines do not add up to the total — a flag, never a block (the full sentence is under the row). */}
+                            {totalNote && (
+                              <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title={totalNote}>lines ≠ total — check the PDF</div>
                             )}
                             {e.priceOnly && (
                               <div className="text-[9px] font-bold text-[var(--color-text-muted)]" title={manpowerScored
@@ -920,16 +960,33 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                                     className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                                     <Pencil className="w-3 h-3" /> correct total
                                   </button>
+                                  {/* MON-10: an ungrouped bid is declined by hand (an award declines only its own RFQ group). */}
+                                  {!doc.rfqGroup?.trim() && doc.kind === "quote" && (
+                                    <button onClick={() => void decline(doc)} disabled={busy === doc.id}
+                                      title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
+                                      className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50">
+                                      <XIcon className="w-3 h-3" /> Decline
+                                    </button>
+                                  )}
                                   <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
                                 </>
+                              )}
+                              {/* MON-10 / MON-3: a declined bid moved no money — it can still be voided (junk, or declined in error). */}
+                              {doc && canManage && doc.status === "declined" && (
+                                <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
                               )}
                             </td>
                           )}
                         </tr>
-                        {((quote?.exclusions.length ?? 0) > 0 || e.missingScope.length > 0 || quote?.notes) && (
+                        {((quote?.exclusions.length ?? 0) > 0 || e.missingScope.length > 0 || quote?.notes || totalNote) && (
                           <tr className={isDeclined ? "opacity-55" : undefined}>
                             <td colSpan={colCount} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
+                                {totalNote && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/[0.07] text-amber-800 dark:text-amber-300" title="The priced lines read from this quote do not add up to its total — flagged for your check, never corrected or blocked">
+                                    total check: {totalNote}
+                                  </span>
+                                )}
                                 {quote?.notes && (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Bidder's note printed on the quote">
                                     note: {quote.notes}
@@ -1058,6 +1115,21 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
       ))}
     </select>
   );
+}
+
+/** PR-2 (DEC-72 item 5): what the reviewer is told when a bid's priced lines
+ *  do not add up to its total — a flag beside the number, never a block.
+ *  The stored check describes the EXTRACTION (the total the AI read against
+ *  the lines it read); once a person restated the total, the number on
+ *  screen is reconciled instead (lib/bidTab reconcileQuoteTotal) — never the
+ *  stored note beside a corrected total. A price-only bid has no lines. */
+export function quoteTotalNote(q: ParsedQuote): string | null {
+  if (q.priceOnly) return null;
+  if (q.totalSource === "human") {
+    const onScreen = reconcileQuoteTotal(q.total, q.lineItems);
+    return onScreen?.mismatch ? onScreen.note : null;
+  }
+  return q.totalCheck?.mismatch ? q.totalCheck.note : null;
 }
 
 /** COST-15: a document whose total was typed before any read — `parsed`
@@ -1203,10 +1275,14 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         setBusy(doc.id);
         // Guarded: only a still-open document voids — never one a stale tab
         // shows as open after someone awarded or posted it (BID-9 / MON-3).
-        const res = await guardedCostDocWrite({
-          doc, actor, patch: { status: "void" },
-          audit: { action: "COST_DOC_VOIDED", details: { fileName: doc.fileName, vendor: doc.vendorName } },
-        });
+        // A DECLINED bid (MON-10) moved no money either: lib/costDocs
+        // voidCostDoc admits it through the same compare-and-swap claim.
+        const res: { ok: true; auditError: string | null } | { ok: false; error: string } = doc.status === "declined"
+          ? await voidCostDoc({ doc, actor }).then((r) => (r.ok ? { ok: true as const, auditError: null } : { ok: false as const, error: r.error ?? "Couldn't void." }))
+          : await guardedCostDocWrite({
+            doc, actor, patch: { status: "void" },
+            audit: { action: "COST_DOC_VOIDED", details: { fileName: doc.fileName, vendor: doc.vendorName } },
+          });
         setBusy(null);
         if (!res.ok) { setErr(res.error); return; }
         if (res.auditError) setErr(`Voided, but its audit record failed: ${res.auditError}`);
