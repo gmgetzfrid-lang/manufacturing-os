@@ -64,7 +64,7 @@ execute/route.ts:46 `const role = (member.role as string) ?? "Viewer";` then :57
 **Done-when.**
 1. ✓ `logAuditCompletion` checks the controller tier before its proposal gate (the app's one definition, not a role list); for `notifyPersonnel` the criterion is replaced by `DEC-44 (I-04)` item 2.
 2. ✓ `/execute` verifies the action against the server-side record of what was proposed (`orchestrator_proposals`), not a fingerprint of the request body.
-3. ✓ `notify_personnel`'s `emit()` carries the caller's name (EGRESS-3; re-pinned in `lib/__tests__/orchestratorExecute.test.ts`).
+3. ✓ `notify_personnel`'s message carries the caller's name (EGRESS-3) — on the bell row the tool now writes itself, on the service role, checked (`actor_name`, `actor_user_id`), and on the email copy the dispatcher queues under the same binding. Corrected at review: the first record said `emit()` carried it, but in `/execute` `emit()` ran on the unbound anon client and delivered nothing; re-pinned through the real notifier, unmocked (`lib/__tests__/orchestratorExecute.test.ts` "… DELIVERED once, in their own name, through the real notifier"; see `ORCH-1`).
 4. ✓ `lib/__tests__/apiRouteAuth.test.ts` covers a Viewer-role caller executing `log_audit_completion` and expects 403 (and a Manager / Supervisor); for `notify_personnel` the decision admits a Viewer about a readable document, and `orchestratorExecute.test.ts` pins both that and the refusal for an unreadable one.
 
 **Scope / residual.** None.
