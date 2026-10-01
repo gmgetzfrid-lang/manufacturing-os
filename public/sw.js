@@ -21,6 +21,21 @@
  * sit in a device-wide cache that outlives the session (see the SESSION and
  * SIGN_OUT messages below).
  *
+ * v7 (public-surfaces PKG-1 SW-OFFLINE): a stated NEVER_CACHE list — the four
+ * verify routes, share, storage, transmittal and intake, the public token
+ * pages and the /d/ short link — is never written AND never read back, even
+ * as a leftover (a cached CURRENT certified the past: OFF-1); no URL whose
+ * query carries code= or a token parameter, no request with an Authorization
+ * header, no redirected response and no identity-varying response is stored
+ * (OFF-6/8/10); RUNTIME_CACHE is bounded — 200 entries, 7 days, 2 MiB per entry, least
+ * recently used first (OFF-9); the shell is precached per asset (OFF-12); a
+ * new worker WAITS for the page's "Update available" tap (OFF-4); VERSION
+ * carries the deployed build id (OFF-11); and the worker tells the page when
+ * the network stops or starts answering, so "offline" is not navigator.onLine
+ * alone (OFF-3). Its footprint is observable: post { type: "CACHE_STATS" }
+ * (with a MessagePort, or from a page) and it answers entries, bytes, limits
+ * and any shell asset it is missing.
+ *
  * Hard rule 1: a handler passed to respondWith() must never RESOLVE to
  * `undefined` — the browser fails the request with "Failed to convert value to
  * 'Response'", which previously broke navigations to uncached pages. Every
@@ -35,14 +50,31 @@
  * return a 503 that says what it is.
  */
 
-// Bumping VERSION drops every old cache on activate — the escape hatch when
-// caching behavior changes (v4: RSC payloads are never cached; data GETs are
-// network-first — stale-while-revalidate was serving old app navigations.
-// v5: stop inventing 504s — see the honesty rule below. v6: no-store /
-// private and every /api/ response stay OUT of the cache, and the cache no
-// longer outlives the session — XEDGE-6; the bump itself drops every cache a
-// v5 worker filled with signed-URL JSON or share PDFs).
-const VERSION = "mfgos-v6";
+// A new VERSION drops every old cache on activate. It has two parts (OFF-11):
+//
+// SW_SCHEMA — the caching-behaviour generation, bumped by hand whenever what
+// the worker stores or serves changes (v4: RSC payloads are never cached; data
+// GETs are network-first — stale-while-revalidate was serving old app
+// navigations. v5: stop inventing 504s — see the honesty rule below. v6:
+// no-store / private and every /api/ response stay OUT of the cache, and the
+// cache no longer outlives the session — XEDGE-6. v7: the never-cache list,
+// the bounded runtime cache, no install-time skipWaiting — PKG-1 SW-OFFLINE).
+// lib/__tests__/sw.test.ts fingerprints this file's code per schema, so a
+// behaviour change that forgets the bump fails CI.
+//
+// SW_BUILD — the deployed build id, written at `prebuild` by
+// scripts/stamp-sw-version.mjs from VERCEL_GIT_COMMIT_SHA ?? VERCEL_DEPLOYMENT_ID
+// (the id /api/version serves), so every deploy changes this file's bytes: the
+// browser installs a new worker, the page offers "Update available", and on
+// activation the previous build's caches are dropped. With neither variable
+// (next dev, a local build, the Docker image) the script leaves the committed
+// "unstamped" in place — deterministic, and the tracked file is never
+// rewritten; those deployments roll the caches only on a SW_SCHEMA bump.
+// Keep the SW_BUILD line exactly as it is: the script refuses a worker
+// without exactly one.
+const SW_SCHEMA = 7;
+const SW_BUILD = "unstamped";
+const VERSION = `mfgos-v${SW_SCHEMA}-${SW_BUILD}`;
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 // The signed-in identity the worker last saw (see rememberSession below).
@@ -51,13 +83,48 @@ const SESSION_KEY = "/__mfgos/session";
 
 const SHELL_ASSETS = ["/", "/offline", "/icon.svg", "/manifest.webmanifest"];
 
+// RUNTIME_CACHE budget (OFF-9): at most this many entries, none older than
+// this, none larger than this. Trimmed least-recently-used first on every
+// write; expired entries are refused on read and swept on write (hourly).
+const MAX_RUNTIME_ENTRIES = 200;
+const MAX_RUNTIME_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_RUNTIME_ENTRY_BYTES = 2 * 1024 * 1024;
+const EXPIRY_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+// Stored on each runtime entry: when it was fetched, and its size.
+const CACHED_AT_HEADER = "X-Mfgos-Cached-At";
+const BYTES_HEADER = "X-Mfgos-Bytes";
+
+/** Precache the offline shell one asset at a time (OFF-12). cache.addAll is
+ *  all-or-nothing, and its failure used to be swallowed — one 404 left the
+ *  device with no shell and no sign of why. Returns the assets that failed,
+ *  and names them in a console warning. Never rejects: a worker without a
+ *  shell still serves the network and the inline offline page. */
+async function precacheShell(onlyMissing) {
+  let cache;
+  try {
+    cache = await caches.open(SHELL_CACHE);
+  } catch {
+    return SHELL_ASSETS.slice();
+  }
+  let assets = SHELL_ASSETS;
+  if (onlyMissing) {
+    const have = await Promise.all(assets.map((a) => cache.match(a).catch(() => undefined)));
+    assets = assets.filter((_, i) => !have[i]);
+  }
+  const results = await Promise.allSettled(assets.map((a) => cache.add(a)));
+  const failed = assets.filter((_, i) => results[i].status === "rejected");
+  if (failed.length) {
+    console.warn(`[sw] offline shell precache failed for ${failed.join(", ")} — offline navigations fall back to a plain notice until the next install or sign-in re-warms it`);
+  }
+  return failed;
+}
+
+// No skipWaiting here (OFF-4): a new worker installs and then WAITS, so the
+// page's "Update available" tap (the SKIP_WAITING message below) is what
+// activates it — or every tab of the old build closing. Taking over at
+// install seized open tabs mid-task and left the tap with nothing to do.
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL_ASSETS).catch(() => undefined))
-      .then(() => self.skipWaiting()),
-  );
+  event.waitUntil(precacheShell(false));
 });
 
 self.addEventListener("activate", (event) => {
@@ -67,7 +134,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((k) => !k.startsWith(VERSION))
+            .filter((k) => !k.startsWith(`${VERSION}-`))
             .map((k) => caches.delete(k)),
         ),
       )
@@ -76,7 +143,8 @@ self.addEventListener("activate", (event) => {
 });
 
 // Allow the page to tell a freshly-installed worker to take over immediately,
-// and (v6) to tell it who is signed in / that nobody is any more.
+// (v6) to tell it who is signed in / that nobody is any more, and (v7) to ask
+// what it last saw of the network and how much it holds.
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") { self.skipWaiting(); return; }
   const msg = event.data;
@@ -84,8 +152,20 @@ self.addEventListener("message", (event) => {
   let work;
   if (msg.type === "SIGN_OUT") work = forgetSession();
   else if (msg.type === "SESSION" && typeof msg.id === "string" && msg.id) work = rememberSession(msg.id);
+  else if (msg.type === "NETWORK_STATUS") {
+    if (networkOk !== null) reply(event, { type: "NETWORK", ok: networkOk });
+    return;
+  } else if (msg.type === "CACHE_STATS") work = cacheStats().then((stats) => reply(event, stats));
   if (work && event.waitUntil) event.waitUntil(work);
 });
+
+/** Answer the page that asked — on its MessagePort when it sent one. */
+function reply(event, payload) {
+  try {
+    const target = (event.ports && event.ports[0]) || event.source;
+    if (target && target.postMessage) target.postMessage(payload);
+  } catch { /* the asking page is gone */ }
+}
 
 /* ─── The cache does not outlive the session (v6, XEDGE-6) ─────────────────
  * RUNTIME_CACHE is device-wide: on a shared field tablet the next person would
@@ -109,6 +189,9 @@ async function forgetSession() {
   await purgeRuntimeCache();
 }
 async function rememberSession(id) {
+  // A sign-out empties every cache on the device (RoleContext, OFF-8) — the
+  // offline shell included; the next sign-in puts back whatever is missing.
+  await precacheShell(true);
   let previous = null;
   let cache = null;
   try {
@@ -137,7 +220,7 @@ function offlineHtmlResponse() {
       '<body style="font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh;background:#0f172a;color:#e2e8f0">' +
       '<div style="text-align:center;padding:2rem">' +
       '<h1 style="font-size:1.25rem;margin:0 0 .5rem">You’re offline</h1>' +
-      '<p style="color:#94a3b8;margin:0">This page isn’t cached yet. Reconnect and try again.</p>' +
+      '<p style="color:#94a3b8;margin:0">This page isn’t available offline. Reconnect and try again.</p>' +
       "</div></body>",
     { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } },
   );
@@ -163,6 +246,51 @@ function wasAborted(request, err) {
   return !!err && err.name === "AbortError";
 }
 
+/** Never cached and never served from cache, whatever the response says
+ *  (v7, PKG-1 SW-OFFLINE) — matched as path prefixes:
+ *
+ *    /api/verify…    the four QR verify routes (verify, -hold, -package,
+ *                    -ticket): a cached CURRENT replayed offline certified
+ *                    the past, and made the page's fail-safe "can't verify"
+ *                    branch unreachable (OFF-1)
+ *    /api/share/, /share/            share links: revocation and expiry are
+ *                    enforced only at the route, and every access is a
+ *                    distribution record (OFF-5, OFF-7, SHR-9)
+ *    /api/storage/   Authorization-gated presigned URLs (OFF-6)
+ *    /api/transmittal, /transmittal/  the transmittal portal: token-gated,
+ *                    and its downloads write the audit row (OFF-6, OFF-7)
+ *    /api/intake/, /submit/          the contractor intake portal (token-gated)
+ *    /d/             the printed short link — it always redirects (OFF-10)
+ *
+ *  Every /api/ path is refused below anyway; this list is stated on its own
+ *  so it holds even if an API path is ever allow-listed (DEC-44 §3 Reversal),
+ *  and because the public token pages are not /api/ paths. The /verify*
+ *  PAGES are deliberately not on it: they carry no verdict (the verdict is
+ *  the /api/verify* answer, fetched no-store on every load), and a cached
+ *  page shell is what lets an offline scan reach the page's own fail-safe
+ *  "can't verify — contact Document Control" screen. */
+const NEVER_CACHE_PREFIXES = [
+  "/api/verify",
+  "/api/share/",
+  "/share/",
+  "/api/storage/",
+  "/api/transmittal",
+  "/transmittal/",
+  "/api/intake/",
+  "/submit/",
+  "/d/",
+];
+
+/** A URL that carries a credential in its query — the OAuth / PKCE return
+ *  (`/?code=…`), a magic-link or reset token, a share or portal token — is
+ *  never written to disk (OFF-8). */
+function carriesCredential(url) {
+  for (const name of url.searchParams.keys()) {
+    if (name === "code" || /token/i.test(name)) return true;
+  }
+  return false;
+}
+
 /** Same-origin API responses are never cached, whatever their headers say
  *  (v6, XEDGE-6): /api/storage/download-url answers with a bearer URL,
  *  /api/share/file streams a controlled PDF, and a cached copy of either is
@@ -172,7 +300,13 @@ function wasAborted(request, err) {
 const CACHEABLE_API_PREFIXES = [];
 function isCacheableRequest(request) {
   try {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (NEVER_CACHE_PREFIXES.some((p) => path.startsWith(p))) return false;
+    if (carriesCredential(url)) return false;
+    // A request that authenticates itself by header answers for ONE identity;
+    // the Cache API keys on the URL alone (OFF-6).
+    if (request.headers && request.headers.get && request.headers.get("Authorization")) return false;
     if (!path.startsWith("/api/")) return true;
     return CACHEABLE_API_PREFIXES.some((p) => path.startsWith(p));
   } catch {
@@ -180,24 +314,165 @@ function isCacheableRequest(request) {
   }
 }
 
-/** The whole cacheability decision (v6): a complete, non-opaque, OK response
- *  to a cacheable request that the server did not mark no-store / private.
+/** The whole cacheability decision: a complete, non-opaque, OK, not
+ *  redirected response to a cacheable request that the server did not mark
+ *  no-store / no-cache / private and that does not vary by identity.
  *  Cache-Control is honoured HERE because Cache Storage does not honour it
- *  for us — cache.put() stores whatever it is handed. */
+ *  for us — cache.put() stores whatever it is handed — and an offline
+ *  fallback can never revalidate, so no-cache is refused too (SHR-9). A
+ *  redirected response is never stored (OFF-10): served for a navigation it
+ *  is refused by the browser. */
 function isCacheableResponse(request, response) {
-  if (!response || !response.ok || response.type === "opaque") return false;
+  if (!response || !response.ok || response.type === "opaque" || response.redirected) return false;
   if (!isCacheableRequest(request)) return false;
-  const cc = (response.headers && response.headers.get("Cache-Control")) || "";
-  if (/\bno-store\b/i.test(cc) || /\bprivate\b/i.test(cc)) return false;
+  const header = (name) => (response.headers && response.headers.get(name)) || "";
+  const cc = header("Cache-Control");
+  if (/\b(?:no-store|no-cache|private)\b/i.test(cc)) return false;
+  if (/\*|\bauthorization\b|\bcookie\b/i.test(header("Vary"))) return false;
   return true;
 }
 
-// Best-effort cache write. Only stores cacheable responses (above), and never
-// rejects into the response path.
+// Best-effort cache write. Only stores cacheable responses (above), never
+// rejects into the response path, and returns a promise the fetch event keeps
+// alive until the write is done.
 function cachePut(cacheName, request, response) {
-  if (!isCacheableResponse(request, response)) return;
+  if (!isCacheableResponse(request, response)) return Promise.resolve();
   const copy = response.clone();
-  caches.open(cacheName).then((c) => c.put(request, copy)).catch(() => undefined);
+  const write = cacheName === RUNTIME_CACHE
+    ? putRuntime(request, copy)
+    : caches.open(cacheName).then((c) => c.put(request, copy));
+  return write.catch(() => undefined);
+}
+
+/* ─── The runtime cache is bounded (OFF-9) ─────────────────────────────────
+ * Every entry is stored with the time it was fetched and its size. An entry
+ * above MAX_RUNTIME_ENTRY_BYTES is never stored; past MAX_RUNTIME_AGE_MS it is
+ * never served (and is deleted); past MAX_RUNTIME_ENTRIES the least recently
+ * used go first — Cache Storage keeps entries in the order they were last
+ * written, and serving one offline re-writes it at the end. */
+async function putRuntime(request, response) {
+  const declared = Number(response.headers.get("Content-Length"));
+  if (declared > MAX_RUNTIME_ENTRY_BYTES) return;
+  const body = await response.blob();
+  if (body.size > MAX_RUNTIME_ENTRY_BYTES) return;
+  const headers = new Headers(response.headers);
+  headers.set(CACHED_AT_HEADER, String(Date.now()));
+  headers.set(BYTES_HEADER, String(body.size));
+  const cache = await caches.open(RUNTIME_CACHE);
+  await cache.put(request, new Response(body, { status: response.status, statusText: response.statusText, headers }));
+  await trimRuntime(cache);
+}
+
+function isFresh(response) {
+  const at = Number(response.headers.get(CACHED_AT_HEADER));
+  return at > 0 && Date.now() - at <= MAX_RUNTIME_AGE_MS;
+}
+
+let lastExpirySweep = 0;
+async function trimRuntime(cache) {
+  let keys = await cache.keys();
+  if (Date.now() - lastExpirySweep >= EXPIRY_SWEEP_INTERVAL_MS) {
+    lastExpirySweep = Date.now();
+    const kept = [];
+    for (const key of keys) {
+      const hit = await cache.match(key);
+      if (hit && isFresh(hit)) kept.push(key);
+      else await cache.delete(key);
+    }
+    keys = kept;
+  }
+  for (let i = 0; i < keys.length - MAX_RUNTIME_ENTRIES; i++) await cache.delete(keys[i]);
+}
+
+/** A fresh runtime entry for this request, marked as just used; undefined
+ *  for a miss, and an expired entry is deleted rather than served. */
+async function matchRuntime(request) {
+  let hit;
+  try {
+    hit = await caches.match(request, { cacheName: RUNTIME_CACHE });
+  } catch {
+    return undefined;
+  }
+  if (!hit) return undefined;
+  const fresh = isFresh(hit);
+  try {
+    const cache = await caches.open(RUNTIME_CACHE);
+    if (fresh) await cache.put(request, hit.clone());
+    else await cache.delete(request);
+  } catch { /* best-effort */ }
+  return fresh ? hit : undefined;
+}
+
+async function matchShell(request) {
+  try {
+    return await caches.match(request, { cacheName: SHELL_CACHE });
+  } catch {
+    return undefined;
+  }
+}
+
+/** What the worker may answer from disk when the network fails: never
+ *  anything on the never-cache list (not even a leftover from an older
+ *  worker), else a fresh runtime entry, else the shell's copy. */
+async function cachedFallback(request) {
+  if (!isCacheableRequest(request)) return undefined;
+  return (await matchRuntime(request)) || (await matchShell(request));
+}
+
+/** The worker's footprint (OFF-9): post { type: "CACHE_STATS" } to read it. */
+async function cacheStats() {
+  let entries = 0;
+  let bytes = 0;
+  let oldestCachedAt = null;
+  try {
+    const cache = await caches.open(RUNTIME_CACHE);
+    const keys = await cache.keys();
+    entries = keys.length;
+    for (const key of keys) {
+      const hit = await cache.match(key);
+      if (!hit) continue;
+      bytes += Number(hit.headers.get(BYTES_HEADER)) || 0;
+      const at = Number(hit.headers.get(CACHED_AT_HEADER));
+      if (at > 0 && (oldestCachedAt === null || at < oldestCachedAt)) oldestCachedAt = at;
+    }
+  } catch { /* report what was read */ }
+  const shell = await Promise.all(SHELL_ASSETS.map((a) => matchShell(a)));
+  return {
+    type: "CACHE_STATS",
+    version: VERSION,
+    entries,
+    bytes,
+    oldestCachedAt,
+    maxEntries: MAX_RUNTIME_ENTRIES,
+    maxAgeMs: MAX_RUNTIME_AGE_MS,
+    maxEntryBytes: MAX_RUNTIME_ENTRY_BYTES,
+    shellMissing: SHELL_ASSETS.filter((_, i) => !shell[i]),
+  };
+}
+
+/* ─── Reachability (OFF-3) ──────────────────────────────────────────────────
+ * navigator.onLine reports "online" on plant Wi-Fi that is associated but has
+ * no route out — the most common way a field device is offline. The worker
+ * sees every same-origin request it handles, so it tells every window when
+ * the network stops answering and when it answers again (one message per
+ * change; an aborted request says nothing about the network). */
+let networkOk = null;
+function reportNetwork(ok) {
+  if (networkOk === ok) return;
+  networkOk = ok;
+  try {
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((windows) => windows.forEach((w) => w.postMessage({ type: "NETWORK", ok })))
+      .catch(() => undefined);
+  } catch { /* no clients API */ }
+}
+
+/** Keep the worker alive until a cache write finishes. */
+function keepAlive(event, work) {
+  try {
+    if (event.waitUntil) event.waitUntil(work);
+  } catch { /* the event already settled — the write stays best-effort */ }
 }
 
 self.addEventListener("fetch", (event) => {
@@ -240,15 +515,21 @@ self.addEventListener("fetch", (event) => {
       (async () => {
         try {
           const res = await fetch(request);
-          cachePut(RUNTIME_CACHE, request, res);
+          reportNetwork(true);
+          keepAlive(event, cachePut(RUNTIME_CACHE, request, res));
           return res;
-        } catch {
+        } catch (err) {
+          // A navigation the browser itself abandoned (the user tapped
+          // another link, hit stop) is not an outage: rethrow it rather than
+          // invent an offline page for it (hard rule 2; OFF-10).
+          if (wasAborted(request, err)) throw err;
+          reportNetwork(false);
           // Each match is awaited so a missing entry (undefined) actually falls
           // through to the next option instead of short-circuiting on a Promise.
           return (
-            (await caches.match(request)) ||
-            (await caches.match("/offline")) ||
-            (await caches.match("/")) ||
+            (await cachedFallback(request)) ||
+            (await matchShell("/offline")) ||
+            (await matchShell("/")) ||
             offlineHtmlResponse()
           );
         }
@@ -257,10 +538,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets (Next build output, images, icon) → cache-first.
+  // Static assets (Next build output, images, icon) → cache-first. A path on
+  // the never-cache list is never routed here, whatever its extension.
   if (
-    url.pathname.startsWith("/_next/static/") ||
-    /\.(?:js|css|woff2?|png|jpg|jpeg|svg|ico|webp)$/.test(url.pathname)
+    (url.pathname.startsWith("/_next/static/") ||
+      /\.(?:js|css|woff2?|png|jpg|jpeg|svg|ico|webp)$/.test(url.pathname)) &&
+    isCacheableRequest(request)
   ) {
     event.respondWith(
       (async () => {
@@ -268,12 +551,14 @@ self.addEventListener("fetch", (event) => {
         if (cached) return cached;
         try {
           const res = await fetch(request);
-          cachePut(SHELL_CACHE, request, res);
+          reportNetwork(true);
+          keepAlive(event, cachePut(SHELL_CACHE, request, res));
           return res;
         } catch (err) {
           // A cancelled asset fetch is the browser's business, not an error
           // we should invent a status code for.
           if (wasAborted(request, err)) throw err;
+          reportNetwork(false);
           return unavailableResponse();
         }
       })(),
@@ -284,18 +569,21 @@ self.addEventListener("fetch", (event) => {
   // Other same-origin GETs → network-first with cache fallback. (Was
   // stale-while-revalidate, which quietly served outdated app data right
   // after deploys; fresh-when-online + cached-when-offline is the contract
-  // Field Mode actually needs.) /api/ responses are never stored and never
-  // replayed — see isCacheableRequest — so offline they fail honestly.
+  // Field Mode actually needs.) /api/ responses and the never-cache list are
+  // never stored and never replayed — see isCacheableRequest — so offline
+  // they fail honestly and the page's own error branch runs.
   event.respondWith(
     (async () => {
       try {
         const res = await fetch(request);
-        cachePut(RUNTIME_CACHE, request, res);
+        reportNetwork(true);
+        keepAlive(event, cachePut(RUNTIME_CACHE, request, res));
         return res;
       } catch (err) {
-        const cached = isCacheableRequest(request) ? await caches.match(request) : undefined;
-        if (cached) return cached;
         if (wasAborted(request, err)) throw err;
+        reportNetwork(false);
+        const cached = await cachedFallback(request);
+        if (cached) return cached;
         return unavailableResponse();
       }
     })(),

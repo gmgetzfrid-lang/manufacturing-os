@@ -12,9 +12,10 @@ export default function OfflinePage() {
       </div>
       <h1 className="text-xl font-black text-white">You&apos;re offline</h1>
       <p className="text-sm text-[var(--color-text-faint)] mt-2 max-w-sm">
-        Manufacturing OS can&apos;t reach the network right now. Pages and data you
-        opened recently are still available; this screen appears for anything
-        that wasn&apos;t cached. Reconnect to pick up where you left off.
+        Manufacturing OS can&apos;t reach the server right now. Documents,
+        drawings and their status are read live and are not kept on this
+        device, so nothing here can be checked until you reconnect — don&apos;t
+        rely on a screen you opened earlier as current. Reconnect and try again.
       </p>
       <Link
         href="/"
