@@ -149,13 +149,17 @@ function shedResolver(opts: {
   archiveUpdateError?: { code?: string; message: string };
   /** ILIFE-5: knowledge_documents.file_key values (a mirror of a controlled revision names the SAME key). */
   mirrorKeys?: string[]; mirrorError?: string;
+  /** The mirror read is cut by a server row cap: its exact count is above the rows it returns. */
+  mirrorCapped?: boolean;
 }) {
   return (table: string, ops: Op[]) => {
     if (table === "documents") return { data: [], error: null };
     if (table === "knowledge_documents") {
       const keys = (filter(ops, "in", "file_key") as string[] | undefined) ?? [];
       if (opts.mirrorError) return { data: null, error: { message: opts.mirrorError } };
-      return { data: (opts.mirrorKeys ?? []).filter((k) => keys.includes(k)).map((k) => ({ file_key: k })), error: null };
+      const hits = (opts.mirrorKeys ?? []).filter((k) => keys.includes(k)).map((k) => ({ file_key: k }));
+      if (opts.mirrorCapped) return { data: [], count: hits.length + 1000, error: null };
+      return { data: hits, error: null };
     }
     if (table === "archives") {
       if (argOf(ops, "update")) {
@@ -393,6 +397,23 @@ describe("document shed — intelligence ILIFE-5: a key a knowledge-library mirr
     const commit = await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
     expect(commit.status).toBe(503);
     expect(((await commit.json()) as { error: string }).error).toMatch(/knowledge_documents\.file_key.*Nothing was freed/);
+    expect(stamps).toEqual([]);
+    expect(state.r2Deletes).toEqual([]);
+  });
+
+  it("fails CLOSED when a server row cap cuts the mirror read short: preview and produce 503, commit 503 with nothing stamped or deleted", async () => {
+    const versions = pair("ok", `orgs/${ORG}/ok.pdf`);
+    state.resolve = shedResolver({ versions, mirrorKeys: [`orgs/${ORG}/ok.pdf`], mirrorCapped: true });
+    expect((await SHED_GET(new NextRequest(`https://app/api/admin/shed?orgId=${ORG}&keep=1`))).status).toBe(503);
+    const claims: string[][] = [];
+    state.resolve = shedResolver({ versions, claims, mirrorKeys: [`orgs/${ORG}/ok.pdf`], mirrorCapped: true });
+    expect((await SHED_PRODUCE(post("https://app/api/admin/shed", { orgId: ORG, keep: 1, confirm: true }))).status).toBe(503);
+    expect(claims).toEqual([]);
+    const stamps: string[][] = [];
+    state.resolve = shedResolver({ versions: [version("ok", `orgs/${ORG}/ok.pdf`, { archive_id: "arch1" })], stamps, mirrorCapped: true });
+    const commit = await SHED_COMMIT(post("https://app/api/admin/shed/commit", { orgId: ORG, archiveId: "arch1", confirm: true }));
+    expect(commit.status).toBe(503);
+    expect(((await commit.json()) as { error: string }).error).toMatch(/knowledge_documents\.file_key .*server row cap cut it short.*Nothing was freed/);
     expect(stamps).toEqual([]);
     expect(state.r2Deletes).toEqual([]);
   });

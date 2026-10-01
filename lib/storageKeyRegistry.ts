@@ -322,6 +322,10 @@ export function plainKeyColumns(sources: readonly StorageKeySource[] = STORAGE_K
     .map((column) => ({ table: s.table, column })));
 }
 
+/** PostgREST's default max-rows: with no count to compare, a read that
+ *  returned this many rows may have been cut. */
+const KEY_READ_ROW_CAP = 1000;
+
 /** intelligence ILIFE-5: the keys among `keys` that a row OUTSIDE the
  *  excluded columns still names — above all a knowledge-library mirror
  *  (`knowledge_documents.file_key`), which names the SAME object as the
@@ -330,8 +334,9 @@ export function plainKeyColumns(sources: readonly StorageKeySource[] = STORAGE_K
  *  like the orphan sweep's reference set (DEC-57): a reference anywhere
  *  protects the object. Plain columns only (the JSON-embedded keys —
  *  ticket attachments, the branding logo, template examples, page
- *  backgrounds — are never a revision's key). Throws on ANY read error: the caller refuses to free
- *  rather than guess (fail closed). `except` lists `table.column` entries
+ *  backgrounds — are never a revision's key). Throws on ANY read error, and
+ *  on a read a server row cap cut short (exact count above the rows returned):
+ *  the caller refuses to free rather than guess (fail closed). `except` lists `table.column` entries
  *  the caller already judged (the shed's own document_versions.file_url,
  *  RET-8's sharedLiveKeys). */
 export async function keysReferencedOutside(
@@ -347,11 +352,21 @@ export async function keysReferencedOutside(
     if (skip.has(`${table}.${column}`)) continue;
     for (let i = 0; i < uniq.length; i += 200) {
       const chunk = uniq.slice(i, i + 200);
-      const { data, error } = await sb.from(table).select(column).in(column, chunk);
+      const { data, error, count } = await sb.from(table).select(column, { count: "exact" }).in(column, chunk);
       if (error) {
         throw new Error(`Couldn't verify whether ${table}.${column} still references these storage keys (${error.message}); refusing to proceed.`);
       }
-      for (const r of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+      const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      // A server row cap (PostgREST max-rows) cuts a read silently, and a hit it
+      // cuts off would free a referenced object. More matching rows than came
+      // back — or, with no count, a page as large as the default cap — refuses.
+      if (typeof count === "number" ? count > rows.length : rows.length >= KEY_READ_ROW_CAP) {
+        throw new Error(
+          `Couldn't verify whether ${table}.${column} still references these storage keys (the read returned ${rows.length} of ` +
+          `${typeof count === "number" ? count : "an unknown number of"} matching rows; a server row cap cut it short); refusing to proceed.`,
+        );
+      }
+      for (const r of rows) {
         const v = r[column];
         if (typeof v === "string") hit.add(v);
       }

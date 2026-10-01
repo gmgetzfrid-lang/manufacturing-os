@@ -71,10 +71,16 @@ const ROWS: Record<string, Row[]> = {
 };
 
 /** A thenable stand-in for the service-role client over ROWS (keyset reads, head counts, `.in` filters). */
-function fakeDb(rows: Record<string, Row[]>, opts: { failRead?: string; reads?: string[] } = {}): SupabaseClient {
+function fakeDb(rows: Record<string, Row[]>, opts: {
+  failRead?: string; reads?: string[];
+  /** PostgREST's max-rows: a read returns at most this many rows (silently). */
+  maxRows?: number;
+  /** A server that answers no count even when one is asked for. */
+  countless?: boolean;
+} = {}): SupabaseClient {
   return {
     from: (table: string) => {
-      let head = false; let after: string | null = null; let cap: number | null = null;
+      let head = false; let counted = false; let after: string | null = null; let cap: number | null = null;
       let inFilter: { col: string; vals: unknown[] } | null = null;
       const c: Row = {};
       const h: ProxyHandler<Row> = {
@@ -88,12 +94,17 @@ function fakeDb(rows: Record<string, Row[]>, opts: { failRead?: string; reads?: 
               let out = [...src].sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1));
               if (after !== null) out = out.filter((r) => String(r.id) > (after as string));
               if (inFilter) out = out.filter((r) => inFilter!.vals.includes(r[inFilter!.col]));
+              const matched = out.length;
               if (cap !== null) out = out.slice(0, cap);
-              resolve({ data: out, error: null });
+              if (opts.maxRows !== undefined) out = out.slice(0, opts.maxRows);
+              resolve(counted && !opts.countless ? { data: out, count: matched, error: null } : { data: out, error: null });
             };
           }
           return (...args: unknown[]) => {
-            if (prop === "select") head = (args[1] as { head?: boolean } | undefined)?.head === true;
+            if (prop === "select") {
+              head = (args[1] as { head?: boolean } | undefined)?.head === true;
+              counted = (args[1] as { count?: string } | undefined)?.count === "exact";
+            }
             if (prop === "gt") after = String(args[1]);
             if (prop === "limit") cap = args[0] as number;
             if (prop === "in") inFilter = { col: args[0] as string, vals: args[1] as unknown[] };
@@ -301,6 +312,25 @@ describe("ILIFE-5 — keysReferencedOutside: the predicate a step freeing a revi
     for (const json of Object.keys(JSON_KEY_COLUMNS)) expect(cols, json).not.toContain(json);
     // without the exclusion, the shed's own column answers too
     expect([...(await keysReferencedOutside(fakeDb(rows), [live, freeable]))].sort()).toEqual([freeable, live].sort());
+  });
+
+  it("a read a server row cap cut short refuses (fail closed) — a hit past the cap would otherwise free a referenced object", async () => {
+    // 12 knowledge mirrors name the live key; the server returns at most 5 rows per read.
+    const many: Record<string, Row[]> = {
+      ...rows,
+      knowledge_documents: Array.from({ length: 12 }, (_, i) => ({ id: `kd${String(i).padStart(2, "0")}`, file_key: i < 11 ? freeable.replace("P-099", `P-0${i}`) : live })),
+    };
+    const keys = [...many.knowledge_documents.map((r) => r.file_key as string)];
+    await expect(keysReferencedOutside(fakeDb(many, { maxRows: 5 }), keys, ["document_versions.file_url"]))
+      .rejects.toThrow(/knowledge_documents\.file_key .*returned 5 of 12 matching rows.*refusing to proceed/);
+    // no count in the answer: a page as large as PostgREST's default cap (1000) refuses too
+    const full: Record<string, Row[]> = {
+      knowledge_documents: Array.from({ length: 1000 }, (_, i) => ({ id: `kd${String(i).padStart(4, "0")}`, file_key: live })),
+    };
+    await expect(keysReferencedOutside(fakeDb(full, { countless: true }), [live], ["document_versions.file_url"]))
+      .rejects.toThrow(/knowledge_documents\.file_key .*an unknown number of matching rows.*refusing to proceed/);
+    // under the cap, every hit comes back and nothing refuses
+    expect([...(await keysReferencedOutside(fakeDb(many, { maxRows: 50 }), keys, ["document_versions.file_url"]))].sort()).toEqual([...new Set(keys)].sort());
   });
 
   it("an unreadable column refuses (fail closed), and nothing to check reads nothing", async () => {
