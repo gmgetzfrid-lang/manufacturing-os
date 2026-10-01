@@ -195,10 +195,14 @@ describe("20261105 — the review side of the door", () => {
     expect(B).toContain("REVOKE ALL ON FUNCTION publish_revision(uuid, uuid, text, jsonb, uuid, text, boolean, boolean, text, text, boolean) FROM PUBLIC;");
     expect(B).toContain("GRANT EXECUTE ON FUNCTION publish_revision(uuid, uuid, text, jsonb, uuid, text, boolean, boolean, text, text, boolean) TO authenticated, service_role;");
   });
-  it("20261105 is the newest definition of the publish guard; publish_revision was re-created FROM it by 20261130 (a later re-creation must start from the newest)", () => {
+  it("20261105's publish guard is the body the next re-creation starts from (20261139, REV-17); publish_revision was re-created FROM it by 20261130 (a later re-creation must start from the newest)", () => {
     const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const newest = (fn: RegExp) => files.filter((f) => fn.test(stripComments(mig(f)))).pop();
-    expect(newest(/CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/)).toBe("20261105_prj_roundG_intake_review_and_attempts.sql");
+    // document-control Round F wave 2, P12 (REV-17): 20261139 re-creates the
+    // guard from THIS file's body plus one block — its byte-fidelity proof
+    // (lineDiff + ordered cut) is lib/__tests__/dcRoundFWave2ResidualsMigrations.test.ts.
+    const guardDefs = files.filter((f) => /CREATE OR REPLACE FUNCTION enforce_document_publish_guard\(\)/.test(stripComments(mig(f))));
+    expect(guardDefs.slice(-2)).toEqual(["20261105_prj_roundG_intake_review_and_attempts.sql", "20261139_dc_roundF_first_issue_and_branch_closeout.sql"]);
     // document-control Round F wave 2 (DCK-8) — its lineDiff against this
     // file's body is lib/__tests__/dcRoundFLifecycleMigration.test.ts.
     expect(newest(/CREATE OR REPLACE FUNCTION publish_revision\(/)).toBe("20261130_dc_roundF_publish_override_reason.sql");
