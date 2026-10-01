@@ -255,3 +255,47 @@ describe("REV-18 (P13 final review fix) — the Draft restore is offered only wh
     expect(s.resolveActorPrincipal).not.toHaveBeenCalled();
   });
 });
+
+describe("REV-19 (P14 final review) — a landed restore says what did not follow it before the dialog closes", () => {
+  const outcome = (o: Partial<{ putBack: boolean | null; complianceClockErrors: string[]; recordError: string | null }>) =>
+    ({ issued: true, putBack: null, complianceClockErrors: [], recordError: null, ...o });
+
+  it("a review clock / acknowledgment roster that did not start is named; the dialog stays until Done, which finishes the restore", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "unknown" };
+    s.unarchiveDocument.mockResolvedValueOnce(outcome({ complianceClockErrors: ["the acknowledgment roster could not be saved (permission denied)"] }));
+    const { onSuccess, onClose } = await open("unarchive");
+    await tick();
+    await click(button("Restore Document"));
+    const dialog = host.querySelector('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain("Restored as Issued — 1 follow-up step did not complete");
+    expect(dialog?.textContent).toContain("The restore stands and is not rolled back — do not restore it again.");
+    expect(host.querySelector('[data-testid="restore-follow-ups"]')?.textContent).toBe("the acknowledgment roster could not be saved (permission denied)");
+    expect(dialog?.textContent).toContain("recorded on the document's history");
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    await click(button("Done"));
+    expect(onSuccess).toHaveBeenCalledWith("Issued");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("an issue record that could not be written is named — and the dialog does not claim the history holds it", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.unarchiveDocument.mockResolvedValueOnce(outcome({ putBack: true, recordError: "permission denied for table audit_logs" }));
+    const { onSuccess } = await open("unarchive");
+    await tick();
+    await click(button("Restore Document"));
+    expect(host.querySelector('[data-testid="restore-follow-ups"]')?.textContent).toBe("The issue record could not be written (permission denied for table audit_logs), so this issue is not on the document's history.");
+    expect(host.querySelector('[role="alertdialog"]')?.textContent).not.toContain("recorded on the document's history;");
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("regression — an outcome with nothing outstanding closes at once, as before", async () => {
+    s.unarchiveDocument.mockResolvedValueOnce(outcome({ putBack: false }));
+    const { onSuccess, onClose } = await open("unarchive");
+    await tick();
+    await click(button("Restore Document"));
+    expect(host.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(onSuccess).toHaveBeenCalledWith("Issued");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
