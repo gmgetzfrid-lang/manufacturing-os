@@ -72,7 +72,8 @@ function chain(table: string) {
       if (refusal) return { data: null, error: refusal, count: null };
       const inserted = rows.map((r) => ({ id: `${table}-${all.length + 1}`, ...r }));
       for (const r of inserted) { state.onWrite?.(table, op, r); all.push(r); }
-      return single ? { data: inserted[0], error: null } : { data: inserted, error: null };
+      // count: PostgREST reports the rows a write statement wrote (the restore's honest counts read it — admin-and-org BKP-5)
+      return single ? { data: inserted[0], error: null, count: 1 } : { data: inserted, error: null, count: inserted.length };
     }
     if (op === "update") {
       const hit = all.filter((r) => matches(r, filters));

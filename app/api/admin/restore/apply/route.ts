@@ -90,22 +90,27 @@ export async function POST(req: NextRequest) {
   // 3) Insert records in FK order.
   const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name);
   const order = orderTablesForRestore(importable);
-  const results: Array<{ name: string; inserted: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
+  const results: Array<{ name: string; inserted: number; existing?: number; uncounted?: number; error?: string; refused?: RestoreRowRefusal[] }> = [];
   let totalInserted = 0;
+  let totalExisting = 0;
   for (const name of order) {
     const raw = envelope.tables[name];
     const rows = (Array.isArray(raw) ? raw : []) as Record<string, unknown>[];
     if (!rows.length) continue;
-    let inserted = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
+    let inserted = 0; let existing = 0; let uncounted = 0; let error: string | undefined; const refused: RestoreRowRefusal[] = [];
     for (let i = 0; i < rows.length; i += 500) {
       const r = await applyRestoreChunk(sb, { orgId, table: name, rows: rows.slice(i, i + 500), idRemap });
       inserted += r.inserted;
+      existing += r.existing;
+      uncounted += r.uncounted;
       refused.push(...r.refused);
       if (!r.ok) { error = r.error ?? "restore write failed"; break; }
     }
     // Report what actually landed — earlier chunks committed even on failure.
-    results.push({ name, inserted, error, ...(refused.length ? { refused } : {}) });
+    // BKP-5: and what did not — rows whose key already exists were skipped.
+    results.push({ name, inserted, ...(existing ? { existing } : {}), ...(uncounted ? { uncounted } : {}), error, ...(refused.length ? { refused } : {}) });
     totalInserted += inserted;
+    totalExisting += existing;
     if (error) {
       // STOP. Tables are FK-ordered parents-before-children: continuing after
       // a parent failure inserts children referencing rows that never landed
@@ -127,9 +132,9 @@ export async function POST(req: NextRequest) {
     user_id: actor.userId, user_email: actor.email,
     details: {
       schemaVersion: plan.schemaVersion, createdUsers,
-      linkedUsers: plan.counts.matchedUsers, totalInserted,
+      linkedUsers: plan.counts.matchedUsers, totalInserted, totalExisting,
       backupOrgId: envelope.manifest.orgId ?? null,
-      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
+      tables: results.map((r) => ({ name: r.name, inserted: r.inserted, existing: r.existing ?? 0, error: r.error, ...(r.refused ? { refused: r.refused.length } : {}) })),
     },
   });
   if (auditErr) {
@@ -145,10 +150,12 @@ export async function POST(req: NextRequest) {
     createdUsers,
     linkedUsers: plan.counts.matchedUsers,
     totalInserted,
+    totalExisting,
     tables: results,
     failedTables: failed.map((f) => f.name),
     note:
-      "Records restored additively (existing ids were skipped). File binaries are not re-uploaded here — " +
+      "Records restored additively: a row whose key already exists in this workspace was skipped and kept exactly as it is — " +
+      "a restore never overwrites or repairs an existing row. File binaries are not re-uploaded here — " +
       "any referenced file that isn't in storage will prompt for its archive when opened. " +
       "Restored users are inactive placeholders; re-invite them to grant access.",
   });

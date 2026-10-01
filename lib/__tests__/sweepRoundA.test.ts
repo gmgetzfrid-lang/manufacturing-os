@@ -92,7 +92,10 @@ describe("SURF-8 — restore refuses immutable tables, audits chunks, mints no r
     expect(s).toMatch(/action: "RESTORE_CHUNK", resource_type: "org", resource_id: orgId, org_id: orgId/);
     expect(s).toMatch(/rowsReceived: rows\.length, rowsAfterFilters: result\.rowsAfterFilters, inserted/);
     expect(s).toMatch(/if \(auditErr\) \{/);
-    expect(src("app/(protected)/admin/restore/page.tsx")).toMatch(/manifest: \{ orgId: envelope\.manifest\.orgId, orgName: envelope\.manifest\.orgName \}/);
+    // admin-and-org BKP-5: the page's chunked flow lives in lib/dataRestore.ts runChunkedRestore; every chunk still names its backup.
+    expect(lib).toMatch(/const manifest = \{ orgId: envelope\.manifest\.orgId, orgName: envelope\.manifest\.orgName \};/);
+    expect(lib).toMatch(/\{ table, rows: chunk, idRemap, manifest \}/);
+    expect(src("app/(protected)/admin/restore/page.tsx")).toMatch(/await runChunkedRestore\(/);
   });
 });
 

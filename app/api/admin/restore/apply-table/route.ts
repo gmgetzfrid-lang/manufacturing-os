@@ -1,9 +1,15 @@
 // POST /api/admin/restore/apply-table?orgId=
-// Body: { table, rows, idRemap }
+// Body: { table, rows, idRemap, preview? }
 //
 // Step 2 of the CHUNKED restore: one bounded slice of one table. The client
 // walks tables in FK order (orderTablesForRestore) posting ≤500 rows per call,
 // so restores of any size fit under serverless request limits.
+//
+// BKP-5: `preview: true` writes nothing and answers how many of these rows
+// already exist under the table's key (kept as they are — a restore only
+// adds) and how many would be new, so the page can show both counts BEFORE
+// the admin applies. An apply answers the same counts for what it did:
+// inserted, existing (skipped — never overwritten), uncounted, refused.
 //
 // Security model: the caller is an org Admin who fully controls the row
 // content anyway — the hard boundary enforced here is that every row lands in
@@ -16,7 +22,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { applyRestoreChunk, restoreTableRefusal, type RestorePlan } from "@/lib/dataRestore";
+import { applyRestoreChunk, previewRestoreChunk, restoreTableRefusal, type RestorePlan } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
@@ -29,7 +35,7 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
-  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string } };
+  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string }; preview?: boolean };
   try { parsed = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const table = (parsed.table || "").trim();
@@ -47,33 +53,57 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "idRemap missing — call /api/admin/restore/begin first." }, { status: 400 });
   }
 
+  // BKP-5: read-only — what would this slice do?
+  if (parsed.preview === true) {
+    const p = await previewRestoreChunk(sb, { orgId, table, rows, idRemap });
+    if (!p.ok) return NextResponse.json({ error: p.error }, { status: p.status ?? 500 });
+    return NextResponse.json({ ok: true, preview: true, rows: p.rows, existing: p.existing, wouldInsert: p.wouldInsert });
+  }
+
   // Remap, FORCE the org boundary, filter, bound org-less rows by their
   // parent, write — the shared function both restore routes call.
   const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
-  const { inserted, refused } = result;
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: result.error, ...(result.code ? { code: result.code } : {}), inserted, ...(refused.length ? { refused } : {}) },
-      { status: result.status ?? 500 },
-    );
+  const { inserted, existing, uncounted, refused } = result;
+  const counts = {
+    inserted,
+    ...(existing ? { existing } : {}),
+    ...(uncounted ? { uncounted } : {}),
+    ...(refused.length ? { refused } : {}),
+  };
+  // A chunk that failed before writing anything leaves nothing to record.
+  if (!result.ok && inserted === 0 && refused.length === 0) {
+    return NextResponse.json({ error: result.error, ...(result.code ? { code: result.code } : {}), ...counts }, { status: result.status ?? 500 });
   }
 
   // SURF-8 done-when 2: every restore chunk leaves an audit row naming the
-  // table, the row count and the backup it came from. Checked write — a
+  // table, the row count and the backup it came from — a chunk that failed
+  // part-way too, with what it wrote and why it stopped. Checked write — a
   // restore whose trail cannot be written must not look complete.
   const { error: auditErr } = await sb.from("audit_logs").insert({
     action: "RESTORE_CHUNK", resource_type: "org", resource_id: orgId, org_id: orgId,
     user_id: actor.userId, user_email: actor.email,
     details: {
       table, rowsReceived: rows.length, rowsAfterFilters: result.rowsAfterFilters, inserted,
+      ...(existing ? { existing } : {}),
+      ...(uncounted ? { uncounted } : {}),
       ...(refused.length ? { refused } : {}),
+      ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,
     },
   });
+  if (!result.ok) {
+    return NextResponse.json(
+      {
+        error: auditErr ? `${result.error} (and the restore audit row failed: ${auditErr.message})` : result.error,
+        ...(result.code ? { code: result.code } : {}), ...counts,
+      },
+      { status: result.status ?? 500 },
+    );
+  }
   if (auditErr) {
-    return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, inserted }, { status: 500 });
+    return NextResponse.json({ error: `Rows were written but the restore audit row failed: ${auditErr.message}`, ...counts }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, inserted, ...(refused.length ? { refused } : {}) });
+  return NextResponse.json({ ok: true, ...counts });
 }

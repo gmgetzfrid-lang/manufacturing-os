@@ -18,6 +18,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Row = Record<string, unknown>;
 
@@ -109,7 +111,11 @@ vi.mock("@/lib/serverAuth", () => ({
 
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
-import { applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore } from "@/lib/dataRestore";
+import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
+import {
+  applyRestoreChunk, ORG_LESS_RESTORE_PARENTS, RESTORE_CONTRACT_TABLES, isSkippedTable, planRestore,
+  previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE, type RestorePost, type RestoreEnvelopeLike,
+} from "@/lib/dataRestore";
 import { censusSchema } from "./helpers/schemaKeys";
 
 const ORG = "org-1";
@@ -345,5 +351,100 @@ describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is r
     expect(r.body).toMatchObject({ error: 'duplicate key value violates unique constraint "notes_slug_key"', code: "23505", inserted: 0 });
     expect(db.attempts.filter((a) => a.table === "notes").map((a) => a.op)).toEqual(["upsert"]);
     expect(rowsOf("notes")).toEqual([]);
+  });
+});
+
+/** The page's transport, pointed at the real route handlers. */
+const routePost: RestorePost = async (path, body) => {
+  const req = new NextRequest(`https://app${path}`, {
+    method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const handler = path.startsWith("/api/admin/restore/begin") ? beginRoute : applyTable;
+  const res = await handler(req);
+  return { ok: res.ok, status: res.status, body: (await res.json().catch(() => null)) as Record<string, unknown> | null };
+};
+const planFor = (envelope: RestoreEnvelopeLike) => planRestore(envelope, { orgId: ORG, orgName: "Acme", members: [] });
+
+describe("BKP-5 — a restore says what it added and what it kept, before and after", () => {
+  const envelope = (): RestoreEnvelopeLike => ({
+    manifest: { orgId: "backup-org", orgName: "Acme" },
+    tables: {
+      org_members: [],
+      notes: [{ id: "n-damaged", org_id: "backup-org", body: "good copy" }, { id: "n-new", org_id: "backup-org", body: "new" }],
+      codebook_config: [{ org_id: "backup-org", drawing_number: {} }],
+    },
+  });
+
+  it("the read-only check counts rows that already exist (by the table's key) apart from new ones — and writes nothing", async () => {
+    db.keys.codebook_config = [["org_id"]];
+    db.rows.notes = [{ id: "n-damaged", org_id: ORG, body: "CORRUPTED" }];
+    db.rows.codebook_config = [{ org_id: ORG, drawing_number: { live: true } }];
+    const env = envelope();
+    const check = await previewChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), post: routePost });
+    expect(check.tables.notes).toEqual({ rows: 2, existing: 1, wouldInsert: 1 });
+    expect(check.tables.codebook_config).toEqual({ rows: 1, existing: 1, wouldInsert: 0 }); // keyed on org_id, bound to THIS org
+    expect(check).toMatchObject({ existing: 2, wouldInsert: 1 });
+    expect(db.attempts).toEqual([]); // nothing written, no audit row
+  });
+
+  it("after applying: inserted and existing are both reported; the damaged row is NOT repaired, and the panel's sentence says so", async () => {
+    db.keys.codebook_config = [["org_id"]];
+    db.rows.notes = [{ id: "n-damaged", org_id: ORG, body: "CORRUPTED" }];
+    const env = envelope();
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result.tables.find((t) => t.name === "notes")).toMatchObject({ inserted: 1, existing: 1 });
+    expect(result).toMatchObject({ totalInserted: 2, totalExisting: 1, totalRefused: 0 });
+    expect(rowsOf("notes").find((r) => r.id === "n-damaged")?.body).toBe("CORRUPTED"); // additive only (DEC-44 A&O P1)
+    expect(RESTORE_ADDITIVE_NOTE).toMatch(/cannot overwrite, repair or roll back/);
+    const chunkAudit = audits("RESTORE_CHUNK").find((r) => (r.details as Record<string, unknown>).table === "notes");
+    expect(chunkAudit?.details).toMatchObject({ inserted: 1, existing: 1 });
+  });
+
+  it("a server that reports no count is 'uncounted', never assumed written", async () => {
+    db.countless = true;
+    const r = await chunk("notes", [{ id: "n1" }, { id: "n2" }]);
+    expect(r.body).toEqual({ ok: true, inserted: 0, uncounted: 2 });
+  });
+
+  it("the run STOPS at the first failed table and names the tables it did not attempt (FK order)", async () => {
+    db.writeError = (table, op) => (table === "documents" && op === "upsert" ? { code: "23505", message: 'duplicate key value violates unique constraint "documents_library_uniqueness_uniq"' } : null);
+    const env: RestoreEnvelopeLike = {
+      manifest: { orgId: "backup-org" },
+      tables: {
+        libraries: [{ id: "lib-1", org_id: "backup-org" }],
+        documents: [{ id: "d1", org_id: "backup-org", library_id: "lib-1" }],
+        document_versions: [{ id: "v1", org_id: "backup-org", record_id: "d1" }],
+        notes: [{ id: "n1", org_id: "backup-org" }],
+      },
+    };
+    const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toEqual({ table: "documents", error: 'duplicate key value violates unique constraint "documents_library_uniqueness_uniq"' });
+    expect(result.notAttempted).toEqual(["document_versions", "notes"]);
+    expect(result.tables.map((t) => t.name)).toEqual(["libraries", "documents"]);
+    expect(rowsOf("document_versions")).toEqual([]); // no child of a parent that never landed
+    expect(rowsOf("notes")).toEqual([]);
+    expect(rowsOf("libraries")).toHaveLength(1);
+  });
+
+  it("a chunk that fails part-way reports what it wrote, and its audit row records the failure", async () => {
+    let calls = 0;
+    db.writeError = (table, op) => (table === "notes" && op === "upsert" && ++calls === 2 ? { code: "XX000", message: "connection reset" } : null);
+    const rows = Array.from({ length: 700 }, (_, i) => ({ id: `n${i}`, org_id: "backup-org" }));
+    const r = await chunk("notes", rows);
+    expect(r.status).toBe(500);
+    expect(r.body).toMatchObject({ error: "connection reset", inserted: 500 });
+    expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ table: "notes", inserted: 500, failed: "connection reset" });
+  });
+
+  it("the page runs the check before it asks, uses the shared driver, and never paints a stopped run green", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page.indexOf("await previewChunkedRestore(")).toBeGreaterThan(0);
+    expect(page.indexOf("await previewChunkedRestore(")).toBeLessThan(page.indexOf("await appConfirm("));
+    expect(page.indexOf("await appConfirm(")).toBeLessThan(page.indexOf("await runChunkedRestore("));
+    expect(page).toMatch(/KEPT EXACTLY AS THEY ARE — not overwritten, not repaired/);
+    expect(page).toMatch(/Restore stopped at <span className="font-mono">\{stopped\.table\}<\/span> — \{result\.notAttempted\.length\} table\(s\) not attempted/);
+    expect(page).toMatch(/const tone = stopped\s*\? "border-red-200/);
+    expect(page).not.toMatch(/it&apos;s additive and safe/);
   });
 });

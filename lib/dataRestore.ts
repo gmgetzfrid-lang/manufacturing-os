@@ -578,6 +578,13 @@ export interface RestoreChunkResult {
   code?: string;
   /** Rows written. Earlier sub-chunks stay written when a later one fails. */
   inserted: number;
+  /** BKP-5: rows NOT written because a row with the same key (the table's
+   *  conflict target — usually its id) already exists. That row is kept
+   *  exactly as it is: a restore only adds, it never overwrites or repairs. */
+  existing: number;
+  /** Rows the database wrote or skipped without reporting a count — honest
+   *  "unknown", never assumed written. */
+  uncounted: number;
   /** Rows not written, each with its reason (a database refusal of that single
    *  row, or a parent that is not a row of this workspace). */
   refused: RestoreRowRefusal[];
@@ -613,8 +620,17 @@ export async function applyRestoreChunk(
 ): Promise<RestoreChunkResult> {
   const { orgId, table, idRemap } = params;
   const refused: RestoreRowRefusal[] = [];
+  let existing = 0;
+  let uncounted = 0;
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, refused, rowsAfterFilters });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, uncounted, refused, rowsAfterFilters });
+  // count: "exact" reports the rows the statement WROTE; ON CONFLICT DO
+  // NOTHING skips the rest. No count is recorded as unknown, never as written.
+  const tally = (count: number | null | undefined, sent: number): number => {
+    if (typeof count !== "number") { uncounted += sent; return 0; }
+    existing += Math.max(0, sent - count);
+    return count;
+  };
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal);
@@ -673,19 +689,226 @@ export async function applyRestoreChunk(
   for (let i = 0; i < mapped.length; i += 500) {
     const chunk = mapped.slice(i, i + 500);
     const up = await sb.from(table).upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-    if (!up.error) { inserted += up.count ?? chunk.length; continue; }
+    if (!up.error) { inserted += tally(up.count, chunk.length); continue; }
     if (!(ROW_REFUSAL_TABLES.has(table) && ROW_REFUSAL_CODES.has(String(up.error.code ?? "")))) {
       return fail(500, up.error.message, inserted, rowsAfterFilters, up.error.code);
     }
     // HLD-9: one refused hold must not sink its chunk — retry row by row.
     for (const row of chunk) {
       const one = await sb.from(table).upsert([row], { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
-      if (!one.error) { inserted += one.count ?? 1; continue; }
+      if (!one.error) { inserted += tally(one.count, 1); continue; }
       if (!ROW_REFUSAL_CODES.has(String(one.error.code ?? ""))) {
         return fail(500, one.error.message, inserted, rowsAfterFilters, one.error.code);
       }
       refused.push({ id: typeof row.id === "string" ? row.id : null, code: String(one.error.code), message: one.error.message });
     }
   }
-  return { ok: true, inserted, refused, rowsAfterFilters };
+  return { ok: true, inserted, existing, uncounted, refused, rowsAfterFilters };
+}
+
+/** BKP-5: what a restore of these rows WOULD do, read-only — how many already
+ *  exist in the database under the table's conflict key (and would be kept
+ *  as they are) and how many would be new. Rows are remapped and bound to the
+ *  workspace exactly as the write does, so a composite key that carries an
+ *  org or a user is compared as it would be written. It does not apply the
+ *  write's other filters (archived-ticket comments, org-less parents): their
+ *  outcome is reported per row after the apply. */
+export interface RestorePreviewResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+  rows: number;
+  existing: number;
+  wouldInsert: number;
+}
+
+export async function previewRestoreChunk(
+  sb: RestoreDb,
+  params: { orgId: string; table: string; rows: ReadonlyArray<Record<string, unknown>>; idRemap: RestorePlan["idRemap"] },
+): Promise<RestorePreviewResult> {
+  const { orgId, table, idRemap } = params;
+  const refusal = restoreTableRefusal(table);
+  if (refusal) return { ok: false, status: 400, error: refusal, rows: 0, existing: 0, wouldInsert: 0 };
+  const cols = conflictTargetFor(table).split(",").map((c) => c.trim());
+  const mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap), orgId));
+  const isKeyValue = (v: unknown): v is string | number => typeof v === "string" || typeof v === "number";
+  const keyOf = (r: Record<string, unknown>) => (cols.every((c) => isKeyValue(r[c])) ? cols.map((c) => String(r[c])).join("\u0000") : null);
+  // Probe on the most selective key column (never org_id when there is another).
+  const probe = cols.find((c) => c !== "org_id") ?? cols[0];
+  const values = Array.from(new Set(mapped.filter((r) => keyOf(r) !== null).map((r) => String(r[probe]))));
+  const present = new Set<string>();
+  for (let i = 0; i < values.length; i += 200) {
+    let q = sb.from(table).select(cols.join(",")).in(probe, values.slice(i, i + 200));
+    if (cols.includes("org_id")) q = q.eq("org_id", orgId);
+    const { data, error } = await q;
+    if (error) return { ok: false, status: 500, error: error.message, rows: mapped.length, existing: 0, wouldInsert: 0 };
+    for (const row of ((data ?? []) as unknown as Array<Record<string, unknown>>)) {
+      const k = keyOf(row);
+      if (k !== null) present.add(k);
+    }
+  }
+  let existing = 0;
+  const seen = new Set<string>();
+  for (const r of mapped) {
+    const k = keyOf(r);
+    if (k === null) continue; // no key yet (a defaulted id): always new
+    if (present.has(k) || seen.has(k)) existing++;
+    seen.add(k);
+  }
+  return { ok: true, rows: mapped.length, existing, wouldInsert: mapped.length - existing };
+}
+
+// ── The chunked restore, driven from the browser (BKP-5) ─────────────────
+// The page's whole restore flow, kept here — pure apart from the injected
+// `post` — so it runs the same in a test against the real routes as it does
+// in the browser against fetch.
+
+/** DEC-44 (A&O P1) §5 — the sentence the page shows before and after a restore. */
+export const RESTORE_ADDITIVE_NOTE =
+  "A restore only ADDS records. A record whose id (or key) already exists in this workspace is kept exactly as it is — " +
+  "a restore cannot overwrite, repair or roll back a record that was changed or damaged after the backup.";
+
+export const RESTORE_CHUNK_ROWS = 500;
+
+export type RestorePost = (path: string, body: unknown) => Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }>;
+
+export interface RestoreRunProgress {
+  phase: "checking" | "begin" | "tables";
+  currentTable?: string;
+  rowsDone: number;
+  rowsTotal: number;
+  tablesDone: number;
+  tablesTotal: number;
+}
+
+export interface RestoreTableOutcome {
+  name: string;
+  rows: number;
+  inserted: number;
+  existing: number;
+  uncounted: number;
+  refused: RestoreRowRefusal[];
+  error?: string;
+}
+
+export interface ChunkedRestoreResult {
+  createdUsers: number;
+  linkedUsers: number;
+  totalInserted: number;
+  totalExisting: number;
+  totalUncounted: number;
+  totalRefused: number;
+  tables: RestoreTableOutcome[];
+  /** BKP-5 Done-when 2: the table the restore STOPPED at (tables are
+   *  FK-ordered, so nothing after it was attempted), and why. */
+  stoppedAt: { table: string; error: string } | null;
+  notAttempted: string[];
+}
+
+export interface ChunkedRestorePreview {
+  tables: Record<string, { rows: number; existing: number; wouldInsert: number }>;
+  existing: number;
+  wouldInsert: number;
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const restoreOrder = (plan: RestorePlan) =>
+  orderTablesForRestore(plan.counts.tables.filter((t) => t.willImport && t.rows > 0).map((t) => t.name));
+const tableRows = (envelope: RestoreEnvelopeLike, table: string): Array<Record<string, unknown>> => {
+  const raw = envelope.tables[table];
+  return (Array.isArray(raw) ? raw : []) as Array<Record<string, unknown>>;
+};
+const keyProjection = (table: string, row: Record<string, unknown>) => {
+  const out: Record<string, unknown> = {};
+  for (const c of conflictTargetFor(table).split(",").map((x) => x.trim())) if (c in row) out[c] = row[c];
+  return out;
+};
+
+/** BKP-5 Done-when 1, BEFORE applying: per table, how many backup rows already
+ *  exist here under the table's key (and would be kept as they are) and how
+ *  many would be new. Read-only; sends only the key columns. Throws with the
+ *  server's message when a check cannot run. */
+export async function previewChunkedRestore(params: {
+  orgId: string; envelope: RestoreEnvelopeLike; plan: RestorePlan; post: RestorePost;
+  onProgress?: (p: RestoreRunProgress) => void;
+}): Promise<ChunkedRestorePreview> {
+  const { orgId, envelope, plan, post } = params;
+  const order = restoreOrder(plan);
+  const rowsTotal = order.reduce((s, t) => s + tableRows(envelope, t).length, 0);
+  const out: ChunkedRestorePreview = { tables: {}, existing: 0, wouldInsert: 0 };
+  let rowsDone = 0;
+  for (const [tablesDone, table] of order.entries()) {
+    const rows = tableRows(envelope, table);
+    const acc = { rows: 0, existing: 0, wouldInsert: 0 };
+    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+      params.onProgress?.({ phase: "checking", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
+      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS).map((r) => keyProjection(table, r));
+      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap: plan.idRemap, preview: true });
+      if (!res.ok) throw new Error(`Could not check ${table} against this workspace: ${String(res.body?.error ?? `HTTP ${res.status}`)}`);
+      acc.rows += num(res.body?.rows);
+      acc.existing += num(res.body?.existing);
+      acc.wouldInsert += num(res.body?.wouldInsert);
+      rowsDone += chunk.length;
+    }
+    out.tables[table] = acc;
+    out.existing += acc.existing;
+    out.wouldInsert += acc.wouldInsert;
+  }
+  return out;
+}
+
+/** The chunked restore: /begin (users), then every importable table in FK
+ *  order through /apply-table. Counts are what the server reported, never
+ *  assumed. BKP-5 Done-when 2 (intelligence ILIFE-4): the run STOPS at the
+ *  first table that fails — continuing would write children of parents that
+ *  never landed — and names the tables it did not attempt. Throws only when
+ *  /begin fails (nothing was restored). */
+export async function runChunkedRestore(params: {
+  orgId: string; envelope: RestoreEnvelopeLike; plan: RestorePlan; orgNameChoice: "backup" | "current"; post: RestorePost;
+  onProgress?: (p: RestoreRunProgress) => void;
+}): Promise<ChunkedRestoreResult> {
+  const { orgId, envelope, plan, post } = params;
+  const order = restoreOrder(plan);
+  const rowsTotal = order.reduce((s, t) => s + tableRows(envelope, t).length, 0);
+  const manifest = { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName };
+  params.onProgress?.({ phase: "begin", rowsDone: 0, rowsTotal, tablesDone: 0, tablesTotal: order.length });
+  const begin = await post(`/api/admin/restore/begin?orgId=${encodeURIComponent(orgId)}`, {
+    manifest, orgMembers: envelope.tables.org_members ?? [], orgNameChoice: params.orgNameChoice,
+  });
+  if (!begin.ok) throw new Error(String(begin.body?.error ?? `HTTP ${begin.status}`));
+  const idRemap = begin.body?.idRemap as RestorePlan["idRemap"];
+
+  const result: ChunkedRestoreResult = {
+    createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
+    totalInserted: 0, totalExisting: 0, totalUncounted: 0, totalRefused: 0,
+    tables: [], stoppedAt: null, notAttempted: [],
+  };
+  let rowsDone = 0;
+  for (const [tablesDone, table] of order.entries()) {
+    const rows = tableRows(envelope, table);
+    const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, uncounted: 0, refused: [] };
+    for (let i = 0; i < rows.length; i += RESTORE_CHUNK_ROWS) {
+      params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
+      const chunk = rows.slice(i, i + RESTORE_CHUNK_ROWS);
+      const res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, { table, rows: chunk, idRemap, manifest });
+      // A failed chunk may still have written rows before it stopped — count them.
+      t.inserted += num(res.body?.inserted);
+      t.existing += num(res.body?.existing);
+      t.uncounted += num(res.body?.uncounted);
+      if (Array.isArray(res.body?.refused)) t.refused.push(...(res.body.refused as RestoreRowRefusal[]));
+      if (!res.ok) { t.error = String(res.body?.error ?? `HTTP ${res.status}`); break; }
+      rowsDone += chunk.length;
+    }
+    result.tables.push(t);
+    result.totalInserted += t.inserted;
+    result.totalExisting += t.existing;
+    result.totalUncounted += t.uncounted;
+    result.totalRefused += t.refused.length;
+    if (t.error) {
+      result.stoppedAt = { table, error: t.error };
+      result.notAttempted = order.slice(order.indexOf(table) + 1);
+      break;
+    }
+  }
+  return result;
 }

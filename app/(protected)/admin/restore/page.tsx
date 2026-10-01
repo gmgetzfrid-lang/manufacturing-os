@@ -6,8 +6,12 @@
 //      Parsed IN THE BROWSER; the plan below is computed locally, zero writes.
 //   2. Review the plan — user reconciliation by email, org-name collision,
 //      exactly which tables import.
-//   3. Restore records — chunked through /api/admin/restore/begin +
-//      /apply-table so any size of backup fits under request limits.
+//   3. Restore records — a read-only check first (how many backup rows
+//      already exist here, how many are new), then chunked through
+//      /api/admin/restore/begin + /apply-table so any size of backup fits
+//      under request limits. A restore only ADDS (DEC-44 (A&O P1)): an
+//      existing row is kept as it is, and the run STOPS at the first table
+//      that fails (lib/dataRestore.ts runChunkedRestore).
 //   4. Put files back (ZIP only) — re-uploads the ZIP's /files payload to
 //      storage under the (org-remapped) original keys, skipping files that
 //      are already present and ones that belong to offline space archives.
@@ -22,8 +26,8 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  planRestore, orderTablesForRestore, remapOrgPath,
-  type RestorePlan, type RestoreEnvelopeLike,
+  planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, RESTORE_ADDITIVE_NOTE,
+  type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
 } from "@/lib/dataRestore";
 
 type ZipLike = {
@@ -32,7 +36,7 @@ type ZipLike = {
 };
 
 interface ApplyProgress {
-  phase: "idle" | "begin" | "tables" | "done" | "error";
+  phase: "idle" | "checking" | "begin" | "tables" | "done" | "error";
   currentTable?: string;
   rowsDone: number;
   rowsTotal: number;
@@ -79,7 +83,8 @@ export default function RestorePage() {
   const [fileEntryCount, setFileEntryCount] = useState(0);
 
   const [applyProgress, setApplyProgress] = useState<ApplyProgress>({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
-  const [applyResult, setApplyResult] = useState<{ createdUsers: number; linkedUsers: number; totalInserted: number; failedTables: string[] } | null>(null);
+  const [applyResult, setApplyResult] = useState<ChunkedRestoreResult | null>(null);
+  const [preview, setPreview] = useState<ChunkedRestorePreview | null>(null);
   const idRemapRef = useRef<RestorePlan["idRemap"] | null>(null);
 
   const [filesProgress, setFilesProgress] = useState<FilesProgress>({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
@@ -92,7 +97,7 @@ export default function RestorePage() {
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
   const handleFile = useCallback(async (file: File) => {
     if (!activeOrgId) return;
-    setError(null); setPlan(null); setFileName(file.name); setApplyResult(null);
+    setError(null); setPlan(null); setFileName(file.name); setApplyResult(null); setPreview(null);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
     envelopeRef.current = null; zipRef.current = null; setFileEntryCount(0);
@@ -154,67 +159,43 @@ export default function RestorePage() {
     }
   }, [activeOrgId]);
 
-  // ── 3. Chunked apply: begin (users) → apply-table in FK order ─────────────
+  // ── 3. Check, confirm, then the chunked apply (begin → apply-table, FK order) ─
   const applyRestore = async () => {
     const envelope = envelopeRef.current;
     if (!activeOrgId || !envelope || !plan) return;
-    const ok = await appConfirm({
-      title: "Apply restore",
-      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept — this is additive and can't be auto-undone.`,
-      tone: "danger",
-      confirmLabel: "Apply restore",
-    });
-    if (!ok) return;
     setError(null);
-    const importable = plan.counts.tables.filter((t) => t.willImport && t.rows > 0);
-    const order = orderTablesForRestore(importable.map((t) => t.name));
-    const rowsTotal = importable.reduce((s, t) => s + t.rows, 0);
-    setApplyProgress({ phase: "begin", rowsDone: 0, rowsTotal, tablesDone: 0, tablesTotal: order.length });
-    try {
-      const token = await authToken();
-      const beginRes = await fetch(`/api/admin/restore/begin?orgId=${encodeURIComponent(activeOrgId)}`, {
+    const token = await authToken();
+    const post: RestorePost = async (path, body) => {
+      const res = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          manifest: { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName },
-          orgMembers: envelope.tables.org_members ?? [],
-          orgNameChoice: keepName,
-        }),
+        body: JSON.stringify(body),
       });
-      const beginBody = await beginRes.json().catch(() => null);
-      if (!beginRes.ok) throw new Error(beginBody?.error || `HTTP ${beginRes.status}`);
-      const idRemap = beginBody.idRemap as RestorePlan["idRemap"];
-      idRemapRef.current = idRemap;
-
-      let rowsDone = 0, tablesDone = 0, totalInserted = 0;
-      const failedTables: string[] = [];
-      for (const table of order) {
-        const rows = (envelope.tables[table] as Array<Record<string, unknown>> | undefined) ?? [];
-        setApplyProgress({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-        let tableFailed = false;
-        for (let i = 0; i < rows.length; i += 500) {
-          const chunk = rows.slice(i, i + 500);
-          const res = await fetch(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(activeOrgId)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ table, rows: chunk, idRemap, manifest: { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName } }),
-          });
-          const body = await res.json().catch(() => null);
-          if (!res.ok) { tableFailed = true; break; }
-          totalInserted += Number(body?.inserted ?? 0);
-          rowsDone += chunk.length;
-          setApplyProgress({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-        }
-        if (tableFailed) failedTables.push(table);
-        tablesDone++;
-      }
-      setApplyProgress({ phase: "done", rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
-      setApplyResult({
-        createdUsers: Number(beginBody.createdUsers ?? 0),
-        linkedUsers: Number(beginBody.linkedUsers ?? 0),
-        totalInserted,
-        failedTables,
+      return { ok: res.ok, status: res.status, body: await res.json().catch(() => null) };
+    };
+    const onProgress = (p: { phase: "checking" | "begin" | "tables"; currentTable?: string; rowsDone: number; rowsTotal: number; tablesDone: number; tablesTotal: number }) =>
+      setApplyProgress({ ...p });
+    try {
+      // BKP-5: before anything is written, how many backup rows already exist
+      // here (kept as they are) and how many would be new. Read-only.
+      const check = await previewChunkedRestore({ orgId: activeOrgId, envelope, plan, post, onProgress });
+      setPreview(check);
+      setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
+      const ok = await appConfirm({
+        title: "Apply restore",
+        message:
+          `Write ${fmtNum(check.wouldInsert)} new record(s) into this workspace. ` +
+          (check.existing > 0
+            ? `${fmtNum(check.existing)} record(s) in the backup already exist here and will be KEPT EXACTLY AS THEY ARE — not overwritten, not repaired. `
+            : "") +
+          `${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). ${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.`,
+        tone: "danger",
+        confirmLabel: "Apply restore",
       });
+      if (!ok) return;
+      const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan, orgNameChoice: keepName, post, onProgress });
+      setApplyProgress((p) => ({ ...p, phase: "done" }));
+      setApplyResult(result);
     } catch (e) {
       setApplyProgress((p) => ({ ...p, phase: "error" }));
       setError((e as Error).message);
@@ -299,7 +280,7 @@ export default function RestorePage() {
     );
   }
 
-  const applying = applyProgress.phase === "begin" || applyProgress.phase === "tables";
+  const applying = applyProgress.phase === "checking" || applyProgress.phase === "begin" || applyProgress.phase === "tables";
   const pct = applyProgress.rowsTotal > 0 ? Math.round((applyProgress.rowsDone / applyProgress.rowsTotal) * 100) : 0;
   const filePct = filesProgress.total > 0 ? Math.round((filesProgress.done / filesProgress.total) * 100) : 0;
 
@@ -386,7 +367,7 @@ export default function RestorePage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat icon={UserCheck} tint="text-emerald-600" value={plan.counts.matchedUsers} label="users re-linked" />
             <Stat icon={UserPlus} tint="text-blue-600" value={plan.counts.newUsers} label="restored placeholders" />
-            <Stat icon={Database} tint="text-[var(--color-accent)]" value={plan.counts.totalRows} label="records to import" />
+            <Stat icon={Database} tint="text-[var(--color-accent)]" value={preview ? preview.wouldInsert : plan.counts.totalRows} label={preview ? `new records (${fmtNum(preview.existing)} already here, kept as they are)` : "records to import"} />
             <Stat icon={FolderArchive} tint="text-violet-600" value={fileEntryCount || plan.counts.files} label={fileEntryCount ? "files in this ZIP" : "files referenced"} />
           </div>
 
@@ -420,6 +401,11 @@ export default function RestorePage() {
                 <div key={t.name} className="px-4 py-1.5 flex items-center gap-3" title={t.reason}>
                   <span className="font-mono text-[11px] text-[var(--color-text)] flex-1 truncate">{t.name}</span>
                   <span className="text-[11px] text-[var(--color-text-muted)]">{fmtNum(t.rows)} rows</span>
+                  {t.willImport && preview?.tables[t.name] && (
+                    <span className="text-[10.5px] text-[var(--color-text-muted)]">
+                      {fmtNum(preview.tables[t.name].wouldInsert)} new · {fmtNum(preview.tables[t.name].existing)} already here
+                    </span>
+                  )}
                   {t.willImport
                     ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                     : <span className="text-[10px] text-[var(--color-text-faint)] italic shrink-0">skipped</span>}
@@ -433,7 +419,9 @@ export default function RestorePage() {
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] mb-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" />
-                {applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> — table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
+                {applyProgress.phase === "checking"
+                  ? <>Checking what already exists — <span className="font-mono">{applyProgress.currentTable}</span> (nothing is written)</>
+                  : applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> — table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                 <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${pct}%` }} />
@@ -444,26 +432,19 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="flex items-center gap-2 text-sm font-black text-emerald-900 mb-1"><CheckCircle2 className="w-4 h-4" /> Records restored</div>
-              <div className="text-[11px] text-emerald-900 leading-relaxed">
-                Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
-                {applyResult.failedTables.length > 0 && <> Some tables reported issues: <span className="font-mono">{applyResult.failedTables.join(", ")}</span> — re-run the restore (it&apos;s additive and safe) or check the audit log.</>}
-                {" "}Restored users are inactive — re-invite them to grant access.
-              </div>
-            </div>
+            <RestoreResultPanel result={applyResult} />
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
                 <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> It&apos;s additive (existing data is kept), re-runnable, and the plan above is exactly what runs. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup — use the Full ZIP to also restore files."}
+                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> {RESTORE_ADDITIVE_NOTE} Before anything is written, the restore checks how many records already exist here and shows you both counts. It stops at the first table that fails. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup — use the Full ZIP to also restore files."}
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-end">
                 <button onClick={() => void applyRestore()} disabled={plan.counts.totalRows === 0}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold text-white bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-40">
-                  <Database className="w-4 h-4" /> Restore {fmtNum(plan.counts.totalRows)} records
+                  <Database className="w-4 h-4" /> Check &amp; restore {fmtNum(plan.counts.totalRows)} records
                 </button>
               </div>
             </div>
@@ -501,6 +482,49 @@ export default function RestorePage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** BKP-5: what the restore did, said plainly — never a green panel over a
+ *  run that stopped, refused rows, or skipped existing ones silently. */
+function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
+  const stopped = result.stoppedAt;
+  const tone = stopped
+    ? "border-red-200 bg-red-50 text-red-900"
+    : result.totalRefused > 0 ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
+  const refusedByTable = result.tables.filter((t) => t.refused.length > 0);
+  return (
+    <div className={`rounded-2xl border p-4 ${tone}`}>
+      <div className="flex items-center gap-2 text-sm font-black mb-1">
+        {stopped
+          ? <><AlertTriangle className="w-4 h-4" /> Restore stopped at <span className="font-mono">{stopped.table}</span> — {result.notAttempted.length} table(s) not attempted</>
+          : result.totalRefused > 0
+            ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
+            : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
+      </div>
+      <div className="text-[11px] leading-relaxed space-y-1">
+        <div>
+          Imported <b>{fmtNum(result.totalInserted)}</b> new record(s) · <b>{fmtNum(result.totalExisting)}</b> already here, kept exactly as they were
+          {result.totalUncounted > 0 && <> · <b>{fmtNum(result.totalUncounted)}</b> not counted by the server</>}
+          {" "}· re-linked <b>{result.linkedUsers}</b> user(s) · created <b>{result.createdUsers}</b> restored placeholder(s).
+        </div>
+        {result.totalExisting > 0 && <div>{RESTORE_ADDITIVE_NOTE}</div>}
+        {stopped && (
+          <div>
+            <b>Why it stopped:</b> {stopped.error}. Tables restore parents-first, so nothing after <span className="font-mono">{stopped.table}</span> was attempted
+            {result.notAttempted.length > 0 && <> (<span className="font-mono">{result.notAttempted.join(", ")}</span>)</>}.
+            Records already written stay. Fix the cause and run the restore again — rows already restored are skipped, not duplicated.
+          </div>
+        )}
+        {refusedByTable.map((t) => (
+          <div key={t.name}>
+            <span className="font-mono">{t.name}</span>: {t.refused.length} row(s) refused —{" "}
+            {Array.from(new Set(t.refused.map((r) => r.code))).join(", ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
+          </div>
+        ))}
+        <div>Restored users are inactive — re-invite them to grant access.</div>
+      </div>
     </div>
   );
 }
