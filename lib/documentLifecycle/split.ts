@@ -12,6 +12,7 @@ import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   type ActorContext,
   createNewDocWithFirstVersion,
@@ -87,6 +88,10 @@ export interface SplitDocumentResult {
    *  error the clock helpers reported) — the split stands; empty when every
    *  sheet's writes answered without an error. */
   complianceClockWarnings: string[];
+  /** GAP-314: when the unit decode of the new document(s) did not run, or
+   *  ran and was refused — the operation stands; null otherwise (a number
+   *  that simply does not decode is recorded by the route, with why). */
+  unitCodeNote: string | null;
 }
 
 export async function splitDocument(input: SplitDocumentInput): Promise<SplitDocumentResult> {
@@ -260,6 +265,10 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     event: "CREATED_FROM_SPLIT", details: { sourceDocId: sourceId },
   });
 
+  // 4c. GAP-314: each new sheet's unit code, decoded from its stored number
+  //     (best-effort — never a rollback; what did not run is reported).
+  const unitCode = await requestUnitCodeDecode(orgId, newDocumentIds, "split");
+
   // 5. Project memberships are a SECONDARY effect: the split itself (new
   //    docs + carried holds + supersession) is durable and correct above; a
   //    membership hiccup is reported via an honest count, never a rollback.
@@ -296,5 +305,6 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
     complianceClockWarnings,
+    unitCodeNote: unitCode.note,
   };
 }

@@ -45,6 +45,7 @@ import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
 import { isControlledIssueStatus } from "@/lib/issueStatus";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
 //
@@ -948,6 +949,12 @@ export async function createDocumentWithFile(input: {
   // Seed retention state so a doc created AFTER a library/folder retention
   // policy exists is not invisible to the retention system.
   try { await recomputeRetention(documentId); } catch { /* best-effort */ }
+  // GAP-314: the unit decode at create time (documents.unit_code, written by
+  // the service role from the stored number) — best-effort, after the
+  // creation is complete: a decode that cannot run never fails it; it is
+  // logged, and the route records a document it left without a code, with why.
+  const unitCode = await requestUnitCodeDecode(input.orgId, [documentId], "upload");
+  if (unitCode.note) console.warn(`[createDocumentWithFile] ${unitCode.note}`);
   return { documentId, status: input.status, reviewPolicy, creationAuditError };
 }
 

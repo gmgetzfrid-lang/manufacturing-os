@@ -3,7 +3,8 @@
 // LifecycleFollowUps — REV-15 (P13). A split or merge that COMPLETED but whose
 // follow-up steps did not all complete (a new sheet's review clock or
 // read-&-understood roster did not — fully — start; `complianceClockWarnings`
-// on SplitDocumentResult / MergeDocumentsResult) says so before the wizard
+// on SplitDocumentResult / MergeDocumentsResult — or a new document's unit
+// decode did not run, `unitCodeNote`, GAP-314) says so before the wizard
 // closes, instead of closing as if everything landed. The operation stands
 // (it is never rolled back for this), so the notice says not to run it again;
 // each item is also on the document's history (the COMPLIANCE_CLOCKS_NOT_STARTED

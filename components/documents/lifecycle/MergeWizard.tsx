@@ -97,7 +97,8 @@ export default function MergeWizard(props: MergeWizardProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // REV-15 (P13): what of the operation's follow-up did not complete (the
-  // result's complianceClockWarnings) — shown before the wizard closes.
+  // result's complianceClockWarnings, and a unit decode that did not run —
+  // GAP-314) — shown before the wizard closes.
   const [followUps, setFollowUps] = useState<string[] | null>(null);
 
   // HLD-2 (review fix 4): the active holds of every source, read when the
@@ -186,7 +187,7 @@ export default function MergeWizard(props: MergeWizardProps) {
         force: holdDecision.kind === "acknowledge" && holdAck ? true : undefined,
         orgId, actorUserId, actorUserName, actorEmail, actorRole,
       });
-      const outstanding = result?.complianceClockWarnings ?? [];
+      const outstanding = [...(result?.complianceClockWarnings ?? []), ...(result?.unitCodeNote ? [result.unitCodeNote] : [])];
       if (outstanding.length > 0) { setFollowUps(outstanding); return; }
       onSuccess();
     } catch (e) {

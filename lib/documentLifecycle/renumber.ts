@@ -19,6 +19,7 @@ import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord } from "@/types/schema";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 export interface RenumberInput {
   doc: DocumentRecord;
@@ -30,7 +31,10 @@ export interface RenumberInput {
   actorRole?: string;
 }
 
-export async function renumberDocument(input: RenumberInput): Promise<void> {
+/** GAP-314: `unitCodeNote` says when the renumbered document's unit decode
+ *  did not run (the renumber stands; 20261138 dropped the old decode, and the
+ *  next unit-identity run places it); null when it ran. */
+export async function renumberDocument(input: RenumberInput): Promise<{ unitCodeNote: string | null }> {
   const { doc, newDocumentNumber, reason, orgId, actorUserId, actorEmail, actorRole } = input;
   if (!doc.id) throw new Error("Document is missing an id.");
   if (!newDocumentNumber.trim()) throw new Error("New document number is required.");
@@ -69,4 +73,10 @@ export async function renumberDocument(input: RenumberInput): Promise<void> {
       reason: reason.trim(),
     },
   });
+
+  // GAP-314: 20261138's guard dropped the old decode with the number; decode
+  // the new one now (server-side, from the stored number) — best-effort.
+  const unitCode = await requestUnitCodeDecode(orgId, [doc.id], "renumber");
+  if (unitCode.note) console.warn(`[renumberDocument] ${unitCode.note}`);
+  return { unitCodeNote: unitCode.note };
 }

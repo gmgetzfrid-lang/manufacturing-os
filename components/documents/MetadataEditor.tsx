@@ -6,6 +6,7 @@ import type { DocumentRecord, MetadataFieldDefinition, MetadataValue } from "@/t
 import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
 
@@ -218,6 +219,14 @@ export default function MetadataEditor(props: {
         metadata: draft,
         core: hasCurrentRevision ? { title, documentNumber, status } : { title, documentNumber, rev, status },
       });
+      // GAP-314: a renumber here drops the document's unit decode (20261138);
+      // ask the server to decode the stored number now — best-effort, after
+      // the save landed (the route records a number left without a code).
+      if (orgId && document.id && documentNumber.trim() !== (document.documentNumber ?? "").trim()) {
+        void requestUnitCodeDecode(orgId, [document.id], "metadata_edit").then((r) => {
+          if (r.note) console.warn(`[MetadataEditor] ${r.note}`);
+        });
+      }
       onClose();
     } catch (e) {
       const message = (e as Error)?.message || "The save was refused — nothing was saved.";

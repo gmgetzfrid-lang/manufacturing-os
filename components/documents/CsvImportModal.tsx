@@ -12,6 +12,11 @@
 // file attached. Use the standard upload flow afterwards to attach
 // PDFs. Useful for backfilling legacy registers or pre-populating
 // a library structure before files exist.
+//
+// GAP-314: once the rows are in, their unit codes (documents.unit_code, the
+// Site Codebook's decode of each number) are decoded server-side from the
+// stored numbers (POST /api/documents/unit-code) — best-effort: the import
+// stands whatever the decode answers, and the result says how many decoded.
 
 import { nudgeKnowledgeSources } from "@/lib/knowledge";
 import React, { useMemo, useState } from "react";
@@ -20,6 +25,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import type { LibraryConfig } from "@/types/schema";
 
 interface Props {
@@ -45,6 +51,8 @@ type Step = "paste" | "map" | "preview" | "done";
 interface ImportResult {
   ok: number;
   failed: Array<{ row: number; reason: string }>;
+  /** GAP-314: the imported rows' unit decode (null: nothing to decode). */
+  unitCodes?: { decoded: number; undecoded: number; note: string | null } | null;
 }
 
 export default function CsvImportModal({
@@ -134,6 +142,7 @@ export default function CsvImportModal({
     setBusy(true); setError(null);
     const failed: Array<{ row: number; reason: string }> = [];
     let ok = 0;
+    const importedNumbers: string[] = [];
     const now = new Date().toISOString();
     const headerIndex: Record<string, number> = {};
     for (let i = 0; i < headers.length; i++) headerIndex[headers[i]] = i;
@@ -181,11 +190,32 @@ export default function CsvImportModal({
         });
         if (insertErr) throw insertErr;
         ok += 1;
+        importedNumbers.push(documentNumber);
       } catch (e) {
         failed.push({ row: rIdx + 2, reason: (e as Error).message });
       }
     }
-    setResult({ ok, failed });
+    // GAP-314: decode the imported rows' unit codes, server-side, from the
+    // numbers as stored (ids read back by number; never a code from here).
+    let unitCodes: ImportResult["unitCodes"] = null;
+    if (importedNumbers.length > 0) {
+      const ids: string[] = [];
+      let readFailed = false;
+      for (let i = 0; i < importedNumbers.length; i += 100) {
+        const { data, error: readErr } = await supabase.from("documents").select("id")
+          .eq("org_id", orgId).eq("library_id", library.id).in("document_number", importedNumbers.slice(i, i + 100));
+        if (readErr) { readFailed = true; continue; }
+        ids.push(...((data ?? []) as Array<{ id: string }>).map((r) => String(r.id)));
+      }
+      const answer = await requestUnitCodeDecode(orgId, ids, "csv_import");
+      unitCodes = {
+        decoded: answer.results.filter((r) => r.unitCode !== null && (r.outcome === "decoded" || r.outcome === "unchanged")).length,
+        undecoded: answer.results.filter((r) => r.outcome === "not_decoded" || r.outcome === "cleared").length,
+        note: [readFailed ? "Some imported rows could not be read back, so their unit codes were not decoded — the next unit-identity run on Operational scope will place them." : null, answer.note]
+          .filter(Boolean).join(" ") || null,
+      };
+    }
+    setResult({ ok, failed, unitCodes });
     setStep("done");
     setBusy(false);
     if (ok > 0) {
@@ -298,6 +328,14 @@ export default function CsvImportModal({
                     ))}
                     {result.failed.length > 8 && <li className="italic">+{result.failed.length - 8} more</li>}
                   </ul>
+                </div>
+              )}
+              {result.unitCodes && (
+                // GAP-314: what the unit decode made of the imported numbers.
+                <div data-testid="csv-unit-codes" className="text-[11px] text-[var(--color-text-muted)]">
+                  Unit codes: {result.unitCodes.decoded} decoded from their numbers
+                  {result.unitCodes.undecoded > 0 ? `; ${result.unitCodes.undecoded} left without one (the reasons are on the record)` : ""}.
+                  {result.unitCodes.note ? ` ${result.unitCodes.note}` : ""}
                 </div>
               )}
               <div className="text-[10px] text-[var(--color-text-muted)]">No files were uploaded. Use the regular upload flow to attach PDFs to each record.</div>

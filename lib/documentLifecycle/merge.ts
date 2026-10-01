@@ -17,6 +17,7 @@ import {
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import type { PublishGuardState } from "@/lib/documentGuards";
 import type { DocumentRecord, DocumentVersion, AssetTag } from "@/types/schema";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   type ActorContext,
   type Compensation,
@@ -98,6 +99,10 @@ export interface MergeDocumentsResult {
    *  start (a write error the clock helpers reported) — the merge stands;
    *  empty otherwise. */
   complianceClockWarnings: string[];
+  /** GAP-314: when the unit decode of the new document(s) did not run, or
+   *  ran and was refused — the operation stands; null otherwise (a number
+   *  that simply does not decode is recorded by the route, with why). */
+  unitCodeNote: string | null;
 }
 
 interface MergeGate {
@@ -448,6 +453,11 @@ async function finishMerge(
       event: "CREATED_FROM_MERGE", details: { sourceDocIds: absorbed.map((s) => s.id) },
     })
     : [];
+  // 6c. GAP-314: a created target's unit code, decoded from its stored number
+  //     (best-effort; an extended target keeps its number, so its code).
+  const unitCodeNote = target.kind === "create_new"
+    ? (await requestUnitCodeDecode(orgId, [targetDocumentId], "merge")).note
+    : null;
 
   // 7. Project memberships from each source — a secondary effect, reported
   //    via an honest count, never cause for a rollback.
@@ -477,6 +487,7 @@ async function finishMerge(
     holdsCopied,
     projectMembershipsCopied: projectsCopied,
     complianceClockWarnings,
+    unitCodeNote,
   };
 }
 
