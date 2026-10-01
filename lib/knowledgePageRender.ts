@@ -21,7 +21,11 @@
 // read. The parsed document is destroyed when the read ends. A caller with a
 // deadline (a route's maxDuration less its margin) passes `deadlineAt`: no
 // page STARTS after it, so a long book ends with the pages that fit instead
-// of a platform timeout.
+// of a platform timeout. The shared slots are always given back: each render
+// races a per-page timeout (a hung render is abandoned, its page counted
+// failed, its slot released), a read waiting for a slot stops waiting at its
+// deadline (its pages counted not started), and renderKnowledgePages gives a
+// caller that names no deadline DEFAULT_RENDER_BUDGET_MS.
 //
 // FLOW-11: renderKnowledgePagesReport says what happened to every page asked
 // for — rendered, outside the document, failed to render, or not started
@@ -41,6 +45,11 @@ const RENDER_WIDTH = 1400;          // readable table text, modest tokens
 export const DRAWING_RENDER_WIDTH = 1800;
 /** Page renders in flight in this process, across every read. */
 export const RENDER_SLOTS = 2;
+/** One page render longer than this is abandoned: the page is counted
+ *  failed and its slot released, so a hung render never holds a slot. */
+export const PAGE_RENDER_TIMEOUT_MS = 45_000;
+/** renderKnowledgePages' deadline when its caller names none. */
+export const DEFAULT_RENDER_BUDGET_MS = 60_000;
 
 export type RenderedPage = AiCallImage & { page: number };
 
@@ -66,18 +75,34 @@ export interface PageRenderOptions {
   width?: number;
   /** Renders this read runs at once (never more than RENDER_SLOTS). */
   concurrency?: number;
-  /** Epoch ms; no page starts after it. */
+  /** Epoch ms; no page starts after it (nor waits for a slot past it). */
   deadlineAt?: number;
+  /** Per-page render timeout (default PAGE_RENDER_TIMEOUT_MS). */
+  pageTimeoutMs?: number;
 }
 
 // ── The process-wide render slots ───────────────────────────────────────────
+/** setTimeout's ceiling: a longer delay would fire at once, not late. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 let inFlight = 0;
 const waiting: Array<() => void> = [];
-async function acquireSlot(): Promise<void> {
-  if (inFlight < RENDER_SLOTS) { inFlight += 1; return; }
+/** True when a slot is held; false when `deadlineAt` passed while waiting
+ *  (the waiter is removed, so no released slot is ever handed to it). */
+async function acquireSlot(deadlineAt?: number): Promise<boolean> {
+  if (inFlight < RENDER_SLOTS) { inFlight += 1; return true; }
   // The releaser hands its slot straight to the first waiter (inFlight is
   // unchanged), so a newcomer can never slip in between and overfill.
-  await new Promise<void>((resolve) => waiting.push(resolve));
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const grant = () => { if (timer !== undefined) clearTimeout(timer); resolve(true); };
+    waiting.push(grant);
+    if (deadlineAt !== undefined) {
+      timer = setTimeout(() => {
+        const at = waiting.indexOf(grant);
+        if (at >= 0) { waiting.splice(at, 1); resolve(false); }
+      }, Math.min(MAX_TIMER_MS, Math.max(0, deadlineAt - Date.now())));
+    }
+  });
 }
 function releaseSlot(): void {
   const next = waiting.shift();
@@ -97,6 +122,19 @@ const loadUnpdf = onceUnlessRejected(() => import("unpdf"));
 
 /** For tests: renders holding a slot right now. */
 export function rendersInFlight(): number { return inFlight; }
+/** For tests: reads waiting for a slot right now. */
+export function rendersWaiting(): number { return waiting.length; }
+
+/** The render, or a rejection after `ms` — whichever comes first. An
+ *  abandoned render's late failure is swallowed (the read is over). */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  work.catch(() => { /* abandoned: nobody is waiting for it */ });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("page render timed out")), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 /** Render the requested pages of a stored PDF and say what became of each.
  *  Never throws. */
@@ -131,13 +169,13 @@ export async function renderKnowledgePagesReport(
     const worker = async () => {
       for (let page = queue.shift(); page !== undefined; page = queue.shift()) {
         if (pastDeadline()) { report.notStarted.push(page); continue; }
-        await acquireSlot();
+        if (!(await acquireSlot(opts.deadlineAt))) { report.notStarted.push(page); continue; }
         try {
           if (pastDeadline()) { report.notStarted.push(page); continue; }
-          const img = await renderPageAsImage(doc, page, {
+          const img = await withTimeout(renderPageAsImage(doc, page, {
             width,
             canvasImport: () => import("@napi-rs/canvas"),
-          });
+          }), opts.pageTimeoutMs ?? PAGE_RENDER_TIMEOUT_MS);
           done.set(page, {
             page,
             mediaType: "image/png",
@@ -168,11 +206,14 @@ export async function renderKnowledgePagesReport(
 
 /** Render the requested pages of a stored PDF to PNG images. Silently
  *  returns fewer (or zero) images on any render failure — deep read is an
- *  enhancement, never a reason an answer fails. */
+ *  enhancement, never a reason an answer fails. A caller that names no
+ *  deadline gets DEFAULT_RENDER_BUDGET_MS: no page starts, or waits for a
+ *  slot, past it. */
 export async function renderKnowledgePages(
   fileKey: string,
   pages: number[],
   maxPages = MAX_DEEP_READ_PAGES,
+  deadlineAt: number = Date.now() + DEFAULT_RENDER_BUDGET_MS,
 ): Promise<Array<AiCallImage & { page: number }>> {
-  return (await renderKnowledgePagesReport(fileKey, pages, { maxPages })).images;
+  return (await renderKnowledgePagesReport(fileKey, pages, { maxPages, deadlineAt })).images;
 }

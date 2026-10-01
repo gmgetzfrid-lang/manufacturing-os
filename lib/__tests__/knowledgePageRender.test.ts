@@ -20,6 +20,7 @@ const pdf = vi.hoisted(() => ({
   started: [] as number[],
   destroyed: 0,
   openFails: false,
+  hang: new Set<number>(),
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({ Body: new Uint8Array([37, 80, 68, 70]) })) }, R2_BUCKET: "b" }));
 vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { constructor(public input: unknown) {} } }));
@@ -32,6 +33,8 @@ vi.mock("unpdf", () => ({
   renderPageAsImage: vi.fn(async (_doc: unknown, page: number, opts: { width: number }) => {
     pdf.started.push(page);
     pdf.widths.push(opts.width);
+    // a render that never returns (a pathological page, a wedged canvas)
+    if (pdf.hang.has(page)) return new Promise<ArrayBuffer>(() => undefined);
     pdf.inFlight += 1;
     pdf.maxInFlight = Math.max(pdf.maxInFlight, pdf.inFlight);
     await new Promise((r) => setTimeout(r, pdf.delayMs));
@@ -43,11 +46,11 @@ vi.mock("unpdf", () => ({
 
 import {
   renderKnowledgePagesReport, renderKnowledgePages, RENDER_SLOTS, DRAWING_RENDER_WIDTH, rendersInFlight,
-  onceUnlessRejected,
+  onceUnlessRejected, rendersWaiting, DEFAULT_RENDER_BUDGET_MS, PAGE_RENDER_TIMEOUT_MS,
 } from "@/lib/knowledgePageRender";
 
 beforeEach(() => {
-  Object.assign(pdf, { numPages: 10, inFlight: 0, maxInFlight: 0, delayMs: 5, fail: new Set<number>(), widths: [], started: [], destroyed: 0, openFails: false });
+  Object.assign(pdf, { numPages: 10, inFlight: 0, maxInFlight: 0, delayMs: 5, fail: new Set<number>(), widths: [], started: [], destroyed: 0, openFails: false, hang: new Set<number>() });
 });
 
 describe("PERF-6 — parallel under a process-wide cap; the document is released", () => {
@@ -79,6 +82,92 @@ describe("PERF-6 — parallel under a process-wide cap; the document is released
     expect(r.images.length).toBeLessThan(6);
     expect(r.notStarted.length).toBe(6 - r.images.length);
     expect(pdf.started).not.toEqual(expect.arrayContaining(r.notStarted));
+  });
+});
+
+describe("PERF-6 — the shared slots are always given back (a hung render, a wait past the deadline, a caller with no deadline)", () => {
+  it("regression pin: a normal render through renderKnowledgePages (the ask route's deep read, quality-manual, checklist, cost-docs) is unchanged — every page, in the order asked, at 1400 px, no slot held after", async () => {
+    const images = await renderKnowledgePages("k", [3, 1, 2], 6);
+    expect(images.map((i) => i.page)).toEqual([3, 1, 2]);
+    expect(images.every((i) => i.mediaType === "image/png")).toBe(true);
+    expect(pdf.widths).toEqual([1400, 1400, 1400]);
+    expect(pdf.destroyed).toBe(1);
+    expect(rendersInFlight()).toBe(0);
+  });
+
+  it("regression pin: a caller with no deadline still waits for a busy slot and renders every page, as before", async () => {
+    pdf.delayMs = 30;
+    const [a, b] = await Promise.all([
+      renderKnowledgePagesReport("a", [1, 2, 3, 4], { maxPages: 6 }),
+      renderKnowledgePages("b", [5, 6], 6),
+    ]);
+    expect(a.images.map((i) => i.page)).toEqual([1, 2, 3, 4]);
+    expect(b.map((i) => i.page)).toEqual([5, 6]);
+    expect(pdf.maxInFlight).toBeLessThanOrEqual(RENDER_SLOTS);
+    expect(rendersInFlight()).toBe(0);
+    expect(rendersWaiting()).toBe(0);
+  });
+
+  it("a deadline beyond setTimeout's range waits, never gives up at once", async () => {
+    pdf.delayMs = 30;
+    const [a, b] = await Promise.all([
+      renderKnowledgePagesReport("a", [1, 2], { maxPages: 6 }),
+      renderKnowledgePagesReport("b", [3, 4], { maxPages: 6, deadlineAt: Number.MAX_SAFE_INTEGER }),
+    ]);
+    expect(a.images.map((i) => i.page)).toEqual([1, 2]);
+    expect(b.images.map((i) => i.page)).toEqual([3, 4]);
+    expect(b.notStarted).toEqual([]);
+  });
+
+  it("the defaults are generous: a page has 45 s, a read with no deadline 60 s", () => {
+    expect(PAGE_RENDER_TIMEOUT_MS).toBe(45_000);
+    expect(DEFAULT_RENDER_BUDGET_MS).toBe(60_000);
+  });
+
+  it("a hung render releases its slot: that page is failed, the others render, and the next read gets a slot", async () => {
+    pdf.hang = new Set([2]);
+    const r = await renderKnowledgePagesReport("k", [1, 2, 3], { maxPages: 6, pageTimeoutMs: 40 });
+    expect(r.images.map((i) => i.page)).toEqual([1, 3]);
+    expect(r.failed).toEqual([2]);
+    expect(rendersInFlight()).toBe(0);
+    pdf.hang = new Set();
+    const next = await renderKnowledgePagesReport("k2", [4, 5], { maxPages: 6 });
+    expect(next.images.map((i) => i.page)).toEqual([4, 5]);
+    expect(rendersInFlight()).toBe(0);
+  }, 3000);
+
+  it("a read waiting for a slot stops waiting at its deadline: its pages are not started, its waiter is removed, and no slot leaks", async () => {
+    pdf.hang = new Set([1, 2]);
+    let aDone = false;
+    const a = renderKnowledgePagesReport("a", [1, 2], { maxPages: 6, pageTimeoutMs: 1500 }).then((r) => { aDone = true; return r; });
+    for (let i = 0; i < 200 && rendersInFlight() < RENDER_SLOTS; i++) await new Promise((res) => setTimeout(res, 2));
+    expect(rendersInFlight()).toBe(RENDER_SLOTS);
+    const t0 = Date.now();
+    const b = await renderKnowledgePagesReport("b", [7, 8], { maxPages: 6, deadlineAt: t0 + 40 });
+    // B gave up at ITS deadline — not when A's hung renders were abandoned
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(aDone).toBe(false);
+    // A still holds both slots: B returned without ever being handed one
+    expect(rendersInFlight()).toBe(RENDER_SLOTS);
+    expect(b.images).toEqual([]);
+    expect(b.notStarted).toEqual([7, 8]);
+    expect(rendersWaiting()).toBe(0);
+    const ra = await a;
+    expect(ra.failed).toEqual([1, 2]);
+    // every slot came back — none was handed to B's abandoned wait
+    expect(rendersInFlight()).toBe(0);
+    expect(rendersWaiting()).toBe(0);
+    expect(pdf.started).not.toContain(7);
+  }, 5000);
+
+  it("renderKnowledgePages gives a caller that names no deadline the default budget: past it, nothing starts", async () => {
+    const real = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValueOnce(real - DEFAULT_RENDER_BUDGET_MS - 1000);
+    try {
+      await expect(renderKnowledgePages("k", [1, 2], 6)).resolves.toEqual([]);
+    } finally { spy.mockRestore(); }
+    expect(pdf.started).toEqual([]);
+    expect(rendersInFlight()).toBe(0);
   });
 });
 
