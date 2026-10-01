@@ -1,6 +1,6 @@
 # 16 · Persistence & RLS across the layer
 
-**12 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM.
+**15 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM · 3 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30).
 
 Table by table: who can write what, and which writes carry authority.
 
@@ -80,7 +80,7 @@ Fix pass 5 (2026-09-30, review minor; detail on `ASK-1`): the route's floor of 5
 ## IRLS-2 · 'Provable' link auto-apply names a partial index as its conflict target and fails on every run, with the error swallowed into a note
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260807_link_proposals.sql:110-113`, `lib/linkProposerServer.ts:403-407`, `lib/linkProposalLogic.ts:416-423`, `lib/answerSkills.ts:56-59`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: grep over supabase/ shows the partial index is the ONLY unique constraint on that pair (the table's only other key is `id UUID PRIMARY KEY` at 20260806_intelligence_layer.sql:69), so ON CONFLICT with a bare column list cannot be inferred → 42P10 on every autoApply batch, swallowed into notes with autoApplied left at 0. The codebase already knows this failure mode: lib/answerSkills.ts:56-58 says "the unique (org_id, builtin_key) index is PARTIAL, which ON CONFLICT can't infer through the API, so an upsert here fails wholesale." The sibling proposed_links upsert works because proposed_links_pair_idx (20260807:68-69) is not partial.
@@ -101,6 +101,17 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 - [ ] a provable draft that fails to apply falls back into the review queue instead of vanishing
 - [ ] 'Auto-apply skipped' is surfaced as an error on the Find-connections surface, not appended to a notes array
 
+**Resolution (2026-09-30, intelligence Round G).** See `LNK-3`: `20261126` replaces the partial index with the plain `document_related_resources_doc_target_uniq`, and the auto-apply write targets it; when the batch fails each row is inserted alone (23505 = already linked), a row that still fails is queued for a person as a provable proposal instead of vanishing, and the failure is a run ERROR rendered as a red banner on the Find-connections surface. Tests: `lib/__tests__/linkProposalsRoundG.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending, and the pending rows from a connection skill that is private (retired to `stale`; fix pass 3) — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ The partial index is replaced by a full unique index (target NULL rows stay unconstrained, NULLs being distinct).
+2. ✓ A provable draft that fails to apply falls back into the review queue.
+3. ✓ "Auto-apply" failures are errors on the run, surfaced as an error, not a note.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="irls-3"></a>
@@ -108,7 +119,7 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 ## IRLS-3 · Any active member — Requester, Accounting — can publish instructions that ride every colleague's AI answer prompt
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261016_reasoning_skills.sql:44-49`, `supabase/migrations/20261016_reasoning_skills.sql:51-54`, `lib/answerSkills.ts:73-96`, `lib/answerSkills.ts:100-108`, `lib/answerSkillsServer.ts:28-47`, `lib/roleCapabilities.ts:48-61`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. lib/roleCapabilities.ts:59-60 shows Requester and Accounting hold only ["create_requests"], and lib/answerSkills.ts:73-96 createAnswerSkill uses the RLS-bound client with no role gate (its only caller, components/intelligence/SkillStudio.tsx:97, is likewise ungated). Mitigating context, not refuting: the migration header at :9-12 states this authority model as intentional ("any active member may author"), and the assembled block ends with "they never override the citation and safety rules above" — but that is a prompt-level request, not an enforcement boundary.
@@ -131,6 +142,17 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 - [ ] the same rule is applied to link_rules, whose insert policy has the identical shape (20261015_connection_skills.sql:54-59)
 - [ ] the answer UI names which Reasoning Skills shaped a given answer, so an unexpected instruction is visible rather than silent
 
+**Resolution (2026-09-30, intelligence Round G).** `20261125` (`DEC-62`): `answer_skills_insert` requires `visibility = 'private' OR is_org_controller(org_id)` for a custom row, and `answer_skills_update`'s `WITH CHECK` admits a non-controller author only when the row stays private — so neither `createAnswerSkill` nor `setAnswerSkillVisibility(id, 'org')` can publish for a Requester or Accounting member; the client functions are checked writes and say so. `link_rules` has the same predicates. A member asks to share (`share_requested`); a controller approves. The controllers' read of private rows admits that decision and nothing else on a member's private row — the guards refuse any other change by a non-author, and no person changes a skill's author (fix pass 2, `IEDGE-3`). Tests: `lib/__tests__/skillsAuthority.test.ts`. Fix pass 3: the author branch of both UPDATE `WITH CHECK`s also requires active membership of the row's org, and a person's update cannot change a skill's org or byline (`GOV-2`, `IEDGE-3`). Fix pass 4 (*corrected*): "a controller approves" was not bound to a request — the guards now refuse a non-author's publish of a private skill unless its author's request is open, and refuse a non-author raising it; an author's edit withdraws a waiting request; the Skill Library approves by the version it showed (`IEDGE-3`, verified on a local PostgreSQL 16). Fix pass 5 (*corrected*): that version was the row's `updated_at`, which a person's INSERT could choose — a draft deleted and re-inserted under its old id and date passed a stale approval; both guards now give a person's new row the database's id, `created_at` and `updated_at` (`IEDGE-3`, verified on a local PostgreSQL 16).
+
+**Pending migration:** `supabase/migrations/20261125_intel_roundG_skills_authority.sql` (DEC-30: the pre-apply inventory — built-ins carrying a member uid, org-wide custom skills whose author is not an active controller, packs without APPLIES WHEN or over 4,000 characters, connection skills over the pattern limits, non-controller members, custom skills whose byline is not their author's member address (re-signed; fix pass 3), and the private custom skills that become readable by controllers (the one read this file widens, with the one decision it admits — approving or declining a member's share request) — is captured into a TEMP TABLE before the DDL and printed in the one result set, with after rows counting the share requests and the custom connection skills that hold a pattern the bounded subset refuses (and the org-wide ones left with none); the probes verify every policy, trigger and pin after apply). *Corrected in fix pass 2:* this paragraph used to say "until it is applied, the app half holds". It did not: every skill create named `share_requested` and every publish and re-enable named `share_requested` / `disabled_reason`, columns only this file adds, so before it is applied PostgREST refused them (PGRST204) and nobody could create, publish or re-enable a skill; a controller's built-in seed was refused by the old insert policy and showed an error banner. What holds before it is applied, since fix pass 2: creating a private skill, publishing, unsharing and switching skills (re-enabling included) work — the client names a 20261125 column only for a share request, and the guard stamps the rest after apply; a share request cannot be recorded (a new skill saves as its author's private skill and the Studio says so; the request control is not offered on a row without the column; asking on an existing skill says the feature needs this file); a controller's refused built-in seed is left to the service-role seeders (the engine, the answer pipeline) without an error; the engine switches a hung skill off without `disabled_reason`; private connection skills do not run; the Studio offers org-wide publishing to controllers only. What does NOT hold until it is applied: the database still admits a direct PostgREST write by any member — publishing org-wide, a member managing a built-in it seeded earlier, an unvalidated `config` — so the authority and pattern claims above are true only once the file is applied.
+
+**Done-when.**
+1. ✓ `answer_skills_insert` and `answer_skills_update` require `is_org_controller(org_id)` whenever `visibility = 'org'`.
+2. ✓ The same rule on `link_rules`.
+3. Not done here — naming the reasoning skills that shaped an answer changes the ask route and the answer UI, which belong to another package (I-03). Opened as `IRLS-13` (`DEC-31`).
+
+**Scope / residual.** `IRLS-13`.
+
 ---
 
 <a id="irls-4"></a>
@@ -138,7 +160,7 @@ lib/linkProposerServer.ts:403-407 — `const { error } = await admin.from("docum
 ## IRLS-4 · The mention engine's upsert names a conflict target Postgres cannot resolve — entity_mentions has never been written
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:59-60`, `lib/mentionIndexer.ts:136-142`, `lib/answerSkills.ts:56-59`, `lib/answerSkillsServer.ts:68-70`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: grep over supabase/ shows entity_mentions_unique_idx is the table's only unique index besides `id UUID PRIMARY KEY`, and `COALESCE(knowledge_document_id, document_id)` cannot be matched by the plain column `knowledge_document_id` in ON CONFLICT → 42P10, which is thrown rather than swallowed (unlike IRLS-2). lib/mentionIndexer.ts:138 is the sole write path in the repo (grep for entity_mentions shows every other TS hit is a SELECT or DELETE, except the generic lib/dataRestore.ts restore list).
@@ -160,6 +182,17 @@ lib/mentionIndexer.ts:136-142 — `const { error } = await supabaseAdmin.from("e
 - [ ] either the index is replaced with a plain unique constraint on (asset_id, knowledge_document_id, page) plus a second one for the document_id branch, or the writer stops using upsert and relies on the existing wholesale delete + plain insert
 - [ ] lib/mentions.ts stops classifying an empty result as "migration hasn't run" — a write failure and an unbuilt index must look different
 - [ ] /api/graph/mentions surfaces the row count it actually wrote, and the graph reports zero mention edges as a problem rather than as an empty map
+
+**Resolution (2026-09-30, intelligence Round G).** `20261126` replaces the COALESCE expression key with two indexes of the same meaning: a PLAIN unique `entity_mentions_kdoc_page_uniq (asset_id, knowledge_document_id, page)` — the indexer's conflict target — and `entity_mentions_doc_page_uniq (asset_id, document_id, page)` over the rows that have no knowledge document (one controlled document can be mirrored in several libraries, `20260919`, so the document branch cannot bind rows that carry a knowledge document). They are built only when no key is duplicated (the inventory proves the expression index made that impossible) and the old index is then dropped. `lib/mentionIndexer.ts` upserts against the plain key with DO NOTHING — after its delete the only rows left for the document are a person's explicit pins, which now survive instead of being overwritten with machine text — counts the rows actually written, falls back to plain inserts on a database without the index (42P10), and logs every failure where it happens before throwing. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("IRLS-4 / WIRE-2 — the mention engine writes against the plain index").
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending, and the pending rows from a connection skill that is private (retired to `stale`; fix pass 3) — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ Plain unique keys for the knowledge-document branch and the document branch; the writer's conflict target matches.
+2. ✓ verified, no edit: `lib/mentions.ts` `tolerate()` treats only 42P01 / "does not exist" as not installed; an empty result is `mentionCoverage → { installed: true, total: 0 }` ("run the indexer"), and a write failure is now logged by the indexer and returned by `/api/graph/mentions` as a 500 with its message — the two look different. (`lib/mentions.ts` belongs to I-02.)
+3. Partly — `/api/graph/mentions` returns `mentionsWritten`, now the count actually written ✓; the graph presenting zero mention edges as a problem is the graph page's (I-14's file) → opened `IRLS-14` (`DEC-31`).
+
+**Scope / residual.** `IRLS-14`.
 
 ---
 
@@ -383,7 +416,7 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 ## IRLS-10 · is_org_controller is SECURITY DEFINER with no SET search_path, and half the intelligence policies ignore the additive roles[] model it exists to honor
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260814_documents_delete_controllers.sql:31-41`, `supabase/schema.sql:1031-1034`, `supabase/migrations/20260928_site_codebook.sql:66-73`, `supabase/migrations/20260806_intelligence_layer.sql:44-51`, `supabase/migrations/20260807_link_proposals.sql:83-90`, `supabase/migrations/20260929_mention_engine.sql:79-86`, `lib/codebook.ts:381-387`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves verified. The consequence is documented in the app itself at lib/codebook.ts:382-387: "the codebook RLS write policy checks only the headline role column, so a client-side update could silently affect zero rows for a member whose DocCtrl authority lives in the additive roles[] array" — while is_org_controller (20260814:38) is precisely the function that DOES honor `roles && ARRAY['Admin','DocCtrl']`.
@@ -414,6 +447,15 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 3. Partly — codebook and alias writes now check affected rows ✓; the related-resource writes (`lib/relatedResources.ts`) are I-08's file and still unchecked.
 
 **Scope / residual.** The related-resource limb of done-when 3 is I-08's (`lib/relatedResources.ts`).
+
+**Resolution (2026-09-30, intelligence Round G, I-08).** The remaining limb of done-when 3 — the related-resource writes, named for I-08 in the Partial block above — is closed: `lib/relatedResources.ts` `addRelatedResource` and `removeRelatedResource` ask for their rows back and throw when RLS refused (42501, or zero rows without an error: "That link was not changed — your role cannot edit related links on this document"); `components/documents/RelatedPanel.tsx` shows the refusal. The proposal decisions on the same surface (`approveProposal`, `dismissProposal`, `reopenProposal`) are checked the same way. The role-list limb of this finding on `proposed_links_write` / `entity_mentions_write` was already the collection since `20261046` (`caller_holds_any_role`); `20261126`'s probes verify it live and it is not re-created. Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("an unpin RLS refuses is reported (checked write)", "a dismissal can be reopened; a decision RLS refuses is an error …").
+
+**Done-when.**
+1. ✓ (R&P `DB-6`, `20261020`; see the Partial block).
+2. ✓ (R&P `ADD-4`, `20261046`; the proposal / mention write policies verified by `20261126`'s probes).
+3. ✓ Codebook and alias writes (I-10), related-resource and proposal-decision writes (I-08) check what they affected.
+
+**Scope / residual.** None.
 
 ---
 
@@ -474,5 +516,81 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 - [ ] the three libs distinguish 42P01 from an empty result in what they show the user
 
 **Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Landed elsewhere: the seven project-controls tables are on the list with their migration (`lib/schemaExpectations.ts:51`–`:126`, projects Round G J9 `REL-7`), and criterion 2's tripwire exists — `lib/__tests__/schemaExpectations.test.ts:155-159` fails when a migration creates a table absent from `EXPECTED_TABLES` — ✓ for every table created from now on. Open: `answer_skills`, `link_rules` and `process_flows` are still absent, and the tripwire grandfathers them — among five (`answer_skills`, `document_markups`, `knowledge_line_traces`, `link_rules`, `process_flows`, `:71`) — so criterion 1's intelligence half is not done; criterion 3 (42P01 vs an empty result, in what the libs show) is untouched. Owners: criterion 1 → admin-and-org **P2** (`BKP-14`, the list regeneration that empties the grandfather set; cross-note there); criterion 3 → the limbs in intelligence **I-08** (`lib/linkRules.ts`, `lib/answerSkills.ts`) and **I-09** (`lib/processFlows.ts`).
+
+---
+
+
+<a id="irls-13"></a>
+
+## IRLS-13 · An answer does not say which Reasoning Skills shaped it
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/answerSkillsServer.ts` (`loadAnswerSkillsBlock`), `app/api/knowledge/ask/route.ts` (the answer response), `app/api/orchestrator/route.ts`
+- **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-3` (`DEC-31`): `IRLS-3`'s third done-when is in the ask route and the answer UI, which another package owns (I-03).
+
+**Mechanism.** `loadAnswerSkillsBlock` returns only the assembled prompt text. Neither the ask route nor the orchestrator returns which packs rode the prompt, so an answer shaped by an org-wide Reasoning Skill looks like every other cited answer. Since `20261125` only a controller can publish an org-wide pack (`DEC-62`), so this is now about transparency rather than about who can inject a pack.
+
+**Done when.**
+
+- [ ] The skills loader returns the names (and ids) of the packs it included alongside the block.
+- [ ] The ask response and the orchestrator response carry that list, and the answer UI names the skills that shaped an answer.
+
+---
+
+<a id="irls-14"></a>
+
+## IRLS-14 · The graph shows an unbuilt or failed mention index as an empty map
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/(protected)/graph/page.tsx`, `lib/orgGraph.ts` (mention edges), `lib/mentions.ts` `mentionCoverage`
+- **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-4` (`DEC-31`): the graph page belongs to another package (I-14).
+
+**Mechanism.** Since `20261126` the mention engine can write, and `/api/graph/mentions` returns the rows it wrote. The graph still draws zero `mention` edges the same way whether the index was never built, the last build failed, or the corpus really names no registry equipment. `mentionCoverage` already tells "not installed" (42P01) from "installed, 0 rows", but the graph does not use it.
+
+**Done when.**
+
+- [ ] The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step (run the indexer / see the failure).
+
+---
+
+<a id="irls-15"></a>
+
+## IRLS-15 · Applied links are readable by every active member, evidence included, whatever documents they connect
+
+- **Severity:** MEDIUM
+- **Status:** RESOLVED
+- **Verification:** CONFIRMED
+- **Locations:** `supabase/migrations/20260806_intelligence_layer.sql:87-90` (`document_related_resources_read`), `lib/relatedResources.ts` (`listRelatedResources`, `listBacklinks`), `lib/linkProposerServer.ts` (auto-apply)
+- **Opened 2026-09-30 (intelligence Round G, I-08 fix pass 4)** from the third review of `LNK-13`'s either-direction read (`DEC-31`): it is `LNK-4`'s exposure on the applied side, and a new policy on a table with live readers is its own change.
+
+**Mechanism.** `document_related_resources_read` admits every active member of the org (`EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = … AND m.uid = auth.uid() AND m.status = 'active')`), with no condition on the documents a row connects. Since `LNK-3` auto-apply writes rows — through the plain index once `20261126` is applied and, *corrected in fix pass 5*, before that through the row-by-row fallback `lib/linkProposerServer.ts` ran on any batch failure, 42P10 included, so the leak began on deploy, not on `20261126` — so provable links — `origin = 'system'`, evidence such as "Off-page connector 44-098 continues onto 44-PID-013" — land in that member-readable table. `LNK-4` closed exactly this for `proposed_links` with a RESTRICTIVE endpoints-readable policy (`proposed_links_read_endpoints`); applied links never got one. Since fix pass 4 the app no longer fetches what an unreadable carrier's link says (`listRelatedResources` names its columns and reads an inbound row's label and evidence only for carriers the viewer's documents read returns), but a raw `select` returns every applied link of the org. Reproduced on a local PostgreSQL 16 with the live documents read path (`documents_org_access`, `documents_acl_select` / `node_visible`) and `20261126` applied: a member whose ACL denies a restricted sheet reads neither the sheet nor its proposal, yet `select * from document_related_resources` returns the sheet's applied link with its evidence.
+
+**Done when.**
+
+- [ ] A RESTRICTIVE SELECT policy on `document_related_resources` mirrors `proposed_links_read_endpoints`: at least the carrier document readable under the caller's `documents` RLS (`EXISTS (SELECT 1 FROM documents d WHERE d.id = document_related_resources.document_id)`). Whether the target must be readable too is decided in that migration — requiring it would also hide a link this document carries to a restricted document, which the Related panel lists today as "restricted document".
+- [ ] The migration counts, before apply, the applied links whose carrier (and target) a non-controller member cannot read, and probes the policy after; the engine and the publish sweep (service role) are unaffected.
+- [ ] A two-member run (as `LNK-4`'s) shows a denied member's raw select returns zero rows for the restricted sheet's links.
+
+
+**Resolution (2026-09-30, intelligence Round G, I-08 fix pass 5).** Resolved in this package after the fourth review, which made it a blocker: `LNK-3` routes provable evidence into this table, so leaving the read open undid `LNK-4`. `20261126` (which already modifies `document_related_resources`) adds `document_related_resources_read_endpoints`, a RESTRICTIVE SELECT policy: `EXISTS (SELECT 1 FROM documents d WHERE d.id = document_related_resources.document_id) AND (document_related_resources.target_document_id IS NULL OR EXISTS (SELECT 1 FROM documents d WHERE d.id = document_related_resources.target_document_id))`. The subqueries run under the caller's own `documents` RLS (`documents_org_access` and the RESTRICTIVE `documents_acl_select` → `node_visible`), so a link is readable only by someone who can read its carrier and, for a document link, its target — `LNK-4`'s rule for proposals. RESTRICTIVE because `document_related_resources_write` is FOR ALL: its USING would otherwise grant SELECT on every row to the writer tier. The decision the finding left open is taken in the migration header: both endpoints, for every document link (not only `origin IN ('system', 'proposed')`). A person's pin to a document you cannot read says the relationship exists and, through its label, usually what the target is — the same fact `LNK-4` withholds for proposals — so it is no longer listed to a member who cannot read the target (before, the Related panel showed it as "restricted document"; on a database without this file it still does). URL links (no target) need only the carrier. The service role (the engine, the evidence audit, the publish sweep) is unaffected; a person's unpin of a link they cannot read matches nothing, which the checked write reports (`IRLS-10`). Before the file is applied the engine applies no provable link at all: `lib/linkProposerServer.ts` treats the batch's 42P10 (no plain index — the same transaction that builds it creates this policy) as "not applied yet" and queues the provable drafts for review with a note, instead of the row-by-row insert that wrote them into the member-readable table (`LNK-3`, corrected); the row-by-row fallback runs only for other batch failures, where the index and so the policy exist. `lib/relatedResources.ts` `listRelatedResources` documents the policy and, since fix pass 5, refuses to turn a failed documents read into an access verdict (it throws; `components/documents/RelatedPanel.tsx` renders "Related links could not be loaded — …" instead of an empty or "restricted" list).
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the pre-apply inventory gains `_intel_g26_links_before` — the links touching a document with restricted visibility (anything but normal / unset, `node_visible`'s open case), those of origin `system` / `proposed`, and those carried by an open document to a restricted one — aggregate counts only, captured before the transaction; who loses which link depends on each member's grants, so the count is of the links that can be hidden from someone; the probes check the RESTRICTIVE policy's deparsed text and that `document_related_resources_read` / `_write` are still there, not re-created).
+
+Verified on a throwaway local PostgreSQL 16: stubs plus the live documents read path loaded verbatim (`my_org_ids` and `documents_org_access` from `schema.sql`, `acl_subject_in_bucket` from `20260708`, `node_visible` (6-arg) from `20261041`, `documents_acl_select` from `20261037`, `is_org_controller` from `20260814`, `caller_holds_any_role` from `20261045`; the owner cascade stubbed to false), then `20261015`, `20261016`, `20261125`, and `20261126` applied twice — 11/11 probes true both times; the inventory counted 2 links touching the restricted sheet, 1 of origin `system`, 1 pinned from the open sheet to it. A restricted sheet S allows member m and denies member d (a Manager, so also a writer); S carries the engine's `system` link to the open sheet T ("Off-page connector 44-098 continues onto 44-PID-013"), T carries a person's pin to S and a URL. Before `20261126`, d read 1 document yet 3 links, 2 touching S, and the evidence (the leak, reproduced). After it, d reads 1 document, 1 link (T's URL), 0 links touching S, 0 rows of the evidence, 0 proposals; d's delete of S's link affected 0 rows; m and the controller read all 3 links and the proposal; the service role read all 3 and upserted on the plain index; the controller unpinned and re-pinned T→S. The cluster was stopped and deleted. Not a CI test — CI has no database; the shape test pins the policy text the run exercised.
+
+Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("fix pass 5 (IRLS-15): applied links are readable only with their carrier and (for a document link) their target …" — the policy text, inside the transaction, the write policies not re-created, the inventory and the probes; "fix pass 5 (IRLS-15): before 20261126 (42P10) nothing is applied …" — no applied link written, no row-by-row insert tried, the provable draft queued and said, a second run neither applies nor doubles it; "fix pass 5 (IRLS-15): the source applies nothing row by row on 42P10"; "fix pass 5: a documents read that fails is an error …").
+
+**Done-when.**
+1. ✓ A RESTRICTIVE SELECT policy on `document_related_resources` mirrors `proposed_links_read_endpoints`: the carrier readable under the caller's documents RLS, and — decided in the migration — the target too for every document link.
+2. ✓ The migration counts, before apply, the links touching a restricted document (the ones a non-controller member can lose), and probes the policy after; the engine and the publish sweep (service role) are unaffected — and before it is applied the engine writes no applied link.
+3. ✓ A two-member run (as `LNK-4`'s) shows a denied member's raw select returns zero rows for the restricted sheet's links (above).
+
+**Scope / residual.** Provable drafts queued for review while `20261126` was not applied stay in the queue after it is (they are already pending, so the next run does not re-derive them); a reviewer approves each. `listBacklinks` (the older backlinks read) is narrowed by the same policy; its own code is unchanged.
+
+**Integration correction (2026-10-01, at the I-08 merge).** An independent verification of fix pass 5 confirmed the endpoints read policy on PG16 (a member denied one endpoint reads none of that pair's links or evidence; members who can read both, controllers and the service role are unaffected; the app's add / unpin / approve writes still work). One overstatement is corrected here: queuing the provable drafts before 20261126 does not keep their evidence out of a member-readable table — `proposed_links` gains its own endpoint read policy in the same migration, so until 20261126 lands the queued evidence is as exposed as any other proposal; what the 42P10 branch guarantees is that nothing is APPLIED before then. Also at merge: the row-by-row fallback now runs only for a constraint failure (SQLSTATE class 23); any other batch failure (transport, PostgREST, permission) queues the whole batch and says so as an error (`lib/linkProposerServer.ts`; test "a batch failure that is not a constraint error … queues the batch" in `lib/__tests__/linkProposalsRoundG.test.ts`). The intake door now passes its service-role client to `runPostPublishSideEffects`, so the proposal sweep runs in-process there (`app/api/intake/upload/route.ts`; pinned in `lib/__tests__/intakeUploadRoute.test.ts`).
 
 ---

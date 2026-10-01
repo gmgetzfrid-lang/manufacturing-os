@@ -611,12 +611,17 @@ describe("postPublish settle — a server caller can wait for every signal", () 
     vi.doMock("@/lib/staleCopies", () => ({ getDocumentRecall: vi.fn(async () => ({ holders: [], unavailable: false })), nudgeStaleHolders: vi.fn(() => later("recall")) }));
     vi.doMock("@/lib/workPackages", () => ({ notifyPackagesOfRevUp: vi.fn(() => later("packages")) }));
     vi.doMock("@/lib/revisionImpact", () => ({ notifyConnectedWork: vi.fn(() => later("impact")) }));
-    vi.doMock("@/lib/linkProposals", () => ({ staleProposalsForDocument: vi.fn(() => later("proposals")) }));
+    // I-08 (merged after J1): the proposal sweep runs in-process on the
+    // caller's service-role client (the intake door passes supabaseAdmin).
+    const invalidate = vi.fn(() => later("proposals").then(() => ({ staled: 0, error: null })));
+    vi.doMock("@/lib/linkProposerServer", () => ({ invalidateProposalsForRevision: invalidate }));
     const { runPostPublishSideEffects } = await import("@/lib/postPublish");
+    const serviceClient = {} as never;
     await runPostPublishSideEffects({
       orgId: "o1", documentId: "d1", libraryId: "lib1", docLabel: "D", newRev: "C",
-      actorUserId: "u1", actorName: "Vendor (intake)", settle: true,
+      actorUserId: "u1", actorName: "Vendor (intake)", settle: true, serviceClient,
     });
+    expect(invalidate).toHaveBeenCalledWith(serviceClient, { orgId: "o1", documentId: "d1", newRev: "C" });
     expect(new Set(order)).toEqual(new Set(["clock", "emit", "acks", "recall", "packages", "impact", "proposals"]));
     vi.resetModules();
   });

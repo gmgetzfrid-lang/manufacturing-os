@@ -572,6 +572,9 @@ describe("the trusted promote is the publish contract plus the pipeline", () => 
     expect(db.pipeline).toHaveLength(1);
     expect(db.pipeline[0].boundToServiceRole).toBe(true);
     expect(db.pipeline[0].input).toMatchObject({ orgId: ORG, documentId: D1, libraryId: "lib1", docLabel: "V-100", newRev: "C", actorUserId: "creator1", actorName: "Vendor Co (intake)", settle: true });
+    // I-08: the proposal sweep runs in-process on the door's service-role client.
+    const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
+    expect((db.pipeline[0].input as Row).serviceClient).toBe(supabaseAdmin);
     expect(scopedToAdmin()).toBe(false); // bound only inside the request's async context
   });
   it.each([

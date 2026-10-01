@@ -4,7 +4,11 @@
 //
 // Three layers, clearly separated:
 //   * CURATED — links a human pinned (another controlled document, or an
-//     external URL such as a vendor manual). The manual layer.
+//     external URL such as a vendor manual), plus connections the engine
+//     applied or a reviewer approved. A document↔document link is listed on
+//     BOTH documents with the same provenance and evidence, whichever of the
+//     two carries the row (LNK-13); its chip comes from the declared origin
+//     set (LNK-9).
 //   * AUTOMATIC — what the system already knows is related (shared equipment
 //     tags, drawing references) via findRelatedDocuments. Zero effort.
 //   * The GRAPH — one click opens the interactive relationship graph.
@@ -19,7 +23,7 @@ import {
   CornerDownLeft, Briefcase, Sparkles, AlertTriangle,
 } from "lucide-react";
 import {
-  listRelatedResources, addRelatedResource, removeRelatedResource, listBacklinks,
+  listRelatedResources, addRelatedResource, removeRelatedResource, listBacklinks, originBadge,
   type RelatedResource, type DocumentBacklinks,
 } from "@/lib/relatedResources";
 import {
@@ -50,10 +54,14 @@ export default function RelatedPanel({
   const [urlDraft, setUrlDraft] = useState<{ url: string; label: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** A Related read that failed — said, never shown as an empty or
+   *  "restricted" list. */
+  const [readError, setReadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setCurated(await listRelatedResources(documentId)); }
-    catch { setCurated([]); }
+    try { setCurated(await listRelatedResources(documentId)); setReadError(null); }
+    catch (e) { setCurated((prev) => prev ?? []); setReadError((e as Error).message); }
   }, [documentId]);
 
   useEffect(() => {
@@ -73,28 +81,38 @@ export default function RelatedPanel({
 
   const decideProposal = async (p: LinkProposal, approve: boolean) => {
     if (!userId) return;
-    setDecidingId(p.id);
+    setDecidingId(p.id); setError(null);
     try {
       const actor = { userId, userName };
       if (approve) await approveProposal(p, actor); else await dismissProposal(p.id, actor);
       setProposals((prev) => prev.filter((r) => r.id !== p.id));
       if (approve) await refresh();
-    } finally { setDecidingId(null); }
+    } catch (e) { setError((e as Error).message); }
+    finally { setDecidingId(null); }
   };
 
   const addDoc = async (targetId: string) => {
     if (!userId) return;
-    await addRelatedResource({
-      orgId, documentId, kind: "document", targetDocumentId: targetId,
-      userId, userName, sortOrder: (curated?.length ?? 0),
-    });
-    setPickerOpen(false);
-    await refresh();
+    setError(null);
+    try {
+      await addRelatedResource({
+        orgId, documentId, kind: "document", targetDocumentId: targetId,
+        userId, userName, sortOrder: (curated?.length ?? 0),
+      });
+      setPickerOpen(false);
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const unpin = async (id: string) => {
+    setError(null);
+    try { await removeRelatedResource(id); await refresh(); }
+    catch (e) { setError((e as Error).message); }
   };
 
   const addUrl = async () => {
     if (!userId || !urlDraft?.url.trim()) return;
-    setBusy(true);
+    setBusy(true); setError(null);
     try {
       let url = urlDraft.url.trim();
       if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
@@ -105,17 +123,20 @@ export default function RelatedPanel({
       });
       setUrlDraft(null);
       await refresh();
-    } finally { setBusy(false); }
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   };
 
   const shortLink = documentNumber
     ? `${publicOrigin()}/d/${encodeURIComponent(documentNumber)}`
     : null;
 
-  // Curated targets shouldn't repeat in the automatic list.
-  const curatedTargetIds = new Set((curated ?? []).map((c) => c.target_document_id).filter(Boolean));
+  // Curated documents (either direction) shouldn't repeat in the automatic
+  // list or under "Linked from".
+  const curatedTargetIds = new Set((curated ?? []).map((c) => c.other_document_id).filter(Boolean));
   const autoShown = (auto ?? [])
     .filter((a) => !curatedTargetIds.has(a.document.id) && a.document.id !== documentId);
+  const backlinkDocs = (backlinks?.docs ?? []).filter((d) => !curatedTargetIds.has(d.id));
 
   return (
     <div className="space-y-2.5">
@@ -141,6 +162,17 @@ export default function RelatedPanel({
         )}
       </div>
 
+      {error && (
+        <div className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {error}
+        </div>
+      )}
+      {readError && (
+        <div className="flex items-start gap-1.5 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-2 py-1.5 text-[11px] text-rose-700 dark:text-rose-300">
+          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> Related links could not be loaded — {readError}
+        </div>
+      )}
+
       {/* Curated pins */}
       {curated === null ? (
         <div className="text-[11px] text-[var(--color-text-faint)] italic">Loading…</div>
@@ -151,14 +183,22 @@ export default function RelatedPanel({
               {r.kind === "document" ? (
                 <>
                   <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  {r.direction === "in" && (
+                    <span title="Linked from that document — the link lives on its side" className="shrink-0 text-violet-500">
+                      <CornerDownLeft className="w-3 h-3" />
+                    </span>
+                  )}
                   {r.target ? (
-                    <Link href={`/documents/${r.target.library_id}?doc=${r.target_document_id}`}
+                    <Link href={`/documents/${r.target.library_id}?doc=${r.other_document_id}`}
                       className="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] hover:text-[var(--color-accent)] truncate">
                       {r.target.document_number || r.target.title || "Document"}
                       {r.label && <span className="font-normal text-[var(--color-text-muted)]"> · {r.label}</span>}
                     </Link>
                   ) : (
-                    <span className="flex-1 text-xs text-[var(--color-text-faint)] italic">missing document</span>
+                    <span className="flex-1 text-xs text-[var(--color-text-faint)] italic"
+                      title={r.other_document_id ? "A document you cannot open" : undefined}>
+                      {r.other_document_id ? "restricted document" : "missing document"}
+                    </span>
                   )}
                 </>
               ) : (
@@ -170,24 +210,28 @@ export default function RelatedPanel({
                   </a>
                 </>
               )}
-              {r.origin && r.origin !== "human" && (
-                <span
-                  title={[
-                    r.origin === "system" ? "Applied automatically — provable connection" : "Approved from a proposal",
-                    r.evidence?.summary,
-                    r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
-                  ].filter(Boolean).join(" · ")}
-                  className="shrink-0 inline-flex items-center gap-0.5 text-[8px] font-black uppercase tracking-wide text-violet-700 bg-violet-100 dark:bg-violet-950/60 rounded px-1 py-0.5"
-                >
-                  <Sparkles className="w-2.5 h-2.5" /> {r.origin === "system" ? "auto" : "approved"}
-                </span>
-              )}
+              {(() => {
+                const badge = originBadge(r.origin);
+                if (!badge) return null;
+                return (
+                  <span
+                    title={[
+                      badge.title,
+                      r.evidence?.summary,
+                      r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
+                    ].filter(Boolean).join(" · ")}
+                    className="shrink-0 inline-flex items-center gap-0.5 text-[8px] font-black uppercase tracking-wide text-violet-700 bg-violet-100 dark:bg-violet-950/60 rounded px-1 py-0.5"
+                  >
+                    <Sparkles className="w-2.5 h-2.5" /> {badge.label}
+                  </span>
+                );
+              })()}
               {r.evidence_lost_at && (
                 <span title="A later revision removed the evidence this link was based on — still linked, worth a look."
                   className="shrink-0 text-amber-600"><AlertTriangle className="w-3 h-3" /></span>
               )}
               {canManage && (
-                <button onClick={() => void removeRelatedResource(r.id).then(refresh)}
+                <button onClick={() => void unpin(r.id)}
                   title="Unpin" className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-600 opacity-60 group-hover:opacity-100">
                   <X className="w-3 h-3" />
                 </button>
@@ -285,13 +329,13 @@ export default function RelatedPanel({
       )}
 
       {/* Linked from — the other direction of the web. What points HERE. */}
-      {backlinks && (backlinks.docs.length > 0 || backlinks.projects.length > 0) && (
+      {backlinks && (backlinkDocs.length > 0 || backlinks.projects.length > 0) && (
         <div>
           <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
             Linked from
           </div>
           <div className="space-y-0.5">
-            {backlinks.docs.map((d) => (
+            {backlinkDocs.map((d) => (
               <Link key={d.id} href={`/documents/${d.library_id}?doc=${d.id}`}
                 className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-[var(--color-surface-2)] transition-colors">
                 <CornerDownLeft className="w-3 h-3 text-violet-500 shrink-0" />
@@ -317,7 +361,7 @@ export default function RelatedPanel({
         <DocumentLinkPicker
           orgId={orgId}
           userId={userId}
-          excludeIds={[documentId, ...(curated ?? []).map((c) => c.target_document_id ?? "")]}
+          excludeIds={[documentId, ...(curated ?? []).map((c) => c.other_document_id ?? "")]}
           onPick={addDoc}
           onClose={() => setPickerOpen(false)}
         />

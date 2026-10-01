@@ -1099,6 +1099,10 @@ export async function POST(req: NextRequest) {
           actorName: `${company} (intake)`,
           actorEmail: contactEmail,
           settle: true,
+          // LNK-11 (I-08): the proposal sweep runs in-process on the service
+          // role; without it the sweep would take the browser path
+          // (/api/links/invalidate with a session) and not run here.
+          serviceClient: supabaseAdmin,
         });
       });
     } catch (e) {

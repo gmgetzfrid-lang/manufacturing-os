@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**259 findings** — 9 CRITICAL, 59 HIGH, 145 MEDIUM, 46 LOW — plus **12 gap specs**.
+**262 findings** — 9 CRITICAL, 59 HIGH, 146 MEDIUM, 48 LOW — plus **12 gap specs**.
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -79,7 +79,7 @@ It is not a missing brain. It is a missing memory.
 | 13 | [**Process flows**](./13-process-flows.md) | 14 | **Your PFD question** |
 | 14 | [Drawing intelligence](./14-drawing-intelligence.md) | 13 | Extraction, OPC refs, tracing, revision staleness |
 | 15 | [Orchestrator](./15-orchestrator.md) | 11 | The highest-privilege AI surface |
-| 16 | [Persistence & RLS](./16-persistence-rls.md) | 12 | Table by table |
+| 16 | [Persistence & RLS](./16-persistence-rls.md) | 15 | Table by table — `IRLS-13`, `IRLS-14`, `IRLS-15` opened by intelligence Round G (I-08), 2026-09-30 |
 | 17 | [Hub UX](./17-hub-ux.md) | 12 | What a new org sees; whether the numbers are real |
 | 18 | [Lifecycle](./18-lifecycle.md) | 13 | Export, restore, delete, orphans |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |

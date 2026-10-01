@@ -64,7 +64,7 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 ## WIRE-2 · Two intelligence-layer upserts name an ON CONFLICT target that matches no plain unique index; both failures are swallowed
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/mentionIndexer.ts:136-142`, `supabase/migrations/20260929_mention_engine.sql:59-60`, `lib/linkProposerServer.ts:403-406`, `supabase/migrations/20260807_link_proposals.sql:111-113`, `app/api/knowledge/ingest/route.ts:157-169`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both ON CONFLICT targets raise 42P10 and both paths are non-fatal, so the mention graph and auto-applied links stay empty with a success response. One precision note: the link proposer is not fully silent — it does `notes.push(\`Auto-apply skipped: ${error.message}\`)` at :406 — but it still never throws and autoApplied stays 0. HIGH stands.
@@ -88,6 +88,17 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 - [ ] `CREATE UNIQUE INDEX entity_mentions_kdoc_page_idx ON entity_mentions (asset_id, knowledge_document_id, page)` (or the upsert switches to delete-then-insert) and a real ingest produces entity_mentions rows
 - [ ] the document_related_resources upsert either targets a non-partial unique index or handles the partial predicate
 - [ ] both call sites log the error rather than swallowing it
+
+**Resolution (2026-09-30, intelligence Round G).** Both outliers now name a plain unique index (`20261126`): `entity_mentions_kdoc_page_uniq (asset_id, knowledge_document_id, page)` for the mention engine (`IRLS-4`) and `document_related_resources_doc_target_uniq (document_id, target_document_id)` for auto-applied links (`LNK-3` / `IRLS-2`). Both writers also degrade row by row on a database that has not taken the migration yet, instead of failing wholesale. Neither failure is silent any more: `lib/mentionIndexer.ts` logs every failure where it happens (so the ingest route's `catch {}` can no longer make it invisible) and throws; the proposer puts a failed apply in the run's `errors`, shown as an error. Tests: `lib/__tests__/linkProposalsRoundG.test.ts`.
+
+**Pending migration:** `supabase/migrations/20261126_intel_roundG_link_conflict_targets.sql` (DEC-30: the inventory — `document_related_resources` rows with NULL `target_document_id`, pairs linked both ways, `origin` values outside the declared set, duplicate mention keys, `proposed_links` rows in status `stale` and pending, and the pending rows from a connection skill that is private (retired to `stale`; fix pass 3) — is captured before the DDL; the plain mention indexes and the VALIDATE of the origin CHECK happen only in the world where nothing violates them, and the final rows say which world was taken).
+
+**Done-when.**
+1. ✓ `entity_mentions` has the plain unique index and the indexer writes rows against it (shown with the indexer against the in-memory stand-in; a real ingest needs the database and the migration applied).
+2. ✓ The `document_related_resources` write targets a non-partial unique index.
+3. ✓ Both call sites log the error rather than swallowing it.
+
+**Scope / residual.** None.
 
 ---
 
