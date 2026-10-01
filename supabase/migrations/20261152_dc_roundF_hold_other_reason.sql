@@ -52,6 +52,13 @@
 --      editable on an open hold). For everyone; release the hold and place
 --      a new one. Every other hold's note stays editable (20261073). No app
 --      door edits a hold's note.
+--      And (final review fix) no hold's reason can be changed once it is
+--      placed — the rail binds INSERT, this binds UPDATE — for everyone,
+--      exactly as 20261073's identity guard holds it (that guard grants no
+--      exemption: a signed-in member, the service role, a restore and the
+--      SQL console are all refused), so the two never disagree, and pasted
+--      ahead of 20261073 a member's PATCH still cannot put free text in
+--      `reason`. No app door changes a hold's reason.
 --      The rail and the freeze are one trigger function,
 --      enforce_document_hold_reason_code() — SECURITY INVOKER (it reads only
 --      the caller's own org's holds, which document_holds_select already
@@ -63,7 +70,9 @@
 -- with a different note) AND NARROWING (the rail rewrites a signed-in hold's
 -- new free text in `reason` into an "Other" hold described by it, and with
 -- the freeze refuses rows the database admitted: an "Other" hold with no
--- description, a change to an "Other" hold's note).
+-- description, a change to an "Other" hold's note; and a change to any
+-- hold's reason — which 20261073 already refuses for everyone, so a
+-- narrowing only where 20261073 is not yet pasted).
 -- DEC-30 inventory (aggregate counts only, captured BEFORE the
 -- transaction): holds whose reason is outside the code vocabulary (custom
 -- text placed before P15 — kept, never rewritten; the public verify
@@ -84,7 +93,9 @@
 -- before the deploy, or a rollback of the deploy, closes no stop-work path.
 -- (That app names such a hold "Other" in its bell / email, and refuses an
 -- identical second custom hold as "already open" — as it did before.)
--- Independent of every other pending migration. Single paste: temp-table
+-- Independent of every other pending migration: pasted before or after
+-- 20261073, a hold's reason cannot be rewritten (both refuse it, for
+-- everyone, check_violation). Single paste: temp-table
 -- inventory -> BEGIN / DDL / COMMIT -> one SELECT (check text, ok boolean,
 -- n text).
 -- REVERSAL: DROP TRIGGER trg_document_hold_reason_code ON document_holds and
@@ -171,7 +182,15 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- UPDATE: an "Other" hold's note IS its description — what the work is
+  -- UPDATE: a hold's reason is identity — fixed once placed, for everyone,
+  -- exactly as 20261073's identity guard holds it (no exemption there, none
+  -- here), so ahead of 20261073 an UPDATE cannot put free text in `reason`.
+  IF NEW.reason IS DISTINCT FROM OLD.reason THEN
+    RAISE EXCEPTION 'A hold''s reason cannot be changed once it is placed; release the hold and place a new one.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- An "Other" hold's note IS its description — what the work is
   -- stopped for — so it is identity, as the free-text reason it replaces is
   -- (20261073). Fixed once placed, for everyone.
   IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN
@@ -242,6 +261,12 @@ SELECT 'the freeze: an Other hold''s note cannot change once placed, for everyon
                 WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
                   AND p.prosrc LIKE '%IF OLD.reason = %Other% AND NEW.notes IS DISTINCT FROM OLD.notes THEN%'
                   AND p.prosrc LIKE '%cannot be changed once it is placed%'),
+       NULL::text
+UNION ALL
+SELECT 'the reason is fixed once placed, for everyone, as 20261073''s identity guard holds it (an UPDATE cannot put free text in reason)',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'enforce_document_hold_reason_code'
+                  AND p.prosrc LIKE '%IF NEW.reason IS DISTINCT FROM OLD.reason THEN%reason cannot be changed once it is placed%IF OLD.reason = %Other% AND NEW.notes IS DISTINCT FROM OLD.notes THEN%'),
        NULL::text
 UNION ALL
 SELECT 'enforce_document_hold_reason_code is SECURITY INVOKER with search_path pinned, and no client role may execute it (DRLS-16)',

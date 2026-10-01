@@ -249,11 +249,15 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     expect(at("NEW.reason := 'Other';")).toBeLessThan(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN"));
     expect(at("IF NULLIF(btrim(NEW.notes), '') IS NULL THEN")).toBeLessThan(at("RAISE EXCEPTION 'An \"Other\" hold needs a description"));
     // the INSERT branch raises exactly once (the blank description), and never for free text
-    const insert = fn.slice(at("IF TG_OP = 'INSERT' THEN"), at("IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN"));
+    const insert = fn.slice(at("IF TG_OP = 'INSERT' THEN"), at("IF NEW.reason IS DISTINCT FROM OLD.reason THEN"));
     expect((insert.match(/RAISE EXCEPTION/g) ?? []).length).toBe(1);
-    // UPDATE: the freeze binds everyone (no auth.uid() exemption after the INSERT branch)
-    const update = fn.slice(at("IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN"));
+    // UPDATE (final review fix): first the reason is fixed, then the freeze — both bind everyone
+    // (no auth.uid() exemption after the INSERT branch), exactly as 20261073's identity guard does
+    expect(at("IF NEW.reason IS DISTINCT FROM OLD.reason THEN")).toBeLessThan(at("IF OLD.reason = 'Other' AND NEW.notes IS DISTINCT FROM OLD.notes THEN"));
+    const update = fn.slice(at("IF NEW.reason IS DISTINCT FROM OLD.reason THEN"));
     expect(update).not.toContain("auth.uid()");
+    expect((update.match(/RAISE EXCEPTION/g) ?? []).length).toBe(2);
+    expect(update).toContain("IF NEW.reason IS DISTINCT FROM OLD.reason THEN\n    RAISE EXCEPTION 'A hold''s reason cannot be changed once it is placed; release the hold and place a new one.'\n      USING ERRCODE = 'check_violation';\n  END IF;");
     expect(update).toContain("RAISE EXCEPTION 'The description of an \"Other\" hold cannot be changed once it is placed; release the hold and place a new one.'");
     // every refusal is a check_violation (the app's checked writes surface the sentence)
     expect((fn.match(/RAISE EXCEPTION/g) ?? []).length).toBe((fn.match(/USING ERRCODE = 'check_violation';/g) ?? []).length);
@@ -265,7 +269,8 @@ describe("20261152 — an open Other hold is keyed by its note (one paste, DEC-3
     expect(tail).toContain("SELECT inventory, NULL::boolean, n FROM dc_round_f_152_before;");
     // deparsed index text is matched with % across the CASE's own lines; no bare cast in a LIKE pattern
     expect(tail).toContain("indexdef LIKE '%(document_id, reason, (%CASE%WHEN%Other%THEN%md5(COALESCE(btrim(notes)%ELSE%END)) WHERE%'");
-    // the trigger, the rail, the freeze and the privileges are probed
+    // the trigger, the rail, the freeze, the fixed reason and the privileges are probed
+    expect(tail).toContain("AND p.prosrc LIKE '%IF NEW.reason IS DISTINCT FROM OLD.reason THEN%reason cannot be changed once it is placed%IF OLD.reason = %Other% AND NEW.notes IS DISTINCT FROM OLD.notes THEN%'");
     expect(tail).toContain("t.tgname = 'trg_document_hold_reason_code'");
     expect(tail).toContain("AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16");
     expect(tail).toContain("AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']");

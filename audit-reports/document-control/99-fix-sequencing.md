@@ -351,7 +351,11 @@ picker writes the "Other" code with the description in the note instead of
 free text in `reason` — and (second review fix) adds the database limb: a
 signed-in hold's reason is a code ("Other" with a description), or
 legacy text the org already carries (a lifecycle carry); an "Other" hold's
-description cannot be changed. If the app ran ahead of the paste, a
+description cannot be changed; and (final review fix) no hold's reason can
+be changed by an UPDATE, for anyone — exactly `20261073`'s identity rule,
+with its exemptions (none) — so pasted before or after `20261073`, no
+PATCH can put free text in `reason`, and the order between the two does
+not matter. If the app ran ahead of the paste, a
 document could hold only one open "Other" hold at a time: a second custom
 hold — two different free-text reasons are placeable today — would be
 refused, and a split / merge / reversal carrying two "Other" holds onto one
