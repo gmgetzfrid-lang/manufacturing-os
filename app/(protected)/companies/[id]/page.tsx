@@ -84,7 +84,7 @@ export default function CompanyProfilePage() {
   if (loading) return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
   if (error || !company) return (
     <div className="min-h-full p-8">
-      <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+      <div role="alert" className="max-w-2xl mx-auto bg-rose-500/[0.08] border border-rose-500/40 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
         <div>{error ?? "Company not found."}<div className="mt-2"><Link href="/companies" className="underline">Back to companies</Link></div></div>
       </div>

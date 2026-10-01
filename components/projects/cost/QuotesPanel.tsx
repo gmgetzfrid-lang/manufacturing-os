@@ -1369,6 +1369,8 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2">
+      {/* A11Y-6: "Copied!" on the button is also said to a screen reader. */}
+      <span role="status" className="sr-only">{copied ? `Link copied for ${links?.find((x) => x.id === copied)?.companyName ?? "the contractor"}.` : ""}</span>
       <div className="text-[11px] text-[var(--color-text-muted)]">
         Send a contractor their own tokened link — no account needed. Their quote PDF lands here, the
         system reads it, and it joins the tabulation on its own.

@@ -120,7 +120,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
           </span>
         )}

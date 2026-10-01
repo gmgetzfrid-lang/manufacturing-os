@@ -143,22 +143,27 @@ export default function ProjectsPage() {
           }
         />
 
-        {/* STATUS TABS */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-4">
+        {/* STATUS TABS — A11Y-7: the selected pill wears the accent ring on
+            the accent tint (a slate the dark bridge collapses to the canvas
+            was invisible in dark mode) with text-token text that clears
+            4.5:1 in both themes, and says it is pressed. */}
+        <div role="group" aria-label="Filter projects by status" className="flex flex-wrap items-center gap-1.5 mb-4">
           {STATUS_TABS.map((t) => (
             <button
               key={t.value}
+              type="button"
+              aria-pressed={statusFilter === t.value}
               onClick={() => setStatusFilter(t.value)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border ${
                 statusFilter === t.value
-                  ? "bg-slate-900 text-white"
-                  : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
+                  ? "bg-[var(--color-accent-soft)] text-[var(--color-text)] border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]"
+                  : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
               }`}
             >
               {t.label}
               {typeof tabCounts[t.value] === "number" && tabCounts[t.value] > 0 && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${
-                  statusFilter === t.value ? "bg-white/20 text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
+                  statusFilter === t.value ? "bg-[var(--color-surface)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"
                 }`}>{tabCounts[t.value]}</span>
               )}
             </button>
@@ -182,7 +187,7 @@ export default function ProjectsPage() {
             <Spinner size="sm" /> Loading projects…
           </div>
         ) : error ? (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+          <div role="alert" className="bg-rose-500/[0.08] border border-rose-500/40 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         ) : projects.length === 0 ? (
@@ -222,10 +227,10 @@ export default function ProjectsPage() {
 
 function ProjectCard({ project }: { project: Project }) {
   const statusColors: Record<ProjectStatus, string> = {
-    active:    "bg-emerald-100 text-emerald-700 border-emerald-200",
-    paused:    "bg-amber-100 text-amber-700 border-amber-200",
-    completed: "bg-blue-100 text-blue-700 border-blue-200",
-    cancelled: "bg-red-100 text-red-700 border-red-200",
+    active:    "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",
+    paused:    "bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/40",
+    completed: "bg-blue-500/10 text-blue-800 dark:text-blue-300 border-blue-500/40",
+    cancelled: "bg-rose-500/10 text-rose-800 dark:text-rose-300 border-rose-500/40",
     archived:  "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
 
@@ -258,7 +263,7 @@ function ProjectCard({ project }: { project: Project }) {
             <p className="text-xs text-[var(--color-text-muted)] mt-1 line-clamp-2">{project.description}</p>
           )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[var(--color-accent)] transition-colors shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)] transition-colors shrink-0 mt-1" />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
@@ -287,7 +292,7 @@ function ProjectCard({ project }: { project: Project }) {
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-      <Briefcase className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+      <Briefcase className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
       <h3 className="text-base font-black text-[var(--color-text)] mb-1">No projects to show</h3>
       <p className="text-xs text-[var(--color-text-muted)] mb-4 max-w-md mx-auto">
         Projects collect related document checkouts so teammates can see who&apos;s working on what,

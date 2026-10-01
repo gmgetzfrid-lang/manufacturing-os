@@ -128,15 +128,19 @@ export default function CompaniesPage() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
+        {/* A11Y-7: the selected kind wears the accent ring on the accent tint
+            (readable in both themes) and says it is pressed. */}
+        <div role="group" aria-label="Filter companies by kind" className="contents">
         {KIND_FILTERS.map((k) => (
-          <button key={k} onClick={() => { setKindFilter(k); setPage(0); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          <button key={k} type="button" aria-pressed={kindFilter === k} onClick={() => { setKindFilter(k); setPage(0); }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border ${
               kindFilter === k
-                ? "bg-slate-900 text-white"
-                : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                ? "bg-[var(--color-accent-soft)] text-[var(--color-text)] border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]"
+                : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
             {k === "all" ? "All" : COMPANY_KIND_LABEL[k]}
           </button>
         ))}
+        </div>
         <div className="relative flex-1 min-w-56">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
@@ -158,7 +162,7 @@ export default function CompaniesPage() {
         <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8"><Spinner size="sm" /> Loading the registry…</div>
       ) : shownState === "failed" ? null : shown.length === 0 ? (
         <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-12 text-center">
-          <HardHat className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+          <HardHat className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
           <h3 className="text-base font-black text-[var(--color-text)] mb-1">
             {total === 0 && !debounced && kindFilter === "all" ? "No companies in the registry yet" : "No companies match"}
           </h3>

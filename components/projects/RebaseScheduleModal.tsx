@@ -135,7 +135,8 @@ export default function RebaseScheduleModal({
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                aria-label="New start date"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]"
               />
             </div>
             <div>
@@ -144,7 +145,8 @@ export default function RebaseScheduleModal({
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                aria-label="Start time (schedule time)"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]"
               />
             </div>
           </div>

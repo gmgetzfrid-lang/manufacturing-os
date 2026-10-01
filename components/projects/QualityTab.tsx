@@ -1306,7 +1306,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
         <span className="text-sm font-bold text-[var(--color-text)]">Punch list</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">The closeout snag list — visible until it&apos;s empty.</span>
         {open.length > 0 && (
-          <span className="ml-auto text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
+          <span className="ml-auto text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
         )}
       </div>
 

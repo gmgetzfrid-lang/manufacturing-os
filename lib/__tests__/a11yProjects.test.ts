@@ -82,10 +82,11 @@ describe("A11Y-1 — every file picker is keyboard-reachable", () => {
     let pickers = 0;
     for (const f of PROJECT_SURFACES) {
       const s = src(f);
-      const re = /<input\b[^>]*type="file"[^>]*>/g;
-      for (let m = re.exec(s); m; m = re.exec(s)) {
+      for (let at = s.indexOf('type="file"'); at >= 0; at = s.indexOf('type="file"', at + 1)) {
         pickers++;
-        const tag = m[0];
+        const start = s.lastIndexOf("<input", at);
+        const tag = s.slice(start, s.indexOf("/>", at));
+        const m = { index: start };
         const hidden = /className="[^"]*\bhidden\b/.test(tag);
         if (keyboardTriggered.has(f)) {
           expect(s).toContain('role="button"');
@@ -304,5 +305,149 @@ describe("A11Y-12 — decision-critical knowledge is never hover-only", () => {
     await act(async () => { root.render(React.createElement(CostGlossary)); });
     expect(host.querySelector("dl")).toBeNull();
     expect(host.querySelector("button")?.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+// ── WCAG 2.x contrast over composited backgrounds (Tailwind v3 sRGB steps;
+//    v4's oklch steps render within a few units). ──
+type RGB = [number, number, number];
+const hex = (h: string): RGB => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) as RGB;
+const over = (fg: RGB, alpha: number, bg: RGB): RGB => fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha))) as RGB;
+const lum = ([r, g, b]: RGB) => {
+  const ch = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+};
+const ratio = (a: RGB, b: RGB) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+const T = {
+  white: hex("#ffffff"), surfaceDark: hex("#111827"), canvasDark: hex("#0b1120"), text: hex("#0f172a"), textDark: hex("#f1f5f9"),
+  accent: hex("#ea580c"), accentSoft: hex("#fff7ed"),
+  amber500: hex("#f59e0b"), amber800: hex("#92400e"), amber300: hex("#fcd34d"), amber600: hex("#d97706"),
+  rose500: hex("#f43f5e"), rose700: hex("#be123c"), rose300: hex("#fda4af"),
+  emerald500: hex("#10b981"), emerald800: hex("#065f46"), emerald700: hex("#047857"), emerald300: hex("#6ee7b7"),
+  blue500: hex("#3b82f6"), blue800: hex("#1e40af"), blue300: hex("#93c5fd"),
+};
+
+describe("A11Y-13 — the cited pairs clear 4.5 : 1 in both themes", () => {
+  it("amber text on the amber-500/15 chip is the 800 step in light and the 300 step in dark (was 700 at 4.47 : 1)", () => {
+    expect(ratio(T.amber800, over(T.amber500, 0.15, T.white))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(T.amber300, over(T.amber500, 0.15, T.surfaceDark))).toBeGreaterThanOrEqual(4.5);
+    for (const [f, chip] of [
+      ["components/projects/QualityTab.tsx", "rounded bg-amber-500/15 text-amber-800 dark:text-amber-300"],
+      ["components/projects/cost/ChangeOrdersPanel.tsx", "rounded bg-amber-500/15 text-amber-800 dark:text-amber-300"],
+      ["components/ui/ChartKit.tsx", "rounded bg-amber-500/15 text-amber-800 dark:text-amber-300"],
+    ]) expect(src(f), f).toContain(chip);
+  });
+  it("the awaiting-review count is amber-800 / amber-300 (amber-600 on white was 3.19 : 1)", () => {
+    expect(ratio(T.amber600, T.white)).toBeLessThan(4.5);
+    expect(ratio(T.amber800, T.white)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(T.amber300, T.surfaceDark)).toBeGreaterThanOrEqual(4.5);
+    expect(src("components/projects/IntakePanel.tsx")).toContain('pending.length ? "text-amber-800 dark:text-amber-300"');
+  });
+  it("error panels are the token recipe — rose text on a rose-500/[0.08] tint — never a light slab in a dark UI", () => {
+    expect(ratio(T.rose700, over(T.rose500, 0.08, T.white))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(T.rose300, over(T.rose500, 0.08, T.surfaceDark))).toBeGreaterThanOrEqual(4.5);
+    for (const f of ["app/(protected)/projects/page.tsx", "app/(protected)/projects/[id]/page.tsx", "app/(protected)/companies/[id]/page.tsx", "components/projects/ScheduleTab.tsx"]) {
+      expect(src(f), f).not.toMatch(/bg-red-50\b/);
+      expect(src(f), f).not.toMatch(/\btext-red-(600|700)\b/);
+    }
+  });
+  it("the action buttons and status chips on the project pages read in dark (emerald / rose / amber / blue at the 800 step on light, 300 on dark)", () => {
+    for (const [c500, c800, c300] of [[T.emerald500, T.emerald800, T.emerald300], [T.rose500, T.rose700, T.rose300], [T.amber500, T.amber800, T.amber300], [T.blue500, T.blue800, T.blue300]]) {
+      expect(ratio(c800, over(c500, 0.1, T.white))).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(c300, over(c500, 0.1, T.surfaceDark))).toBeGreaterThanOrEqual(4.5);
+    }
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    expect(page).not.toContain("border-red-200 bg-red-50 text-red-700");
+    expect(page).not.toContain("border-emerald-200 bg-emerald-50 text-emerald-700");
+    expect(page).not.toContain("hover:bg-slate-50/60");
+    expect(page).toContain('tone === "active" ? "bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300"');
+    for (const f of ["app/(protected)/projects/page.tsx", "app/(protected)/projects/[id]/page.tsx"]) {
+      expect(src(f), f).not.toMatch(/bg-(emerald|amber|blue|red)-100 text-/);
+    }
+  });
+  it("form errors on the Costs tab and the change-order form carry their dark variant (rose-700 alone was 2.8 : 1 in dark)", () => {
+    expect(ratio(T.rose700, T.surfaceDark)).toBeLessThan(4.5);
+    for (const f of ["components/projects/CostsTab.tsx", "components/projects/cost/ChangeOrdersPanel.tsx"]) {
+      expect(src(f), f).not.toMatch(/text-rose-700"/);
+    }
+  });
+  it("every date input in the Projects area follows the theme", () => {
+    const offenders: string[] = [];
+    for (const f of PROJECT_SURFACES) {
+      const s = src(f);
+      for (let at = s.indexOf('type="date"'); at >= 0; at = s.indexOf('type="date"', at + 1)) {
+        const tag = s.slice(s.lastIndexOf("<input", at), s.indexOf("/>", at));
+        if (!/dark:\[color-scheme:dark\]/.test(tag)) offenders.push(`${f}: ${tag.slice(0, 80)}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("A11Y-7 — the selected filter and tab are visible in both themes and announced", () => {
+  it("the selected pill is the accent ring on the accent tint, with text-token text (4.5 : 1 in both themes), and says it is pressed", () => {
+    const accentSoftDark = over(T.accent, 0.22, T.canvasDark);
+    expect(ratio(T.text, T.accentSoft)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(T.textDark, accentSoftDark)).toBeGreaterThanOrEqual(4.5);
+    // the ring is what tells it apart: orange against the unselected surface, in both themes
+    expect(ratio(T.accent, T.white)).toBeGreaterThanOrEqual(3);
+    expect(ratio(T.accent, T.surfaceDark)).toBeGreaterThanOrEqual(3);
+    for (const f of ["app/(protected)/projects/page.tsx", "app/(protected)/companies/page.tsx", "components/projects/ScheduleFilterBar.tsx"]) {
+      const s = src(f);
+      expect(s, f).not.toMatch(/\bbg-slate-900 text-white\b/);
+      expect(s, f).toContain("aria-pressed=");
+      expect(s, f).toContain("bg-[var(--color-accent-soft)] text-[var(--color-text)] border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]");
+    }
+  });
+  it("every toggle group the finding names says which option is pressed", () => {
+    expect(src("components/projects/ProjectWizard.tsx")).toContain("aria-pressed={jobKind === k.v}");
+    expect(src("components/projects/ProjectWizard.tsx")).toContain('aria-pressed={visibility === "public"}');
+    expect(src("components/projects/CostsTab.tsx")).toContain("aria-pressed={type === t.v}");
+    expect(src("components/projects/ScheduleTab.tsx")).toContain("aria-pressed={view === id}");
+    expect(src("app/submit/[token]/page.tsx")).toContain('aria-pressed={mode === "new"}');
+  });
+  it("the project page's seven tabs are a tablist with a selected tab and a tabpanel", () => {
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    expect(page).toContain('<div role="tablist" aria-label="Project sections"');
+    expect(page).toMatch(/role="tab"\n\s+aria-selected=\{active\}/);
+    expect(page).toContain('role="tabpanel" id="project-tabpanel"');
+    expect((page.match(/<TabButton active=/g) ?? []).length).toBe(7);
+  });
+});
+
+describe("A11Y-6 / UX-7 — results are announced, and an intake failure reads as an error", () => {
+  it("the intake notice carries a tone: setMsg is an error unless the site says otherwise, and the banner is alert / status in a live region", () => {
+    const p = src("components/projects/IntakePanel.tsx");
+    expect(p).toContain('const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {');
+    expect(p).toContain('<div role={msg.tone === "error" ? "alert" : "status"} data-tone={msg.tone}');
+    expect(p).toContain('<div aria-live="polite" aria-atomic="true">');
+    // a failed revoke / approve / reject stays an error; a landed one is success
+    expect(p).toMatch(/if \(error\) \{ setMsg\(`Couldn't revoke: \$\{error\.message\}`\); return; \}/);
+    expect(p).toContain('landed && (!swept || swept.ok) ? "success" : "error");');
+    expect(p).toContain('auditErr ? "error" : "success");');
+    expect(p).not.toMatch(/\{msg && <div className="rounded-xl border border-\[var\(--color-border\)\] bg-\[var\(--color-surface\)\][^"]*">\{msg\}<\/div>\}/);
+  });
+  it("the cited error and confirmation sites are announced", () => {
+    const page = src("app/(protected)/projects/[id]/page.tsx");
+    expect(page).toMatch(/\{actionError && \(\n\s+<div role="alert" className="mb-3/);
+    expect(page).toContain('{error && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}');
+    expect(src("components/projects/ScheduleTab.tsx")).toMatch(/<div role="alert" className="flex items-center gap-2 text-xs font-bold text-rose-700/);
+    expect(src("components/projects/cost/QuotesPanel.tsx")).toContain('<span role="status" className="sr-only">{copied ? `Link copied for');
+    expect(src("components/projects/CostsTab.tsx")).toMatch(/\{error && <span role="alert" className="text-\[11px\] font-bold text-rose-700 dark:text-rose-300">\{error\}<\/span>\}/);
+    expect(src("app/(protected)/projects/page.tsx")).toContain('<div role="alert" className="bg-rose-500/[0.08]');
+  });
+});
+
+describe("A11Y-10 — nothing stays multi-column on a phone; a clipped money value wraps", () => {
+  it("the cited grids collapse below sm:, the wizard's repeater rows restack, and the stat value wraps instead of truncating", () => {
+    const offenders: string[] = [];
+    for (const f of ["components/projects/ProjectWizard.tsx", "app/(protected)/companies/page.tsx", "app/(protected)/companies/[id]/page.tsx"]) {
+      for (const m of src(f).matchAll(/className="grid grid-cols-(2|3)\b[^"]*"/g)) offenders.push(`${f}: ${m[0]}`);
+    }
+    expect(offenders).toEqual([]);
+    const w = src("components/projects/ProjectWizard.tsx");
+    expect((w.match(/className="flex flex-wrap sm:flex-nowrap items-center gap-2"/g) ?? []).length).toBe(3);
+    expect((w.match(/w-full sm:w-auto sm:flex-1 min-w-0/g) ?? []).length).toBe(3);
+    expect(src("components/projects/CostsTab.tsx")).toContain('text-lg font-black tabular-nums text-[var(--color-text)] break-words">{value}</div>');
   });
 });

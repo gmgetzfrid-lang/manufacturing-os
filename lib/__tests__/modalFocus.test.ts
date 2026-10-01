@@ -392,6 +392,13 @@ describe("A11Y-4 — the five modals compose the shared Modal", () => {
     comp.gatherCompanyProfiles.mockResolvedValue(new Map());
     await act(async () => { root.render(h(CompaniesPage)); });
     await flush();
+    // A11Y-7 (rendered): the kind filter says which pill is pressed, and moves with a click
+    const pills = [...document.querySelectorAll('[aria-label="Filter companies by kind"] button')] as HTMLButtonElement[];
+    expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false", "false", "false", "false"]);
+    await act(async () => { pills[1].click(); });
+    await flush();
+    expect(pills.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true", "false", "false", "false"]);
+    expect(pills[1].className).toContain("ring-[var(--color-accent)]");
     const add = byText("button", /Add company/)!;
     add.focus();
     await act(async () => { add.click(); });

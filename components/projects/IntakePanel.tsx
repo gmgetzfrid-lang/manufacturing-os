@@ -70,7 +70,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [intakeCollectionId, setIntakeCollectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  // UX-7 / A11Y-6: one notice, with a tone — a failed action reads as an
+  // error (role="alert"), a landed one as a confirmation (role="status").
+  // setMsg(text) is an error unless the call site says otherwise.
+  const [msg, setNotice] = useState<{ tone: "error" | "success" | "info"; text: string } | null>(null);
+  const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {
+    setNotice(text == null ? null : { tone, text });
+  }, []);
   /** SEC-19: link id → the address minted or re-issued in THIS session — the
    *  only time it is known (the database keeps its SHA-256, 20261141). */
   const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
@@ -181,7 +187,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     } catch (e) {
       setMsg(`Couldn't load intake data: ${(e as Error).message}`);
     } finally { setLoading(false); }
-  }, [orgId, projectId]);
+  }, [orgId, projectId, setMsg]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const createLink = async () => {
@@ -221,7 +227,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       await refresh();
       setMsg(auditErr
         ? `Link created, but its audit record failed: ${auditErr.message}`
-        : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.");
+        : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.",
+      auditErr ? "error" : "success");
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -240,7 +247,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       await refresh();
       setMsg(res.auditError
         ? `${l.companyName}'s link was re-issued, but its audit record failed: ${res.auditError}`
-        : `${l.companyName}'s link was re-issued — copy the new address below now; it is shown only this once.`);
+        : `${l.companyName}'s link was re-issued — copy the new address below now; it is shown only this once.`,
+      res.auditError ? "error" : "success");
     } finally { setBusy(null); }
   };
 
@@ -307,7 +315,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setAssignQ(""); setAssignResults([]);
       await refresh();
-      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`);
+      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`, "success");
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -383,7 +391,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           const opened = await listDraftRoster(p.docId, p.pendingVersionId);
           setMsg(hasPrimary(opened)
             ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab.`
-            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`);
+            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`,
+          hasPrimary(opened) ? "info" : "error");
           await refresh();
           return;
         }
@@ -400,10 +409,12 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
       // UX-16: the approval swept the project's open checklists — say what it did.
       const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
-      setMsg((String(after?.current_version_id ?? "") === p.pendingVersionId
+      const landed = String(after?.current_version_id ?? "") === p.pendingVersionId;
+      setMsg((landed
         ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
         : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
-        + (swept ? ` ${swept.text}` : ""));
+        + (swept ? ` ${swept.text}` : ""),
+      landed && (!swept || swept.ok) ? "success" : "error");
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -454,7 +465,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       });
       setMsg(auditErr
         ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${auditErr.message}`
-        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`);
+        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
+      auditErr ? "error" : "success");
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -476,21 +488,33 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     });
     setMsg(res.ok
       ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
-      : (res.error ?? "Couldn't flag the collision."));
+      : (res.error ?? "Couldn't flag the collision."),
+    res.ok ? "success" : "error");
   };
 
   if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
     <div className="space-y-4">
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      <div aria-live="polite" aria-atomic="true">
+        {msg && (
+          <div role={msg.tone === "error" ? "alert" : "status"} data-tone={msg.tone}
+            className={`rounded-xl border px-3 py-2 text-xs font-bold ${msg.tone === "error"
+              ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
+              : msg.tone === "success"
+                ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-300"
+                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+            {msg.text}
+          </div>
+        )}
+      </div>
 
       {/* Review queue — the point of the whole system. */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-2 mb-2">
           <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Submissions awaiting review</span>
-          <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-600" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
+          <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
         </div>
         {pending.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing waiting. Approved intake revisions become the single current version automatically.</div>}
         <ul className="space-y-2">
@@ -546,7 +570,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                     {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (() => {
                       const url = knownUrl(l);
                       return url ? (
-                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`, "success"); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
                       ) : (
                         <button onClick={() => void reissue(l)} disabled={busy === l.id} title="The address is not stored (only its fingerprint is). Re-issue to get a new one — the old one stops working." className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><RotateCcw className="w-3 h-3" /> Re-issue</button>
                       );

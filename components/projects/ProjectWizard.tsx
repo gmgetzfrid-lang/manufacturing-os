@@ -373,7 +373,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <Group label="Job size — sets sensible defaults, never permissions">
                 <div className="grid sm:grid-cols-3 gap-2">
                   {JOB_KINDS.map((k) => (
-                    <button key={k.v} onClick={() => setJobKind(k.v)}
+                    <button key={k.v} type="button" aria-pressed={jobKind === k.v} onClick={() => setJobKind(k.v)}
                       className={`rounded-xl border p-3 text-left transition-colors ${jobKind === k.v ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/50" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
                       <div className="text-xs font-black text-[var(--color-text)]">{k.label}</div>
                       <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">{k.hint}</div>
@@ -394,8 +394,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               </div>
               <Group label="Visibility">
                 <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
-                  <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Public (everyone in org)</button>
-                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Private (members only)</button>
+                  <button type="button" aria-pressed={visibility === "public"} onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Public (everyone in org)</button>
+                  <button type="button" aria-pressed={visibility === "private"} onClick={() => setVisibility("private")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "private" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Private (members only)</button>
                 </div>
               </Group>
             </>
