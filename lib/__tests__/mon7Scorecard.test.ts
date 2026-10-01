@@ -304,16 +304,47 @@ describe("MON-7 dw2 / COST-12 dw3 (fix pass) — a SEEDED or existing item is as
     expect(audits("PUNCH_CONTRACTOR_SET")).toHaveLength(1);
   });
 
-  it("the Quality tab wires it: a contractor control on every turnover and punch row (unassigned, or undecided) and a picker beside Seed required contents", () => {
+  it("J10 third fix: a REJECTED turnover item is never named after the fact (no reopen — a wrong name could not be corrected); a waived one and a voided punch item can be, once", async () => {
+    const gulf = await addGulf();
+    await addTurnoverItem({ orgId: "o1", projectId: "p1", name: "Hydro test pack", actor });
+    await addTurnoverItem({ orgId: "o1", projectId: "p1", name: "Vendor manuals", actor });
+    await addPunchItem({ orgId: "o1", projectId: "p1", title: "Not a real snag", actor });
+    db.rows.turnover_items[0].status = "rejected";
+    db.rows.turnover_items[1].status = "waived";
+    db.rows.punch_items[0].status = "void";
+    const [rejected, waived] = await listTurnoverItems("o1", "p1");
+    db.writes = [];
+
+    const refused = await assignTurnoverContractor({ item: rejected, partyId: gulf, actor });
+    expect(refused).toEqual({ ok: false, error: "This turnover item is rejected — its contractor can't be named now: a rejection can't be reopened, so a wrong name could never be corrected. Name the contractor once the resubmission is accepted." });
+    expect(db.writes).toEqual([]);
+    expect(db.rows.turnover_items[0].party_id).toBeNull();
+    expect(audits("TURNOVER_CONTRACTOR_SET")).toEqual([]);
+    // the nonconformance stays on nobody's record — never on a guessed one
+    expect((await quality()).score).toBeNull();
+
+    expect(await assignTurnoverContractor({ item: waived, partyId: gulf, actor })).toEqual({ ok: true });
+    const [voided] = await listPunchItems("o1", "p1");
+    expect(await assignPunchContractor({ item: voided, partyId: gulf, actor })).toEqual({ ok: true });
+    // and once named, a closed / voided punch item keeps it — no "Reopen it" (the app has none for punch)
+    const [named] = await listPunchItems("o1", "p1");
+    expect((await assignPunchContractor({ item: named, partyId: null, actor })).error).toBe("This punch item is voided — its contractor stays as recorded.");
+  });
+
+  it("the Quality tab wires it: an undecided row's pick is its write; a decided, unassigned row (accepted / waived, closed / voided) goes through Assign and a confirm; a rejected one has no control; a picker beside Seed required contents", () => {
     const q = readFileSync(join(process.cwd(), "components/projects/QualityTab.tsx"), "utf8");
     expect(q).toContain("seedTurnoverItems({ orgId, projectId, jobKind, partyId: seedParty || null, actor })");
     expect(q).toContain('label="Contractor who delivers the seeded items"');
     expect(q).toContain("finish(await assignTurnoverContractor({ item, partyId: partyId || null, actor }));");
-    expect(q).toContain('(!it.partyId || it.status === "open" || it.status === "received") ? (');
+    expect(q).toContain('{canManage && busy !== it.id && pickable.length > 0 && (it.status === "open" || it.status === "received") ? (');
+    expect(q).toContain('canManage && busy !== it.id && pickable.length > 0 && !it.partyId && (it.status === "accepted" || it.status === "waived") ? (');
+    expect(q).toContain("if (!(await confirmLateContractor({ itemName: item.name, decided: item.status, contractor }))) return;");
     expect(q).toContain("label={`Contractor who delivers ${it.name}`}");
     expect(q).toContain("const r = await assignPunchContractor({ item: it, partyId: partyId || null, actor });");
-    expect(q).toContain('(!it.partyId || it.status === "open") ? (');
+    expect(q).toContain('{canManage && busy !== it.id && pickable.length > 0 && it.status === "open" ? (');
+    expect(q).toContain("if (!(await confirmLateContractor({ itemName: it.title, decided: it.status, contractor }))) return;");
     expect(q).toContain("label={`Contractor responsible for ${it.title}`}");
+    // rendered behaviour: qualityTabContractorAssign.test.ts
   });
 });
 

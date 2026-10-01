@@ -293,21 +293,31 @@ export async function addTurnoverItem(input: {
  *  (or, for a punch item, its close-out) counts for, through that
  *  contractor's Known Company link. A seeded item, or one added before its
  *  contractor was known, is assigned here. The rule is app-level, like the
- *  contractor's company link (DEC-44 (J10) item 3): an UNASSIGNED item may be
- *  assigned at any status — so a package the wizard seeded and QA/QC already
- *  accepted reaches its company — but an assigned one is moved to another
- *  contractor (or cleared) only while it is undecided, so a standing
- *  decision (an acceptance, a rejection's nonconformance, a close-out) never
- *  moves from one company's record to another's. The contractor must be one
- *  of the item's own project. The write is guarded on the contractor and the
- *  status the caller saw (a concurrent change is refused, never
- *  overwritten), checked (GAP-402), and audited with what it replaced. */
+ *  contractor's company link (DEC-44 (J10) item 3): while an item is
+ *  undecided its contractor may be set, changed or cleared; once it is
+ *  decided an assigned contractor stays as recorded, so a standing decision
+ *  (an acceptance, a rejection's nonconformance, a close-out) never moves
+ *  from one company's record to another's. An UNASSIGNED decided item may
+ *  still be named once — so a package the wizard seeded and QA/QC already
+ *  accepted reaches its company — except where nothing could correct a
+ *  wrong name afterwards and the decision counts AGAINST the company: a
+ *  rejected turnover item (no reopen; its nonconformance would stand on the
+ *  wrong record) is named once it is accepted instead (J10 third review
+ *  fix). The Quality tab asks before naming a decided item's contractor and
+ *  says it is permanent. The contractor must be one of the item's own
+ *  project. The write is guarded on the contractor and the status the caller
+ *  saw (a concurrent change is refused, never overwritten), checked
+ *  (GAP-402), and audited with what it replaced. */
 async function assignContractor(input: {
   table: "turnover_items" | "punch_items";
   noun: "turnover item" | "punch item";
   item: { id: string; orgId: string; projectId: string; partyId: string | null; status: string };
   name: string;
   undecided: boolean;
+  /** Decided, unassigned, and still nameable (see above). */
+  lateNameable: boolean;
+  /** The decided status has a way back to undecided in the app (Reopen). */
+  reopenable: boolean;
   partyId: string | null;
   action: "TURNOVER_CONTRACTOR_SET" | "PUNCH_CONTRACTOR_SET";
   actor: Actor;
@@ -315,8 +325,12 @@ async function assignContractor(input: {
   const { item } = input;
   const next = input.partyId || null;
   if (next === item.partyId) return { ok: true };
+  const statusWord = item.status === "done" ? "closed" : item.status === "void" ? "voided" : item.status;
   if (item.partyId && !input.undecided) {
-    return { ok: false, error: `This ${input.noun} is ${item.status === "done" ? "closed" : item.status} — its contractor stays as recorded. Reopen it to change who it counts for.` };
+    return { ok: false, error: `This ${input.noun} is ${statusWord} — its contractor stays as recorded.${input.reopenable ? " Reopen it to change who it counts for." : ""}` };
+  }
+  if (!item.partyId && !input.undecided && !input.lateNameable) {
+    return { ok: false, error: `This ${input.noun} is ${statusWord} — its contractor can't be named now: a rejection can't be reopened, so a wrong name could never be corrected. Name the contractor once the resubmission is accepted.` };
   }
   if (next) {
     const { data, error } = await supabase.from("project_parties").select("id")
@@ -343,13 +357,17 @@ async function assignContractor(input: {
 }
 
 /** Assign (or, while undecided, change) the contractor who delivers a
- *  turnover item — see assignContractor. Undecided: not received / received. */
+ *  turnover item — see assignContractor. Undecided: not received / received;
+ *  an unassigned accepted or waived item may be named once (Reopen is its
+ *  correction path), a rejected one is not. */
 export async function assignTurnoverContractor(input: {
   item: TurnoverItem; partyId: string | null; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   return assignContractor({
     table: "turnover_items", noun: "turnover item", item: input.item, name: input.item.name,
     undecided: input.item.status === "open" || input.item.status === "received",
+    lateNameable: input.item.status === "accepted" || input.item.status === "waived",
+    reopenable: input.item.status === "accepted" || input.item.status === "waived",
     partyId: input.partyId, action: "TURNOVER_CONTRACTOR_SET", actor: input.actor,
   });
 }
@@ -533,13 +551,18 @@ export async function addPunchItem(input: {
 }
 
 /** Assign (or, while it is open, change) the contractor responsible for a
- *  punch item — see assignContractor. */
+ *  punch item — see assignContractor. An unassigned closed one may be named
+ *  once; it is never changed afterwards. */
 export async function assignPunchContractor(input: {
   item: PunchItem; partyId: string | null; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   return assignContractor({
     table: "punch_items", noun: "punch item", item: input.item, name: input.item.title,
     undecided: input.item.status === "open",
+    // A closed punch item has no reopen in the app; naming it is permanent,
+    // which the Quality tab's confirm says before it writes.
+    lateNameable: true,
+    reopenable: false,
     partyId: input.partyId, action: "PUNCH_CONTRACTOR_SET", actor: input.actor,
   });
 }

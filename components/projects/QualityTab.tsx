@@ -66,7 +66,8 @@ import {
 } from "@/lib/turnover";
 import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, reasonProblem, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
-import { appPrompt } from "@/components/providers/DialogProvider";
+import { appPrompt, appConfirm } from "@/components/providers/DialogProvider";
+import { getCompany } from "@/lib/companies";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import Link from "next/link";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
@@ -168,12 +169,15 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [sweepTick, setSweepTick] = useState(0);
   /** COST-12 / MON-7: the project's contractors, for the turnover and punch
    *  add rows — read on its own, so a failure only hides the picker (the
-   *  item is still added, unassigned) and never the lists. */
+   *  item is still added, unassigned) and never the lists. EVERY contractor
+   *  is kept (J10 third fix): an item assigned to one later set inactive
+   *  still names it; only the pickers that choose a new one leave inactive
+   *  contractors out (`pickableContractors`). */
   const [contractors, setContractors] = useState<CostParty[]>([]);
   useEffect(() => {
     let cancelled = false;
     listParties(orgId, projectId)
-      .then((ps) => { if (!cancelled) setContractors(ps.filter((p) => p.status !== "inactive")); })
+      .then((ps) => { if (!cancelled) setContractors(ps); })
       .catch((e: unknown) => { console.warn(`[QualityTab] contractors not read: ${(e as Error).message}`); });
     return () => { cancelled = true; };
   }, [orgId, projectId]);
@@ -380,7 +384,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
               ))}
             </select>
             <button onClick={() => void read()} disabled={!doc || reading || aiBlocked(ai)}
-              className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+              className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}
               title="AI reads the printed pages and splits them into checkable items — you review before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it
             </button>
@@ -406,7 +410,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
               className="h-8 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-bold" />
             <span className="text-[11px] text-[var(--color-text-muted)]">{proposed.length} items read — remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
-              className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+              className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save checklist
             </button>
             <button onClick={() => setProposed(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
@@ -1003,7 +1007,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const [addParty, setAddParty] = useState("");
   /** MON-7: the contractor the seeded package is assigned to (optional). */
   const [seedParty, setSeedParty] = useState("");
-  const contractorName = useMemo(() => new Map(contractors.map((c) => [c.id, c.name])), [contractors]);
+  const contractorName = useMemo(() => contractorNames(contractors), [contractors]);
+  const pickable = useMemo(() => pickableContractors(contractors), [contractors]);
   const addItem = async () => {
     if (!addName.trim()) return;
     const r = await addTurnoverItem({ orgId, projectId, name: addName, partyId: addParty || null, actor });
@@ -1108,6 +1113,17 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
     finish(await assignTurnoverContractor({ item, partyId: partyId || null, actor }));
   };
 
+  /** MON-7 (J10 third fix): an accepted or waived item with no contractor is
+   *  named only through "Assign" and a confirm that names the item, the
+   *  contractor and its Known Company and says it is permanent — a pick on
+   *  the select alone writes nothing. */
+  const lateAssign = async (item: TurnoverItem, contractor: CostParty) => {
+    if (item.status !== "accepted" && item.status !== "waived") return;
+    if (!(await confirmLateContractor({ itemName: item.name, decided: item.status, contractor }))) return;
+    setBusy(item.id); setNotice(null);
+    finish(await assignTurnoverContractor({ item, partyId: contractor.id, actor }));
+  };
+
   const reopen = async (item: TurnoverItem) => {
     const reason = await promptReason(`Reopen "${item.name}"`,
       `This item is ${item.status}. Reopening sends it back for review; the ${item.status === "accepted" ? "acceptance" : "waiver"} stays in the history with your reason.`,
@@ -1129,11 +1145,11 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
         )}
         {canManage && !loadError && (
           <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {contractors.length > 0 && (
-              <ContractorPicker contractors={contractors} value={seedParty} onChange={setSeedParty} label="Contractor who delivers the seeded items" />
+            {pickable.length > 0 && (
+              <ContractorPicker contractors={pickable} value={seedParty} onChange={setSeedParty} label="Contractor who delivers the seeded items" />
             )}
             <button onClick={() => void seed()} disabled={busy != null}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+              className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}
               title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
               {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Seed required contents
             </button>
@@ -1175,10 +1191,18 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
               <li key={it.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-[var(--color-text)]">{it.name}</span>
-                  {canManage && busy !== it.id && contractors.length > 0 && (!it.partyId || it.status === "open" || it.status === "received") ? (
+                  {canManage && busy !== it.id && pickable.length > 0 && (it.status === "open" || it.status === "received") ? (
+                    // Undecided: the pick is the write — it can still be changed.
                     <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
                       label={`Contractor who delivers ${it.name}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
-                  ) : it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
+                  ) : canManage && busy !== it.id && pickable.length > 0 && !it.partyId && (it.status === "accepted" || it.status === "waived") ? (
+                    // Decided: nothing is written until Assign is confirmed.
+                    <LateContractorAssign contractors={pickable} label={`Contractor who delivered ${it.name}`} onAssign={(c) => void lateAssign(it, c)} />
+                  ) : it.partyId ? (
+                    <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId) ?? "a contractor not on this project's list"}</span>
+                  ) : canManage && it.status === "rejected" && pickable.length > 0 ? (
+                    <span className="text-[10px] text-[var(--color-text-muted)]">· no contractor — name one once the resubmission is accepted</span>
+                  ) : null}
                   {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
                   <TurnoverChip status={it.status} />
                   {canManage && busy !== it.id && (
@@ -1306,11 +1330,11 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
             onKeyDown={(e) => { if (e.key === "Enter") void addItem(); }}
             placeholder="Add a required item — e.g. Torque records"
             className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          {contractors.length > 0 && (
-            <ContractorPicker contractors={contractors} value={addParty} onChange={setAddParty} label="Contractor who delivers it" />
+          {pickable.length > 0 && (
+            <ContractorPicker contractors={pickable} value={addParty} onChange={setAddParty} label="Contractor who delivers it" />
           )}
           <button onClick={() => void addItem()}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]">
+            className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]`}>
             <Plus className="w-3 h-3" /> Add
           </button>
         </div>
@@ -1319,24 +1343,96 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   );
 }
 
+/** The contractors a picker offers for a NEW choice — inactive ones are
+ *  left out (J10 third fix: the list itself keeps them, see QualityTab). */
+function pickableContractors(contractors: CostParty[]): CostParty[] {
+  return contractors.filter((c) => c.status !== "inactive");
+}
+
+/** Every contractor's name, an inactive one marked — an item assigned to a
+ *  contractor later set inactive still says who it counts for. */
+function contractorNames(contractors: CostParty[]): Map<string, string> {
+  return new Map(contractors.map((c) => [c.id, c.status === "inactive" ? `${c.name} (inactive)` : c.name]));
+}
+
 /** The contractor an item is assigned to (optional). Its acceptance or
  *  close-out counts for the Known Company that contractor is linked to; an
- *  unassigned or unlinked one counts for nobody (never as a zero). */
+ *  unassigned or unlinked one counts for nobody (never as a zero). The
+ *  options are the active contractors plus the one already chosen — marked
+ *  "(inactive)" when it is, and named as missing when it is not on the list
+ *  at all — so the select never shows another contractor than the item's. */
 function ContractorPicker({ contractors, value, onChange, label, placeholder = "Contractor (optional)…", compact = false }: {
   contractors: CostParty[]; value: string; onChange: (v: string) => void; label: string;
   placeholder?: string;
   /** A row's own control (MON-7): smaller, with the decision-target floor. */
   compact?: boolean;
 }) {
+  const options = contractors.filter((c) => c.status !== "inactive" || c.id === value);
+  const missing = value !== "" && !options.some((c) => c.id === value);
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={`${label} — their company's scorecard counts it`}
       className={compact
         ? `${DECISION_TARGET} max-w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[10px] text-[var(--color-text-muted)]`
         : "h-8 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"}>
       <option value="">{placeholder}</option>
-      {contractors.map((c) => <option key={c.id} value={c.id}>{c.name}{c.companyId ? "" : " (unlinked)"}</option>)}
+      {missing && <option value={value}>A contractor not on this project&apos;s list</option>}
+      {options.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "inactive" ? " (inactive)" : ""}{c.companyId ? "" : " (unlinked)"}</option>)}
     </select>
   );
+}
+
+/** MON-7 (J10 third fix): naming the contractor of an item that is ALREADY
+ *  decided attributes the decision to that contractor's company at once,
+ *  and the name never moves afterwards — so choosing on the select writes
+ *  nothing (a keyboard arrow on a closed select fires `change`); the
+ *  "Assign" button asks first (`confirmLateContractor`). */
+function LateContractorAssign({ contractors, label, onAssign }: {
+  contractors: CostParty[]; label: string; onAssign: (c: CostParty) => void;
+}) {
+  const [pick, setPick] = useState("");
+  const chosen = contractors.find((c) => c.id === pick) ?? null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <ContractorPicker contractors={contractors} value={pick} onChange={setPick} label={label} placeholder="Name the contractor…" compact />
+      <button type="button" disabled={!chosen} onClick={() => { if (chosen) onAssign(chosen); }}
+        aria-label={chosen ? `Assign ${chosen.name} — asks before anything is written` : "Assign — choose a contractor first"}
+        className={`${DECISION_TARGET} px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text)] border border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed`}>
+        Assign
+      </button>
+    </span>
+  );
+}
+
+/** The confirm before a decided item's contractor is named: the item, the
+ *  contractor, the Known Company it counts for (read now; said plainly when
+ *  it cannot be read or the contractor is unlinked), what that does to the
+ *  company's Quality score, and that the name is permanent — a turnover
+ *  item's only way back is reopening the signed decision. */
+async function confirmLateContractor(input: {
+  itemName: string;
+  decided: "accepted" | "waived" | "done" | "void";
+  contractor: CostParty;
+}): Promise<boolean> {
+  const { itemName, decided, contractor: c } = input;
+  let company: string | null = null;
+  if (c.companyId) {
+    try { company = (await getCompany(c.companyId))?.name ?? null; } catch { company = null; }
+  }
+  const statusWord = decided === "done" ? "closed" : decided === "void" ? "voided" : decided;
+  const effect = decided === "accepted" ? "its acceptance counts toward that company's Quality score"
+    : decided === "done" ? "its close-out counts toward that company's Quality score"
+    : `a ${statusWord} item is not scored, but it is theirs on the record`;
+  const counts = c.companyId
+    ? `It will count for ${company ? `the Known Company “${company}”` : `the Known Company ${c.name} is linked to`} — ${effect}.`
+    : `${c.name} is not linked to a Known Company, so it counts for nobody until the contractor is linked on the Costs tab — then for that company.`;
+  const permanent = decided === "accepted" || decided === "waived"
+    ? `The contractor can't be changed afterwards without reopening the signed ${decided === "accepted" ? "acceptance" : "waiver"} and signing it again.`
+    : "The contractor can't be changed afterwards.";
+  return appConfirm({
+    title: `Name ${c.name} for “${itemName}”?`,
+    message: `“${itemName}” is already ${statusWord}. ${counts} ${permanent}`,
+    confirmLabel: `Assign ${c.name}`,
+  });
 }
 
 function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
@@ -1363,7 +1459,8 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
 }) {
   const [title, setTitle] = useState("");
   const [party, setParty] = useState("");
-  const contractorName = useMemo(() => new Map(contractors.map((c) => [c.id, c.name])), [contractors]);
+  const contractorName = useMemo(() => contractorNames(contractors), [contractors]);
+  const pickable = useMemo(() => pickableContractors(contractors), [contractors]);
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
   const [due, setDue] = useState("");
@@ -1391,6 +1488,14 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
     const r = await assignPunchContractor({ item: it, partyId: partyId || null, actor });
     setBusy(null);
     if (!r.ok) setNotice(failure(r.error ?? "Couldn't change the contractor.")); else onChanged();
+  };
+
+  /** MON-7 (J10 third fix): a closed or voided item with no contractor is
+   *  named only through "Assign" and the confirm — never on the pick. */
+  const lateAssign = async (it: PunchItem, contractor: CostParty) => {
+    if (it.status === "open") return;
+    if (!(await confirmLateContractor({ itemName: it.title, decided: it.status, contractor }))) return;
+    await assign(it, contractor.id);
   };
 
   const close = async (it: PunchItem, status: "done" | "void") => {
@@ -1432,11 +1537,11 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
             className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due date"
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
-          {contractors.length > 0 && (
-            <ContractorPicker contractors={contractors} value={party} onChange={setParty} label="Contractor responsible" />
+          {pickable.length > 0 && (
+            <ContractorPicker contractors={pickable} value={party} onChange={setParty} label="Contractor responsible" />
           )}
           <button onClick={() => void add()} disabled={busy === "add"}
-            className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
         </div>
@@ -1463,10 +1568,16 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   <StatusMark spec={PUNCH_STATUS_MARKS[it.status === "done" ? "done" : it.status === "void" ? "void" : overdue ? "overdue" : "open"]} />
                   <span className={it.status !== "open" ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
-                  {canManage && busy !== it.id && contractors.length > 0 && (!it.partyId || it.status === "open") ? (
+                  {canManage && busy !== it.id && pickable.length > 0 && it.status === "open" ? (
+                    // Open: the pick is the write — it can still be changed.
                     <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
                       label={`Contractor responsible for ${it.title}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
-                  ) : it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
+                  ) : canManage && busy !== it.id && pickable.length > 0 && !it.partyId ? (
+                    // Closed or voided: nothing is written until Assign is confirmed.
+                    <LateContractorAssign contractors={pickable} label={`Contractor who was responsible for ${it.title}`} onAssign={(c) => void lateAssign(it, c)} />
+                  ) : it.partyId ? (
+                    <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId) ?? "a contractor not on this project's list"}</span>
+                  ) : null}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                       due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}
