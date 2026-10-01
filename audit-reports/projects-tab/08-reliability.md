@@ -253,7 +253,7 @@ About fifteen lines.
 ## REL-6 · Nothing tests any data layer, any new route's authorization, or any policy
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J13 RECORDS RECONCILE (new; the remainder appears landed — independently verified before any flip) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** regression risk
@@ -306,6 +306,25 @@ zero tests above lib/, so a broken auth check on a route shipped green."*
 - `gatherProjectSnapshot`'s error case is distinguishable from empty, and tested — ✓ by pointer: package J7 (`PERF-3`, report 09) — `lib/__tests__/projectSnapshot.test.ts` "names the table it could not read instead of presenting zeros as the truth" and the read-failure cases after it.
 
 **Scope / residual.** Stays OPEN until P3's money-path failure tests land. Remediation items 4 (`gatherCompanyProfile` fixture) and 6-7 (checklist / turnover progress, `applyAssessment`) belong to the packages that own those libraries (P9, P2).
+
+**Resolution (2026-10-01, projects Round G).** Record reconcile by package J13 RECORDS RECONCILE: no application code, test or migration changed here. The limb the 2026-09-30 Partial left open was the money paths' failure-mode tests, which were P3's. They landed with joint package J3 MONEY-LEDGER (commit `ff3c1a8` and its fix passes; merge `9b4c5f4`, merged after J9's `2a2ae73` wrote the Partial). The record was never flipped. Verified against HEAD `4dd0df7`, each test file run at HEAD.
+
+**Done-when.**
+- ✓ All four routes have authorization tests: `lib/__tests__/apiRouteAuth.test.ts` covers `/api/projects/checklist` (:481), `/api/companies/quality-manual` (:826), `/api/projects/cost-docs` (:913) and `/api/intake/upload` (:966). Exit 0 (61 passed).
+- ✓ The money paths have failure-mode tests, in `lib/__tests__/costDocs.test.ts` (exit 0, 63 passed):
+  - remediation item 2 (an award whose post fails and whose revert fails): "MON-1: post failure + revert failure is reported as STUCK with the document id, never silence" (:325);
+  - remediation item 3 (a void against an awarded document): "voiding a document whose stored status is awarded is refused even when the snapshot says parsed" (:177) and "a void that loses the race (zero rows matched) is reported…" (:186);
+  - "COST-11: a failed rival-decline is a PARTIAL outcome…" (:346);
+  - "COST-11: post failure + revert failure names the CO as stuck; a saved-link failure is a warning on success" (:532);
+  - "SAF-3: a zero-row void (RLS-filtered) returns the permission-or-changed error and writes NO audit row" (:1028);
+  - "MON-12: a failed company lookup REFUSES the award instead of passing it" (:957).
+- ✓ `gatherProjectSnapshot`'s error case is distinguishable from empty, and tested: `lib/__tests__/projectSnapshot.test.ts` "names the table it could not read instead of presenting zeros as the truth" (:170). Exit 0 (36 passed). Package J7, `PERF-3`.
+
+**Scope / residual.** Remediation items 4 and 6-7 were never done-whens, and they are covered now anyway:
+- item 4, a populated `gatherCompanyProfile` fixture: `companiesRegistry.test.ts`, 18 passed;
+- items 6-7: `checklists.test.ts` "a count-only call (no confirmed ids) writes NOTHING and audits nothing" (:139), 39 passed; `turnover.test.ts` "reports accepted and waived separately; pct still counts both as met" (:193), 23 passed.
+
+The money and quality rails carry migration shape tests (`moneyRailsMigration.test.ts`, `qualityRailsMigration.test.ts`). No test runs a live Postgres, which is this area's stated limit.
 
 ---
 
@@ -613,7 +632,7 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-3 | HIGH | OPEN |
 | REL-4 | HIGH | OPEN |
 | REL-5 | HIGH | RESOLVED |
-| REL-6 | HIGH | OPEN |
+| REL-6 | HIGH | RESOLVED |
 | REL-7 | HIGH | RESOLVED |
 | REL-8 | MEDIUM | RESOLVED |
 | REL-9 | MEDIUM | OPEN |
