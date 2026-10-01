@@ -271,7 +271,7 @@ regardless of whether a schedule span exists.
 ## CHART-6 · Two consumers paint the score band's colour as text, and the 70–84 band is the white-label accent
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility
@@ -288,6 +288,14 @@ regardless of whether a schedule span exists.
 **Done when.**
 - Neither consumer paints a band colour on text: the figure wears a text token, and the band is carried by a mark beside it (a dot, the arc) or by the band word.
 - A test pins that no consumer passes `scoreBandColor` to a text `color`.
+
+**Resolution (2026-10-01, projects Round G).** `components/projects/ProjectCoach.tsx`: the "score · band" header label wears the text token, and the band's colour is an `aria-hidden` dot beside the figure. `app/(protected)/companies/[id]/page.tsx`: the "NN% coverage" label likewise — text token, band dot beside it. `scoreBandColor` is now used only as a mark (the dial arc, a bar fill, a dot) anywhere in the app. Tests: `a11yProjects.test.ts` "CHART-6 —" (a census over every app and component file that no `color: scoreBandColor(` is passed to text, with the reason pinned — orange-600 on white measures 3.56 : 1; the coach header and the coverage label use the text token with the aria-hidden band dot).
+
+**Done-when.**
+- ✓ Neither consumer paints a band colour on text: the figure wears a text token, and the band is carried by a dot beside it (and by the band word).
+- ✓ A test pins that no consumer passes `scoreBandColor` to a text `color`.
+
+**Scope / residual.** None.
 
 ---
 

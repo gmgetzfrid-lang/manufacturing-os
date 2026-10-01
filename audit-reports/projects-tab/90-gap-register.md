@@ -403,6 +403,15 @@ contrast pass on both themes.
    accessible name of a status cell includes its state.
 3. Both themes pass contrast on the milestone and checklist surfaces.
 
+**Resolution (2026-10-01, projects Round G).** Built by package J10 from its three sources. **(1)** The public portal: every file picker is `sr-only` in a label that shows focus, the submission-type toggle is a pressed-state button group, and the result is announced (`A11Y-1`, `A11Y-6`); the quotes panel's picker likewise. **(2)** Status by shape and word as well as colour on every compliance surface: `components/projects/StatusMark.tsx` gives each checklist, punch and rubric state its own glyph, a visually-hidden "Status: {word}." read with the row, and a visible legend (`A11Y-2`) — not a tooltip on a dot (the "Do not"). **(3)** Contrast in both themes on the milestone surface (`A11Y-3`, 2026-09-30) and the checklist surface (the marks' tones and chips at the 800 / 300 steps, computed).
+
+**Acceptance.**
+- ✓ 1. Every control on the public portal is keyboard-reachable and focus-visible (`a11yProjects.test.ts` "A11Y-1 —", rendered).
+- ✓ 2. No compliance surface conveys status by colour alone; a test asserts the accessible name of a status cell includes its state (`a11yProjects.test.ts` "A11Y-2 —").
+- ✓ 3. Both themes pass contrast on the milestone and checklist surfaces (`scheduleEngineUi.test.ts` "A11Y-3 ·"; `a11yProjects.test.ts` "A11Y-13 —").
+
+**Scope / residual.** Out of scope by the register's own line: a full WCAG programme. The schedule engine's remaining light slabs outside the milestone rows are `A11Y-13`'s (open).
+
 ---
 
 ## What deliberately did NOT become a gap

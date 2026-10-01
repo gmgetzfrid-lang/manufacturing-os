@@ -389,7 +389,7 @@ trying to exclude, and delete the impossible `'app'` branch.
 ## MON-7 · The Known Companies scorecard is structurally empty for the normal workflow
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** feature-dead
 - **Locations:**
@@ -441,6 +441,22 @@ the contractor's permanent scorecard."
 - A test with a fully-populated fixture asserts each dimension is non-null.
 
 *Landed 2026-09-29 (projects Round G, J4 limb): reader half: `gatherCompanyProfiles` derives `awardsTotal` from posted commitment entries on the company's parties (the typed `contract_value` is a labelled fallback), reads quotes through `cost_documents.company_id` OR `party_id`, and reports "unlinked" distinctly from "no work"; the quote upload row passes `partyId`; 20261096 backfills `project_parties.company_id` where the normalised name matches exactly one registry row (second fix pass: every decision is recorded as a `PROJECT_PARTY_COMPANY_BACKFILLED` audit row that drives the UPDATE, listed by the review query at the file's foot and undone by its revert statement). The writer limbs (`saveParty` companyId, turnover/punch `partyId`, the intake quote branch) stay with P11 / PC-1 / PC-5 / PC-7. Fix pass: the derived award base excludes the commitments approved change orders post (`posted_entry_id`, or the CO number on the entry), and every batched read pages past PostgREST's 1000-row cap. Second fix pass: the base is resolved per party — posted commitments where a party has them, that party's `contract_value` otherwise ("mixed" when both contribute).*
+
+**Resolution (2026-10-01, projects Round G — the writer limbs).** The scorecard's three join keys now have writers in the normal workflow (DEC-44 (J10) item 3):
+
+- **`project_parties.company_id` from the Costs tab.** `CostParty` / `mapParty` carry `companyId` (J3). The Contractors panel (`CostsTab.tsx` `PartiesPanel`) reads the Known Companies list and offers a **Known company** picker on add — suggested from the typed name (`matchCompanyByName`), changeable to another or to none — and, on an **unlinked** contractor only, a **Link to a known company** action; a linked contractor shows its company (a link to its profile) and offers no relink. `lib/costs.ts` `linkPartyToCompany` writes only where `company_id IS NULL` (a concurrent link is never overwritten; an existing link is never re-pointed — `saveParty`'s edit path refuses a company change), because an award reads the company through the quote's contractor: a contractor whose name could be a do-not-use company, linked to any other company, needs a reason (`needsOverride` → the panel asks and retries), recorded on `COST_PARTY_CREATED` / `COST_PARTY_LINKED`. An unreadable registry never blocks adding (the contractor goes in unlinked, and the panel says so).
+- **`turnover_items.party_id` and `punch_items.party_id`.** The Quality tab reads the project's contractors on its own (a failure only hides the picker) and the turnover and punch add rows offer "Contractor (optional)…", passing `partyId` to `addTurnoverItem` / `addPunchItem`; each row shows its contractor. An accepted turnover item and a closed punch item count for the company bound to the item's contractor; an unassigned item or an unlinked contractor's counts for nobody — the company's Quality stays Unrated (null), never 0.
+- **`cost_documents.party_id`.** The quote upload passes it (J4); the intake quote branch resolves it from the link's company (J1).
+
+Tests: `mon7Scorecard.test.ts` (7, through the real `gatherCompanyProfile` on an in-memory PostgREST double): a contractor added on the Costs tab appears on its company's profile; link once, never re-point, the update filtered on `company_id IS NULL`; a do-not-use name linked elsewhere needs a recorded reason; an accepted turnover item moves Quality off Unrated while the unassigned and unlinked ones are not counted; a punch item's close-out counts; the Quality add rows pass the contractor; **a fully-populated fixture scores every dimension** (safety, quality, cost, schedule, responsiveness) **and the awarded quote is in the bid history**. `costsContractorLink.test.ts` (4, rendered): the linked / unlinked rows, the link with its suggestion, the asked-for reason, the add form's kind list and suggested company, an unreadable registry.
+
+**Done-when.**
+- ✓ A contractor added from the Costs tab appears on their company profile.
+- ✓ An accepted turnover item moves the company's Quality dimension off Unrated.
+- ✓ An awarded quote appears in the company's bid history (through the quote's contractor or its own company link).
+- ✓ A test with a fully-populated fixture asserts each dimension is non-null.
+
+**Scope / residual.** Remediation 4 (backfilling old rows by name) was 20261096's for `project_parties`; existing turnover and punch rows stay unassigned until someone sets a contractor — there is no edit control for an existing item's contractor yet (adding one is a new item's choice). No migration.
 
 ---
 

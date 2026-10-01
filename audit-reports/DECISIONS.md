@@ -103,6 +103,7 @@ about the system.
 | [DEC-67](#dec-67) | One unit identity joined as data (a codebook unit maps to at most one operational unit; `documents.unit_code` is written by the decode, never guessed); a scope is a resolved id set that scopes the graph's assembly — the place before the filter; no node type beyond systems | low | `GM-2`, `GM-10`, `GM-12`, `GPV-2`, `GPV-3`, `WIRE-3`, `WIRE-4`, `AREA-10`, `GAP-305`, `GAP-306` |
 | [DEC-68](#dec-68) | Drawing intelligence: a dense page is a drawing when its text says so (vision never automatic); a verdict is keyed by the set it was computed over (`drawing_audit_logs` unique per library); a stored verdict at a known revision is never lowered, and a provisional one waits on the documents still being read; a model's point is a claim, never a fact (`20261124`). | low | `DWG-4`, `DWG-6`, `DWG-7`, `DWG-13`, `BR-12` |
 | [DEC-69](#dec-69) | The contractor door's credential at rest, its upload path, and who reads a project's audit rows: an intake link is stored only as the SHA-256 of its token (shown once, re-issued when lost); a large file goes straight to storage through a staged object the door reserves, claims once and always removes; an audit row about a project is the project's (`20261141`, `20261142`). | low | `SEC-19`, `INTK-15`, `SEC-20`, `SEC-16` |
+| [DEC-44 (J10)](#dec-44-j10) | The Projects surface: one word per concept (`lib/projectVocabulary` — contractor, task, and one "no longer counts" word per record); a database refusal reaches a user as a plain sentence, the raw detail logged (`lib/userFacingError`); a contractor links to its Known Company once and never re-points, a do-not-use name linked elsewhere needs a recorded reason; Accept is confirmed by the document pick and the signature ceremony | low | `UX-15`, `REL-3`, `UX-10`, `MON-7`, `COST-12`, `A11Y-8` |
 
 ---
 
@@ -4419,3 +4420,79 @@ and `20261141` pasted BEFORE the J11 deploy (or followed by a rollback)
 would break every contractor link, which its first statement guards
 against.
 
+## DEC-44 (J10) · The Projects surface's words, its refusals, and a contractor's company link
+
+*Minted by projects Round G, package J10 SURFACE-SWEEP (2026-10-01), as a provisional "DEC-44 (J10)" — distinct from the download-record DEC-44; the integrator renumbers it at merge.*
+
+**Decision. Four defaults the J10 brief named, each the reading that fails safe:**
+
+1. **One word per concept (`UX-15`).** `lib/projectVocabulary.ts` holds the
+   words and their meanings, and the pickers, legends and the Costs glossary
+   read them. The company on a project is a **contractor** whatever its kind
+   (contractor / vendor / rental / internal crew — one kind list, every
+   picker); a company that priced an RFQ group is a **bidder**; the org-wide
+   list is the **Known Companies** registry. "Party" is a schema word and
+   never reaches the screen. The schedule row is a **task**; a task under
+   another is a **sub-task**, a task that rolls sub-tasks up is a **phase**,
+   and a task with no duration is a **milestone** (a diamond — the Execution
+   legend says so). "No longer counts" keeps one word per record, each with
+   its own meaning and reason rule: **void** (money — a cost entry or a quote
+   — and a punch item that was not a real snag), **not selected** (a bid in a
+   group awarded to another bidder), **not applicable / N/A** (a checklist item
+   this job does not need), **waived** (a turnover deliverable the job goes
+   without, signed). A budget slice is a **budget line** (a cost account in
+   accounting terms); money posts **as actual**.
+2. **A database refusal reaches a user as a sentence (`REL-3`, `UX-10`).**
+   `lib/userFacingError.ts` is the one translator: raw driver text (Postgres /
+   PostgREST templates, schema-cache and missing-relation errors, timeouts,
+   lock and serialisation failures, a dropped connection) maps to a fixed
+   sentence; a message written for users — a database rail's own `RAISE`
+   under `42501` / `23514` / `23505` / `23503` / `P0001`, or a library's own
+   words — passes through untouched (the message template decides, never the
+   code alone); any other driver error is an "unexpected" line naming no
+   table, column or policy. Whenever the text is replaced the raw detail goes
+   to `console.error`. A failed read is worded as a read. Code that must read
+   the driver text to decide (schema step-down, missing-RPC probes) reads the
+   raw error before translating.
+3. **A contractor's Known Company link is set once (`MON-7`, `COST-12`).** An
+   award reads its company THROUGH the quote's contractor, so the link is part
+   of the do-not-use rail: it is set when the contractor is added, or later
+   only while it has none (`linkPartyToCompany` updates where
+   `company_id IS NULL`), and never re-pointed. A contractor whose name could
+   be a do-not-use company, linked to any other company, needs a reason,
+   recorded on the audit row. An accepted turnover item and a closed punch
+   item count for the company bound to the item's contractor; an unassigned
+   item or one whose contractor is unlinked counts for nobody — the
+   dimension stays Unrated (null), never 0.
+4. **Accept is confirmed (`A11Y-8`).** The brief's default was "Accept opens
+   the same reason dialog as Reject"; the code already routes Accept through
+   the reviewed-document pick and the e-signature ceremony (`DEC-66`), a
+   heavier confirmation than Reject's reason dialog, so no third dialog is
+   added. The wizard's stepper is out of the tab order — it stays clickable,
+   marks the current step (`aria-current="step"`), and Back / Next are the
+   keyboard path.
+
+**Rationale.** Each removes a way the surface misinforms: a word that means
+two things, a schema sentence where a plant user needs a plain one, a link
+that could move a do-not-use flag, a zero that reads as "bad" when the truth
+is "unknown".
+
+**Acceptance.** `ux15Vocabulary.test.ts` (no "party" in a user-facing string;
+the schedule components say task / sub-task; one kind list; the glossary
+covers the terms on the tab and nothing else), `userFacingError.test.ts`
+(the fixed table, rail passthrough, the logged detail, and a source census of
+the Projects / Companies data layer), `mon7Scorecard.test.ts` and
+`costsContractorLink.test.ts` (link once, never re-point, the recorded reason,
+accepted turnover reaches the company, every dimension scores on a full
+fixture), `a11yProjects.test.ts` "A11Y-8".
+
+**Reversal.** 1: a plant that calls its schedule rows "activities" changes
+the words in `lib/projectVocabulary.ts` and the strings that read them. 2:
+none planned. 3: a controller-only "re-point a link" action with its own
+audited reason would allow a correction; until then a wrong link is undone in
+the database by an administrator. 4: a stated requirement for a typed reason
+on Accept adds it to the ceremony.
+
+**Risk:** low — words, messages and a narrower write; no migration.
+
+*Landed 2026-10-01 (projects Round G): all four items, package J10 SURFACE-SWEEP — `lib/projectVocabulary.ts` and the UX-15 sweep; `lib/userFacingError.ts` across the Projects / Companies data layer (REL-3, UX-10); `linkPartyToCompany` and the contractor pickers (MON-7, COST-12); A11Y-8 pinned on the existing ceremony. No migration.*

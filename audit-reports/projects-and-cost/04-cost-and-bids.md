@@ -542,7 +542,7 @@ lib/costDocs.ts:256 — `.then(() => undefined, () => undefined);` on the rival-
 ## COST-12 · The Known Companies scorecard is structurally unable to score: three of the four party_id columns it queries are never written, and company_id and contract_value are written by mutually exclusive code paths
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10 SURFACE-SWEEP (the Costs tab party form — MON-7's writers) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/companies.ts:240`, `lib/companies.ts:246-253`, `lib/companies.ts:284`, `lib/companies.ts:299-301`, `lib/costs.ts:127-154`, `components/projects/ProjectWizard.tsx:177-186`, `components/projects/cost/QuotesPanel.tsx:461-466`, `lib/turnover.ts:152`, `lib/turnover.ts:174`, `lib/turnover.ts:253`
@@ -580,6 +580,17 @@ lib/companies.ts:284 — `const awardsTotal = parties.reduce((s, p) => s + (p.co
 **Scope / residual.** Pending migration: `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30). PC-5's nonconformance events are not read (the table is not in this tree; DEC-31).
 
 **Partial (2026-09-30, projects Round G — J1 INTAKE-DOOR, the intake limb of Done-when 3).** The intake quote branch (`app/api/intake/upload/route.ts`) now resolves `party_id` from the link's company before it files the quote: the project's `project_parties` (org- and project-scoped) matched by `lib/bidTab.ts` `matchCompanyByName` — the registry's own binding rule, an exact case-insensitive name first, else the ONE party the name normalises to; none or several binds nothing (the Costs tab links it by hand), and an unreadable party list files the quote unlinked rather than refusing it. The chosen party rides on the audit row and the team notice. Tests — `lib/__tests__/intakeUploadRoute.test.ts` "a quote is filed against the project party the link's company names (COST-12 intake limb)", "an ambiguous or unmatched company binds no party — and an unreadable party list never refuses the quote". The finding stays OPEN: Done-when 1 is PC-7's and the turnover/punch half of Done-when 3 is PC-5's.
+
+**Resolution (2026-10-01, projects Round G — J10 SURFACE-SWEEP, the Costs tab party form and the turnover / punch limb).** `components/projects/CostsTab.tsx` `PartiesPanel` links a contractor to a Known Company — a **Known company** picker on add (suggested from the name; another or none can be picked) and **Link to a known company** on an unlinked contractor — through `saveParty` (`companyId` on create) and the new `lib/costs.ts` `linkPartyToCompany`, which writes only while the contractor has no link (`.is("company_id", null)`) and never re-points one; a name that could be a do-not-use company, linked to another company, needs a recorded reason (`needsOverride`, the audit row's `overrideDoNotUse`) — the award reads the company through the contractor, so the link is part of the do-not-use rail (MON-12). `CostParty` / `mapParty` already carried `companyId` (J3). The Quality tab's turnover and punch add rows offer the project's contractors and pass `partyId` (`addTurnoverItem` / `addPunchItem`). Tests: `mon7Scorecard.test.ts`, `costsContractorLink.test.ts` (see projects-tab `MON-7`).
+
+**Done-when.**
+- [x] saveParty and the Costs tab's PartiesPanel let a party be linked to a Known Company, and CostParty/mapParty carry companyId — ✓.
+- [x] awardQuote writes the awarded total … (or gatherCompanyProfile derives awardsTotal from posted commitment entries) — ✓ (2026-09-29).
+- [x] uploadCostDoc's caller and the intake quote branch resolve and set party_id, and turnover/punch creation carries the responsible party — ✓ (upload 2026-09-29, intake 2026-09-30, turnover / punch here).
+- [x] gatherCompanyProfile reports honestly when a dimension is empty because the link is missing versus because no work happened — ✓ (2026-09-29).
+- [x] A composite built from a single commendation does not render as "Excellent" — ✓ (2026-09-29).
+
+**Scope / residual.** An existing turnover or punch item's contractor cannot be changed from the screen (a new item's choice only). No migration.
 
 ---
 

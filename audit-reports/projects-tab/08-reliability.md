@@ -125,7 +125,7 @@ the bytes, or clean up the orphan on insert failure.
 ## REL-3 · Raw Postgres error strings reach plant users at roughly twenty-two sites
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -153,6 +153,14 @@ sites through it, falling back to a generic message plus a logged detail.
 **Done when.**
 - No raw Postgres string reaches a user in the Projects or Companies area.
 - The underlying detail is still logged for diagnosis.
+
+**Resolution (2026-10-01, projects Round G).** New `lib/userFacingError.ts` — the one translator (DEC-44 (J10) item 2). A fixed table maps raw driver text to a plain sentence: a missing relation / column / function or a schema-cache miss (`42P01`, `42703`, `42883`, `PGRST202/204/205`) → "This needs the latest database migration applied"; an RLS refusal or a missing grant → "You don't have permission to do this"; a unique / foreign-key / not-null / check violation, bad input, a lock or serialisation failure, a statement timeout, an unreachable or timed-out gateway (`PGRST000-003`), a single-row miss (`PGRST116`), an expired session (`PGRST30x`), a dropped connection — each its own sentence, worded for a write ("— nothing was changed") or, through `userFacingReadError`, for a read. A message written for users passes through untouched: a database rail's own `RAISE` under `42501` / `23514` / `23505` / `23503` / `P0001` and the libraries' own sentences (the template decides, never the code alone — the 23505 precedent in `lib/companies.ts` and the migration hint in `QuotesPanel.tsx` are kept). Any other driver error becomes "Something went wrong on the server — try again…", naming no table, column or policy. Whenever the text is replaced, the raw `{code, message, details, hint}` goes to `console.error` with a context label. Routed through it: every cited site (`lib/checklists.ts`, `lib/turnover.ts`, `lib/costDocs.ts`, `lib/changeOrders.ts`, `lib/companies.ts`) and the rest of the Projects / Companies data layer — `lib/costs.ts`, `lib/milestones.ts` (the schedule engine), `lib/projects.ts` (lifecycle, members, checkout release on close), `lib/timeline.ts`, `lib/transitionIn.ts`, `lib/intakeLinks.ts`, `lib/projectExport.ts`, `lib/projectReport.ts` — and the component sites that read the database directly (`QuotesPanel`, `IntakePanel`, `CostsTab`, `ChangeOrdersPanel`, `ProjectWizard`'s refusals, `EditProjectModal`, `ProjectDocumentsCard`). `lib/checkedWrite.ts`'s `describeWriteError` keeps its own sentences and now maps the rest through the translator (a raw `23505` used to reach the screen). Code that must read the driver text to decide (schema step-down, missing-RPC / missing-table probes) reads the raw error before translating. Tests: `userFacingError.test.ts` (31: each template → its sentence with no internals in it and the raw detail logged; rails and library sentences pass through unlogged; `describeWriteError`; the libraries end to end; a source census of the thirteen libraries — no `error.message` reaches a caller except through the translator), and the tests that pinned raw driver text now pin the sentence (`checkedWrite`, `costDocs`, `qualitySignoff`, `turnover`, `checkoutRoundF`, `projectExport`, `projects`, `scheduleEngineWriters`, `scheduleImportWriters`).
+
+**Done-when.**
+- ✓ No raw Postgres string reaches a user in the Projects or Companies area (census over the data layer; the cited and direct component sites).
+- ✓ The underlying detail is still logged for diagnosis (`console.error`, every replacement).
+
+**Scope / residual.** Server routes' JSON error bodies (the AI and intake routes) are J12's server remainder; their messages reach the same announced banners. `lib/projectWizardWrites.ts` returns the raw text to the wizard, which translates it (`wizardWriteError`) before showing it.
 
 ---
 

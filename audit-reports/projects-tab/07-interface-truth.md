@@ -287,7 +287,7 @@ for a step that already happened.
 ## UX-7 · The two most common successful outcomes are rendered as red errors
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / trust
@@ -321,6 +321,14 @@ return.
 - ✗ A failed intake action renders in an error tone — `components/projects/IntakePanel.tsx` :292 is P1 / DC P4's file, not edited here; this record stays OPEN for that limb.
 
 **Scope / residual.** The IntakePanel limb.
+
+**Resolution (2026-10-01, projects Round G — the IntakePanel limb).** `components/projects/IntakePanel.tsx`: the notice carries a tone. `setMsg(text, tone = "error")` — every failure (a refused revoke, approve, reject, re-issue, a failed read, any throw) is an error unless the call site says otherwise, and the sites that report a landed action pass `"success"` (an approval whose sweep also landed, a revoke whose audit row landed) or `"info"`. The banner is `role="alert"` for an error and `role="status"` otherwise, inside an always-mounted polite live region, and wears rose / emerald / neutral tints with dark variants (`data-tone` for tests). Its awaiting-review count is `amber-800` / `amber-300` (A11Y-13). Tests: `a11yProjects.test.ts` "A11Y-6 / UX-7 —" (the default tone is error; the success sites; the banner's role by tone in a live region; the old neutral banner is gone).
+
+**Done-when.**
+- ✓ A successful sweep renders in a non-error tone (QualityTab, 2026-09-29).
+- ✓ A failed intake action renders in an error tone.
+
+**Scope / residual.** None.
 
 ---
 
@@ -417,7 +425,7 @@ failed COMMENT blank the entire project view."*
 ## UX-10 · A missing migration or a denied policy reads as a friendly empty state
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10 SURFACE-SWEEP — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / diagnosability
@@ -465,6 +473,14 @@ database migration (20261013) applied."*
 
 
 **Integration (2026-09-30, projects Round G — J2 merged onto J3 and J4).** With all three merged, "empty, broken and forbidden render differently" holds on the Quality tab (J2), on the Costs tab (J3: the list functions throw, and the tab shows its failure banner), and in the bid table's new writes (J4). Still OPEN for Done-when 2: no raw Postgres string may reach a user anywhere in the Projects area. That is `REL-3`'s sweep, and not every surface has been converted.
+
+**Resolution (2026-10-01, projects Round G — Done-when 2).** `REL-3`'s sweep is complete for the Projects area: `lib/userFacingError.ts` translates every database refusal before it reaches a user — the list readers and writers of the Costs, Quality, Schedule, project lifecycle, activity, transition-in, intake-link, export and report libraries, and the components that read the database directly — with a rail's or a library's own sentence passed through and the raw detail logged. A missing migration reads "This needs the latest database migration applied", a denied policy "You don't have permission to see this" (a read) or "to do this — nothing was changed" (a write), so the three states the tabs already render differently (empty / couldn't be loaded / not permitted) also read differently. Tests: `userFacingError.test.ts` (the table, the passthrough, the logging, a source census of the thirteen Projects / Companies libraries).
+
+**Done-when.**
+- ✓ Empty, broken and forbidden render differently (Quality: 2026-09-29; Costs and the bid table: J3 / J4, integrated 2026-09-30).
+- ✓ No raw Postgres string reaches a user in the Projects area (see `REL-3`).
+
+**Scope / residual.** Server routes' JSON error bodies are J12's (see `REL-3`).
 
 ---
 
@@ -567,7 +583,7 @@ step 0 onward. This is the single most fixable friction point in the area.
 ## UX-13 · Preconditions are announced after the effort, not before it
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux
 - **Locations:**
@@ -600,6 +616,14 @@ the vendor, and spending an AI call on the read**.
 **Done when.**
 - Every AI entry point states its precondition before the click.
 - "Needs a budget line" offers the fix in place.
+
+**Resolution (2026-10-01, projects Round G).** New `lib/aiReadiness.ts` reads the three facts the governed AI routes refuse on — the caller's own key, the acceptable-use agreement, the month's budget — through the routes that already serve them to the AI settings dialog (`GET /api/ai/connection`, `/agreement`, `/usage`), cached a minute per org and shared by every button on the page; `aiReadinessFrom` turns them into one precondition in `governedCall`'s order (key, agreement, cap), and a fact that cannot be read is "unknown", never a refusal. `components/projects/AiPrecondition.tsx` (`useAiReadiness`, `aiBlocked`, `AiPreconditionNote`) states it beside each AI entry point before the click — "Needs your AI key — … Set it up (1 min)" linking to the setup page, the agreement with a link to Knowledge, the budget with "See your usage" — and disables the button when the server is certain to refuse (no key, cap spent); the agreement is stated but not enforced here (only the server knows whether its table exists yet). Wired at every AI entry point in the area: the Quality tab's read-a-checklist and assess (`NewChecklistFlow`, `ChecklistCard`), the quotes panel's Read, and the company profile's quality-manual Evaluate. "Needs a budget line" is replaced in place by a **Create budget line** action (`CreateBudgetLineInline` in `QuotesPanel.tsx`: a name and an optional budget, saved as a subcontract line, then the award row picks it; with one line it is preselected). The Quality tab's empty checklist state links to Documents to upload, or "point at one already uploaded". Tests: `ux13Preconditions.test.ts` (9: the derivation in order; an unreadable fact is unknown; the cache; the note's link; each entry point disabled on a certain refusal and stated; the inline budget line).
+
+**Done-when.**
+- ✓ Every AI entry point states its precondition before the click (the three governed routes the Projects area calls: checklist, cost-docs, quality-manual).
+- ✓ "Needs a budget line" offers the fix in place.
+
+**Scope / residual.** The readiness is advisory: the server's gates stay the authority (a key revoked in the minute the cache holds is still refused by the route, with its own message).
 
 ---
 
@@ -647,7 +671,7 @@ distinction it does not make.
 ## UX-15 · Seven words for "this no longer counts", five for the company, six for the schedule row
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / rookie-readability
 - **Locations:** across the Projects surface; representative sites below
@@ -702,6 +726,24 @@ shown on that tab), **EAC** (never rendered — the forecast is a sentence),
 - One word per concept in user-facing strings.
 - The execution legend does not contradict the row label.
 - The glossary covers the terms actually on screen, and drops the ones that are not.
+
+**Resolution (2026-10-01, projects Round G).** A vocabulary list, one word per concept, held in `lib/projectVocabulary.ts` and swept through the surface (DEC-44 (J10) item 1):
+
+- **The company — contractor.** "Party" is gone from every user-facing string (the Costs entry and budget-line pickers, the add form and its refusal "Contractor name is required.", the quote upload's "Contractor (optional)…", the company pages' "unlinked" notes, the scorecard's notes, the delete confirm's count, the report's "Contractors on the job"); the Costs list is "Contractors", the wizard step "Contractors" (rows "Contractor N …", "Add contractor"); on the bid tab the company is the **bidder** ("bidder-stated" hours, "this bidder"); the registry stays **Known Companies**. One kind list — `COMPANY_KINDS` / `COMPANY_KIND_LABEL` (contractor, vendor, rental / equipment, internal crew) — feeds the wizard, the Costs panel (which now offers rental) and the registry's filters and forms.
+- **The schedule row — task.** The Schedule tab ("Tasks", "Add task", "No tasks yet", "Delete task", the weight hint, the first-run hint), the import count ("N tasks found"), the wizard's schedule step, the coach, the report and its lessons-learned draft, the evidence pack and the scorecard ("tasks on time"); a child is a **sub-task** (the calendar's "Sub-items" / "steps", the guide's "sub-steps" and the detail panel's "step" all now say sub-task) and a parent a **phase**. The Execution legend's milestone is "a task with no duration: a single date the schedule marks (shown as a diamond, never a bar)" — consistent with rows called tasks.
+- **"No longer counts" — one word per record, each said where it is used.** Void (money; and a punch item that was not a real snag), not selected (a bid that lost — "declined" is gone from the screen), not applicable / N/A (checklist), waived (turnover — a key line now sits above the turnover list: Accepted / Waived / Rejected and what each means; the waive prompt asks "Why can this job go without it?"). The Costs glossary's Void entry names the Quality tab's two words so the three are told apart.
+- **Money.** A budget slice is a **budget line** ("Budget lines", "New budget line", "No budget lines yet", "Budget line name"; the glossary keeps "cost accounts" as the accounting term); money posts **as actual** ("post as spend" is gone from the coach and the quotes panel).
+- **The four exports** are explained in a labelled disclosure beside them on the project page ("What each export contains": the CSV, the auditor's evidence pack, the management report, lessons learned).
+- **The glossary** (`COST_GLOSSARY_TERMS`) now defines exactly the terms the Costs tab shows: added Revised budget, % burned, Unspent, Exposure, Pinned, Spend curve, Bidder, Price / hr, Peak crew, Value score, Not stated, excludes: / check: (the silent gap), Not selected, Reason code, Contractor, Void, and the RFQ expansion; dropped SPI (not on the tab); renamed S-curve → Spend curve and $/labor-hour → Price / hr, as the screen labels them. EAC and Available keep their entries (pinned by COST-1 / MON-4).
+
+Tests: `ux15Vocabulary.test.ts` (11: no "party" in any user-facing string across fifteen Projects files and libraries — a string-literal and JSX-text census, mutation-checked; the refusal, list and wizard words; one kind list everywhere; no "milestone" / "sub-step" / "sub-item" as the row word in the schedule components; the Execution legend; the dismissal words and the turnover key; "as actual", never "as spend"; the export disclosure; the glossary covers the terms and each term's word appears in the Costs sources outside the glossary), and the tests that pinned the old words now pin the new ones.
+
+**Done-when.**
+- ✓ One word per concept in user-facing strings (the company, the schedule row, each dismissal, the budget slice, posting money).
+- ✓ The execution legend does not contradict the row label.
+- ✓ The glossary covers the terms actually on screen, and drops the ones that are not.
+
+**Scope / residual.** Table names, identifiers and audit actions keep their schema words (`project_parties`, `milestones`, `COST_PARTY_*`). The ExecutionView's own row labels for a summary row ("Phases") and the critical-path legend were already consistent and were not changed.
 
 ---
 
