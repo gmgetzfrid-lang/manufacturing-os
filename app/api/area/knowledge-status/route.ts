@@ -13,6 +13,7 @@
 //       newMatches: [{ id, name, libraryName, pathNames, docCount }],
 //     },
 //     suggestions: [ same shape as newMatches ], // wizard pre-checks these
+//     flowReads: { readable, read, otherDocs } | null, // AREA-8: flow drawings read
 //     canManage: boolean,
 //   }
 //
@@ -28,6 +29,9 @@ import { aiReadability } from "@/lib/aiBoundary";
 import {
   suggestFoldersForUnit, computeAreaDrift, type AreaFolder,
 } from "@/lib/areaKnowledge";
+import { flowReadCoverage } from "@/lib/flowsRead";
+import { loadCodebookAdmin } from "@/lib/codebookServer";
+import { parseDrawingNumber } from "@/lib/codebook";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -134,6 +138,7 @@ export async function GET(req: NextRequest) {
       counts: { ready: 0, pending: 0 },
       drift: { deadSources: [], movedOut: [], movedOutTotal: 0, newMatches: [] },
       suggestions: suggestFoldersForUnit(unit, allFolders),
+      flowReads: null,
       canManage: principal.isController,
     });
   }
@@ -201,16 +206,16 @@ export async function GET(req: NextRequest) {
 
   // Where each mirrored doc lives in doc control NOW.
   const dcIds = [...new Set(kdocs.map((d) => d.source_document_id).filter((x): x is string => !!x))];
-  const dcById = new Map<string, { collectionId: string | null; libraryId: string | null }>();
+  const dcById = new Map<string, { collectionId: string | null; libraryId: string | null; number: string | null }>();
   for (let i = 0; i < dcIds.length; i += 100) {
     const { data, error: dcErr } = await supabaseAdmin
-      .from("documents").select("id, collection_id, library_id")
+      .from("documents").select("id, collection_id, library_id, document_number")
       .in("id", dcIds.slice(i, i + 100));
     // A failed chunk would make its docs read as "deleted in doc control"
     // and silently vanish from moved-out detection — fail instead.
     if (dcErr) return bad(`Couldn't locate mirrored documents: ${dcErr.message}`, 500);
-    for (const d of (data ?? []) as Array<{ id: string; collection_id: string | null; library_id: string | null }>) {
-      dcById.set(d.id, { collectionId: d.collection_id, libraryId: d.library_id });
+    for (const d of (data ?? []) as Array<{ id: string; collection_id: string | null; library_id: string | null; document_number?: string | null }>) {
+      dcById.set(d.id, { collectionId: d.collection_id, libraryId: d.library_id, number: d.document_number ?? null });
     }
   }
   const mirroredDocs = kdocs
@@ -227,6 +232,40 @@ export async function GET(req: NextRequest) {
         inDc: !!at,
       };
     });
+  // AREA-8: how many of the shelf's FLOW DRAWINGS have been read for flows
+  // — a FLOWS_READ record (a read, flows found or not) or a flow read off
+  // it. A flow drawing is a ready document whose title or doc-control folder
+  // names it one (PFD, P&ID, block diagram — lib/flowsRead namesFlowDrawing),
+  // or one already read; the data sheets, manuals and standards on the same
+  // shelf are counted apart, not owed a paid read. Coverage, not presence:
+  // one hand-drawn flow no longer ticks the deep read for 400 unread
+  // drawings. Null when it cannot be counted.
+  const readyDocs = kdocs.filter((d) => d.status === "ready");
+  const readIds = await flowReadIds(orgId, new Set(readyDocs.map((d) => d.id)));
+  const folderPathOf = (sourceDocumentId: string | null): string[] => {
+    const at = sourceDocumentId ? dcById.get(sourceDocumentId) : undefined;
+    if (!at) return [];
+    const folder = at.collectionId ? landscape.folders.get(at.collectionId) : undefined;
+    const lib = at.libraryId ? landscape.libraries.get(at.libraryId)?.name : undefined;
+    return [...(lib ? [lib] : []), ...(folder ? (folder.path_names.length > 0 ? folder.path_names : [folder.name]) : [])];
+  };
+  // The drawing type a mirror's number decodes to (Site Codebook
+  // drawing_type, "02" → "P&ID"): a P&ID titled only by its number, in a
+  // folder that does not say so, still counts. A codebook that cannot be
+  // read decodes nothing and the title / folder test stands alone.
+  const book = readIds === null ? null : await loadCodebookAdmin(supabaseAdmin, orgId);
+  const drawingTypeOf = (sourceDocumentId: string | null): string | null => {
+    const number = sourceDocumentId ? dcById.get(sourceDocumentId)?.number : null;
+    return number && book ? parseDrawingNumber(number, book)?.drawingTypeLabel ?? null : null;
+  };
+  const flowReads = readIds === null ? null : flowReadCoverage(
+    readyDocs.map((d) => ({
+      id: d.id, name: d.name, folderPath: folderPathOf(d.source_document_id),
+      drawingType: drawingTypeOf(d.source_document_id),
+    })),
+    readIds,
+  );
+
   const coveredWithWhole = new Set(coveredFolderIds);
   coveredWithWhole.add("__whole");
 
@@ -258,8 +297,41 @@ export async function GET(req: NextRequest) {
       newMatches: drift.newMatches.slice(0, 6),
     },
     suggestions: [],
+    flowReads,
     canManage: principal.isController,
   });
+}
+
+/** AREA-8: which of these knowledge documents have been read for flows;
+ *  null when that cannot be told. */
+async function flowReadIds(orgId: string, ready: ReadonlySet<string>): Promise<Set<string> | null> {
+  const read = new Set<string>();
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("audit_logs").select("id, resource_id")
+      .eq("org_id", orgId).eq("action", "FLOWS_READ")
+      .order("id").range(from, from + 999);
+    if (error) return null;
+    for (const r of (data ?? []) as Array<{ resource_id: string | null }>) {
+      if (r.resource_id && ready.has(r.resource_id)) read.add(r.resource_id);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await supabaseAdmin
+      .from("process_flows").select("id, source_document_id")
+      .eq("org_id", orgId).not("source_document_id", "is", null)
+      .order("id").range(from, from + 999);
+    if (error) {
+      if (error.code === "42P01" || /does not exist|could not find the table/i.test(error.message)) break;
+      return null;
+    }
+    for (const r of (data ?? []) as Array<{ source_document_id: string | null }>) {
+      if (r.source_document_id && ready.has(r.source_document_id)) read.add(r.source_document_id);
+    }
+    if ((data ?? []).length < 1000) break;
+  }
+  return read;
 }
 
 // ── POST: bind (or unbind) the area's knowledge library ─────────────────────

@@ -1032,6 +1032,25 @@
         "I-05 (merged, DEC-73)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-01 at the I-05 merge, for remainders whose owners (I-02, I-02b, I-05) have merged. Can run any time; AiSettingsModal is also edited by I-18 only through the usage route's answers, so take I-18's merged copy if it lands first."
+    },
+    {
+      "name": "I-21 CONFIRMED TOPOLOGY — confirmed process flows become a reasoning input for the orchestrator's line trace (FLOW-14, GAP-315)",
+      "findings": [
+        "FLOW-14 (remainder re-owned by the integrator 2026-10-01 at the I-09 merge: DEC-80 item 2 — confirmed topology is not yet a reasoning input; the build is GAP-315)",
+        "GAP-315 (opened by I-09 2026-10-01: flowsToLineEdges(orgId) over CONFIRMED rows only, merged into the orchestrator's loadLineGraph with each edge's basis named, scoped by traceNeighbourhood; never a proposed or dismissed row; nothing flow-derived drives a hold or an MOC)"
+      ],
+      "files": [
+        "lib/processFlows.ts (flowsToLineEdges)",
+        "lib/orchestrator/tools.ts (loadLineGraph merges confirmed flows; its .limit(20000) read paged as I-03 did for the drawing-facts census — ING-10's residual)",
+        "lib/pidTrace.ts (LineEdge basis)",
+        "tests under lib/__tests__/ (confirmed-only, basis named, a proposal never reaches the trace)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-09 merged (DEC-80; 20261155 — confirmed means controller-asserted only once it is pasted)",
+        "I-18 merged (it edits lib/orchestrator/loop.ts; this package edits tools.ts beside it)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-01 at the I-09 merge (DEC-31 remainder: FLOW-14 Partial, GAP-315 BUILD LATER)."
     }
   ],
   "crossAreaFileOverlaps": [

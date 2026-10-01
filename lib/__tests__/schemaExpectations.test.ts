@@ -291,6 +291,9 @@ describe("/api/admin/schema-health — functions, and a table PostgREST cannot f
     const body = await (await probe()).json() as { healthy: boolean; migrationsToRun: string[]; missingTables: Array<{ table: string; kind: string }> };
     expect(body.healthy).toBe(false);
     expect(body.missingTables).toEqual([expect.objectContaining({ table: "process_flows", kind: "table" })]);
-    expect(body.migrationsToRun).toEqual(["20261017_process_flows.sql"]);
+    // The table's own file first; 20261155 (process_flows.source_version_id,
+    // an EXPECTED_COLUMNS row since the I-09 merge) is needed too once the
+    // table is gone, so it is named after it.
+    expect(body.migrationsToRun).toEqual(["20261017_process_flows.sql", "20261155_intel_roundG_process_flows_authority.sql"]);
   });
 });

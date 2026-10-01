@@ -869,3 +869,25 @@ Fix:
 **Scope / residual.** None. Intelligence `ILIFE-12` and `IRLS-12` close by pointer here (cross-notes on both). Their criterion on the 20261015/16/17 ALTERs is vacuous: those migrations add no column to an older table, they create the three tables, which are now probed.
 
 ---
+
+## BKP-15 · A restore refuses a process flow whose endpoint is gone — the dangling flows a backup carries are reported as failed rows, not restored as what they were
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** admin-and-org P3 (the restore engine's handling of one table; no migration expected) — by the integrator, 2026-10-01 (intelligence I-09 merge; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
+- **Verification:** CONFIRMED (verified by intelligence I-09's second review on a throwaway PostgreSQL 16, recorded in intelligence `FLOW-6`'s record, "Open handoff to admin-and-org (BKP restore fidelity)")
+- **Locations:** `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql` (`process_flows_guard()` — the endpoint check binds every writer, the service role included), `lib/dataRestore.ts` (the org restore writes `process_flows` as the service role)
+- **Independently verified:** — opened 2026-10-01 by the integrator at the intelligence Round G I-09 merge (DEC-31: the restore-side remainder of `FLOW-6` / `WIRE-10`, which I-09 recorded as an open handoff); not yet challenged by a second party.
+
+**Mechanism.** Since `20261155`, a `process_flows` row whose `asset` end names no asset of the org (or whose `unit` end names no Site Codebook unit) is refused with `23503 process_flows_endpoint`, for every writer. Rows that were already dangling when the migration was pasted are kept (DEC-80 item 3), so a backup taken afterwards still carries them. On restore each is refused, and the engine's row-by-row retry reports it as "references a row that is not there". A flow whose asset the restore skipped, because that asset exists in another workspace, is refused the same way.
+
+**Failure scenario.** An org restores a backup holding three flows to an asset deleted before the paste. The restore completes, but its report lists three failed `process_flows` rows with a generic reason; the operator cannot tell they were already dangling in the source, and the restored workspace silently differs from the backup by those rows.
+
+**Done when.**
+
+- [ ] The restore reports a refused dangling flow as what it is ("a process flow whose equipment no longer exists — not restored"), counted on its own line, distinct from a real failure; or the guard honours a restore-session marker on INSERT so the row is restored exactly as it was. The choice and its reason are recorded.
+- [ ] A restore round-trip test with a dangling flow pins the chosen behaviour, and every other `process_flows` row restores as today.
+
+**Closer:** admin-and-org P3 (assigned at the I-09 merge, 2026-10-01).
+
+---

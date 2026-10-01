@@ -294,7 +294,7 @@ Tests: `lib/__tests__/intelRoundGMigrationOrder.test.ts`:
 ## IRLS-7 · Knowledge sources and mirrored documents carry no foreign key to the document-control rows they claim to mirror
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260917_knowledge_sources.sql:31`, `supabase/migrations/20260917_knowledge_sources.sql:53-58`, `supabase/migrations/20261017_process_flows.sql:17-20`, `supabase/migrations/20260928_site_codebook.sql:78`, `lib/knowledgeSourceSync.ts:285-292`
@@ -331,6 +331,23 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 - ✗ Not done here. Validating `process_flows` endpoints against the registry on read belongs to process flows and graph assembly (I-09 / I-13), not ingestion.
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql`. OPEN until the `process_flows` read-time validation lands.
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — the remainder).** The remainder was done-when 3: `process_flows` endpoints that reference assets are validated against the registry on read, so an edge to a deleted asset is shown as broken rather than drawn. Reproduced first: FlowPanel resolved an unknown asset end to "…", indistinguishable from loading.
+
+What landed:
+- `lib/processFlows.ts` `resolveAssetEndpoints` reads every asset end of the flows a surface shows from the registry (chunked). It returns the tag (archived marked), or `missing` for a ref that names no asset (a non-uuid ref included). A chunk whose registry read fails marks each ref it asked about `unchecked` ("equipment (not checked)"). *(Third fix pass: it returned null for the whole map, so one failed read took the unit's own equipment's tags with it. The unit's own equipment, passed as `known`, is never asked and keeps its tag; the plant-wide list says "not checked" per end.)*
+- FlowPanel and the plant-wide `FlowReviewQueue` show a missing end as "equipment no longer exists" with a remove button for the controller tier, and never offer to confirm a proposal to nothing.
+- The graph already does not draw such an edge and counts it (I-13, see `FLOW-6`).
+- No new dangling row can be written: `20261155`'s endpoint guard and asset-delete cleanup (`WIRE-10`).
+
+Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-7 / FLOW-6 …"; third fix pass: "a registry read that fails marks only the refs it asked for 'unchecked' …", "one failed chunk leaves the other chunks' answers standing"), `lib/__tests__/flowPanelRender.test.ts` ("IRLS-7 / FLOW-6 — an end naming deleted equipment is shown as gone"; third fix pass: "IRLS-7 — a registry read that fails leaves the unit's own equipment named").
+
+**Done-when.**
+1. ✓ (2026-09-30, ILIFE-5) Deleting a controlled document removes its mirror and chunks through the foreign key (`20261122`).
+2. ✓ (2026-09-30) The scheduled sync reports dangling sources.
+3. ✓ `process_flows` asset ends are validated against the registry on read; an edge to a deleted asset is shown as broken, with removal, not drawn.
+
+**Scope / residual.** **Pending migrations:** `20261122_intel_roundG_ingest_integrity.sql` (limb 1, not this package's) and `20261155_intel_roundG_process_flows_authority.sql` (the guard and cleanup that stop new dangling rows). The read-time validation in limb 3 needs neither.
 
 ---
 
@@ -467,7 +484,7 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 ## IRLS-11 · process_flows lets any active member insert a status='confirmed', origin='ai' edge into the plant's flow topology
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:49-54`, `supabase/migrations/20261017_process_flows.sql:22-28`, `lib/processFlows.ts:50-68`, `app/(protected)/graph/page.tsx:309-346`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the UI path: app/(protected)/graph/page.tsx:334-346 calls createManualFlow for any asset↔asset or unit↔unit pair, and grep for role/ADMIN_ROLES in that page returns no authorization gate on Connect mode. Over PostgREST a member can also set origin='ai' directly, since only created_by is checked.
@@ -489,6 +506,15 @@ Tests: `lib/__tests__/intelRoundGIngestMigration.test.ts` (the key and the casca
 - [ ] process_flows_insert forces `origin = 'manual' AND status = 'proposed'` for non-controllers, leaving 'confirmed' and 'ai' to is_org_controller(org_id)
 - [ ] the graph's Connect mode is gated on the same authority as the flow review UI, so the affordance matches the permission
 - [ ] a WITH CHECK predicate ties source_document_id to a knowledge_documents row in the same org
+
+**Resolution (2026-10-01, intelligence Round G).** One root with `FLOW-2` / `AREA-3` / `IEDGE-7`; see `FLOW-2` for the migration and the scratch PostgreSQL 16 cases. Reproduced first: the INSERT policy constrained neither status, origin nor source.
+
+**Done-when.**
+1. ✓ `process_flows_insert` (re-created from `20261017` plus three clauses) requires `status = 'proposed'` unless `is_org_controller(org_id)`, and `origin = 'manual'` with no source document. The guard enforces the same before the policy runs, and refuses a forged `origin 'ai'`.
+2. ✓ Met by its letter: Connect is gated on the same authority as the flow review UI, and the affordance matches the permission. By decision (`DEC-80` item 1), Connect stays open to every member as a proposal, and the database decides what lands (`20261155`): a controller's draw lands `confirmed`, anyone else's `proposed`. The review UI's controls follow the same tier (`FLOW-3`): anyone proposes, a controller confirms. So what Connect offers (draw a flow) is what each member may do (propose one; confirm only as a controller). *(Second fix pass: this line was ticked outright, then marked ✗ for how the graph shows a proposal. Third fix pass: the criterion names the gate and the affordance, not the wording on the screen, so it is judged by that letter. The presentation is a residual reassigned to I-14 under Scope / residual, not a done-when of this finding.)*
+3. ✓ A source document is tied to a knowledge document of the same org, for every writer, in the guard (`process_flows_source`, 23503; the scratch case refused a cross-workspace source from the service role). A person cannot set one at all. Existing cross-workspace sources are counted in the inventory, never rewritten.
+
+**Scope / residual.** Pending migration `20261155`. **Reassigned to I-14** (`app/(protected)/graph/page.tsx`, not edited here): the graph shows a proposal as an error. `completeConnect` awaits `createManualFlow`. A non-controller's flow is written as `proposed` and the call throws `FlowProposedNotice`; the graph's generic catch shows the notice's sentence in Connect's error slot and draws no edge. I-14 catches the notice as a success ("proposed — a document controller confirms it"). Since the third fix pass a Connect on a pair already in the table (23505) throws too: `FlowProposedNotice` ("That flow is already proposed …") for a proposal, `FlowDismissedNotice` for a pair a controller dismissed, and an error when the existing row's status cannot be read. Only a confirmed pair returns `"exists"`. The graph draws none of them; showing the two notices as notices is the same I-14 handoff (`FLOW-2`). Fix pass: the first version of the guard also refused a person CLEARING the source. That is the UPDATE 20261017's `ON DELETE SET NULL` runs, so deleting a cited knowledge document, controlled document or library failed with `process_flows_fixed`. The guard now lets a source be cleared, and still refuses setting or retargeting one. The correction, the reproduction and the scratch PostgreSQL 16 cases are on `FLOW-2`.
 
 ---
 
@@ -521,6 +547,8 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 **Partial (2026-09-30, intelligence Round G).** Re-verified at HEAD `1b71ca1`. Landed elsewhere: the seven project-controls tables are on the list with their migration (`lib/schemaExpectations.ts:51`–`:126`, projects Round G J9 `REL-7`), and criterion 2's tripwire exists — `lib/__tests__/schemaExpectations.test.ts:155-159` fails when a migration creates a table absent from `EXPECTED_TABLES` — ✓ for every table created from now on. Open: `answer_skills`, `link_rules` and `process_flows` are still absent, and the tripwire grandfathers them — among five (`answer_skills`, `document_markups`, `knowledge_line_traces`, `link_rules`, `process_flows`, `:71`) — so criterion 1's intelligence half is not done; criterion 3 (42P01 vs an empty result, in what the libs show) is untouched. Owners: criterion 1 → admin-and-org **P2** (`BKP-14`, the list regeneration that empties the grandfather set; cross-note there); criterion 3 → the limbs in intelligence **I-08** (`lib/linkRules.ts`, `lib/answerSkills.ts`) and **I-09** (`lib/processFlows.ts`).
 
 *Cross-note (2026-10-01, admin-and-org Round G, P2): criteria 1 and 2 ✓ by admin-and-org `BKP-14` (RESOLVED). The three tables are listed with their files, `knowledge_line_traces` is recorded as retired, and the grandfather set is empty. Criterion 3 (42P01 vs an empty result in what the libs show) remains I-08's and I-09's.*
+
+*Pointer (2026-10-01, intelligence Round G, I-09 — criterion 3's `lib/processFlows.ts` limb).* `listProcessFlows` / `listProcessFlowsPaged` answer null ("process flows aren't installed yet") only for a missing TABLE (42P01 / PGRST205 / "relation … does not exist" / "could not find the table"). A missing column, or any other read error, is thrown and shown, never "not installed". Before, `/does not exist/` matched a missing column too. Test: `lib/__tests__/processFlowsLib.test.ts` ("IRLS-12 limb …"). No status change: criterion 1 is A&O P2's, and the other two libs are I-08's.
 
 ---
 

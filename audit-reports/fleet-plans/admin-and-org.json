@@ -114,7 +114,8 @@
     "intelligence ILIFE-4 (remainder re-owned by the integrator 2026-10-01 at the A&O P1 merge: done-when 2 \u2014 /api/admin/restore/apply has no caller; delete it, or wire it as the restore page's small-backup path; it already shares applyRestoreChunk and the stop rule)",
     "BKP-11 (remainder re-owned by the integrator 2026-10-01 at the A&O P2 merge: done-when 3's remaining limb \u2014 PATCH /api/data-export/destinations/[id] refuses enabled:true on a row with no credentials or no webhook secret; done-when 1 is the paste of 20261154)",
     "intelligence ILIFE-14 (opened by the integrator 2026-10-01 at the A&O P2 merge: app/api/storage/delete/route.ts DELETE refuses (409) a key any other registered key column still names, via keysReferencedOutside, fail closed; the hunk is in ILIFE-5's record)",
-    "intelligence ILIFE-6 (criterion 3, re-owned by the integrator 2026-10-01 at the A&O P2 merge: lib/storageOrphans.ts deleteOrphans re-checks each candidate key just before its DeleteObjects batch \u2014 keysReferencedOutside for the plain key columns plus one containment read per key for JSON_KEY_COLUMNS; a read error stops the purge before that batch with nothing deleted)"
+    "intelligence ILIFE-6 (criterion 3, re-owned by the integrator 2026-10-01 at the A&O P2 merge: lib/storageOrphans.ts deleteOrphans re-checks each candidate key just before its DeleteObjects batch \u2014 keysReferencedOutside for the plain key columns plus one containment read per key for JSON_KEY_COLUMNS; a read error stops the purge before that batch with nothing deleted)",
+    "BKP-15 (opened by the integrator 2026-10-01 at the intelligence I-09 merge: the restore reports a process flow refused by 20261155's endpoint check as a dangling flow, on its own line, or the guard honours a restore-session marker; a round-trip test pins it)"
    ],
    "files": [
     "app/api/data-export/structured/route.ts",

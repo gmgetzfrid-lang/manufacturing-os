@@ -23,9 +23,9 @@
       "LOW": 5
     },
     "by_status": {
-      "RESOLVED": 116,
+      "RESOLVED": 117,
       "REFUTED": 2,
-      "OPEN": 23
+      "OPEN": 22
     }
   },
   "status_vocabulary": [
@@ -1455,7 +1455,7 @@
       "id": "SEC-10",
       "title": "The checklist route authorizes at member level but reads ACL-restricted documents with the service role",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "security / data-confidentiality",

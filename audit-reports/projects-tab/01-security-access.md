@@ -496,7 +496,7 @@ cost entries should be deletable at all, versus archive-only.
 ## SEC-10 · The checklist route authorizes at member level but reads ACL-restricted documents with the service role
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 (app/api/flows/read is its file) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** security / data-confidentiality
@@ -535,6 +535,26 @@ resolve documents the same way.
 **Scope / residual.** (1) `/api/flows/read` — a controller-only service-role page read outside this gate (above). The fix belongs to its owner (intelligence I-09, cross-reference I-12 `KACL-5`, which names the mirror's `file_key` as the controlled key): resolve the mirror's `source_document_id` through `resolveDocumentFile` (channel `flows_read`) or an equivalent that honours the download deny and writes `DEC-43`, and keep upload-origin mirrors (no source document) on their own rule. (2) The gate is now STRICTER than `/api/storage/download-url`, which still evaluates only the document's own ACL and only for private / hidden documents and reads no `orgs`-subject deny — intelligence `KACL-5`. The parity matrix names each divergence; when `KACL-5` brings the egress route to the same chain, those names shrink (the census test fails if one goes stale). Until then the bytes of a normal document behind an allow-list can still be signed by the egress route: that is `KACL-5`'s open limb, not this route's. (3) The gate reads the chain through the shared engine, so it inherits the engine's zero-rule semantics: an ACL object with no rules anywhere on the chain grants nothing (intelligence `DACL-6`, I-12) — the library page hides the same documents, and when I-12 changes the engine the gate follows. (4) The title filter's ownership branch is the explicit document owner only (the cascade is asked for content), so a hidden title owned through a folder or library is left out of the prompt — failing closed. (5) `file_url` aliasing: the version is bound to the document, but its `file_url` is not bound to anything — roles-and-permissions `EGRESS-6`'s own-draft arm of `document_versions_insert_integrity` (`20261037:157`) lets a member insert an in-review version, with any `file_url`, on a document they can see, and then point that document's `pending_version_id` at it. A member who knows private document B's storage key can so have B's pages read under A's ACL. `/api/storage/download-url` shares the gap (it resolves a key's owning document with `.limit(1)` on `file_url`). The fix is a database rail — a new version's `file_url` must lie under its own document's storage prefix, or must not be another document's key — for the owner of `EGRESS-6`'s overlay; the gate does not refuse shared keys itself, because copy flows may legitimately share one. (6) A broken chain is refused, controllers included, with the repair message (409) until a document controller repairs the folder's `path_ids` (or the dangling folder / library reference). The library page (`buildFolderChain`, `documents/[libraryId]/page.tsx:1748-1756`) skips a missing rung instead, and `lib/aclIndexRebuild` skips and reports the node (`:27`), so the gate is stricter than both here — by design: it cannot know what the missing rung would have denied. (7) `app/api/transmittal/route.ts:43` (document-control P7's file) cites `lib/docFileServer.ts:26-28` for the forged-pointer comment; that comment is now `lib/docFileServer.ts:317-323`, and it binds `record_id` as well as the org — a citation for DC P7 to refresh, not edited here. Cross-reference: roles-and-permissions `03-document-control-acl.md` (`DOCACL-5`) cites this finding as the shape of a service-role re-check; for page reads the one shared helper is now `resolveDocumentFile`. `DEC-43` carries a landed line.
 
 **Verification fix (2026-09-30, projects Round G — at merge).** A `document_versions` read error in `resolveDocumentFile` is now 503 (`DOC_ACCESS_UNVERIFIED`), never the 404 "no file" it used to fall into (`lib/docFileServer.ts`, the version read), and the assess prompt says a linked SOW with no readable file is "linked but has no readable file — it was not read", never "No Summary of Work attached" (`app/api/projects/checklist/route.ts`, `sowNoFile`). Pinned by `apiRouteAuth.test.ts` "a SOW whose version read fails is 'could not be checked'…", which fails on the previous tree.
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — `/api/flows/read`).** Reproduced first on the base route: a controller's read of a source-linked mirror rendered `knowledge_documents.file_key` as the service role without asking the document gate ("SEC-10: the controlled document gate is never asked": `expected +0 to be 1`).
+
+What landed: `app/api/flows/read/route.ts` resolves a mirror's `source_document_id` through `lib/docFileServer` `resolveDocumentFile(orgId, sourceDocumentId, { uid, email, channel: "flows_read" })` before anything is rendered or sent. Fix pass: the gate is asked AFTER `assertAiGates` and the roster, just before the render. The first version asked it before the AI gates. A controller's restricted read then wrote a `CONTROLLER_RESTRICTED_READ` row even when the gates refused (412 / 428 / 402 / 503), and the 428 → sign → retry path wrote two rows for one read. Now a read the gates or the empty registry refuse opens no file and records nothing. So:
+- an explicit download deny binds (controllers too);
+- a broken folder chain is named (409), and a chain that cannot be read is 503;
+- pages served only because the reader is a controller write `CONTROLLER_RESTRICTED_READ` with `channel: "flows_read"` (DEC-43).
+
+The pages rendered are the file the gate decided on. An upload-origin knowledge document (no source document) keeps its own rule: the route is controller-only.
+
+Second fix pass: the gate is first asked with `labelOnly: true`. That call serves no bytes, so it writes no DEC-43 row. Its answer is checked with `lib/verifyVerdict` `isPdfFile`. A mirror can lag behind its document: the current revision is republished as a DWG and no sync has dropped the stale PDF mirror yet. The route then answers 409 ("The current revision of this drawing is not a PDF — this mirror is stale … Sync the library"). It renders nothing and records nothing. The first version rendered the gate's DWG and answered a misleading 502 "could not be rendered", after writing a restricted-read row. Only a PDF is then resolved for its bytes, under the recording gate, and checked again. A revision that changes between the two asks gets the same 409.
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` ("SEC-10 — the pages are the caller's to read": a refusal is its status with nothing rendered or sent, the call's arguments and channel; 409 / 503 before any spend; the gate's file is the one rendered; an upload skips the gate; from the fix pass, "the document gate is asked only once the read will happen …": an unsigned DocCtrl's 428 and an empty registry's 412 ask no gate, the retry after signing asks it once, and the order is gates → document gate → render → call; from the second fix pass, the order is gates → label-only gate → recording gate → render → call, "a mirror lagging a current revision that is NOT a PDF … is a 409 that says so — nothing opened, nothing recorded, nothing rendered", and "the revision changing to a non-PDF between the label and the read is the same 409 …"). The gate's own deny, chain and DEC-43 behaviour is pinned in `docFileServer.test.ts` / `apiRouteAuth.test.ts`.
+
+**Done-when.**
+- A member without ACL read on a document receives 403 from the checklist route — ✓ (2026-09-30).
+- The check is applied to every route that resolves a document via `supabaseAdmin` — ✓. The one route left, `/api/flows/read`, now reads through `resolveDocumentFile`.
+- An `apiRouteAuth.test.ts` case pins it — ✓ (2026-09-30). For flows/read the pins are in `flowsReadRoute.test.ts`.
+
+**Scope / residual.** The residuals (2)–(7) above stay with their owners (KACL-5, DACL-6, EGRESS-6's overlay, DC P7's citation). They are not this route's. One case is still recorded: once the gate has resolved the file for a controller bypass, a render that then fails (502) or runs out of time (504) has fetched the controlled bytes for that reader, so it keeps its DEC-43 row. This is the same rule as the egress route, which records when the URL is issued, not when the download completes.
 
 ---
 
@@ -1097,7 +1117,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 | SEC-7 | MEDIUM | RESOLVED |
 | SEC-8 | HIGH | RESOLVED |
 | SEC-9 | HIGH | RESOLVED |
-| SEC-10 | HIGH | OPEN |
+| SEC-10 | HIGH | RESOLVED |
 | SEC-11 | MEDIUM | RESOLVED |
 | SEC-12 | HIGH | RESOLVED |
 | SEC-13 | HIGH | RESOLVED |

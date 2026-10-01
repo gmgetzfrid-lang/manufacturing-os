@@ -20,15 +20,20 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { listAssetIdentities } from "@/lib/assets";
+import { loadCodebook } from "@/lib/codebook";
+import { planIdentityReview } from "@/lib/assetCategorize";
 
 interface Facts {
   units: number; equipTypes: number;
   assets: number; uncategorized: number; unitless: number;
+  /** AREA-11: equipment whose site code names another unit than its filing; null = could not be read. */
+  mismatched: number | null;
   libraries: number; documents: number; numbered: number;
   docAssetLinks: number; mentions: number;
   kdocs: number; mirrored: number; hasAiKey: boolean;
   skillsEnabled: number; reasoningSkills: number; curatedLinks: number; pendingProposals: number;
-  flows: number; plotPlans: number;
+  flows: number; proposedFlows: number; plotPlans: number;
 }
 
 type Filter = Record<string, unknown>;
@@ -72,7 +77,8 @@ export default function SetupPage() {
         docAssetLinks, mentions,
         kdocs, mirrored, aiKeyCount,
         skillsEnabled, reasoningSkills, curatedLinks, pendingProposals,
-        flows, plotPlans,
+        flows, proposedFlows, plotPlans,
+        mismatched,
       ] = await Promise.all([
         count("codebook_entries", { kind: "unit" }),
         count("codebook_entries", { kind: "equipment_type" }),
@@ -92,15 +98,32 @@ export default function SetupPage() {
         count("document_related_resources"),
         count("proposed_links", { status: "pending" }),
         count("process_flows", { status: "confirmed" }),
+        count("process_flows", { status: "proposed" }),
         count("plot_plans"),
+        // AREA-11: the code says one unit, the filing another — the count the
+        // Operating Areas page's identity review lists (planIdentityReview).
+        (async (): Promise<number | null> => {
+          try {
+            const [identities, book] = await Promise.all([listAssetIdentities(activeOrgId), loadCodebook(activeOrgId)]);
+            const live = identities.filter((a) => !a.archived);
+            // loadCodebook answers EMPTY_CODEBOOK when its read fails, and an
+            // empty book decodes no code — "every site code agrees" would be
+            // a tick on nothing checked. A book with no unit or no equipment
+            // type cannot name a code's unit at all: while a filed asset
+            // carries a code, that is "could not be checked", never 0.
+            const decodable = book.units.length > 0 && book.equipmentTypes.length > 0;
+            if (!decodable && live.some((a) => !!a.code && !!a.unit_code)) return null;
+            return planIdentityReview(live, book, identities).filter((r) => r.kind === "code_names_other_unit").length;
+          } catch { return null; }
+        })(),
       ]);
       if (!alive) return;
       setFacts({
-        units, equipTypes, assets, uncategorized, unitless,
+        units, equipTypes, assets, uncategorized, unitless, mismatched,
         libraries, documents, numbered, docAssetLinks, mentions,
         kdocs, mirrored, hasAiKey: aiKeyCount > 0,
         skillsEnabled, reasoningSkills, curatedLinks, pendingProposals,
-        flows, plotPlans,
+        flows, proposedFlows, plotPlans,
       });
     })();
     return () => { alive = false; };
@@ -128,6 +151,12 @@ export default function SetupPage() {
           { label: `${f.assets} asset${f.assets === 1 ? "" : "s"} registered`, ok: f.assets > 0 },
           { label: f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized — auto-categorize in Operating areas`, ok: f.assets > 0 && f.uncategorized === 0 },
           { label: f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0 },
+          {
+            label: f.mismatched === null ? "Site codes vs. filing could not be checked"
+              : f.mismatched === 0 ? "Every site code agrees with its unit"
+              : `${f.mismatched} site code${f.mismatched === 1 ? " names" : "s name"} another unit than the filing — reconcile in Operating areas`,
+            ok: f.mismatched === 0,
+          },
         ],
         href: "/admin/assets", cta: "Open Operating areas",
       },
@@ -178,7 +207,7 @@ export default function SetupPage() {
         blurb: "Flows turn the graph into the plant: draw them on the Process lens, or point the reader at a PFD and confirm what it finds. Plot plans add the spatial picture.",
         icon: Compass, hue: "from-rose-500 to-red-600",
         checks: [
-          { label: `${f.flows} confirmed flow${f.flows === 1 ? "" : "s"}`, ok: f.flows > 0 },
+          { label: `${f.flows} confirmed flow${f.flows === 1 ? "" : "s"}${f.proposedFlows > 0 ? ` · ${f.proposedFlows} proposed, awaiting a document controller` : ""}`, ok: f.flows > 0 },
           { label: `${f.plotPlans} plot plan${f.plotPlans === 1 ? "" : "s"}`, ok: f.plotPlans > 0 },
         ],
         href: "/graph", cta: "Open the graph",

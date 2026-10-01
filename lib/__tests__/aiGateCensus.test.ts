@@ -59,7 +59,9 @@ const carriesAllFive = (s: string) => missingGates(s).length === 0;
 
 /** Routes whose agreement gate is another package's file (owner — limb). */
 const PENDING: Record<string, string> = {
-  "app/api/flows/read/route.ts": "I-09 — flows/read adopts aiGates (GOV-11 / PR-12 limb; a local agreement check until it lands)",
+  // app/api/flows/read/route.ts left this list with intelligence Round G
+  // I-09: it runs assertAiGates before the render and calls the model
+  // through governedAiCall with its page images — GATED, checked below.
   "app/api/knowledge/locate/route.ts": "I-07 — locate adopts aiGates with the refine-pass metering (GOV-8 / DWG-5)",
   // app/api/knowledge/ingest/route.ts left this list in I-05's fix pass 5:
   // its vision context now checks the agreement (the GOV-11 verifier's sixth
@@ -124,6 +126,21 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     expect(agreementAt).toBeGreaterThan(0);
     expect(s.slice(agreementAt, agreementAt + 300)).toMatch(/\.eq\("user_id", user\.id\)[\s\S]*\.eq\("agreement_version", AGREEMENT_VERSION\)/);
     expect(agreementAt).toBeLessThan(s.indexOf("vision = {"));
+  });
+
+  it("flows/read is GATED (I-09, GOV-11 / PR-12): the gates before the render, governedAiCall with the images, no direct provider call", () => {
+    const f = "app/api/flows/read/route.ts";
+    const s = src(f);
+    expect(PENDING[f]).toBeUndefined();
+    expect(callers).not.toContain(f);
+    expect(usesGates(s)).toBe(true);
+    expect(s).not.toMatch(/\bcallAiModel\s*\(/);
+    expect(s).toMatch(/await assertAiGates\(\{ orgId, userId, op: "flowRead" \}\)/);
+    expect(s).toMatch(/governedAiCall\(\{[\s\S]*?op: "flowRead"[\s\S]*?images: images\.map/);
+    // the gates run before the pages are rendered: a refusal costs no render
+    expect(s.indexOf("await assertAiGates(")).toBeLessThan(s.indexOf("renderKnowledgePagesReport(fileKey"));
+    // the stale comments PR-12 names are gone
+    expect(s).not.toMatch(/doesn't carry images/);
   });
 
   it("PENDING names real provider callers, each with its owner", () => {

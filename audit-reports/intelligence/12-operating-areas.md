@@ -101,7 +101,7 @@ supabase/migrations/20260609_phase1_normalization.sql:187-190 — `CREATE POLICY
 ## AREA-3 · Any active member can write a CONFIRMED process flow into the plant topology, and every such row permanently blinds the AI PFD reader to that pair
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:50-56`, `app/(protected)/graph/page.tsx:309-347`, `app/api/flows/read/route.ts:42-48`, `app/api/flows/read/route.ts:82-88`, `lib/processFlows.ts:52-70`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Any active member really can write a CONFIRMED flow, and the Connect UI really has no role gate — that stands. But "every such row permanently blinds the AI PFD reader to that pair" is false as written: because the settled key encodes direction, a backwards hand-drawn flow (V-102→E-101) does not suppress the model's correct reading (E-101→V-102), which is still proposed for review; suppression only occurs for the identical ordered pair, where re-proposing an already-recorded flow would be pointless. The finding's headline harm scenario therefore does not occur.
@@ -121,6 +121,24 @@ supabase/migrations/20261017_process_flows.sql:24 — `status TEXT NOT NULL DEFA
 - [ ] process_flows INSERT is restricted to controllers, or to `status = 'proposed'` for non-controllers so a human decision still gates the topology.
 - [ ] Graph Connect mode is role-gated to match.
 - [ ] The reader distinguishes 'a human decided this' from 'a row exists': settled should be built from rows with decided_at set (or origin='ai' dismissals), so a stray manual row cannot silently suppress a correct reading, and skippedSettled > 0 is surfaced to the user instead of being folded into the generic 'no flows found' note.
+
+**Resolution (2026-10-01, intelligence Round G).** One root with `FLOW-2` / `IEDGE-7` / `IRLS-11`; see `FLOW-2`'s Resolution for the migration (`20261155`) and the scratch PostgreSQL 16 cases. Reproduced first: a member's `status 'confirmed'` insert was accepted before the paste, and on the base route the settled set was every row read without order, any status.
+
+What landed for this finding's third limb (`app/api/flows/read/route.ts` + `lib/flowsRead.ts` `planFlowProposals`): the reader no longer treats "a row exists" as "a human decided". A pair found on the drawing is classified against the WHOLE table, read in id order and paged:
+- already on the map (`confirmed`);
+- awaiting review (`proposed`);
+- dismissed by a person, which sticks unless a new revision of the same drawing is being read (`IEDGE-8`).
+
+Each count, and each pair with its reason (`skippedPairs`), is in the answer. The note names them ("Not proposed: 1 already on the map; 1 dismissed by a person …") and no longer blames the drawing.
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("new, already confirmed, awaiting review, dismissed — each counted apart (AREA-3 …)"), `lib/__tests__/flowsReadRoute.test.ts` ("a hand-drawn confirmed row is 'already on the map'; a pending one is 'awaiting review' — neither is called a dismissal").
+
+**Done-when.**
+1. ✓ A non-controller's insert lands `proposed` (`20261155`).
+2. ✓ Connect is gated by the same tier at the database, by decision (`DEC-80` item 1). A member's draw is a proposal a controller decides, and the graph is told (`FlowProposedNotice`).
+3. ✓ "A human decided" is distinguished from "a row exists" (status categories, revision-scoped dismissals), and the skips are surfaced, never folded into "no flows found".
+
+**Scope / residual.** Pending migration `20261155` (see `FLOW-2`).
 
 ---
 
@@ -157,7 +175,7 @@ lib/equipmentBridgeServer.ts:190-193 — `const targetKey = bridge?.targetColumn
 ## AREA-5 · The PFD reader can only see the first 300 assets of an unordered query, and is never scoped to the unit whose panel launched it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:57-71`, `components/assets/UnitOpsPanels.tsx:250-254`, `components/assets/UnitOpsPanels.tsx:265-269`, `app/api/flows/browse/route.ts:38-46`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Both halves verified, including that the launching panel demonstrably knows the unit and drops it. Severity trimmed to MEDIUM: the failure mode is omission, not fabrication — the roster is the grounding allowlist, so an unreachable asset yields no flow rather than a wrong one, everything the reader does emit lands as `status: "proposed"` for human accept/dismiss (route.ts:158, UnitOpsPanels.tsx:163), and orgs at or below 300 assets are unaffected.
@@ -177,6 +195,20 @@ app/api/flows/read/route.ts:58 — `supabaseAdmin.from("assets").select("id, tag
 - [ ] The roster is selected deliberately, not sliced: when the reader is launched from a unit hub it takes unitCode and prioritises that unit's assets (plus codebook units) before filling the remainder; the query gets a deterministic `.order("tag")`.
 - [ ] When the registry exceeds the roster budget the response says so explicitly instead of returning the generic 'No new flows found' note.
 - [ ] ReadFlowsModal accepts and forwards the unit so /api/flows/browse can default its library filter to the area's bound knowledge library.
+
+**Resolution (2026-10-01, intelligence Round G).** Same root as `FLOW-4` / `WIRE-6`; the roster is fixed once (see `FLOW-4`). Reproduced first: `ReadFlowsModal` received only `orgId`, and `/api/flows/browse` took no unit.
+
+What landed for this finding's own limbs:
+- `ReadFlowsModal` takes the launching `unitCode` and sends it to `/api/flows/read`, which puts that unit's equipment first on the roster.
+- It also sends it to `/api/flows/browse`, which answers `areaKnowledgeLibrary`: the unit's bound knowledge library (`codebook_entries.meta.knowledgeLibraryId`). The picker then opens on "This area's library — <name>", showing only documents mirrored into it (rows now carry `kLibraryId`). "All document libraries" is one choice away.
+- Fix pass: the picker opens on the area's library only when that library holds documents (`lib/flowsBrowse.ts` `areaShelfDocCount`). An area that is bound but not yet synced has PFDs that are still "Not synced yet". Those rows carry no library, so the area filter hid them. Such an area now opens on every library, with the rows and their Sync button visible. The opening filter is chosen once, so a reload after a sync never moves the person off what they picked. A person who picks the area filter on an empty shelf reads "Nothing in this area's library yet (<name>) — its documents may not be synced", with a "Show all document libraries" button. Before, the panel said "No documents yet — upload PDFs …".
+
+Tests: `lib/__tests__/flowsReadRoute.test.ts` (the roster cases on `FLOW-4`), `lib/__tests__/flowsBrowse.test.ts` ("AREA-5: a mirrored row names the knowledge library it lives in …"; "AREA-5 — what the area-shelf filter would show"), `lib/__tests__/flowPanelRender.test.ts` ("a bound area whose shelf has not synced opens on ALL libraries …", "an area shelf that holds mirrors opens on it …", "the area filter chosen on an empty shelf names itself …").
+
+**Done-when.**
+1. ✓ The roster is selected deliberately: the launching unit's equipment first, plus every codebook unit, ordered by tag.
+2. ✓ Past the roster budget the response says so explicitly, and the note names the count.
+3. ✓ ReadFlowsModal accepts and forwards the unit. The picker defaults to the area's bound knowledge library whenever that library holds documents; when it holds none (bound, not yet synced), it opens on every library.
 
 ---
 
@@ -205,6 +237,23 @@ app/(protected)/graph/page.tsx:229-235 — `// Namespaced ids ("asset:…", "cbu
 - [ ] The unit hub header and FlowPanel link to `/graph?focus=cbunit:<code>`, closing the round trip orgGraph.ts:201 already opens in the other direction.
 - [ ] The focus deep link optionally scopes rather than just selects — accept `?scope=` (or make focus set focusId) so landing on a unit shows that unit's subtree, which is the 'extreme pivot' the owner is asking for.
 - [ ] The same pivot is reachable from the area page for a non-graph user: a 'show only this unit' state that filters the graph's node set by unit membership rather than by node type (GraphSettings has hiddenTypes but no scope — lib/graphSettings.ts).
+
+**Partial (2026-10-01, intelligence Round G).** Reproduced first: the unit hub's only graph exit was `<Link href="/graph">Process lens →</Link>`, and the area panel never linked to the graph.
+
+What landed — the operating area is `lib/scope.ts`'s first consumer outside the graph (DEC-67 item 6: the place before the filter). `components/assets/UnitOpsPanels.tsx` `unitGraphHref(code)` builds `/graph?scope=<formatScopeParam({ kind: "unit", code })>&focus=cbunit:<code>`:
+- `scope=unit:<code>` is the URL key the graph's scoped assembly (`buildOrgGraph(orgId, { scope })`) reads once I-14 wires the page.
+- `focus=cbunit:<code>` selects the unit's node on the graph as it stands today.
+
+FlowPanel's header link ("Show this unit on the graph →") and the area panel's header (`AreaKnowledgePanel`, "Show on the graph →", on the unit hub page) carry it.
+
+Tests: `lib/__tests__/flowPanelRender.test.ts` ("the graph link carries the unit's scope key and focuses its node").
+
+**Done-when.**
+1. ✓ The unit hub (the area panel's header) and FlowPanel link to `/graph?…focus=cbunit:<code>`.
+2. ✗ Not met here: the graph page reading `?scope=` is `app/(protected)/graph/page.tsx`, I-14's (GPV-11 / the picker). The link already carries the key.
+3. ✗ Not met here: "show only this unit" on the graph is the same page, over `lib/scope.ts` (built, I-13).
+
+**Scope / residual.** OPEN until I-14's page reads `?scope=`; no change here is needed then.
 
 ---
 
@@ -256,7 +305,7 @@ components/assets/AssetCsvImportModal.tsx:22-27 — the four-field CANONICAL_FIE
 ## AREA-8 · The area's order-of-operations checklist is real state, but three of its four steps are satisfied by a single occurrence — and step 1 is satisfied by a folder name alone
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/assets/AreaKnowledgePanel.tsx:192-196`, `components/assets/AreaKnowledgePanel.tsx:314-349`, `components/assets/AreaKnowledgePanel.tsx:102-150`, `app/api/area/knowledge-status/route.ts:128-139`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The thresholds are exactly as claimed — every step flips to the emerald tick at a count of 1 (step 2 too, at one watched source). One factual correction: step 1 is NOT satisfied by a folder name alone; suggestFoldersForUnit (lib/areaKnowledge.ts:56-63) name-matches, but drawingsDone additionally requires `s.docCount > 0`, and knowledge-status/route.ts:88-93 counts only AI-READABLE documents rolled up the folder ancestry — so at least one real readable drawing must be filed. Impact is a setup-checklist honesty/UX issue with no data loss or security consequence, so MEDIUM reads high; LOW fits.
@@ -276,6 +325,33 @@ components/assets/AreaKnowledgePanel.tsx:192-196 — `const drawingsDone = statu
 - [ ] Steps carry coverage, not presence: step 3 shows flows-read-per-drawing (documents in the area's library with a process_flows source_document_id vs total), step 4 shows linked-assets / total-area-assets, and 'done' means a threshold a plant engineer would accept.
 - [ ] Step 1's unbound state distinguishes 'a folder matching this area's name exists' from 'this area's drawings are filed' — the former is a suggestion, not completion.
 - [ ] The step-3/4 counts are computed over the area's full asset set even when listAssets truncates (see the unbounded-query finding).
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first: step 1 ticked on `suggestions.some((s) => s.docCount > 0)` (a name-matched folder with one readable document), step 3 on `flowCount > 0`, step 4 on `docLinkCount > 0`.
+
+What landed:
+- `app/api/area/knowledge-status/route.ts` answers `flowReads: { readable, read, otherDocs }` for a bound area. It is computed by `lib/flowsRead.ts` `flowReadCoverage`, and is null when it cannot be counted or when the area has no shelf.
+  - `readable` is the shelf's **flow drawings**. A flow drawing is a ready document whose title, or whose doc-control library / folder path, names it a PFD, P&ID, block (flow) diagram, UFD or flowsheet (`namesFlowDrawing`, whole words). A ready document that has already been read for flows also counts.
+  - `read` is how many of them have a `FLOWS_READ` record — `/api/flows/read` now writes one per read, flows found or not — or have a flow read off them.
+  - `otherDocs` counts the data sheets, manuals and standards on the same shelf. They are reported, not counted.
+  - Fix pass: the first version counted every ready document on the shelf. An area holding 12 PFDs and 300 data sheets read "12 of 312 readable drawings", step 3 could not be finished, and the panel pointed users at spending their AI key reading data sheets for flows.
+  - Second fix pass, on the denominator's honesty:
+    - The lexicon now catches the spelled-out "Piping & Instrumentation Diagram(s)" / "Piping and Instrument(ation) Diagram". Before, a shelf of P&IDs numbered `1001-P-…` under a folder with that name counted every P&ID as an "other document". Three PFDs read then ticked step 3.
+    - A bare "PID" that names the control algorithm ("PID controller …", "PID loop tuning …") is no longer a drawing.
+    - The drawing type a mirror's document number decodes to (Site Codebook `drawing_type`, e.g. "02" → "P&ID", via `parseDrawingNumber`) is asked as well. A codebook label is free text, so it adds a drawing the title misses and never takes one away.
+    - A read whose every proposal write failed no longer writes `FLOWS_READ`. Nothing was recorded, so the drawing is not counted as read. A read that partly landed records `writeFailed`.
+- `components/assets/AreaKnowledgePanel.tsx` ticks:
+  - step 1 only when the area's shelf holds its drawings. A folder named like the area is shown as "Suggested: <library> / <folder> (N docs) — a folder named for this area; connect it in step 2 …", never a tick.
+  - step 3 only when every flow drawing on the shelf was read for flows ("3 of 40 flow drawings (PFDs, P&IDs, block diagrams) read for flows · 300 other documents on the shelf (data sheets, manuals…) not counted"). A shelf with no flow drawing by title or folder says so and stays to-do; it is never ticked on 0 of 0.
+  - step 4 only when every piece of the area's equipment has a linked document ("1 of 2 equipment items … has a linked document").
+- In between, a step is "in progress", a new amber state.
+- *Third fix pass (corrected):* step 4's coverage and step 3's linked-document count come from one `document_assets` read, whose error was ignored, so a failed read said "0 of N equipment items … have a linked document". The read's error is now checked. On an error, or a read that throws, both say "could not be counted", and step 4 takes its own "not counted" state: never done, in progress or to-do.
+
+Tests: `lib/__tests__/areaKnowledgeCoverage.test.ts` (the route's count, an unreadable record is null, unbound is null; the panel's in-progress and done states; an unbound area's suggestion is never a tick; from the fix pass, "a shelf of 12 PFDs beside 300 data sheets: the 12 PFDs are the denominator …", "a mirror named only by its number counts … under a PFD folder", "a shelf with no flow drawing … never a tick on 0 of 0"; from the second fix pass, "P&IDs filed under 'Piping & Instrumentation Diagrams' with numbered titles are in the denominator: 3 PFDs read do NOT tick step 3", "the lexicon: the spelled-out P&ID counts; a 'PID controller' data sheet does not", "a mirror titled only by its number … counts when its number decodes to a P&ID drawing type"; from the third fix pass, "a document-links read that returns an error / throws says 'could not be counted' — never '0 of 2' …" and the pin "a document-links read that succeeds with no links still says '0 of 2' — a todo, as before"), `lib/__tests__/flowsRead.test.ts` ("AREA-8 — flowReadCoverage …"), `lib/__tests__/flowsReadRoute.test.ts` ("every read writes a FLOWS_READ record …"; second fix pass: "a read whose writes ALL failed is not counted as read …", "a read where some writes landed is counted, and the record carries how many failed").
+
+**Done-when.**
+1. ✓ Steps 3 and 4 carry coverage: flow drawings read out of the shelf's flow drawings, and linked equipment out of the area's equipment. "Done" means all of them. Step 3 is done when every PFD, P&ID and block diagram on the shelf (by title or folder) has been read once, which is the threshold a plant engineer sets for "the flow drawings are mapped"; the data sheets beside them are said, not owed a read. A drawing that prints no flows still counts once it has been read. Limit: the test is by name (title, folder path, or the drawing type the number decodes to). A flow drawing with an unhelpful title, in an unhelpful folder, with no decodable number, counts as an "other document" until it is read. From then on it counts as read. A read counts only when something was recorded.
+2. ✓ Step 1's unbound state is a suggestion, not completion.
+3. ✓ Verified, no change needed: the counts run over the area's full equipment list. `lib/assets.ts` `listAssets` reads every page (`readAllPages`, or a stated refusal past `MAX_REGISTRY_ROWS`), and the page passes the whole area (`areaAssetIds`). Step 4's link read is chunked over every id.
 
 ---
 
@@ -358,6 +434,15 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 
 **Scope / residual.** Remaining limbs: I-14 GPV-7 (write `node.unitCode`; refuse a unit node without one), I-09 WIRE-10 (endpoint-existence trigger). Apply 20261138.
 
+**Partial (2026-10-01, intelligence Round G, I-09 — the WIRE-10 limb).** Done-when 3 lands here. `20261155` `process_flows_guard()` refuses, for every writer, a `unit` end that names no Site Codebook unit of the org (`codebook_entries` kind `unit`), and an `asset` end that names no asset of the org (23503, the ref named). Scratch PostgreSQL 16: a flow to `U100`, an operational-unit code Connect writes, was refused: "unit U100 is not a Site Codebook unit — a flow ends at registry equipment or a Site Codebook unit". `lib/processFlows.ts` `createManualFlow` shows that sentence on the graph. Existing rows naming a non-codebook unit are counted in the paste's inventory, never rewritten.
+
+**Done-when.**
+1. ✓ (I-13).
+2. Partly. Connect can no longer WRITE a units-table code that is not a codebook code: the database refuses it (above). **Not met here:** an unmapped operational unit whose free-text code happens to equal some codebook code would still be written as that codebook unit. Writing `node.unitCode` and refusing a unit node without one is I-14's GPV-7 (`app/(protected)/graph/page.tsx`).
+3. ✓ No `process_flows` row can be created whose unit ref resolves to no `codebook_entries` row (`20261155`).
+
+**Scope / residual.** Pending migrations `20261138` and `20261155`. Remaining limb: I-14 GPV-7.
+
 ---
 
 <a id="area-11"></a>
@@ -365,7 +450,7 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 ## AREA-11 · assets.code and assets.unit_code can permanently contradict each other, and every automated writer is a fill-blanks-only path that will never reconcile them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/assets/page.tsx:1309-1314`, `app/(protected)/admin/assets/page.tsx:1011-1018`, `lib/equipmentBridgeServer.ts:240-258`, `lib/assetCategorize.ts:51-56`
@@ -395,5 +480,19 @@ app/(protected)/admin/assets/page.tsx:1310 — `if (asset?.code) return; // exis
 3. ✗ Not done here — the Facility Setup navigator (`app/(protected)/setup/page.tsx`) is I-05's file; the count it needs is `planIdentityReview(assets, book).filter((r) => r.kind === "code_names_other_unit").length` (exported, tested).
 
 **Scope / residual.** Limb 3 is handed to I-05 (setup navigator).
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — limb 3).** `app/(protected)/setup/page.tsx` (the Facility Setup navigator) reads every asset's identity (`listAssetIdentities`, archived included as code holders) and the codebook (`loadCodebook`). Its registry stage counts `planIdentityReview(live, book, identities).filter((r) => r.kind === "code_names_other_unit").length` beside `unitless`:
+- "N site code(s) name another unit than the filing — reconcile in Operating areas" (not ok while N > 0);
+- "Every site code agrees with its unit";
+- "Site codes vs. filing could not be checked" when the registry read fails — never 0. Second fix pass: also when the codebook read fails. `loadCodebook` answers `EMPTY_CODEBOOK` on any read error, and an empty book decodes nothing. The first version then showed "Every site code agrees with its unit" as a tick. Now, when the book has no unit or no equipment type, so it cannot name any code's unit, and a filed asset carries a code, the count is null ("could not be checked"). With no coded equipment, nothing can contradict its filing, and the tick stands.
+
+The process stage also names proposed flows awaiting a document controller.
+
+Tests: `lib/__tests__/setupNavigatorIdentity.test.ts` (E-22 filed under 20 with code 2530.22 is counted, an agreeing one is not; an unreadable registry is "could not be checked"; from the second fix pass, "a codebook read that fails (loadCodebook answers EMPTY_CODEBOOK) with coded equipment: 'could not be checked', never a green tick", "no equipment carries a code …", "agreeing codes on a readable codebook are still ticked (regression pin)").
+
+**Done-when.**
+1. ✓ (2026-09-30).
+2. ✓ (2026-09-30).
+3. ✓ The navigator's registry stage counts mismatches alongside `unitless`.
 
 ---

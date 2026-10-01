@@ -264,7 +264,7 @@ Fix pass 2, after the second review (*corrected:* "nothing paid is discarded" he
 ## PR-7 · The PFD reader asks for a confidence score, stores it, and never uses it as a gate
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:102-104`, `app/api/flows/read/route.ts:144-166`, `app/api/flows/read/route.ts:1-12`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the score is written and never read anywhere in the repo, and settled at :150 blocks re-proposal of the pair. Severity lowered because every AI row lands status='proposed' (:158) and only a human can promote it (decideFlow), so the missing signal costs review ergonomics, never a bad edge in the topology.
@@ -287,6 +287,20 @@ flows/read/route.ts:162 is the only use of `f.confidence`. There is no threshold
 - [ ] the confidence a proposal carries is visible in the review UI without opening raw JSON
 - [ ] a missing confidence is treated as unknown rather than silently 0.5
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: a flow returned with no confidence was stored as 0.5 (`expected 0.5 to be null`). Decision: `DEC-80` item 5, the plan's default — never auto-confirmed (a number is not a source, GAP-303).
+
+What landed:
+- `lib/flowsRead.ts` `readConfidence` keeps the number the model gave, clamped to 0–1, and null when it gave none or gave a non-number. Unknown is never a default. The route stores `evidence.confidence` that way and answers `lowConfidence` (below `LOW_CONFIDENCE` 0.5, or unknown).
+- FlowPanel and the plant-wide list show each AI proposal's confidence on its row ("90% sure", "confidence unknown"). Proposals below 0.5 or unknown sit apart, under "Low confidence — the reader was unsure, or gave no confidence; check the drawing before confirming".
+- Every proposal still needs a person.
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("PR-7: confidence is kept as the model gave it, null when absent …"), `lib/__tests__/flowsReadRoute.test.ts` ("a missing confidence is stored as unknown (null), never 0.5 …"), `lib/__tests__/processFlowsLib.test.ts` ("confidence — PR-7"), `lib/__tests__/flowPanelRender.test.ts` ("an AI proposal with no confidence sits in the low-confidence bucket …").
+
+**Done-when.**
+1. ✓ Low-confidence flows are clearly bucketed in the review list (stored, never withheld or auto-confirmed).
+2. ✓ The confidence is visible on the row without opening raw JSON.
+3. ✓ A missing confidence is unknown (null), not 0.5.
+
 ---
 
 <a id="pr-8"></a>
@@ -294,7 +308,7 @@ flows/read/route.ts:162 is the only use of `f.confidence`. There is no threshold
 ## PR-8 · The PFD reader crashes to a bare 500 on malformed model JSON, after the call is already billed
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:140-141`, `app/api/flows/read/route.ts:135-138`, `lib/orchestrator/protocol.ts:32-52`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The unguarded JSON.parse after a billed call is real. Severity lowered: lib/orchestrator/protocol.ts:32-52 returns null for unbalanced output ('unbalanced — truncated output, usually a token limit'), which is the common malformed case, so only balanced-but-invalid JSON throws; the blast radius is one wasted call and a generic error for one admin, with nothing written and no state corrupted.
@@ -313,6 +327,16 @@ flows/read/route.ts:135-141 — `} catch (e) { … return bad((e as Error).messa
 
 - [ ] the JSON.parse is inside a try that returns a 502 naming the malformed-response case, matching cost-docs and quality-manual
 - [ ] the response distinguishes 'the model read the drawing but replied badly — retry' from 'the drawing has no readable flows'
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: balanced-but-invalid JSON (`{flows: [{from: A1}]}`) threw out of `POST` (`SyntaxError: Expected property name …`) after the call was billed.
+
+What landed: `lib/flowsRead.ts` `parseFlowReply(block)` returns the flows, or `no_json` (no balanced block — a reply cut off at the token limit), or `malformed` (invalid JSON, or `flows` not an array). It never throws. The route answers either failure with a readable 502: "The AI read the drawing but replied in a form that couldn't be understood, so nothing was written. The call was charged to your key — try the read again." It carries `malformedReply: true` and the pages read. A reply of `{"flows": []}` stays "no flows".
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("parseFlowReply — PR-8 …"), `lib/__tests__/flowsReadRoute.test.ts` ("balanced but invalid JSON is a readable 502 …"; "a reply cut off at the token limit (no JSON) is the same 502, not 'no flows found'").
+
+**Done-when.**
+1. ✓ The parse is guarded and the failure is a 502 that names the malformed-response case.
+2. ✓ The response distinguishes "the model read the drawing but replied badly — retry" from "the drawing has no readable flows".
 
 ---
 
@@ -456,7 +480,7 @@ Tests:
 ## PR-12 · Three provider-calling routes send document pages and row data without the signed acceptable-use agreement
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-09 PROCESS FLOWS & OPERATING AREAS (criterion 1, and criterion 2's locate status code) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:106-132`, `app/api/knowledge/locate/route.ts:171-215`, `app/api/templates/generate/route.ts:177-238`, `lib/ai/pricing.ts:29-33`, `lib/ai/governedCall.ts:50-61`
@@ -494,5 +518,16 @@ Two search shapes confirm the set: `grep -rn ai_key_agreements` and `grep -rn AG
 3. ✓ A test asserts every route importing a provider call either runs the gates, checks `AGREEMENT_VERSION`, or is named with its owner.
 
 **Scope / residual.** OPEN until I-09 lands criterion 1 and settles criterion 2's locate status code (I-07's limb is merged).
+
+**Resolution (2026-10-01, intelligence Round G, I-09 — criterion 1, and the locate status code).**
+- **Criterion 1.** `app/api/flows/read/route.ts` calls the model through `governedAiCall` with its page images (`op: "flowRead"`, `maxTokens` 1600, a timeout budgeted from the route's deadline). `assertAiGates` runs first so a refusal costs no render (`GOV-11`). The inline key → allowlist → cap → `callAiModel` → `recordAskUsage` stack is gone, and so are both stale "doesn't carry images" comments. Reproduced first: the base route never read `ai_key_agreements`.
+- **Criterion 2, locate's status code.** Decision, recorded as `DEC-80` item 7: **keep locate's 200 with `agreementRequired` / `agreementText` / `agreementVersion`.** Opening a drawing must keep its free answer — the cached text-layer positions, `notOnPage` and the library-wide "elsewhere" jumps, none of which spends anything — and a 428 would turn opening a sheet into an error for an unsigned member. The agreement IS checked before the first provider call, and nothing is sent unsigned (I-07's gate, `intelRoundGDrawingRoutes.test.ts`). A client may prompt on `agreementRequired`. `app/api/knowledge/locate/**` is I-18's; nothing there changed.
+
+Tests: `lib/__tests__/aiGateCensus.test.ts` ("flows/read is GATED …": no direct provider call, `assertAiGates` before the render, `governedAiCall` with `images`, no stale comment), `lib/__tests__/flowsReadRoute.test.ts` (the GOV-11 / PR-12 cases).
+
+**Done-when.**
+1. ✓ flows/read calls `governedAiCall` with its images; both stale comments are deleted.
+2. ✓ templates/generate (I-05: 428). knowledge/locate checks the agreement before its first provider call and answers 200 with the agreement fields, by the decision recorded above, rather than the criterion's 428.
+3. ✓ (I-05) The census.
 
 ---

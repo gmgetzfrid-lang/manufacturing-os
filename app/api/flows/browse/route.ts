@@ -2,7 +2,8 @@
 //
 // Returns the org's DOCUMENT-CONTROL tree (libraries → nested folders →
 // every controlled document, no caps) with each document's AI state:
-// ready to read, waiting on a sync, in a folder no knowledge library
+// ready to read, still indexing, indexing FAILED (with the stored reason —
+// FLOW-7), waiting on a sync, in a folder no knowledge library
 // watches, not a PDF, superseded, fileless, or held back by a controller.
 // Plus the PDFs uploaded straight into knowledge libraries. A folder that
 // exists on the Documents side can never be missing here — it shows up
@@ -37,6 +38,8 @@ const displayName = (d: { name: string | null; title: string | null; document_nu
 
 export async function GET(req: NextRequest) {
   const orgId = (req.nextUrl.searchParams.get("orgId") ?? "").trim();
+  // AREA-5: the operating area the picker was opened from (optional).
+  const unitCode = (req.nextUrl.searchParams.get("unitCode") ?? "").trim();
   if (!orgId) return bad("orgId is required", 400);
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!token) return bad("Not signed in", 401);
@@ -57,8 +60,8 @@ export async function GET(req: NextRequest) {
   for (let from = 0; from < MAX_DOCS; from += 1000) {
     const { data, error } = await supabaseAdmin
       .from("knowledge_documents")
-      .select("id, name, library_id, page_count, status, source_document_id")
-      .eq("org_id", orgId).order("name").range(from, from + 999);
+      .select("id, name, library_id, page_count, status, source_document_id, error")
+      .eq("org_id", orgId).order("name").order("id").range(from, from + 999);
     if (error) return bad(`Couldn't load documents: ${error.message}`, 500);
     for (const d of data ?? []) {
       knowledgeDocs.push({
@@ -68,6 +71,8 @@ export async function GET(req: NextRequest) {
         pageCount: (d.page_count as number | null) ?? null,
         status: (d.status as string | null) ?? null,
         sourceDocumentId: (d.source_document_id as string | null) ?? null,
+        // FLOW-7: a failed ingest carries its stored reason to the row.
+        error: (d.error as string | null) ?? null,
       });
     }
     if ((data ?? []).length < 1000) break;
@@ -211,6 +216,16 @@ export async function GET(req: NextRequest) {
   }
 
   const knowledgeLibraries = (libRows ?? []) as Array<{ id: string; name: string }>;
+  // AREA-5: the area's bound knowledge library, so the picker opens on the
+  // area's own shelf (the codebook unit's meta.knowledgeLibraryId).
+  let areaKnowledgeLibrary: { id: string; name: string } | null = null;
+  if (unitCode) {
+    const { data: unitRow } = await supabaseAdmin
+      .from("codebook_entries").select("meta")
+      .eq("org_id", orgId).eq("kind", "unit").eq("code", unitCode).maybeSingle();
+    const bound = (((unitRow as { meta?: { knowledgeLibraryId?: string } | null } | null)?.meta?.knowledgeLibraryId) ?? "").trim();
+    areaKnowledgeLibrary = bound ? knowledgeLibraries.find((l) => l.id === bound) ?? null : null;
+  }
   const { tree, uploads } = assembleFlowsBrowse({
     knowledgeLibraries, knowledgeDocs: visibleKdocs, sources,
     dcLibraryNames, dcFolders, dcDocs: visibleDcDocs, nonPdfDocIds,
@@ -219,6 +234,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     tree, uploads,
     knowledgeLibraries,
+    areaKnowledgeLibrary,
     canSync: principal.isController,
   });
 }

@@ -304,7 +304,7 @@ supabase/migrations/20260929_mention_engine.sql:74-76 — `CREATE POLICY entity_
 ## IEDGE-7 · process_flows RLS lets any active member INSERT a flow edge with arbitrary status, origin, source_document_id and decided_by_name — the plant's topology and the proposed/confirmed distinction are forgeable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20261017_process_flows.sql:49-55`, `supabase/migrations/20261017_process_flows.sql:22-33`, `supabase/migrations/20260807_link_proposals.sql:83-90`, `lib/processFlows.ts:36-48`, `app/api/flows/read/route.ts:152-166`
 - **Also surfaced independently as** [`IRLS-11`](./16-persistence-rls.md#irls-11) — two lenses found this separately. Fix once.
@@ -327,6 +327,17 @@ supabase/migrations/20261017_process_flows.sql:50-55 — `CREATE POLICY process_
 - [ ] decided_by_name cannot be set by the inserting client at all — it is derived server-side from decided_by
 - [ ] A test inserts a forged confirmed edge as a Viewer and asserts the write is rejected or downgraded
 
+**Resolution (2026-10-01, intelligence Round G).** One root with `FLOW-2` / `AREA-3` / `IRLS-11`; the migration, the policy lineDiff and the scratch PostgreSQL 16 cases are on `FLOW-2`. Reproduced first: the scratch database accepted a Viewer's insert of `status 'confirmed', origin 'ai'` with a real PFD as its source and a controller's name as `decided_by_name` before the paste.
+
+What landed: `20261155` `process_flows_guard()` refuses a person's `origin 'ai'` and any source, page, revision or evidence (42501). It downgrades a non-controller's status to `proposed` and forces `decided_by` / `decided_at` / `decided_by_name` to NULL on a proposal. On a person's decision it stamps them as the deciding person (uid, `now()`, the member's address); on any other update it keeps them as they were. `decided_by_name` and `created_by_name` are never what a client sent. The reader (the service role) keeps writing AI proposals.
+
+**Done-when.**
+1. ✓ A BEFORE INSERT trigger forces `proposed` and safe `origin` / `decided_*` for non-controllers. Only the controller tier writes a confirmed edge, and only the service role an AI-attributed one.
+2. ✓ `decided_by_name` is derived by the database from the deciding person; the inserting client cannot set it.
+3. ✓ A forged confirmed edge from a Viewer is downgraded, and the forged AI one refused: the scratch-database cases on `FLOW-2` (1, 2), and the shape test `intelRoundGProcessFlowsMigration.test.ts`.
+
+**Scope / residual.** Pending migration `20261155`. Fix pass: the first version of the guard refused the foreign key's `ON DELETE SET NULL` on `source_document_id`, so a cited knowledge document, controlled document or library could not be deleted by a person. The guard now lets a source be cleared, and still refuses setting or retargeting one. The correction and its scratch cases are on `FLOW-2`. No forged provenance can be written: every other provenance column stays fixed, and clearing a citation removes provenance, never adds it.
+
 ---
 
 <a id="iedge-8"></a>
@@ -334,7 +345,7 @@ supabase/migrations/20261017_process_flows.sql:50-55 — `CREATE POLICY process_
 ## IEDGE-8 · A dismissed or hand-drawn flow pair permanently blocks the PFD reader from ever proposing that connection again, and one collision aborts the whole batch after the model has been billed
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/flows/read/route.ts:81-88`, `app/api/flows/read/route.ts:149-151`, `app/api/flows/read/route.ts:168-173`, `supabase/migrations/20261017_process_flows.sql:36`, `app/api/flows/read/route.ts:118-133`
 - **Re-verified:** hardening pass — **SURVIVES**. `settled` is built from **every** `process_flows` row for the org (`flows/read:82-88`) with no filter on origin or state, and `if (settled.has(key)) { skippedSettled += 1; continue; }` (`:150`). Any pre-existing pair — hand-drawn or dismissed — permanently suppresses re-extraction of that pair.
@@ -355,6 +366,25 @@ app/api/flows/read/route.ts:82-88 — `const { data: prior } = await supabaseAdm
 - [ ] settled is restricted to genuinely decided rows (status IN ('confirmed','dismissed')), and a dismissal is scoped to the source revision it was made against so a revised PFD can re-propose
 - [ ] The insert is per-row or upsert-with-ignore so one collision cannot discard a whole reading
 - [ ] skippedSettled is surfaced to the user with the reason per pair, not folded into a 'no new flows' message
+
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first on the base route: a pair dismissed on an earlier reading blocked the same pair on a revised drawing for good ("IEDGE-8: a dismissal from an older revision blocks the revised drawing forever": `expected +0 to be 1`). One duplicate pair failed the whole batch insert with a 500 after the call was metered ("FLOW-12 …": `expected 500 to be 200`). Decision: `DEC-80` item 6.
+
+What landed:
+- `20261155` adds `process_flows.source_version_id`: the knowledge document's revision a proposal was read from. A person can never set it; the reader writes it.
+- `lib/flowsRead.ts` `reproposable`: a dismissal of THIS document's AI reading at a recorded revision may be re-proposed when the document is read at another revision. Any other dismissal sticks: no revision recorded (hand-drawn rows, uploads, every row before `20261155`), another document's reading, or a read whose revision is unknown.
+- The route re-proposes in place: a service-role UPDATE guarded `.eq("status", "dismissed")` to `proposed`, with the new revision, page, evidence (`previousRevision`) and the decision cleared. A row decided again meanwhile is left and counted.
+- The revision read is the mirror's `source_version_id` when the file the document gate resolved IS the mirror's file. A mirror a sync has not caught up with reads the controlled document's current file, and records the revision as unknown.
+- The write is tolerant (`FLOW-12`).
+- Every pair found but not proposed is in the answer with its reason (`skippedPairs`: already on the map / awaiting review / dismissed — stands until the drawing is revised / over the per-read limit / written by someone else meanwhile). The modal lists up to six of them.
+
+Tests: `lib/__tests__/flowsRead.test.ts` ("IEDGE-8: a dismissal of THIS document's reading at an older revision is re-proposed on a new revision; on the same revision it sticks"; "a dismissal sticks when …"), `lib/__tests__/flowsReadRoute.test.ts` ("the drawing revised (rev2): the dismissed pair is re-proposed in place, with the new revision"; "before 20261155 (no source_version_id): … every dismissal sticks"; the `skippedPairs` assertions).
+
+**Done-when.**
+1. ✓ — the revision limb to the letter; the status limb in effect. Settled is "a person decided": confirmed, or dismissed on this revision. A dismissal is scoped to the revision it judged, so a revised PFD can re-propose. A `proposed` pair is still not re-proposed. It is skipped and reported apart as "awaiting review" (`skippedPending`), never counted as a dismissal or as settled. So the literal `status IN ('confirmed','dismissed')` is not how the code reads it. Re-proposing a pending pair could not land anyway: `20261017`'s `UNIQUE (org_id, from_kind, from_ref, to_kind, to_ref)` refuses a second row for it. The harm the criterion named — a pending row treated as a decision — is gone.
+2. ✓ The insert is an upsert-with-ignore, falling back to one row at a time (`FLOW-12`); one collision cannot discard a reading.
+3. ✓ Each skipped pair is surfaced with its reason, never folded into "no new flows".
+
+**Scope / residual.** Pending migration `20261155` (the column). Until it is pasted, the route reads and writes without it and every dismissal sticks.
 
 ---
 

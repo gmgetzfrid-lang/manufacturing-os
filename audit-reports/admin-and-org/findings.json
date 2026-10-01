@@ -8,16 +8,16 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 56,
+    "findings": 57,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 28,
-      "LOW": 6
+      "LOW": 7
     },
     "by_status": {
-      "OPEN": 45,
+      "OPEN": 46,
       "RESOLVED": 11
     }
   },
@@ -1463,6 +1463,29 @@
       ],
       "refuted": false,
       "summary": "An admin starts a full backup, cancels after 200 of 9,000 drawings, and keeps the downloaded part. The archive is internally consistent, its report claims full SHA-256 verification, and nothing in the ZIP records that 8,800 files are missing. Years later, in a PSM records request or a tenant-loss recovery, that archive is treated as the backup of record. The same report is what components/archive/",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/02-backup-restore.md"
+    },
+    {
+      "id": "BKP-15",
+      "title": "A restore refuses a process flow whose endpoint is gone — the dangling flows a backup carries are reported as failed rows, not restored as what they were",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (verified by intelligence I-09's second review on a throwaway PostgreSQL 16, recorded in intelligence `FLOW-6`'s record, \"Open handoff to admin-and-org (BKP restore fidelity)\")",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261155_intel_roundG_process_flows_authority.sql",
+        "lib/dataRestore.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An org restores a backup holding three flows to an asset deleted before the paste. The restore completes, but its report lists three failed processflows rows with a generic reason; the operator cannot tell they were already dangling in the source, and the restored workspace silently differs from the backup by those rows.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/02-backup-restore.md"
     },

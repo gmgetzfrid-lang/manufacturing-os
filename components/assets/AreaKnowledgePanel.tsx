@@ -6,7 +6,13 @@
 //   1. ORDER OF OPERATIONS, live: file drawings → connect the area's
 //      knowledge → deep read (flows / equipment / plot) → link equipment
 //      files. Each step shows real state and launches its tool — the user
-//      never has to remember the sequence.
+//      never has to remember the sequence. A step is done when its COVERAGE
+//      is (AREA-8): every flow drawing on the area's shelf (a PFD, P&ID or
+//      block diagram by title or folder — not the data sheets and manuals
+//      beside them) read for flows, every piece of the area's equipment with
+//      a linked document —
+//      one occurrence is "in progress", and a folder that merely carries the
+//      area's name is a suggestion, never a filed drawing.
 //   2. THE SETUP WIZARD: creates (or picks) this unit's knowledge library
 //      and links its folders across the type-first doc-control libraries
 //      (PFDs/<unit>, P&IDs/<unit>, Plot Plans/<unit>…) — with the unit's
@@ -32,6 +38,7 @@ import {
   removeKnowledgeSource, browseKnowledgeContainers, type SourceBrowseResult,
 } from "@/lib/knowledge";
 import { listProcessFlows } from "@/lib/processFlows";
+import { unitGraphHref } from "@/components/assets/UnitOpsPanels";
 
 /** Bind the area server-side — the same controller bar as every other
  *  knowledge mutation, and a denied write is a loud error, never a silent
@@ -63,6 +70,9 @@ interface AreaStatus {
     newMatches: Array<{ id: string; name: string; libraryName: string; pathNames: string[]; docCount: number }>;
   };
   suggestions: Array<{ id: string; name: string; libraryName: string; pathNames: string[]; docCount: number }>;
+  /** AREA-8: the flow drawings on the area's shelf, how many were read for
+   *  flows, and the other documents beside them (not counted). */
+  flowReads?: { readable: number; read: number; otherDocs?: number } | null;
   canManage: boolean;
 }
 
@@ -82,6 +92,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   // Client-side deep-read signals — RLS lets any member count them.
   const [flowCount, setFlowCount] = useState<number | null>(null);
   const [docLinkCount, setDocLinkCount] = useState<number | null>(null);
+  // AREA-8: how many of the area's equipment have at least one linked document.
+  const [linkedAssetCount, setLinkedAssetCount] = useState<number | null>(null);
+  // The document_assets read behind both counts failed: "could not be
+  // counted", never "0 of N" (AREA-8).
+  const [linksUnread, setLinksUnread] = useState(false);
   const [plotMarkCount, setPlotMarkCount] = useState<number | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -101,6 +116,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
 
   useEffect(() => {
     let alive = true;
+    let linksSettled = false;
     (async () => {
       const assetSet = new Set(unitAssetIds);
       const flows = await listProcessFlows(orgId);
@@ -118,18 +134,28 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         // chunk's links are paged — a checklist that says "12 documents
         // linked" must mean 12, not "12 among the slice we looked at".
         const docIds = new Set<string>();
-        for (let i = 0; i < unitAssetIds.length; i += 200) {
+        const linkedAssets = new Set<string>();
+        let failed = false;
+        for (let i = 0; i < unitAssetIds.length && !failed; i += 200) {
           const chunk = unitAssetIds.slice(i, i + 200);
           for (let from = 0; ; from += 1000) {
-            const { data: links } = await supabase.from("document_assets")
-              .select("document_id").in("asset_id", chunk)
-              .order("document_id").range(from, from + 999);
-            for (const l of links ?? []) docIds.add(l.document_id as string);
+            const { data: links, error: linksError } = await supabase.from("document_assets")
+              .select("document_id, asset_id").in("asset_id", chunk)
+              .order("document_id").order("asset_id").range(from, from + 999);
+            if (linksError) { failed = true; break; }
+            for (const l of links ?? []) {
+              docIds.add(l.document_id as string);
+              linkedAssets.add(l.asset_id as string);
+            }
             if (!links || links.length < 1000 || from >= 20000) break;
           }
         }
-        if (alive) setDocLinkCount(docIds.size);
-      } else if (alive) setDocLinkCount(0);
+        linksSettled = true;
+        if (alive) {
+          setLinksUnread(failed);
+          if (!failed) { setDocLinkCount(docIds.size); setLinkedAssetCount(linkedAssets.size); }
+        }
+      } else if (alive) { linksSettled = true; setLinksUnread(false); setDocLinkCount(0); setLinkedAssetCount(0); }
       // Every plot plan, paged — the old .limit(50) undercounted markers on
       // sites with more than 50 plans.
       let marks = 0;
@@ -145,7 +171,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
         if (!plots || plots.length < 100 || from >= 2000) break;
       }
       if (alive) setPlotMarkCount(marks);
-    })().catch(() => { if (alive) { setFlowCount(0); setDocLinkCount(0); setPlotMarkCount(0); } });
+    })().catch(() => { if (alive) { setFlowCount(0); if (!linksSettled) setLinksUnread(true); setPlotMarkCount(0); } });
     return () => { alive = false; };
   }, [orgId, unit.code, unitAssetIds]);
 
@@ -189,11 +215,23 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   // invitation, not a defect, and must not hold step 2 hostage forever.
   const needsReview = !!drift && (drift.deadSources.length > 0 || drift.movedOutTotal > 0);
   const knowledgeDone = !!status?.boundLibrary && status.sources.length > 0 && !needsReview;
-  const drawingsDone = status
-    ? (status.boundLibrary
-        ? status.counts.ready + status.counts.pending > 0
-        : status.suggestions.some((s) => s.docCount > 0))
-    : false;
+  // Step 1 is done only when the area's shelf holds its drawings; a folder
+  // named like the area is a suggestion, not a filed drawing (AREA-8).
+  const drawingsDone = !!status?.boundLibrary && status.counts.ready + status.counts.pending > 0;
+  const suggested = !status?.boundLibrary ? (status?.suggestions ?? []).filter((s) => s.docCount > 0) : [];
+  // Step 3: flow drawings read for flows, over every flow drawing on the shelf.
+  const reads = status?.flowReads ?? null;
+  const readState: "done" | "partial" | "todo" | "loading" = status === null ? "loading"
+    : !reads ? "todo"
+    : reads.readable > 0 && reads.read >= reads.readable ? "done"
+    : reads.read > 0 ? "partial" : "todo";
+  // Step 4: equipment with a linked document, over the area's equipment.
+  const areaTotal = unitAssetIds.length;
+  const linkState: "done" | "partial" | "todo" | "loading" | "unknown" = status === null ? "loading"
+    : linksUnread ? "unknown"
+    : linkedAssetCount === null ? "loading"
+    : areaTotal > 0 && linkedAssetCount >= areaTotal ? "done"
+    : linkedAssetCount > 0 ? "partial" : "todo";
 
   const scrollToFlows = () => {
     document.getElementById("area-flow-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -201,7 +239,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
 
   const Step = ({ n, title, state, children, action }: {
     n: number; title: string;
-    state: "done" | "review" | "todo" | "loading";
+    state: "done" | "partial" | "review" | "todo" | "loading" | "unknown";
     children: React.ReactNode;
     action?: React.ReactNode;
   }) => (
@@ -209,6 +247,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-[11px] font-black mt-0.5 ${
         state === "done" ? "bg-emerald-500 text-white"
         : state === "review" ? "bg-amber-400 text-amber-950"
+        : state === "partial" ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300"
         : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border-strong)]"
       }`}>
         {state === "done" ? <Check className="w-3.5 h-3.5" /> : state === "loading" ? <Loader2 className="w-3 h-3 animate-spin" /> : n}
@@ -219,6 +258,16 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           {state === "review" && (
             <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
               needs review
+            </span>
+          )}
+          {state === "partial" && (
+            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+              in progress
+            </span>
+          )}
+          {state === "unknown" && (
+            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
+              not counted
             </span>
           )}
         </div>
@@ -247,6 +296,10 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             ) : "The setup path for this operating area, in order — each step shows its live state."}
           </div>
         </div>
+        <Link href={unitGraphHref(unit.code)} title="Open the graph on this operating area"
+          className="text-[10px] font-black text-violet-700 dark:text-violet-300 hover:underline shrink-0">
+          Show on the graph →
+        </Link>
         {status?.boundLibrary && status.canManage && (
           <button type="button" onClick={() => void syncNow()} disabled={syncing}
             className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-violet-700 hover:border-violet-400 disabled:opacity-50 shrink-0">
@@ -315,6 +368,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           state={status === null ? "loading" : drawingsDone ? "done" : "todo"}>
           Type-first folders work best: <b>PFDs / {unit.label}</b>, <b>P&amp;IDs / {unit.label}</b>, <b>Plot Plans / {unit.label}</b>.
           {" "}<Link href="/documents" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Open Documents <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
+          {suggested.length > 0 && (
+            <span className="block mt-0.5">
+              Suggested: <b>{suggested[0].libraryName} / {suggested[0].pathNames.join(" / ")}</b> ({suggested[0].docCount} doc{suggested[0].docCount === 1 ? "" : "s"}){suggested.length > 1 ? ` and ${suggested.length - 1} more` : ""} — a folder named for this area; connect it in step 2 to count its drawings as this area&apos;s.
+            </span>
+          )}
         </Step>
         <Step n={2} title="Connect the area's knowledge"
           state={status === null ? "loading" : knowledgeDone ? "done" : needsReview ? "review" : "todo"}
@@ -329,7 +387,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             : <>One knowledge library per area keeps its answers pure — asking {unit.label} never surfaces another unit&apos;s drawings. The wizard finds this area&apos;s folders for you.</>}
         </Step>
         <Step n={3} title="Deep read the drawings"
-          state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
+          state={flowCount === null ? "loading" : readState}
           action={
             <button type="button" onClick={scrollToFlows}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-cyan-700 hover:border-cyan-400">
@@ -337,14 +395,31 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             </button>
           }>
           <span className="inline-flex items-center gap-2 flex-wrap">
-            <span><b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
-            <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>
+            <span>
+              {reads
+                ? reads.readable > 0
+                  ? <><b>{reads.read}</b> of <b>{reads.readable}</b> flow drawing{reads.readable === 1 ? "" : "s"} (PFDs, P&amp;IDs, block diagrams) read for flows</>
+                  : <>no PFD, P&amp;ID or block diagram on the shelf by title or folder — read one from the flow panel below</>
+                : status?.boundLibrary ? "drawings read for flows could not be counted" : "connect the area's knowledge to measure the deep read"}
+              {reads && (reads.otherDocs ?? 0) > 0 && (
+                <span className="text-[var(--color-text-faint)]"> · {reads.otherDocs} other document{reads.otherDocs === 1 ? "" : "s"} on the shelf (data sheets, manuals…) not counted</span>
+              )}
+            </span>
+            <span>· <b>{flowCount ?? "…"}</b> process flow{flowCount === 1 ? "" : "s"}</span>
+            {linksUnread
+              ? <span>· linked documents could not be counted</span>
+              : <span>· <b>{docLinkCount ?? "…"}</b> linked document{docLinkCount === 1 ? "" : "s"}</span>}
             <span>· <b>{plotMarkCount ?? "…"}</b> plot marker{plotMarkCount === 1 ? "" : "s"}</span>
             <Link href="/plot-plans" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
         <Step n={4} title="Link equipment files to assets"
-          state={status === null || docLinkCount === null ? "loading" : docLinkCount > 0 ? "done" : "todo"}>
+          state={linkState}>
+          {linksUnread ? (
+            <span className="block">Equipment with a linked document could not be counted — the document links could not be read. Reload to try again.</span>
+          ) : linkedAssetCount !== null && (
+            <span className="block"><b>{linkedAssetCount}</b> of <b>{areaTotal}</b> equipment item{areaTotal === 1 ? "" : "s"} in this area {linkedAssetCount === 1 ? "has" : "have"} a linked document.</span>
+          )}
           Open any asset below → <b>+ Link document</b> attaches its data sheets and files; drawings that print the tag link themselves.
         </Step>
       </div>
