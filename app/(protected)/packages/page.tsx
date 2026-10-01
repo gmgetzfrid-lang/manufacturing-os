@@ -22,15 +22,20 @@ import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
+import { isControllerPrincipal } from "@/lib/permissions";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
-  setWorkPackageStatus, type WorkPackage,
+  setWorkPackageStatus, coverEntryLabels, mergeLeftOut, type WorkPackage,
 } from "@/lib/workPackages";
 
 interface DocPick { id: string; label: string; rev: string | null }
 
 export default function PackagesPage() {
-  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole, roles } = useRole();
+  // DRLS-10 / PKG-5: moving pins and closing a package are the owner's or a
+  // controller's (the controller tier is a property of the role COLLECTION).
+  const isController = isControllerPrincipal({ role: activeRole, roles });
+  const canManage = (pkg: WorkPackage) => pkg.ownerUserId === uid || isController;
   const { showToast } = useToast();
   // Scan landing: the QR on a printed cover sheet lands here with ?pkg= —
   // highlight that package so the verdict is instant.
@@ -117,7 +122,10 @@ export default function PackagesPage() {
     if (!ok) return;
     setBusyId(pkg.id);
     try {
-      await refreshWorkPackage(pkg.id);
+      await refreshWorkPackage(pkg.id, {
+        actor: uid ? { userId: uid, email: userEmail } : undefined,
+        reason: "refresh",
+      });
       await load();
       showToast({ type: "success", title: "Package refreshed", message: "All pins moved to the current revisions. Re-print the pack." });
     } catch (e) {
@@ -156,11 +164,12 @@ export default function PackagesPage() {
     if (!activeOrgId || !uid) return;
     setPrinting(pkg.id);
     try {
-      const { buildPackageCover } = await import("@/lib/physicalBridge");
+      const { buildPackageCover, coverContentsChunks } = await import("@/lib/physicalBridge");
       const { buildAndDownloadDocPack, assessPackDocs } = await import("@/lib/docPack");
       // Gate first: which sheets CAN be printed? Nothing is recorded or
-      // refreshed for a pack that would produce no paper.
-      const assessment = await assessPackDocs(pkg.docs.map((d) => d.documentId));
+      // refreshed for a pack that would produce no paper. The printer's
+      // read-&-understood gate is part of it (PKG-9).
+      const assessment = await assessPackDocs(pkg.docs.map((d) => d.documentId), { userId: uid });
       if (assessment.packable.length === 0) {
         const first = assessment.skipped[0];
         showToast({
@@ -170,7 +179,7 @@ export default function PackagesPage() {
         });
         return;
       }
-      const canMovePins = pkg.ownerUserId === uid || hasAnyRole(["Admin", "DocCtrl"]);
+      const canMovePins = canManage(pkg);
       const packableById = new Map(assessment.packable.map((s) => [s.id, s]));
       let pinNote = "";
       // PKG-6 ordering: the failure-prone content assembly runs FIRST. The
@@ -183,12 +192,15 @@ export default function PackagesPage() {
         documentIds: assessment.packable.map((s) => s.id),
         userId: uid,
         userEmail,
-        buildCoverAfter: async (includedSheets) => {
+        buildCoverAfter: async (includedSheets, builderSkipped) => {
           // Immutable print snapshot of exactly this paper (PKG-2); the
           // recorded version is each sheet's CURRENT revision — what docPack
           // prints — so a non-owner's print (pins untouched) is described
-          // truthfully. Best-effort inside recordPackagePrint: on failure the
-          // print proceeds with the legacy package-level QR.
+          // truthfully. It also records every package sheet this print LEFT
+          // OUT, with why (VFY-19), so the cover scan can tell "left out of
+          // this printing" from "added since". A snapshot that cannot be
+          // written STOPS the print here — nothing downloaded, no pin moved
+          // (VFY-18: never a cover whose QR can never be verified).
           const printId = await recordPackagePrint({
             orgId: activeOrgId,
             packageId: pkg.id,
@@ -200,7 +212,14 @@ export default function PackagesPage() {
               revLabel: packableById.get(s.documentId)?.rev ?? null,
               label: s.label,
             })),
+            leftOut: mergeLeftOut(assessment.skipped, builderSkipped).flatMap((s) =>
+              s.documentId && s.code
+                ? [{ documentId: s.documentId, label: s.label, code: s.code, reason: s.reason, versionId: s.versionId ?? null }]
+                : []),
           });
+          // PKG-12: every cover entry carries its page(s) in this pack — the
+          // cover's own pages come first.
+          const labels = coverEntryLabels(includedSheets, coverContentsChunks(includedSheets.length).length);
           return buildPackageCover({
             packageId: pkg.id,
             printId,
@@ -208,8 +227,8 @@ export default function PackagesPage() {
             description: pkg.description,
             ownerName: pkg.ownerName,
             printedByName: userEmail?.split("@")[0] ?? null,
-            docs: includedSheets.map((s) => ({
-              label: s.label,
+            docs: includedSheets.map((s, i) => ({
+              label: labels[i],
               rev: packableById.get(s.documentId)?.rev ?? null,
             })),
           });
@@ -219,6 +238,8 @@ export default function PackagesPage() {
           try {
             await refreshWorkPackage(pkg.id, {
               onlyDocumentIds: includedSheets.map((s) => s.documentId),
+              actor: { userId: uid, email: userEmail },
+              reason: "print",
             });
           } catch (e) {
             // The paper is already printed and correctly snapshotted — an
@@ -231,9 +252,13 @@ export default function PackagesPage() {
       // Refusals from the gate plus anything the builder itself had to drop
       // (missing file, fetch failure) — the crew sees the full left-out list,
       // and skipped sheets never have their pins moved.
-      const leftOut = [...assessment.skipped, ...result.skipped];
+      const leftOut = mergeLeftOut(assessment.skipped, result.skipped);
+      // EGR-6: a copy that is not on the distribution record is said.
+      const unrecordedNote = result.unrecorded.length > 0
+        ? ` ${result.unrecorded.length} sheet${result.unrecorded.length === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused) — tell Document Control.`
+        : "";
       showToast({
-        type: leftOut.length > 0 || pinNote ? "warning" : "success",
+        type: leftOut.length > 0 || pinNote || unrecordedNote ? "warning" : "success",
         title: canMovePins && !pinNote ? "Pack printed & pins refreshed" : "Pack printed — pins unchanged",
         message:
           `${result.included} drawing${result.included === 1 ? "" : "s"}, cover sheet with live-status QR on top.` +
@@ -241,7 +266,8 @@ export default function PackagesPage() {
             ? ` Left out (pins not moved): ${leftOut.map((s) => `${s.label} (${s.reason})`).join(", ")}.`
             : "") +
           (canMovePins ? "" : " Moving pins needs the package owner or Document Control.") +
-          pinNote,
+          pinNote +
+          unrecordedNote,
       });
     } catch (e) {
       showToast({ type: "error", title: "Couldn't print the pack", message: (e as Error).message });
@@ -251,7 +277,7 @@ export default function PackagesPage() {
   };
 
   const staleTotal = useMemo(
-    () => (packages ?? []).filter((p) => p.staleCount > 0).length,
+    () => (packages ?? []).filter((p) => p.staleCount > 0 || p.unknownCount > 0).length,
     [packages],
   );
 
@@ -292,6 +318,10 @@ export default function PackagesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {packages.map((pkg) => {
             const stale = pkg.staleCount > 0;
+            // PKG-7: a member this reader cannot open is "unknown" — the
+            // package is never shown plainly Fresh over it.
+            const unknown = !stale && pkg.unknownCount > 0;
+            const manage = canManage(pkg);
             return (
               <div
                 key={pkg.id}
@@ -300,8 +330,8 @@ export default function PackagesPage() {
                 } ${highlightId === pkg.id ? "ring-4 ring-blue-300 animate-in zoom-in-95" : ""}`}
               >
                 <div className={`px-4 py-3 flex items-center gap-2 border-b ${stale ? "border-amber-200 bg-amber-100/50" : "border-[var(--color-border)]"}`}>
-                  {stale
-                    ? <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  {stale || unknown
+                    ? <AlertTriangle className={`w-4 h-4 shrink-0 ${stale ? "text-amber-600" : "text-slate-500"}`} />
                     : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-black text-[var(--color-text)] truncate">{pkg.name}</div>
@@ -309,10 +339,13 @@ export default function PackagesPage() {
                       {pkg.ownerName || "—"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
                     </div>
                   </div>
-                  <span className={`shrink-0 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
-                    stale ? "bg-amber-500 text-white" : "bg-emerald-100 text-emerald-700"
-                  }`}>
-                    {stale ? `Stale · ${pkg.staleCount}` : "Fresh"}
+                  <span
+                    className={`shrink-0 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
+                      stale ? "bg-amber-500 text-white" : unknown ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700"
+                    }`}
+                    title={unknown ? "Some sheets in this package are documents you cannot open, so whether they are current is unknown to you." : undefined}
+                  >
+                    {stale ? `Stale · ${pkg.staleCount}` : unknown ? `Unknown · ${pkg.unknownCount}` : "Fresh"}
                   </span>
                 </div>
 
@@ -323,9 +356,13 @@ export default function PackagesPage() {
                       href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
                       className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500 animate-pulse" : "bg-emerald-400"}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500 animate-pulse" : d.freshness === "unknown" ? "bg-slate-400" : "bg-emerald-400"}`} />
                       <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-blue-700 truncate flex-1">{d.docLabel}</span>
-                      {d.drifted ? (
+                      {d.freshness === "unknown" ? (
+                        <span className="text-[10px] font-bold text-slate-500 shrink-0" title="You cannot open this document, so whether its pin is current is unknown to you.">
+                          status unknown to you
+                        </span>
+                      ) : d.drifted ? (
                         <span className="text-[10px] font-bold text-amber-700 shrink-0">
                           pinned Rev {d.pinnedRevLabel ?? "?"} → now Rev {d.currentRev ?? "?"}
                         </span>
@@ -349,7 +386,7 @@ export default function PackagesPage() {
                     {printing === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
                     Print pack
                   </button>
-                  {stale && (
+                  {stale && manage && (
                     <button
                       onClick={() => void handleRefresh(pkg)}
                       disabled={busyId === pkg.id}
@@ -360,14 +397,16 @@ export default function PackagesPage() {
                       Refresh pins
                     </button>
                   )}
-                  <button
-                    onClick={() => void handleClose(pkg)}
-                    disabled={busyId === pkg.id}
-                    className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    title="Job done — stop watching"
-                  >
-                    <Archive className="w-3 h-3" /> Close
-                  </button>
+                  {manage && (
+                    <button
+                      onClick={() => void handleClose(pkg)}
+                      disabled={busyId === pkg.id}
+                      className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      title="Job done — stop watching"
+                    >
+                      <Archive className="w-3 h-3" /> Close
+                    </button>
+                  )}
                 </div>
               </div>
             );

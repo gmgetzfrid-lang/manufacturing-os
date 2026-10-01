@@ -176,13 +176,18 @@ export default function AssetHubPage() {
                         onProgress: (done, total) => setPackProgress([done, total]),
                       });
                       // "all current" is an earned claim: docPack refuses
-                      // Draft/Superseded/Void/held sheets, so zero skips means
-                      // every included sheet was Issued/Locked (or pre-status
-                      // legacy data) and hold-free (PKG-4).
+                      // every sheet outside the verify allow-list (VFY-17),
+                      // held, unreadable or ack-gated, so zero skips means
+                      // every included sheet was Issued/Locked and hold-free
+                      // (PKG-4). A copy missing from the distribution record
+                      // is said (EGR-6, document-control P8).
                       setPackNote(
-                        result.skipped.length === 0
+                        (result.skipped.length === 0
                           ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
-                          : `Pack ready — ${result.included} included; ${result.skipped.length} left out: ${result.skipped.map((s) => `${s.label} (${s.reason})`).join(", ")}.`,
+                          : `Pack ready — ${result.included} included; ${result.skipped.length} left out: ${result.skipped.map((s) => `${s.label} (${s.reason})`).join(", ")}.`) +
+                        (result.unrecorded.length > 0
+                          ? ` ${result.unrecorded.length} sheet${result.unrecorded.length === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused) — tell Document Control.`
+                          : ""),
                       );
                     } catch (e) {
                       setPackNote(`Pack failed: ${(e as Error).message}`);

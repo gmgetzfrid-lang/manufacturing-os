@@ -345,15 +345,18 @@ describe("VFY-2 review fix — a package sheet the print gate could not print is
     expect(r.notPrintable).toEqual([]);
     expect(r.verdict).toBe("stale"); // the Draft member IS on a legacy QR's "paper" (the live membership)
   });
-  it("the page never says 'added to the package since printing'", () => {
+  it("the page never says 'added to the package since printing' on its own — only from the route's VFY-19 fields, which an older snapshot never sets", () => {
     const page = readFileSync(join(process.cwd(), "app/verify-package/[packageId]/page.tsx"), "utf8");
     expect(page).not.toMatch(/since printing/i);
     expect(page).not.toContain("addedSincePrint");
     expect(page).toContain("In the package but NOT in this pack:");
     expect(page).toContain("In the package, not in this pack — cannot be printed now:");
     expect(page).toContain("notPrintableText(a.reason)");
+    // document-control P8 (VFY-19): the words for WHEN come from
+    // lib/packLeftOut.ts, gated on the route's fields
+    expect(page).toContain("missingSheetWhen(a)");
     const route = readFileSync(join(process.cwd(), "app/api/verify-package/route.ts"), "utf8");
-    expect(route).not.toContain("addedSincePrint");
+    expect(route).toContain("const when: WhenMissing = !recordsLeftOut ? {} : atPrint ? { leftOutAtPrint: atPrint.code } : { addedSincePrint: true };");
   });
 });
 
@@ -700,5 +703,124 @@ describe("fail-closed reads, the scan record and no-store", () => {
       ["stale", PRINT],
       ["unconfirmed_print", null],
     ]);
+  });
+});
+
+// ─── document-control Round F wave 2, P8 FIELD ─────────────────────────────
+
+describe("VFY-17 — the pack print gate and the verify allow-list agree on an EMPTY status", () => {
+  it("an empty-status document is refused at print (lib/docPack.ts filterPackDocs) and reads not_issued at verify (lib/verifyVerdict.ts documentStanding)", async () => {
+    const { documentStanding } = await import("@/lib/verifyVerdict");
+    vi.doMock("@/lib/supabase", () => ({ supabase: {} }));
+    vi.doMock("@/lib/stamping", () => ({ applyStampToPdfDoc: vi.fn() }));
+    vi.doMock("@/lib/intents", () => ({ recordIntent: vi.fn() }));
+    const { filterPackDocs } = await import("@/lib/docPack");
+    for (const status of ["", null, undefined]) {
+      expect(documentStanding(status as string | null | undefined)).toBe("not_issued");
+      const { docs, skipped } = filterPackDocs([{ id: DOC, document_number: "P-101", status }], new Set(), false);
+      expect(docs).toEqual([]);
+      expect(skipped).toEqual([{ documentId: DOC, label: "P-101", reason: "no status — not an issued, controlled revision", code: "not_issued" }]);
+    }
+    // and an in-force status passes both
+    expect(documentStanding("Issued")).toBe("in_force");
+    expect(filterPackDocs([{ id: DOC, status: "Issued" }], new Set(), false).docs).toHaveLength(1);
+    // no parallel status list in the gate
+    expect(readFileSync(join(process.cwd(), "lib/docPack.ts"), "utf8")).not.toMatch(/status !== "Issued"|status !== "Locked"/);
+  });
+  it("so a just-printed pack of a legacy empty-status sheet can no longer exist: the verify page reads it 'not issued' at the paper, and the gate never printed it", async () => {
+    // the pre-VFY-17 world, for contrast: an empty-status sheet on paper reads not_issued (red)
+    state.print = printAt([sheetV2]);
+    state.docs = [docRow({ status: "" })];
+    const r = await verify(true);
+    expect(states(r)).toEqual(["not_issued"]);
+    // from now on the gate refuses it, so a print records it as LEFT OUT, not as paper (VFY-19 below)
+  });
+});
+
+describe("VFY-19 — the snapshot records what the print LEFT OUT, so a missing sheet says when it went missing", () => {
+  const leftOut = (documentId: string, code: string, versionId: string | null = null) =>
+    ({ documentId, versionId, revLabel: null, label: "x", printed: false, leftOutCode: code, leftOutReason: "free text the printer saw" });
+  const printed = { ...sheetV2, printed: true };
+  const member = (id: string, label: string, over: Record<string, unknown> = {}) => {
+    state.liveMembers.push({ document_id: id, pinned_version_id: "w1", pinned_rev_label: "1" });
+    state.docs.push(docRow({ id, document_number: label, current_version_id: "w1", rev: "1", ...over }));
+  };
+  const view = (r: Record<string, unknown>) => presentPackVerdict(r as unknown as PackVerifyResult);
+
+  it("SKIPPED AT PRINT: a member the snapshot lists as left out (its file could not be fetched) is 'left out of this printing — <code>'; printable now, so the pack is red (a re-print carries it)", async () => {
+    member(DOC2, "P-102");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, "fetch_failed", "w1")]);
+    const r = await verify(true);
+    expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "fetch_failed" }]);
+    expect(r.verdict).toBe("stale");
+    expect(states(r)).toEqual(["fresh"]); // the left-out entry is NOT treated as paper
+    // the printer's free text is never published
+    expect(JSON.stringify(r)).not.toContain("free text the printer saw");
+  });
+
+  it("SKIPPED AT PRINT for a reason that still holds (on hold) → amber 'incomplete' with the reason AND when", async () => {
+    member(DOC2, "P-102");
+    state.holds = [{ document_id: DOC2, reason: "Client Review", released_at: null }];
+    state.print = printAt([printed, leftOut(DOC2, "on_hold")]);
+    const r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "on_hold", leftOutAtPrint: "on_hold" }]);
+    expect(r.verdict).toBe("incomplete");
+  });
+
+  it("a 'PDF' the print could not read, still the current revision, is amber not_pdf (a re-print cannot carry it) — no longer red on every re-print", async () => {
+    member(DOC2, "P-102");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-102.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed, leftOut(DOC2, "unreadable_pdf", "w1")]);
+    let r = await verify(true);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_pdf", leftOutAtPrint: "unreadable_pdf" }]);
+    expect(r.notInPack).toEqual([]);
+    expect(r.verdict).toBe("incomplete");
+    // a NEW revision since: the unreadable file is no longer current — a re-print may carry it (red)
+    state.docs = state.docs.map((d) => (d.id === DOC2 ? { ...d, current_version_id: "w9" } : d));
+    state.versions = [{ id: "w9", file_url: "org/lib/P-102-r2.pdf", file_type: "application/pdf" }];
+    r = await verify(true);
+    expect(r.notInPack).toEqual([{ label: "P-102", leftOutAtPrint: "unreadable_pdf" }]);
+    expect(r.verdict).toBe("stale");
+  });
+
+  it("ADDED SINCE: a member the snapshot neither printed nor left out joined after this printing", async () => {
+    member(DOC3, "P-103");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-103.pdf", file_type: "application/pdf" }];
+    state.print = printAt([printed]); // a VFY-19 snapshot (marker present) with nothing left out
+    const r = await verify(true);
+    expect(r.notInPack).toEqual([{ label: "P-103", addedSincePrint: true }]);
+    expect(r.verdict).toBe("stale");
+    // a not-printable member added since says so too
+    state.liveMembers = [{ document_id: DOC, pinned_version_id: "v2", pinned_rev_label: "4" }];
+    state.docs = [docRow()];
+    member(DOC3, "P-103", { status: "Draft" });
+    const r2 = await verify(true);
+    expect(r2.notPrintable).toEqual([{ label: "P-103", reason: "not_issued", addedSincePrint: true }]);
+  });
+
+  it("PRE-CHANGE snapshot (no marker): the present-tense split alone — no 'when' field, nothing says 'added since'", async () => {
+    member(DOC2, "P-102", { status: "Draft" });
+    member(DOC3, "P-103");
+    state.versions = [{ id: "w1", file_url: "org/lib/P-103.pdf", file_type: "application/pdf" }];
+    state.print = printAt([sheetV2]); // no `printed` key anywhere
+    const r = await verify(true);
+    expect(r.notInPack).toEqual([{ label: "P-103" }]);
+    expect(r.notPrintable).toEqual([{ label: "P-102", reason: "not_issued" }]);
+    for (const x of [...(r.notInPack as Array<Record<string, unknown>>), ...(r.notPrintable as Array<Record<string, unknown>>)]) {
+      expect(x).not.toHaveProperty("addedSincePrint");
+      expect(x).not.toHaveProperty("leftOutAtPrint");
+    }
+    const v = view(r);
+    expect(`${v.headline} ${v.blurb} ${v.advice ?? ""}`).not.toMatch(/added/i);
+  });
+
+  it("the pack page's words for WHEN (lib/packLeftOut.ts missingSheetWhen)", async () => {
+    const { missingSheetWhen, packLeftOutText } = await import("@/lib/packLeftOut");
+    expect(missingSheetWhen({})).toBeNull();
+    expect(missingSheetWhen({ addedSincePrint: true })).toBe("added since this pack was printed");
+    expect(missingSheetWhen({ leftOutAtPrint: "fetch_failed" })).toBe("left out of this printing — its file could not be fetched when printed");
+    expect(missingSheetWhen({ leftOutAtPrint: "left_out" })).toBe("left out of this printing");
+    expect(packLeftOutText("nonsense")).toBe("left out of this printing");
   });
 });

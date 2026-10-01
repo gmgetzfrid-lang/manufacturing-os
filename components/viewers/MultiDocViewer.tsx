@@ -28,7 +28,10 @@ import { PDF_DOC_OPTIONS } from "@/lib/pdfjsConfig";
 import * as fabric from "fabric";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRecord } from "@/types/schema";
-import { downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone } from "@/lib/downloads";
+import {
+  downloadDocumentPdf, printDocumentPdf, determineControlState, viewerStatusBadge, type ViewBadgeTone,
+  ackGatedDocumentIds, readCopyHoldState, holdFooterLine, copyWatermark,
+} from "@/lib/downloads";
 import { stampPdf } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -679,19 +682,26 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     try {
       let fileUrl = activeEntry.resolvedUrl;
       const marks = markupStore[activeEntry.doc.id ?? ""];
-      if (marks && Object.keys(marks).length) {
+      const markedUp = !!marks && Object.keys(marks).length > 0;
+      if (markedUp) {
         const res = await fetch(activeEntry.resolvedUrl);
         const bytes = new Uint8Array(await res.arrayBuffer());
         const baked = await bakeMarkupIntoPdf(bytes, marks);
         bakedUrl = URL.createObjectURL(new Blob([baked as BlobPart], { type: "application/pdf" }));
         fileUrl = bakedUrl;
       }
-      const ctx = { doc: activeEntry.doc, fileUrl, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null, versionId: activeEntry.doc.currentVersionId ?? undefined };
+      // PKG-10: a sheet with markups baked in is never the controlled master —
+      // it is stamped UNCONTROLLED even for the checkout holder.
+      const ctx = { doc: activeEntry.doc, fileUrl, markedUp, userId: currentUserId, userEmail: currentUserEmail ?? null, userLabel: currentUserEmail ?? null, versionId: activeEntry.doc.currentVersionId ?? undefined };
       if (type === "download") await downloadDocumentPdf(ctx);
       else await printDocumentPdf(ctx);
       setDownloadConfirm(null);
     } catch (e) {
-      setActionError((e as Error).message || "Action failed");
+      const message = (e as Error).message || "Action failed";
+      setActionError(message);
+      // The holder's direct download opens no dialog — say it anyway (an
+      // unrecorded copy, a hold or an acknowledgment refusal is never silent).
+      if (!downloadConfirm) void appAlert(message);
     } finally {
       if (bakedUrl) URL.revokeObjectURL(bakedUrl);
       setDocBusy(false);
@@ -707,20 +717,40 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
   // Merge a scope of resolved PDFs into ONE stamped (uncontrolled) PDF and log
   // every included document to the audit trail. Shared by download + print.
-  const assembleStampedBook = async (scope: typeof entries): Promise<Blob | null> => {
+  // Document-control Round F (P8): a hard read-&-understood gate refuses the
+  // book through the same helper a single download uses (PKG-9); a held
+  // sheet is stamped with its hold (HLD-1); only the sheets that actually
+  // made it into the book are recorded, rows with no organization are never
+  // sent, and a refused record is reported, not swallowed (EGR-6).
+  const assembleStampedBook = async (scope: typeof entries): Promise<{ blob: Blob; unrecorded: number } | null> => {
     if (!currentUserId || scope.length === 0) return null;
+    const gated = await ackGatedDocumentIds(scope.map((e) => e.doc), currentUserId);
+    if (gated.size > 0) {
+      const names = scope.filter((e) => e.doc.id && gated.has(e.doc.id))
+        .map((e) => e.doc.documentNumber || e.doc.title || e.doc.name || "Document");
+      throw new Error(
+        `Read-&-understood required: ${names.join(", ")} ${names.length === 1 ? "has" : "have"} a hard acknowledgment gate and your sign-off is outstanding. ` +
+        "Sign it (the document's Acknowledgments section, or your Inbox) or leave it out of the book — nothing was downloaded.",
+      );
+    }
     const merged = await PDFDocument.create();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
+    const bound: typeof entries = [];
     for (const entry of scope) {
       try {
+        const hold = await readCopyHoldState(entry.doc.id);
+        const holdLine = holdFooterLine(hold);
         const stamped = await stampPdf(entry.resolvedUrl!, {
           userLabel: currentUserEmail ?? undefined,
           email: currentUserEmail ?? undefined,
           timestamp: now,
           expiresAt,
-          watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
-          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+          watermarkText: hold.blocked
+            ? copyWatermark({ versionIsCurrent: true }, hold)
+            : `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+          footerNotice: (holdLine ? `${holdLine} ` : "") +
+            `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
           verifyUrl: entry.doc.id && entry.doc.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${entry.doc.id}?v=${entry.doc.currentVersionId}`
             : undefined,
@@ -729,25 +759,39 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         const src = await PDFDocument.load(buf);
         const copied = await merged.copyPages(src, src.getPageIndices());
         copied.forEach((p) => merged.addPage(p));
+        bound.push(entry);
       } catch (e) {
         console.error("Failed to add doc to book", entry.doc.documentNumber, e);
       }
     }
     const bytes = await merged.save();
-    const rows = scope.map((e) => ({
-      org_id: e.doc.orgId ?? null,
-      document_id: e.doc.id ?? null,
-      version_id: e.doc.currentVersionId ?? null,
-      user_id: currentUserId,
-      user_email: currentUserEmail ?? null,
-      created_at: now.toISOString(),
-      expires_at: expiresAt.toISOString(),
-      watermark_policy_id: null,
-    }));
-    try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+    const recordable = bound.filter((e) => !!e.doc.orgId && !!e.doc.id);
+    let unrecorded = bound.length - recordable.length;
+    if (recordable.length > 0) {
+      const rows = recordable.map((e) => ({
+        org_id: e.doc.orgId,
+        document_id: e.doc.id,
+        version_id: e.doc.currentVersionId ?? null,
+        user_id: currentUserId,
+        user_email: currentUserEmail ?? null,
+        created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(),
+        watermark_policy_id: null,
+      }));
+      try {
+        const { error } = await supabase.from("download_audits").insert(rows);
+        if (error) {
+          console.error("[download_audits] REFUSED — this book is missing from the distribution record:", error.message);
+          unrecorded = bound.length;
+        }
+      } catch (e) {
+        console.error("[download_audits] insert failed — this book is missing from the distribution record:", e);
+        unrecorded = bound.length;
+      }
+    }
     // Same ambient trail as a single-doc pull: each included sheet leaves a
     // reference intent so the stale-copy radar sees book pulls too.
-    for (const e of scope) {
+    for (const e of bound) {
       if (!e.doc.id || !e.doc.orgId) continue;
       void recordIntent({
         orgId: e.doc.orgId,
@@ -760,17 +804,22 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         baseVersionId: e.doc.currentVersionId ?? null,
       });
     }
-    return new Blob([bytes as BlobPart], { type: "application/pdf" });
+    return { blob: new Blob([bytes as BlobPart], { type: "application/pdf" }), unrecorded };
   };
+
+  /** EGR-6: what the person is told when book sheets are not on the record. */
+  const unrecordedBookMessage = (n: number) =>
+    `The book was delivered, but ${n} sheet${n === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused), ` +
+    "so they will not be recalled if the drawings change. Tell Document Control.";
 
   const downloadBookMerged = async (scope: typeof entries) => {
     if (!currentUserId || scope.length === 0) return;
     setBookBusy(true);
     setActionError(null);
     try {
-      const blob = await assembleStampedBook(scope);
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
+      const book = await assembleStampedBook(scope);
+      if (!book) return;
+      const url = URL.createObjectURL(book.blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `Reference_Book_${scope.length}_docs_UNCONTROLLED.pdf`;
@@ -778,6 +827,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      if (book.unrecorded > 0) { setActionError(unrecordedBookMessage(book.unrecorded)); return; }
       setDownloadConfirm(null);
     } catch (e) {
       setActionError((e as Error).message || "Book download failed");
@@ -793,9 +843,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
     setBookBusy(true);
     setActionError(null);
     try {
-      const blob = await assembleStampedBook(scope);
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
+      const book = await assembleStampedBook(scope);
+      if (!book) return;
+      const url = URL.createObjectURL(book.blob);
       const w = window.open(url, "_blank");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       if (!w) {
@@ -805,6 +855,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         return;
       }
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
+      if (book.unrecorded > 0) { setActionError(unrecordedBookMessage(book.unrecorded)); return; }
       setDownloadConfirm(null);
     } catch (e) {
       setActionError((e as Error).message || "Book print failed");

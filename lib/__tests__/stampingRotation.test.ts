@@ -313,7 +313,9 @@ describe("PKG-13 dw3 — an encrypted source is refused by the stamper, never me
   it("docPack turns the refusal into a skipped sheet with the reason (its per-document try/catch)", () => {
     const pack = readFileSyncSafe("lib/docPack.ts");
     expect(pack).toMatch(/await applyStampToPdfDoc\(single, \{/);
-    expect(pack).toMatch(/\} catch \(e\) \{\s*\n\s*skipped\.push\(\{ label, reason: \(e as Error\)\.message \}\);/);
+    // document-control P8 (VFY-19): the skip also carries the document, a
+    // code ("unreadable_pdf") and the revision tried — the reason unchanged.
+    expect(pack).toMatch(/\} catch \(e\) \{\s*\n\s*if \(e instanceof PackTooLargeError\) throw e;[\s\S]{0,200}?skipped\.push\(\{ documentId, label, reason: \(e as Error\)\.message, code: "unreadable_pdf", versionId \}\);/);
   });
 });
 
