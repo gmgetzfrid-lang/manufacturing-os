@@ -61,7 +61,9 @@ import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { applyEmailLookup } from "@/lib/identity";
 import type {
   Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
@@ -148,7 +150,17 @@ export default function ProjectDetailPage() {
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
   const [lessonsDraft, setLessonsDraft] = useState<string | null>(null);
+  // A11Y-4: what the editor opened with — every way out (Escape, the
+  // backdrop, the header X, Cancel) asks before discarding edits, and closes
+  // at once when nothing changed.
+  const [lessonsSeed, setLessonsSeed] = useState<string | null>(null);
   const [lessonsBusy, setLessonsBusy] = useState(false);
+  const discardLessons = async () => {
+    if (lessonsBusy) return;
+    if (lessonsDraft !== null && lessonsDraft !== lessonsSeed
+      && !(await appConfirm({ title: "Discard your edits?", message: "The lessons-learned text you changed has not been saved.", confirmLabel: "Discard", tone: "danger" }))) return;
+    setLessonsDraft(null);
+  };
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
 
@@ -214,7 +226,7 @@ export default function ProjectDetailPage() {
       }
       setCoachKey((k) => k + 1);
     } catch (e) {
-      setError((e as Error).message || "Failed to load project");
+      setError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "project page" }) : "Failed to load project");
     } finally {
       setLoading(false);
     }
@@ -244,7 +256,7 @@ export default function ProjectDetailPage() {
     setTimelineFresh(true);
     getProjectTimeline({ projectId, limit: 200 })
       .then((tl) => { if (mine === timelineReq.current) setTimeline(tl); })
-      .catch((e) => { if (mine === timelineReq.current) setTimelineError((e as Error).message || "The timeline could not be loaded."); });
+      .catch((e) => { if (mine === timelineReq.current) setTimelineError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "project page" }) : "The timeline could not be loaded."); });
   }, [tab, timelineFresh, projectId]);
 
   // PM-1: a controller reopens a closed project — a distinct, audited action.
@@ -262,7 +274,7 @@ export default function ProjectDetailPage() {
       await reopenProject({ projectId: project.id, orgId: project.orgId, reason, actorUserId: uid, actorEmail: userEmail ?? undefined });
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
     }
   };
 
@@ -273,7 +285,7 @@ export default function ProjectDetailPage() {
     if (!project?.id || !uid) return;
     let counts;
     try { counts = await countProjectRecords(project.id); }
-    catch (e) { await appAlert({ message: `The project's records could not be counted, so nothing was deleted: ${(e as Error).message}`, tone: "danger" }); return; }
+    catch (e) { await appAlert({ message: `The project's records could not be counted, so nothing was deleted: ${userFacingCaughtError(e, { action: "read", context: "project page" })}`, tone: "danger" }); return; }
     const lines = describeProjectRecords(counts);
     const regulated = regulatedRecordTotal(counts);
     const list = lines.length ? `\n\nThis would permanently destroy:\n• ${lines.join("\n• ")}` : "\n\nNo cost, quality or schedule records are attached.";
@@ -308,7 +320,7 @@ export default function ProjectDetailPage() {
     try {
       await deleteProject({ projectId: project.id, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined, reason });
       router.push("/projects");
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   const handlePostComment = async () => {
@@ -325,8 +337,18 @@ export default function ProjectDetailPage() {
       setCommentDraft("");
       await refresh();
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
     } finally { setPosting(false); }
+  };
+
+  /** A11Y-4: every way out of the status-transition confirm (Escape, the
+   *  backdrop, the header X, Cancel) asks before discarding a typed reason —
+   *  a cancellation's is mandatory — and closes at once when none was typed. */
+  const discardTransition = async () => {
+    if (transitionBusy) return;
+    if (statusReason.trim()
+      && !(await appConfirm({ title: "Discard your reason?", message: "The reason you typed has not been recorded, and the project's status is unchanged.", confirmLabel: "Discard", tone: "danger" }))) return;
+    setPendingStatus(null); setStatusReason(""); setActionError(null);
   };
 
   const handleTransition = async () => {
@@ -355,7 +377,7 @@ export default function ProjectDetailPage() {
       if (releaseError) setActionError(releaseError);
       else if (activityError) setActionError(`The project is ${pendingStatus}, but ${activityError.charAt(0).toLowerCase()}${activityError.slice(1)}`);
     } catch (e) {
-      setActionError((e as Error).message);
+      setActionError(userFacingCaughtError(e, { context: "project page" }));
       // The status may have changed before the throw; render the database's
       // state, never the pre-click one beside the message.
       await refresh().catch(() => undefined);
@@ -370,11 +392,11 @@ export default function ProjectDetailPage() {
 
   if (error || !project) return (
     <div className="min-h-full p-4 sm:p-8">
-      <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+      <div role="alert" className="max-w-2xl mx-auto bg-rose-500/[0.08] border border-rose-500/40 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
         <div>
           {error || "Project not found"}
-          <div className="mt-2"><Link href="/projects" className="text-red-600 underline">Back to projects</Link></div>
+          <div className="mt-2"><Link href="/projects" className="underline">Back to projects</Link></div>
         </div>
       </div>
     </div>
@@ -384,16 +406,16 @@ export default function ProjectDetailPage() {
     <div className="pb-20">
       {/* HEADER */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-        <div className="max-w-6xl mx-auto px-6 py-5">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5">
           <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/projects"); }} className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to projects
           </button>
 
           {actionError && (
-            <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 animate-in fade-in slide-in-from-top-1">
+            <div role="alert" className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 animate-in fade-in slide-in-from-top-1">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span className="flex-1">{actionError}</span>
-              <button onClick={() => setActionError(null)} className="shrink-0 text-rose-400 hover:text-rose-600" aria-label="Dismiss">
+              <button onClick={() => setActionError(null)} className="shrink-0 text-rose-700 dark:text-rose-300 hover:opacity-80" aria-label="Dismiss">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -423,7 +445,7 @@ export default function ProjectDetailPage() {
                 <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "—"}</span>
                 {project.targetCompletionDate && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
-                {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
+                {project.cancelledReason && <span className="inline-flex items-center gap-1 text-rose-700 dark:text-rose-300"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
                 {project.linkedTicketId && (
                   <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
                     <Hash className="w-3 h-3" /> Linked ticket
@@ -445,7 +467,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await exportProjectToCsv(project.id, project.orgId); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             {canManage && (
@@ -461,7 +483,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id) return;
                 try { await openProjectEvidencePack(project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             <ActionButton
@@ -470,7 +492,7 @@ export default function ProjectDetailPage() {
               onClick={async () => {
                 if (!project.id || !project.orgId) return;
                 try { await openProjectReport(project.orgId, project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
               }}
             />
             {canManage && (project.status === "completed" || project.status === "active" || project.status === "paused") && (
@@ -483,13 +505,22 @@ export default function ProjectDetailPage() {
                   try {
                     const existing = await supabase.from("projects").select("lessons_learned").eq("id", project.id).maybeSingle();
                     const stored = (existing.data as { lessons_learned?: string | null } | null)?.lessons_learned ?? null;
-                    setLessonsDraft(stored || await draftLessonsLearned(project.orgId, project.id));
+                    const seed = stored || await draftLessonsLearned(project.orgId, project.id);
+                    setLessonsSeed(seed);
+                    setLessonsDraft(seed);
                   } catch (e) {
-                    await appAlert({ message: (e as Error).message, tone: "danger" });
+                    await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" });
                   } finally { setLessonsBusy(false); }
                 }}
               />
             )}
+            {/* UX-15: the four exports, told apart where they sit. */}
+            <HelpTooltip label="What each export contains" placement="bottom">
+              <b>Export CSV</b> — a spreadsheet of this project&rsquo;s record, its documents and their checkouts, to open in Excel.
+              <b className="block mt-1">Evidence pack</b> — a printable record for an auditor: the team, the schedule, formal document issues (transmittals) and the audit trail.
+              <b className="block mt-1">Report</b> — a printable brief for management: money and forecast, schedule, quality and closeout, and the contractors on the job.
+              {canManage && <><b className="block mt-1">Lessons learned</b> — drafted from this project&rsquo;s history for you to edit and save; the Report prints it.</>}
+            </HelpTooltip>
             {project.id && project.orgId && uid && (
               <>
                 <WatchButton
@@ -532,6 +563,8 @@ export default function ProjectDetailPage() {
 
           {/* TABS */}
           <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px overflow-x-auto [scrollbar-width:none]">
+            {/* A11Y-7: a real tab strip — a screen reader hears which tab is selected. */}
+            <div role="tablist" aria-label="Project sections" className="flex items-center gap-1">
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{documentsTabCount(register, checkouts.map((c) => c.documentId))}</span>
             </TabButton>
@@ -553,11 +586,12 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
               <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-[var(--color-text-faint)]">{members.length}</span>
             </TabButton>
+            </div>
             <div className="ml-1 pb-2">
               <HelpTooltip>
                 <b>Documents</b> — the project&rsquo;s document register (checked-out, attached and approved contractor documents, each marked current or not), then every checkout taken under the project (active + released). The badge counts distinct documents.
-                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
-                <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
+                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, tasks finished.
+                <b className="block mt-1">Schedule</b> — tasks with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
                 <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>
@@ -568,7 +602,8 @@ export default function ProjectDetailPage() {
       {/* CONTENT — schedule tab needs full page width to render the
           execution canvas; everything else keeps the comfortable
           reading width. */}
-      <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
+      <div role="tabpanel" id="project-tabpanel" aria-label={`${TAB_LABEL[tab]} tab`}
+        className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-4 sm:px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
         {project.id && project.orgId && tab !== "schedule" && (
@@ -684,20 +719,20 @@ export default function ProjectDetailPage() {
       {/* Lessons-learned editor — auto-drafted from the project's exhaust
           (change orders by reason, slips, rejections), edited by a human. */}
       {lessonsDraft !== null && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
-              <div className="text-sm font-black text-[var(--color-text)]">Lessons learned</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                Drafted from this project&apos;s own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
-              </div>
-            </div>
-            <div className="px-6 py-4">
-              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12}
+        <Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden" onClose={() => void discardLessons()}>
+            {/* A11Y-4: every way out — Escape, the backdrop, the header X and
+                Cancel — asks before discarding edited text. The middle
+                scrolls (min-h-0) and the footer never shrinks, so Save stays
+                on screen on a short viewport or after the textarea is
+                dragged taller. */}
+            <ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => void discardLessons()}
+              subtitle="Drafted from this project's own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report." />
+            <div className="px-6 py-4 overflow-y-auto min-h-0">
+              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12} aria-label="Lessons learned"
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+              <button onClick={() => void discardLessons()} disabled={lessonsBusy}
                 className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button
                 onClick={async () => {
@@ -714,8 +749,7 @@ export default function ProjectDetailPage() {
                 Save to project
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {showEdit && uid && (
@@ -731,22 +765,19 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
-              <div className="text-sm font-black text-[var(--color-text)]">
-                {pendingStatus === "cancelled" ? "Cancel project" :
-                 pendingStatus === "completed" ? "Mark project complete" :
-                 pendingStatus === "archived" ? "Archive project" :
-                 pendingStatus === "paused" ? "Pause project" :
-                 "Resume project"}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
-                  ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
-                  : "No checkouts will be affected."}
-              </div>
-            </div>
+        <Modal size="md" dismissable={!transitionBusy} className="overflow-hidden"
+          onClose={() => void discardTransition()}>
+            <ModalHeader
+              title={pendingStatus === "cancelled" ? "Cancel project" :
+                pendingStatus === "completed" ? "Mark project complete" :
+                pendingStatus === "archived" ? "Archive project" :
+                pendingStatus === "paused" ? "Pause project" :
+                "Resume project"}
+              subtitle={pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
+                ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
+                : "No checkouts will be affected."}
+              onClose={transitionBusy ? undefined : () => void discardTransition()} />
+            <div className="overflow-y-auto min-h-0">
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && gates && (() => {
@@ -775,27 +806,28 @@ export default function ProjectDetailPage() {
               );
             })()}
             <div className="px-6 py-5">
-              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
+              <label htmlFor="transition-reason" className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">
                 Reason {pendingStatus === "cancelled" ? "*" : "(optional)"}
               </label>
               <textarea
+                id="transition-reason"
                 value={statusReason}
                 onChange={(e) => setStatusReason(e.target.value)}
                 rows={3}
                 className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 placeholder={pendingStatus === "cancelled" ? "Why is this project being cancelled?" : "Optional note for the audit log"}
               />
-              {actionError && <div className="mt-2 text-xs text-red-600">{actionError}</div>}
+              {actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+            </div>
+            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+              <button onClick={() => void discardTransition()} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
@@ -803,10 +835,10 @@ export default function ProjectDetailPage() {
 
 function StatusBadge({ status }: { status: ProjectStatus }) {
   const cls: Record<ProjectStatus, string> = {
-    active: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    paused: "bg-amber-100 text-amber-700 border-amber-200",
-    completed: "bg-blue-100 text-blue-700 border-blue-200",
-    cancelled: "bg-red-100 text-red-700 border-red-200",
+    active: "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",
+    paused: "bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/40",
+    completed: "bg-blue-500/10 text-blue-800 dark:text-blue-300 border-blue-500/40",
+    cancelled: "bg-rose-500/10 text-rose-800 dark:text-rose-300 border-rose-500/40",
     archived: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
   return (
@@ -818,9 +850,9 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
 
 function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; label: string; onClick: () => void; color?: "red" | "emerald" }) {
   const cls = color === "red"
-    ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+    ? "border-rose-500/40 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300 hover:bg-rose-500/15"
     : color === "emerald"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+    ? "border-emerald-500/40 bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/15"
     : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
   return (
     <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>
@@ -833,6 +865,9 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
+      role="tab"
+      aria-selected={active}
+      aria-controls={active ? "project-tabpanel" : undefined}
       className={`px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 transition-colors ${
         active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
       }`}
@@ -853,7 +888,7 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
   if (checkouts.length === 0) {
     return (
       <div className="bg-[var(--color-surface)] border border-dashed border-[var(--color-border-strong)] rounded-2xl p-6 text-center">
-        <FileText className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+        <FileText className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
         <p className="text-xs text-[var(--color-text-muted)]">No checkouts under this project yet. Open a document in a library and check it out to this project — it joins the register above.</p>
       </div>
     );
@@ -883,7 +918,7 @@ function DocumentsTab({ checkouts }: { checkouts: CheckoutWithDoc[] }) {
 function Section({ title, count, tone, children }: { title: string; count: number; tone: "active" | "muted"; children: React.ReactNode }) {
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-      <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-50/40 text-emerald-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+      <div className={`px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between text-xs font-bold ${tone === "active" ? "bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
         <span>{title}</span>
         <span className="text-[10px] font-mono bg-[var(--color-surface)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-full">{count}</span>
       </div>
@@ -894,7 +929,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
 
 function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: boolean }) {
   return (
-    <div className={`px-4 py-3 hover:bg-slate-50/60 transition-colors ${historical ? "opacity-70" : ""}`}>
+    <div className={`px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors ${historical ? "opacity-70" : ""}`}>
       <div className="flex items-center gap-3">
         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
@@ -968,7 +1003,7 @@ function ActivityTab({
       )}
 
       {timelineError ? (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+        <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/[0.06] px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> The timeline could not be loaded: {timelineError}
         </div>
       ) : timeline === null ? (
@@ -1031,7 +1066,7 @@ function MembersTab({
       setAddEmail(""); setAddResp(""); setAddRole("collaborator");
       onAdded();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "project page" }));
     } finally { setBusy(false); }
   };
 
@@ -1042,7 +1077,7 @@ function MembersTab({
       await updateMember({ projectId: project.id!, userId: m.userId, responsibility: next, actorUserId });
       setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; });
       onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   const makeOwner = async (m: ProjectMember) => {
@@ -1054,7 +1089,7 @@ function MembersTab({
         actorUserId, actorEmail,
       });
       onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 
   return (
@@ -1080,7 +1115,7 @@ function MembersTab({
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
             </button>
           </div>
-          {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
+          {error && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{error}</div>}
         </div>
       )}
 
@@ -1145,10 +1180,10 @@ function MembersTab({
                         try {
                           await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
                           onAdded();
-                        } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                        } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
                       }}
                       title="Remove from project"
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
+                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-500/10"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

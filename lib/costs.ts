@@ -19,6 +19,9 @@
 // broken tab is never pixel-identical to an empty one.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { listBarredCompanies } from "@/lib/companies";
+import { barredCompanyFor } from "@/lib/bidTab";
 
 export type CostEntryType = "commitment" | "actual" | "adjustment";
 
@@ -157,15 +160,76 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
 export async function listParties(orgId: string, projectId: string): Promise<CostParty[]> {
   const { data, error } = await supabase.from("project_parties").select("*")
     .eq("org_id", orgId).eq("project_id", projectId).order("name");
-  if (error) throw new Error(`Couldn't load contractors & vendors: ${error.message}`);
+  if (error) throw new Error(`Couldn't load the contractors: ${userFacingReadError(error, "listParties")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapParty);
+}
+
+/** A contractor's company link may need a stated reason: returned when the
+ *  link was refused only for want of one (the caller asks and retries). */
+export interface PartyLinkOverrideNeeded { companyId: string; company: string }
+
+/** What an unreadable registry refusal says did NOT happen, per path. */
+const REGISTRY_UNREAD_NOT_ADDED = "the contractor was not added; try again, or add it with no company link";
+const REGISTRY_UNREAD_NOT_LINKED = "nothing was linked";
+
+/**
+ * The do-not-use rule for a contractor's Known Companies link (COST-12 /
+ * MON-12). An award reads the company THROUGH the quote's party
+ * (lib/costDocs companyBehind: the quote's own link, then its party's, then
+ * the bidder's name), so a contractor whose NAME could be a do-not-use
+ * company, bound to some other company, would carry its awards past the
+ * flag. Such a link needs a reason, which is recorded (returned as
+ * overrideDoNotUse for the audit row).
+ *
+ * An unreadable registry refuses the write the check guards, so the refusal
+ * says what did NOT happen on that path (`unreadOutcome`): on the Costs
+ * tab's add (saveParty create) the contractor was not added at all; on a
+ * later link (linkPartyToCompany) nothing was linked.
+ */
+async function partyLinkCheck(orgId: string, name: string, companyId: string, overrideReason: string | null, unreadOutcome: string = REGISTRY_UNREAD_NOT_LINKED): Promise<
+  | { refused: { error: string; needsOverride?: PartyLinkOverrideNeeded } }
+  | { refused: null; overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null }
+> {
+  let barred: { id: string; name: string } | null;
+  try { barred = barredCompanyFor(name, null, await listBarredCompanies(orgId)); }
+  catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — ${unreadOutcome}.` } }; }
+  if (!barred || barred.id === companyId) return { refused: null, overrideDoNotUse: null };
+  if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
+  return { refused: {
+    error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.`,
+    needsOverride: { companyId: barred.id, company: barred.name },
+  } };
+}
+
+/**
+ * The same rule for a link written WITHOUT a way to ask for a reason — the
+ * project wizard binds its contractor rows to Known Companies by exact name
+ * (lib/projectWizardWrites). A link that would need a recorded reason, or
+ * one the registry could not be read to check, is not written: the caller
+ * adds the contractor unlinked and shows the note, and the link is made
+ * later on the Costs tab, where the reason is asked for. This is an
+ * app-level rule (DEC-76 item 3) — the database does not enforce it.
+ */
+export async function checkPartyCompanyLink(orgId: string, name: string, companyId: string): Promise<{ ok: true } | { ok: false; note: string }> {
+  const chk = await partyLinkCheck(orgId, name, companyId, null);
+  if (!chk.refused) return { ok: true };
+  const barred = chk.refused.needsOverride;
+  return {
+    ok: false,
+    note: barred
+      ? `"${name}" was added without a company link: the name could be ${barred.company}, flagged DO NOT USE in the registry. Link it on the project's Costs tab, where the link records a reason.`
+      : `"${name}" was added without a company link: ${chk.refused.error.replace(/ — nothing was linked\.$/, "")}. Link it on the project's Costs tab.`,
+  };
 }
 
 export async function saveParty(input: {
   orgId: string; projectId: string; id?: string | null;
   patch: Partial<Pick<CostParty, "name" | "kind" | "trade" | "defaultRate" | "contractValue" | "contactName" | "contactEmail" | "status" | "companyId">>;
+  /** A new contractor linked to a company although its name could be a
+   *  do-not-use one: the reason, recorded on the audit row. */
+  linkOverrideReason?: string | null;
   actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; needsOverride?: PartyLinkOverrideNeeded }> {
   const row: Record<string, unknown> = {};
   if (input.patch.name !== undefined) row.name = input.patch.name?.trim();
   if (input.patch.kind !== undefined) row.kind = input.patch.kind || null;
@@ -177,18 +241,65 @@ export async function saveParty(input: {
   if (input.patch.status !== undefined) row.status = input.patch.status;
   if (input.patch.companyId !== undefined) row.company_id = input.patch.companyId || null;
   if (input.id) {
+    // An existing contractor's link is set only by linkPartyToCompany, and
+    // only while it has none: re-pointing a link would move the do-not-use
+    // flag an award reads through it (COST-12).
+    if (input.patch.companyId !== undefined) return { ok: false, error: "A contractor's company link is set with “Link to a known company” — nothing was changed." };
     const { data: hit, error } = await supabase.from("project_parties").update(row).eq("id", input.id).select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "saveParty" }) };
     if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
     await audit("COST_PARTY_UPDATED", input.orgId, input.id, input.actor, { patch: input.patch });
     return { ok: true };
   }
-  if (!row.name) return { ok: false, error: "Party name is required." };
+  if (!row.name) return { ok: false, error: "Contractor name is required." };
+  let overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null = null;
+  if (row.company_id) {
+    // Refused here, the INSERT never runs — the contractor is not added.
+    const chk = await partyLinkCheck(input.orgId, String(row.name), String(row.company_id), input.linkOverrideReason?.trim() || null, REGISTRY_UNREAD_NOT_ADDED);
+    if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
+    overrideDoNotUse = chk.overrideDoNotUse;
+  }
   const { data, error } = await supabase.from("project_parties")
     .insert({ org_id: input.orgId, project_id: input.projectId, created_by: input.actor.uid, ...row })
     .select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the party." };
-  await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, { name: row.name });
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "saveParty" }) : "Couldn't add the contractor." };
+  await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, {
+    name: row.name,
+    ...(row.company_id ? { companyId: row.company_id } : {}),
+    ...(overrideDoNotUse ? { overrideDoNotUse } : {}),
+  });
+  return { ok: true };
+}
+
+/**
+ * COST-12 / MON-7: bind a contractor that has NO company link yet to its
+ * Known Companies record, so its awards, change orders, accepted turnover
+ * and punch reach that company's scorecard. The update's own filter is
+ * `company_id IS NULL` — a concurrent link is never overwritten and an
+ * existing link is never re-pointed (see partyLinkCheck). Audited as
+ * COST_PARTY_LINKED, with the do-not-use reason when one was needed.
+ */
+export async function linkPartyToCompany(input: {
+  orgId: string; partyId: string; companyId: string;
+  overrideReason?: string | null;
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string; needsOverride?: PartyLinkOverrideNeeded }> {
+  const { data: party, error: readErr } = await supabase.from("project_parties").select("id, name, company_id")
+    .eq("id", input.partyId).eq("org_id", input.orgId).maybeSingle();
+  if (readErr) return { ok: false, error: userFacingError(readErr, { context: "linkPartyToCompany" }) };
+  const p = party as { id: string; name: string | null; company_id: string | null } | null;
+  if (!p) return { ok: false, error: "That contractor wasn't found — it may have been removed. Refresh and try again." };
+  if (p.company_id) return { ok: false, error: "This contractor is already linked to a company — refresh to see it. A link is never re-pointed." };
+  const chk = await partyLinkCheck(input.orgId, String(p.name ?? ""), input.companyId, input.overrideReason?.trim() || null, REGISTRY_UNREAD_NOT_LINKED);
+  if (chk.refused) return { ok: false, error: chk.refused.error, needsOverride: chk.refused.needsOverride };
+  const { data: hit, error } = await supabase.from("project_parties").update({ company_id: input.companyId })
+    .eq("id", input.partyId).eq("org_id", input.orgId).is("company_id", null).select("id");
+  if (error) return { ok: false, error: userFacingError(error, { context: "linkPartyToCompany" }) };
+  if (!hit || hit.length === 0) return { ok: false, error: "This contractor was linked (or removed) by someone else just now — refresh to see it." };
+  await audit("COST_PARTY_LINKED", input.orgId, input.partyId, input.actor, {
+    companyId: input.companyId, party: p.name,
+    ...(chk.overrideDoNotUse ? { overrideDoNotUse: chk.overrideDoNotUse } : {}),
+  });
   return { ok: true };
 }
 
@@ -197,7 +308,7 @@ export async function saveParty(input: {
 export async function listAccounts(orgId: string, projectId: string): Promise<CostAccount[]> {
   const { data, error } = await supabase.from("cost_accounts").select("*")
     .eq("org_id", orgId).eq("project_id", projectId).order("code", { ascending: true, nullsFirst: false });
-  if (error) throw new Error(`Couldn't load cost accounts: ${error.message}`);
+  if (error) throw new Error(`Couldn't load cost accounts: ${userFacingReadError(error, "listAccounts")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapAccount);
 }
 
@@ -223,18 +334,18 @@ export async function saveAccount(input: {
   if (input.id) {
     const { data: before } = await supabase.from("cost_accounts").select("budget, name").eq("id", input.id).maybeSingle();
     const { data: hit, error } = await supabase.from("cost_accounts").update(row).eq("id", input.id).select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "saveAccount" }) };
     if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
     await audit("COST_ACCOUNT_UPDATED", input.orgId, input.id, input.actor, {
       before: before ?? null, patch: input.patch,
     });
     return { ok: true };
   }
-  if (!row.name) return { ok: false, error: "Account name is required." };
+  if (!row.name) return { ok: false, error: "Budget line name is required." };
   const { data, error } = await supabase.from("cost_accounts")
     .insert({ org_id: input.orgId, project_id: input.projectId, budget: 0, created_by: input.actor.uid, ...row })
     .select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the account." };
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "saveAccount" }) : "Couldn't create the account." };
   await audit("COST_ACCOUNT_CREATED", input.orgId, String(data.id), input.actor, { name: row.name, code: row.code ?? null });
   return { ok: true };
 }
@@ -246,7 +357,7 @@ export async function listEntries(orgId: string, projectId: string): Promise<Cos
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("entry_date", { ascending: false })
     .limit(2000);
-  if (error) throw new Error(`Couldn't load cost entries: ${error.message}`);
+  if (error) throw new Error(`Couldn't load cost entries: ${userFacingReadError(error, "listEntries")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEntry);
 }
 
@@ -281,7 +392,7 @@ export async function addEntry(input: {
     created_by: input.actor.uid,
     created_by_name: input.actor.email?.split("@")[0] ?? null,
   }).select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "Couldn't post the entry." };
+  if (error || !data) return { ok: false, error: error ? userFacingError(error, { context: "addEntry" }) : "Couldn't post the entry." };
   await audit("COST_ENTRY_POSTED", input.orgId, String(data.id), input.actor, {
     accountId: input.costAccountId, type: input.entryType, amount: input.amount, reference: input.reference ?? null,
     sourceDocumentId: input.sourceDocumentId ?? null,
@@ -308,7 +419,7 @@ export async function voidEntry(input: {
   // void is a zero-row match, and a zero-row match writes NO audit row.
   const { data: hit, error } = await supabase.from("cost_entries").update({ status: "void" })
     .eq("id", input.entryId).eq("status", "posted").select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error, { context: "voidEntry" }) };
   if (!hit || hit.length === 0) return { ok: false, error: NO_ROW_MATCHED };
   await audit("COST_ENTRY_VOIDED", input.orgId, input.entryId, input.actor, { before: before ?? null });
   return { ok: true };

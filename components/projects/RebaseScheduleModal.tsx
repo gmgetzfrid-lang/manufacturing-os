@@ -135,7 +135,8 @@ export default function RebaseScheduleModal({
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                aria-label="New start date"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]"
               />
             </div>
             <div>
@@ -144,7 +145,8 @@ export default function RebaseScheduleModal({
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+                aria-label="Start time (schedule time)"
+                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/40 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]"
               />
             </div>
           </div>
@@ -174,21 +176,25 @@ export default function RebaseScheduleModal({
             </div>
           )}
 
+          {/* A11Y-6: the result is announced — a live region that stays
+              mounted, the result an alert when anything failed, a status
+              when it all went; the token recipe in both themes (A11Y-13). */}
+          <div aria-live="polite" aria-atomic="true">
           {result && (
-            <div className={`rounded-xl p-3 border ${
+            <div role={result.errors.length > 0 ? "alert" : "status"} className={`rounded-xl p-3 border ${
               result.errors.length > 0
-                ? "border-rose-200 bg-rose-50"
-                : "border-emerald-200 bg-emerald-50"
+                ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
+                : "border-emerald-500/50 bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300"
             }`}>
               <div className="flex items-center gap-2 font-bold text-sm">
                 {result.errors.length > 0
-                  ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Rebased with errors</>
-                  : <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> Schedule rebased</>}
+                  ? <><AlertTriangle className="w-4 h-4" /> Rebased with errors</>
+                  : <><CheckCircle2 className="w-4 h-4" /> Schedule rebased</>}
               </div>
               <div className="mt-1 text-xs space-y-0.5">
                 <div>Shifted: <b>{result.shiftedCount}</b> tasks ({result.shiftDays >= 0 ? "+" : ""}{result.shiftDays} days)</div>
                 {result.errors.length > 0 && (
-                  <div className="text-rose-700 mt-1">
+                  <div className="mt-1">
                     {result.errors.length} error{result.errors.length === 1 ? "" : "s"}:
                     <ul className="ml-5 list-disc max-h-24 overflow-y-auto">
                       {result.errors.slice(0, 6).map((e, i) => <li key={i}>{e}</li>)}
@@ -198,6 +204,7 @@ export default function RebaseScheduleModal({
               </div>
             </div>
           )}
+          </div>
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">

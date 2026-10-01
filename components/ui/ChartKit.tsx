@@ -513,7 +513,7 @@ export function ExampleFrame({ children, note, className = "" }: {
         </span>
       </div>
       <div className="px-3 pt-2.5 pb-1 flex items-center gap-2">
-        <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+        <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/40">
           Example data
         </span>
         <span className="text-[10px] text-[var(--color-text-muted)]">

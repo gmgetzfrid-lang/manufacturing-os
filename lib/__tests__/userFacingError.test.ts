@@ -1,0 +1,462 @@
+// projects Round G — J10, REL-3 / UX-10 (Done-when 2). The one translator
+// from a database refusal to what a plant user reads (lib/userFacingError):
+// raw driver text becomes a plain sentence by a fixed table, a rail's own
+// refusal (written for users, under 42501 / 23514 / 23505 / 23503 / P0001)
+// passes through as written, any other driver error is an "unexpected" line
+// that names no internals, and the raw detail is always logged. Then the
+// Projects / Companies libraries route through it, and (review fix) so does
+// every screen of the area and the vendor portal: a caught error is
+// translated where it is shown (userFacingCaughtError keeps a library's
+// lead-in and replaces only the driver fragment) — a library census and a
+// screen census pin both.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+const db = vi.hoisted(() => ({ next: null as null | { data: unknown; error: unknown } }));
+vi.mock("@/lib/supabase", () => {
+  const chain = (): unknown => new Proxy({}, {
+    get(_t, prop: string) {
+      if (prop === "then") return (resolve: (v: unknown) => void) => resolve(db.next ?? { data: [], error: null });
+      return () => chain();
+    },
+  });
+  return { supabase: { from: () => chain() } };
+});
+vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
+
+import { userFacingError, userFacingReadError, userFacingCaughtError, classifyDbError, asClause, type UserFacingKind, type DbErrorLike } from "@/lib/userFacingError";
+import { describeWriteError } from "@/lib/checkedWrite";
+import { saveCompany, listCompanies, addCompanyEvent } from "@/lib/companies";
+import { saveParty, listParties, addEntry } from "@/lib/costs";
+import { listChangeOrders } from "@/lib/changeOrders";
+
+let errSpy: ReturnType<typeof vi.spyOn>;
+beforeEach(() => { db.next = null; errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined); });
+afterEach(() => { errSpy.mockRestore(); });
+
+/** Words that would leak the schema to a plant user. */
+const INTERNALS = /relation|row-level|policy|constraint|column|schema|PGRST|SQLSTATE|duplicate key|permission denied for|public\.|_id\b|"[a-z_]+"/i;
+
+describe("REL-3 — raw driver text becomes a plain sentence", () => {
+  const cases: Array<[string, { message: string; code?: string }, RegExp]> = [
+    ["RLS on insert", { message: 'new row violates row-level security policy for table "cost_entries"', code: "42501" }, /^You don't have permission to do this — nothing was changed\.$/],
+    ["grant missing", { message: "permission denied for table project_parties", code: "42501" }, /^You don't have permission/],
+    ["missing table", { message: 'relation "public.cost_accounts" does not exist', code: "42P01" }, /latest database migration/],
+    ["missing column", { message: 'column "company_id" of relation "project_parties" does not exist', code: "42703" }, /latest database migration/],
+    ["schema cache column", { message: "Could not find the 'pages_read' column of 'cost_documents' in the schema cache", code: "PGRST204" }, /latest database migration/],
+    ["schema cache table", { message: "Could not find the table 'public.turnover_review_events' in the schema cache", code: "PGRST205" }, /latest database migration/],
+    ["duplicate", { message: 'duplicate key value violates unique constraint "change_orders_project_co_number_key"', code: "23505" }, /^That already exists — nothing was changed\.$/],
+    ["foreign key", { message: 'insert or update on table "cost_entries" violates foreign key constraint "cost_entries_cost_account_id_fkey"', code: "23503" }, /refers to has been removed/],
+    ["not null", { message: 'null value in column "planned_at" of relation "milestones" violates not-null constraint', code: "23502" }, /required value is missing/],
+    ["check", { message: 'new row for relation "cost_documents" violates check constraint "cost_documents_status_check"', code: "23514" }, /isn't allowed here/],
+    ["bad input", { message: 'invalid input syntax for type uuid: "abc"', code: "22P02" }, /expected format/],
+    ["lock", { message: "canceling statement due to lock timeout", code: "55P03" }, /changing this right now/],
+    ["deadlock", { message: "deadlock detected", code: "40P01" }, /same moment/],
+    ["timeout", { message: "canceling statement due to statement timeout", code: "57014" }, /took too long/],
+    ["single row", { message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" }, /wasn't found/],
+    ["jwt", { message: "JWT expired", code: "PGRST303" }, /session has expired/],
+    ["network", { message: "Failed to fetch" }, /Couldn't reach the server/],
+    ["unknown driver error", { message: "could not open file \"base/16384/2619\": No such file or directory", code: "58P01" }, /^Something went wrong on the server/],
+  ];
+  for (const [name, err, expected] of cases) {
+    it(`${name} → a sentence that names no internals, and the raw detail is logged`, () => {
+      const out = userFacingError(err, { context: "test" });
+      expect(out).toMatch(expected);
+      expect(out).not.toMatch(INTERNALS);
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(errSpy.mock.calls[0])).toContain(JSON.stringify(err.message).slice(1, 20));
+    });
+  }
+
+  it("an Error carrying a code (a lib's re-throw) is classified by its code and text", () => {
+    const e = Object.assign(new Error('relation "public.change_orders" does not exist'), { code: "42P01" });
+    expect(classifyDbError(e)).toBe("migration");
+    expect(userFacingError(e)).toMatch(/migration/);
+  });
+
+  it("a failed read is worded as a read — no 'nothing was changed'", () => {
+    expect(userFacingReadError({ message: "permission denied for table companies", code: "42501" })).toBe("You don't have permission to see this.");
+    expect(userFacingReadError({ message: 'relation "companies" does not exist', code: "42P01" })).toBe("This needs the latest database migration applied.");
+  });
+});
+
+describe("REL-3 — a refusal written for users passes through untouched (never re-worded, never logged)", () => {
+  const rails: Array<[string, { message: string; code?: string }]> = [
+    ["a rail under 42501", { message: "Only a controller, the owner or a quality sign-off holder can sign this checklist off.", code: "42501" }],
+    ["a rail under 23514", { message: "A closed project's cost records are read-only — reopen the project first.", code: "23514" }],
+    ["a rail under 23505", { message: "This revision label is already used on this document.", code: "23505" }],
+    ["a rail under 23503", { message: "That budget line belongs to another project.", code: "23503" }],
+    ["plain RAISE (P0001)", { message: "The intake link has expired — ask the project team for a fresh one.", code: "P0001" }],
+    ["a lib's own sentence", { message: "“Apex Industrial” is already in the registry." }],
+  ];
+  for (const [name, err] of rails) {
+    it(name, () => {
+      expect(classifyDbError(err)).toBe("passthrough");
+      expect(userFacingError(err)).toBe(err.message);
+      expect(errSpy).not.toHaveBeenCalled();
+    });
+  }
+  it("describeWriteError keeps its own sentences and now maps the rest (a 23505 used to reach the screen raw)", () => {
+    expect(describeWriteError({ message: "x", code: "42501" })).toBe("You don't have permission to do this — nothing was changed.");
+    expect(describeWriteError({ message: "canceling statement due to lock timeout", code: "55P03" })).toMatch(/checklist right now/);
+    expect(describeWriteError({ message: 'duplicate key value violates unique constraint "turnover_items_key"', code: "23505" })).toBe("That already exists — nothing was changed.");
+    expect(describeWriteError({ message: "The checklist is complete — reopen it before changing an item.", code: "P0001" })).toBe("The checklist is complete — reopen it before changing an item.");
+  });
+});
+
+describe("REL-3 — a caught error shown on a screen: the library's lead-in is kept, only the driver fragment is replaced", () => {
+  it("a partial success keeps what DID happen, and is never followed by 'nothing was changed' (the embedded reason)", () => {
+    const e = new Error('The new revision is published, but the prior revision could not be marked superseded: new row violates row-level security policy for table "document_versions"');
+    expect(userFacingCaughtError(e)).toBe("The new revision is published, but the prior revision could not be marked superseded: You don't have permission to do this.");
+    expect(errSpy).toHaveBeenCalledTimes(1);
+  });
+  it("a parenthesised fragment is replaced in place and the sentences after it are kept", () => {
+    const e = new Error('The reviewer roster could not be saved (insert or update on table "document_review_signoffs" violates foreign key constraint "x_fkey"). The submission was withdrawn: nothing is in review. Fix the cause and submit again.');
+    const out = userFacingCaughtError(e);
+    expect(out).toBe("The reviewer roster could not be saved (Something this refers to has been removed, or is still in use — refresh and try again). The submission was withdrawn: nothing is in review. Fix the cause and submit again.");
+    expect(out).not.toMatch(INTERNALS);
+  });
+  it("a fragment followed by the library's own next sentence keeps that sentence; a schema-cache text loses its 'Could not find…' preamble", () => {
+    expect(userFacingCaughtError(new Error('Name and visibility were saved, but purpose was not: column "purpose" of relation "projects" does not exist. Save changes retries just those.')))
+      .toBe("Name and visibility were saved, but purpose was not: This needs the latest database migration applied. Save changes retries just those.");
+    const out = userFacingCaughtError(new Error("Couldn't publish: Could not find the 'pages_read' column of 'documents' in the schema cache"), { action: "read" });
+    expect(out).toBe("Couldn't publish: This needs the latest database migration applied.");
+  });
+  it("a bare driver message becomes its sentence; a sentence passes through untouched and unlogged; a lead-in that names internals is dropped", () => {
+    expect(userFacingCaughtError(new Error('duplicate key value violates unique constraint "x_key"'))).toBe("That already exists — nothing was changed.");
+    errSpy.mockClear();
+    expect(userFacingCaughtError(new Error("The checklist is complete — reopen it before changing an item."))).toBe("The checklist is complete — reopen it before changing an item.");
+    expect(userFacingCaughtError(new Error("Couldn't load: Failed to fetch"))).toBe("Couldn't load: Failed to fetch");
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(userFacingCaughtError(new Error('Write to "cost_entries" failed: permission denied for table cost_entries'))).toBe("You don't have permission to do this — nothing was changed.");
+  });
+  it("an Error that keeps its driver code and a translated message (listChangeOrders) reads as that sentence", () => {
+    const e = Object.assign(new Error("You don't have permission to see this."), { code: "42501" });
+    expect(userFacingCaughtError(e, { action: "read" })).toBe("You don't have permission to see this.");
+  });
+});
+
+/** One driver error per kind — the Record type keeps the list complete
+ *  (a kind added to the translator without a sample fails to compile). */
+const SAMPLE: Record<Exclude<UserFacingKind, "passthrough">, DbErrorLike> = {
+  permission: { message: 'new row violates row-level security policy for table "cost_entries"', code: "42501" },
+  migration: { message: 'relation "public.cost_accounts" does not exist', code: "42P01" },
+  duplicate: { message: 'duplicate key value violates unique constraint "change_orders_project_co_number_key"', code: "23505" },
+  reference: { message: 'insert or update on table "cost_entries" violates foreign key constraint "cost_entries_cost_account_id_fkey"', code: "23503" },
+  required: { message: 'null value in column "planned_at" of relation "milestones" violates not-null constraint', code: "23502" },
+  invalid: { message: 'invalid input syntax for type uuid: "abc"', code: "22P02" },
+  rejected_value: { message: 'new row for relation "cost_documents" violates check constraint "cost_documents_status_check"', code: "23514" },
+  busy: { message: "canceling statement due to lock timeout", code: "55P03" },
+  conflict: { message: "deadlock detected", code: "40P01" },
+  timeout: { message: "canceling statement due to statement timeout", code: "57014" },
+  unavailable: { message: "Could not connect to the database", code: "PGRST000" },
+  not_found: { message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" },
+  session: { message: "JWT expired", code: "PGRST303" },
+  network: { message: "Failed to fetch" },
+  unexpected: { message: 'could not open file "base/16384/2619": No such file or directory', code: "58P01" },
+};
+const KINDS = Object.keys(SAMPLE) as Array<keyof typeof SAMPLE>;
+const NOTHING_CHANGED = /nothing was changed/i;
+
+describe("REL-3 (fix pass) — a read is worded as a read, and a partial success is never followed by 'nothing was changed'", () => {
+  it("every sample is classified as its own kind (the iterations below cover every kind)", () => {
+    for (const k of KINDS) expect(classifyDbError(SAMPLE[k]), k).toBe(k);
+  });
+
+  it("a failed READ is worded as a load for EVERY kind — none says 'nothing was changed', none names internals", () => {
+    for (const k of KINDS) {
+      const out = userFacingError(SAMPLE[k], { action: "read" });
+      expect(out, k).not.toMatch(NOTHING_CHANGED);
+      expect(out, k).not.toMatch(INTERNALS);
+      expect(userFacingReadError(SAMPLE[k]), k).toBe(out);
+    }
+    // the cited case: a malformed id filter on a load (22P02)
+    expect(userFacingReadError(SAMPLE.invalid)).toBe("A value in the request isn't in the expected format.");
+  });
+
+  it("the embedded reason (embed: true) never says 'nothing was changed', for every kind; the stand-alone write sentence still does where it is true", () => {
+    for (const k of KINDS) {
+      const out = userFacingError(SAMPLE[k], { embed: true });
+      expect(out, k).not.toMatch(NOTHING_CHANGED);
+      expect(out, k).not.toMatch(INTERNALS);
+      expect(out, k).toMatch(/[.]$/);
+    }
+    expect(userFacingError(SAMPLE.permission, { embed: true })).toBe("You don't have permission to do this.");
+    expect(userFacingError(SAMPLE.permission)).toBe("You don't have permission to do this — nothing was changed.");
+  });
+
+  /** Lead-ins that report a write which LANDED (the reviewer's cited shapes). */
+  const LANDED = [
+    "The new revision is published, but the prior revision could not be marked superseded",
+    "CO-003 was approved and its money posted, but the link to its cost entry could not be saved",
+    "Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not",
+    "Link created, but its audit record failed",
+    "Ownership moved, but the roster was not updated",
+    "Awarded, but 2 of 3 competing bid(s) could not be marked not-selected",
+    "The project is completed, but its active checkouts were NOT released",
+  ];
+
+  it("census: through userFacingCaughtError, no message holds both a landed-write lead-in and 'nothing was changed' — every lead-in × every kind × colon and parenthesised forms", () => {
+    let checked = 0;
+    for (const lead of LANDED) {
+      for (const k of KINDS) {
+        const raw = SAMPLE[k].message!;
+        for (const msg of [`${lead}: ${raw}`, `${lead} (${raw}) — refresh and decline them by hand.`]) {
+          const out = userFacingCaughtError(Object.assign(new Error(msg), { code: SAMPLE[k].code }));
+          expect(out, `${k}: ${msg}`).not.toMatch(NOTHING_CHANGED);
+          expect(out, `${k}: ${msg}`).not.toMatch(INTERNALS);
+          // where the driver fragment is found, what DID happen is kept
+          if (k !== "network" && k !== "unexpected") expect(out.startsWith(lead), `${k}: ${out}`).toBe(true);
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBe(LANDED.length * KINDS.length * 2);
+  });
+
+  /** The text of each translator call (balanced parentheses) on a line. */
+  const calls = (line: string): string[] => {
+    const out: string[] = [];
+    const re = /userFacing(?:Error|CaughtError)\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line))) {
+      let depth = 1, i = m.index + m[0].length;
+      for (; i < line.length && depth > 0; i++) { if (line[i] === "(") depth++; else if (line[i] === ")") depth--; }
+      out.push(line.slice(m.index, i));
+    }
+    return out;
+  };
+
+  it("source census: every translator call on a line that reports a landed write ('…, but …') uses the embedded reason", () => {
+    const files = ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+      "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts",
+      "components/projects/EditProjectModal.tsx", "components/projects/IntakePanel.tsx", "components/projects/cost/QuotesPanel.tsx",
+      "components/projects/QualityTab.tsx", "components/projects/CostsTab.tsx", "app/(protected)/projects/[id]/page.tsx"];
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      readFileSync(join(process.cwd(), f), "utf8").split("\n").forEach((line, i) => {
+        if (!/\bbut\b/i.test(line)) return;
+        for (const c of calls(line)) {
+          seen++;
+          if (!/embed: true|clause: true/.test(c)) offenders.push(`${f}:${i + 1}: ${c}`);
+        }
+      });
+    }
+    expect(seen).toBeGreaterThanOrEqual(15);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the sub-clauses a caller puts after a landed write carry the embedded reason too (activity row, released checkouts, schedule rows, audit rows, delete follow-ups)", () => {
+    const at = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const projects = at("lib/projects.ts");
+    expect(projects).toContain('return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects", embed: true })}` : null;');
+    expect(projects).toContain('return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects", embed: true })}`;');
+    expect(projects).toContain("NOT released: ${userFacingError(res.error, { context: \"projects\", embed: true })}");
+    expect(projects).toContain('scheduleError = userFacingError(mdErr, { context: "projects", embed: true });');
+    // the paged reads are reads
+    expect(projects).toContain('if (error) throw new Error(`${label}: ${userFacingReadError(error, "projects")}`);');
+    const ms = at("lib/milestones.ts");
+    for (const s of ["breadcrumbs: ${userFacingError(noteErr, { context: \"milestones\", embed: true })}", "audit: ${userFacingError(auditRes.error, { context: \"milestones\", embed: true })}",
+      "moved up a level (${userFacingError(upErr, { context: \"milestones\", clause: true })})", "could not be removed (${userFacingError(linkErr, { context: \"milestones\", clause: true })})"]) {
+      expect(ms).toContain(s);
+    }
+    expect(at("lib/intakeLinks.ts")).toContain('auditError: userFacingError(auditErr, { context: "intakeLinks", embed: true })');
+    expect(at("components/projects/cost/QuotesPanel.tsx")).toContain("return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };");
+  });
+});
+
+describe("REL-3 (J10 third fix) — a reason placed inside the caller's own sentence is a clause: no '….)', and never the caller's tail twice", () => {
+  it("clause: true is the reason alone with no closing full stop, for every kind — read-worded for a read, never 'nothing was changed'", () => {
+    for (const k of KINDS) {
+      for (const out of [userFacingError(SAMPLE[k], { clause: true }), userFacingError(SAMPLE[k], { action: "read", clause: true })]) {
+        expect(out, k).not.toMatch(/[.]$/);
+        expect(out, k).not.toMatch(NOTHING_CHANGED);
+        expect(out, k).not.toMatch(INTERNALS);
+        expect(out.length, k).toBeGreaterThan(10);
+      }
+      expect(userFacingError(SAMPLE[k], { action: "read", clause: true }), k).toBe(asClause(userFacingReadError(SAMPLE[k])));
+      expect(userFacingError(SAMPLE[k], { clause: true }), k).toBe(asClause(userFacingError(SAMPLE[k], { embed: true })));
+    }
+    // a rail's own sentence passes through, its full stop dropped
+    expect(userFacingError({ code: "P0001", message: "This project is closed." }, { clause: true })).toBe("This project is closed");
+    // a caught error: the clause too, with its lead-in kept
+    expect(userFacingCaughtError(new Error('Link created, but its audit record failed: new row violates row-level security policy for table "audit_logs"'), { clause: true }))
+      .toBe("Link created, but its audit record failed: You don't have permission to do this");
+    expect(userFacingCaughtError({ message: "canceling statement due to statement timeout", code: "57014" }, { clause: true })).toBe("The database took too long to answer — try again");
+    expect(asClause("Done.")).toBe("Done");
+    expect(asClause("Done")).toBe("Done");
+  });
+
+  const AREA = ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+    "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts",
+    "lib/checkedWrite.ts", "lib/projectWizardWrites.ts", "lib/evidencePack.ts", "lib/projectHealth.ts",
+    "components/projects/EditProjectModal.tsx", "components/projects/IntakePanel.tsx", "components/projects/cost/QuotesPanel.tsx",
+    "components/projects/cost/ChangeOrdersPanel.tsx", "components/projects/QualityTab.tsx", "components/projects/CostsTab.tsx",
+    "app/(protected)/projects/[id]/page.tsx", "app/(protected)/projects/page.tsx"];
+  /** Every `(${…})` interpolation on a line — and, in JSX text, every
+   *  `({…})` — the expression inside. */
+  const parenthesised = (line: string): string[] => {
+    const out: string[] = [];
+    for (const open of ["(${", "({"]) {
+      for (let at = line.indexOf(open); at >= 0; at = line.indexOf(open, at + 1)) {
+        // JSX text — "read ({loadErr}) —" — never a call's object literal: `fn({ a: b })`
+        if (open === "({" && (line[at - 1] !== " " || /\s/.test(line[at + 2] ?? " "))) continue;
+        let depth = 1, i = at + open.length;
+        for (; i < line.length && depth > 0; i++) { if (line[i] === "{") depth++; else if (line[i] === "}") depth--; }
+        if (line[i] === ")") out.push(line.slice(at + open.length, i - 1));
+      }
+    }
+    return out;
+  };
+  it("source census (mutation-checked): every translator call — and every already-translated error — placed inside parentheses is a clause", () => {
+    const offenders: string[] = [];
+    let translator = 0, translated = 0;
+    const check = (f: string, text: string) => {
+      text.split("\n").forEach((line, i) => {
+        for (const expr of parenthesised(line)) {
+          if (/userFacing(Read|Caught)?Error\(/.test(expr)) {
+            translator++;
+            if (!/clause: true|\.replace\(\/\\\.\$\/, ""\)/.test(expr)) offenders.push(`${f}:${i + 1}: ${expr}`);
+          } else if (/^[\w.?]*(?:\berror|Error|Err)$/.test(expr.trim())) {
+            // a library's `error` field / a variable holding translated text
+            translated++;
+            offenders.push(`${f}:${i + 1}: ${expr} (wrap it in asClause)`);
+          } else if (/^asClause\(/.test(expr.trim())) translated++;
+        }
+      });
+    };
+    for (const f of AREA) check(f, readFileSync(join(process.cwd(), f), "utf8"));
+    expect(offenders).toEqual([]);
+    expect(translator).toBeGreaterThanOrEqual(17);
+    expect(translated).toBeGreaterThanOrEqual(10);
+    // mutation check: the census catches each shape it exists for
+    const before = offenders.length;
+    check("mutant", "throw new Error(`Could not delete (${userFacingError(err, { context: \"x\" })}) — nothing was changed.`);");
+    check("mutant", "return `Couldn't check (${userFacingReadError(error, \"x\")}). Nothing was grouped.`;");
+    check("mutant", "error: `Couldn't check who else can sign (${authority.error}) — it stays open.`");
+    check("mutant", "<span>Couldn&apos;t load the change orders ({loadErr}) — the figures are not shown.</span>");
+    expect(offenders.length - before).toBe(4);
+  });
+
+  it("the sites the review named read as one sentence", () => {
+    const at = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const ms = at("lib/milestones.ts");
+    expect(ms).toContain("throw new Error(`Could not delete “${m.name}” (${userFacingError(rpcErr, { context: \"milestones\", clause: true })}) — nothing was changed.`);");
+    expect(ms).toContain("throw new Error(`Could not delete “${m.name}” (${userFacingError(delErr, { context: \"milestones\", clause: true })}) — nothing was changed.`);");
+    expect(ms).toContain("return `Couldn't check the grouping for loops (${userFacingError(error, { action: \"read\", context: \"milestones\", clause: true })}). Nothing was grouped.`;");
+    expect(at("lib/checklists.ts")).toContain("`Couldn't check who else can sign this checklist off (${asClause(authority.error)}) — it stays open.`");
+    expect(at("lib/turnover.ts")).toContain("`Couldn't check who else can accept or waive this item (${asClause(authority.error)}) — nothing was changed.`");
+  });
+});
+
+describe("REL-3 — the Projects and Companies libraries route through it", () => {
+  const RLS = { message: 'new row violates row-level security policy for table "companies"', code: "42501" };
+
+  it("companies: a denied write and a denied read read as sentences; the 23505 precedent is kept", async () => {
+    db.next = { data: null, error: RLS };
+    await expect(saveCompany({ orgId: "o1", name: "Apex", kind: "contractor", actorId: "u1" })).rejects.toThrow("You don't have permission to do this — nothing was changed.");
+    db.next = { data: null, error: { message: "permission denied for table companies", code: "42501" } };
+    await expect(listCompanies("o1")).rejects.toThrow("You don't have permission to see this.");
+    db.next = { data: null, error: { message: 'duplicate key value violates unique constraint "companies_org_name_key"', code: "23505" } };
+    await expect(saveCompany({ orgId: "o1", name: "Apex", kind: "contractor", actorId: "u1" })).rejects.toThrow("\"Apex\" is already in the registry.");
+    db.next = { data: null, error: { message: 'relation "public.company_events" does not exist', code: "42P01" } };
+    await expect(addCompanyEvent({ orgId: "o1", companyId: "c1", kind: "near_miss", eventDate: "2026-10-01", description: "Crane swing", actorId: "u1" })).rejects.toThrow(/latest database migration/);
+  });
+
+  it("costs: the party, list and entry paths never hand back driver text", async () => {
+    db.next = { data: null, error: RLS };
+    const r = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex" }, actor: { uid: "u1", email: null } });
+    expect(r).toEqual({ ok: false, error: "You don't have permission to do this — nothing was changed." });
+    db.next = { data: null, error: { message: 'relation "public.project_parties" does not exist', code: "42P01" } };
+    await expect(listParties("o1", "p1")).rejects.toThrow("Couldn't load the contractors: This needs the latest database migration applied.");
+    db.next = { data: null, error: { message: 'insert or update on table "cost_entries" violates foreign key constraint "x"', code: "23503" } };
+    const e = await addEntry({ orgId: "o1", projectId: "p1", costAccountId: "a1", entryType: "actual", amount: 10, entryDate: "2026-10-01", actor: { uid: "u1", email: null } });
+    expect(e.ok).toBe(false);
+    expect(e.error).not.toMatch(INTERNALS);
+  });
+
+  it("change orders: the list read keeps its code (callers tell a missing table from a refusal) and loses the driver text", async () => {
+    db.next = { data: null, error: { message: 'relation "public.change_orders" does not exist', code: "42P01" } };
+    const err = await listChangeOrders("p1").catch((x: unknown) => x as Error & { code?: string });
+    expect((err as { code?: string }).code).toBe("42P01");
+    expect((err as Error).message).toBe("This needs the latest database migration applied.");
+  });
+
+  it("source census: in the Projects / Companies libraries every database error message reaches the user only through the translator", () => {
+    const offenders: string[] = [];
+    // The cited libraries, then the rest of the Projects area's data layer
+    // (the schedule engine, project lifecycle, activity feed, transition-in,
+    // intake links, the export and the report) — UX-10 done-when 2.
+    for (const f of ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+      "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts"]) {
+      const lines = readFileSync(join(process.cwd(), f), "utf8").split("\n");
+      lines.forEach((line, i) => {
+        // any `<name>.message` / `<name>?.message`. A caught Error's text is
+        // shown only through userFacingCaughtError (a callee outside this set
+        // may hand back driver text); what may remain is a presence test
+        // (`(e as Error)?.message ? … : fallback`) and a structured
+        // `{ message: (e as Error).message }` handed to a translating caller.
+        if (!/\b[A-Za-z_][\w.]*\??\.message\b/.test(line.replace(/\(e as Error\)\?\.message \?/g, "").replace(/\{ message: \(e as Error\)\.message \}/g, ""))) return;
+        // logic that reads the driver text (never shown): schema step-down,
+        // missing-RPC / missing-table probes, classification, a structured
+        // {message, code} handed to a translating caller, a rail's own
+        // sentence under 23514, an Error already translated upstream.
+        if (/console\.(warn|error|log)|\.test\(|isMissing|missingColumn|looksLikeUnknownColumn|refusedColumn|=== |\/does not exist|const msg = (err\.message|\(error\.message|`\$\{(error|e)\.message)|\{ message: error\.message, code|releaseFailure\.message|code === "23514" && error\.message/.test(line)) return;
+        offenders.push(`${f}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  /** Every screen of the Projects / Companies area and the vendor portal. */
+  const SCREENS = (() => {
+    const out: string[] = [];
+    const walk = (dir: string, keep: (f: string) => boolean) => {
+      for (const n of readdirSync(join(process.cwd(), dir))) {
+        const rel = `${dir}/${n}`;
+        if (statSync(join(process.cwd(), rel)).isDirectory()) walk(rel, keep);
+        else if (keep(rel)) out.push(rel);
+      }
+    };
+    walk("components/projects", (f) => /\.(tsx|ts)$/.test(f));
+    walk("app/(protected)/projects", (f) => f.endsWith("page.tsx"));
+    walk("app/(protected)/companies", (f) => f.endsWith("page.tsx"));
+    out.push("app/submit/[token]/page.tsx");
+    return out;
+  })();
+
+  it("screen census: on every Projects / Companies screen (and the portal) a database or caught error's text reaches the user only through the translator", () => {
+    expect(SCREENS.length).toBeGreaterThan(30);
+    expect(SCREENS).toEqual(expect.arrayContaining(["components/projects/StaleCheckoutBanner.tsx", "components/projects/EditProjectModal.tsx",
+      "components/projects/cost/QuotesPanel.tsx", "app/(protected)/projects/page.tsx", "app/(protected)/companies/[id]/page.tsx"]));
+    const offenders: string[] = [];
+    for (const f of SCREENS) {
+      readFileSync(join(process.cwd(), f), "utf8").split("\n").forEach((line, i) => {
+        const rest = line.replace(/\((e|err) as Error\)\?\.message \?/g, "");
+        if (!/\b[A-Za-z_][\w.]*\??\.message\b|\((e|err) as Error\)\??\.message/.test(rest)) return;
+        // never shown: console lines and logic that reads the driver text
+        // (a missing-column step-down, a network retry) before translating.
+        if (/console\.(warn|error|log)|\.test\(/.test(rest)) return;
+        // text that is not a database's: a toast's or notice's own text, the
+        // wizard's failure rows (wizardWriteError translated them), the AI
+        // readiness note, an expiry rule's sentence, a render error caught
+        // by the tab boundary, and the intake door's own JSON body (its
+        // server route's words — J12's server remainder).
+        if (/\b(t|toast|f|readiness|ai|expiry|body)\.message\b|this\.state\.error\.message/.test(rest)) return;
+        offenders.push(`${f}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("the cited leaks are closed: the edit dialog's second write and the stale-checkout release translate the driver's text", () => {
+    const edit = readFileSync(join(process.cwd(), "components/projects/EditProjectModal.tsx"), "utf8");
+    expect(edit).toContain('were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\\.$/, "")}. Save changes retries just those.');
+    expect(edit).not.toContain("${extErr.message}");
+    const banner = readFileSync(join(process.cwd(), "components/projects/StaleCheckoutBanner.tsx"), "utf8");
+    expect(banner).toContain("Couldn't release ${row.docNumber || \"the checkout\"}: ${userFacingCaughtError(e, { context: \"StaleCheckoutBanner release\" })}");
+  });
+});

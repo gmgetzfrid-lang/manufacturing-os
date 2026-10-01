@@ -40,7 +40,8 @@
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
-import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { userFacingCaughtError, userFacingReadError, asClause } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
@@ -221,7 +222,7 @@ export async function listTurnoverItems(orgId: string, projectId: string): Promi
   const { data, error } = await supabase.from("turnover_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: true }).limit(300);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listTurnoverItems"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem);
 }
 
@@ -235,7 +236,7 @@ export async function listTurnoverReviewEvents(orgId: string, projectId: string)
     .order("created_at", { ascending: true }).limit(1000);
   if (error) {
     if (isMissingSchemaError(error)) return [];
-    throw new Error(describeWriteError(error));
+    throw new Error(userFacingReadError(error, "listTurnoverReviewEvents"));
   }
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEvent);
 }
@@ -250,7 +251,7 @@ export async function seedTurnoverItems(input: {
 }): Promise<{ ok: boolean; error?: string; added: number }> {
   let existing: TurnoverItem[];
   try { existing = await listTurnoverItems(input.orgId, input.projectId); }
-  catch (e) { return { ok: false, error: (e as Error).message, added: 0 }; }
+  catch (e) { return { ok: false, error: userFacingCaughtError(e, { action: "read", context: "seedTurnoverItems" }), added: 0 }; }
   const have = new Set(existing.map((i) => i.name.toLowerCase()));
   const rows = seedsForJobKind(input.jobKind)
     .filter((s) => !have.has(s.name.toLowerCase()))
@@ -286,6 +287,89 @@ export async function addTurnoverItem(input: {
   if (!w.ok) return { ok: false, error: w.error };
   await audit("TURNOVER_ITEM_ADDED", input.orgId, input.projectId, input.actor, { name: input.name.trim() });
   return { ok: true };
+}
+
+/** MON-7 / COST-12: who delivers an item — the contractor its acceptance
+ *  (or, for a punch item, its close-out) counts for, through that
+ *  contractor's Known Company link. A seeded item, or one added before its
+ *  contractor was known, is assigned here. The rule is app-level, like the
+ *  contractor's company link (DEC-76 item 3): while an item is
+ *  undecided its contractor may be set, changed or cleared; once it is
+ *  decided an assigned contractor stays as recorded, so a standing decision
+ *  (an acceptance, a rejection's nonconformance, a close-out) never moves
+ *  from one company's record to another's. An UNASSIGNED decided item may
+ *  still be named once — so a package the wizard seeded and QA/QC already
+ *  accepted reaches its company — except where nothing could correct a
+ *  wrong name afterwards and the decision counts AGAINST the company: a
+ *  rejected turnover item (no reopen; its nonconformance would stand on the
+ *  wrong record) is named once it is accepted instead (J10 third review
+ *  fix). The Quality tab asks before naming a decided item's contractor and
+ *  says it is permanent. The contractor must be one of the item's own
+ *  project. The write is guarded on the contractor and the status the caller
+ *  saw (a concurrent change is refused, never overwritten), checked
+ *  (GAP-402), and audited with what it replaced. */
+async function assignContractor(input: {
+  table: "turnover_items" | "punch_items";
+  noun: "turnover item" | "punch item";
+  item: { id: string; orgId: string; projectId: string; partyId: string | null; status: string };
+  name: string;
+  undecided: boolean;
+  /** Decided, unassigned, and still nameable (see above). */
+  lateNameable: boolean;
+  /** The decided status has a way back to undecided in the app (Reopen). */
+  reopenable: boolean;
+  partyId: string | null;
+  action: "TURNOVER_CONTRACTOR_SET" | "PUNCH_CONTRACTOR_SET";
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { item } = input;
+  const next = input.partyId || null;
+  if (next === item.partyId) return { ok: true };
+  const statusWord = item.status === "done" ? "closed" : item.status === "void" ? "voided" : item.status;
+  if (item.partyId && !input.undecided) {
+    return { ok: false, error: `This ${input.noun} is ${statusWord} — its contractor stays as recorded.${input.reopenable ? " Reopen it to change who it counts for." : ""}` };
+  }
+  if (!item.partyId && !input.undecided && !input.lateNameable) {
+    return { ok: false, error: `This ${input.noun} is ${statusWord} — its contractor can't be named now: a rejection can't be reopened, so a wrong name could never be corrected. Name the contractor once the resubmission is accepted.` };
+  }
+  if (next) {
+    const { data, error } = await supabase.from("project_parties").select("id")
+      .eq("id", next).eq("project_id", item.projectId).maybeSingle();
+    if (error) return { ok: false, error: `Couldn't check the contractor: ${userFacingReadError(error, "assignContractor")}` };
+    if (!data) return { ok: false, error: "That contractor isn't on this project — add them on the Costs tab first." };
+  }
+  const patch = { party_id: next };
+  // One checked statement (the GAP-402 census reads statements), guarded on
+  // the status and the contractor the caller saw.
+  const w = await checkedWrite((item.partyId
+    ? supabase.from(input.table).update(patch).eq("id", item.id).eq("org_id", item.orgId).eq("status", item.status).eq("party_id", item.partyId)
+    : supabase.from(input.table).update(patch).eq("id", item.id).eq("org_id", item.orgId).eq("status", item.status).is("party_id", null)
+  ).select("id"));
+  if (!w.ok) {
+    return { ok: false, error: w.code === "refused"
+      ? `The contractor was not changed — this ${input.noun} changed since you loaded it, or you can't edit it. Reload and try again.`
+      : w.error };
+  }
+  await audit(input.action, item.orgId, item.projectId, input.actor, {
+    itemId: item.id, name: input.name, status: item.status, from: item.partyId, to: next,
+  });
+  return { ok: true };
+}
+
+/** Assign (or, while undecided, change) the contractor who delivers a
+ *  turnover item — see assignContractor. Undecided: not received / received;
+ *  an unassigned accepted or waived item may be named once (Reopen is its
+ *  correction path), a rejected one is not. */
+export async function assignTurnoverContractor(input: {
+  item: TurnoverItem; partyId: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  return assignContractor({
+    table: "turnover_items", noun: "turnover item", item: input.item, name: input.item.name,
+    undecided: input.item.status === "open" || input.item.status === "received",
+    lateNameable: input.item.status === "accepted" || input.item.status === "waived",
+    reopenable: input.item.status === "accepted" || input.item.status === "waived",
+    partyId: input.partyId, action: "TURNOVER_CONTRACTOR_SET", actor: input.actor,
+  });
 }
 
 /**
@@ -329,7 +413,7 @@ export async function reviewTurnoverItem(input: {
     // could (fail closed — DEC-16).
     if (item.createdBy && item.createdBy === input.actor.uid) {
       const authority = await loadSignoffAuthority(item.orgId, item.projectId, input.actor);
-      if (authority.error) return { ok: false, error: `Couldn't check who else can accept or waive this item (${authority.error}) — nothing was changed.` };
+      if (authority.error) return { ok: false, error: `Couldn't check who else can accept or waive this item (${asClause(authority.error)}) — nothing was changed.` };
       const sod = signoffSeparation(item.createdBy, input.actor.uid, authority.otherSigners, "turnover");
       if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person accepts or waives this item." };
       singleSigner = sod.singleSigner;
@@ -437,7 +521,7 @@ export async function listPunchItems(orgId: string, projectId: string): Promise<
   const { data, error } = await supabase.from("punch_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listPunchItems"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapPunch);
 }
 
@@ -464,6 +548,23 @@ export async function addPunchItem(input: {
   if (!w.ok) return { ok: false, error: w.error };
   await audit("PUNCH_ADDED", input.orgId, input.projectId, input.actor, { title: input.title.trim() });
   return { ok: true };
+}
+
+/** Assign (or, while it is open, change) the contractor responsible for a
+ *  punch item — see assignContractor. An unassigned closed one may be named
+ *  once; it is never changed afterwards. */
+export async function assignPunchContractor(input: {
+  item: PunchItem; partyId: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  return assignContractor({
+    table: "punch_items", noun: "punch item", item: input.item, name: input.item.title,
+    undecided: input.item.status === "open",
+    // A closed punch item has no reopen in the app; naming it is permanent,
+    // which the Quality tab's confirm says before it writes.
+    lateNameable: true,
+    reopenable: false,
+    partyId: input.partyId, action: "PUNCH_CONTRACTOR_SET", actor: input.actor,
+  });
 }
 
 /** Close (done), void, or reopen a punch item. Done records who closed it

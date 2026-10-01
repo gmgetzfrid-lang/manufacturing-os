@@ -15,6 +15,7 @@
 // schedule loaded".
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
 import {
   listChangeOrders, summarizeChangeOrders, approvedChangesByAccount, CO_REASON_LABEL, type CoReason,
@@ -161,7 +162,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     named(R.milestones, supabase.from("milestones").select("id, name, planned_at, planned_start_at, status, percent_complete, source", { count: "exact" })
       .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT)
       .then((r) => {
-        if (r.error) throw new Error(r.error.message);
+        if (r.error) throw new Error(userFacingReadError(r.error, "projectReport"));
         return { rows: (r.data ?? []) as Array<Record<string, unknown>>, total: r.count ?? (r.data ?? []).length };
       }),
       { rows: [] as Array<Record<string, unknown>>, total: 0 }),
@@ -315,8 +316,8 @@ ${moneyRows}
 </table>
 
 <h2>Schedule</h2>
-${failed.has(R.milestones) ? `<p><span class="flag">Could not read the milestones</span> — the schedule is left out, not shown as empty.</p>` : d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
-<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${truncated ? ` <span class="muted">(${firstOf} — every figure in this section counts those)</span>` : ""}${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
+${failed.has(R.milestones) ? `<p><span class="flag">Could not read the schedule</span> — it is left out, not shown as empty.</p>` : d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
+<p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} tasks complete${truncated ? ` <span class="muted">(${firstOf} — every figure in this section counts those)</span>` : ""}${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}${d.milestones.some((m) => m.imported) ? ` · <span class="muted">${d.milestones.filter((m) => m.imported).length} imported from the schedule file</span>` : ""}</p>
 <table>${d.milestones.slice(0, 25).map((m) => row(
   m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "—",
   `${esc(m.name)} <span class="muted">— ${esc(m.status.replace("_", " "))}</span>`,
@@ -343,11 +344,11 @@ ${d.closeout.gates.length > 0 ? `<p class="muted">Gate state recorded at complet
   `<span class="${g.ok == null ? "muted" : g.ok ? "ok" : "flag"}">${esc(g.text)}</span>`,
 )).join("")}</table>` : `<p class="muted">No gate snapshot was recorded with this completion — the quality figures above are today's rows, not closeout day's.</p>`}` : ""}
 
-${failed.has(R.parties) ? `<h2>Companies on the job</h2><p>${couldNotRead}</p>` : d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
+${failed.has(R.parties) ? `<h2>Contractors on the job</h2><p>${couldNotRead}</p>` : d.parties.length ? `<h2>Contractors on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}
 
 ${p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
-<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records — cost entries, change orders, milestones, checklist evidence, and turnover reviews.${d.readFailures.length > 0 ? ` Not read this time: ${esc(listJoin(d.readFailures))} — left out above, never printed as zero or empty.` : ""}</p>
+<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records — cost entries, change orders, schedule tasks, checklist evidence, and turnover reviews.${d.readFailures.length > 0 ? ` Not read this time: ${esc(listJoin(d.readFailures))} — left out above, never printed as zero or empty.` : ""}</p>
 <script>window.print()</script>
 </body></html>`;
 }
@@ -369,7 +370,7 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   const money = (n: number) => fmtMoney(n, cur);
   const lines: string[] = [];
   const truncated = d.milestoneTotal > d.milestones.length;
-  const firstOf = `the first ${d.milestones.length} of ${d.milestoneTotal} activities by planned date`;
+  const firstOf = `the first ${d.milestones.length} of ${d.milestoneTotal} tasks by planned date`;
   const failed = new Set(d.readFailures);
   const costFailed = d.readFailures.filter((x) => REPORT_COST_READS.includes(x));
   const r = d.rollup;
@@ -400,11 +401,11 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   }
   const scheduleScope = truncated ? ` (counted over ${firstOf})` : "";
   if (failed.has(R.milestones)) {
-    lines.push("SCHEDULE: Could not read the milestones when this draft was written — check for slipped activities by hand.");
+    lines.push("SCHEDULE: Could not read the schedule when this draft was written — check for slipped tasks by hand.");
   } else if (d.overdue > 0) {
-    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date${scheduleScope} — check which activities slipped and why.`);
+    lines.push(`SCHEDULE: ${d.overdue} task${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date${scheduleScope} — check which tasks slipped and why.`);
   } else if (d.milestones.length > 0) {
-    lines.push(`SCHEDULE: No overdue milestones at report time${scheduleScope}.`);
+    lines.push(`SCHEDULE: No overdue tasks at report time${scheduleScope}.`);
   }
   if (d.turnover.rejected > 0) {
     lines.push(`QUALITY: ${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission — feed the rejection reasons back to the contractor's record.`);
@@ -437,7 +438,7 @@ export async function saveLessonsLearned(input: {
   const { error } = await supabase.from("projects")
     .update({ lessons_learned: input.text.trim() || null })
     .eq("id", input.projectId);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error, { context: "projectReport" }) };
   await supabase.from("audit_logs").insert({
     action: "PROJECT_LESSONS_SAVED", resource_type: "project", resource_id: input.projectId,
     org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,

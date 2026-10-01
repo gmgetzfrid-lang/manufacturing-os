@@ -28,8 +28,9 @@ const input = (over: Partial<WizardWriteInput> = {}): WizardWriteInput => ({
   ...over,
 });
 
-/** A client where named tables refuse; everything else lands. */
-function deps(refuse: Partial<Record<"projects" | "cost_accounts" | "milestones" | "project_parties" | "turnover", { message: string; code?: string }>> = {}) {
+/** A client where named tables refuse; everything else lands. `linkRefusals`
+ *  maps a contractor name to the do-not-use note its company link draws. */
+function deps(refuse: Partial<Record<"projects" | "cost_accounts" | "milestones" | "project_parties" | "turnover", { message: string; code?: string }>> = {}, linkRefusals: Record<string, string> = {}) {
   const calls: Array<{ table: string; rows?: unknown; patch?: unknown }> = [];
   const d: WizardWriteDeps = {
     updateProject: async (patch) => { calls.push({ table: "projects", patch }); return { error: refuse.projects ?? null }; },
@@ -41,6 +42,10 @@ function deps(refuse: Partial<Record<"projects" | "cost_accounts" | "milestones"
       return { error: refuse[table] ?? null };
     },
     seedTurnover: async () => (refuse.turnover ? { ok: false, error: refuse.turnover.message } : { ok: true }),
+    checkPartyLink: async (name, companyId) => {
+      calls.push({ table: "check_party_link", rows: [{ name, companyId }] });
+      return linkRefusals[name] ? { ok: false, note: linkRefusals[name] } : { ok: true };
+    },
   };
   return { d, calls };
 }
@@ -85,7 +90,7 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
       message: "new row violates row-level security policy for table \"cost_accounts\"",
     }]);
     // The other writes still ran — one refusal does not abandon the rest.
-    expect(calls.map((c) => c.table)).toEqual(["projects", "cost_accounts", "milestones", "project_parties"]);
+    expect(calls.map((c) => c.table)).toEqual(["projects", "cost_accounts", "milestones", "check_party_link", "project_parties"]);
     // The typed rows are exactly what the retry will resend.
     expect(inp.accounts).toHaveLength(4);
     expect(summarizeWizardFailures(failures)).toBe("4 budget lines");
@@ -94,7 +99,7 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
   it("the milestones insert binds its error instead of .then(() => undefined, () => undefined)", async () => {
     const { d } = deps({ milestones: { message: "null value in column \"planned_at\"", code: "23502" } });
     const { failures } = await runWizardFollowUpWrites(input(), d);
-    expect(failures).toEqual([{ step: "schedule", label: "2 milestones", message: "null value in column \"planned_at\"" }]);
+    expect(failures).toEqual([{ step: "schedule", label: "2 schedule tasks", message: "null value in column \"planned_at\"" }]);
   });
 
   it("a turnover seed that returns { ok: false } is a failure, not a swallowed catch", async () => {
@@ -120,13 +125,30 @@ describe("runWizardFollowUpWrites — nothing fails silently (UX-1 / PM-13)", ()
     expect((partyInserts[1].rows as Array<Record<string, unknown>>)[0]).not.toHaveProperty("company_id");
   });
 
+  it("DEC-76 item 3: a name-bound company link passes the do-not-use rule — one that would need a reason goes in unlinked, and says so", async () => {
+    const parties = [
+      { name: "Acme Piping Inc", kind: "contractor", trade: "piping", companyId: "c-active" },
+      { name: "Gulf Mechanical", kind: "contractor", trade: "piping", companyId: "c1" },
+      { name: "Walk-in Crew", kind: "internal", trade: "", companyId: null },
+    ];
+    const note = '"Acme Piping Inc" was added without a company link: the name could be Acme Piping LLC, flagged DO NOT USE in the registry. Link it on the project\'s Costs tab, where the link records a reason.';
+    const { d, calls } = deps({}, { "Acme Piping Inc": note });
+    const { failures, notes } = await runWizardFollowUpWrites(input({ parties }), d);
+    expect(failures).toEqual([]);
+    expect(notes).toEqual([note]);
+    // only the linked rows were checked; the refused one is written without its link
+    expect(calls.filter((c) => c.table === "check_party_link").map((c) => (c.rows as Array<{ name: string }>)[0].name)).toEqual(["Acme Piping Inc", "Gulf Mechanical"]);
+    const rows = calls.find((c) => c.table === "project_parties")!.rows as Array<Record<string, unknown>>;
+    expect(rows.map((r) => [r.name, r.company_id])).toEqual([["Acme Piping Inc", null], ["Gulf Mechanical", "c1"], ["Walk-in Crew", null]]);
+  });
+
   it("several failures are all reported, in wizard order, and summarised as a sentence", async () => {
     const { d } = deps({
       cost_accounts: { message: "rls" }, milestones: { message: "rls" }, turnover: { message: "seed failed" },
     });
     const { failures } = await runWizardFollowUpWrites(input(), d);
     expect(failures.map((f) => f.step)).toEqual(["budget", "schedule", "turnover"]);
-    expect(summarizeWizardFailures(failures)).toBe("4 budget lines, 2 milestones and the turnover package seeds");
+    expect(summarizeWizardFailures(failures)).toBe("4 budget lines, 2 schedule tasks and the turnover package seeds");
   });
 
   it("the retry re-runs ONLY the refused steps with the retained rows", async () => {

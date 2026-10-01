@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { userFacingError, userFacingCaughtError } from "@/lib/userFacingError";
 import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
@@ -61,7 +62,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       setHidden(register.hiddenByPermissions);
       onLoaded?.(register);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { action: "read", context: "ProjectDocumentsCard" }));
     } finally { setLoading(false); }
     // onLoaded is a parent callback; the register is keyed on the project.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -108,12 +109,12 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         { org_id: orgId, project_id: projectId, document_id: doc.id, source: "manual", last_seen_at: nowIso },
         { onConflict: "project_id,document_id", ignoreDuplicates: false },
       );
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "ProjectDocumentsCard" }));
       const feedErr = await activity("doc_added", `${doc.label} attached to the project`, doc.id);
       setQ(""); setResults([]);
       await refresh();
       if (feedErr) setErr(`${doc.label} was attached, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(userFacingCaughtError(e, { context: "ProjectDocumentsCard" })); }
     finally { setBusy(null); }
   };
 
@@ -130,12 +131,12 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
     setBusy(r.linkId); setErr(null);
     try {
       const { data: gone, error } = await supabase.from("project_documents").delete().eq("id", r.linkId).select("id");
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "ProjectDocumentsCard" }));
       if (!gone || (gone as unknown[]).length === 0) throw new Error("The document was not removed — only the project owner or an Admin / Document Control can change the register.");
       const feedErr = await activity("doc_removed", `${r.label} removed from the project`, r.docId);
       await refresh();
       if (feedErr) setErr(`${r.label} was removed, but ${feedErr.charAt(0).toLowerCase()}${feedErr.slice(1)}`);
-    } catch (e) { setErr((e as Error).message); }
+    } catch (e) { setErr(userFacingCaughtError(e, { context: "ProjectDocumentsCard" })); }
     finally { setBusy(null); }
   };
 
@@ -155,7 +156,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         )}
       </div>
 
-      {err && <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
+      {err && <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.07] border-b border-rose-500/30">{err}</div>}
       {hidden > 0 && (
         <div className="px-4 py-2 text-[11px] text-[var(--color-text-muted)] border-b border-[var(--color-border)] inline-flex items-center gap-1.5 w-full">
           <EyeOff className="w-3.5 h-3.5 shrink-0" />

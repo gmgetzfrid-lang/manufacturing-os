@@ -49,6 +49,7 @@ import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { checkedWrite, describeWriteError } from "@/lib/checkedWrite";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { isControllerPrincipal } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
@@ -238,17 +239,17 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
       return { maySign: d?.maySign === true, otherSigners: Number.isFinite(others) ? Math.max(0, others) : null, source: "database" };
     }
     if (!isMissingFunction(error)) {
-      return { maySign: false, otherSigners: null, source: "database", error: describeWriteError(error) };
+      return { maySign: false, otherSigners: null, source: "database", error: userFacingReadError(error, "signoff check") };
     }
   } catch (e) {
-    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message || "the sign-off check failed" };
+    return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "signoff check" }) : "the sign-off check failed" };
   }
   const [membersRes, projectRes] = await Promise.all([
     supabase.from("org_members").select("uid, role, roles").eq("org_id", orgId).eq("status", "active"),
     supabase.from("projects").select("owner_user_id").eq("id", projectId).maybeSingle(),
   ]);
   const readError = membersRes.error ?? projectRes.error;
-  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: describeWriteError(readError) };
+  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: userFacingReadError(readError, "signoff check") };
   const members = ((membersRes.data ?? []) as Array<{ uid?: string | null; role?: string | null; roles?: string[] | null }>);
   const eligible = new Set<string>();
   for (const m of members) {
@@ -317,7 +318,7 @@ export async function captureQualitySignoff(input: {
     });
     return { ok: true, signatureId: sig.id };
   } catch (e) {
-    return { ok: false, error: `Your signature wasn't recorded, so nothing was signed off: ${(e as Error)?.message || "the signing ceremony failed"}` };
+    return { ok: false, error: `Your signature wasn't recorded, so nothing was signed off: ${(e as Error)?.message ? userFacingCaughtError(e, { context: "captureQualitySignoff" }) : "the signing ceremony failed"}` };
   }
 }
 
@@ -330,7 +331,7 @@ export async function listChecklists(orgId: string, projectId: string): Promise<
   const { data, error } = await supabase.from("project_checklists").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(50);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listChecklists"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapChecklist);
 }
 
@@ -339,7 +340,7 @@ export async function listChecklists(orgId: string, projectId: string): Promise<
 export async function readChecklistItems(checklistId: string): Promise<{ rows: ChecklistItem[]; error: string | null }> {
   const { data, error } = await supabase.from("checklist_items").select("*")
     .eq("checklist_id", checklistId).order("seq", { ascending: true }).limit(600);
-  if (error) return { rows: [], error: describeWriteError(error) };
+  if (error) return { rows: [], error: userFacingReadError(error, "readChecklistItems") };
   return { rows: (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem), error: null };
 }
 
@@ -613,7 +614,7 @@ export async function setChecklistStatus(input: {
     // decision — DEC-16).
     if (input.checklist.createdBy && input.checklist.createdBy === input.actor.uid) {
       const authority = await loadSignoffAuthority(input.orgId, input.projectId, input.actor);
-      if (authority.error) return { ok: false, error: `Couldn't check who else can sign this checklist off (${authority.error}) — it stays open.` };
+      if (authority.error) return { ok: false, error: `Couldn't check who else can sign this checklist off (${asClause(authority.error)}) — it stays open.` };
       const sod = signoffSeparation(input.checklist.createdBy, input.actor.uid, authority.otherSigners, "checklist");
       if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person signs this checklist off." };
       singleSigner = sod.singleSigner;
@@ -862,7 +863,7 @@ export async function runProjectEvidenceSweep(input: {
   try {
     const { data, error } = await supabase.from("project_checklists").select("id")
       .eq("project_id", input.projectId).eq("status", "open").limit(50);
-    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${error.message})` };
+    if (error) return { ...EMPTY_PROJECT_SWEEP, error: `the project's checklists could not be read (${userFacingError(error, { action: "read", context: "runProjectEvidenceSweep", clause: true })})` };
     const ids = ((data ?? []) as Array<{ id: string }>).map((r) => String(r.id));
     if (ids.length === 0) return { ...EMPTY_PROJECT_SWEEP };
     const state = await gatherProjectEvidenceState(input.orgId, input.projectId);
@@ -876,7 +877,7 @@ export async function runProjectEvidenceSweep(input: {
     }
     return out;
   } catch (e) {
-    return { ...EMPTY_PROJECT_SWEEP, error: (e as Error).message };
+    return { ...EMPTY_PROJECT_SWEEP, error: userFacingCaughtError(e, { context: "evidence sweep" }) };
   }
 }
 
@@ -910,10 +911,10 @@ export async function sweepEvidenceForDocument(input: {
       out.retracted += r.retracted; out.refused += r.refused; out.failed += r.failed;
       if (r.error && !out.error) out.error = r.error;
     }
-    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${failedRead.message})`;
+    if (failedRead && !out.error) out.error = `the projects citing this document could not all be read (${userFacingError(failedRead, { action: "read", context: "sweepEvidenceForDocument", clause: true })})`;
     return out;
   } catch (e) {
-    return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: (e as Error).message };
+    return { ...EMPTY_PROJECT_SWEEP, projects: 0, error: userFacingCaughtError(e, { context: "evidence sweep" }) };
   }
 }
 

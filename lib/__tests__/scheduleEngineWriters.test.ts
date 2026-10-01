@@ -419,7 +419,10 @@ describe("SCH-4 / SCH-9 · grouping under an existing phase is checked for loops
     let n = 0;
     db.failSelect = (table) => (table === "milestones" && ++n === 3 ? { message: "statement timeout" } : null); // the selected rows, the parent, then the project
     const grp = await groupTasksUnderParent({ orgId: ORG, projectId: PROJECT, parentId: "Q", childIds: ["t"], actorUserId: USER });
-    expect(grp.errors).toEqual(["Couldn't check the grouping for loops (statement timeout). Nothing was grouped."]);
+    // REL-3: a sentence, never the driver text — and (J10 third fix) the
+    // reason inside the parentheses carries no full stop of its own
+    expect(grp.errors).toEqual(["Couldn't check the grouping for loops (The database took too long to answer — try again). Nothing was grouped."]);
+    expect(grp.errors[0]).not.toContain(".)");
     expect(updates()).toEqual([]);
   });
 
@@ -519,6 +522,17 @@ describe("SCH-17 · deleting a phase never orphans its subtree", () => {
       expect((err as Error).message).toMatch(/^“Phase 1” was not deleted — you do not have the right to delete it .* Nothing was changed\.$/);
       expect(db.writes).toEqual([]);
       expect(deletedAudit()).toEqual([]);
+    });
+    it("J10 third fix: a refusal under another code reads as ONE sentence — the reason in the parentheses has no full stop of its own, and 'nothing was changed' is said once", async () => {
+      seed();
+      db.rpcImpl = () => ({ data: null, error: { code: "", message: 'new row violates row-level security policy for table "milestones"' } });
+      await expect(deleteMilestone("P", USER)).rejects.toThrow(/^Could not delete “Phase 1” \(You don't have permission to do this\) — nothing was changed\.$/);
+      db.rpcImpl = () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+      const err = await deleteMilestone("P", USER).then(() => null, (e: unknown) => e as Error);
+      expect(err!.message).toBe("Could not delete “Phase 1” (The database took too long to answer — try again) — nothing was changed.");
+      expect(err!.message).not.toContain(".)");
+      expect(err!.message.match(/nothing was changed/g)).toHaveLength(1);
+      expect(db.writes).toEqual([]);
     });
     it("a permission error that names the function is a refusal, never 'not deployed' — no fallback delete runs", async () => {
       seed();
@@ -674,7 +688,7 @@ describe("SAF-7 · every captured baseline is available for drift, newest first"
     expect(await listBaselineCaptures({ orgId: ORG, projectId: PROJECT, milestones: live })).toMatchObject({ historyUnavailable: true });
     db.failSelect = (t) => (t === "milestone_baseline_history" ? { message: "permission denied for table milestone_baseline_history" } : null);
     const res = await listBaselineCaptures({ orgId: ORG, projectId: PROJECT, milestones: live });
-    expect(res.error).toMatch(/permission denied/);
+    expect(res.error).toBe("You don't have permission to see this.");   // REL-3
     expect(res.captures.map((c) => c.id)).toEqual(["current"]);
   });
 });

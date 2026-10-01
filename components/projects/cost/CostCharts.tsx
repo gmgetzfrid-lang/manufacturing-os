@@ -21,6 +21,7 @@ import {
 import { buildExampleCostData } from "@/lib/exampleProject";
 import { computeBidEconomics } from "@/lib/bidTab";
 import { fmtMoney, type CostEntry, type ProjectCostRollup } from "@/lib/costs";
+import { BIDDER_TERM, CONTRACTOR_TERM, NOT_SELECTED_TERM, VOID_TERM, type VocabularyTerm } from "@/lib/projectVocabulary";
 
 // Axis labels: compact money ("$150K"), one formatter per currency.
 const compactFmts = new Map<string, Intl.NumberFormat>();
@@ -200,10 +201,10 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
   const noMoney = noBudget && series.every((p) => p.planned == null && p.committed === 0 && p.actual === 0);
   const plannedHint = !noMoney && series.length >= 2 && !series.some((p) => p.planned != null)
     ? noBudget && noSchedule
-      ? "No budget and no schedule dates yet, so there's no planned-pace line — set a budget and add milestones and it appears."
+      ? "No budget and no schedule dates yet, so there's no planned-pace line — set a budget and add dated tasks and it appears."
       : noBudget
         ? "No budget on any line yet, so there's no planned-pace line — set a budget and it appears."
-        : "No schedule dates yet, so there's no planned-pace line — import or add milestones and it appears."
+        : "No schedule dates yet, so there's no planned-pace line — import a schedule or add dated tasks and it appears."
     : null;
 
   // REL-11: burn by budget line, for real — each line against its own
@@ -278,7 +279,7 @@ function CostPictures({ series, emptyReason = "no-dates", fmt, tickFmt, todayIso
           // explains itself instead of leaving a silent gap.
           <div data-empty="spend-curve" data-reason="no-dates" className="rounded-xl border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 text-[11px] text-[var(--color-text-muted)]">
             <b className="text-[var(--color-text)]">No spend curve yet — it needs dates.</b>{" "}
-            Add or import milestones to draw the planned pace against your budget, or post a commitment or an actual to start the spent line.
+            Add dated tasks (or import a schedule) to draw the planned pace against your budget, or post a commitment or an actual to start the spent line.
           </div>
         )}
       </div>
@@ -362,29 +363,58 @@ function ForecastSentence({ sentence, basis, scopeNote, example = false }: {
 
 // ── The glossary — jargon kept, but explained where everyone can see it ──
 
-export const COST_GLOSSARY_TERMS: Array<{ term: string; plain: string }> = [
+/** UX-15: every term the Costs tab shows, in the words it shows them — and
+ *  nothing it does not (SPI is not on this tab; "S-curve" and "$/labor-hour"
+ *  are on screen as "Spend curve" and "Price / hr"). The company and
+ *  "no longer counts" words come from lib/projectVocabulary, the one list. */
+export const COST_GLOSSARY_TERMS: VocabularyTerm[] = [
   { term: "Budget", plain: "What you plan to spend, split into budget lines (cost accounts)." },
+  { term: "Revised budget", plain: "The budget plus the approved change orders. Burn, Available and the forecast measure against it." },
   { term: "Commitment", plain: "Money you've promised — a signed PO or an awarded contract. Not spent yet, but spoken for." },
-  { term: "Actual", plain: "Money that really left — an invoice or timesheet posted against a budget line." },
+  { term: "Actual", plain: "Money that really left — an invoice or timesheet posted against a budget line. Spent = actuals plus signed adjustments (a negative adjustment credits money back)." },
   { term: "Adjustment", plain: "A signed correction. Negative adjustments credit money back." },
+  { term: "% burned", plain: "Spent ÷ the revised budget — how far through its money the job is." },
   { term: "Available (uncommitted)", plain: "Budget minus what you've spent minus what you've promised (open commitments, net of the invoices already posted against them). The number you can still award." },
+  { term: "Unspent (actuals only)", plain: "The revised budget minus Spent — it ignores open commitments, so it is never smaller than Available." },
+  { term: "Exposure", plain: "What a budget line will cost at least: spent plus the open commitments not yet invoiced. The over-budget flag uses it." },
+  { term: "Pinned (to a schedule task)", plain: "A budget line tied to one schedule task, so it earns value as that task progresses. An unpinned line earns nothing and is forecast at its budget (or its spend pace, if that runs higher)." },
   { term: "Earned value (EV)", plain: "Work done, priced at budget: a line pinned to a schedule task earns its budget × that task's % complete." },
   { term: "CPI", plain: "Cost Performance Index = earned value ÷ actual cost. 1.0 is on budget; 1.06 means you get $1.06 of work per $1 spent; below 1.0 you're over-running." },
-  { term: "SPI", plain: "Schedule Performance Index — same idea for time. Below 1.0 means behind schedule." },
-  { term: "S-curve", plain: "The spend-over-time chart: planned pace (grey dashes), committed (dash-dot line) and spent (solid line, shaded), with the budget drawn across and a marker at today — healthy jobs track near the planned line." },
+  { term: "Spend curve", plain: "The spend-over-time chart (an S-curve): planned pace (grey dashes), committed (dash-dot line) and spent (solid line, shaded), with the budget drawn across and a marker at today — healthy jobs track near the planned line." },
   { term: "EAC / forecast", plain: "Estimate At Completion — where the total lands if current performance continues: the part of the budget pinned to schedule tasks ÷ CPI, plus the rest at its budget (or at its spend pace, if that runs higher). The note beside the forecast says which applied." },
   { term: "Planned average crew", plain: "The awarded bid's labor hours ÷ the schedule's weeks ÷ 40 hours per person-week. An average, not a curve — a bid says how many hours, not which weeks they fall in." },
-  { term: "RFQ group", plain: "One scope of work you asked several companies to price. Their quotes tabulate side by side under it." },
-  { term: "Bid tabulation", plain: "The side-by-side of competing quotes: price, labor hours offered, $/hour, and what each bid EXCLUDED — which is usually why the low bid is low." },
-  { term: "$/labor-hour", plain: "Total price ÷ labor hours offered. The manpower-for-the-money number — lower buys more hands." },
+  { term: "RFQ group", plain: "One scope of work you asked several companies to price (a Request For Quotation). Their quotes tabulate side by side under it." },
+  BIDDER_TERM,
+  { term: "Bid tabulation", plain: "The side-by-side of competing quotes: price, labor hours offered, price per hour, and what each bid EXCLUDED — which is usually why the low bid is low." },
+  { term: "Price / hr", plain: "Total price ÷ labor hours offered. The manpower-for-the-money number — lower buys more hands." },
+  { term: "Peak crew", plain: "The largest crew size the bid states." },
+  { term: "Value score", plain: "How a bid ranks in its RFQ group: its price against the others, plus manpower-for-the-money once enough bids state believable hours. A ranking aid, not the winner — you decide." },
+  { term: "Not stated", plain: "The bid gives no labor hours. Where the field scores manpower, it scores none; check the PDF." },
+  { term: "excludes:", plain: "Scope a bid explicitly leaves out — declared, so it never lowers the score; it is scope you must buy elsewhere." },
+  { term: "check:", plain: "A line another bidder priced that this bid's wording doesn't obviously cover — a silent gap to check in the PDF. A prompt, not a finding; it does not change the score." },
+  NOT_SELECTED_TERM,
   { term: "Change order (CO)", plain: "A priced change to the contract, with a reason code. Approving one posts the money; nothing changes the budget silently." },
+  { term: "Reason code", plain: "Why a change order happened. It decides whose record the money lands on: a contractor's scope gap counts against that contractor; a design error or an owner request counts against us." },
+  CONTRACTOR_TERM,
+  VOID_TERM,
 ];
 
+/** Remembers (per browser) that the glossary has been seen once. */
+const GLOSSARY_SEEN_KEY = "costGlossarySeen.v1";
+
 export function CostGlossary() {
-  const [open, setOpen] = React.useState(false);
+  // A11Y-12: open on a viewer's FIRST visit — the definitions are not an
+  // Easter egg at the foot of the page — and collapsed after that. Storage
+  // can be blocked; then it simply opens.
+  const [open, setOpen] = React.useState(() => {
+    try { return typeof window !== "undefined" && window.localStorage.getItem(GLOSSARY_SEEN_KEY) !== "1"; } catch { return true; }
+  });
+  React.useEffect(() => {
+    try { window.localStorage.setItem(GLOSSARY_SEEN_KEY, "1"); } catch { /* storage blocked: it opens again next time */ }
+  }, []);
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-      <button onClick={() => setOpen((v) => !v)}
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <span className="text-sm font-bold text-[var(--color-text)]">What do these words mean?</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">Plain-language guide to every term on this page</span>

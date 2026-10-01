@@ -34,6 +34,7 @@ import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
 export type CostDocKind = "quote" | "invoice" | "po";
 export type CostDocStatus = "draft" | "parsed" | "awarded" | "declined" | "posted" | "void";
@@ -121,7 +122,7 @@ export async function listCostDocs(orgId: string, projectId: string): Promise<Co
   const { data, error } = await supabase.from("cost_documents").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
-  if (error) throw new Error(`Couldn't load quotes & invoices: ${error.message}`);
+  if (error) throw new Error(`Couldn't load quotes & invoices: ${userFacingReadError(error, "listCostDocs")}`);
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapDoc);
 }
 
@@ -141,7 +142,7 @@ export async function uploadCostDoc(input: {
   try {
     await uploadToPath(input.file, key, { contentType: input.file.type });
   } catch (e) {
-    return { ok: false, error: `File upload failed: ${(e as Error).message}` };
+    return { ok: false, error: `File upload failed: ${userFacingError(e, { context: "uploadCostDoc storage" })}` };
   }
 
   const row: Record<string, unknown> = {
@@ -163,7 +164,7 @@ export async function uploadCostDoc(input: {
   if (error || !data) {
     // REL-2 dw2: the bytes went up before the row — don't leave them orphaned.
     try { await deleteFile(key); } catch { /* best effort; the orphan collector (ILIFE-1) is the backstop */ }
-    return { ok: false, error: error?.message ?? "Couldn't record the document." };
+    return { ok: false, error: error ? userFacingError(error, { context: "uploadCostDoc" }) : "Couldn't record the document." };
   }
 
   const doc = mapDoc(data as Record<string, unknown>);
@@ -228,7 +229,7 @@ async function claimDocTransition(
 ): Promise<{ ok: true; fresh: CostDocument; raw: Record<string, unknown> } | { ok: false; error: string }> {
   const { data: row, error: readErr } = await supabase
     .from("cost_documents").select("*").eq("id", docId).maybeSingle();
-  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found — it may have been removed." };
+  if (readErr || !row) return { ok: false, error: readErr ? userFacingReadError(readErr, "claimDocTransition") : "Document not found — it may have been removed." };
   const raw = row as Record<string, unknown>;
   const fresh = mapDoc(raw);
   if (!fromStatuses.includes(fresh.status)) {
@@ -245,7 +246,7 @@ async function claimDocTransition(
     .update(patch)
     .eq("id", docId).in("status", fromStatuses)
     .select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error, { context: "claimDocTransition" }) };
   if (!claimed || claimed.length === 0) {
     return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
   }
@@ -262,18 +263,18 @@ async function revertDocTransition(docId: string, backTo: CostDocStatus, from: C
       .update({ status: backTo, posted_at: null, posted_by: null })
       .eq("id", docId).eq("status", from)
       .select("id");
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: userFacingError(error, { context: "revertDocTransition" }) };
     if (!data || data.length === 0) return { ok: false, error: "the row was not in the claimed state any more" };
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: userFacingCaughtError(e, { context: "revertDocTransition" }) };
   }
 }
 
 /** The message for a claim whose money failed AND whose revert failed —
  *  names the state and the id so the row can be found and repaired. */
 function stuckMessage(docId: string, claimedAs: CostDocStatus, postErr: string, revertErr: string): string {
-  return `The money did not post (${postErr}) AND the document could not be put back (${revertErr}) — it is stuck as ${claimedAs} with no cost entry. Document ${docId}: use "Repair" on the Costs tab to re-post or revert it.`;
+  return `The money did not post (${asClause(postErr)}) AND the document could not be put back (${asClause(revertErr)}) — it is stuck as ${claimedAs} with no cost entry. Document ${docId}: use "Repair" on the Costs tab to re-post or revert it.`;
 }
 
 /** A stored currency as an ISO-4217-shaped code, or null when unstated or
@@ -296,7 +297,7 @@ async function currencyMismatch(doc: CostDocument, costAccountId: string): Promi
   const docCur = normalizeCurrency(doc.currency);
   if (!docCur) return null;
   const { data, error } = await supabase.from("cost_accounts").select("currency").eq("id", costAccountId).maybeSingle();
-  if (error) return `Couldn't check the budget line's currency: ${error.message}`;
+  if (error) return `Couldn't check the budget line's currency: ${userFacingReadError(error, "currencyMismatch")}`;
   const acctCur = normalizeCurrency((data as { currency?: string | null } | null)?.currency) ?? "USD";
   if (acctCur === docCur) return null;
   return `This document is in ${docCur} but the budget line is in ${acctCur} — pick a ${docCur} budget line or correct the document's currency before posting.`;
@@ -313,7 +314,7 @@ type CompanyRow = { id: string; name: string; status: string };
 async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; error?: string }> {
   const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
     const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).maybeSingle();
-    if (error) return { company: null, error: error.message };
+    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
     return { company: (data as CompanyRow | null) ?? null };
   };
   const docCompanyId = (raw.company_id as string | null | undefined) ?? null;
@@ -323,7 +324,7 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
   }
   if (doc.partyId) {
     const { data, error } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
-    if (error) return { company: null, error: error.message };
+    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
     const partyCompanyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
     if (partyCompanyId) {
       const hit = await byId(partyCompanyId);
@@ -334,7 +335,7 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
   if (!name) return { company: null };
   const { data, error } = await supabase.from("companies").select("id, name, status")
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
-  if (error) return { company: null, error: error.message };
+  if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
   const rows = (data ?? []) as CompanyRow[];
   return { company: rows.length === 1 ? rows[0] : null };
 }
@@ -424,7 +425,7 @@ async function selectIn<T>(
   const rows: T[] = [];
   for (let i = 0; i < values.length; i += 100) {
     const { data, error } = await build(values.slice(i, i + 100));
-    if (error) return { rows, error: error.message };
+    if (error) return { rows, error: userFacingReadError(error, "listOrphans") };
     rows.push(...((data ?? []) as T[]));
   }
   return { rows };
@@ -509,7 +510,7 @@ export async function awardQuote(input: {
     const mismatch = await currencyMismatch(f, input.costAccountId);
     if (mismatch) return mismatch;
     const behind = await companyBehind(f, raw);
-    if (behind.error) return `Couldn't check the company registry (${behind.error}) — try again; an award is not made without that check.`;
+    if (behind.error) return `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`;
     company = behind.company;
     flagged = !!company && (company.status === "do_not_use" || company.status === "inactive");
     if (company && flagged && !override) {
@@ -586,7 +587,7 @@ export async function awardQuote(input: {
       .select("id");
     declined = hit?.length ?? 0;
     if (error || declined < rivals.length) {
-      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${error.message})` : ""} — refresh and decline them by hand.`);
+      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${userFacingError(error, { context: "declineRivals", clause: true })})` : ""} — refresh and decline them by hand.`);
     }
   }
   if (ungroupedOpen.length > 0) {
@@ -721,12 +722,12 @@ export async function setManualTotal(input: {
   }
   const open = await supabase.from("cost_documents").update({ ...patch, status: "parsed" })
     .eq("id", input.doc.id).in("status", ["draft", "parsed"]).select("id");
-  if (open.error) return { ok: false, error: open.error.message };
+  if (open.error) return { ok: false, error: userFacingError(open.error, { context: "setManualTotal" }) };
   let hit = open.data ?? [];
   if (hit.length === 0) {
     const dec = await supabase.from("cost_documents").update(patch)
       .eq("id", input.doc.id).eq("status", "declined").select("id");
-    if (dec.error) return { ok: false, error: dec.error.message };
+    if (dec.error) return { ok: false, error: userFacingError(dec.error, { context: "setManualTotal" }) };
     hit = dec.data ?? [];
   }
   if (hit.length === 0) {
@@ -783,7 +784,7 @@ export async function listLedgerOrphans(orgId: string, projectId: string): Promi
   const probe = await supabase.from("cost_ledger_orphans").select("id").eq("org_id", orgId).eq("project_id", projectId).limit(1);
   if (probe.error) {
     if (relationMissing(probe.error)) return { available: false, docs: [], changeOrders: [] };
-    throw new Error(`Couldn't check the ledger for orphans: ${probe.error.message}`);
+    throw new Error(`Couldn't check the ledger for orphans: ${userFacingReadError(probe.error, "ledgerOrphans")}`);
   }
   const [docsRes, cosRes] = await Promise.all([
     supabase.from("cost_documents").select("*").eq("org_id", orgId).eq("project_id", projectId)
@@ -792,7 +793,7 @@ export async function listLedgerOrphans(orgId: string, projectId: string): Promi
       .eq("org_id", orgId).eq("project_id", projectId).eq("status", "approved").limit(500),
   ]);
   const failed = docsRes.error ?? cosRes.error;
-  if (failed) throw new Error(`Couldn't check the ledger for orphans: ${failed.message}`);
+  if (failed) throw new Error(`Couldn't check the ledger for orphans: ${userFacingReadError(failed, "ledgerOrphans")}`);
   const moved = ((docsRes.data ?? []) as Array<Record<string, unknown>>).map(mapDoc);
   const approved = (cosRes.data ?? []) as Array<{ id: string; co_number: string; title: string; amount: unknown; cost_account_id: string | null; posted_entry_id: string | null }>;
 
@@ -847,14 +848,14 @@ export async function repairCostDoc(input: {
   doc: CostDocument; action: "repost" | "revert"; costAccountId?: string | null; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   const { data: row, error: readErr } = await supabase.from("cost_documents").select("*").eq("id", input.doc.id).maybeSingle();
-  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found — it may have been removed." };
+  if (readErr || !row) return { ok: false, error: readErr ? userFacingReadError(readErr, "repairCostDoc") : "Document not found — it may have been removed." };
   const fresh = mapDoc(row as Record<string, unknown>);
   if (fresh.status !== "awarded" && fresh.status !== "posted") {
     return { ok: false, error: `This document is ${costDocStatusLabel(fresh.status).toLowerCase()} — nothing to repair.` };
   }
   const { data: linked, error: linkErr } = await supabase.from("cost_entries").select("id, status")
     .eq("source_document_id", fresh.id).limit(50);
-  if (linkErr) return { ok: false, error: linkErr.message };
+  if (linkErr) return { ok: false, error: userFacingError(linkErr, { context: "repairCostDoc" }) };
   const links = (linked ?? []) as Array<{ id: string; status: string | null }>;
   if (links.some((e) => e.status === "posted")) return { ok: false, error: "This document already has its cost entry — nothing to repair. Refresh." };
   // Pre-Round-G money carries no source_document_id: an unlinked entry of

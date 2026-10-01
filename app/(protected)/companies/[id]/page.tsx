@@ -20,7 +20,10 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { Spinner } from "@/components/ui/Spinner";
+import { Modal, ModalHeader } from "@/components/ui/Modal";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   getCompany, saveCompany, gatherCompanyProfile, addCompanyEvent, confirmQualityManual, recordedQualityScore,
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
@@ -32,6 +35,8 @@ import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
+import { StatusMark, StatusLegend, RUBRIC_MARKS } from "@/components/projects/StatusMark";
+import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -71,7 +76,7 @@ export default function CompanyProfilePage() {
         const p = await gatherCompanyProfile(c);
         if (!cancelled) setProfile(p);
       } catch (e) {
-        if (!cancelled) { setError((e as Error).message); setLoading(false); }
+        if (!cancelled) { setError(userFacingCaughtError(e, { action: "read", context: "company profile" })); setLoading(false); }
       }
     })();
     return () => { cancelled = true; };
@@ -81,7 +86,7 @@ export default function CompanyProfilePage() {
   if (loading) return <div className="min-h-full flex items-center justify-center"><Spinner /></div>;
   if (error || !company) return (
     <div className="min-h-full p-8">
-      <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-start gap-2">
+      <div role="alert" className="max-w-2xl mx-auto bg-rose-500/[0.08] border border-rose-500/40 rounded-xl p-4 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
         <div>{error ?? "Company not found."}<div className="mt-2"><Link href="/companies" className="underline">Back to companies</Link></div></div>
       </div>
@@ -164,13 +169,13 @@ export default function CompanyProfilePage() {
                   <> Fewer than {MIN_EVIDENCE_FOR_BAND} evidence points — the band is <b>provisional</b>, not a grade.</>
                 )}
                 {profile && profile.partiesLinked === 0 && (
-                  <> <b>Unlinked:</b> no project party points at this registry row, so awards, change orders, turnover and punch evidence cannot reach it — link a party on a project&apos;s Costs tab.</>
+                  <> <b>Unlinked:</b> no project&apos;s contractor is linked to this company, so awards, change orders, turnover and punch evidence cannot reach it — link the contractor on that project&apos;s Costs tab.</>
                 )}
                 {profile && profile.awardsSource === "contract_value" && (
                   <> Awards come from a typed contract value, not posted commitments.</>
                 )}
                 {profile && profile.awardsSource === "mixed" && (
-                  <> Awards on some parties come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
+                  <> Awards on some contractor records come from a typed contract value (no commitment has posted against that contractor), the rest from posted commitments.</>
                 )}
               </div>
             )}
@@ -212,6 +217,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
   const [adjusted, setAdjusted] = useState<string>("");
   const [confirming, setConfirming] = useState(false);
   const areaLabel = useMemo(() => new Map(QUALITY_MANUAL_RUBRIC.map((a) => [a.key, a.label])), []);
+  // UX-13: the evaluation's precondition is stated before the search, not after the click.
+  const ai = useAiReadiness(orgId);
 
   useEffect(() => {
     const q = query.trim();
@@ -249,7 +256,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       });
       setAdjusted(String(body.score));
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setEvaluating(false); }
   };
 
@@ -272,7 +279,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       setProposal(null); setDoc(null); setQuery(""); setAdjusted("");
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setConfirming(false); }
   };
 
@@ -282,10 +289,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
         <BookOpenCheck className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quality manual</span>
         {company.qualityManualScore != null ? (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(company.qualityManualScore) }}
+          // CHART-6: text token for the figure; the band colour rides on a mark beside it.
+          <span className="inline-flex items-center gap-1 text-[11px] font-black tabular-nums text-[var(--color-text)]"
             title={`Based on ${readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label} of the manual`}>
+            <span aria-hidden="true" className="w-2 h-2 rounded-full shrink-0" style={{ background: scoreBandColor(company.qualityManualScore) }} />
             {Math.round(company.qualityManualScore)}% coverage
-            <span className="ml-1 font-bold text-[var(--color-text-faint)]">· {readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label}</span>
+            <span className="ml-1 font-bold text-[var(--color-text-muted)]">· {readExtent(company.qualityManualPagesRead, company.qualityManualPagesTotal).label}</span>
           </span>
         ) : (
           <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated — the score gauges how much of a real quality program their manual covers.</span>
@@ -313,7 +322,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
-                    <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">
@@ -323,11 +332,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                       className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
                   </span>
                 )}
-                <button onClick={() => void evaluate()} disabled={!doc || evaluating}
+                <button onClick={() => void evaluate()} disabled={!doc || evaluating || aiBlocked(ai)}
                   className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
                   title="AI reads the manual against the ISO 9001-shaped rubric (doc control, welding, NDE, calibration, ITPs, materials, NCRs, training, records). You review before anything lands.">
                   {evaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Evaluate
                 </button>
+                <AiPreconditionNote readiness={ai} className="basis-full" />
               </div>
               {results.length > 0 && !doc && (
                 <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
@@ -368,10 +378,12 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                   </button>
                 </span>
               </div>
+              {/* A11Y-2: covered vs gap is a glyph and a word, never hue alone. */}
+              <StatusLegend marks={RUBRIC_MARKS} title="Rubric key" />
               <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                 {proposal.findings.map((f) => (
                   <li key={f.area} className="px-3 py-1.5 text-[11px] flex items-start gap-2">
-                    <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${f.covered ? "bg-emerald-500" : "bg-rose-500"}`} />
+                    <StatusMark spec={f.covered ? RUBRIC_MARKS.covered : RUBRIC_MARKS.gap} />
                     <span><b className="text-[var(--color-text)]">{areaLabel.get(f.area) ?? f.area}:</b> <span className="text-[var(--color-text-muted)]">{f.finding}</span></span>
                   </li>
                 ))}
@@ -402,7 +414,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       await addCompanyEvent({ orgId, companyId: company.id, kind, eventDate: date, description: desc, actorId, actorName });
       setDesc(""); onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setBusy(false); }
   };
 
@@ -439,7 +451,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
         <ul className="divide-y divide-[var(--color-border)] max-h-80 overflow-y-auto">
           {events.map((e) => (
             <li key={e.id} className="px-4 py-2 flex items-start gap-2 text-xs">
-              <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
+              <span aria-hidden="true" className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
                 e.kind === "recordable" || e.kind === "stop_work" ? "bg-rose-500"
                 : e.kind === "warning" ? "bg-amber-500"
                 : e.kind === "commendation" ? "bg-emerald-500"
@@ -553,40 +565,49 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
       });
       onSaved();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "company profile" }));
     } finally { setBusy(false); }
   };
 
+  // A11Y-4: Escape / the backdrop close it — asking first when an edit would be lost.
+  const edited = name !== company.name || kind !== company.kind || trade !== (company.trade ?? "") || status !== company.status
+    || contactName !== (company.contactName ?? "") || contactEmail !== (company.contactEmail ?? "")
+    || contactPhone !== (company.contactPhone ?? "") || notes !== (company.notes ?? "");
+  const dismiss = async () => {
+    if (edited && !(await appConfirm({ title: "Discard your changes?", message: `Your edits to ${company.name} have not been saved.`, confirmLabel: "Discard", tone: "danger" }))) return;
+    onClose();
+  };
+
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-          <div className="text-sm font-black text-[var(--color-text)] flex-1">Edit {company.name}</div>
-          <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="px-6 py-5 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *"
+    <Modal onClose={() => void dismiss()} size="md" dismissable={!busy} className="overflow-hidden">
+        <ModalHeader title={`Edit ${company.name}`} onClose={busy ? undefined : () => void dismiss()} />
+        <div className="px-6 py-5 space-y-3 overflow-y-auto min-h-0">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name *" aria-label="Company name (required)"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])}
+            <select value={kind} onChange={(e) => setKind(e.target.value as Company["kind"])} aria-label="Kind"
               className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
               {(Object.keys(COMPANY_KIND_LABEL) as Company["kind"][]).map((k) => (
                 <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade" aria-label="Trade"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <select value={status} onChange={(e) => setStatus(e.target.value as Company["status"])}
-              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
-              title="'Do not use' keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). 'Inactive' needs the same override to be awarded.">
+              aria-label="Status" aria-describedby="company-status-help"
+              className="px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="do_not_use">Do not use</option>
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          {/* A11Y-12: what "Do not use" does is said in text, not in a hover title on a select. */}
+          <p id="company-status-help" className="text-[11px] text-[var(--color-text-muted)]">
+            <b>Do not use</b> keeps the record and flags the company on the bid tab: an award to it needs a typed, recorded override (and so does re-linking a bidder away from it). <b>Inactive</b> needs the same override to be awarded.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Contact name"
               className="px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
             <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email"
@@ -597,19 +618,18 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Notes"
             className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
+            <div role="alert" className="flex items-start gap-2 p-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.07] text-xs font-bold text-rose-700 dark:text-rose-300">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
             </div>
           )}
         </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+          <button onClick={() => void dismiss()} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -28,6 +28,7 @@ import {
 } from "@/lib/milestones";
 import { isImportedMilestone, isOverdueMilestone } from "@/lib/milestoneLiveness";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import Spinner from "@/components/ui/Spinner";
@@ -105,7 +106,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const list = await listMilestones({ orgId, projectId, includeGhost: true });
       setMilestones(list);
       setLoadError(null);
-    } catch (e) { setLoadError((e as Error).message); }
+    } catch (e) { setLoadError(userFacingCaughtError(e, { action: "read", context: "ScheduleTab" })); }
     finally { setLoading(false); }
   }, [orgId, projectId]);
 
@@ -224,7 +225,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBusy(false); }
   };
 
@@ -233,14 +234,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     const target = milestones.find((m) => m.id === id);
     const plan = planMilestoneDelete(milestones, id);
     const parentName = plan.newParentId ? milestones.find((m) => m.id === plan.newParentId)?.name ?? "its parent" : null;
-    const parts = [`Delete “${target?.name ?? "this milestone"}”? This action is audited.`];
+    const parts = [`Delete “${target?.name ?? "this task"}”? This action is audited.`];
     if (plan.children.length > 0) parts.push(`Its ${plan.children.length} sub-task${plan.children.length === 1 ? "" : "s"}${plan.descendants > plan.children.length ? ` (${plan.descendants} tasks in all)` : ""} will move up to ${parentName ? `“${parentName}”` : "the top level"} — none is deleted.`);
     if (plan.dependents.length > 0) parts.push(`${plan.dependents.length} task${plan.dependents.length === 1 ? "" : "s"} that depend${plan.dependents.length === 1 ? "s" : ""} on it will lose that link.`);
     if (target && isImportedMilestone(target)) parts.push(`It came from ${target.source}: the next import of a file that still contains it adds it back.`);
     if (!(await appConfirm({ message: parts.join(" "), tone: "danger" }))) return;
     setBusy(true); setError(null);
     try { await deleteMilestone(id, userId); await refresh(); }
-    catch (e) { setError((e as Error).message); void refresh(); }
+    catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); void refresh(); }
     finally { setBusy(false); }
   };
 
@@ -271,7 +272,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBaselineBusy(false); }
   };
 
@@ -279,11 +280,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   return (
     <div className="space-y-4">
       {(error || loadError) && (
-        <div role="alert" className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+        <div role="alert" className="flex items-center gap-2 text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded-lg px-3 py-2">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           <span className="flex-1 min-w-0">{[error, loadError].filter(Boolean).join(" · ")}</span>
           {error && (
-            <button type="button" onClick={() => setError(null)} aria-label="Dismiss this message" className="shrink-0 p-0.5 rounded hover:bg-red-100">
+            <button type="button" onClick={() => setError(null)} aria-label="Dismiss this message" className="shrink-0 p-0.5 rounded hover:bg-rose-500/15">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
@@ -292,8 +293,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
       <FirstRunHint storageKey="schedule.intro.v2" tone="info">
         Drop an exported schedule file and we&apos;ll parse it — from MS Project (.xml / .csv) or Primavera P6,
-        the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand — that&apos;s
-        enough to unlock the board. Drag milestones in the calendar to reschedule; click a pill to advance its status.
+        the scheduling tool big projects use (.xml / .xer export). No file? Type a few dated tasks by hand — that&apos;s
+        enough to unlock the board. Drag tasks in the calendar to reschedule; click a pill to advance its status.
       </FirstRunHint>
 
       {/* Progress dashboard — always on top, summarizes everything */}
@@ -301,13 +302,15 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
       {/* View tabs */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-sm p-1 gap-0.5">
+        <div role="group" aria-label="Schedule view" className="inline-flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-sm p-1 gap-0.5">
           {([
             { id: "planning",  label: "Planning",  Icon: ClipboardList },
             { id: "execution", label: "Execution", Icon: PlayCircle },
           ] as Array<{ id: ScheduleView; label: string; Icon: typeof PlayCircle }>).map(({ id, label, Icon }) => (
             <button
               key={id}
+              type="button"
+              aria-pressed={view === id}
               onClick={() => setView(id)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
                 view === id
@@ -321,6 +324,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         </div>
         <div className="inline-flex items-center gap-2">
           <button
+            type="button"
+            aria-pressed={showGhost}
             onClick={() => setShowGhost((v) => !v)}
             title={showGhost
               ? "Hide the rows imported from your scheduling tool from the list and the board. Every number, rollup, the critical path and the cycle check still count them."
@@ -353,7 +358,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   title={hasBaseline
                     ? "Capture the current plan as the new baseline — once the baseline-history migration is applied the one it replaces is kept for the Report to compare against (the confirm says whether this database keeps it)"
                     : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.16] border border-emerald-500/50 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
                   <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
                 </button>
@@ -362,7 +367,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                 onClick={() => setAdding((v) => !v)}
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
               >
-                <Plus className="w-3.5 h-3.5" /> Add milestone
+                <Plus className="w-3.5 h-3.5" /> Add task
               </button>
             </>
           )}
@@ -441,9 +446,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               } else void refresh();
               return { ok: true, updatedAt: res.updatedAt };
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               void refresh();
-              return { ok: false, error: (e as Error).message };
+              return { ok: false, error: userFacingCaughtError(e, { context: "ScheduleTab" }) };
             }
           }}
           onSetStatus={async (id, status) => {
@@ -457,7 +462,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               await refresh();
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               return false;
             }
           }}
@@ -472,7 +477,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               await refresh();
               return true;
             } catch (e) {
-              setError((e as Error).message);
+              setError(userFacingCaughtError(e, { context: "ScheduleTab" }));
               return false;
             }
           }}
@@ -492,7 +497,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-slate-50/60">
             <div className="flex items-center gap-2">
               <Flag className="w-4 h-4 text-[var(--color-accent)]" />
-              <div className="font-bold text-[var(--color-text)] text-sm">Milestones</div>
+              <div className="font-bold text-[var(--color-text)] text-sm">Tasks</div>
               <span className="text-[10px] text-[var(--color-text-muted)] font-mono">{visible.length}</span>
             </div>
             <HelpTooltip>
@@ -519,7 +524,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             </div>
           ) : visible.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
-              {planFilterOn ? "No tasks match the current search/filter." : <>No milestones yet.{canEdit && " Click Add milestone above to create the first one."}</>}
+              {planFilterOn ? "No tasks match the current search/filter." : <>No tasks yet.{canEdit && " Click Add task above to create the first one."}</>}
             </div>
           ) : (
             <div className="divide-y divide-[var(--color-border)]">
@@ -681,7 +686,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, nowMs, onSetStatus, o
           {m.location && <span className="text-slate-600">· {m.location}</span>}
           {actual && (
             <>
-              <ArrowRight className="w-3 h-3 text-slate-300" />
+              <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
               <span className={slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>
                 actual {actual.toLocaleDateString()}{slipDays !== 0 && ` (${slipDays > 0 ? "+" : ""}${slipDays}d)`}
               </span>
@@ -719,7 +724,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, nowMs, onSetStatus, o
             onClick={() => onDelete(m.id!)}
             disabled={busy}
             className="p-1 rounded text-slate-600 hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/[0.08] transition-colors"
-            title="Delete milestone"
+            title="Delete task"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -825,7 +830,7 @@ function AddMilestoneForm({
         createdByRole: userRole,
       });
       onCreated();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ScheduleTab" })); }
     finally { setBusy(false); }
   };
 
@@ -833,15 +838,19 @@ function AddMilestoneForm({
     <form onSubmit={submit} className="px-4 py-3 bg-[var(--color-accent-soft)]/60 border-b border-[var(--color-border)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (required)" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" autoFocus />
-        <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" title="Planned date" />
+        <input type="date" value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)} aria-label="Planned date" className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] [color-scheme:light] dark:[color-scheme:dark]" title="Planned date" />
         <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="Weight (default 1)"
-          title="How much this milestone counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
+          title="How much this task counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
           className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
         <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "Rev 3 release")' className="text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
       </div>
       <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" rows={2} className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 resize-y" />
+      {/* A11Y-12: what the weight means, in text — not only in a hover title. */}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        <b>Weight</b> is how much this task counts in the % complete — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure.
+      </p>
       {error && (
-        <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>
+        <div role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded px-2 py-1">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Cancel</button>

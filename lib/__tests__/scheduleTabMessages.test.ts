@@ -169,7 +169,7 @@ describe("SCH-17 · the Planning list's delete error reaches the screen", () => 
     await settle();
     h.deleteError = "“Weld” was not deleted — you do not have the right to delete it (Admin or Manager, its creator, or someone who manages this project may), or it is already gone. Nothing was changed.";
     const before = h.listCalls;
-    const del = host.querySelector('button[title="Delete milestone"]') as HTMLButtonElement;
+    const del = host.querySelector('button[title="Delete task"]') as HTMLButtonElement;
     expect(del).not.toBeNull();
     await act(async () => { del.click(); });
     await settle();

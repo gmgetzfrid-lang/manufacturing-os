@@ -9,6 +9,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
 import {
   computeCompanyScorecard,
   type CompanyEvidence,
@@ -48,12 +49,9 @@ export interface CompanyEvent {
   createdByName: string | null;
 }
 
-export const COMPANY_KIND_LABEL: Record<Company["kind"], string> = {
-  contractor: "Contractor",
-  vendor: "Vendor",
-  rental: "Rental / equipment",
-  internal: "Internal crew",
-};
+/** The kinds' labels live with the Projects vocabulary (UX-15) — one list
+ *  for the wizard, the Costs tab and the registry. */
+export { COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 
 export const EVENT_KIND_LABEL: Record<CompanyEvent["kind"], string> = {
   recordable: "Recordable injury",
@@ -94,7 +92,7 @@ export const COMPANY_PAGE_SIZE = 50;
 export async function listCompanies(orgId: string): Promise<Company[]> {
   const { data, error } = await supabase
     .from("companies").select("*").eq("org_id", orgId).order("name").limit(COMPANY_LIST_CAP);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "listCompanies"));
   return ((data as Record<string, unknown>[]) ?? []).map(rowToCompany);
 }
 
@@ -109,7 +107,7 @@ export async function listBarredCompanies(orgId: string): Promise<Company[]> {
   for (let from = 0; ; from += COMPANY_LIST_CAP) {
     const { data, error } = await supabase.from("companies").select("*")
       .eq("org_id", orgId).eq("status", "do_not_use").order("id").range(from, from + COMPANY_LIST_CAP - 1);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(userFacingReadError(error, "listBarredCompanies"));
     const batch = (data as Record<string, unknown>[] | null) ?? [];
     out.push(...batch.map(rowToCompany));
     if (batch.length < COMPANY_LIST_CAP) return out;
@@ -141,7 +139,7 @@ export async function listCompaniesPage(orgId: string, opts: {
   const term = (opts.search ?? "").replace(/\s+/g, " ").trim();
   if (term) q = q.or(`name.ilike.${orValue(`*${term}*`)},trade.ilike.${orValue(`*${term}*`)}`);
   const { data, error, count } = await q.order("name").range(page * pageSize, page * pageSize + pageSize - 1);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "listCompaniesPage"));
   return {
     rows: ((data as Record<string, unknown>[]) ?? []).map(rowToCompany),
     total: count ?? 0, page, pageSize,
@@ -150,7 +148,7 @@ export async function listCompaniesPage(orgId: string, opts: {
 
 export async function getCompany(id: string): Promise<Company | null> {
   const { data, error } = await supabase.from("companies").select("*").eq("id", id).maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "getCompany"));
   return data ? rowToCompany(data as Record<string, unknown>) : null;
 }
 
@@ -183,7 +181,7 @@ export async function saveCompany(input: {
     const { data, error } = await supabase
       .from("companies").update({ ...row, updated_at: new Date().toISOString(), updated_by: input.actorId })
       .eq("id", input.id).select("*").single();
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(userFacingError(error, { context: "saveCompany" }));
     await logAuditAction({
       action: "COMPANY_UPDATED", resourceType: "company", resourceId: input.id,
       orgId: input.orgId, userId: input.actorId, details: { name: row.name },
@@ -196,7 +194,7 @@ export async function saveCompany(input: {
     if ((error as { code?: string }).code === "23505") {
       throw new Error(`"${row.name}" is already in the registry.`);
     }
-    throw new Error(error.message);
+    throw new Error(userFacingError(error, { context: "saveCompany" }));
   }
   await logAuditAction({
     action: "COMPANY_CREATED", resourceType: "company", resourceId: (data as { id: string }).id,
@@ -209,7 +207,7 @@ export async function listCompanyEvents(companyId: string): Promise<CompanyEvent
   const { data, error } = await supabase
     .from("company_events").select("*").eq("company_id", companyId)
     .order("event_date", { ascending: false }).limit(200);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "listCompanyEvents"));
   return ((data as Record<string, unknown>[]) ?? []).map((r) => ({
     id: r.id as string,
     companyId: r.company_id as string,
@@ -242,7 +240,7 @@ export async function addCompanyEvent(input: {
     created_by: input.actorId,
     created_by_name: input.actorName ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "addCompanyEvent" }));
   await logAuditAction({
     action: "COMPANY_EVENT_LOGGED", resourceType: "company", resourceId: input.companyId,
     orgId: input.orgId, userId: input.actorId,
@@ -296,7 +294,7 @@ export async function confirmQualityManual(input: {
     ({ error } = await supabase.from("companies").update(patch)
       .eq("id", input.companyId).eq("org_id", input.orgId));
   }
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingError(error, { context: "confirmQualityManual" }));
   await logAuditAction({
     action: "COMPANY_QM_CONFIRMED", resourceType: "company", resourceId: input.companyId,
     orgId: input.orgId, userId: input.actorId,

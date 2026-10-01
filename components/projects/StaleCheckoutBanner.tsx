@@ -15,6 +15,7 @@ import { finishMySession } from "@/lib/checkoutEpisodes";
 import { logCheckoutEvent } from "@/lib/audit";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import type { CheckoutSession } from "@/types/schema";
 
 interface StaleCheckoutBannerProps {
@@ -106,7 +107,9 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       });
       await refresh();
     } catch (e) {
-      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${(e as Error).message}`);
+      // REL-3: lib/checkoutEpisodes (Document Control's) hands back the
+      // driver's text; the Projects screen translates it here.
+      setReleaseError(`Couldn't release ${row.docNumber || "the checkout"}: ${userFacingCaughtError(e, { context: "StaleCheckoutBanner release" })}`);
     } finally { setReleasingId(null); }
   };
 
@@ -126,7 +129,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         </button>
       </div>
       {releaseError && (
-        <div className="px-4 py-2 text-[11px] font-bold text-rose-700 bg-rose-50 border-b border-rose-200">{releaseError}</div>
+        <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border-b border-rose-500/50">{releaseError}</div>
       )}
       <div className="divide-y divide-amber-100">
         {rows.map((r) => (

@@ -10,6 +10,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
@@ -67,7 +68,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       if (readErr) {
         // Pre-migration DB or a refused read: say so rather than offering
         // blank fields that would overwrite what is stored.
-        setFieldsLoadError(readErr.message);
+        setFieldsLoadError(userFacingReadError(readErr, "EditProjectModal"));
         return;
       }
       const row = (data ?? {}) as Record<string, unknown>;
@@ -167,7 +168,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             updated_at: new Date().toISOString(),
             updated_by: actorUserId,
           }).eq("id", project.id!);
-          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${extErr.message}. Save changes retries just those.`);
+          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\.$/, "")}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",
@@ -181,7 +182,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
       // before this write (lib/projectSnapshot memo).
       invalidateProjectSnapshot(project.orgId, project.id!);
       onSaved();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "EditProjectModal" })); }
     finally { setBusy(false); }
   };
 
@@ -244,7 +245,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Purpose, goals &amp; scope</div>
             {fieldsLoadError && (
               <div role="status" className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
-                These fields could not be read ({fieldsLoadError}) — they are left untouched by this save.
+                These fields could not be read ({asClause(fieldsLoadError)}) — they are left untouched by this save.
               </div>
             )}
           </div>

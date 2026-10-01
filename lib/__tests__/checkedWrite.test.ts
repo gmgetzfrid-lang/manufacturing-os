@@ -30,9 +30,11 @@ describe("checkedWrite", () => {
     const rls = await checkedWrite(Promise.resolve({ data: null, error: { message: 'new row violates row-level security policy for table "checklist_items"', code: "42501" } }));
     expect((rls as { error: string }).error).toMatch(/don't have permission/);
     const other = await checkedWrite(Promise.resolve({ data: null, error: { message: "deadlock detected", code: "40P01" } }));
-    expect((other as { error: string }).error).toBe("deadlock detected");
+    // REL-3 (J10): raw driver text is translated too — never shown as written
+    expect((other as { error: string }).error).toBe("Someone else changed this at the same moment — nothing was changed. Try again.");
     const thrown = await checkedWrite(Promise.reject(new Error("fetch failed")));
-    expect(thrown).toMatchObject({ ok: false, code: "db", error: "fetch failed" });
+    // REL-3 (J10): a dropped connection is said in words too
+    expect(thrown).toMatchObject({ ok: false, code: "db", error: "Couldn't reach the server — check your connection and try again." });
   });
   it("matched rows ⇒ ok with the ids", async () => {
     expect(await checkedWrite(Promise.resolve({ data: [{ id: "a" }, { id: "b" }], error: null }))).toEqual({ ok: true, ids: ["a", "b"] });
@@ -62,7 +64,8 @@ describe("checkedWrite", () => {
     expect(describeWriteError({ message: column.message })).toMatch(/latest database migration/);
     expect(describeWriteError({ message: rawColumn.message })).toMatch(/latest database migration/);
     // …and an unrelated PostgREST error still carries its own message
-    expect(describeWriteError({ message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" })).toBe("JSON object requested, multiple (or no) rows returned");
+    // REL-3 (J10): PostgREST's single-row text is translated, not passed through
+    expect(describeWriteError({ message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" })).toBe("That record wasn't found — it may have been removed, or you can't see it.");
   });
   it("isMissingSchemaError is true for the pending-migration shapes only — a denial or an outage is never 'not there yet'", () => {
     for (const e of [

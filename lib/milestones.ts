@@ -17,6 +17,7 @@
 // as a separate enhancement.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
@@ -180,7 +181,7 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
     .select("*")
     .single();
 
-  if (error || !data) throw new Error(error?.message ?? "Failed to create milestone");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to create milestone");
   const row = data as MilestoneRow;
   const m = rowToMilestone(row);
 
@@ -299,7 +300,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   if (ownedKeys.length > 0) {
     const cols = Array.from(new Set(["id", "source", "project_id", "name", ...ownedKeys.map((k) => PATCH_COLUMN[k])]));
     const { data: cur, error: curErr } = await supabase.from("milestones").select(cols.join(", ")).eq("id", input.id).maybeSingle();
-    if (curErr) throw new Error(curErr.message);
+    if (curErr) throw new Error(userFacingReadError(curErr, "milestones"));
     row = (cur as Record<string, unknown> | null) ?? null;
     if (row && isImportedMilestone({ source: row.source as string | null })) {
       const changed: string[] = [];
@@ -335,7 +336,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
       for (let from = 0; ; from += 1000) {
         const { data: page, error: allErr } = await supabase.from("milestones").select("id, name, depends_on, parent_id")
           .eq("project_id", projectId).order("id").range(from, from + 999);
-        if (allErr) throw new Error(`Could not check the new link for loops (${allErr.message}) — nothing was saved.`);
+        if (allErr) throw new Error(`Could not check the new link for loops (${userFacingError(allErr, { action: "read", context: "milestones", clause: true })}) — nothing was saved.`);
         const got = (page ?? []) as Array<{ id: string; name: string; depends_on: string[] | null; parent_id: string | null }>;
         rows.push(...got);
         if (got.length < 1000) break;
@@ -377,7 +378,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone");
   const m = rowToMilestone(data as MilestoneRow);
 
   // Breadcrumb: record a reschedule on the task's own activity trail
@@ -499,7 +500,7 @@ export async function applyMilestoneMoves(input: {
       .from("milestones")
       .select("id, name, planned_at, planned_start_at, updated_at, status, source")
       .in("id", ids.slice(i, i + 200));
-    if (readErr) { readError = readErr.message; break; }
+    if (readErr) { readError = userFacingReadError(readErr, "milestones"); break; }
     for (const r of (data ?? []) as BeforeRow[]) before.set(r.id, r);
   }
   // Imported rows' dates belong to the scheduling tool (PT SCH-13): the
@@ -517,7 +518,7 @@ export async function applyMilestoneMoves(input: {
   // check below and a move without its own lock value depend on. Without it
   // the batch is refused — nothing is moved (PT SCH-13).
   if (readError) {
-    throw new Error(`Could not read the tasks before moving them (${readError}) — nothing was moved. Try again.`);
+    throw new Error(`Could not read the tasks before moving them (${asClause(readError)}) — nothing was moved. Try again.`);
   }
   // All or nothing for a stale view (PT SCH-7): a row that already differs
   // from the lock its move carries (or is gone) would be skipped by the RPC
@@ -552,7 +553,7 @@ export async function applyMilestoneMoves(input: {
       })));
       return { matched: ids, unmatched: [], count: ids.length, via: "rows" };
     }
-    throw new Error(error.message);
+    throw new Error(userFacingError(error, { context: "milestones" }));
   }
   // 20260907 returned an INT; 20261098 returns {matched, unmatched, count}.
   let matched: string[] = ids;
@@ -586,7 +587,7 @@ export async function applyMilestoneMoves(input: {
   }
   for (let i = 0; i < notes.length; i += 200) {
     const { error: noteErr } = await supabase.from("milestone_notes").insert(notes.slice(i, i + 200));
-    if (noteErr) { errs.push(`breadcrumbs: ${noteErr.message}`); break; }
+    if (noteErr) { errs.push(`breadcrumbs: ${userFacingError(noteErr, { context: "milestones", embed: true })}`); break; }
   }
 
   // The batch audit row: before/after per moved row, never silently lost.
@@ -607,7 +608,7 @@ export async function applyMilestoneMoves(input: {
   };
   let auditRes = await supabase.from("audit_logs").insert(auditRow);
   if (auditRes.error) auditRes = await supabase.from("audit_logs").insert(auditRow); // one retry
-  if (auditRes.error) errs.push(`audit: ${auditRes.error.message}`);
+  if (auditRes.error) errs.push(`audit: ${userFacingError(auditRes.error, { context: "milestones", embed: true })}`);
   if (errs.length) result.auditError = errs.join("; ");
 
   // Read back the moved rows' new updated_at — the lock an Undo of THIS move
@@ -695,7 +696,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to update milestone status");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone status");
   const m = rowToMilestone(data as MilestoneRow);
 
   // Breadcrumb note for the task's own activity log.
@@ -793,7 +794,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to update milestone progress");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone progress");
   const m = rowToMilestone(data as MilestoneRow);
 
   await addMilestoneNote({
@@ -850,7 +851,7 @@ export async function addMilestoneNote(input: {
     body: input.body?.trim() || null,
     created_by: input.createdBy, created_by_name: input.createdByName ?? null,
   }).select("*").single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to add note");
+  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to add note");
   return noteRowTo(data as MilestoneNoteRow);
 }
 
@@ -858,7 +859,7 @@ export async function listMilestoneNotes(milestoneId: string): Promise<Milestone
   const { data, error } = await supabase
     .from("milestone_notes").select("*").eq("milestone_id", milestoneId)
     .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "milestones"));
   return ((data as MilestoneNoteRow[]) ?? []).map(noteRowTo);
 }
 
@@ -930,7 +931,7 @@ export class MilestoneDeleteRefusedError extends Error {
 
 export async function deleteMilestone(id: string, actorUserId: string): Promise<{ reparented: number; unlinked: number }> {
   const { data: row, error: readErr } = await supabase.from("milestones").select("*").eq("id", id).maybeSingle();
-  if (readErr) throw new Error(readErr.message);
+  if (readErr) throw new Error(userFacingReadError(readErr, "milestones"));
   if (!row) return { reparented: 0, unlinked: 0 };
   const m = rowToMilestone(row as MilestoneRow);
   const newParent = m.parentId && m.parentId !== id ? m.parentId : null;
@@ -974,7 +975,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   if (rpcErr && !rpcMissing) {
     // The RPC runs in one transaction: whatever it refused, nothing changed.
     if (rpcErr.code === "42501") throw new MilestoneDeleteRefusedError(m.name);
-    throw new Error(`Could not delete “${m.name}” (${rpcErr.message}) — nothing was changed.`);
+    throw new Error(`Could not delete “${m.name}” (${userFacingError(rpcErr, { context: "milestones", clause: true })}) — nothing was changed.`);
   }
   if (!rpcErr) {
     const out = rpcData as null | {
@@ -995,7 +996,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   // the hierarchy (20260703) or the links (20260715) has no children /
   // dependents to look after — the column is simply absent.
   const { data: kidRows, error: kidErr } = await supabase.from("milestones").select("id, name").eq("parent_id", id);
-  if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${kidErr.message}) — nothing was deleted.`);
+  if (kidErr && !looksLikeUnknownColumn(kidErr.message)) throw new Error(`Could not read the sub-tasks (${userFacingError(kidErr, { action: "read", context: "milestones", clause: true })}) — nothing was deleted.`);
   const children = (kidErr ? [] : (kidRows ?? [])) as Array<{ id: string; name: string }>;
   // depends_on is JSONB (20260715): the containment value goes as JSON text.
   // An array would be sent as a Postgres array literal (cs.{uuid}), which is
@@ -1003,13 +1004,13 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   let depQ = supabase.from("milestones").select("id, name, depends_on").contains("depends_on", JSON.stringify([id]));
   depQ = m.projectId ? depQ.eq("project_id", m.projectId) : depQ.eq("org_id", m.orgId);
   const { data: depRows, error: depErr } = await depQ;
-  if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${depErr.message}) — nothing was deleted.`);
+  if (depErr && !looksLikeUnknownColumn(depErr.message)) throw new Error(`Could not read the tasks that depend on it (${userFacingError(depErr, { action: "read", context: "milestones", clause: true })}) — nothing was deleted.`);
   const dependents = ((depErr ? [] : (depRows ?? [])) as Array<{ id: string; name: string; depends_on: string[] | null }>)
     .filter((r) => r.id !== id)
     .map((r) => ({ id: r.id, name: r.name, depends_on: [...(r.depends_on ?? [])] }));
 
   const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
-  if (delErr) throw new Error(`Could not delete “${m.name}” (${delErr.message}) — nothing was changed.`);
+  if (delErr) throw new Error(`Could not delete “${m.name}” (${userFacingError(delErr, { context: "milestones", clause: true })}) — nothing was changed.`);
   if (!Array.isArray(gone) || gone.length === 0) throw new MilestoneDeleteRefusedError(m.name);
 
   // The row is gone. Its children were detached by ON DELETE SET NULL: move
@@ -1023,7 +1024,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ parent_id: newParent, updated_at: now, updated_by: actorUserId })
       .in("id", children.map((c) => c.id))
       .select("id");
-    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${upErr.message}) — they are at the top level now`);
+    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${userFacingError(upErr, { context: "milestones", clause: true })}) — they are at the top level now`);
     else if (!Array.isArray(moved) || moved.length < children.length) {
       const n = children.length - (Array.isArray(moved) ? moved.length : 0);
       incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
@@ -1039,7 +1040,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
       .eq("id", d.id)
       .select("id");
-    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${linkErr.message}) — it still names the deleted task; remove it in that task's links`);
+    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${userFacingError(linkErr, { context: "milestones", clause: true })}) — it still names the deleted task; remove it in that task's links`);
     else if (!Array.isArray(linkRows) || linkRows.length === 0) incomplete.push(`the link from “${d.name}” was not removed (the task could not be changed, or is gone) — if it is still there it names the deleted task; remove it in that task's links`);
     else unlinked.push(d);
   }
@@ -1065,7 +1066,7 @@ export async function listMilestones(params: ListMilestonesParams): Promise<Mile
   if (documentId) q = q.eq("document_id", documentId);
   if (!includeGhost) q = q.eq("source", "manual");
   const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(userFacingReadError(error, "milestones"));
   return ((data as MilestoneRow[]) ?? []).map(rowToMilestone);
 }
 
@@ -1278,7 +1279,7 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
             planned_at: plannedIso, updated_at: new Date().toISOString(),
             updated_by: input.createdBy,
           }).eq("id", (existing as { id: string }).id);
-          if (error) { result.errors.push(`Row ${i+1}: ${error.message}`); }
+          if (error) { result.errors.push(`Row ${i+1}: ${userFacingError(error, { context: "milestones" })}`); }
           else result.updated++;
           continue;
         }
@@ -1294,10 +1295,10 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
         created_by: input.createdBy,
         created_by_name: input.createdByName ?? null,
       });
-      if (error) result.errors.push(`Row ${i+1}: ${error.message}`);
+      if (error) result.errors.push(`Row ${i+1}: ${userFacingError(error, { context: "milestones" })}`);
       else result.inserted++;
     } catch (e) {
-      result.errors.push(`Row ${i+1}: ${(e as Error).message}`);
+      result.errors.push(`Row ${i+1}: ${userFacingCaughtError(e, { context: "milestones" })}`);
     }
   }
   return result;
@@ -1635,7 +1636,7 @@ async function fetchExistingImportRows(input: ImportParsedInput, missing: Set<Sc
       const { data, error } = await q.order("id").range(from, from + PAGE - 1);
       if (error) {
         if (looksLikeUnknownColumn(error.message) && stepDownSchema(missing, error.message, READ_SETS)) { stepDown = true; break; }
-        return { rows: out, error: error.message };
+        return { rows: out, error: userFacingReadError(error, "milestones") };
       }
       const page = (data ?? []) as unknown as ExistingImportRow[];
       out.push(...page);
@@ -1753,7 +1754,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   const missing = new Set<SchemaSet>();
   const { rows: existingRows, error: readErr } = await fetchExistingImportRows(input, missing);
   if (readErr) {
-    result.errors.push(`Could not read the existing schedule: ${readErr}. Nothing was written.`);
+    result.errors.push(`Could not read the existing schedule: ${readErr.replace(/\.$/, "")}. Nothing was written.`);
     return result;
   }
   const lacks = (id: SchemaSet) => missing.has(id);
@@ -1974,7 +1975,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       const one = mode === "insert"
         ? await supabase.from("milestones").insert(insertPayload(p)).select("id").maybeSingle()
         : await supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id").maybeSingle();
-      if (one.error) { result.errors.push(`${rowLabel(p)}: ${one.error.message}`); continue; }
+      if (one.error) { result.errors.push(`${rowLabel(p)}: ${userFacingError(one.error, { context: "milestones" })}`); continue; }
       if (mode === "insert") {
         result.inserted++;
         const id = (one.data as { id: string } | null)?.id ?? null;
@@ -2002,7 +2003,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       if (cancelled()) { result.cancelled = true; result.errors.push(`Import cancelled after ${done} of ${total} rows. Rows written so far are tagged with batch ${batchId}.`); return result; }
       const chunk = list.slice(i, i + IMPORT_CHUNK);
       try { await writeChunk(chunk, mode); }
-      catch (e) { for (const p of chunk) result.errors.push(`${rowLabel(p)}: ${(e as Error).message}`); }
+      catch (e) { const why = userFacingCaughtError(e, { context: "schedule import" }); for (const p of chunk) result.errors.push(`${rowLabel(p)}: ${why}`); }
       done += chunk.length;
       report("rows");
     }
@@ -2058,7 +2059,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         missing.add("20260715"); // 20260715 not applied — keep the hierarchy, drop the links
         res = await supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id);
       }
-      if (res.error) result.errors.push(`Structure for ${u.id}: ${res.error.message}`);
+      if (res.error) result.errors.push(`Structure for ${u.id}: ${userFacingError(res.error, { context: "milestones" })}`);
     }));
     input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
   }
@@ -2118,7 +2119,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     .eq("org_id", input.orgId)
     .eq("project_id", input.projectId);
   if (loadErr) {
-    errors.push(`Couldn't load milestones: ${loadErr.message}`);
+    errors.push(`Couldn't load milestones: ${userFacingReadError(loadErr, "milestones")}`);
     return { shiftedCount: 0, shiftDays: 0, oldAnchor: null, newAnchor: input.newStartIso, errors };
   }
   if (!rows || rows.length === 0) {
@@ -2177,7 +2178,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     let q = supabase.from("milestones").update(patch).eq("id", raw.id);
     if (raw.updated_at) q = q.eq("updated_at", raw.updated_at);
     const { data: updatedRow, error } = await q.select("id").maybeSingle();
-    if (error) errors.push(`${raw.id.slice(0, 8)}: ${error.message}`);
+    if (error) errors.push(`${raw.id.slice(0, 8)}: ${userFacingError(error, { context: "milestones" })}`);
     else if (!updatedRow) skipped++;
     else shifted++;
   }
@@ -2260,7 +2261,7 @@ async function groupingLoopRefusal(projectId: string, parentId: string, parentNa
   for (let from = 0; ; from += 1000) {
     const { data: page, error } = await supabase.from("milestones").select("id, name, parent_id, depends_on")
       .eq("project_id", projectId).order("id").range(from, from + 999);
-    if (error) return `Couldn't check the grouping for loops (${error.message}). Nothing was grouped.`;
+    if (error) return `Couldn't check the grouping for loops (${userFacingError(error, { action: "read", context: "milestones", clause: true })}). Nothing was grouped.`;
     const got = (page ?? []) as typeof rows;
     rows.push(...got);
     if (got.length < 1000) break;
@@ -2303,7 +2304,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   {
     const { data: srcRows, error: srcErr } = await supabase.from("milestones").select("id, name, source").in("id", input.childIds);
     if (srcErr) {
-      errors.push(`Couldn't read the selected tasks: ${srcErr.message}`);
+      errors.push(`Couldn't read the selected tasks: ${userFacingReadError(srcErr, "milestones")}`);
       return { parentId: "", parentName: "", childCount: 0, errors };
     }
     const imported = ((srcRows ?? []) as Array<{ id: string; name: string; source: string | null }>).filter((r) => isImportedMilestone(r));
@@ -2386,7 +2387,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
       .select("id, name")
       .single();
     if (createErr || !created) {
-      errors.push(`Couldn't create parent task: ${createErr?.message ?? "unknown"}`);
+      errors.push(`Couldn't create parent task: ${createErr ? userFacingError(createErr, { context: "milestones" }) : "unknown"}`);
       return { parentId: "", parentName: "", childCount: 0, errors };
     }
     parentId = (created as { id: string }).id;
@@ -2405,7 +2406,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
         updated_by: input.actorUserId,
       })
       .eq("id", cid);
-    if (error) errors.push(`${cid.slice(0,8)}: ${error.message}`);
+    if (error) errors.push(`${cid.slice(0,8)}: ${userFacingError(error, { context: "milestones" })}`);
     else updated++;
   }
 
@@ -2438,7 +2439,7 @@ export async function setTaskDuration(input: {
     .select("planned_at, project_id, parent_id, source, name")
     .eq("id", input.id)
     .maybeSingle();
-  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Task not found" };
+  if (readErr || !row) return { ok: false, error: readErr ? userFacingReadError(readErr, "milestones") : "Task not found" };
   const r = row as { planned_at: string; project_id: string | null; parent_id: string | null; source?: string | null; name?: string };
   if (isImportedMilestone({ source: r.source ?? null })) {
     return { ok: false, error: `“${r.name ?? "This task"}” comes from ${sourceLabel(r.source)}: its dates are set there and the next import writes them back. Change its duration in the scheduling tool and re-import.` };
@@ -2457,7 +2458,7 @@ export async function setTaskDuration(input: {
       updated_by: input.actorUserId,
     })
     .eq("id", input.id);
-  if (updErr) return { ok: false, error: updErr.message };
+  if (updErr) return { ok: false, error: userFacingError(updErr, { context: "milestones" }) };
 
   // Re-envelope ancestors so a parent/summary bar still covers this leaf.
   // (Drag edits reflow via computeTreeMove; a direct duration set didn't,
@@ -2532,7 +2533,7 @@ export async function setBaseline(input: {
     if (count === 0) return { ok: false, count: 0, error: "No tasks to baseline.", via: "rpc" };
     return { ok: true, count, via: "rpc", historyId: d.history_id ?? null };
   }
-  if (!RPC_MISSING(error, "set_project_baseline")) return { ok: false, count: 0, error: error.message, via: "rpc" };
+  if (!RPC_MISSING(error, "set_project_baseline")) return { ok: false, count: 0, error: userFacingError(error, { context: "milestones" }), via: "rpc" };
 
   // Legacy path (20261099 not applied): per-row writes, client-side audit.
   const { data: rows, error: readErr } = await supabase
@@ -2540,7 +2541,7 @@ export async function setBaseline(input: {
     .select("id, planned_at, planned_start_at")
     .eq("org_id", input.orgId)
     .eq("project_id", input.projectId);
-  if (readErr) return { ok: false, count: 0, error: readErr.message, via: "legacy" };
+  if (readErr) return { ok: false, count: 0, error: userFacingReadError(readErr, "milestones"), via: "legacy" };
   if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline.", via: "legacy" };
 
   const now = new Date().toISOString();
@@ -2553,7 +2554,7 @@ export async function setBaseline(input: {
       baseline_set_at: now,
       baseline_set_by: input.actorUserId,
     }).eq("id", r.id);
-    if (e) errors.push(e.message); else count++;
+    if (e) errors.push(userFacingError(e, { context: "milestones" })); else count++;
   }));
 
   await logAuditAction({
@@ -2587,12 +2588,12 @@ export async function clearBaseline(input: {
     const d = (data ?? {}) as { count?: number };
     return { ok: true, count: Number(d.count ?? 0), via: "rpc" };
   }
-  if (!RPC_MISSING(error, "clear_project_baseline")) return { ok: false, count: 0, error: error.message, via: "rpc" };
+  if (!RPC_MISSING(error, "clear_project_baseline")) return { ok: false, count: 0, error: userFacingError(error, { context: "milestones" }), via: "rpc" };
 
   const { data: cleared, error: updErr } = await supabase.from("milestones").update({
     baseline_start_at: null, baseline_finish_at: null, baseline_set_at: null, baseline_set_by: null,
   }).eq("org_id", input.orgId).eq("project_id", input.projectId).select("id");
-  if (updErr) return { ok: false, count: 0, error: updErr.message, via: "legacy" };
+  if (updErr) return { ok: false, count: 0, error: userFacingError(updErr, { context: "milestones" }), via: "legacy" };
   const count = (cleared ?? []).length;
   await logAuditAction({
     action: "SCHEDULE_BASELINE_CLEARED",
@@ -2683,7 +2684,7 @@ export async function listBaselineCaptures(input: {
     .limit(50);
   if (error) {
     const missing = error.code === "42P01" || error.code === "PGRST205" || /milestone_baseline_history/.test(error.message ?? "") && /does not exist|could not find/i.test(error.message ?? "");
-    return missing ? { captures, historyUnavailable: true } : { captures, error: error.message };
+    return missing ? { captures, historyUnavailable: true } : { captures, error: userFacingReadError(error, "milestones") };
   }
   for (const h of (data ?? []) as Array<{ id: string; taken_at: string; reason: "rebaseline" | "clear"; row_count: number; rows: Array<{ id: string; baseline_finish_at: string | null; baseline_set_at: string | null }> | null }>) {
     const finishById = new Map<string, string>();

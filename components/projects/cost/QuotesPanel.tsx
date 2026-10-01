@@ -35,10 +35,13 @@
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
+import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
+import { saveAccount } from "@/lib/costs";
 import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
@@ -46,7 +49,7 @@ import { getFileUrl } from "@/lib/storage";
 import {
   type CostDocument, COST_DOC_STATUS_LABEL,
   uploadCostDoc, awardQuote, postInvoice,
-  parsedQuoteFrom, quoteGroups,
+  parsedQuoteFrom, quoteGroups, normalizeCurrency,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
@@ -92,7 +95,7 @@ export async function guardedCostDocWrite(input: {
 }): Promise<{ ok: true; auditError: string | null } | { ok: false; error: string }> {
   const { data, error } = await supabase.from("cost_documents").update(input.patch)
     .eq("id", input.doc.id).eq("org_id", input.doc.orgId).in("status", [...OPEN_DOC_STATUSES]).select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: userFacingError(error) };
   if (!data || (data as unknown[]).length === 0) {
     return { ok: false, error: "Someone else has already awarded, posted or voided this document — refresh to see the latest." };
   }
@@ -101,7 +104,7 @@ export async function guardedCostDocWrite(input: {
     org_id: input.doc.orgId, user_id: input.actor.uid, user_email: input.actor.email,
     details: input.audit.details,
   });
-  return { ok: true, auditError: auditErr ? auditErr.message : null };
+  return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -121,6 +124,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [showLinks, setShowLinks] = useState(false);
+  // UX-13: the AI read's precondition, read once for the panel; the budget
+  // line an award or a post needs, creatable where the need shows.
+  const ai = useAiReadiness(orgId);
+  const budgetLineCtx = useMemo(() => ({ orgId, projectId, actor, onCreated: onChanged }), [orgId, projectId, actor, onChanged]);
   // Known Companies registry — matched to bidders by normalised name (or
   // an explicit link) so their record (quality-manual coverage, do-not-use
   // flags) sits beside every price. A FAILED load is said out loud: an
@@ -221,10 +228,10 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     if (error) {
       setErr(missingColumn(error)
         ? "Linking a bidder to the registry needs migration 20261096 applied."
-        : `Couldn't link the company: ${error.message}`);
+        : `Couldn't link the company: ${userFacingError(error)}`);
       return;
     }
-    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, declined or voided) or removed since this table loaded. Refresh to see the latest."); return; }
+    if (!data || (data as unknown[]).length === 0) { setErr("Couldn't link the company — the document was decided (awarded, not selected or voided) or removed since this table loaded. Refresh to see the latest."); return; }
     const { error: auditErr } = await supabase.from("audit_logs").insert({
       action: "COST_DOC_COMPANY_LINKED", resource_type: "cost", resource_id: doc.id,
       org_id: orgId, user_id: actor.uid, user_email: actor.email,
@@ -240,12 +247,12 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           .eq("id", doc.id).eq("org_id", orgId).select("id");
         const undone = !revertErr && !!reverted && (reverted as unknown[]).length > 0;
         setErr(undone
-          ? `The override could not be recorded (${auditErr.message}) — the link was put back.`
-          : `The link changed but its override record failed (${auditErr.message}) and it could not be undone (${revertErr ? revertErr.message : "no row was updated"}) — relink it by hand.`);
+          ? `The override could not be recorded (${userFacingError(auditErr, { clause: true })}) — the link was put back.`
+          : `The link changed but its override record failed (${userFacingError(auditErr, { clause: true })}) and it could not be undone (${revertErr ? userFacingError(revertErr, { clause: true }) : "no row was updated"}) — relink it by hand.`);
         if (!undone) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
         return;
       }
-      setErr(`The company was linked but its audit record failed: ${auditErr.message}`);
+      setErr(`The company was linked but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
     }
     setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
   };
@@ -262,7 +269,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       onChanged();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel read" }));
     } finally { setBusy(null); }
   };
 
@@ -360,12 +367,14 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
   };
 
   return (
+    <AiReadinessContext.Provider value={ai}>
+    <BudgetLineContext.Provider value={budgetLineCtx}>
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ScanSearch className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          Drop vendor quote PDFs — the system reads them and compares price, manpower, and scope.
+          Drop bidders&apos; quote PDFs — the system reads them and compares price, manpower, and scope.
         </span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
@@ -386,6 +395,15 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         </div>
       )}
 
+      {/* UX-13: what reading and awarding need, said before the upload — not
+          discovered after the PDF, the vendor name and an AI call. */}
+      {canManage && (ai.message || accounts.length === 0) && (
+        <div id="quotes-ai-precondition" className="px-4 pt-2.5 flex flex-col gap-1">
+          <AiPreconditionNote readiness={ai} />
+          {accounts.length === 0 && <CreateBudgetLineInline label="Awarding a quote or posting an invoice" />}
+        </div>
+      )}
+
       {canManage && (
         <UploadRow orgId={orgId} projectId={projectId} actor={actor} kind="quote"
           existingGroups={existingGroups} parties={parties} onDone={onChanged} setErr={setErr} />
@@ -396,7 +414,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No quotes yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload the PDFs vendors sent you (same RFQ group name = compared side by side), or send
+            Upload the PDFs bidders sent you (same RFQ group name = compared side by side), or send
             contractors a quote link and their submissions land here on their own.
           </div>
         </div>
@@ -417,7 +435,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="px-4 py-2.5 flex items-center gap-2">
           <Receipt className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">Read → review → post as actual spend.</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">Read → review → post as actual.</span>
         </div>
         {canManage && (
           <UploadRow orgId={orgId} projectId={projectId} actor={actor} kind="invoice"
@@ -461,7 +479,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                       const res = await postInvoice({ doc, costAccountId: accountId, actor, confirmedTotal });
                       setBusy(null);
                       if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
-                    }} label="Post as actual" />
+                    }} label="Post as actual" currency={doc.currency} costType="material" />
                 )}
                 {canManage && typedTotalUnread(doc) && (
                   <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
@@ -481,6 +499,8 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         )}
       </div>
     </div>
+    </BudgetLineContext.Provider>
+    </AiReadinessContext.Provider>
   );
 }
 
@@ -565,7 +585,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
    *  stops). */
   const barredNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
     const { data: row, error } = await supabase.from("cost_documents").select("company_id").eq("id", doc.id).maybeSingle();
-    if (error && !missingColumn(error)) throw new Error(error.message);
+    if (error && !missingColumn(error)) throw new Error(userFacingReadError(error));
     const boundId = (row as { company_id?: string | null } | null)?.company_id ?? null;
     if (boundId) {
       const bound = await getCompany(boundId);
@@ -608,7 +628,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     try {
       barred = await barredNow(doc, e?.vendorName ?? doc.vendorName);
     } catch (err) {
-      setErr(`Award stopped — the Known Companies registry couldn't be checked (${(err as Error).message}). Reload and try again.`);
+      setErr(`Award stopped — the Known Companies registry couldn't be checked (${userFacingCaughtError(err, { action: "read", context: "QuotesPanel registry" }).replace(/\.$/, "")}). Reload and try again.`);
       return;
     }
     let overrideReason: string | null = null;
@@ -622,7 +642,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     }
 
     const warnings = [
-      expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the vendor.` : null,
+      expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the bidder.` : null,
       extent.truncated ? `The AI ${extent.label} — the total may come from an incomplete read.` : null,
       !extent.known && quote && !quote.priceOnly ? "The read extent of this document is unknown — the total may come from an incomplete read." : null,
       quote?.totalSource === "human" && quote.extractedTotal != null ? `Total corrected by hand from the AI's ${fmtMoney(quote.extractedTotal, isoCurrency(quote.extractedCurrency) ?? cur)}.` : null,
@@ -637,7 +657,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       confirmedTotal = await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`);
       if (confirmedTotal == null) return;
     } else if (!(await appConfirm({
-      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
@@ -652,7 +672,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
-      if (error) { setErr(`The override could not be recorded (${error.message}) — award stopped.`); return false; }
+      if (error) { setErr(`The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.`); return false; }
       return true;
     };
     let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;
@@ -685,7 +705,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
     } catch (err) {
-      failure = (err as Error).message;
+      failure = userFacingCaughtError(err, { context: "QuotesPanel award" });
     } finally { setBusy(null); }
     if (failure == null) { onChanged(); return; }
     if (overridden) {
@@ -694,7 +714,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: overridden.id, company: overridden.name, why: failure },
       });
-      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${error.message}.)`;
+      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error, { embed: true })})`;
     }
     setErr(failure);
   };
@@ -745,7 +765,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                   <tr className="text-left text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                     <th className="px-3 py-2">Bidder</th>
                     <th className="px-3 py-2 text-right">Price</th>
-                    <th className="px-3 py-2 text-right" title="Labor hours the bid offers — vendor-stated, AI-extracted">Labor hrs</th>
+                    <th className="px-3 py-2 text-right" title="Labor hours the bid offers — bidder-stated, AI-extracted">Labor hrs</th>
                     <th className="px-3 py-2 text-right" title="Total price ÷ labor hours — lower buys more hands">Price / hr</th>
                     <th className="px-3 py-2 text-right" title="Largest crew size stated">Peak crew</th>
                     <th className="px-3 py-2" title="Quote validity date as printed">Valid until</th>
@@ -846,7 +866,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           <td className="px-3 py-2 text-right tabular-nums">
                             {e.priceOnly ? <span className="text-[var(--color-text-faint)]">not scored</span>
                               : e.laborHours > 0 ? (
-                                <span title={manpowerScored ? "Vendor-stated, AI-extracted" : `Vendor-stated, AI-extracted — shown, not scored: ${notCorroborated}.`}>
+                                <span title={manpowerScored ? "Bidder-stated, AI-extracted" : `Bidder-stated, AI-extracted — shown, not scored: ${notCorroborated}.`}>
                                   {e.laborHours.toLocaleString()}
                                   {e.implausibleHours && (
                                     <span className="block text-[9px] font-bold text-amber-700 dark:text-amber-300"
@@ -864,7 +884,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                           <td className="px-3 py-2 text-right tabular-nums">{e.priceOnly ? <span className="text-[var(--color-text-faint)]">—</span> : e.peakHeadcount ?? "—"}</td>
                           <td className="px-3 py-2 tabular-nums">
                             {quote?.validUntil
-                              ? <span className={expired ? "font-black text-rose-700 dark:text-rose-300" : ""} title={expired ? "This quote's validity date has passed" : "Vendor-stated validity date"}>{quote.validUntil}{expired ? " · expired" : ""}</span>
+                              ? <span className={expired ? "font-black text-rose-700 dark:text-rose-300" : ""} title={expired ? "This quote's validity date has passed" : "Bidder-stated validity date"}>{quote.validUntil}{expired ? " · expired" : ""}</span>
                               : <span className="text-[var(--color-text-faint)]">—</span>}
                           </td>
                           <td className="px-3 py-2 text-right">
@@ -885,7 +905,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {rowActions && registryGate === "ready" && (
                                 <PostControls accounts={accounts} busy={busy === doc.id}
-                                  onPost={(accountId) => award(doc, accountId)} label="Award" />
+                                  onPost={(accountId) => award(doc, accountId)} label="Award" currency={doc.currency} />
                               )}
                               {rowActions && registryGate === "loading" && (
                                 <span className="text-[10px] text-[var(--color-text-muted)]" title="Award waits until the Known Companies registry and this bid's company link have loaded — the do-not-use check needs both">checking the registry…</span>
@@ -910,7 +930,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             <td colSpan={colCount} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
                                 {quote?.notes && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Vendor note printed on the quote">
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Bidder's note printed on the quote">
                                     note: {quote.notes}
                                   </span>
                                 )}
@@ -943,9 +963,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
               {currency.mixed ? (
                 <>This field mixes currencies, so no bid is scored or ranked — each price is shown in its own currency.</>
               ) : manpowerScored ? (
-                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are vendor-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.{hasTypedTotal ? " A typed-total bid (price only) has no hours, so it is not scored on manpower and carries no value score here — its price still counts against every rival's." : ""}</>
+                <>Value score = {Math.round(weights.price * 100)}% price + {Math.round(weights.manpower * 100)}% manpower-for-the-money, each measured against this field; labor hours are bidder-stated and AI-extracted and, between bids that state plausible hours, move the score by at most {MANPOWER_MAX_COMPOSITE_SWING} points — a bid that states none scores 0 on manpower, up to {silenceGap} points below one that does. A bid whose price per stated hour is more than {HOURS_PLAUSIBILITY_RATIO}× off this field&apos;s median is flagged and scored as not stated.{hasTypedTotal ? " A typed-total bid (price only) has no hours, so it is not scored on manpower and carries no value score here — its price still counts against every rival's." : ""}</>
               ) : (
-                <>Value score = price alone: labor hours are vendor-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown, nobody&apos;s manpower is scored, and every bid{hasTypedTotal ? " — typed totals included —" : ""} is scored on price.</>
+                <>Value score = price alone: labor hours are bidder-stated and AI-extracted, and are scored only once at least {MIN_CORROBORATING_STATEMENTS} bids in the field state hours in line with one another — here fewer do, so the hours are shown, nobody&apos;s manpower is scored, and every bid{hasTypedTotal ? " — typed totals included —" : ""} is scored on price.</>
               )}
               {" "}Scope coverage is not scored: declared exclusions never lower a score (as the RFQ letter promises) and &quot;check&quot; prompts are for you to verify against the PDF.
               {scoredCount < 2 ? " With fewer than two scored bids there is no field to rank, so no bid is badged." : manpowerScored ? " The cheapest bid doesn't automatically win — manpower counts too, and the exclusions are yours to weigh. You make the call." : " On price alone the cheapest bid ranks first — its exclusions and check prompts are yours to weigh. You make the call."}
@@ -986,7 +1006,7 @@ function OpenPdfButton({ doc, setErr }: { doc: CostDocument; setErr: (m: string 
           const url = await getFileUrl(doc.fileUrl!);
           window.open(url, "_blank", "noopener,noreferrer");
         } catch (e) {
-          setErr(`Couldn't open ${doc.fileName ?? "the PDF"}: ${(e as Error).message}`);
+          setErr(`Couldn't open ${doc.fileName ?? "the PDF"}: ${userFacingCaughtError(e, { action: "read", context: "QuotesPanel PDF" })}`);
         } finally { setBusy(false); }
       }}
       title={`Open ${doc.fileName ?? "the source PDF"} — review the paper before you award on the number`}
@@ -1064,9 +1084,16 @@ function bidFromRow(d: CostDocument, q: ParsedQuote): ParsedQuote {
   };
 }
 
+/** UX-13: the panel's AI readiness, read once for every Read button in it. */
+const AiReadinessContext = React.createContext<ReturnType<typeof useAiReadiness> | null>(null);
+/** UX-13: what the "needs a budget line" fix-in-place needs to create one. */
+const BudgetLineContext = React.createContext<{ orgId: string; projectId: string; actor: Actor; onCreated: () => void } | null>(null);
+
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const ai = React.useContext(AiReadinessContext);
+  const blocked = !!ai && aiBlocked(ai);
   return (
-    <button onClick={onClick} disabled={busy}
+    <button onClick={onClick} disabled={busy || blocked} aria-describedby={blocked ? "quotes-ai-precondition" : undefined}
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
       title="AI reads the printed pages into numbers — on your own AI key. You review before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
@@ -1074,14 +1101,18 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   );
 }
 
-function PostControls({ accounts, busy, onPost, label }: {
+function PostControls({ accounts, busy, onPost, label, currency, costType }: {
   accounts: CostAccount[]; busy: boolean;
   onPost: (accountId: string) => void | Promise<void>; label: string;
+  /** The document's currency and the cost type its line should carry — the
+   *  in-place budget line is made to take this post (COST-15 refuses a
+   *  line in another currency). */
+  currency?: string | null; costType?: string;
 }) {
-  const [accountId, setAccountId] = useState(accounts.length === 1 ? accounts[0].id : "");
-  if (accounts.length === 0) {
-    return <span className="text-[10px] text-[var(--color-text-muted)]" title="Create a budget line first — money always posts somewhere.">needs a budget line</span>;
-  }
+  const [picked, setAccountId] = useState("");
+  // A single line is the obvious target — also once it was just created here.
+  const accountId = picked || (accounts.length === 1 ? accounts[0].id : "");
+  if (accounts.length === 0) return <CreateBudgetLineInline label={label} currency={currency} costType={costType} />;
   return (
     <span className="inline-flex items-center gap-1">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
@@ -1093,6 +1124,69 @@ function PostControls({ accounts, busy, onPost, label }: {
         className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
+    </span>
+  );
+}
+
+/** The cost types a budget line takes (the Costs tab's own list). */
+const INLINE_COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
+
+/** UX-13: "needs a budget line" offers the fix where the need is met — a
+ *  name and an optional budget, created right here — instead of a hover
+ *  title sending the user past the change-orders panel and back. The line
+ *  is made to TAKE the post: in the document's currency (COST-15 refuses a
+ *  line in another one — an account with no currency is USD) and with the
+ *  cost type the caller names (a subcontract for an award; an invoice picks
+ *  its own), both shown and changeable. */
+function CreateBudgetLineInline({ label, currency, costType = "subcontract" }: { label: string; currency?: string | null; costType?: string }) {
+  const ctx = React.useContext(BudgetLineContext);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [budget, setBudget] = useState("");
+  const [cur, setCur] = useState(() => normalizeCurrency(currency) ?? "USD");
+  const [type, setType] = useState(costType);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!ctx) return <span className="text-[10px] text-[var(--color-text-muted)]">needs a budget line — create one in the accounts below</span>;
+  if (!open) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+        {label} needs a budget line —
+        <button type="button" onClick={() => setOpen(true)} className="font-black text-[var(--color-accent)] underline">Create budget line</button>
+      </span>
+    );
+  }
+  const create = async () => {
+    if (!name.trim()) { setError("Name the budget line."); return; }
+    const b = budget.trim() ? Number(budget.replace(/[,$\s]/g, "")) : 0;
+    if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
+    const code = normalizeCurrency(cur);
+    if (!code) { setError(`"${cur.trim()}" is not a currency code — use a three-letter code such as USD, CAD or EUR.`); return; }
+    setSaving(true); setError(null);
+    const res = await saveAccount({ orgId: ctx.orgId, projectId: ctx.projectId, patch: { name: name.trim(), budget: b, costType: type, currency: code }, actor: ctx.actor });
+    setSaving(false);
+    if (!res.ok) { setError(res.error ?? "Couldn't create the budget line."); return; }
+    setOpen(false); setName(""); setBudget("");
+    ctx.onCreated();
+  };
+  return (
+    <span className="inline-flex items-center gap-1 flex-wrap">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Budget line name" aria-label="New budget line name" autoFocus
+        className="h-6 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px]" />
+      <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (optional)" aria-label="New budget line budget" inputMode="decimal"
+        className="h-6 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px] font-mono" />
+      <input value={cur} onChange={(e) => setCur(e.target.value)} aria-label="New budget line currency" maxLength={4}
+        className="h-6 w-12 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[10px] font-mono uppercase" />
+      <select value={type} onChange={(e) => setType(e.target.value)} aria-label="New budget line cost type"
+        className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px]">
+        {INLINE_COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+      </select>
+      <button type="button" onClick={() => void create()} disabled={saving}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Create
+      </button>
+      <button type="button" onClick={() => { setOpen(false); setError(null); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+      {error && <span role="alert" className="text-[10px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
     </span>
   );
 }
@@ -1157,19 +1251,21 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
 
   return (
     <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap">
-      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs">
+      {/* A11Y-1: the input is visually hidden but stays in the tab order
+          (sr-only, never display:none); the label shows its focus ring. */}
+      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)] text-xs">
         <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />
         <span className="text-[var(--color-text-muted)] max-w-48 truncate">{file ? file.name : `${kind === "quote" ? "Quote" : "Invoice"} PDF…`}</span>
-        <input type="file" accept=".pdf,application/pdf" className="hidden"
+        <input type="file" accept=".pdf,application/pdf" className="sr-only"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
       </label>
-      <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
+      <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name (or let the AI read it)"
         className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {parties.length > 0 && (
-        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Project party this document came from"
-          title="Which project party sent this — the link that lets it reach their company scorecard"
+        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor this document came from"
+          title="Which of this project's contractors sent this — the link that lets it reach their company scorecard"
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs max-w-48">
-          <option value="">Party (optional)…</option>
+          <option value="">Contractor (optional)…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
@@ -1262,7 +1358,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         expires_at: expiresAt.toISOString(),
         created_by: actor.uid,
       }).select("id").single();
-      if (error) throw new Error(/purpose/.test(error.message) ? "Quote links need the latest database migration (20261013) applied." : error.message);
+      if (error) throw new Error(/purpose/.test(error.message) ? "Quote links need the latest database migration (20261013) applied." : userFacingError(error));
       // The audit row names the LINK (its id) — never token material — and
       // a failed audit of minting an external credential is visible.
       const { error: auditErr } = await supabase.from("audit_logs").insert({
@@ -1270,12 +1366,12 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: company.trim(), rfqGroup: snapRfqGroup(group, snapTargets) || null, projectId, expiresAt: expiresAt.toISOString() },
       });
-      if (auditErr) setErr(`The link was created but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setErr(`The link was created but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       setFreshUrls((prev) => new Map(prev).set(String((created as { id: string }).id), portalUrl(token)));
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel quote link" }));
     } finally { setSaving(false); }
   };
 
@@ -1285,7 +1381,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     try {
       const { data: revoked, error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() })
         .eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id");
-      if (error) { setErr(`Couldn't revoke: ${error.message}`); return; }
+      if (error) { setErr(`Couldn't revoke: ${userFacingError(error)}`); return; }
       // Zero rows = nothing was revoked (already revoked, or not permitted):
       // never audit a revocation that did not happen.
       if (!revoked || (revoked as unknown[]).length === 0) { setErr(`${l.companyName}'s link was not revoked — it may already be revoked, or you may not have permission. Refresh to see its state.`); await refresh(); return; }
@@ -1294,7 +1390,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: l.companyName, rfqGroup: l.rfqGroup, projectId },
       });
-      if (auditErr) setErr(`The link was revoked but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setErr(`The link was revoked but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       await refresh();
     } finally { setRevoking(null); }
   };
@@ -1361,12 +1457,14 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         turnoverItems: (((to ?? []) as Array<{ name: string }>)).map((t) => t.name),
       });
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "QuotesPanel starter RFQ" }));
     }
   };
 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2">
+      {/* A11Y-6: "Copied!" on the button is also said to a screen reader. */}
+      <span role="status" className="sr-only">{copied ? `Link copied for ${links?.find((x) => x.id === copied)?.companyName ?? "the contractor"}.` : ""}</span>
       <div className="text-[11px] text-[var(--color-text-muted)]">
         Send a contractor their own tokened link — no account needed. Their quote PDF lands here, the
         system reads it, and it joins the tabulation on its own.

@@ -16,6 +16,7 @@
 // thousand rows.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingReadError } from "@/lib/userFacingError";
 import { csvLine } from "@/lib/csvSafe";
 
 function csvRow(fields: unknown[]): string {
@@ -62,7 +63,7 @@ function chunks<T>(xs: T[], n: number): T[][] {
 /** A read the export depends on: its refusal is the export's failure, never
  *  an empty section in a file someone mails to an auditor. */
 function rowsOf(label: string, res: { data: unknown; error: { message: string } | null }): Array<Record<string, unknown>> {
-  if (res.error) throw new Error(`The export could not read ${label}: ${res.error.message}`);
+  if (res.error) throw new Error(`The export could not read ${label}: ${userFacingReadError(res.error, "projectExport")}`);
   return (res.data ?? []) as Array<Record<string, unknown>>;
 }
 
@@ -185,7 +186,7 @@ export async function buildProjectCsv(projectId: string, orgId: string): Promise
   const res = await supabase
     .from("projects").select("*")
     .eq("id", projectId).eq("org_id", orgId).maybeSingle();
-  if (res.error) throw new Error(`The export could not read the project: ${res.error.message}`);
+  if (res.error) throw new Error(`The export could not read the project: ${userFacingReadError(res.error, "projectExport")}`);
   if (!res.data) return null;
   const [bundle] = await loadProjectBundles([res.data as Record<string, unknown>]);
   return { name: String(bundle.project.name ?? "project"), csv: bundleToCsv(bundle) };

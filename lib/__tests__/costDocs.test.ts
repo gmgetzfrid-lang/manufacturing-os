@@ -211,6 +211,17 @@ describe("void + manual total decide against the DATABASE row (MON-3 / COST-14)"
     expect(db.tables.cost_documents[1]).toMatchObject({ status: "parsed", total_amount: 250 });
   });
 
+  it("review fix: a refused manual-total UPDATE reads as a refused WRITE (never as a failed read), logged under setManualTotal", async () => {
+    db.tables.cost_documents.push(docRow({ status: "parsed", total_amount: 1000 }));
+    db.fail["cost_documents:update"] = [{ message: 'new row violates row-level security policy for table "cost_documents"', code: "42501" }];
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await setManualTotal({ doc: doc({ status: "parsed" }), total: 5, actor });
+    expect(res).toEqual({ ok: false, error: "You don't have permission to do this — nothing was changed." });
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain("setManualTotal");
+    errSpy.mockRestore();
+    expect(db.tables.cost_documents[0].total_amount).toBe(1000);
+  });
+
   it("a DECLINED document moved no money: it can be voided, and a typed total corrects it WITHOUT reopening it", async () => {
     db.tables.cost_documents.push(docRow({ status: "declined", total_amount: 1000 }), docRow({ id: "d2", status: "declined" }));
     const fixed = await setManualTotal({ doc: doc({ status: "declined" }), total: 900, actor });
@@ -351,6 +362,16 @@ describe("awardQuote — the award as a checked transaction (MON-1 / MON-10 / MO
     expect(res.warning).toMatch(/1 of 1 competing bid\(s\) could not be marked not-selected/);
     expect(res.warning).toContain("timeout");
     expect(db.tables.cost_documents[1].status).toBe("parsed");
+  });
+
+  it("REL-3 (fix pass): a rival-decline refused by the database is an embedded REASON — 'Awarded, but …' is never followed by 'nothing was changed'", async () => {
+    db.tables.cost_documents.push(docRow({}), docRow({ id: "r1", status: "parsed" }));
+    db.fail["cost_documents:update"] = [null, { message: 'new row violates row-level security policy for table "cost_documents"', code: "42501" }];
+    const res = await awardQuote({ doc: doc(), siblings: [doc(), doc({ id: "r1" })], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.warning).toMatch(/^Awarded, but 1 of 1 competing bid\(s\) could not be marked not-selected \(You don't have permission to do this\) — refresh and decline them by hand\./);
+    expect(res.warning).not.toContain(".)");
+    expect(res.warning).not.toMatch(/nothing was changed|row-level|cost_documents/);
   });
 
   it("COST-8: a document in another currency than the budget line is refused BEFORE the claim", async () => {
@@ -541,6 +562,14 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     const out = await decideChangeOrder({ co: co({ id: "co2", coNumber: "CO-002" }), decision: "approved", shownAmount: 500, shownAccountId: "a1", actorId: "u-owner" });
     expect(out.warning).toMatch(/CO-002 was approved and its money posted, but the link/);
     expect(entries()).toHaveLength(1);
+  });
+
+  it("REL-3 (fix pass): a link write refused by the database after the money posted reads as a reason, never 'nothing was changed'", async () => {
+    db.tables.change_orders = [coRow({ id: "co3", co_number: "CO-003" })];
+    db.fail["change_orders:update"] = [null, { message: 'new row violates row-level security policy for table "change_orders"', code: "42501" }];
+    const out = await decideChangeOrder({ co: co({ id: "co3", coNumber: "CO-003" }), decision: "approved", shownAmount: 500, shownAccountId: "a1", actorId: "u-owner" });
+    expect(out.warning).toBe('CO-003 was approved and its money posted, but the link to its cost entry could not be saved (You don\'t have permission to do this) — it is listed under "Ledger needs attention" on the Costs tab until repaired.');
+    expect(out.warning).not.toMatch(/nothing was changed/);
   });
 
   it("REL-9 / COST-9: the unwind voids EXACTLY posted_entry_id, marks the CO void and records the entry id", async () => {
@@ -738,7 +767,8 @@ describe("legacy (pre-Round-G) entries attend their document — never a second 
     expect(o).toEqual({ available: false, docs: [], changeOrders: [] });
     // any other probe failure is a failed read (REL-2), never "nothing wrong"
     db.fail["cost_ledger_orphans:select"] = [{ message: "permission denied for view cost_ledger_orphans" }];
-    await expect(listLedgerOrphans("o1", "p1")).rejects.toThrow(/Couldn't check the ledger for orphans: permission denied/);
+    // REL-3 (J10): in words, not the driver's
+    await expect(listLedgerOrphans("o1", "p1")).rejects.toThrow("Couldn't check the ledger for orphans: You don't have permission to see this.");
   });
 
   it("the linked-entry check reads only this project's moved documents, in chunks — a large project never mis-lists a healthy award", async () => {
@@ -784,7 +814,7 @@ describe("approved change orders whose entry is gone — budget, listing, unwind
     expect(approvedChangesByAccount(cos).get("a1")).toBe(149 * 100);
     // a failed entry read is a failed read (REL-2), never a budget that silently dropped its changes
     db.fail["cost_entries:select"] = [{ message: "statement timeout" }];
-    await expect(listChangeOrders("p1")).rejects.toThrow(/Couldn't read the change orders' cost entries: statement timeout/);
+    await expect(listChangeOrders("p1")).rejects.toThrow("Couldn't read the change orders' cost entries: The database took too long to answer — try again.");
   });
 
   it("COST-4 (verification fix): the CO tiles and the report figure count by the same rule as the revised budget", async () => {
@@ -959,7 +989,7 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     db.fail["project_parties:select"] = [{ message: "statement timeout" }];
     const res = await awardQuote({ doc: doc({ partyId: "pp1" }), siblings: [], costAccountId: "a1", actor });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check the company registry \(statement timeout\)/);
+    expect(res.error).toMatch(/Couldn't check the company registry \(The database took too long to answer — try again\) — try again; an award is not made without that check\./);
     expect(db.tables.cost_documents[0].status).toBe("parsed");
     db.fail["companies:select"] = [{ message: "timeout" }];
     const byName = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
@@ -1048,7 +1078,7 @@ describe("checked writes and honest reads (SAF-3 / REL-2)", () => {
 
   it("REL-2: a failed read THROWS instead of returning an empty list", async () => {
     db.fail["cost_accounts:select"] = [{ message: "permission denied for table cost_accounts" }];
-    await expect(listAccounts("o1", "p1")).rejects.toThrow(/Couldn't load cost accounts: permission denied/);
+    await expect(listAccounts("o1", "p1")).rejects.toThrow("Couldn't load cost accounts: You don't have permission to see this.");
     db.fail["cost_documents:select"] = [{ message: "relation does not exist" }];
     await expect(listCostDocs("o1", "p1")).rejects.toThrow(/Couldn't load quotes & invoices/);
   });

@@ -463,6 +463,16 @@ describe("SCH-18 · a failed Undo keeps its toast and says so; timers stay bound
     expect(attempts).toBe(2);
     expect(api.toasts).toHaveLength(0);
   });
+  it("REL-3: a refusal reaches the toast as a sentence, and a SECOND failed Undo keeps the action's own words (a translated reason holds a dash of its own)", async () => {
+    await render(React.createElement(Harness));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => { api.announce("Moved “Weld”", async () => { throw new Error("permission denied for table milestones"); }); });
+    await act(async () => { await api.runUndo(api.toasts[0]); });
+    expect(api.toasts[0].message).toBe("Couldn't undo: You don't have permission to do this — nothing was changed — Moved “Weld”");
+    await act(async () => { await api.runUndo(api.toasts[0]); });
+    expect(api.toasts[0].message).toBe("Couldn't undo: You don't have permission to do this — nothing was changed — Moved “Weld”");
+    errSpy.mockRestore();
+  });
   it("pushing ten toasts leaves three on screen and three timers — a dropped toast takes its timer with it", async () => {
     await render(React.createElement(Harness));
     await act(async () => { for (let i = 0; i < 10; i++) api.notify(`n${i}`); });
@@ -510,7 +520,9 @@ describe("SCH-7 / SCH-18 · a partly written batch can be undone, and a failed U
     expect(calls[1].rows).toEqual([{ id: "c2", plannedStartAt: "2026-03-02T00:00:00Z", plannedAt: "2026-03-04T00:00:00Z" }]);
     expect(calls[1].opts).toEqual({ expectedUpdatedAt: { c2: "2026-09-30T10:00:00.5+00:00" } });
     // the Undo was refused for a reason that is not a concurrent edit — and says so
-    expect(host.textContent).toMatch(/Couldn't undo: permission denied for table milestones — Only 1 of 2 tasks moved/);
+    // (REL-3: the refusal reaches the toast as a sentence, never the driver's text)
+    expect(host.textContent).toMatch(/Couldn't undo: You don't have permission to do this — nothing was changed — Only 1 of 2 tasks moved/);
+    expect(host.textContent).not.toMatch(/permission denied for table/);
   });
   it("a batch that moved nothing offers no Undo — and says why on the board (review: it snapped back silently)", async () => {
     await render(board(phase, { onMoveMany: async () => ({ ok: false, matched: [], error: "Weld was changed by someone else — nothing was moved" }) }));

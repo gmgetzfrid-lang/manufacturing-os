@@ -8,6 +8,7 @@
 // activity trail.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
@@ -146,7 +147,7 @@ export default function TaskDetailPanel({
     setDeleteError(null);
     try {
       await deleteMilestone(m.id, userId);
-    } catch (e) { setDeleteError((e as Error).message); onChanged(); return; }
+    } catch (e) { setDeleteError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); onChanged(); return; }
     onChanged();
     onClose();
   }, [m, subtasks, allTasks, imported, userId, onChanged, onClose]);
@@ -257,7 +258,7 @@ export default function TaskDetailPanel({
                     <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
                     <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
                   </div>
-                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
+                  <span className="text-[10px] text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-tasks come along)"}</span>
                 </div>
               )}
 
@@ -335,7 +336,7 @@ export default function TaskDetailPanel({
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
-                    Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
+                    Dot = set status · ◀ ▶ = move this sub-task a day earlier/later (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => {
@@ -368,14 +369,14 @@ export default function TaskDetailPanel({
                           <span className="shrink-0 flex items-center gap-0.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
-                              title="Move this step 1 day earlier"
+                              title="Move this sub-task 1 day earlier"
                               className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
-                              title="Move this step 1 day later"
+                              title="Move this sub-task 1 day later"
                               className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
@@ -441,7 +442,7 @@ export default function TaskDetailPanel({
             <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
-            {deleteError && <span role="alert" className="text-[11px] text-rose-600">{deleteError}</span>}
+            {deleteError && <span role="alert" className="text-[11px] text-rose-700 dark:text-rose-300">{deleteError}</span>}
           </div>
         )}
         {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>}
@@ -538,7 +539,7 @@ function EditForm({
         updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
       });
       onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); }
     finally { setSaving(false); }
   };
 
@@ -555,8 +556,8 @@ function EditForm({
       <fieldset disabled={imported} className="space-y-3 disabled:opacity-60">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Start (schedule time)"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label="Finish (schedule time)"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+        <L label="Start (schedule time)"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={`${cls("start")} bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]`} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label="Finish (schedule time)"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={`${cls("finish")} bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]`} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
@@ -589,7 +590,7 @@ function EditForm({
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
       </fieldset>
-      {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+      {error && <div role="alert" className="text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/50 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
@@ -751,7 +752,7 @@ function DependencyEditor({
     try {
       await updateMilestone({ id: milestone.id, patch: { dependsOn: next }, updatedBy: userId });
       onChanged();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "TaskDetailPanel" })); }
     finally { setSaving(false); }
   };
 
@@ -798,7 +799,7 @@ function DependencyEditor({
           ))}
         </select>
       )}
-      {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+      {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-300 mt-1">{error}</div>}
     </div>
   );
 }
@@ -832,7 +833,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         updatedBy: userId,
       });
       onChanged();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+    } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "TaskDetailPanel" }), tone: "danger" }); }
     finally { setSaving(false); }
   };
 

@@ -20,6 +20,7 @@
 // client until the user clicks "Import N milestones".
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon,
@@ -157,7 +158,7 @@ export default function ScheduleImportModal({
       setParseResult({
         format: "unknown",
         rows: [],
-        warnings: [`Couldn't read the file: ${(e as Error).message}`],
+        warnings: [`Couldn't read the file: ${userFacingCaughtError(e, { context: "ScheduleImportModal" })}`],
       });
     } finally { setParsing(false); }
   }, [invalidatePlan]);
@@ -375,7 +376,7 @@ export default function ScheduleImportModal({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold text-[var(--color-text)] truncate">{filename}</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} milestone{parseResult.rows.length === 1 ? "" : "s"} found</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{FORMAT_LABEL[parseResult.format]} · {parseResult.rows.length} task{parseResult.rows.length === 1 ? "" : "s"} found</div>
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFilename(null); setImportResult(null); invalidatePlan(); }}
@@ -614,15 +615,20 @@ export default function ScheduleImportModal({
                 </div>
               )}
 
-              {/* Import result */}
+              {/* Import result — A11Y-6: announced (a live region that stays
+                  mounted; an alert when it was cancelled or anything failed,
+                  a status when it all went), the token recipe in both
+                  themes (A11Y-13). */}
+              <div aria-live="polite" aria-atomic="true">
               {importResult && (
-                <div className={`rounded-xl p-3 border ${importResult.errors.length > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
+                <div role={importResult.cancelled || importResult.errors.length > 0 ? "alert" : "status"}
+                  className={`rounded-xl p-3 border ${importResult.cancelled || importResult.errors.length > 0 ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300" : "border-emerald-500/50 bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300"}`}>
                   <div className="flex items-center gap-2 font-bold text-sm">
                     {importResult.cancelled
-                      ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Import cancelled</>
+                      ? <><AlertTriangle className="w-4 h-4" /> Import cancelled</>
                       : importResult.errors.length > 0
-                      ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Imported with errors</>
-                      : <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> Imported successfully</>
+                      ? <><AlertTriangle className="w-4 h-4" /> Imported with errors</>
+                      : <><CheckCircle2 className="w-4 h-4" /> Imported successfully</>
                     }
                   </div>
                   <div className="mt-1 text-xs space-y-0.5">
@@ -633,7 +639,7 @@ export default function ScheduleImportModal({
                     {parseResult.keyColumn && <div>Rows matched on <b>{parseResult.keyColumn}</b>.</div>}
                     {importResult.batchId && <div className="text-[10px] font-mono text-[var(--color-text-faint)]">batch {importResult.batchId}</div>}
                     {importResult.errors.length > 0 && (
-                      <div className="text-rose-700">
+                      <div>
                         {importResult.errors.length} error{importResult.errors.length === 1 ? "" : "s"}:
                         <ul className="ml-5 list-disc">{importResult.errors.slice(0, 5).map((e, i) => <li key={i}>{e}</li>)}</ul>
                       </div>
@@ -641,6 +647,7 @@ export default function ScheduleImportModal({
                   </div>
                 </div>
               )}
+              </div>
             </>
           )}
 

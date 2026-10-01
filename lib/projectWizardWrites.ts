@@ -46,6 +46,10 @@ export interface WizardWriteDeps {
   updateProject(patch: Record<string, unknown>): Promise<{ error: WriteError | null }>;
   insertRows(table: "cost_accounts" | "milestones" | "project_parties", rows: Record<string, unknown>[]): Promise<{ error: WriteError | null }>;
   seedTurnover(): Promise<{ ok: boolean; error?: string }>;
+  /** The do-not-use rule for a contractor's Known Companies link
+   *  (lib/costs checkPartyCompanyLink): a link that would need a recorded
+   *  reason is not written here — the row goes in unlinked, with a note. */
+  checkPartyLink(name: string, companyId: string): Promise<{ ok: true } | { ok: false; note: string }>;
 }
 
 /** PostgREST's "column does not exist" codes — a database the migration
@@ -104,8 +108,10 @@ export async function runWizardFollowUpWrites(
   input: WizardWriteInput,
   deps: WizardWriteDeps,
   only?: ReadonlySet<WizardWriteStep>,
-): Promise<{ failures: WizardWriteFailure[] }> {
+): Promise<{ failures: WizardWriteFailure[]; notes: string[] }> {
   const failures: WizardWriteFailure[] = [];
+  /** Saved, but not as typed — a contractor added without its company link. */
+  const notes: string[] = [];
   const wants = (s: WizardWriteStep) => !only || only.has(s);
   const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -139,11 +145,22 @@ export async function runWizardFollowUpWrites(
       name: r.name, planned_at: new Date(`${r.date}T12:00:00`).toISOString(),
       status: "planned", created_by: input.actorUserId,
     })));
-    if (error) failures.push({ step: "schedule", label: plural(input.milestones.length, "milestone"), message: describe(error, "milestones") });
+    if (error) failures.push({ step: "schedule", label: plural(input.milestones.length, "schedule task"), message: describe(error, "schedule tasks") });
   }
 
   if (wants("team") && input.parties.length > 0) {
-    const rows = input.parties.map((r) => ({
+    // DEC-76 item 3: the name-bound link passes the do-not-use rule
+    // first. The wizard cannot ask for a reason, so a link that needs one
+    // (or that could not be checked) is left off and said.
+    const parties: WizardWriteInput["parties"] = [];
+    for (const r of input.parties) {
+      if (r.companyId) {
+        const chk = await deps.checkPartyLink(r.name, r.companyId);
+        if (!chk.ok) { notes.push(chk.note); parties.push({ ...r, companyId: null }); continue; }
+      }
+      parties.push(r);
+    }
+    const rows = parties.map((r) => ({
       org_id: input.orgId, project_id: input.projectId,
       name: r.name, kind: r.kind, trade: r.trade || null,
       company_id: r.companyId,
@@ -154,7 +171,7 @@ export async function runWizardFollowUpWrites(
       // Pre-migration: company_id doesn't exist yet — save without the link.
       ({ error } = await deps.insertRows("project_parties", rows.map(({ company_id: _c, ...rest }) => rest)));
     }
-    if (error) failures.push({ step: "team", label: plural(input.parties.length, "company", "companies"), message: describe(error, "companies on the job") });
+    if (error) failures.push({ step: "team", label: plural(input.parties.length, "contractor"), message: describe(error, "contractors") });
   }
 
   if (wants("turnover")) {
@@ -166,7 +183,7 @@ export async function runWizardFollowUpWrites(
     }
   }
 
-  return { failures };
+  return { failures, notes };
 }
 
 /**
@@ -201,7 +218,7 @@ export function retainedRowLines(input: WizardWriteInput, step: WizardWriteStep,
   }
 }
 
-/** One line naming what did not save: "4 budget lines and 2 milestones". */
+/** One line naming what did not save: "4 budget lines and 2 schedule tasks". */
 export function summarizeWizardFailures(failures: WizardWriteFailure[]): string {
   const labels = failures.map((f) => f.label);
   if (labels.length === 0) return "";

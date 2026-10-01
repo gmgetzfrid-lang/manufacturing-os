@@ -14,6 +14,7 @@ import {
   GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Undo2, UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
@@ -43,10 +44,15 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       setCos(await listChangeOrders(projectId));
       setLoadErr(null);
     } catch (e) {
-      const msg = (e as Error).message ?? "unknown error";
       setCos([]);
-      // pre-migration: the table is absent — the panel stays quiet
-      setLoadErr(/does not exist|schema cache|could not find the table/i.test(msg) ? null : msg);
+      // pre-migration: the table is absent — the panel stays quiet. Decided
+      // on the driver CODE listChangeOrders carries (42P01 / PGRST205); its
+      // message is already the translated sentence, which names no table
+      // (REL-3). The text test stays for a thrower that kept the raw text.
+      const code = (e as { code?: string | null }).code ?? null;
+      const raw = (e as Error)?.message ?? "";
+      const missingTable = code === "42P01" || code === "PGRST205" || /does not exist|schema cache|could not find the table/i.test(raw);
+      setLoadErr(missingTable ? null : (raw ? userFacingCaughtError(e, { action: "read", context: "ChangeOrdersPanel" }) : "unknown error"));
     }
   }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh, reloadKey]);
@@ -70,7 +76,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       if (!co.costAccountId && accountId) {
         const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId })
           .eq("id", co.id).eq("status", "proposed");
-        if (error) { setErr(error.message); return; }
+        if (error) { setErr(userFacingError(error)); return; }
         target = { ...co, costAccountId: accountId };
       }
     }
@@ -92,7 +98,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       // COST-11: a partial outcome (money posted, link not saved) is said out loud.
       if (out?.warning) setErr(out.warning);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setBusy(null); }
   };
 
@@ -107,7 +113,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       await refresh();
       onMoneyMoved();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setBusy(null); }
   };
 
@@ -120,7 +126,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/40">
             {open.length} awaiting decision
           </span>
         )}
@@ -153,7 +159,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       {loadErr ? (
         <div role="alert" className="px-4 py-4 flex items-center gap-2 text-xs font-bold text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>Couldn&apos;t load the change orders ({loadErr}) — the approved-change figures are not shown.</span>
+          <span>Couldn&apos;t load the change orders ({asClause(loadErr)}) — the approved-change figures are not shown.</span>
           <button onClick={() => void refresh()}
             className="ml-auto px-2 py-0.5 rounded-md border border-rose-500/40 text-[11px] hover:bg-rose-500/[0.08]">Retry</button>
         </div>
@@ -302,7 +308,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
       });
       onDone();
     } catch (e) {
-      setError((e as Error).message);
+      setError(userFacingCaughtError(e, { context: "ChangeOrdersPanel" }));
     } finally { setSaving(false); }
   };
 
@@ -326,14 +332,18 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         </select>
         <select value={partyId} onChange={(e) => setPartyId(e.target.value)}
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Contractor / vendor…</option>
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       </div>
+      {/* A11Y-12: the scoring consequence of the reason code, visible before the choice. */}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        The reason code scores both sides: a <b>scope gap</b> counts against the contractor&apos;s record; a <b>design error</b> or an <b>owner request</b> counts on ours; field conditions and other reasons score neither.
+      </p>
       <div className="flex items-center gap-2">
-        {error && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" />{error}</span>}
+        {error && <span role="alert" className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300"><AlertTriangle className="w-3 h-3" />{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}

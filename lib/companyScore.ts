@@ -103,7 +103,7 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
   }
 
   const unlinked = (e.partiesLinked ?? 1) === 0;
-  const unlinkedNote = "no project party is linked to this company — link one on the Costs tab";
+  const unlinkedNote = "no project's contractor is linked to this company — link one on that project's Costs tab";
 
   // QUALITY — turnover acceptance rate (the hard evidence), quality-manual
   // coverage, punch burn-down.
@@ -160,7 +160,10 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
           ownerBit, neutralBit,
           e.awardsSource === "contract_value" ? "awards from the typed contract value" : null,
           e.awardsSource === "mixed"
-            ? `awards from posted commitments on ${e.awardsPostedPartyCount ?? "some"} part${e.awardsPostedPartyCount === 1 ? "y" : "ies"} and the typed contract value on ${e.awardsTypedPartyCount ?? "others"}`
+            // The counts are contractor rows (project_parties) — one company
+            // can be two contractors on one project — so they are named as
+            // contractor records, never as projects.
+            ? `awards from posted commitments on ${e.awardsPostedPartyCount ?? "some"} contractor record${e.awardsPostedPartyCount === 1 ? "" : "s"} and the typed contract value on ${e.awardsTypedPartyCount ?? "others"}`
             : null,
         ].filter(Boolean).join(" · "),
       });
@@ -175,7 +178,7 @@ export function computeCompanyScorecard(e: CompanyEvidence): CompanyScorecard {
       const rate = e.milestonesHitOnTime / e.milestonesOnTheirScopes;
       dims.push({
         key: "schedule", label: "Schedule", score: r1(clamp(rate * 100)),
-        detail: `${e.milestonesHitOnTime}/${e.milestonesOnTheirScopes} milestones on time`,
+        detail: `${e.milestonesHitOnTime}/${e.milestonesOnTheirScopes} tasks on time`,
       });
     }
   }

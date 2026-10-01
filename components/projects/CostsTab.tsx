@@ -12,14 +12,16 @@
 // 20261013); everyone on the project reads the same picture.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import {
   CostAccount, CostEntry, CostParty, CostEntryType,
-  listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty,
+  listAccounts, listEntries, listParties, saveAccount, addEntry, voidEntry, saveParty, linkPartyToCompany,
   computeCostRollup, milestonePctIndex, fmtMoney,
 } from "@/lib/costs";
 import {
@@ -34,6 +36,9 @@ import { scheduleSpanFromMilestones } from "@/lib/costSeries";
 import { vizCat } from "@/components/dashboard/viz";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
+import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
+import { listCompanies, type Company } from "@/lib/companies";
+import { matchCompanyByName } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
@@ -104,7 +109,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         supabase.from("milestones").select("id, name, percent_complete, status, planned_at, planned_start_at")
           .eq("project_id", projectId).order("planned_at").order("id").limit(PROJECT_MILESTONE_READ_LIMIT),
       ]);
-      if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${msErr.message}`);
+      if (msErr) throw new Error(`Couldn't load the schedule for earned value: ${userFacingReadError(msErr)}`);
       setAccounts(a);
       setEntries(e);
       setParties(p);
@@ -118,7 +123,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       setSchedSpan(scheduleSpanFromMilestones(rows));
       setLoaded(true);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { action: "read", context: "CostsTab" }));
     } finally { setLoading(false); }
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,11 +279,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <CircleDollarSign className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Cost accounts</span>
+          <span className="text-sm font-bold text-[var(--color-text)]">Budget lines</span>
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{accounts.length}</span>
           {canManage && (
             <button onClick={() => setShowNewAccount((v) => !v)} className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-              <Plus className="w-3 h-3" /> New account
+              <Plus className="w-3 h-3" /> New budget line
             </button>
           )}
         </div>
@@ -295,9 +300,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         {rollup.accounts.length === 0 ? (
           <div className="px-4 py-10 text-center">
             <CircleDollarSign className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">No cost accounts yet</div>
+            <div className="text-sm font-bold text-[var(--color-text)]">No budget lines yet</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-              An account is a budget line — &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
+              A budget line (a cost account, in accounting terms) is one slice of the budget — &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
               {canManage ? " Create the first one above." : " Document Control sets these up."}
             </div>
           </div>
@@ -360,12 +365,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         )}
       </div>
 
-      {/* ── Parties ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+      {/* ── Contractors (UX-15: never "party" on screen) ── */}
+      <div data-panel="contractors" className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
         <button onClick={() => setShowParties((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
           {showParties ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
           <HardHat className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Contractors &amp; vendors</span>
+          <span className="text-sm font-bold text-[var(--color-text)]">Contractors</span>
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
@@ -398,7 +403,7 @@ function StatCard({ icon, label, value, sub, tone }: {
         <span className={`p-1.5 rounded-lg ${tones[tone]}`}>{icon}</span>
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
       </div>
-      <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] truncate">{value}</div>
+      <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] break-words">{value}</div>
       {sub && <div className="text-[10px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
     </div>
   );
@@ -446,7 +451,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
       note = await appPrompt({
         title: `Reverse ${c.coNumber}`,
         message: "No cost entry of this change order remains on the ledger, so reversing marks it void on the record (the approver stays visible). Why?",
-        placeholder: "e.g. Its commitment was voided by hand in the accounts below",
+        placeholder: "e.g. Its commitment was voided by hand in the budget lines below",
       });
       if (note === null) return;
     } else if (!(await appConfirm({ message: `Link ${c.coNumber} to the selected commitment? Its amount then counts in the revised budget. The action is audited.` }))) return;
@@ -455,7 +460,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
       await repairChangeOrder({ co: { id: c.id }, action, entryId, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
       onCoRepaired();
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(userFacingCaughtError(e, { context: "CostsTab" }));
     } finally { setBusy(null); }
   };
   const coSentence = (c: LedgerOrphans["changeOrders"][number]) =>
@@ -546,7 +551,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
     setBusy(a.id);
     const res = await saveAccount({ orgId, projectId, id: a.id, patch: { wbsMilestoneId: v || null }, actor });
     setBusy(null);
-    if (!res.ok) setErr(res.error ?? "Couldn't pin the milestone."); else onChanged();
+    if (!res.ok) setErr(res.error ?? "Couldn't pin the task."); else onChanged();
   };
 
   return (
@@ -569,6 +574,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
             </select>
           </label>
           <div className="text-[10px] text-[var(--color-text-muted)] pb-1.5">
+            <span className="block">Earned value (EV) = this line&apos;s budget × the pinned task&apos;s % complete.</span>
             Committed {fmtMoney(r.committed, cur)} · Actual {fmtMoney(r.actual, cur)}{r.adjustments !== 0 ? ` · Adjustments ${fmtMoney(r.adjustments, cur)}` : ""}
             {r.approvedChanges !== 0 ? ` · Approved changes ${fmtMoney(r.approvedChanges, cur)} (revised budget ${fmtMoney(r.revisedBudget, cur)})` : ""}
             {` · Exposure ${fmtMoney(r.exposure, cur)}`}
@@ -654,21 +660,26 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
 
   return (
     <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5 flex items-end gap-2 flex-wrap">
-      <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
-        {ENTRY_TYPES.map((t) => (
-          <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-            {t.label}
-          </button>
-        ))}
+      <div className="flex flex-col gap-0.5">
+        <div role="group" aria-label="Entry type" className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
+          {ENTRY_TYPES.map((t) => (
+            <button key={t.v} type="button" onClick={() => setType(t.v)} aria-pressed={type === t.v} title={t.hint}
+              className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors ${type === t.v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {/* A11Y-12: Commitment vs Actual vs Adjustment, in text — the three
+            most confusable words in cost control are never hover-only. */}
+        <span className="text-[10px] text-[var(--color-text-muted)]">{ENTRY_TYPES.find((t) => t.v === type)?.hint}</span>
       </div>
       <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
         className="h-8 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
       <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
         className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
       {parties.length > 0 && (
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Party…</option>
+        <select value={party} onChange={(e) => setParty(e.target.value)} aria-label="Contractor" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
@@ -700,7 +711,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!name.trim()) { setError("Account name is required."); return; }
+    if (!name.trim()) { setError("Budget line name is required."); return; }
     const b = budget ? Number(budget) : 0;
     if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
     setSaving(true); setError(null);
@@ -710,7 +721,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
       actor,
     });
     setSaving(false);
-    if (!res.ok) { setError(res.error ?? "Couldn't create the account."); return; }
+    if (!res.ok) { setError(res.error ?? "Couldn't create the budget line."); return; }
     onDone();
   };
 
@@ -718,7 +729,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
         <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (e.g. 01-200)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono" />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Account name (required)" autoFocus className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs md:col-span-2" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Budget line name (required)" autoFocus className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs md:col-span-2" />
         <select value={type} onChange={(e) => setType(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
@@ -728,8 +739,8 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
             {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </span>
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Party…</option>
+        <select value={party} onChange={(e) => setParty(e.target.value)} aria-label="Contractor" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <option value="">Contractor…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
@@ -738,7 +749,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
           <option value="">Pin to schedule task (optional, enables EV/CPI)…</option>
           {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
         </select>
-        {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+        {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
@@ -750,6 +761,10 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
   );
 }
 
+/** The Known Companies list the contractor pickers offer: loading, read, or
+ *  unreadable (then contractors are added unlinked and say so). */
+type RegistryRead = { state: "loading" } | { state: "ready"; companies: Company[] } | { state: "failed"; error: string };
+
 function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }: {
   orgId: string; projectId: string; actor: { uid: string; email: string | null };
   parties: CostParty[]; canManage: boolean; onChanged: () => void;
@@ -758,39 +773,123 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
   const [kind, setKind] = useState("contractor");
   const [trade, setTrade] = useState("");
   const [contract, setContract] = useState("");
+  /** The registry pick: undefined = follow the name's suggestion, "" = none. */
+  const [companyPick, setCompanyPick] = useState<string | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [registry, setRegistry] = useState<RegistryRead>({ state: "loading" });
+  const [linking, setLinking] = useState<string | null>(null);
+  const [linkPick, setLinkPick] = useState("");
+
+  // COST-12 / MON-7: the Known Companies the contractor can be linked to. A
+  // failed read never blocks adding — the contractor is added unlinked.
+  useEffect(() => {
+    let cancelled = false;
+    listCompanies(orgId)
+      .then((companies) => { if (!cancelled) setRegistry({ state: "ready", companies }); })
+      .catch((e: unknown) => { if (!cancelled) setRegistry({ state: "failed", error: userFacingCaughtError(e, { action: "read", context: "CostsTab" }) }); });
+    return () => { cancelled = true; };
+  }, [orgId]);
+  const companies = registry.state === "ready" ? registry.companies : [];
+  const companyName = new Map(companies.map((c) => [c.id, c.name]));
+  const suggestion = matchCompanyByName(name.trim(), companies);
+  const chosenCompany = companyPick === undefined ? (suggestion?.id ?? "") : companyPick;
+
+  /** A link the registry objects to (the name could be a do-not-use
+   *  company) asks for the reason and goes again with it. */
+  const withOverride = async <T extends { ok: boolean; error?: string; needsOverride?: { company: string } }>(
+    run: (reason: string | null) => Promise<T>,
+  ): Promise<T | null> => {
+    const first = await run(null);
+    if (first.ok || !first.needsOverride) return first;
+    const reason = await appPrompt({
+      title: `Link despite ${first.needsOverride.company}?`,
+      message: `${first.error ?? ""} Say why this contractor is not ${first.needsOverride.company}.`,
+      placeholder: "e.g. Same trade name, different company — checked their licence number",
+    });
+    if (reason === null || !reason.trim()) return null;
+    return run(reason.trim());
+  };
 
   const add = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
     setSaving(true); setError(null);
-    const res = await saveParty({
+    const res = await withOverride((reason) => saveParty({
       orgId, projectId,
       patch: {
         name: name.trim(), kind, trade: trade || null,
         contractValue: contract ? Number(contract) : null,
+        ...(chosenCompany ? { companyId: chosenCompany } : {}),
       },
+      linkOverrideReason: reason,
       actor,
-    });
+    }));
     setSaving(false);
-    if (!res.ok) { setError(res.error ?? "Couldn't add the party."); return; }
-    setName(""); setTrade(""); setContract("");
+    if (!res) return;
+    if (!res.ok) { setError(res.error ?? "Couldn't add the contractor."); return; }
+    setName(""); setTrade(""); setContract(""); setCompanyPick(undefined);
+    onChanged();
+  };
+
+  const link = async (p: CostParty) => {
+    if (!linkPick) return;
+    setSaving(true); setError(null);
+    const res = await withOverride((reason) => linkPartyToCompany({ orgId, partyId: p.id, companyId: linkPick, overrideReason: reason, actor }));
+    setSaving(false);
+    if (!res) return;
+    if (!res.ok) { setError(res.error ?? "Couldn't link the contractor."); return; }
+    setLinking(null); setLinkPick("");
     onChanged();
   };
 
   return (
     <div className="px-4 pb-4 space-y-2 border-t border-[var(--color-border)]">
+      <p className="pt-3 text-[10px] text-[var(--color-text-muted)]">
+        Link each contractor to its <Link href="/companies" className="underline">Known Companies</Link> record — that is how
+        its awards, change orders, accepted turnover and punch items reach the company&apos;s scorecard. A link is set once and never re-pointed.
+      </p>
+      {registry.state === "failed" && (
+        <p role="alert" className="text-[10px] font-bold text-amber-800 dark:text-amber-300">
+          The Known Companies list couldn&apos;t be loaded ({asClause(registry.error)}) — contractors are added unlinked; link them once it loads.
+        </p>
+      )}
       {parties.length > 0 && (
-        <ul className="pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {parties.map((p) => (
-            <li key={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+            <li key={p.id} data-party={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
-                {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
+                {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[p.kind as keyof typeof COMPANY_KIND_LABEL] ?? p.kind}</span>}
                 {p.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
                 {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "—"}
+              </div>
+              <div className="text-[10px] mt-0.5" data-company-link={p.companyId ? "linked" : "unlinked"}>
+                {p.companyId ? (
+                  <Link href={`/companies/${p.companyId}`} className="font-bold text-[var(--color-accent)] hover:underline">
+                    Known company: {companyName.get(p.companyId) ?? "open the record"}
+                  </Link>
+                ) : linking === p.id ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <select value={linkPick} onChange={(e) => setLinkPick(e.target.value)} aria-label={`Known company for ${p.name}`}
+                      className="h-7 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
+                      <option value="">Pick the company…</option>
+                      {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
+                    </select>
+                    <button type="button" onClick={() => void link(p)} disabled={!linkPick || saving}
+                      className="h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                    <button type="button" onClick={() => { setLinking(null); setLinkPick(""); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="italic text-[var(--color-text-faint)]">Unlinked — its record can&apos;t reach a company scorecard</span>
+                    {canManage && registry.state === "ready" && (
+                      <button type="button" onClick={() => { setLinking(p.id); setLinkPick(matchCompanyByName(p.name, companies)?.id ?? ""); }}
+                        className="font-bold text-[var(--color-accent)] hover:underline">Link to a known company</button>
+                    )}
+                  </span>
+                )}
               </div>
             </li>
           ))}
@@ -798,20 +897,26 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
       )}
       {canManage && (
         <div className="pt-1 flex items-end gap-2 flex-wrap">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-            <option value="contractor">contractor</option>
-            <option value="vendor">vendor</option>
-            <option value="internal">internal</option>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" aria-label="Contractor name" className="h-8 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+            {COMPANY_KINDS.map((k) => <option key={k} value={k}>{COMPANY_KIND_LABEL[k]}</option>)}
           </select>
-          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+          {registry.state === "ready" && (
+            <select value={chosenCompany} onChange={(e) => setCompanyPick(e.target.value)} aria-label="Known company"
+              title="The Known Companies record this contractor is — suggested from the name; pick another or none"
+              className="h-8 max-w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+              <option value="">Not in Known Companies (unlinked)</option>
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
+            </select>
+          )}
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" aria-label="Trade" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" aria-label="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
           <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
-          {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
         </div>
       )}
+      {error && <p role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</p>}
     </div>
   );
 }

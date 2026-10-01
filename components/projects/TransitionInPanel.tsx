@@ -30,6 +30,7 @@ import {
   ChevronDown, ChevronRight, RefreshCw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   TransitionCandidate, TransitionImpact, UnverifiableReason,
   listTransitionCandidates, scanTransitionImpact, adoptDocument, blockingNumberCollision, candidateInReview,
@@ -96,7 +97,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       }
       setScanning(false);
     } catch (e) {
-      setMsg(`Couldn't load the transition list: ${(e as Error).message}`);
+      setMsg(`Couldn't load the transition list: ${userFacingCaughtError(e, { action: "read", context: "TransitionInPanel" })}`);
     } finally { setLoading(false); }
   }, [orgId, intakeCollectionId]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -155,7 +156,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
       if (!res.ok) throw new Error(res.error);
       setMsg(res.note ?? `${c.label} adopted into the controlled register.`);
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "TransitionInPanel" })); }
     finally { setBusy(null); }
   };
 
@@ -206,7 +207,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         </button>
       </div>
 
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      <div aria-live="polite">{msg && <div role="status" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}</div>
 
       {canManage && !canAdopt && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 text-xs text-[var(--color-text-muted)]">

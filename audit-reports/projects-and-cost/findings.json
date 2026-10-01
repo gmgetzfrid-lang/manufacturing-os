@@ -18,8 +18,8 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 64,
-      "OPEN": 12
+      "RESOLVED": 65,
+      "OPEN": 11
     }
   },
   "status_vocabulary": [
@@ -890,7 +890,7 @@
       "id": "COST-12",
       "title": "The Known Companies scorecard is structurally unable to score: three of the four party_id columns it queries are never written, and company_id and contract_value are written by mutually exclusive code paths",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -25,6 +25,7 @@
 // WBS — all write through to the same audited mutations.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
@@ -843,7 +844,7 @@ export default function ExecutionView({
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
         <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
         <div className="text-sm font-semibold text-[var(--color-text)]">No dated tasks yet</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule or add a milestone to populate the execution board.</div>
+        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule or add a task to populate the execution board.</div>
       </div>
     );
   }
@@ -1684,10 +1685,10 @@ function Legend({ calendarLabel }: { calendarLabel: string }) {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-blue-500 overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
-          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A phase — a summary task that rolls up its sub-tasks">
+          <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase (rolls up sub-tasks)
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a task with no duration: a single date the schedule marks (shown as a diamond, never a bar)">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title={`On the critical path — the chain of finish-to-start links that drives the finish date (${calendarLabel}, no holiday calendar; a task with no links counts only if it ends at the finish)`}>
@@ -1736,7 +1737,7 @@ function GroupTasksModal({
       });
       if (res.errors.length > 0) setError(res.errors.join(" · "));
       else onDone();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) { setError(userFacingCaughtError(e, { context: "ExecutionView" })); }
     finally { setBusy(false); }
   };
 
@@ -1775,7 +1776,7 @@ function GroupTasksModal({
               {childNames.length > 12 && <li className="text-[10px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
@@ -1823,7 +1824,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Days the task runs</label>
           <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
           <div className="text-[11px] text-[var(--color-text-muted)]">Ends on <b>{fmtDateUTC(finish)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div role="alert" className="text-xs text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border border-rose-500/40 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>

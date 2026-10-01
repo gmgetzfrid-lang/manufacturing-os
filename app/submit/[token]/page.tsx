@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { putWithXhr, UploadCancelledError } from "@/lib/storage";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 import { INTAKE_TOKEN_HEADER, INTAKE_BEGUN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
@@ -143,6 +144,21 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** A11Y-6: the result of a submission is announced — an error assertively
+ *  (role="alert"), a confirmation politely (role="status") — inside a live
+ *  region that is always mounted, with a dark variant for each tone
+ *  (A11Y-13). */
+function PortalMessage({ msg }: { msg: { tone: "ok" | "err"; text: string } | null }) {
+  return (
+    <div aria-live="polite" aria-atomic="true">
+      {msg && (
+        <div role={msg.tone === "err" ? "alert" : "status"}
+          className={`text-xs rounded-lg border px-3 py-2 ${msg.tone === "ok" ? "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300" : "border-rose-500/30 bg-rose-500/[0.07] text-rose-700 dark:text-rose-300"}`}>{msg.text}</div>
+      )}
+    </div>
+  );
+}
+
 export default function IntakePortal({ params }: { params: Promise<{ token: string }> }) {
   const { token } = React.use(params);
   const [state, setState] = useState<"loading" | "ok" | "revoked" | "expired" | "notfound" | "link_gone" | "project_closed" | "error">("loading");
@@ -194,7 +210,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setFile(null); setTitle(""); setNumber(""); setRevLabel(""); setChangeNote("");
       await refresh();
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
     } finally { setBusy(false); }
   };
 
@@ -207,7 +223,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       setMsg({ tone: "ok", text: body.message ?? "Redlines sent." });
       await refresh();
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
     } finally { setRedlineBusy(null); }
   };
 
@@ -234,13 +250,13 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         setFile(null); setChangeNote("");
         await refresh();
       } catch (e) {
-        setMsg({ tone: "err", text: (e as Error).message });
+        setMsg({ tone: "err", text: userFacingCaughtError(e, { context: "portal" }) });
       } finally { setBusy(false); }
     };
     return (
       <Shell>
         <div className="flex items-center gap-3 mb-1">
-          <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200"><Building2 className="w-5 h-5" /></div>
+          <div className="p-2.5 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30"><Building2 className="w-5 h-5" /></div>
           <div className="min-w-0">
             <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Quote submission portal</div>
             <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
@@ -256,10 +272,10 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             Upload your quote as a PDF. Include your <b>price breakdown</b>, <b>labor hours and crew size</b>,
             and any <b>exclusions</b> — bids are compared on all three, so what you state is what gets credited.
           </div>
-          <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
+          <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]">
             <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
             <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose your quote (PDF, up to 100 MB)"}</span>
-            <input type="file" accept=".pdf,application/pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept=".pdf,application/pdf" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
           <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="Note to the project team (optional)"
             className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
@@ -267,9 +283,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} Submit quote
           </button>
-          {msg && (
-            <div className={`text-xs rounded-lg border px-3 py-2 ${msg.tone === "ok" ? "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700" : "border-rose-500/30 bg-rose-500/[0.07] text-rose-700"}`}>{msg.text}</div>
-          )}
+          <PortalMessage msg={msg} />
         </div>
 
         <div className="mt-4">
@@ -282,10 +296,10 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
                 <span className="font-bold text-[var(--color-text)] truncate">{q.fileName}</span>
                 {q.submittedAt && <span className="text-xs text-[var(--color-text-muted)]">{new Date(q.submittedAt).toLocaleDateString()}</span>}
                 {q.status === "awarded"
-                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> awarded</span>
+                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="w-3 h-3" /> awarded</span>
                   : q.status === "not_selected"
                     ? <span className="ml-auto text-[11px] font-bold text-[var(--color-text-faint)]">not selected</span>
-                    : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> under review</span>}
+                    : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300"><Clock className="w-3 h-3" /> under review</span>}
               </li>
             ))}
           </ul>
@@ -298,7 +312,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   return (
     <Shell>
       <div className="flex items-center gap-3 mb-1">
-        <div className="p-2.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200"><Building2 className="w-5 h-5" /></div>
+        <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/30"><Building2 className="w-5 h-5" /></div>
         <div className="min-w-0">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Drawing &amp; file submission portal</div>
           <h1 className="text-base font-black text-[var(--color-text)] truncate">{data.projectName}{data.orgName ? ` · ${data.orgName}` : ""}</h1>
@@ -308,9 +322,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
 
       {/* Submit form */}
       <div className="mt-4 rounded-xl border border-[var(--color-border-strong)] p-4">
-        <div className="flex items-center gap-1 mb-3 rounded-lg border border-[var(--color-border)] p-0.5 w-fit">
-          <button onClick={() => setMode("new")} className={`px-3 py-1 rounded-md text-xs font-bold ${mode === "new" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>New document</button>
-          <button onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`px-3 py-1 rounded-md text-xs font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
+        <div role="group" aria-label="What are you submitting?" className="flex items-center gap-1 mb-3 rounded-lg border border-[var(--color-border)] p-0.5 w-fit">
+          <button type="button" aria-pressed={mode === "new"} onClick={() => setMode("new")} className={`px-3 py-1 rounded-md text-xs font-bold ${mode === "new" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>New document</button>
+          <button type="button" aria-pressed={mode === "rev"} onClick={() => setMode("rev")} disabled={data.items.length === 0} className={`px-3 py-1 rounded-md text-xs font-bold disabled:opacity-40 ${mode === "rev" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)]"}`}>Revision of ours</button>
         </div>
         <div className="space-y-2">
           {mode === "new" ? (
@@ -328,17 +342,17 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             </div>
           )}
           <input value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="What changed? (goes on the record)" className="w-full h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
-          <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
+          {/* A11Y-1: sr-only, never display:none — the picker stays in the
+              tab order and opens on Enter / Space; the label shows focus. */}
+          <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]">
             <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
             <span className="text-sm text-[var(--color-text-muted)] truncate">{file ? file.name : "Choose the file (PDF, DWG, DXF or ZIP, up to 100 MB)"}</span>
-            <input type="file" accept=".pdf,.dwg,.dxf,.zip" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept=".pdf,.dwg,.dxf,.zip" className="sr-only" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           </label>
           <button onClick={() => void submit()} disabled={busy} className="w-full inline-flex items-center justify-center gap-2 h-10 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} Submit
           </button>
-          {msg && (
-            <div className={`text-xs rounded-lg border px-3 py-2 ${msg.tone === "ok" ? "border-emerald-500/30 bg-emerald-500/[0.07] text-emerald-700" : "border-rose-500/30 bg-rose-500/[0.07] text-rose-700"}`}>{msg.text}</div>
-          )}
+          <PortalMessage msg={msg} />
         </div>
       </div>
 
@@ -346,7 +360,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       {(data.redlineRequests?.length ?? 0) > 0 && (
         <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/[0.05] p-4">
           <div className="flex items-center gap-2 mb-2">
-            <Pen className="w-4 h-4 text-amber-600" />
+            <Pen className="w-4 h-4 text-amber-700 dark:text-amber-300" />
             <span className="text-sm font-black text-[var(--color-text)]">Redlines requested</span>
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mb-2">
@@ -357,10 +371,12 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
               <li key={r.ticketRef} className="flex items-center gap-2 flex-wrap rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs">
                 <span className="font-bold text-[var(--color-text)]">{r.title}</span>
                 <span className="text-[var(--color-text-faint)]">{r.ticketNumber ?? ""}{r.docLabel ? ` · ${r.docLabel}` : ""}</span>
-                <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 font-black cursor-pointer hover:bg-amber-500/10 ${redlineBusy === r.ticketRef ? "opacity-50 pointer-events-none" : ""}`}>
+                <label className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-800 dark:text-amber-300 font-black cursor-pointer hover:bg-amber-500/10 focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)] ${redlineBusy === r.ticketRef ? "opacity-50 pointer-events-none" : ""}`}>
                   {redlineBusy === r.ticketRef ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
                   Upload redlines
-                  <input type="file" accept=".pdf,.dwg,.dxf,.zip,.png,.jpg,.jpeg" className="hidden" onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
+                  <input type="file" accept=".pdf,.dwg,.dxf,.zip,.png,.jpg,.jpeg" className="sr-only" disabled={redlineBusy === r.ticketRef}
+                    aria-label={`Upload redlines for ${r.title}`}
+                    onChange={(e) => { void submitRedline(r.ticketRef, e.target.files?.[0] ?? null); e.target.value = ""; }} />
                 </label>
               </li>
             ))}
@@ -380,10 +396,10 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
                 <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "—"}</span>
                 {i.pendingReview
-                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> in review</span>
+                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300"><Clock className="w-3 h-3" /> in review</span>
                   : i.lastOutcome === "rejected"
-                    ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
-                    : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
+                    ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
+                    : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="w-3 h-3" /> current</span>}
               </div>
               {!i.pendingReview && i.lastOutcome === "rejected" && i.rejectionReason && (
                 <div className="mt-1 ml-6 text-xs text-[var(--color-text-muted)]">Reviewer&apos;s reason: {i.rejectionReason}</div>

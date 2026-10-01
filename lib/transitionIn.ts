@@ -19,6 +19,7 @@
 // untouched — adoption moves the document, it never rewrites history.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
 import { generateTicketNumber } from "@/lib/ticketNumber";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
@@ -139,7 +140,7 @@ export async function listTransitionCandidates(
     .neq("status", "Superseded")
     .order("created_at", { ascending: false })
     .limit(200);
-  if (error) throw new Error(`Couldn't list the intake sheets: ${error.message}`);
+  if (error) throw new Error(`Couldn't list the intake sheets: ${userFacingReadError(error, "transitionIn")}`);
   const rows = ((docs ?? []) as Array<Record<string, unknown>>);
   const ids = rows.map((d) => String(d.id));
   // INTK-3 / INTK-4: an open pending revision that names a RETIRED draft is
@@ -149,7 +150,7 @@ export async function listTransitionCandidates(
   if (pendingIds.length) {
     const { data: pv, error: pErr } = await supabase
       .from("document_versions").select("id, review_state, superseded_at").in("id", pendingIds);
-    if (pErr) throw new Error(`Couldn't read the pending submissions: ${pErr.message}`);
+    if (pErr) throw new Error(`Couldn't read the pending submissions: ${userFacingReadError(pErr, "transitionIn")}`);
     for (const v of ((pv ?? []) as Array<{ id: string; review_state: string | null; superseded_at: string | null }>)) {
       if (pendingDraftRetired(v)) retiredPending.add(String(v.id));
     }
@@ -163,7 +164,7 @@ export async function listTransitionCandidates(
       .in("record_id", ids)
       .not("intake_link_id", "is", null)
       .order("created_at", { ascending: false });
-    if (vErr) throw new Error(`Couldn't read the intake submissions: ${vErr.message}`);
+    if (vErr) throw new Error(`Couldn't read the intake submissions: ${userFacingReadError(vErr, "transitionIn")}`);
     for (const v of ((vers ?? []) as Array<{ record_id: string; review_state: string | null }>)) {
       if (!latestState.has(String(v.record_id))) latestState.set(String(v.record_id), v.review_state ?? null);
     }
@@ -717,7 +718,7 @@ export async function flagCollisionToDrafting(
         },
       },
     }).select("id").single();
-    if (error || !row) return { ok: false, error: error?.message ?? "Couldn't create the ticket." };
+    if (error || !row) return { ok: false, error: error ? userFacingError(error, { context: "transitionIn" }) : "Couldn't create the ticket." };
 
     // Same routing as any new drafting request.
     void (async () => {
@@ -754,6 +755,6 @@ export async function flagCollisionToDrafting(
 
     return { ok: true, ticketNumber };
   } catch (e) {
-    return { ok: false, error: (e as Error).message };
+    return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }
 }

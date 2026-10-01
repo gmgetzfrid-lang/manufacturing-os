@@ -225,7 +225,8 @@ describe("loadSignoffAuthority — the database's decision, fail-closed (dw4 / D
     const a = await loadSignoffAuthority("o1", "p1", actorOf(SAFETY));
     expect(a.maySign).toBe(false);
     expect(a.otherSigners).toBeNull();
-    expect(a.error).toMatch(/upstream timeout/);
+    // REL-3 (J10): the driver's words are translated
+    expect(a.error).toBe("The database couldn't be reached just now — try again in a moment.");
   });
   it("a failed fallback read is an error too", async () => {
     state.readError.org_members = { message: "permission denied", code: "42501" };
@@ -320,7 +321,8 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
     const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor: actorOf(OW), signoff });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check who else can sign this checklist off \(upstream timeout\) — it stays open/);
+    // J10 third fix: the reason sits inside the sentence — no "….)"
+    expect(res.error).toBe("Couldn't check who else can sign this checklist off (The database couldn't be reached just now — try again in a moment) — it stays open.");
     expect(ceremony.calls).toHaveLength(0);
   });
 
@@ -443,7 +445,8 @@ describe("reviewTurnoverItem('accepted' / 'waived') — QUAL-4", () => {
     state.rpc = { quality_signoff_status: () => ({ data: null, error: { message: "upstream timeout", code: "PGRST000" } }) };
     const res = await reviewTurnoverItem({ item: titem(), status: "waived", note: "Vendor data sheets were not part of this scope", actor: actorOf(OW), signoff });
     expect(res.ok).toBe(false);
-    expect(res.error).toMatch(/Couldn't check who else can accept or waive this item \(upstream timeout\)/);
+    // J10 third fix: the reason sits inside the sentence — no "….)"
+    expect(res.error).toBe("Couldn't check who else can accept or waive this item (The database couldn't be reached just now — try again in a moment) — nothing was changed.");
     expect(ceremony.calls).toHaveLength(1);
   });
 });
@@ -865,7 +868,7 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
     expect((top.match(/onChanged=\{retry\}/g) ?? []).length).toBe(3);
   });
   it("the fallback notice names everyone the fallback admits: the project owner, Admin and Document Control", () => {
-    expect(tab).toContain("<Notice notice={info(`Couldn't read who may sign off on this project (${authority.error}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />");
+    expect(tab).toContain("<Notice notice={info(`Couldn't read who may sign off on this project (${asClause(authority.error)}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />");
     expect(tab).not.toContain("the project owner's and Document Control's");
     // the fallback it describes: the page's canManage = owner || Admin / DocCtrl
     expect(src("app/(protected)/projects/[id]/page.tsx")).toContain('const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);');

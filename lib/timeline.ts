@@ -28,6 +28,7 @@
 // group by timestamp if it wants a single visual entry.
 
 import { supabase } from "@/lib/supabase";
+import { userFacingReadError } from "@/lib/userFacingError";
 
 export type TimelineEventKind = "audit" | "version" | "project_activity" | "hold";
 
@@ -221,7 +222,7 @@ async function readAllRows<T>(
   const out: T[] = [];
   for (let from = 0; ; from += TIMELINE_PAGE_ROWS) {
     const { data, error } = await page(from, from + TIMELINE_PAGE_ROWS - 1);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(userFacingReadError(error, "timeline"));
     const batch = ((data as T[] | null) ?? []);
     out.push(...batch);
     if (batch.length < TIMELINE_PAGE_ROWS) return out;
@@ -241,7 +242,7 @@ async function readByIdChunks<T>(
   const results = await Promise.all(parts.map((part) => read(part)));
   const out: T[] = [];
   for (const r of results) {
-    if (r.error) throw new Error(r.error.message);
+    if (r.error) throw new Error(userFacingReadError(r.error, "timeline"));
     out.push(...(((r.data as T[] | null) ?? [])));
   }
   return out;
@@ -597,9 +598,9 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
     loadDocumentScope(documentId),
   ]);
 
-  if (auditResult.error) throw new Error(auditResult.error.message);
-  if (versionResult.error) throw new Error(versionResult.error.message);
-  if (holdResult.error) throw new Error(holdResult.error.message);
+  if (auditResult.error) throw new Error(userFacingReadError(auditResult.error, "timeline"));
+  if (versionResult.error) throw new Error(userFacingReadError(versionResult.error, "timeline"));
+  if (holdResult.error) throw new Error(userFacingReadError(holdResult.error, "timeline"));
 
   // Holds and the matching HOLD_OPENED / HOLD_RELEASED audit rows
   // describe the same fact pair. HLD-11: dedup by HOLD ID, not by action
@@ -727,8 +728,8 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
       .order("id")
       .range(from, to)),
   ]);
-  if (activityResult.error) throw new Error(activityResult.error.message);
-  if (projectAuditResult.error) throw new Error(projectAuditResult.error.message);
+  if (activityResult.error) throw new Error(userFacingReadError(activityResult.error, "timeline"));
+  if (projectAuditResult.error) throw new Error(userFacingReadError(projectAuditResult.error, "timeline"));
 
   const events: TimelineEvent[] = ((activityResult.data as ProjectActivityRow[]) ?? []).map(projectActivityRowToEvent);
   // The query already left noise out; the map is re-applied so a row the
@@ -862,8 +863,8 @@ export async function getRevisionChain(documentId: string): Promise<RevisionChai
       .order("released_at", { ascending: true, nullsFirst: true })
       .order("created_at", { ascending: true }),
   ]);
-  if (docResult.error) throw new Error(docResult.error.message);
-  if (versionsResult.error) throw new Error(versionsResult.error.message);
+  if (docResult.error) throw new Error(userFacingReadError(docResult.error, "timeline"));
+  if (versionsResult.error) throw new Error(userFacingReadError(versionsResult.error, "timeline"));
 
   const currentVersionId = (docResult.data as { current_version_id: string | null } | null)?.current_version_id ?? null;
   return ((versionsResult.data as Array<{

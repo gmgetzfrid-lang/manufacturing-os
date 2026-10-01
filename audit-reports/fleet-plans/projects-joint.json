@@ -942,7 +942,9 @@
      "PERF-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'the suppression is still present at both sites'. At HEAD: components/projects/CostsTab.tsx:123-125 and components/projects/QualityTab.tsx:174-176 (onDataChanged?.() inside refresh, under '// eslint-disable-next-line \u2026)",
      "REL-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: (1) 'a mistaken checklist's void is J2's (lib/checklists.ts / QualityTab)'. At HEAD, QualityTab calls setChecklistStatus only with 'complete' (:531), so no UI voids a checklist, although the lib accepts 'void' and J2b's \u2026)",
      "GAP-403 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: acceptance 3's 'with a named column' \u2014 lib/scheduleParsers.ts and ScheduleImportModal.tsx)",
-     "GAP-408 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: acceptance 2, 'each links to its record' \u2014 components/documents/TimelineFeed.tsx TimelineRow and lib/timeline.ts)"
+     "GAP-408 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: acceptance 2, 'each links to its record' \u2014 components/documents/TimelineFeed.tsx TimelineRow and lib/timeline.ts)",
+     "A11Y-13 (remainder re-owned by the integrator 2026-10-01 at the J10 merge: the residual text-{rose,red,amber,emerald}-600 pairs without a dark: variant that the record lists by file:line (61 sites in 21 files); lib/__tests__/a11y13FinalReview.test.ts ratchets them)",
+     "A11Y-14 (opened by J10 2026-10-01; remainder re-owned by the integrator 2026-10-01 at the J10 merge: decision controls under 24 px (44 on coarse pointer) outside the Quality tab \u2014 IntakePanel, QuotesPanel, ChangeOrdersPanel, CostsTab \u2014 with DECISION_TARGET)"
     ],
     "projects-and-cost": [
      "QUAL-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'The closeout dialog's explicit \"gates could not be loaded\" state \u2014 NOT done here ... this record stays OPEN until that limb lands.' At HEAD, page.tsx:224-232 swallows a gatherProjectSnapshot rejection (.catch(() => \u2026)",
@@ -998,7 +1000,8 @@
      "PERF-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: measure frames in the pre-installed Chromium (Playwright) for the schedule surface the record names; 'does not drop frames' is the unmet done-when)",
      "SEC-21 (opened by J11's review 2026-10-01: project audit rows written under another resource type \u2014 e.g. a private project's milestone anchored to a document, written as resource_type 'document' \u2014 stay readable by every org member after 20261142; a migration re-creating 20261142's audit read policy from its body, with a DEC-30 inventory)",
      "BID-10 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: quoteGroups (lib/costDocs.ts) keys case-sensitively and feeds projectSnapshot \u2192 projectHealth)",
-     "GAP-405 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: acceptance 2's 'visible on the closeout record' \u2014 the printed closeout report (lib/projectReport.ts) prints each decision's reason, not only counts)"
+     "GAP-405 (remainder re-owned by the integrator 2026-10-01 at the J13 merge: acceptance 2's 'visible on the closeout record' \u2014 the printed closeout report (lib/projectReport.ts) prints each decision's reason, not only counts)",
+     "MON-13 (opened by J10 2026-10-01; remainder re-owned by the integrator 2026-10-01 at the J10 merge: a trigger migration enforcing the contractor-link rule (project_parties.company_id set once, never re-pointed; a do-not-use look-alike needs a recorded reason) and the item-contractor rule (turnover_items / punch_items party_id changes only while undecided) \u2014 DEC-76 item 3; DEC-30 inventory first)"
     ],
     "intelligence": [
      "PR-2 (remainder re-owned by the integrator 2026-10-01 at the I-04 merge: criterion 3 \u2014 the cost-docs route's invoice branch (app/api/projects/cost-docs/route.ts) validates the parsed invoice payload as validateParsedQuote does for quotes instead of storing raw.)"

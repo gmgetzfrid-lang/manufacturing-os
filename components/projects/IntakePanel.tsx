@@ -16,6 +16,7 @@
 // Costs tab, not here (INTK-12).
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
   FilePlus2, Search, RotateCcw,
@@ -70,7 +71,13 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const [intakeCollectionId, setIntakeCollectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  // UX-7 / A11Y-6: one notice, with a tone — a failed action reads as an
+  // error (role="alert"), a landed one as a confirmation (role="status").
+  // setMsg(text) is an error unless the call site says otherwise.
+  const [msg, setNotice] = useState<{ tone: "error" | "success" | "info"; text: string } | null>(null);
+  const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {
+    setNotice(text == null ? null : { tone, text });
+  }, []);
   /** SEC-19: link id → the address minted or re-issued in THIS session — the
    *  only time it is known (the database keeps its SHA-256, 20261141). */
   const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
@@ -113,7 +120,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
       ]);
-      if (linksRead.error) throw new Error(linksRead.error.message ?? "the links could not be read");
+      if (linksRead.error) throw new Error(userFacingReadError(linksRead.error, "intake links"));
       const lk = linksRead.data;
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), token: linkCredentialView(r).token, tokenPrefix: linkCredentialView(r).prefix,
@@ -179,9 +186,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         setPending([]);
       }
     } catch (e) {
-      setMsg(`Couldn't load intake data: ${(e as Error).message}`);
+      setMsg(`Couldn't load intake data: ${userFacingCaughtError(e, { action: "read", context: "IntakePanel load" })}`);
     } finally { setLoading(false); }
-  }, [orgId, projectId]);
+  }, [orgId, projectId, setMsg]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const createLink = async () => {
@@ -194,7 +201,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       if (!intakeLibraryId) {
         const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
-        if (libErr) throw new Error(`Couldn't set the intake library: ${libErr.message}`);
+        if (libErr) throw new Error(`Couldn't set the intake library: ${userFacingError(libErr)}`);
       }
       // SEC-19: the database stores only the token's SHA-256 (20261141) — this
       // is the one moment the address exists in full; it is shown below once.
@@ -206,7 +213,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         expires_at: expiry.iso,
         created_by: uid,
       }).select("id").single();
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "create intake link" }));
       // INTK-12: the audit row names the LINK (its id) — never the project in
       // its place, never token material — and a failed audit is visible.
       const { error: auditErr } = await supabase.from("audit_logs").insert({
@@ -220,9 +227,10 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setCompany(""); setEmail(""); setExpires(isoDateInDays(INTAKE_LINK_DEFAULT_DAYS)); setTrusted(false);
       await refresh();
       setMsg(auditErr
-        ? `Link created, but its audit record failed: ${auditErr.message}`
-        : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.");
-    } catch (e) { setMsg((e as Error).message); }
+        ? `Link created, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
+        : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.",
+      auditErr ? "error" : "success");
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -240,7 +248,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       await refresh();
       setMsg(res.auditError
         ? `${l.companyName}'s link was re-issued, but its audit record failed: ${res.auditError}`
-        : `${l.companyName}'s link was re-issued — copy the new address below now; it is shown only this once.`);
+        : `${l.companyName}'s link was re-issued — copy the new address below now; it is shown only this once.`,
+      res.auditError ? "error" : "success");
     } finally { setBusy(null); }
   };
 
@@ -249,14 +258,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     setBusy(l.id);
     try {
       const { error } = await supabase.from("project_intake_links").update({ revoked_at: new Date().toISOString() }).eq("id", l.id);
-      if (error) { setMsg(`Couldn't revoke: ${error.message}`); return; }
+      if (error) { setMsg(`Couldn't revoke: ${userFacingError(error)}`); return; }
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_LINK_REVOKED",
         resource_type: "project_intake_link", resource_id: l.id,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: l.companyName, projectId },
       });
-      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${auditErr.message}`);
+      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       await refresh();
     } finally { setBusy(null); }
   };
@@ -298,7 +307,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const { error } = await supabase.from("project_intake_links")
         .update({ assigned_doc_ids: ids }).eq("id", l.id);
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(userFacingError(error, { context: "intake assignment" }));
       await supabase.from("audit_logs").insert({
         action: "INTAKE_ASSIGNMENT_CHANGED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -307,8 +316,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setAssignQ(""); setAssignResults([]);
       await refresh();
-      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`);
-    } catch (e) { setMsg((e as Error).message); }
+      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`, "success");
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -321,7 +330,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { data: doc, error: docErr } = await supabase.from("documents")
         .select("id, library_id, collection_id, review_control, pending_version_id")
         .eq("id", p.docId).eq("org_id", orgId).maybeSingle();
-      if (docErr) throw new Error(`Couldn't read ${p.label}: ${docErr.message}`);
+      if (docErr) throw new Error(`Couldn't read ${p.label}: ${userFacingReadError(docErr)}`);
       if (!doc || String(doc.pending_version_id ?? "") !== p.pendingVersionId) {
         await refresh();
         throw new Error(`${p.label} changed since this list loaded — it has been refreshed. Check the submission shown now before approving.`);
@@ -342,7 +351,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       // to the bytes they reviewed; its MOC reference is SEC-14's.
       const { data: ver, error: verErr } = await supabase.from("document_versions")
         .select("moc_reference, file_hash").eq("id", p.pendingVersionId).maybeSingle();
-      if (verErr) throw new Error(`Couldn't read the submission: ${verErr.message}`);
+      if (verErr) throw new Error(`Couldn't read the submission: ${userFacingReadError(verErr)}`);
       // SEC-14: a drawing-class document's external revision carries its
       // management-of-change reference (the database refuses it otherwise).
       // Captured HERE, before either path — on the roster path the publish
@@ -360,7 +369,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         if (moc.trim().length < 3) throw new Error("An MOC reference is at least 3 characters.");
         const { data: set, error: setErr } = await supabase.from("document_versions")
           .update({ moc_reference: moc.trim() }).eq("id", p.pendingVersionId).eq("review_state", "in_review").select("id");
-        if (setErr) throw new Error(`Couldn't record the MOC reference: ${setErr.message}`);
+        if (setErr) throw new Error(`Couldn't record the MOC reference: ${userFacingError(setErr)}`);
         if (!set || set.length === 0) throw new Error("Couldn't record the MOC reference: the write was refused.");
       }
       if (rosterRequired) {
@@ -383,7 +392,8 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           const opened = await listDraftRoster(p.docId, p.pendingVersionId);
           setMsg(hasPrimary(opened)
             ? `${p.label} Rev ${p.revLabel ?? ""} was sent to its reviewers — it publishes when the last of them signs off on the document's review panel (in the document library), not from this tab.`
-            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`);
+            : `No reviewer could be resolved for ${p.label}'s library — set its reviewers before this submission can be approved.`,
+          hasPrimary(opened) ? "info" : "error");
           await refresh();
           return;
         }
@@ -400,12 +410,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
       // UX-16: the approval swept the project's open checklists — say what it did.
       const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
-      setMsg((String(after?.current_version_id ?? "") === p.pendingVersionId
+      const landed = String(after?.current_version_id ?? "") === p.pendingVersionId;
+      setMsg((landed
         ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
         : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
-        + (swept ? ` ${swept.text}` : ""));
+        + (swept ? ` ${swept.text}` : ""),
+      landed && (!swept || swept.ok) ? "success" : "error");
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -434,18 +446,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         ({ data: vRows, error: vErr } = await supabase.from("document_versions")
           .update({ review_state: "rejected" }).eq("id", p.pendingVersionId).select("id"));
       }
-      if (vErr) throw new Error(`Couldn't reject: ${vErr.message}`);
+      if (vErr) throw new Error(`Couldn't reject: ${userFacingError(vErr)}`);
       if (!vRows || vRows.length === 0) throw new Error("Couldn't reject: the write was refused.");
       const { error: dErr } = await supabase.from("documents")
         .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
-      if (dErr) throw new Error(`Couldn't clear the pending revision: ${dErr.message}`);
+      if (dErr) throw new Error(`Couldn't clear the pending revision: ${userFacingError(dErr)}`);
       // RG-10: close out any sign-off rows on the rejected draft, so the daily
       // scan and the reviewers' inboxes stop chasing a draft nothing points at.
       // Zero rows is the normal case (an intake draft has no roster).
       const { error: voidErr } = await supabase.from("document_review_signoffs")
         .update({ status: "void", updated_at: new Date().toISOString() })
         .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
-      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${voidErr.message}`);
+      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${userFacingError(voidErr, { embed: true })}`);
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
@@ -453,10 +465,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
       });
       setMsg(auditErr
-        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${auditErr.message}`
-        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`);
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
+        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
+      auditErr ? "error" : "success");
       await refresh();
-    } catch (e) { setMsg((e as Error).message); }
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
 
@@ -476,21 +489,33 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     });
     setMsg(res.ok
       ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
-      : (res.error ?? "Couldn't flag the collision."));
+      : (res.error ?? "Couldn't flag the collision."),
+    res.ok ? "success" : "error");
   };
 
   if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
     <div className="space-y-4">
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-bold text-[var(--color-text)]">{msg}</div>}
+      <div aria-live="polite" aria-atomic="true">
+        {msg && (
+          <div role={msg.tone === "error" ? "alert" : "status"} data-tone={msg.tone}
+            className={`rounded-xl border px-3 py-2 text-xs font-bold ${msg.tone === "error"
+              ? "border-rose-500/50 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300"
+              : msg.tone === "success"
+                ? "border-emerald-500/40 bg-emerald-500/[0.07] text-emerald-800 dark:text-emerald-300"
+                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"}`}>
+            {msg.text}
+          </div>
+        )}
+      </div>
 
       {/* Review queue — the point of the whole system. */}
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <div className="flex items-center gap-2 mb-2">
           <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Submissions awaiting review</span>
-          <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-600" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
+          <span className={`text-base font-black tabular-nums ${pending.length ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text-faint)]"}`}>{pending.length}</span>
         </div>
         {pending.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing waiting. Approved intake revisions become the single current version automatically.</div>}
         <ul className="space-y-2">
@@ -546,7 +571,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                     {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (() => {
                       const url = knownUrl(l);
                       return url ? (
-                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
+                        <button onClick={() => { void navigator.clipboard.writeText(url); setMsg(`Copied ${l.companyName}'s link.`, "success"); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
                       ) : (
                         <button onClick={() => void reissue(l)} disabled={busy === l.id} title="The address is not stored (only its fingerprint is). Re-issue to get a new one — the old one stops working." className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><RotateCcw className="w-3 h-3" /> Re-issue</button>
                       );

@@ -152,7 +152,7 @@ describe("PERF-2 — the round-trip count does not grow with every project", () 
   it("a refused read fails the export — never an empty DOCUMENTS section in a file that gets mailed", async () => {
     seed(2);
     state.errors.checkout_sessions = { message: "permission denied for table checkout_sessions" };
-    await expect(buildAllProjectsCsv("o1")).rejects.toThrow(/could not read checkouts: permission denied/);
+    await expect(buildAllProjectsCsv("o1")).rejects.toThrow(/could not read checkouts: You don't have permission to see this\./);   // REL-3
   });
 
   it("the Export All button cannot start a second run and shows progress with a cancel", () => {

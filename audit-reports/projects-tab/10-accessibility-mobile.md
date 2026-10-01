@@ -18,7 +18,7 @@ the app had already solved. Most fixes are substitutions, not new engineering.
 ## A11Y-1 · File pickers are unreachable by keyboard, including on the public vendor portal
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility / legal
 - **Locations:**
@@ -47,12 +47,20 @@ working one, so fix these four and consider a sweep.)
 - Every file picker in the Projects area and the submit portal is reachable by Tab and activatable by Enter or Space.
 - The submit portal is completable end to end with a keyboard alone.
 
+**Resolution (2026-10-01, projects Round G).** `app/submit/[token]/page.tsx`: the drawing, document and redlines file inputs are `sr-only` (visually hidden, still in the tab order — the plot-plans pattern) inside labels that show keyboard focus (`focus-within:ring-2` on the accent ring), so Tab reaches each picker and Enter / Space opens it; the redlines input is named ("Upload redlines for {title}") and disabled while a send is in flight. The "What are you submitting?" toggle is a labelled button group with `aria-pressed`, and a send's result lands in a live region that is always mounted (`PortalMessage`: an error is `role="alert"`, a success `role="status"`, both with dark variants). `components/projects/cost/QuotesPanel.tsx`: the quote picker is `sr-only` the same way. Tests: `a11yProjects.test.ts` "A11Y-1 —" — a census that no `type="file"` input on a Projects surface or the portal is `hidden` and each sits in a label that shows focus; the rendered portal with every picker focusable and named (drawing form, quote form, each redlines request); the pressed toggle and the announced result.
+
+**Done-when.**
+- ✓ Every file picker in the Projects area and the submit portal is reachable by Tab and activatable by Enter or Space (census + rendered portal).
+- ✓ The submit portal is completable with a keyboard alone: mode toggle, text fields, the picker and Send are all tab stops in order, and the result is announced.
+
+**Scope / residual.** The ~20 other `hidden` file inputs elsewhere in the app (the finding's "wider pattern") are outside the Projects area and were not touched (DEC-31).
+
 ---
 
 ## A11Y-2 · Checklist item status is conveyed entirely by an eight-pixel coloured dot, on the PSSR surface
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility / safety
 - **Locations:**
@@ -88,6 +96,15 @@ the checklist card. Three components, one pattern.
 - Every status is readable as text or a distinguishable glyph, not hue alone.
 - A screen reader announces the status of each checklist, punch and rubric row.
 - The checklist card carries a legend.
+
+**Resolution (2026-10-01, projects Round G).** New `components/projects/StatusMark.tsx`: each status has its own glyph inside a ringed mark (checklist: Satisfied ✓ / Needs evidence clock / Open dash / Not applicable slash; punch: Open / Overdue / Done ✓ / Void slash — done and void now differ by glyph and word; rubric: Covered ✓ / Gap ✕), a visually-hidden "Status: {word}." the screen reader reads with the row, the word in the mark's title, and colour as a third carrier only. `StatusLegend` renders the same table as a visible key. `QualityTab.tsx` uses the marks on every checklist item and punch row (the 8 px `StatusDot` is gone) with a legend on the checklist card and on the punch list; `companies/[id]/page.tsx` uses them on the rubric rows with a legend (the timeline's decorative event dot is `aria-hidden`). Tests: `a11yProjects.test.ts` "A11Y-2 —" (every state has a distinct glyph and word; the rendered mark's accessible text names its state; done vs void differ by glyph and word; the legend lists every state; no bare colour dot is left on the checklist, punch or rubric rows).
+
+**Done-when.**
+- ✓ Every status is readable as a word and a distinguishable glyph, not hue alone.
+- ✓ A screen reader announces the status of each checklist, punch and rubric row ("Status: Needs evidence.").
+- ✓ The checklist card carries a legend (and so do the punch list and the rubric).
+
+**Scope / residual.** None.
 
 ---
 
@@ -149,7 +166,7 @@ both grounds.
 ## A11Y-4 · Five modals with no dialog role, no focus trap, no Escape and no backdrop dismissal
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility
 - **Locations:**
@@ -187,6 +204,27 @@ matching `Modal.tsx`. Do not "fix" those.*
 - All five compose the shared `Modal`.
 - Escape and backdrop click close each one.
 - Focus is trapped while open and restored on close.
+
+**Resolution (2026-10-01, projects Round G).** `components/ui/Modal.tsx` (shared by the whole app — every importer checked) gains the trap and the restore, with Escape / backdrop / non-dismissable behaviour unchanged for a single modal: opening moves focus into the dialog (an `autoFocus` inside keeps it; otherwise the panel itself takes focus — the shell never picks the first field for the caller); Tab and Shift+Tab wrap only at the edges, and focus that escaped to the page behind is brought back; a module-level stack makes only the topmost modal trap and answer Escape, so a confirm opened from a dialog closes alone (an intended change to the shared shell, recorded in DEC-76 item 5: with nested modals each open dismissable `Modal` used to answer the same Escape, so one key closed all of them); Escape already handled inside (an open `HelpTooltip` in front — see the review fix) does not close the dialog; on close focus returns to the opener — captured at render, before `autoFocus` moves — only when the dialog really closed, focus was lost with it, and the opener is still connected; a closed modal traps nothing. `ModalHeader`'s title names the dialog (`aria-labelledby`), and callers can pass `ariaLabel` / `ariaLabelledBy`. The five hand-rolled shells now compose it: the project wizard (`ProjectWizard.tsx` — not dismissable while a write is in flight), the lessons-learned editor and the status-transition confirm (`projects/[id]/page.tsx`, each with a labelled close and a scrolling middle), Add company (`companies/page.tsx`) and Edit company (`companies/[id]/page.tsx`). A dismissal of a form someone has typed into asks before discarding it. Tests: `modalFocus.test.ts` (18) — the trap (entry, wrap at both edges, escaped focus pulled back, a form inside the trap still submits on Enter), single-modal dismissal unchanged (Escape and backdrop close a dismissable modal; a non-dismissable one ignores both and still traps; an open tooltip takes the first Escape), restore (to the opener; never to an opener that unmounted; focus the consumer moved on close is left alone), nesting (`DialogProvider`'s confirm over a dialog closes alone and focus returns into the dialog; `appConfirm` / `appPrompt` unchanged), and each of the five modals rendered as a named dialog.
+
+**Done-when.**
+- ✓ All five compose the shared `Modal`.
+- ✓ Escape and backdrop click close each one (asking first when typed input would be lost; the wizard not while a write runs).
+- ✓ Focus is trapped while open and restored on close.
+
+**Scope / residual.** The mechanism also notes that no modal locks body scroll. The shared `Modal` never did, and adding it changes every consumer in the app; it was not part of the done-when and was left alone (REGRESSION FIRST).
+
+**Review fix (2026-10-01, projects Round G).** (1) **The exit stays on screen.** The shared panel is `max-h-[90vh]` with its overflow hidden, so a composed dialog whose middle does not scroll clips its own footer: the lessons-learned editor's textarea block was not a scroll container, and on a short viewport (a landscape phone, ~337 px of panel) or after the textarea was dragged taller, "Save to project" was cut off with nothing to scroll — the failure scenario above, back for the Save path. Each of the five now has the same recipe: the region between header and footer scrolls (`overflow-y-auto min-h-0`) and the header and footer never shrink (`shrink-0`) — the lessons-learned editor, the transition confirm, the wizard and both company dialogs. (2) **Every way out asks first.** The lessons-learned editor's header X and Cancel discarded edits without the confirm Escape and the backdrop ask for; they now go through the same `discardLessons`, as do the Add / Edit company dialogs' X and Cancel (`dismiss`) and the wizard's header X (`dismissWizard`, which keeps the partial-failure confirm). (3) **Escape belongs to what is in front.** `components/ui/HelpTooltip.tsx` marks Escape handled only when focus is inside the note, or the note sits in the topmost open dialog (or no dialog is open); a note left open on the page behind a dialog closes quietly and lets the dialog have the same Escape (a keyboard user who opened "What each export contains" and then Tab-Enter'd "Lessons learned" needed two Escapes). The note also closes when focus moves to another element, so it is not left open behind a dialog that takes focus. Tests: `modalFocus.test.ts` (23, +5) — every composed modal's middle is a scroll container with a fixed header and footer (the five on the source, the wizard's panel rendered); the header X and Cancel ask before discarding (the wizard and Add company rendered, the lessons editor on the source); a note behind a dialog does not swallow the dialog's Escape; with no dialog open the note still takes Escape, and focus moving away closes it.
+
+- Done-when after the fix: ✓ all five compose `Modal`; ✓ Escape and the backdrop close each (and the X / Cancel ask as they do); ✓ focus trapped and restored — and the Save / Confirm footer stays reachable on a short viewport.
+
+**Second review fix (2026-10-01, projects Round G).** (1) **The status-transition confirm asks too.** The review fix above said every dismissal of a typed-into form asks before discarding, but the project page's status-transition confirm closed on Escape, a backdrop click, the header X or Cancel and silently cleared its reason — a cancellation's reason is mandatory, so a misclick lost it. All four exits now go through `discardTransition` (`app/(protected)/projects/[id]/page.tsx`): no reason typed → it closes at once; a reason typed → "Discard your reason?" first; never while the transition runs. (2) **The shared trap leaves alone what another handler owns** (`components/ui/Modal.tsx`). A Tab a control inside the dialog already handled (`defaultPrevented` — a textarea that inserts a mention on Tab, as `MentionableTextarea` does, placed last) is no longer yanked to the first field; a Tab while focus sits in an overlay the modal does not own (another `role="dialog"` / `aria-modal`, a portaled listbox or menu opened above it) is that overlay's. (3) **Escape honours "handled" only from inside the panel.** An Escape a control inside the panel handled is theirs (the open `HelpTooltip` keeps working); one handled only by a page-level handler outside the panel no longer stops the topmost modal cancelling — the keys are now read on `document`, after a control's own handler and before any `window` handler, so a hand-rolled overlay under an `appConfirm` that preventDefaults Escape can no longer leave the confirm on screen with Confirm focused. The topmost-only rule is DEC-76 item 5, marked there for the integrator's ratification (the brief asked for unchanged Escape and nested-modal behaviour). Tests: `modalFocus.test.ts` (27, +4: a Tab-handling textarea last in the panel keeps focus while an unhandled Tab still wraps; focus in a listbox or an `aria-modal` dialog above the modal keeps its own Tab while focus escaped to the page behind is still brought back; a page-level `window` Escape handler cannot stop the cancel while a control inside the panel can; the listener sits on `document` — the four fail on the previous `Modal`), and the transition confirm's four exits and `discardTransition` pinned on the source (the page needs the whole project to render).
+
+*Third review fix (2026-10-01, projects Round G) — what the integrator ratifies.* The Escape change to the shared `components/ui/Modal.tsx` (DEC-76 item 5) is a deliberate deviation from the brief's "keep Escape / nested-modal behaviour identical", and it is **RATIFIED by the integrator at merge (2026-10-01)** — no consumer before J10 nests a `Modal`, so every existing screen keeps its Escape behaviour (`DEC-76` item 5). What it changes, exactly: (a) with nested `Modal`s only the topmost answers Escape (before, each open `Modal` registered its own `window` listener and one Escape closed them all); (b) an Escape a control INSIDE the panel already handled (`defaultPrevented`) no longer closes even a single modal; (c) the listener sits on `document`, not `window`. Before J10 only two consumers imported `Modal` — `DialogProvider`'s `DialogHost` (confirm / prompt / alert) and the plot-plans page's "New plot plan" — and **neither nested a `Modal`** (the plot-plans dialog reports failures by toast, not by a dialog over itself) **nor held a control that handles Escape**, so for them one Escape still closes the open dialog; (a) and (b) matter only to J10's own nested flows (each dialog's discard confirm, the status-transition confirm). If it is not ratified: Escape goes back to every open `Modal` on `window` while topmost-only stays for the focus trap, and each J10 discard confirm then needs a re-entry guard (the parent's `onClose` ignores Escape while its own confirm is open). The single-modal sentence in the resolution above ("Escape / backdrop / non-dismissable behaviour unchanged for a single modal") is exact only with (b) excepted.
+
+- Done-when after the second fix: ✓ all five compose `Modal`; ✓ Escape and the backdrop close each, and every way out of each of the five asks before discarding typed input — the transition confirm's reason included; ✓ focus trapped and restored, without taking a key another handler already owns.
+
+*Integrator fix pass (final review minors, 2026-10-01):* Nothing changed here. The final review's optional item — a rendered behaviour test for the project page's lessons-learned or status-transition dialog (Escape with typed text opens the discard confirm; "no" keeps the dialog) — was not added: both dialogs are inline in `app/(protected)/projects/[id]/page.tsx`, which no test renders (it needs the whole project), and extracting them would edit a page another package edits later. They stay pinned on the source in `modalFocus.test.ts`. DEC-76 item 5 is still NOT ratified.
 
 ---
 
@@ -238,7 +276,7 @@ tree either, for the same reason.
 ## A11Y-6 · No error anywhere in the Projects area is announced to assistive technology
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (zero `aria-live` / `role="alert"` / `role="status"` in any audited file)
 - **Blast radius:** accessibility
 - **Locations:**
@@ -261,12 +299,22 @@ banner when an error lands, and to the offending field where there is one.
 - Every error and success message is announced.
 - A wizard validation failure moves focus to the field that failed.
 
+**Resolution (2026-10-01, projects Round G).** Every error and confirmation the finding cites is announced, and so is every other message on the Projects, Companies and portal surfaces: errors are `role="alert"`, successes and notes `role="status"` or a polite live region that stays mounted — the wizard's banner, the project page's action error, transition and member errors, the Costs tab's form errors, the change-order form, the Quality tab's notices (`Notice`: alert or status by tone), the companies pages, the Schedule tab, the portal (`PortalMessage`), the intake panel (UX-7), the quotes panel's "link copied" (an `sr-only` status), the execution board's undo toasts (`UndoToastHost`: a polite region that stays mounted, a warning assertive, a labelled Dismiss) and its duration / baseline dialog errors, the transition-in list's result line, and the project document card's error. The wizard moves focus on a refusal: to the field that failed (name, description, or the budget amount that is not a number — `pendingFocus` after the step renders) or, with no single field, to the announced banner (focusable, `tabIndex={-1}`). Tests: `a11yProjects.test.ts` "A11Y-6 / UX-7 —" (an area census that every file setting a message renders an alert or a live region; the toast region rendered; the intake tone; the cited sites), `modalFocus.test.ts` "A11Y-6: a wizard refusal moves focus to the failed field … or … to the announced banner".
+
+**Third review fix (2026-10-01, projects Round G) — a correction.** The resolution above said every other message on the Projects surfaces was announced; it was not, and its census could not see it: the census passed a whole FILE once any `role="alert"` sat in it, and read only `set(Err|Error|Notice|Msg)`. Silent until now, each a plain `div`: the task edit's save error (`TaskDetailPanel.tsx`, also a light-only `bg-rose-50` slab) and its dependency editor's error, the rebase result and its error list (`RebaseScheduleModal.tsx`), the import result — "Imported with errors / cancelled / successfully" and its errors (`ScheduleImportModal.tsx`) — and, found by the new census, the stale-checkout release error (`StaleCheckoutBanner.tsx`) and the project page's timeline load error. Now the two task-panel errors, the release error and the timeline error are `role="alert"`; the rebase and import results sit in a polite live region that stays mounted, the result itself `role="alert"` when anything failed (or the import was cancelled) and `role="status"` when it all went; every one is in the token recipe (rose / emerald text on a `500/[0.08]` tint with a dark variant — no light-only slab). Tests: `a11yProjects.test.ts` "A11Y-6 / UX-7 —" (+2): a census **per render site** — every `{x && <…>}` / `{x ? <…>}` render of a message or RESULT state (setters ending Err / Error / Errors / Notice / Msg / Message / Result / Warning / Problem) must be an alert, a status or a live region itself, open an announcing component (`Notice`, `LoadFailed`, `PortalMessage`), or sit inside one (a brace-aware scan of the elements open at the site); one state is excluded by name with its reason (the import modal's `parseResult` — the parsed file, whose questions are form controls); mutation-checked on synthetic sources, and against the previous code it flags all six sites above; and the six sites pinned.
+
+**Done-when.**
+- ✓ Every error and success message is announced — since the third fix true per render site (it was not: six sites were silent, see the correction above).
+- ✓ A wizard validation failure moves focus to the field that failed.
+
+**Scope / residual.** None in the Projects area. Server routes' JSON errors are shown through the same announced banners.
+
 ---
 
 ## A11Y-7 · The selected filter pill is invisible in dark mode, and carries no state for assistive technology
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (computed contrast)
 - **Blast radius:** accessibility
 - **Locations:**
@@ -293,12 +341,20 @@ and proper tab semantics to the tab strip.
 - The selected filter is visually obvious in both themes.
 - A screen reader reports which filter and which tab is active.
 
+**Resolution (2026-10-01, projects Round G).** The selected status pill (`projects/page.tsx`) and kind pill (`companies/page.tsx`) are the accent ring on the accent tint with text-token text — legible in both themes, never a slate the dark bridge collapses (computed ≥ 4.5 : 1; an accent fill with white text measured 3.56 : 1 and was rejected) — and every toggle group the finding names says which option is pressed (`role="group"` + `aria-pressed`): the projects and companies filters, the wizard's job size and visibility, the Costs entry type, the Schedule tab's view and ghost toggles, the schedule filter bar's status / group / shift chips, and the portal's submission type. The project page's seven tabs are a `role="tablist"` of `role="tab"` buttons with `aria-selected` / `aria-controls`, and the content is the `role="tabpanel"` they control. Tests: `a11yProjects.test.ts` "A11Y-7 —" (computed contrast of the selected pill in both themes; `aria-pressed` on every named group; the tablist / tab / tabpanel), `modalFocus.test.ts` (the rendered pills report pressed).
+
+**Done-when.**
+- ✓ The selected filter is visually obvious in both themes.
+- ✓ A screen reader reports which filter and which tab is active.
+
+**Scope / residual.** None.
+
 ---
 
 ## A11Y-8 · Accept and Reject are nineteen-pixel targets four pixels apart, and Accept has no confirmation
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (computed from the Tailwind box)
 - **Blast radius:** accessibility / safety
 - **Locations:**
@@ -326,6 +382,19 @@ give the current step `aria-current="step"`.
 - No decision control in the Quality tab is under 24px, or under 44px on a coarse pointer.
 - Accept has the same confirmation weight as Reject.
 - The stepper is either a real control or not in the tab order.
+
+**Resolution (2026-10-01, projects Round G).** `QualityTab.tsx`: every decision control — Received / Accept / Reject / Waive / Reopen on turnover, the checklist item decisions (✓ Satisfied, ✓ Verify, N/A, ✓ Confirm N/A, Reject) and the punch Done / Void — carries one target floor set on the control itself (`DECISION_TARGET`: `min-h-6 min-w-6`, and on a coarse pointer `min-h-11 min-w-11` with wider padding — Tailwind's `pointer-coarse:` variant, so no bare-element rule was added to `globals.css`), in clusters spaced 8 px that wrap. Accept carries Reject's weight: it fires nothing on the click — it opens the reviewed-document pick and then the e-signature ceremony (QUAL-4 / DEC-66) before anything is written, which is the brief's default ("Accept opens the same reason dialog as Reject") met by a heavier existing confirmation (DEC-76 item 4). The wizard's stepper is out of the tab order (`tabIndex={-1}` — still clickable) and marks the current step `aria-current="step"`; Back / Next are the keyboard path. Tests: `a11yProjects.test.ts` "A11Y-8 —" (the floor; every named button carries it; 8 px clusters; Accept → document pick → ceremony; the stepper).
+
+**Review fix (2026-10-01, projects Round G) — a correction.** Done-when 1 was ticked while three Quality-tab decision controls carried no floor: "Accept without naming a document" in the turnover document pick — the acceptance path itself, a 10 px underlined text button about 15 px tall — "Mark complete" (the checklist sign-off), and "Apply N ticked" in the AI review panel. Now every button in those three places carries `DECISION_TARGET`, in clusters spaced 8 px (`gap-2`): the document pick's results, "Accept without naming a document" and its Cancel; the checklist's decision cluster ("Which items apply to this job?", "Check evidence we already hold", "Mark complete"); the review panel's "Tick every in-scope proposal", "Clear", "Apply N ticked" and Cancel. The new contractor control on each turnover / punch row (MON-7) carries it too. Tests: `a11yProjects.test.ts` "A11Y-8 —" (+1: a census of EVERY `<button` in the document pick, the checklist's decision cluster and the review panel — counted, so a button added there without the floor fails — and the 8 px clusters; the decision-cluster count now includes the seed cluster).
+
+**Third review fix (2026-10-01, projects Round G) — a correction.** Done-when 1 was ticked again while five Quality-tab buttons that WRITE had no coarse-pointer floor: **Seed required contents** (writes the required package, about 24 px), **Save checklist** and **Read it** (`h-8`, 32 px), and the turnover and punch **Add** buttons (`h-8`). Each now carries `DECISION_TARGET`, and so does the new **Assign** button (MON-7's decided-item naming). "Decision control" now means, and the census checks, every button whose click starts a write — read, save, seed, add, assess, sweep, review, waive, reopen, override, close, sign, accept, apply, pick, skip, assign. Tests: `qualityTabContractorAssign.test.ts` "A11Y-8 (J10 third fix)" (rendered: Seed, both Add buttons and Assign carry the 24 / 44 px floor; a counted source census over every `<button` in `QualityTab.tsx` whose `onClick` starts a write — 24 or more, none without the floor, the five named ones among them; it fails on the previous tab).
+
+**Done-when.**
+- ✓ No decision control in the Quality tab is under 24 px, or under 44 px on a coarse pointer — since the review fix, including the document pick, the checklist sign-off and the review panel; since the third fix every button that writes (Seed, Save checklist, Read it, both Add buttons, Assign), by a census over every write button in the tab.
+- ✓ Accept has the same confirmation weight as Reject (heavier: a document pick and a signature).
+- ✓ The stepper is not in the tab order (and marks the current step).
+
+**Scope / residual.** The ~20 other sub-24 px controls the finding lists OUTSIDE the Quality tab (intake panel, quotes panel, change-order panel, Costs tab) are not part of the done-when and were not resized — opened as `A11Y-14` (DEC-31).
 
 ---
 
@@ -368,7 +437,7 @@ flex, and stack the label above the bar on narrow screens. Add `min-w-0` and
 ## A11Y-10 · The wizard's repeater rows leave about thirty pixels for the name field on a phone
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** mobile
 - **Locations:**
@@ -401,6 +470,15 @@ to the truncating stat values.
 - Every form field at 375px is wide enough to type in.
 - No grid stays multi-column on a phone.
 - A truncated money value is recoverable (tooltip or wrap).
+
+**Resolution (2026-10-01, projects Round G).** `ProjectWizard.tsx`: the budget, task and contractor repeater rows restack below `sm:` (`flex-wrap sm:flex-nowrap`; the name field takes the full row on a phone, `w-full sm:w-auto sm:flex-1 min-w-0`, with the select / amount / remove on the line below), and the MOC / date grid is `grid-cols-1 sm:grid-cols-2`. The companies pages' contact and profile grids are `grid-cols-1 sm:grid-cols-2|3`. The Costs tab's stat value wraps (`break-words`) instead of truncating, so a long money figure is never clipped. The project page's header and body use `px-4 sm:px-6`. Tests: `a11yProjects.test.ts` "A11Y-10 —" (no unprefixed `grid-cols-2|3` in the wizard or the companies pages; the three repeater rows restack; the stat value wraps), `modalFocus.test.ts` (the Add-company dialog's grids collapse on a phone).
+
+**Done-when.**
+- ✓ Every form field at 375 px is wide enough to type in (the name field owns a full row; nothing shares it with three controls).
+- ✓ No grid stays multi-column on a phone (the cited grids).
+- ✓ A truncated money value is recoverable — it no longer truncates; it wraps.
+
+**Scope / residual.** The remediation's "group the header actions into labelled clusters" was not done: it is not a done-when item and the project page header is IS-P1's next (edits there were kept local). The page's one remaining `px-6` is the activity feed's inner padding.
 
 ---
 
@@ -447,7 +525,7 @@ disappears with it — resolve that one first.
 ## A11Y-12 · Decision-critical knowledge is hover-only, at roughly sixty-five sites
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** accessibility / rookie-readability
 - **Locations (ranked by what the user loses):**
@@ -482,12 +560,21 @@ this is mostly substitution.
 - No decision-critical explanation is reachable only by hover.
 - The checklist card has a visible status legend.
 
+**Resolution (2026-10-01, projects Round G).** Every decision-critical site the finding ranks now explains itself in text or in a disclosure, never in a `title` alone: the checklist status meaning is the visible legend (A11Y-2); the two AI buttons' explanations (and the sweep's) are `HelpTooltip` disclosures beside the buttons; Commitment / Actual / Adjustment's meaning is visible text under the entry-type toggle; the earned-value formula is visible text in the budget line's detail; reason codes "score both sides" is a visible line on the change-order form; the bid table's value-score formula, the silent-hours penalty and "exclusions never lower a score; check prompts are for you to verify" are visible text under the table (J4) and defined in the glossary (UX-15); "needs a budget line" offers its fix in place (UX-13); machine-found vs human-attached evidence chips say "Sweep" / "Attached"; the destructive punch Void is named ("Void … — not a real snag (a reason is required)") and its meaning is in the punch legend; task weight is visible text on the add form; the company status select has a visible, `aria-describedby` explanation of "do not use" / "inactive". `HelpTooltip` itself is now a real disclosure (named trigger via `label`, `aria-expanded` / `aria-controls`, visible focus, Escape closes it without closing an enclosing dialog). The cost glossary opens on a viewer's first visit (remembered per browser; storage blocked → it opens). Tests: `a11yProjects.test.ts` "A11Y-12 —" (the disclosure's semantics and Escape; existing callers keep their name; the cited sites explain in text or a disclosure; the glossary opens on the first visit only).
+
+**Done-when.**
+- ✓ No decision-critical explanation is reachable only by hover — every site the finding ranks.
+- ✓ The checklist card has a visible status legend.
+
+**Scope / residual.** About a hundred `title=` attributes remain across the area; those left restate visible text or name an icon button. A census of every one of them was not done.
+
 ---
 
 ## A11Y-13 · Contrast failures and missing dark variants
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (the residual dark-mode pairs the record lists by file:line; the census test ratchets them) — by the integrator, 2026-10-01 (at the J10 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** accessibility
 - **Re-verified:** hardening pass — **SURVIVES**. `text-red-600` on a cancelled banner (`projects/[id]/page.tsx:307`) and `bg-red-50 border-red-200 text-red-700` on the error card (`projects/page.tsx:161`), neither with a `dark:` variant.
@@ -548,6 +635,52 @@ background to the one date input.
 - No error panel renders light-on-dark.
 - All date inputs match the theme.
 
+**Partial (2026-10-01, projects Round G).** Every cited pair is fixed, and the date inputs area-wide: amber text on light is the 800 step with its 300 dark variant (the awaiting-review count, the ExampleFrame badge, the change-order and checklist chips — `amber-700` on `amber-500/15` was 4.47 : 1); every cited `rose-700` / `red-600` form or action error carries its dark variant; the five light error panels (`projects/page.tsx`, the project page's load error, `companies/[id]/page.tsx`, the Schedule tab's two) are the token recipe (rose text on `rose-500/[0.08]`, half-alpha border); the project page's `ActionButton` red / emerald variants, status badge and chips, the "Currently checked out" heading and the checkout row hover use the token recipe; the Schedule tab's Set-baseline and Done chips likewise; the `slate-300` icons use the faint token; the portal's chips and messages have dark variants; every date / time input on the Projects surfaces follows the theme (the cited Schedule one, the rebase dialog's date and time, and the task detail panel's start / finish). Tests: `a11yProjects.test.ts` "A11Y-13 —" (each pair's contrast computed by the WCAG formula over the composited background in both themes, Tailwind v3 sRGB steps; the error panels; the action buttons and chips; a census of every date / time input).
+
+**Done-when.**
+- ✗ Every text / background pair in the Projects area clears 4.5 : 1 in both themes — the cited pairs do; 35 light tint slabs (`bg-{hue}-50|100` with no dark variant) remain in uncited schedule-engine files: `ScheduleImportModal.tsx` (9), `TaskDetailPanel.tsx` (7), `ExecutionReportView.tsx` (5), `StaleCheckoutBanner.tsx` (3), `MovePreviewSheet.tsx`, `RebaseScheduleModal.tsx`, `ScheduleFilterBar.tsx`, `ExecutionView.tsx` (2 each), `ExecutionGuide.tsx`, `SchedulePulse.tsx`, `ScheduleProgress.tsx` (1 each). This record stays OPEN for them.
+- ✓ No error panel renders light-on-dark (every error panel in the area — the execution board's two dialog errors included — is the token recipe).
+- ✓ All date inputs match the theme.
+
+**Scope / residual.** The 35 slabs above (the schedule engine's own surfaces); the next pass converts them with the same recipe and extends the census. The uncited `-600` text pairs with no `dark:` variant are listed in the final-review note below.
+
+
+*Review fix (2026-10-01, projects Round G).* Two dimmed rows on the checklist surface were missed: an N/A checklist row (`opacity-50`) and a closed punch row (`opacity-55`) took their text — the muted rationale line most of all — under 4.5 : 1 in both themes. They are now set back by their status mark, the muted text token and (punch) a strike with the done / voided label, never whole-row opacity (`components/projects/QualityTab.tsx`); `a11yProjects.test.ts` computes the old composite (< 4.5) and the muted token at full strength (≥ 4.5 in light and dark) and pins both rows. The finding stays OPEN for the 35 uncited schedule-engine slabs above.
+
+*Third review fix (2026-10-01, projects Round G).* Six of the 35 slabs above went with A11Y-6's announced sites, to the token recipe: the task panel's save error (`TaskDetailPanel.tsx`, 1), the rebase result (`RebaseScheduleModal.tsx`, rose / emerald, 2), the import result (`ScheduleImportModal.tsx`, rose / emerald, 2) and the stale-checkout release error (`StaleCheckoutBanner.tsx`, 1) — 29 remain in the files listed, and the finding stays OPEN for them.
+
+*Integrator fix pass (final review minors, 2026-10-01).* The task panel's announced delete error (`TaskDetailPanel.tsx:445`) now wears the area's token recipe, `text-rose-700 dark:text-rose-300` (it was `text-rose-600`, under 4.5 : 1 on the dark footer). The residual above understated what remains: besides the 29 light tint slabs, the area holds uncited `text-{rose,red,amber,emerald}-600` pairs whose class string carries no `dark:` text variant — 61 sites in 21 files (`components/projects`, `app/(protected)/projects`, `app/(protected)/companies`, `app/submit`; none is `red-600`). None is changed here, and the finding stays OPEN for them:
+- **Text** (23 — 4.5 : 1, or 3 : 1 for the 2xl / 3xl figures): `TaskDetailPanel.tsx:442` (the "Delete task" label, with a `hover:bg-rose-50` slab), `:619` (the edit form's field note, rose error / amber advice); `ExecutionReportView.tsx:93, 104, 211, 216, 284, 285, 286` (10 — % complete, ahead / behind, finish drift, slipped / pulled in, blocked / hold / late); `ExecutionView.tsx:1146, 1162`; `ScheduleProgress.tsx:93` (the SPI figure, 3); `ScheduleCalendarTileView.tsx:380` (today's date); `TransitionInPanel.tsx:201, 202, 263`; `CostsTab.tsx:347` (a line's negative remaining).
+- **Icons** (22 — non-text, SC 1.4.11's 3 : 1): `CostsTab.tsx:397, 398` (stat-card icon chips); `EditProjectModal.tsx:287`; `ExecutionReportView.tsx:158, 247, 346` (346: the health icons, 3); `ExecutionView.tsx:861`; `IntakePanel.tsx:525`; `ProjectCoach.tsx:101`; `ProjectWizard.tsx:337, 456`; `ScheduleImportModal.tsx:824, 825`; `ScheduleProgress.tsx:97` (2); `StaleCheckoutBanner.tsx:127` (the dismiss X, with a `hover:bg-amber-100` slab), `:137`; `TabErrorBoundary.tsx:51`; `app/(protected)/companies/error.tsx:17` (its tile has a dark background variant, its icon colour none); `app/submit/[token]/page.tsx:295`.
+- **Hover-only** (16 — `hover:text-rose-600` on a faint or muted control, no dark hover variant): `CostsTab.tsx:180, 618`; `EditProjectModal.tsx:266, 289`; `IntakePanel.tsx:598`; `ProjectDocumentsCard.tsx:236`; `ProjectWizard.tsx:430, 458, 500, 525, 549`; `QualityTab.tsx:387, 441`; `cost/ChangeOrdersPanel.tsx:252`; `cost/QuotesPanel.tsx:1215`; `app/(protected)/companies/[id]/page.tsx:325`.
+
+Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused delete, in the recipe, with the old pair under 4.5 : 1 on the dark footer and the new one over it in both themes; a ratchet census over this list — per file, no more such sites than listed — mutation-checked).
+
+---
+
+## A11Y-14 · Decision controls outside the Quality tab are still under 24 px
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** projects-joint J10b UI REMAINDERS (the decision controls under 24 px outside the Quality tab: intake panel, quotes panel, change-order panel, Costs tab) — by the integrator, 2026-10-01 (at the J10 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Verification:** CARRIED — the sites `A11Y-8` measured; not re-measured
+- **Blast radius:** accessibility / mobile
+- **Locations** (as `A11Y-8` listed them; line numbers have moved):
+  - `components/projects/IntakePanel.tsx:373` — **~12 px**
+  - `components/projects/cost/QuotesPanel.tsx:160, 249` — **~13 px**, bare text buttons
+  - `components/projects/cost/QuotesPanel.tsx:397, 420, 441`, `components/projects/cost/ChangeOrdersPanel.tsx:180, 184`, `components/projects/CostsTab.tsx:393` — **~19 px**
+- **Independently verified:** — (opened by projects Round G package J10 on 2026-10-01, split from `A11Y-8` under `DEC-31`: `A11Y-8`'s done-when covered the Quality tab, which now carries the floor)
+
+**Mechanism.** WCAG 2.2 SC 2.5.8 asks for 24×24 px; a gloved hand needs 44. The intake approvals, the bid table's actions and the change-order decisions are the same kind of control as the Quality tab's — they move a document into the register or money onto a budget line — and keep the sub-24 px boxes `A11Y-8` measured.
+
+**Failure scenario.** A mis-tap on a tablet approves the wrong intake sheet or decides the wrong change order.
+
+**Remediation.** Lift the Quality tab's `DECISION_TARGET` (`min-h-6 min-w-6`, `pointer-coarse:min-h-11 pointer-coarse:min-w-11`) into a shared constant and apply it to every decision control in the listed files, in clusters spaced 8 px.
+
+**Done when.**
+- No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer.
+- A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
+
 ---
 
 ## Verified sound — do not "fix" these
@@ -604,3 +737,4 @@ background to the one date input.
 | A11Y-11 | MEDIUM | RESOLVED |
 | A11Y-12 | MEDIUM | OPEN |
 | A11Y-13 | MEDIUM | OPEN |
+| A11Y-14 | MEDIUM | OPEN |

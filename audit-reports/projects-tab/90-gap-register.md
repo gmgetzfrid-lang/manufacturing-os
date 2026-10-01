@@ -457,6 +457,17 @@ contrast pass on both themes.
    accessible name of a status cell includes its state.
 3. Both themes pass contrast on the milestone and checklist surfaces.
 
+**Resolution (2026-10-01, projects Round G).** Built by package J10 from its three sources. **(1)** The public portal: every file picker is `sr-only` in a label that shows focus, the submission-type toggle is a pressed-state button group, and the result is announced (`A11Y-1`, `A11Y-6`); the quotes panel's picker likewise. **(2)** Status by shape and word as well as colour on every compliance surface: `components/projects/StatusMark.tsx` gives each checklist, punch and rubric state its own glyph, a visually-hidden "Status: {word}." read with the row, and a visible legend (`A11Y-2`) — not a tooltip on a dot (the "Do not"). **(3)** Contrast in both themes on the milestone surface (`A11Y-3`, 2026-09-30) and the checklist surface (the marks' tones and chips at the 800 / 300 steps, computed).
+
+**Acceptance.**
+- ✓ 1. Every control on the public portal is keyboard-reachable and focus-visible (`a11yProjects.test.ts` "A11Y-1 —", rendered).
+- ✓ 2. No compliance surface conveys status by colour alone; a test asserts the accessible name of a status cell includes its state (`a11yProjects.test.ts` "A11Y-2 —").
+- ✓ 3. Both themes pass contrast on the milestone and checklist surfaces (`scheduleEngineUi.test.ts` "A11Y-3 ·"; `a11yProjects.test.ts` "A11Y-13 —") — including the dimmed rows, since the review fix below.
+
+**Scope / residual.** Out of scope by the register's own line: a full WCAG programme. The schedule engine's remaining light slabs outside the milestone rows are `A11Y-13`'s (open).
+
+*Review fix (2026-10-01, projects Round G).* Acceptance 3 was marked ✓ while two rows of the checklist surface failed it: N/A checklist rows rendered at `opacity-50` and closed punch rows at `opacity-55` — content rows, not disabled controls — which put their text (the muted rationale line most of all) under 4.5 : 1 in both themes, and the record computed only the cited pairs. Both rows are now set back by their status mark, the muted text token and (punch) a strike with the done / voided label, never whole-row opacity (`components/projects/QualityTab.tsx`); `a11yProjects.test.ts` computes the old composite (< 4.5) and the muted token at full strength (≥ 4.5 in light and dark) and pins both rows.
+
 ---
 
 ## What deliberately did NOT become a gap

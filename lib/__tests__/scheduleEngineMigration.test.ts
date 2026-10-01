@@ -70,7 +70,7 @@ describe("ScheduleTab — the lock, the named rejections and the live channel (P
   });
   it("a partly written batch hands back the rows that moved and their new locks (so the board can undo them), and every failure carries its reason", () => {
     expect(tab).toMatch(/return \{ ok: false, matched: res\.matched, updatedAt: res\.updatedAt, error: reason \};/);
-    expect(tab).toMatch(/return \{ ok: false, error: \(e as Error\)\.message \};/);
+    expect(tab).toMatch(/return \{ ok: false, error: userFacingCaughtError\(e, \{ context: "ScheduleTab" \}\) \};/);
     expect(tab).not.toMatch(/return \{ ok: false \};/);
   });
   it("INSERT / UPDATE are filtered on project_id; DELETE is NOT subscribed (RLS is not applied to DELETE events)", () => {
