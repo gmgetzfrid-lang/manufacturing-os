@@ -214,7 +214,8 @@ describe("REV-18 — the bulk editor", () => {
   it("a refusal of a row that was not an issue (any other reason) is named as it came, unmarked", async () => {
     s.answers.a5 = { data: null, error: { message: "permission denied for table documents" } };
     await open([DOCS[4]]);
-    await act(async () => setValue(labelled("New value") as HTMLSelectElement, "IFC"));
+    // (P15 / VFY-20: "IFC" is no longer offered — Issued → Archived is the not-an-issue change here.)
+    await act(async () => setValue(labelled("New value") as HTMLSelectElement, "Archived"));
     await click(button("Apply to 1"));
     await tick();
     const items = Array.from(host.querySelectorAll('[data-testid="bulk-refused-rows"] li')).map((li) => li.textContent);

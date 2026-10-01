@@ -71,7 +71,7 @@ import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
-import { assertNotOnHold } from "@/lib/holdGate";
+import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
 import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
@@ -409,12 +409,13 @@ async function assertParkedHoldsDecided(
 ): Promise<Array<{ id: string; label: string; reasons: string[] }>> {
   if (parkIds.length === 0) return [];
   const { data, error } = await supabase
-    .from("document_holds").select("document_id, reason")
+    .from("document_holds").select("document_id, reason, notes")
     .in("document_id", parkIds).is("released_at", null);
   if (error) throw new Error(`Couldn't check the documents this reversal parks for active holds (${error.message}) — nothing was changed.`);
   const byDoc = new Map<string, string[]>();
-  for (const h of (data as Array<{ document_id: string; reason: string }> | null) ?? []) {
-    byDoc.set(h.document_id, [...(byDoc.get(h.document_id) ?? []), h.reason]);
+  // VFY-6 (P15): a custom ("Other") hold is named by its description.
+  for (const h of (data as Array<{ document_id: string; reason: string; notes?: string | null }> | null) ?? []) {
+    byDoc.set(h.document_id, [...(byDoc.get(h.document_id) ?? []), holdReasonLabel(h)]);
   }
   if (byDoc.size === 0) return [];
   const { data: named } = await supabase.from("documents").select("id, document_number").in("id", [...byDoc.keys()]);

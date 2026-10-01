@@ -63,6 +63,22 @@ export const TRANSMIT_CAPABILITY = "transmittal.issue" as const;
  *  the issue transition (20261133); this constant is the UI's copy of it. */
 export const PORTAL_LINK_DAYS = 90;
 
+/** TRX-16: the portal's stamping bound (DEC-61 §5) — a PDF above it leaves
+ *  the portal unstamped. The issue-time check's copy of the portal route's
+ *  own constant (a route module cannot export it); a test pins them equal. */
+export const PORTAL_STAMP_MAX_BYTES = 64 * 1024 * 1024;
+
+/** TRX-16: the issue-time stamp check's total time budget across a
+ *  transmittal's items (lib/transmittalStampCheck.ts, server-side) — here so
+ *  the browser's wait can be bounded by it. */
+export const STAMP_CHECK_TIME_BUDGET_MS = 60_000;
+
+/** TRX-16 (P15 review fix): how long the issuer's browser waits for the
+ *  check — the server's budget plus room for the item in flight when it ran
+ *  out and the round trip. Past it the issue goes ahead unchecked (logged),
+ *  as for any check that cannot run; the route's own ceiling is 120 s. */
+export const STAMP_CHECK_CLIENT_TIMEOUT_MS = STAMP_CHECK_TIME_BUDGET_MS + 20_000;
+
 export interface TransmittalItem {
   documentId: string;
   number: string;
@@ -901,6 +917,91 @@ export async function assertItemsIssuable(
   for (const id of ids) await assertNotOnHold(id, { client, action: "issuing it on a transmittal" });
 }
 
+// ─── TRX-16: the issue-time stampability check ──────────────────────────────
+
+/** What the issue-time check found for one item's file — the same test the
+ *  portal runs when the recipient downloads it (app/api/transmittal/route.ts):
+ *  a PDF up to PORTAL_STAMP_MAX_BYTES that pdf-lib loads (no
+ *  `ignoreEncryption`) is `stampable`; one over the bound is `oversize`; one
+ *  pdf-lib refuses — owner-password / permission-restricted, certified or
+ *  damaged — is `unloadable`. A file that is not a PDF is `not_pdf` (the
+ *  portal releases it unmarked and its page says so up front). `unchecked`:
+ *  the check could not decide (a read failed, the time budget ran out). */
+export type StampVerdict = "stampable" | "not_pdf" | "oversize" | "unloadable" | "unchecked";
+export interface ItemStampCheck {
+  documentId: string;
+  number: string;
+  verdict: StampVerdict;
+  /** Why, for `unloadable` / `unchecked` (never file content). */
+  detail?: string | null;
+}
+
+/** The items the portal would release WITHOUT the UNCONTROLLED marking. */
+export function unstampableItems(checks: readonly ItemStampCheck[]): ItemStampCheck[] {
+  return checks.filter((c) => c.verdict === "oversize" || c.verdict === "unloadable");
+}
+
+/** The issuer's warning, naming each item and the reason and remedy — null
+ *  when every PDF can be marked. */
+export function describeUnstampable(checks: readonly ItemStampCheck[]): string | null {
+  const bad = unstampableItems(checks);
+  if (bad.length === 0) return null;
+  const mb = Math.round(PORTAL_STAMP_MAX_BYTES / (1024 * 1024));
+  const lines = bad.map((c) => c.verdict === "oversize"
+    ? `${c.number}: larger than the portal can mark (${mb} MB) — split it into smaller files.`
+    : `${c.number}: a PDF the portal cannot mark — most often one saved with security or permission restrictions (otherwise a damaged file); re-save it without restrictions.`);
+  return `The recipient's portal cannot stamp ${bad.length === 1 ? "this file" : "these files"} as an UNCONTROLLED copy, so ${bad.length === 1 ? "it" : "they"} would be released as issued, WITHOUT the marking, the as-issued footer or the verify QR:\n${lines.map((l) => `• ${l}`).join("\n")}\nFix the file${bad.length === 1 ? "" : "s"} and issue again, or issue anyway.`;
+}
+
+/** TRX-16: issuing was stopped BEFORE anything was written because the
+ *  portal cannot stamp one or more PDFs — the issuer decides (fix and
+ *  re-issue, or issue anyway with `acceptedUnstampable`). */
+export class UnstampableItemsError extends Error {
+  readonly code = "unstampable_items" as const;
+  constructor(readonly items: ItemStampCheck[]) {
+    super(describeUnstampable(items) ?? "Some files cannot be stamped by the portal.");
+    this.name = "UnstampableItemsError";
+  }
+}
+
+/** TRX-16: ask the server (`/api/transmittal/stamp-check`) whether the
+ *  portal can stamp each of a DRAFT's files — a size bound plus a pdf-lib
+ *  load, done where the files are, so the browser never fetches them. */
+export async function checkTransmittalStampability(
+  id: string,
+  opts?: { timeoutMs?: number },
+): Promise<{ ok: true; items: ItemStampCheck[] } | { ok: false; error: string }> {
+  // P15 review fix: the wait is bounded (STAMP_CHECK_CLIENT_TIMEOUT_MS) — a
+  // check that does not answer in time is a check that could not run.
+  const timeoutMs = opts?.timeoutMs ?? STAMP_CHECK_CLIENT_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return { ok: false, error: "Not signed in" };
+    const res = await fetch("/api/transmittal/stamp-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ transmittalId: id }),
+      signal: controller.signal,
+    });
+    const out = (await res.json().catch(() => ({}))) as { items?: unknown; error?: string };
+    if (!res.ok) return { ok: false, error: out.error || `the check answered ${res.status}` };
+    if (!Array.isArray(out.items)) return { ok: false, error: "the check returned no items" };
+    return { ok: true, items: out.items as ItemStampCheck[] };
+  } catch (e) {
+    if (controller.signal.aborted) return { ok: false, error: `the check did not answer within ${Math.round(timeoutMs / 1000)} s` };
+    return { ok: false, error: (e as Error)?.message || String(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** TRX-16 (P15 review fix): what the issue is doing, for the composer —
+ *  `checking` while the server loads and test-stamps each file (up to
+ *  STAMP_CHECK_CLIENT_TIMEOUT_MS), `issuing` once the issue write starts. */
+export type IssuePhase = "checking" | "issuing";
+
 /** TRX-10: everything the issue flow needs to tell the person truthfully. */
 export interface IssueOutcome {
   /** The row as the database left it — portal token, snapshot and all. */
@@ -915,12 +1016,38 @@ export interface IssueOutcome {
 /** Move a draft → issued. The database authorizes it (transmit authority per
  *  item library), completes the item snapshot, stamps the issue time and
  *  mints the portal link; this returns the row it wrote (TRX-10) or throws
- *  when nothing was issued (TRX-7). */
-export async function issueTransmittal(id: string, actor: TransmittalActor): Promise<IssueOutcome> {
+ *  when nothing was issued (TRX-7).
+ *
+ *  TRX-16: before anything is written, the files are checked the way the
+ *  portal will stamp them (`checkTransmittalStampability`). A PDF the portal
+ *  cannot mark stops the issue with an `UnstampableItemsError` naming the
+ *  item and the reason — the ISSUER is warned now, not the recipient later.
+ *  The issuer may go ahead: `acceptedUnstampable` (the error's items) issues
+ *  without re-checking, and the acceptance is recorded on the
+ *  TRANSMITTAL_ISSUED row. A check that cannot run does not block the issue
+ *  (it is a warning; DEC-61 §5 still governs the portal) — it is logged. The
+ *  check marks no item: arming the portal's stricter refusal (`stampable:
+ *  true`) awaits the user's ratification of the DEC-61 §5 amendment. */
+export async function issueTransmittal(
+  id: string,
+  actor: TransmittalActor,
+  opts?: { acceptedUnstampable?: ItemStampCheck[]; onPhase?: (phase: IssuePhase) => void },
+): Promise<IssueOutcome> {
   const draft = await getTransmittal(id);
   if (!draft) throw new Error("That transmittal no longer exists.");
   if (draft.status !== "draft") throw new Error(`${draft.number} is already ${draft.status}.`);
   await assertItemsIssuable(draft.orgId, draft.items);
+  const accepted = opts?.acceptedUnstampable ?? null;
+  if (!accepted) {
+    opts?.onPhase?.("checking");
+    const check = await checkTransmittalStampability(id);
+    if (!check.ok) {
+      console.warn(`[transmittals] the issue-time stamp check could not run for ${draft.number} — issuing without it (DEC-61 §5 still governs the portal):`, check.error);
+    } else if (unstampableItems(check.items).length > 0) {
+      throw new UnstampableItemsError(unstampableItems(check.items));
+    }
+  }
+  opts?.onPhase?.("issuing");
 
   const now = new Date().toISOString();
   const { data, error } = await supabase
@@ -943,7 +1070,11 @@ export async function issueTransmittal(id: string, actor: TransmittalActor): Pro
     userId: actor.actorUserId,
     userEmail: actor.actorName,
     userRole: actor.actorRole,
-    details: { number: t.number, purpose: t.purpose, recipient: t.recipientName || t.recipientCompany, documentCount: t.items.length },
+    details: {
+      number: t.number, purpose: t.purpose, recipient: t.recipientName || t.recipientCompany, documentCount: t.items.length,
+      // TRX-16: the issuer was warned at issue and went ahead.
+      ...(accepted && accepted.length > 0 ? { unstampableAccepted: accepted.map((c) => ({ documentId: c.documentId, number: c.number, verdict: c.verdict })) } : {}),
+    },
   });
   const email = await sendTransmittalEmail(t, actor);
   return { transmittal: t, email, portal: t.portalToken ? "ready" : "missing", auditError };

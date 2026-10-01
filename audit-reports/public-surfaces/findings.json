@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "RESOLVED": 46,
-      "OPEN": 15,
+      "RESOLVED": 48,
+      "OPEN": 13,
       "WONTFIX": 1
     }
   },
@@ -958,7 +958,7 @@
       "id": "VFY-6",
       "title": "/api/verify-hold publishes the hold reason verbatim to the open internet, and the reason field accepts free text — the route's own comment claims free text is withheld",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1356,7 +1356,7 @@
       "id": "SHR-14",
       "title": "The share INSERT rail does not refuse a creator who is denied download on the document — the mint succeeds, the modal offers it, and the link never serves",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

@@ -34,6 +34,7 @@
 // audit; a door that wants an override adds it there, not by widening this.
 
 import { supabase } from "@/lib/supabase";
+import type { HoldReason } from "@/types/schema";
 
 /** Any client with a `.from()` — the shared browser client, or the one a
  *  route handler / cron built with the service role. */
@@ -42,8 +43,31 @@ export type HoldGateClient = Pick<typeof supabase, "from">;
 export interface ActiveHoldSummary {
   id: string;
   reason: string;
+  /** VFY-6 (P15): the hold's note — an "Other" hold's description. Read so
+   *  the members-only refusal names a custom hold by what it is for; never
+   *  sent to a public surface (lib/shareServe.ts publicShareHoldReason says
+   *  the category, from `reason`). */
+  notes?: string | null;
   openedAt: string | null;
   openedByName: string | null;
+}
+
+/** VFY-6 (P15): the "Other" slot of HoldReason — a hold for anything the
+ *  four predefined reasons do not cover, its description in the NOTE.
+ *  (Defined here, pure; lib/holds.ts re-exports it.) */
+export const OTHER_HOLD_REASON: HoldReason = "Other";
+
+/** VFY-6 (P15): how a hold is named to MEMBERS — an "Other" hold by its
+ *  note ("Other: waiting on vendor weld map"), every other hold by its
+ *  reason. Members-only surfaces: the hold gate's refusal sentence, the
+ *  bell / email, the transmittal composer, a reversal's hold sentence. Never
+ *  a public surface, nor the paper that leaves the organisation (the copy
+ *  footer, lib/downloads.ts holdFooterLine, keeps the category until the
+ *  user decides). Pure; lib/holds.ts re-exports it. */
+export function holdReasonLabel(h: { reason: string; notes?: string | null }): string {
+  const note = (h.notes ?? "").trim();
+  if (h.reason !== OTHER_HOLD_REASON || !note) return h.reason;
+  return `${OTHER_HOLD_REASON}: ${note.length > 120 ? `${note.slice(0, 119)}…` : note}`;
 }
 
 export type HoldGateRead =
@@ -60,7 +84,7 @@ export async function readActiveHolds(documentId: string, client?: HoldGateClien
   try {
     const { data, error } = await (client ?? supabase)
       .from("document_holds")
-      .select("id, reason, opened_at, opened_by_name")
+      .select("id, reason, notes, opened_at, opened_by_name")
       .eq("document_id", documentId)
       .is("released_at", null);
     if (error) return { readable: false, error: error.message || "hold read failed" };
@@ -70,6 +94,7 @@ export async function readActiveHolds(documentId: string, client?: HoldGateClien
       holds: rows.map((r) => ({
         id: String(r.id),
         reason: String(r.reason ?? ""),
+        notes: (r.notes as string | null) ?? null,
         openedAt: (r.opened_at as string | null) ?? null,
         openedByName: (r.opened_by_name as string | null) ?? null,
       })),
@@ -80,9 +105,12 @@ export async function readActiveHolds(documentId: string, client?: HoldGateClien
 }
 
 /** The refusal sentence, one shape everywhere. `action` names what was being
- *  attempted ("sending a transmittal") so the message says what to do. */
+ *  attempted ("sending a transmittal") so the message says what to do. It
+ *  is said to MEMBERS only (a public door — lib/shareServe.ts — says the
+ *  category instead), so a custom hold is named by its description
+ *  (holdReasonLabel — VFY-6, P15 third review fix), not just "Other". */
 export function holdRefusalMessage(holds: ActiveHoldSummary[], action?: string): string {
-  const reasons = holds.map((h) => h.reason).filter(Boolean).join(", ");
+  const reasons = holds.map(holdReasonLabel).filter(Boolean).join(", ");
   const plural = holds.length > 1 ? "holds" : "hold";
   const what = action ? ` before ${action}` : "";
   return `Document has an active ${plural}${reasons ? ` (${reasons})` : ""}; release the ${plural}${what}.`;

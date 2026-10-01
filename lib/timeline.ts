@@ -29,6 +29,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { userFacingReadError } from "@/lib/userFacingError";
+import { holdReasonLabel } from "@/lib/holdGate";
 
 export type TimelineEventKind = "audit" | "version" | "project_activity" | "hold";
 
@@ -141,7 +142,7 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
       userId: r.opened_by,
       userName: r.opened_by_name,
       userEmail: null,
-      summary: `Hold opened — ${r.reason}`,
+      summary: `Hold opened — ${holdReasonLabel(r)}`, // VFY-6 (P15): a custom hold by its description
       details: {
         holdId: r.id, reason: r.reason, notes: r.notes,
         expectedReleaseAt: r.expected_release_at,
@@ -161,7 +162,7 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
         userEmail: null,
         // HLD-11: the resolution the releaser typed is part of the story —
         // in the summary line, not buried in details.
-        summary: `Hold released — ${r.reason} (${durationDays}d)${r.released_reason ? ` — "${r.released_reason}"` : ""}`,
+        summary: `Hold released — ${holdReasonLabel(r)} (${durationDays}d)${r.released_reason ? ` — "${r.released_reason}"` : ""}`,
         details: {
           holdId: r.id, reason: r.reason,
           releasedReason: r.released_reason, durationDays,
@@ -285,7 +286,10 @@ export function mergeHoldHistory(
     // itself and no row came back. Outside the page, or unchecked → plain audit.
     const confirmedGone = holdId !== null && existingHoldIds !== null && !existingHoldIds.has(holdId);
     if (confirmedGone) {
-      const reason = typeof r.details?.reason === "string" ? (r.details.reason as string) : "hold";
+      // VFY-6 (P15): a custom ("Other") hold by its description (audit details.notes)
+      const reason = typeof r.details?.reason === "string"
+        ? holdReasonLabel({ reason: r.details.reason as string, notes: typeof r.details?.notes === "string" ? (r.details.notes as string) : null })
+        : "hold";
       const releasedReason = typeof r.details?.releasedReason === "string" ? (r.details.releasedReason as string) : null;
       ev.kind = "hold";
       ev.action = HOLD_RECORD_REMOVED;

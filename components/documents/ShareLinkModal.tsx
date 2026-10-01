@@ -17,6 +17,13 @@
 // — is stated under the list rather than guessed; and a refusal this
 // browser could not confirm (a failed read) says "couldn't confirm", never
 // "not serving".
+//
+// SHR-14: a minter an ACL download deny names is refused by the INSERT
+// policy (20261140), so the modal asks the same predicate
+// (shareMintDownloadDenial — user_download_denied, for oneself) and says
+// why instead of offering the Create box. Before 20261140 is pasted the
+// predicate does not exist and neither does the rail: the box is offered as
+// before and the reason is logged.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -25,7 +32,7 @@ import {
 } from "lucide-react";
 import {
   createShareLink, listShareLinks, revokeShareLink, loadShareDocumentContext, canMintShare,
-  shareRefusalState, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
+  shareRefusalState, shareMintDownloadDenial, mintDenialNotice, SHARE_MAX_DAYS, type DocumentShare, type ShareServedState,
 } from "@/lib/documentShares";
 import { useRole } from "@/components/providers/RoleContext";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -68,6 +75,10 @@ export default function ShareLinkModal({
   // false when the refusal is only "couldn't read it from here" — minting is
   // still refused, but the routes (service role) may be serving the links.
   const [refusalConfirmed, setRefusalConfirmed] = useState(true);
+  // SHR-14: why THIS minter may not create a link although the tier admits
+  // them — an ACL download deny names them, or that could not be confirmed.
+  // null = nothing stops them (or the predicate is not installed yet).
+  const [mintDenial, setMintDenial] = useState<string | null>(null);
   const [currentRev, setCurrentRev] = useState<string | null>(null);
   const [docStatus, setDocStatus] = useState<string | null>(null);
   // What a link serves right now, by the routes' own rule (SHR-7).
@@ -100,6 +111,7 @@ export default function ShareLinkModal({
         // read would come back empty ("Document not found") — there is no
         // context to load and nothing to mint. The amber notice says so.
         setCanMint(null); setRefusal(null); setRefusalConfirmed(true); setCurrentRev(null); setDocStatus(null); setServed(null);
+        setMintDenial(null);
         return;
       }
       try {
@@ -107,19 +119,23 @@ export default function ShareLinkModal({
         setCurrentRev(ctx.rev);
         setDocStatus(ctx.status);
         setServed(ctx.served);
-        const [allowed, why] = await Promise.all([
+        const [allowed, why, denial] = await Promise.all([
           canMintShare({ orgId, uid: createdBy, libraryId: ctx.libraryId, isController }),
           shareRefusalState(documentId),
+          shareMintDownloadDenial({ orgId, uid: createdBy, aclIndex: ctx.aclIndex }),
         ]);
         setCanMint(allowed);
         setRefusal(why?.reason ?? null);
         setRefusalConfirmed(why?.confirmed ?? true);
+        // SHR-14: denied, or unknown (fail closed); `unchecked` (no predicate
+        // installed) and `clear` leave the box as it was.
+        setMintDenial(mintDenialNotice(denial));
       } catch (e) {
         // Unknown document state: neither "you may not mint" nor a Create box
         // — and never a CONFIRMED refusal left over from an earlier read: the
         // refusal reads as unconfirmed ("couldn't confirm"), as it would from
         // shareRefusalState's own failed read.
-        setError((e as Error).message); setCanMint(null); setServed(null);
+        setError((e as Error).message); setCanMint(null); setServed(null); setMintDenial(null);
         setRefusal("Couldn't confirm the document's state; it is treated as unshareable.");
         setRefusalConfirmed(false);
       }
@@ -162,7 +178,7 @@ export default function ShareLinkModal({
   // NEXT_PUBLIC_SITE_URL is unset (see lib/publicOrigin.ts).
   const origin = publicOrigin();
   const baseUrl = origin ? `${origin}/share/` : "/share/";
-  const showCreate = readable && canMint === true && refusal === null;
+  const showCreate = readable && canMint === true && refusal === null && mintDenial === null;
   // What the DOCUMENT resolves to today — the same answer for every row (a
   // share always serves the current revision), stated the way the public
   // routes would decide it: refused with the reason, no published file, or
@@ -231,6 +247,15 @@ export default function ShareLinkModal({
                 Sharing a document outside the organisation is a Document Control / Admin act, or one for a publisher granted on this library.
                 Ask a controller to mint the link; existing links are listed below.
               </span>
+            </div>
+          )}
+
+          {readable && !loading && canMint === true && mintDenial && (
+            // SHR-14: the tier admits them, the download deny does not — say
+            // why instead of offering a link that could never serve.
+            <div data-testid="share-mint-denied" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>No new link can be created: {mintDenial}</span>
             </div>
           )}
 

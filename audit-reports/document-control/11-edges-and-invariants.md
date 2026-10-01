@@ -519,6 +519,7 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Assigned:** document-control P15 SURFACE REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** the user — by the integrator, 2026-10-01 (P15 merge). P15 could not move the dependency: the environment's network policy denies `cdn.sheetjs.com` (403 at the egress proxy), where SheetJS ≥ 0.20.2 is published, and exceljs would drop legacy `.xls` imports. Either allow that host (the environment's Network access setting) so a session can vendor the SheetJS tarball into the lockfile, or ratify the exceljs move and the loss of `.xls`; the fleet plan's `userHeld` carries it (`audit-reports/fleet-plans/document-control.json`).
 - **Verification:** SUSPECTED
 - **Locations:** `package.json:29`, `package-lock.json (node_modules/xlsx 0.18.5)`, `lib/xlsxData.ts:9,33`, `app/api/templates/generate/route.ts:131`
 - **Re-verified:** hardening pass — **SURVIVES**. `package.json:36` pins `"xlsx": "^0.18.5"`, the final npm release of the package, and `lib/xlsxData.ts:9` imports it. Reachable with an attacker-chosen bucket object via `XEDGE-1`.
@@ -550,6 +551,18 @@ app/api/templates/generate/route.ts:317-318 `const docs = Array.isArray(body.doc
 - [x] a fixture test asserts a workbook whose sheet names include `__proto__` does not mutate Object.prototype ✓.
 
 **Scope / residual.** The dependency move (above) — the finding stays OPEN for it.
+
+**Partial (2026-10-01, document-control Round F wave 3).** P15 SURFACE REMAINDERS — the dependency move is **blocked by the environment's network policy, and left undone**; nothing about the dependency changed, and `package-lock.json` was NOT edited. Reproduced on `4dd0df7`: `package.json:36` is `"xlsx": "^0.18.5"`, `node_modules/xlsx/package.json` is `0.18.5`, and `lib/xlsxData.ts:24` imports it (the hardening of 2026-09-23 is in place: byte cap, row window, unsafe sheet names, prototype guard).
+- **SheetJS >= 0.20.2 (the vendored tarball).** `curl https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` from this session: the egress proxy answered **403 to CONNECT for `cdn.sheetjs.com:443`** (recorded by the proxy as a policy denial). SheetJS publishes these builds only on its CDN, so the tarball cannot be fetched here, and per the brief the lockfile is not hand-written without it.
+- **exceljs (reachable — the npm registry answers 4.4.0) was considered and NOT taken: it would regress imports.** Both doors that call `parseWorkbook` accept legacy **`.xls`** (BIFF): the asset import (`components/assets/AssetCsvImportModal.tsx:301` `accept=".xlsx,.xls,.csv,…"`, `app/api/assets/parse-workbook/route.ts:52` "Pick a spreadsheet (.xlsx, .xls or .csv)") and the template generator (`components/templates/GenerateModal.tsx:207` `accept=".xlsx,.xls,.csv"`). exceljs reads `.xlsx` and CSV only, so every `.xls` import that works today would fail; the hardening's row-window refusal (`sheetRows`, `!fullref`), `__rowNum__` row numbers and `cellDates` are SheetJS behaviours the fixture tests pin and would all be re-implemented. The user's top rule (every spreadsheet import a legitimate user makes today must still work) rules it out as a drop-in.
+- The fixture tests still pass on HEAD (`lib/__tests__/dcRoundFTemplateLibs.test.ts` "XEDGE-12 — the workbook parser runs on hardened input", `lib/__tests__/assetWorkbookRoute.test.ts`: 20 / 20).
+
+**Done-when (this pass).**
+1. ✗ Not done — the vendored SheetJS build cannot be fetched (`cdn.sheetjs.com` denied by this environment's egress policy), and exceljs would drop `.xls` imports. **Unblocking step** (whoever can reach the CDN — the user can allow `cdn.sheetjs.com` in the environment's network access settings, or fetch it on another machine): download `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` into the repo (e.g. `vendor/xlsx-0.20.3.tgz`, committed), run `npm install --save file:vendor/xlsx-0.20.3.tgz` against a node_modules that is not shared with parallel worktrees, check that `package-lock.json`'s `node_modules/xlsx` entry is 0.20.3 with the vendored `resolved` / `integrity` (and that the 0.18.5 sub-dependencies `adler-32`, `cfb`, `codepage`, `crc-32`, `ssf`, `wmf`, `word` leave the lockfile if nothing else needs them), then re-run `dcRoundFTemplateLibs.test.ts` and `assetWorkbookRoute.test.ts` and the full suite.
+2. ✓ (2026-09-23, unchanged) `parseWorkbook` runs on hardened input.
+3. ✓ (2026-09-23, unchanged) the `__proto__` sheet-name fixture test — kept, green.
+
+**Scope / residual.** Stays OPEN for done-when 1 only (the dependency move), blocked on network access to `cdn.sheetjs.com`. No file changed for it in this pass.
 
 ---
 

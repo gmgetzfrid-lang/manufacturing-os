@@ -44,12 +44,13 @@ import {
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
   transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
-  legalHoldNotice, PORTAL_LINK_DAYS,
-  type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome,
+  legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError,
+  type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome, type IssuePhase,
 } from "@/lib/transmittals";
 import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { holdReasonLabel } from "@/lib/holdGate";
 import type { Role } from "@/types/schema";
 
 /** The picker's PostgREST filter for the shared not-current set (TRX-3) —
@@ -536,6 +537,8 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     return base;
   });
   const [saving, setSaving] = useState<null | "draft" | "issue">(null);
+  // TRX-16 (P15 review fix): what the issue is doing, said in the footer.
+  const [issuePhase, setIssuePhase] = useState<IssuePhase | null>(null);
 
   // Document picker.
   const [pq, setPq] = useState("");
@@ -597,7 +600,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     (async () => {
       const [docsRes, holdsRes] = await Promise.all([
         supabase.from("documents").select("id, status, archived_at, current_version_id, legal_hold, library_id, rev").eq("org_id", orgId).in("id", ids),
-        supabase.from("document_holds").select("document_id, reason").in("document_id", ids).is("released_at", null),
+        supabase.from("document_holds").select("document_id, reason, notes").in("document_id", ids).is("released_at", null),
       ]);
       if (!alive) return;
       const docs = (docsRes.data as Array<Record<string, unknown>> | null) ?? [];
@@ -626,7 +629,9 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
           currentRevisionLabel: d.current_version_id && labelOf.has(String(d.current_version_id)) ? labelOf.get(String(d.current_version_id)) : undefined,
           legalHold: !!d.legal_hold,
           libraryId: (d.library_id as string) ?? null,
-          holds: holdsRes.error ? null : holdRows.filter((h) => String(h.document_id) === id).map((h) => String(h.reason ?? "hold")),
+          // VFY-6 (P15): a custom hold is named by its description (members only).
+          holds: holdsRes.error ? null : holdRows.filter((h) => String(h.document_id) === id)
+            .map((h) => holdReasonLabel({ reason: String(h.reason ?? "hold"), notes: (h.notes as string | null) ?? null })),
         });
       }
       setFacts(out);
@@ -638,7 +643,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
   const issuable = !!facts && isTransmittalIssuable({ items, recipientName, recipientCompany }, facts);
   const canIssue = policy !== null && mayTransmit(policy, principal, items.map((i) => facts?.get(i.documentId)?.libraryId ?? null));
   const blockers = facts ? items.map((i) => ({ id: i.documentId, why: itemIssueBlocker(i, facts.get(i.documentId)) })).filter((b) => b.why) : [];
-  const footerHint = !basicsReady ? "Add a document + recipient to issue"
+  const footerHint = saving === "issue" && issuePhase === "checking"
+    ? "Checking each file the recipient's portal will stamp — large PDFs take a moment…"
+    : saving === "issue" && issuePhase === "issuing" ? "Issuing…"
+    : !basicsReady ? "Add a document + recipient to issue"
     : !facts ? "Checking the documents…"
     : blockers.length > 0 ? blockers[0].why!
     : !canIssue ? "Saving a draft is open to everyone; issuing needs transmit authority (the \"Issue transmittals\" capability) — a Document Controller can issue your draft."
@@ -674,12 +682,27 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     }
     try {
       // TRX-10: the outcome carries the row the database wrote.
-      const outcome = await issueTransmittal(draft.id, actor);
+      let outcome: IssueOutcome;
+      try {
+        outcome = await issueTransmittal(draft.id, actor, { onPhase: setIssuePhase });
+      } catch (e) {
+        if (!(e instanceof UnstampableItemsError)) throw e;
+        setIssuePhase(null); // the check answered; the issuer decides
+        // TRX-16: warned at issue, before anything was sent — the issuer
+        // fixes the file(s) or issues anyway (DEC-61 §5: released unmarked,
+        // recorded so; the acceptance goes on the TRANSMITTAL_ISSUED row).
+        if (!(await appConfirm({ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">{e.message}</span>, confirmLabel: "Issue anyway" }))) {
+          await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });
+          return;
+        }
+        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, onPhase: setIssuePhase });
+      }
       await onSaved({ kind: "issued", outcome });
     } catch (e) {
       await onSaved({ kind: "issue-failed", draft, error: (e as Error).message });
     } finally {
       setSaving(null);
+      setIssuePhase(null);
     }
   };
 

@@ -180,6 +180,43 @@ describe("mergeHoldHistory (HLD-11)", () => {
   });
 });
 
+describe("VFY-6 (P15) — the timeline names a custom (Other) hold by its description", () => {
+  it("the hold row's opened and released lines name an Other hold by its note; a predefined hold reads exactly as before", () => {
+    const { holdEvents } = mergeHoldHistory([], [
+      hold({ id: "h-o", reason: "Other", notes: " waiting on vendor weld map ", released_at: "2026-09-04T10:00:00Z", released_reason: "map received" }),
+      hold({ id: "h-p", reason: "Client Review", notes: "see RFI 12", released_at: "2026-09-04T10:00:00Z" }),
+      hold({ id: "h-n", reason: "Other", notes: null }),
+    ], new Set(["h-o", "h-p", "h-n"]));
+    expect(holdEvents.map((e) => e.summary)).toEqual([
+      "Hold opened — Other: waiting on vendor weld map",
+      'Hold released — Other: waiting on vendor weld map (3d) — "map received"',
+      "Hold opened — Client Review",
+      "Hold released — Client Review (3d)",
+      "Hold opened — Other", // an Other hold with no note (placed before P15's description rule)
+    ]);
+    // details keep the stored reason (a consumer may read it)
+    expect(holdEvents[0].details).toMatchObject({ reason: "Other", notes: " waiting on vendor weld map " });
+    expect(holdEvents[1].details).toMatchObject({ reason: "Other" });
+  });
+
+  it("the record-removed fallback names an Other hold by the audit row's notes; a predefined hold, or an Other row with no notes, as before", () => {
+    const { auditEvents } = mergeHoldHistory([
+      audit({ id: "a1", action: "HOLD_OPENED", details: { holdId: "gone", reason: "Other", notes: "crane survey pending" } }),
+      audit({ id: "a2", action: "HOLD_RELEASED", details: { holdId: "gone", reason: "Other", notes: "crane survey pending", releasedReason: "survey done" } }),
+      audit({ id: "a3", action: "HOLD_RELEASED", details: { holdId: "gone-2", reason: "Other", releasedReason: "cleared" } }),
+      audit({ id: "a4", action: "HOLD_OPENED", details: { holdId: "gone-3", reason: "Client Review", notes: "see RFI 12" } }),
+    ], [], new Set());
+    expect(auditEvents.map((e) => e.summary)).toEqual([
+      "Hold opened — Other: crane survey pending — hold record removed (the audit row is the only surviving evidence)",
+      'Hold released — Other: crane survey pending — "survey done" — hold record removed',
+      'Hold released — Other — "cleared" — hold record removed',
+      "Hold opened — Client Review — hold record removed (the audit row is the only surviving evidence)",
+    ]);
+    // the audit row's own reason is untouched in details
+    expect(auditEvents[0].details).toMatchObject({ reason: "Other", notes: "crane survey pending", holdRecordRemoved: true });
+  });
+});
+
 describe("the builders confirm deletion with a targeted lookup, not with the page (HLD-11 review fix)", () => {
   // h-old: opened in January, released in September → its HOLD_RELEASED audit
   // row is the newest audit row, its hold row the OLDEST on the document.

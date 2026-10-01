@@ -7,8 +7,10 @@ import CheckoutStatusCell from "./CheckoutStatusCell";
 import AssetTagChip from "@/components/assets/AssetTagChip";
 import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
-
-const DOCUMENT_STATUSES = ["Draft", "Issued", "Superseded", "Void", "Archived", "Locked"];
+import {
+  METADATA_EDITOR_STATUS_OPTIONS, statusSelectOptions, notOfferedStatusNote, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION,
+} from "@/lib/documentStatusOptions";
+import { assertNotOnHold, isHoldBlockedError } from "@/lib/holdGate";
 
 // ── Inline pill editor used for tags/multi columns ──────────────────────────
 function TagInput({
@@ -196,6 +198,13 @@ export default function MetadataEditor(props: {
   // status) — a guarded write at the database (20261144). Said before the
   // save; a refusal is shown as the database words it.
   const issuing = isIssueTransition({ fromStatus: document.status, toStatus: status, hasCurrentRevision });
+  // VFY-20 / DEC-77 review fix: out of a status the database already
+  // counts as an issue but no gate reads as in force (an existing IFC row)
+  // into Issued / Locked — the change that puts the revision in force, which
+  // the database's guard does not see. Treated as an issue here: said before
+  // the save, and refused over an active hold (this editor is Document
+  // Control's only, so the publisher tier holds). REV-21 is the database limb.
+  const enteringForce = isUnguardedEntryIntoForce({ fromStatus: document.status, toStatus: status, hasCurrentRevision });
 
   const applyIngestion = () => {
     if (!canEdit) return;
@@ -213,6 +222,9 @@ export default function MetadataEditor(props: {
     setSaving(true);
     setSaveError(null);
     try {
+      // P15 review fix: the hold the database does not check for this change
+      // (fail closed — an unreadable hold state refuses it too).
+      if (enteringForce && document.id) await assertNotOnHold(document.id, { action: ENTRY_INTO_FORCE_ACTION });
       // DRLS-15: the revision label only for a document with no current
       // revision — otherwise it is the revision's, not this dialog's to set.
       await onSave({
@@ -232,7 +244,7 @@ export default function MetadataEditor(props: {
       const message = (e as Error)?.message || "The save was refused — nothing was saved.";
       // REV-18: an issue the database refused names the rule and what to do;
       // nothing else in the edit was saved either (one statement).
-      setSaveError(issuing && isIssueRefusal(message)
+      setSaveError((issuing && isIssueRefusal(message)) || (enteringForce && isHoldBlockedError(e))
         ? `${message} The status was not changed to ${status}, and nothing else in this edit was saved — change the status back to save the other fields.`
         : message);
     } finally {
@@ -452,14 +464,30 @@ export default function MetadataEditor(props: {
                   className={fieldClass}
                 >
                   <option value="">Select…</option>
-                  {DOCUMENT_STATUSES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                  {/* VFY-20 / DEC-77: the offered statuses, plus the
+                      document's own when it is one no editor offers (an
+                      existing IFC row) — shown as what it is, never as
+                      "Select…", and kept unless another is chosen. */}
+                  {statusSelectOptions(METADATA_EDITOR_STATUS_OPTIONS, document.status).map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
+                {notOfferedStatusNote(METADATA_EDITOR_STATUS_OPTIONS, status) && (
+                  <p data-testid="status-not-offered-note" className="text-[10px] text-amber-800 mt-1">
+                    {notOfferedStatusNote(METADATA_EDITOR_STATUS_OPTIONS, status)}
+                  </p>
+                )}
                 {issuing && (
                   // REV-18: the issue is a guarded write — say so before the save.
                   <p data-testid="issue-transition-note" className="text-[10px] text-amber-800 mt-1">
                     Saving issues Rev {document.rev ?? "?"} as a controlled copy. The database refuses it while the document is on hold, and — in a library that requires reviewer sign-off — for anyone but Document Control unless this revision&apos;s review is complete.
+                  </p>
+                )}
+                {enteringForce && (
+                  // P15 review fix: an issue the database does not see — said
+                  // truthfully, and the hold is checked by this editor.
+                  <p data-testid="entry-into-force-note" className="text-[10px] text-amber-800 mt-1">
+                    Saving puts Rev {document.rev ?? "?"} in force as a controlled copy: the field pack will print it and a scan will read it as current. The database does not check this change (it already counts {document.status?.trim() ? <>&quot;{document.status}&quot;</> : "an empty status"} as an issue), so this editor checks the hold — the save is refused while the document is on hold. Its review is not checked: choose {status} only for a revision that was reviewed.
                   </p>
                 )}
               </div>

@@ -893,3 +893,28 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 **Closer:** document-control P14 (assigned at the P13 merge, 2026-10-01).
 
 ---
+
+<a id="rev-21"></a>
+
+## REV-21 · Moving an existing "IFC" document to Issued or Locked puts it in force with no guard — the database counts IFC as an issue already, so the status-transition guard never sees the move
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** — unassigned; for the user to ratify with DEC-77 (public-surfaces `VFY-20`), then the next owner of `20261144`'s guard (document-control).
+- **Assigned:** the user first (ratify the database limb with DEC-77 §4: either `20261144`'s guard judges a status-only move INTO Issued / Locked from any status outside them as an issue, or the existing IFC / empty / unrecognised rows with a current revision are moved under the user's decision), then document-control P16 STATUS-GUARD FOLLOW-UPS (new) — by the integrator, 2026-10-01 (P15 merge; fleet plan `audit-reports/fleet-plans/document-control.json`, `userHeld` and P16).
+- **Verification:** CONFIRMED (read from `20261144`'s `v_issuing` and `is_controlled_issue_status`, `lib/issueStatus.ts`, `lib/verifyVerdict.ts` and `lib/docPack.ts`; the app half's behaviour is pinned by test)
+- **Locations:** `supabase/migrations/20261144_dc_roundF_status_issue_transition.sql` (`enforce_document_publish_guard` — `v_issuing := NEW.current_version_id IS NOT NULL AND NOT is_controlled_issue_status(OLD.status) AND is_controlled_issue_status(NEW.status)`), `lib/issueStatus.ts` (`isControlledIssueStatus`, `isIssueTransition` — the same predicate), `lib/verifyVerdict.ts` (`IN_FORCE_STATUSES` — Issued / Locked), `lib/docPack.ts` (`filterPackDocs`), `supabase/schema.sql` (`documents_org_access` FOR ALL)
+- **Independently verified:** — opened 2026-10-01 by document-control Round F wave 3 (P15 SURFACE REMAINDERS, review fix pass) from the package reviewer's major on `VFY-20` / DEC-77, per DEC-31 (the database limb of a gap whose app half P15 closed; the brief leaves the predicate unchanged); not yet challenged by a second party.
+
+**Mechanism.** `REV-18`'s guard decides a status-only issue by `v_issuing`: out of a status that is not an issue (Draft, In Review, Superseded, Void, Archived) into one that is. `is_controlled_issue_status` counts every other status as an issue — Issued and Locked, and also "IFC", an empty status, and any value outside the vocabulary. The print gate and the verify allow-list count only Issued and Locked as in force. So the one move that puts such a document in force — IFC (or an empty or unrecognised status) → Issued / Locked — is issue-to-issue to the database: `v_issuing` is false, the write is not otherwise advancing (no pointer move, no retirement), and the guard returns before its publisher tier, its hold limb and its require-mode limb. `documents_org_access` admits the UPDATE for any active member whom the restrictive `documents_deny_write_guard` (`20260901` — the document's ACL denies write / editMetadata; controllers exempt) does not stop. DEC-77 stops the editors offering IFC and keeps existing IFC rows (the fail-safe default), so those rows remain, scanning STATUS NOT RECOGNISED and excluded from packs, one status write away from being in force.
+
+**Failure scenario.** A legacy drawing set at status "IFC" whose current revision was never reviewed, in a library whose policy requires sign-off. Any member with row UPDATE PATCHes `status` to "Issued" through PostgREST: the guard does not run its issue block, the drawings scan green and print into field packs, with no publisher check, no hold check (one of them is under a stop-work hold) and no review. (The app's two status editors no longer allow this over a hold — P15's review fix treats the move as an issue there, and both are Document Control's — but the database does not.)
+
+**Done when.**
+
+- [ ] The user ratifies how the gap closes, with DEC-77: either `20261144`'s issue limb also judges a status-only move INTO an in-force status (Issued / Locked) out of any status outside them as an issue (publisher tier, hold, require mode), with `isIssueTransition` and the editors following; or the existing IFC (and empty / unrecognised) rows with a current revision are moved under the user's decision, and the inventory shows none left.
+- [ ] A test drives IFC → Issued and IFC → Locked against the guard (a non-publisher refused; a held document refused for a controller too; under a require policy an unreviewed revision refused for a non-controller), and the app's `isUnguardedEntryIntoForce` (`lib/documentStatusOptions.ts`) is retired into `isIssueTransition` or pinned equal to the new limb.
+
+**Closer:** unassigned (the user's ratification first). The app half is in place: `lib/documentStatusOptions.ts` `isUnguardedEntryIntoForce`, used by `components/documents/MetadataEditor.tsx` and `components/documents/BulkEditModal.tsx` (said before the save; refused over an active hold through `lib/holdGate.ts`), pinned in `lib/__tests__/dcRoundFP15StatusVocabulary.test.ts`.
+
+---

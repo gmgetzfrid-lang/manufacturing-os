@@ -17,7 +17,7 @@ import { createRoot, type Root } from "react-dom/client";
 const s = vi.hoisted(() => ({
   roles: ["Engineer"] as string[],
   activeRole: "Engineer" as string,
-  holds: {} as Record<string, Array<{ id: string; reason: string }>>,
+  holds: {} as Record<string, Array<{ id: string; reason: string; notes?: string | null }>>,
   holdsFail: false,
   searchRows: [] as Array<Record<string, unknown>>,
   splitDocument: vi.fn(async (..._a: unknown[]) => ({})),
@@ -188,6 +188,21 @@ describe("HLD-2 (review fix 4) — the Split wizard over a held source", () => {
   });
 });
 
+describe("VFY-6 (P15 third review fix) — the Split and Merge wizards name a custom (Other) hold by its description", () => {
+  it("split: the acknowledgement says what the work is stopped for", async () => {
+    s.roles = ["DocCtrl"]; s.activeRole = "DocCtrl";
+    s.holds.p101 = [{ id: "h1", reason: "Other", notes: "crane survey pending" }];
+    await splitToConfirm();
+    expect(text()).toMatch(/Proceed over the active hold on P-101 \(Other: crane survey pending\)\. It is carried to every new sheet\./);
+  });
+  it("merge: the same, for an absorbed source", async () => {
+    s.roles = ["DocCtrl"]; s.activeRole = "DocCtrl";
+    s.holds.p102 = [{ id: "h2", reason: "Other", notes: "waiting on vendor weld map" }];
+    await mergeToConfirm();
+    expect(text()).toMatch(/\(Other: waiting on vendor weld map\)/);
+  });
+});
+
 describe("HLD-2 (review fix 4) — the Merge wizard over a held source", () => {
   it("a controller acknowledges a hold on ANY absorbed source; the merge passes force: true with the carry locked on", async () => {
     s.roles = ["DocCtrl"]; s.activeRole = "DocCtrl";
@@ -245,6 +260,11 @@ describe("HLD-2 / REV-12 (review fix 4) — the reverse dialog over a held docum
     expect(button("Confirm Reverse").disabled).toBe(false);
     await click(button("Confirm Reverse"));
     expect(s.reverseSplit.mock.calls[0][0]).toMatchObject({ splitAuditEventId: "ev1", force: true });
+  });
+  it("VFY-6 (P15 third review fix): a custom (Other) hold is named by its description in the acknowledgement", async () => {
+    s.holds.p101a = [{ id: "h9", reason: "Other", notes: "waiting on vendor weld map" }];
+    await openReverse(splitEvent);
+    expect(text()).toMatch(/Proceed over the active hold \(Other: waiting on vendor weld map\) on the split's sheets this reversal parks\./);
   });
   it("no held sheet: no acknowledgement, no force", async () => {
     await openReverse(splitEvent);

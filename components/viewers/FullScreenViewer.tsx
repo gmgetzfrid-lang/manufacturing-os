@@ -60,6 +60,9 @@ import {
   type ViewBadgeTone,
   logDownloadAudit,
   DownloadUnrecordedError,
+  readCopyHoldState,
+  holdFooterLine,
+  copyWatermark,
 } from "@/lib/downloads";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -1022,6 +1025,13 @@ export default function FullScreenViewer({
 
       // 2. Apply the UNCONTROLLED stamp on top — unconditionally (PHYS-5):
       //    markups are never part of the controlled revision.
+      //    HLD-1: the export carries the document's hold through the same
+      //    lib/downloads.ts hold stamp the plain download and print use — the
+      //    gate's read when the copy is taken (an unreadable hold state is a
+      //    hold), the ON HOLD watermark and the hold line leading the footer.
+      //    A copy of a document that is not held is stamped exactly as before.
+      const hold = await readCopyHoldState(docRecord?.id);
+      const markupFooter = `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`;
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
       await applyStampToPdfDoc(pdfDoc, {
@@ -1030,8 +1040,8 @@ export default function FullScreenViewer({
         email: currentUserEmail ?? undefined,
         timestamp: now,
         expiresAt,
-        watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-        footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
+        watermarkText: hold.blocked ? copyWatermark({ versionIsCurrent: viewingIsCurrent }, hold) : "UNCONTROLLED — FOR REVIEW ONLY",
+        footerNotice: [holdFooterLine(hold), markupFooter].filter(Boolean).join(" "),
         verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
           ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
           : undefined,

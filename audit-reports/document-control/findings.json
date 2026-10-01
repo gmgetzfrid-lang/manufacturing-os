@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 159,
+    "findings": 160,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
-      "MEDIUM": 70,
+      "MEDIUM": 71,
       "LOW": 16
     },
     "by_status": {
-      "RESOLVED": 138,
-      "OPEN": 21
+      "RESOLVED": 140,
+      "OPEN": 20
     }
   },
   "status_vocabulary": [
@@ -766,7 +766,7 @@
       "id": "DIST-9",
       "title": "download_audits — the sole evidence base for stale-copy recall — is fully mutable and deletable by any active org member",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3347,6 +3347,32 @@
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
     {
+      "id": "REV-21",
+      "title": "Moving an existing \"IFC\" document to Issued or Locked puts it in force with no guard — the database counts IFC as an issue already, so the status-transition guard never sees the move",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from `20261144`'s `v_issuing` and `is_controlled_issue_status`, `lib/issueStatus.ts`, `lib/verifyVerdict.ts` and `lib/docPack.ts`; the app half's behaviour is pinned by test)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261144_dc_roundF_status_issue_transition.sql",
+        "lib/issueStatus.ts",
+        "lib/verifyVerdict.ts",
+        "lib/docPack.ts",
+        "supabase/schema.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A legacy drawing set at status \"IFC\" whose current revision was never reviewed, in a library whose policy requires sign-off. Any member with row UPDATE PATCHes status to \"Issued\" through PostgREST: the guard does not run its issue block, the drawings scan green and print into field packs, with no publisher check, no hold check (one of them is under a stop-work hold) and no review. (The app's two s",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
       "id": "RG-7",
       "title": "A draft whose reviewer roster failed to save strands the review and simultaneously leaves the database completion guard inert",
       "severity": "MEDIUM",
@@ -4284,7 +4310,7 @@
       "id": "TRX-16",
       "title": "A PDF the portal cannot stamp is accepted at issue and refused only when the recipient downloads it",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; the download-time refusal it follows is pinned in `lib/__tests__/transmittalPortalRoute.test.ts` \"TRX-15 — …\")",
       "blast_radius": "document-control delivery (an issued transmittal its recipient cannot receive)",

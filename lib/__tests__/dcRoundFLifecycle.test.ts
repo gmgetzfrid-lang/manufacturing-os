@@ -1916,3 +1916,139 @@ describe("REV-15 / REV-17 — which statuses ISSUE a first revision (one predica
     for (const s of ["Issued", "IFC", "Locked", "Approved for Construction", "", null, undefined]) expect(isControlledIssueStatus(s), String(s)).toBe(true);
   });
 });
+
+// ─── P15 review fix (public-surfaces VFY-6) ───────────────────────────────
+// Every custom hold is now placed under the one code "Other" with its
+// description in the note. The carry must key a hold the way the open-reason
+// unique index does (20261152: an "Other" hold by its note too) — never by
+// the reason alone, which would silently drop the second of two different
+// custom holds on a merge or a reversal.
+describe("VFY-6 (P15 review fix) — two different custom (Other) holds both carry; the carry keys a hold as the unique index does", () => {
+  /** The open-reason unique index, as the database enforces it on INSERT:
+   *  20261152 keys an Other hold by its btrim'd note; 20260612 by reason only. */
+  function openReasonIndex(version: "20261152" | "20260612") {
+    const key = (r: Row) => version === "20261152" && r.reason === "Other"
+      ? `${r.document_id}|Other|${String(r.notes ?? "").replace(/^ +| +$/g, "")}`
+      : `${r.document_id}|${r.reason}`;
+    state.db.beforeInsert!.document_holds = (row, table) => {
+      if (table.some((h) => h.released_at == null && key(h) === key(row))) {
+        throw { code: "23505", message: 'duplicate key value violates unique constraint "document_holds_open_reason_uniq"' };
+      }
+      return row;
+    };
+  }
+  function seedOther(docId: string, notes: string) {
+    (state.db.tables.document_holds ??= []).push({ id: `h-${docId}-${notes}`, org_id: ORG, document_id: docId, reason: "Other", notes, expected_release_at: null, released_at: null, opened_at: "2026-09-01" });
+  }
+  const openOn = (docId: string) => T("document_holds").filter((h) => h.document_id === docId && h.released_at == null);
+  const newTarget = (n: string) => ({ kind: "create_new" as const, documentNumber: n, title: "merged", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB });
+
+  it("the reviewer's case: merging S1 (Other: Awaiting legal) and S2 (Other: Pending survey) carries BOTH onto the target — holdsCopied 2", async () => {
+    state.roles = ["DocCtrl"];
+    openReasonIndex("20261152");
+    const a = seedDoc("o1"); const b = seedDoc("o2");
+    seedOther("o1", "Awaiting legal"); seedOther("o2", "Pending survey");
+    const r = await mergeDocuments({ sources: [asRecord(a), asRecord(b)], target: newTarget("O-NEW"), reason: "combine", orgId: ORG, actorUserId: ME, force: true });
+    expect(r.holdsCopied).toBe(2);
+    const carried = openOn(r.targetDocumentId);
+    expect(carried.map((h) => h.reason)).toEqual(["Other", "Other"]);
+    expect(carried.map((h) => h.notes)).toEqual([
+      "Carried over from O1 (merge). Original notes: Awaiting legal",
+      "Carried over from O2 (merge). Original notes: Pending survey",
+    ]);
+    expect(docRow("o1").status).toBe("Superseded");
+    expect(docRow("o2").status).toBe("Superseded");
+  });
+
+  it("merging into an EXISTING target that already holds its own Other hold carries the source's Other hold too", async () => {
+    state.roles = ["DocCtrl"];
+    openReasonIndex("20261152");
+    const t = seedDoc("o3"); const a = seedDoc("o4");
+    seedOther("o3", "Pending survey"); seedOther("o4", "Awaiting legal");
+    // (a held kept target takes a merge with no rev-up — its content is unchanged)
+    const r = await mergeDocuments({
+      sources: [asRecord(t), asRecord(a)],
+      target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, assetTagsUnion: [] },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    });
+    expect(r.holdsCopied).toBe(1);
+    expect(openOn("o3").map((h) => h.notes).sort()).toEqual(["Carried over from O4 (merge). Original notes: Awaiting legal", "Pending survey"]);
+  });
+
+  it("reversing a split whose two parked sheets each carry a different Other hold carries BOTH back onto the restored source", async () => {
+    state.roles = ["DocCtrl"];
+    openReasonIndex("20261152");
+    seedDoc("o5", { status: "Superseded", uniqueness_key: "o5-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`o5${x}`, { uniqueness_key: `o5${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-o5a", org_id: ORG, superseded_doc_id: "o5", replacement_doc_id: "o5a", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-o5b", org_id: ORG, superseded_doc_id: "o5", replacement_doc_id: "o5b", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-o5", action: "DOC_SPLIT", resource_id: "o5", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["o5a", "o5b"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    seedOther("o5a", "Awaiting legal"); seedOther("o5b", "Pending survey");
+    await reverseSplit({ splitAuditEventId: "ev-o5", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true });
+    expect(docRow("o5").status).toBe("Issued");
+    expect(openOn("o5").map((h) => h.notes).sort()).toEqual([
+      "Carried over from O5A (reversed split). Original notes: Awaiting legal",
+      "Carried over from O5B (reversed split). Original notes: Pending survey",
+    ]);
+    expect(audit("DOC_SPLIT_REVERSED")[0].details).toMatchObject({ holdsCarriedBack: 2 });
+  });
+
+  it("before 20261152 is pasted the old index refuses the second Other carry: the merge FAILS CLOSED (rolled back, named) — never a dropped hold", async () => {
+    state.roles = ["DocCtrl"];
+    openReasonIndex("20260612");
+    const a = seedDoc("o6"); const b = seedDoc("o7");
+    seedOther("o6", "Awaiting legal"); seedOther("o7", "Pending survey");
+    await expect(mergeDocuments({ sources: [asRecord(a), asRecord(b)], target: newTarget("O-OLD"), reason: "combine", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/"Other: Pending survey" hold could not be carried over to the new document: it already has an open "Other" hold, and until database update 20261152 is applied a document holds one at a time/);
+    expect(docRow("o6").status).toBe("Issued");
+    expect(docRow("o7").status).toBe("Issued");
+    const created = T("documents").find((d) => d.document_number === "O-NEW" || d.document_number === "O-OLD")!;
+    expect(created.status).toBe("Archived");
+    expect(openOn(created.id as string)).toHaveLength(0);
+  });
+
+  it("REGRESSION: a predefined (or legacy free-text) reason already open on the target is skipped exactly as before; a carried Other note already there is not inserted twice", async () => {
+    openReasonIndex("20261152");
+    seedDoc("o8");
+    seedHold("o8", "Client Review"); seedHold("o8", "Awaiting legal review"); seedOther("o8", "Pending survey");
+    seedDoc("o9");
+    seedHold("o9", "Client Review"); seedHold("o9", "Awaiting legal review");
+    seedOther("o9", "Carried over from O8. Original notes: Pending survey");
+    const r = await copyActiveHoldsToDoc({ sourceDocId: "o8", targetDocId: "o9", originLabel: "O8", actor: ACTOR });
+    expect(r.copied).toBe(0);
+    expect(openOn("o9")).toHaveLength(3);
+    // and a different Other note on the target does not stop the carry
+    seedOther("o10", "Pending survey");
+    const r2 = await copyActiveHoldsToDoc({ sourceDocId: "o10", targetDocId: "o9", originLabel: "O10", actor: ACTOR });
+    expect(r2.copied).toBe(1);
+    expect(openOn("o9").filter((h) => h.reason === "Other")).toHaveLength(2);
+  });
+
+  it("the carry reads the target's open holds with their notes and keys them by openHoldKey (the index's key)", () => {
+    const copy = src("lib/documentLifecycle/common.ts");
+    const body = copy.slice(copy.indexOf("export async function copyActiveHoldsToDoc("), copy.indexOf("export async function releaseCarriedHolds("));
+    expect(body).toMatch(/\.select\("reason, notes"\)\s*\n\s*\.eq\("document_id", targetDocId\)/);
+    expect(body).toMatch(/const key = openHoldKey\(\{ reason: h\.reason, notes: note \}\);\s*\n\s*if \(openKeys\.has\(key\)\) continue;/);
+    expect(body).not.toMatch(/existingReasons/);
+  });
+});
+
+describe("VFY-6 (P15 third review fix) — a reversal names a custom (Other) hold on a parked sheet by its description", () => {
+  it("the refusal says what the work is stopped for — not just (Other); a predefined hold beside it is named as before", async () => {
+    state.roles = ["DocCtrl"];
+    seedDoc("v6", { status: "Superseded", uniqueness_key: "v6-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`v6${x}`, { uniqueness_key: `v6${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-v6a", org_id: ORG, superseded_doc_id: "v6", replacement_doc_id: "v6a", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-v6b", org_id: ORG, superseded_doc_id: "v6", replacement_doc_id: "v6b", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-v6", action: "DOC_SPLIT", resource_id: "v6", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["v6a", "v6b"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    (state.db.tables.document_holds ??= []).push({ id: "h-v6a-other", org_id: ORG, document_id: "v6a", reason: "Other", notes: "waiting on vendor weld map", expected_release_at: null, released_at: null, opened_at: "2026-09-02" });
+    seedHold("v6b", "Client Review");
+    const e = await reverseSplit({ splitAuditEventId: "ev-v6", reason: "wrong split", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
+    expect(e.message).toMatch(/^Cannot reverse without an explicit decision: active holds on V6A \(Other: waiting on vendor weld map\); V6B \(Client Review\), which the reversal parks as Superseded\./);
+    expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+  });
+});

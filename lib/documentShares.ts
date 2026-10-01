@@ -14,6 +14,12 @@
 //     (`describeShareRefusal` — status via lib/shareRules, holds via
 //     lib/holdGate, fail-closed). The database refuses the same set
 //     (document_share_refusal, 20261080).
+//   * DOWNLOAD DENY (public-surfaces SHR-14): a creator an ACL download deny
+//     names (by uid, role or team) is refused at the INSERT by 20261140
+//     (user_download_denied, the SQL twin of lib/downloadDeny.ts). The modal
+//     asks the same predicate first (`shareMintDownloadDenial`) and says why
+//     instead of offering the Create box; createShareLink names the deny when
+//     the policy refuses for it.
 //   * HOW LONG: never-expires is gone; 90 days is the ceiling (lib/shareRules).
 //   * RECORD: creating and revoking a share writes an audit_logs row — a
 //     checked write: if it is refused the link change still stands, and the
@@ -71,10 +77,13 @@ export type ShareServedState =
 export async function loadShareDocumentContext(documentId: string): Promise<{
   rev: string | null; status: string | null; archivedAt: string | null; libraryId: string | null;
   served: ShareServedState;
+  /** The document's chain-resolved ACL index — what the download-deny
+   *  predicate reads (SHR-14). */
+  aclIndex: unknown;
 }> {
   const { data, error } = await supabase
     .from("documents")
-    .select("rev, status, archived_at, library_id, current_version_id")
+    .select("rev, status, archived_at, library_id, current_version_id, acl_index")
     .eq("id", documentId)
     .maybeSingle();
   if (error) throw new Error(error.message || "Couldn't read the document");
@@ -95,6 +104,7 @@ export async function loadShareDocumentContext(documentId: string): Promise<{
     archivedAt: (data.archived_at as string | null) ?? null,
     libraryId: (data.library_id as string | null) ?? null,
     served,
+    aclIndex: (data as { acl_index?: unknown }).acl_index ?? null,
   };
 }
 
@@ -116,6 +126,80 @@ export async function canMintShare(input: {
 
 export const SHARE_MINT_REFUSED =
   "This link was not created. Only Document Control / Admin or a granted publisher of this library can share a document outside the organisation, and only an issued document that is not on hold.";
+
+/** SHR-14: the sentence for a creator an ACL download deny names. */
+export const SHARE_DOWNLOAD_DENIED =
+  "You are denied download on this document — an access rule names you, one of your roles or a team you are on — so a link you create could never serve a copy. Ask Document Control to share it, or to review the rule.";
+
+/** SHR-14: whether the creator may mint as far as the download deny goes —
+ *  asked of the database's own predicate, so the modal and the INSERT
+ *  policy (20261140) cannot disagree.
+ *  - `clear`: no deny names them;
+ *  - `denied`: one does — the policy refuses the mint, so say why;
+ *  - `unknown`: the predicate could not be asked (an error other than its
+ *    absence) — fail CLOSED: nothing is offered, the reason is said;
+ *  - `unchecked`: the predicate is not installed (20261140 not pasted). The
+ *    database then has no such rail either, so the mint behaves as before
+ *    (offered), and the reason is logged — never a refusal the server would
+ *    not make, never an admission it would refuse. */
+export type ShareMintDenial =
+  | { kind: "clear" }
+  | { kind: "denied"; reason: string }
+  | { kind: "unknown"; reason: string }
+  | { kind: "unchecked"; reason: string };
+
+/** PostgREST's answer for a function that does not exist yet (PGRST202 — its
+ *  schema cache — or Postgres' undefined_function). */
+function isMissingDenyPredicate(e: { code?: string; message?: string }): boolean {
+  return e.code === "PGRST202" || e.code === "42883"
+    || /could not find the function|function .*user_download_denied.* does not exist/i.test(e.message ?? "");
+}
+
+export async function shareMintDownloadDenial(input: {
+  orgId: string; uid: string; aclIndex: unknown;
+}): Promise<ShareMintDenial> {
+  let data: unknown;
+  let error: { code?: string; message?: string } | null;
+  try {
+    // Callable for oneself only (20261140 refuses another uid): the caller IS the creator.
+    ({ data, error } = await supabase.rpc("user_download_denied", {
+      p_acl_index: input.aclIndex ?? null, p_uid: input.uid, p_org: input.orgId,
+    }));
+  } catch (e) {
+    error = { message: (e as Error)?.message || String(e) };
+  }
+  if (error) {
+    if (isMissingDenyPredicate(error)) {
+      const reason = "user_download_denied is not installed (migration 20261140 is not applied): the download-deny check before minting is skipped, as before; the share routes still refuse to serve a link whose creator is denied download.";
+      console.warn(`[share] ${reason}`);
+      return { kind: "unchecked", reason };
+    }
+    return { kind: "unknown", reason: `Couldn't confirm that you may download this document (${error.message || "the check failed"}), so no link can be created from here right now. Try again.` };
+  }
+  return data === true ? { kind: "denied", reason: SHARE_DOWNLOAD_DENIED } : { kind: "clear" };
+}
+
+/** SHR-14: what the modal shows INSTEAD of the Create box, or null to offer
+ *  it — a deny that names the creator, or a check that failed (fail closed).
+ *  `unchecked` (the predicate is not installed, and so neither is the rail)
+ *  and `clear` offer the box exactly as before. */
+export function mintDenialNotice(d: ShareMintDenial): string | null {
+  return d.kind === "denied" || d.kind === "unknown" ? d.reason : null;
+}
+
+/** SHR-14: the sentence for a policy-refused mint — the download deny named
+ *  when the predicate says it was the cause, the general sentence otherwise
+ *  (or when the cause cannot be told). Reads only after a refusal. */
+async function explainMintRefusal(input: { orgId: string; documentId: string; createdBy: string }): Promise<string> {
+  try {
+    const { data, error } = await supabase.from("documents").select("acl_index").eq("id", input.documentId).maybeSingle();
+    if (error || !data) return SHARE_MINT_REFUSED;
+    const denial = await shareMintDownloadDenial({ orgId: input.orgId, uid: input.createdBy, aclIndex: (data as { acl_index?: unknown }).acl_index ?? null });
+    return denial.kind === "denied" ? `This link was not created. ${SHARE_DOWNLOAD_DENIED}` : SHARE_MINT_REFUSED;
+  } catch {
+    return SHARE_MINT_REFUSED;
+  }
+}
 
 /** Why this document cannot be shared right now, or null — and whether
  *  that is CONFIRMED (the document's status / archive flag / an open hold,
@@ -189,7 +273,7 @@ export async function createShareLink(input: {
   }).select("*").single();
   if (error) {
     throw new Error(
-      isPolicyRefusal(error) ? SHARE_MINT_REFUSED
+      isPolicyRefusal(error) ? await explainMintRefusal(input)
         : isExpiryRefusal(error) ? SHARE_EXPIRY_REFUSED
         : (error.message || "Failed to create the share link"),
     );

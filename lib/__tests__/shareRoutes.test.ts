@@ -875,7 +875,7 @@ describe("lib/documentShares — who may mint, what, for how long; audit rows", 
     const { loadShareDocumentContext } = await import("@/lib/documentShares");
     let ctx = await loadShareDocumentContext("docA");
     expect(ctx.served).toEqual({ kind: "served", rev: "B" }); // revision_label, not documents.rev ("A")
-    expect(state.calls).toContainEqual({ table: "documents", method: "select", args: ["rev, status, archived_at, library_id, current_version_id"] });
+    expect(state.calls).toContainEqual({ table: "documents", method: "select", args: ["rev, status, archived_at, library_id, current_version_id, acl_index"] });
     state.versionById = { "v-cur": publishedVersion({ review_state: "in_review" }) };
     state.latest = [publishedVersion({ id: "v-old", revision_label: "A" })];
     ctx = await loadShareDocumentContext("docA");
@@ -1118,7 +1118,7 @@ describe("ShareLinkModal / the landing page — the stated model", () => {
     expect(m).toContain('import { publicOrigin } from "@/lib/publicOrigin";');
     expect(m).toContain("const baseUrl = origin ? `${origin}/share/` : \"/share/\";");
     expect(m).toContain('const isController = hasAnyRole(["Admin", "DocCtrl"]);');
-    expect(m).toContain("const showCreate = readable && canMint === true && refusal === null;");
+    expect(m).toContain("const showCreate = readable && canMint === true && refusal === null && mintDenial === null;");
     expect(m).toMatch(/A share always serves the <b>current<\/b> revision/);
     // SHR-7: "resolves to" is the ROUTES' answer (lib/shareRules resolveServedVersion via loadShareDocumentContext),
     // refused-with-reason when the document cannot serve — not documents.rev
