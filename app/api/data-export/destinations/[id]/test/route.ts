@@ -3,18 +3,18 @@
 // Verifies the credentials for a destination by doing a real write +
 // delete (S3/R2) or a HEAD probe (webhook). Returns ok/error. We do this
 // server-side so the access keys never leave the server.
+// Admin-only, like every data-export route (admin-and-org BKP-8), through
+// the one gate (lib/adminGate.ts).
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { testDestinationConnection, type ExportDestination } from "@/lib/exportRunner";
-
-const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { data: dest } = await auth.admin

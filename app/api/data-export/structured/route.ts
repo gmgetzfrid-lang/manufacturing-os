@@ -1,70 +1,47 @@
 // GET /api/data-export/structured?orgId=...
 //
-// Streams the full export envelope as a downloadable JSON file.
-// Caller must be an Admin or Manager of the requested org. Authorization
-// is checked server-side against org_members using the user's session token.
+// Streams the full export envelope as a downloadable JSON file (and is the
+// first step of the browser-built Full ZIP, lib/clientBackup.ts).
+// Admin-only (admin-and-org BKP-8): the export runs as the service role, so
+// the caller is held to the data-export admin surface by the one gate
+// (lib/adminGate.ts — the surface's role set lives in lib/adminSurfaces.ts,
+// never in this file). An export that cannot be recorded in the audit trail
+// is refused (BKP-13), with nothing sent.
 
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
-import { createClient } from "@supabase/supabase-js";
 import { runOrgExport } from "@/lib/dataExport";
-import { memberHoldsAny } from "@/lib/roleHeld";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
     return NextResponse.json({ error: "Server is missing Supabase credentials" }, { status: 500 });
   }
 
-  // Pull the bearer token from the user's session
-  const authHeader = req.headers.get("authorization") || "";
-  const accessToken = authHeader.replace(/^Bearer\s+/i, "");
-  if (!accessToken) {
-    return NextResponse.json({ error: "Missing access token" }, { status: 401 });
-  }
-
-  // Resolve the user from their token
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false },
-  });
-  const { data: userData, error: userErr } = await userClient.auth.getUser();
-  if (userErr || !userData?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const user = userData.user;
-
-  // Pick the org out of the query string and verify membership + role
-  const url = new URL(req.url);
-  const orgId = url.searchParams.get("orgId") || "";
+  const orgId = new URL(req.url).searchParams.get("orgId") || "";
   if (!orgId) return NextResponse.json({ error: "orgId is required" }, { status: 400 });
-
-  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-  const { data: member } = await admin
-    .from("org_members")
-    .select("role, roles, status")
-    .eq("org_id", orgId)
-    .eq("uid", user.id)
-    .maybeSingle();
-  const status = (member as { status?: string } | null)?.status;
-  if (status !== "active") return NextResponse.json({ error: "Not a member of this org" }, { status: 403 });
-  // ADD-1: authority by the role COLLECTION, never the headline alone.
-  if (!memberHoldsAny(member as { role?: unknown; roles?: unknown } | null, ["Admin", "Manager", "DocCtrl"])) {
-    return NextResponse.json({ error: "Only Admin / Manager / DocCtrl can export org data" }, { status: 403 });
-  }
+  const actor = await authorizeAdminSurface(req, orgId, "data-export");
+  if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
   // Run the export
-  const envelope = await runOrgExport({
-    supabaseUrl,
-    serviceRoleKey,
-    orgId,
-    exporterUserId: user.id,
-    exporterEmail: user.email || "",
-  });
+  let envelope: Awaited<ReturnType<typeof runOrgExport>>;
+  try {
+    envelope = await runOrgExport({
+      supabaseUrl,
+      serviceRoleKey,
+      orgId,
+      exporterUserId: actor.userId,
+      exporterEmail: actor.email,
+      exporterRole: actor.role,
+      auditDetails: { channel: "json", exporterRoles: actor.roles },
+    });
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message || String(e) }, { status: 500 });
+  }
 
   // Stream as a downloadable JSON file
   const body = JSON.stringify(envelope, null, 2);

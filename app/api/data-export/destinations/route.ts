@@ -4,14 +4,18 @@
 // Credentials are encrypted at rest before insert via lib/serverCrypto.
 // Sensitive fields are NEVER returned to the client after creation —
 // API responses include only a masked preview.
+//
+// Admin-only (admin-and-org BKP-8 / BKP-13): a destination is an unattended
+// channel for the whole workspace, so it is held to the data-export admin
+// surface by the one gate (lib/adminGate.ts), and creating one rings every
+// other controller's bell (lib/exportAlerts.ts).
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret, maskSecret } from "@/lib/serverCrypto";
 import { computeNextRunAt } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
-
-const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
+import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -44,7 +48,7 @@ interface DestinationCreateBody {
 
 export async function GET(req: NextRequest) {
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { data } = await auth.admin
@@ -71,8 +75,8 @@ export async function POST(req: NextRequest) {
   let body: DestinationCreateBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const { orgId } = body || {};
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const orgId = String(body?.orgId ?? "");
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   if (!body.name || !body.destination_type) {
@@ -153,5 +157,18 @@ export async function POST(req: NextRequest) {
     details: { name: data.name, destination_type: data.destination_type },
   });
 
-  return NextResponse.json({ destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined } });
+  // BKP-13 Done-when 3: creating ANY destination (a webhook included) tells
+  // every other controller. A refused alert is said in the answer, never
+  // swallowed; the destination stands either way.
+  const alert = await alertAdminsOfDestination(auth.admin, {
+    orgId, actorUserId: auth.userId, actorEmail: auth.email, change: "created",
+    destinationId: data.id, destinationName: data.name, destinationType: data.destination_type,
+    enabled: data.enabled === true, schedule: data.schedule_kind,
+  }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
+  if (!alert.ok) console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
+
+  return NextResponse.json({
+    destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined },
+    ...(alert.ok ? {} : { warning: `Created, but the other Admins could not be alerted: ${alert.error}` }),
+  });
 }

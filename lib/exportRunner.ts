@@ -124,7 +124,31 @@ export type ExportRunResult = {
   downloadUrl?: string;
   downloadUrlExpiresAt?: string;
   diagnostics: DiagnosticStep[];
+  /** BKP-6: what a bucket push's retention purge did — set whenever one ran
+   *  (or was refused), so the route can put a failure on the run row. */
+  retention?: RetentionOutcome;
 };
+
+/** BKP-6 Done-when 3: a retention purge's outcome. `failed` counts archives
+ *  the purge chose but storage did not delete; `error` is why the purge
+ *  stopped (a refusal, a listing or delete call that threw). */
+export interface RetentionOutcome {
+  keepDays: number;
+  scanned: number;
+  deleted: number;
+  failed: number;
+  error?: string;
+}
+
+/** The run row's line for a purge that did not do all it set out to — null
+ *  when it did. The backup itself was delivered and verified either way. */
+export function retentionProblem(r: RetentionOutcome | undefined): string | null {
+  if (!r || (!r.error && r.failed === 0)) return null;
+  const did = `deleted ${r.deleted} archive(s) older than ${r.keepDays} day(s)`;
+  return `Backup delivered and verified, but the retention purge did not finish: ${did}` +
+    (r.failed > 0 ? `, ${r.failed} could not be deleted` : "") +
+    (r.error ? ` — ${r.error}` : "") + ".";
+}
 
 type DeliveryMode =
   | { kind: "inline" }                              // return the ZIP bytes
@@ -167,8 +191,12 @@ export async function buildAndDeliverExport(params: {
   supabaseUrl: string;
   serviceRoleKey: string;
   orgId: string;
-  exporterUserId: string;
+  /** null for the scheduled push (no person) — DEC-44 (A&O P3). */
+  exporterUserId: string | null;
   exporterEmail: string;
+  /** Recorded on the DATA_EXPORT audit row (lib/dataExport.ts recordExport). */
+  exporterRole?: string | null;
+  auditDetails?: Record<string, unknown>;
   includeFiles: boolean;
   delivery: DeliveryMode;
   /** The route's own deadline (exportEmbedDeadline(routeStart, maxDuration)):
@@ -188,6 +216,8 @@ export async function buildAndDeliverExport(params: {
     orgId: params.orgId,
     exporterUserId: params.exporterUserId,
     exporterEmail: params.exporterEmail,
+    exporterRole: params.exporterRole,
+    auditDetails: params.auditDetails,
     deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);
@@ -360,7 +390,10 @@ export async function buildAndDeliverExport(params: {
 
         // Enforce retention if configured. The purge's outcome — including a
         // refusal (no prefix) — lands in diagnostics, so a purge that did
-        // nothing is visible, never a silent "succeeded" (XEDGE-4).
+        // nothing is visible, never a silent "succeeded" (XEDGE-4), and is
+        // returned (BKP-6) so the route puts a failure on the run row and
+        // the destination card, where the admin looks.
+        let retention: RetentionOutcome | undefined;
         if (dest.retention_days && dest.retention_days > 0) {
           step("s3:retention", `purge older than ${dest.retention_days}d`);
           try {
@@ -369,8 +402,15 @@ export async function buildAndDeliverExport(params: {
               prefix: dest.prefix || "",
               keepDays: dest.retention_days,
             });
-            step("s3:retention:done", `scanned ${purge.scanned}, deleted ${purge.deleted} app archive(s)`);
+            retention = { keepDays: dest.retention_days, scanned: purge.scanned, deleted: purge.deleted, failed: purge.failed, ...(purge.error ? { error: purge.error } : {}) };
+            step(
+              purge.failed > 0 || purge.error ? "s3:retention:err" : "s3:retention:done",
+              `scanned ${purge.scanned}, deleted ${purge.deleted} app archive(s)` +
+                (purge.failed > 0 ? `, ${purge.failed} could not be deleted` : "") +
+                (purge.error ? ` — ${purge.error}` : ""),
+            );
           } catch (e) {
+            retention = { keepDays: dest.retention_days, scanned: 0, deleted: 0, failed: 0, error: (e as Error).message };
             step("s3:retention:err", (e as Error).message);
           }
         }
@@ -382,6 +422,7 @@ export async function buildAndDeliverExport(params: {
           totalRows,
           destinationPath: `${dest.bucket}/${fullKey}`,
           diagnostics,
+          ...(retention ? { retention } : {}),
         };
       }
 
@@ -492,7 +533,7 @@ export async function s3PurgeOlderThan(params: {
   dest: ExportDestination;
   prefix: string;
   keepDays: number;
-}): Promise<{ deleted: number; scanned: number }> {
+}): Promise<{ deleted: number; scanned: number; failed: number; error?: string }> {
   // XEDGE-4: with no prefix, ListObjectsV2 enumerates the WHOLE bucket and an
   // age-only test would delete the customer's own unrelated objects — a
   // shared corporate bucket's entire history, permanently, while the run
@@ -526,16 +567,31 @@ export async function s3PurgeOlderThan(params: {
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
 
-  const deleted = toDelete.length;
-  // S3 DeleteObjects supports max 1000 keys per call
+  // S3 DeleteObjects supports max 1000 keys per call. BKP-6: what was
+  // DELETED is counted from each call's answer — a key storage reports in
+  // `Errors` was not deleted — and a call that throws stops the purge with
+  // the rest counted as not deleted, never as deleted.
+  let deleted = 0;
+  let failed = 0;
+  let error: string | undefined;
   while (toDelete.length > 0) {
     const batch = toDelete.splice(0, 1000);
-    await client.send(new DeleteObjectsCommand({
-      Bucket: params.dest.bucket || "",
-      Delete: { Objects: batch },
-    }));
+    try {
+      const out = await client.send(new DeleteObjectsCommand({
+        Bucket: params.dest.bucket || "",
+        Delete: { Objects: batch },
+      }));
+      const errs = (out as { Errors?: Array<{ Key?: string; Message?: string }> } | undefined)?.Errors ?? [];
+      failed += errs.length;
+      deleted += batch.length - errs.length;
+      if (errs.length > 0 && !error) error = `storage refused ${errs[0].Key ?? "a key"}: ${errs[0].Message ?? "unknown error"}`;
+    } catch (e) {
+      failed += batch.length + toDelete.length;
+      error = (e as Error).message;
+      break;
+    }
   }
-  return { deleted, scanned };
+  return { deleted, scanned, failed, ...(error ? { error } : {}) };
 }
 
 // ─── Connection test ────────────────────────────────────────────

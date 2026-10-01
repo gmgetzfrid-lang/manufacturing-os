@@ -6,16 +6,17 @@
 // caller as a download response.
 //
 // Always writes an export_runs row with the result.
+//
+// Admin-only (admin-and-org BKP-8): held to the data-export admin surface by
+// the one gate (lib/adminGate.ts; the role set lives in lib/adminSurfaces.ts).
 
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
-import { authorizeOrgRole } from "@/lib/serverAuth";
-import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, type ExportDestination } from "@/lib/exportRunner";
+import { authorizeAdminSurface } from "@/lib/adminGate";
+import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
-import { roleFilter } from "@/lib/roleHeld";
-
-const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
+import { alertAdminsOfExport } from "@/lib/exportAlerts";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -36,46 +37,14 @@ interface RunBody {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-/** Bell-icon alert to every OTHER Admin/DocCtrl that a full export just ran. */
-async function alertAdminsOfExport(
-  admin: import("@supabase/supabase-js").SupabaseClient,
-  info: { orgId: string; actorUserId: string; actorEmail: string; destination: string },
-): Promise<void> {
-  const { data: admins } = await admin
-    .from("org_members")
-    .select("uid")
-    .eq("org_id", info.orgId)
-    .eq("status", "active")
-    .or(roleFilter(["Admin", "DocCtrl"]));
-  const recipients = ((admins ?? []) as Array<{ uid: string }>)
-    .map((m) => m.uid)
-    .filter((uid) => uid && uid !== info.actorUserId);
-  if (recipients.length === 0) return;
-  const when = new Date().toISOString();
-  await admin.from("notifications").insert(
-    recipients.map((uid) => ({
-      org_id: info.orgId,
-      user_id: uid,
-      kind: "security_export",
-      title: "Full workspace export was run",
-      body: `${info.actorEmail} exported the entire workspace (${info.destination}). If this wasn't expected, review the account immediately.`,
-      link: "/admin/data-export",
-      resource_type: "export",
-      actor_user_id: info.actorUserId,
-      actor_name: info.actorEmail,
-      metadata: { destination: info.destination, at: when },
-    })),
-  );
-}
-
 export async function POST(req: NextRequest) {
   // The ZIP's embed loop (and the export's storage checks) stop at this route's own deadline, so the archive is delivered.
   const routeStart = Date.now();
   let body: RunBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const orgId = body?.orgId;
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const orgId = String(body?.orgId ?? "");
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   // Rate limit: cap export runs per org per hour so a tight loop can't hammer
@@ -126,6 +95,8 @@ export async function POST(req: NextRequest) {
       orgId,
       exporterUserId: auth.userId,
       exporterEmail: auth.email,
+      exporterRole: auth.role,
+      auditDetails: { channel: dest ? `destination:${dest.destination_type}` : "zip", exporterRoles: auth.roles, ...(dest ? { destinationId: dest.id } : {}) },
       includeFiles: dest?.include_files ?? body.includeFiles ?? true,
       delivery: dest
         ? { kind: "destination", destination: dest }
@@ -142,10 +113,15 @@ export async function POST(req: NextRequest) {
     // so an unexpected export surfaces on their bell within seconds. This is
     // detection, not prevention (the actor is already authorized), but it
     // collapses the window between exfiltration and discovery.
-    await alertAdminsOfExport(auth.admin, {
+    // A refused alert is recorded on the run (BKP-13), never swallowed.
+    const alert = await alertAdminsOfExport(auth.admin, {
       orgId, actorUserId: auth.userId, actorEmail: auth.email,
       destination: dest ? (dest.destination_type as string) : "inline download",
-    }).catch(() => undefined);
+    }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
+    if (!alert.ok) console.error(`[data-export/run] org ${orgId}: the export alert was not sent: ${alert.error}`);
+    // BKP-6: a retention purge that did not finish is said on the run row and
+    // the destination card; the backup itself was delivered and verified.
+    const retentionNote = retentionProblem(result.retention);
 
     const completedAt = new Date().toISOString();
     const duration = Date.parse(completedAt) - Date.parse(startedAt);
@@ -158,7 +134,8 @@ export async function POST(req: NextRequest) {
         total_bytes: result.bytes,
         destination_path: result.destinationPath ?? null,
         destination_type: dest?.destination_type ?? "inline",
-        diagnostics: result.diagnostics,
+        diagnostics: alert.ok ? result.diagnostics : [...result.diagnostics, { ts: completedAt, step: "alert:unsent", detail: alert.error }],
+        ...(retentionNote ? { error_message: retentionNote.slice(0, 1000) } : {}),
         completed_at: completedAt,
         duration_ms: duration,
       }).eq("id", runId);
@@ -169,7 +146,7 @@ export async function POST(req: NextRequest) {
       await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
-        last_run_error: null,
+        last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
         last_run_bytes: result.bytes,
         next_run_at: computeNextRunAt({
           schedule_kind: dest.schedule_kind,

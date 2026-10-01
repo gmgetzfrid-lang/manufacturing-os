@@ -21,7 +21,12 @@
 // `limit` and the max-rows cut. Its second review fix pass (composite-key
 // keyset): `or(...)` filters in PostgREST's logic-tree syntax — terms
 // `col.eq.v` / `col.gt.v` / `col.lt.v`, nested `and(...)` / `or(...)`, and
-// double-quoted values with backslash escapes.
+// double-quoted values with backslash escapes. Admin-and-org P3: terms
+// `col.in.(a,b)` and `col.ov.{a,b}` too — the shape lib/roleHeld.ts
+// roleFilter builds (who holds a role, by the full collection); `lte` /
+// `gte` filters; and an `insert(...).select()` answers the rows it wrote,
+// each given a generated `id` when it carries none (the export run row's id
+// the routes read back). No restore path inserts with a select.
 
 export type Row = Record<string, unknown>;
 
@@ -58,7 +63,7 @@ function cmp(a: unknown, b: unknown): number {
   return as < bs ? -1 : as > bs ? 1 : 0;
 }
 
-/** Split a logic-tree list on its top-level commas (not inside parentheses or quotes). */
+/** Split a logic-tree list on its top-level commas (not inside parentheses, braces or quotes). */
 function splitTerms(src: string): string[] {
   const out: string[] = []; let depth = 0; let quoted = false; let cur = "";
   for (let i = 0; i < src.length; i++) {
@@ -70,8 +75,8 @@ function splitTerms(src: string): string[] {
       continue;
     }
     if (ch === '"') { quoted = true; cur += ch; continue; }
-    if (ch === "(") depth++;
-    if (ch === ")") depth--;
+    if (ch === "(" || ch === "{") depth++;
+    if (ch === ")" || ch === "}") depth--;
     if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
     cur += ch;
   }
@@ -86,9 +91,15 @@ function logicTerm(term: string): (r: Row) => boolean {
     const parts = splitTerms(group[2]).map(logicTerm);
     return group[1] === "and" ? (r) => parts.every((f) => f(r)) : (r) => parts.some((f) => f(r));
   }
-  const m = /^([^.]+)\.(eq|gt|lt)\.([\s\S]*)$/.exec(term);
+  const m = /^([^.]+)\.(eq|gt|lt|in|ov)\.([\s\S]*)$/.exec(term);
   if (!m) throw new Error(`restoreMemoryDb: unsupported or() term ${term}`);
   const [, col, op, raw] = m;
+  if (op === "in" || op === "ov") {
+    const vals = splitTerms(raw.slice(1, -1)).map((x) => unquote(x.trim()));
+    return op === "in"
+      ? (r) => r[col] !== null && r[col] !== undefined && vals.includes(String(r[col]))
+      : (r) => Array.isArray(r[col]) && (r[col] as unknown[]).some((x) => vals.includes(String(x)));
+  }
   const v = unquote(raw);
   return (r) => {
     const x = r[col];
@@ -98,7 +109,9 @@ function logicTerm(term: string): (r: Row) => boolean {
   };
 }
 
-function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null) {
+let generatedIds = 0;
+
+function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null, returning = false) {
   const all = (db.rows[table] ??= []);
   if (op === "select") {
     if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
@@ -146,9 +159,11 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
         return { data: null, error: { code: "23503", message: `insert or update on table "${table}" violates foreign key constraint "${table}_${fk.column}_fkey"` }, count: null };
       }
     }
+    if (returning) for (const r of staged) if (r.id === undefined) r.id = `gen-${++generatedIds}`;
     all.push(...staged);
     db.writes.push({ table, op, n: staged.length });
-    return { data: null, error: null, count: opts?.count && !db.countless ? staged.length : null };
+    const data = returning ? (single ? (staged[0] ?? null) : staged.map((r) => ({ ...r }))) : null;
+    return { data, error: null, count: opts?.count && !db.countless ? staged.length : null };
   }
   if (op === "update") {
     const injected = db.writeError?.(table, op, [payload as Row]);
@@ -162,13 +177,13 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
 }
 
 export function from(table: string) {
-  let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false;
+  let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false; let returning = false;
   let range: [number, number] | null = null;
   let limit: number | null = null;
   const orders: Array<{ col: string; asc: boolean }> = [];
   const filters: Array<(r: Row) => boolean> = [];
   const b: Record<string, unknown> = {
-    select: () => b,
+    select: () => { if (op === "insert") returning = true; return b; },
     insert: (rows: unknown, o?: Record<string, unknown>) => { op = "insert"; payload = rows; opts = o; return b; },
     upsert: (rows: unknown, o?: Record<string, unknown>) => { op = "upsert"; payload = rows; opts = o; return b; },
     update: (patch: unknown) => { op = "update"; payload = patch; return b; },
@@ -177,6 +192,8 @@ export function from(table: string) {
     not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
     lt: (c: string, v: unknown) => { filters.push((r) => typeof r[c] === "number" && typeof v === "number" && (r[c] as number) < v); return b; },
+    lte: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && cmp(r[c], v) <= 0); return b; },
+    gte: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && cmp(r[c], v) >= 0); return b; },
     gt: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && cmp(r[c], v) > 0); return b; },
     or: (expr: string) => { const fs = splitTerms(expr).map(logicTerm); filters.push((r) => fs.some((f) => f(r))); return b; },
     order: (c: string, o?: { ascending?: boolean }) => { orders.push({ col: c, asc: o?.ascending !== false }); return b; },
@@ -185,7 +202,7 @@ export function from(table: string) {
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
-      try { res(exec(table, op, payload, opts, filters, single, range, orders, limit)); } catch (e) { rej(e); }
+      try { res(exec(table, op, payload, opts, filters, single, range, orders, limit, returning)); } catch (e) { rej(e); }
     },
   };
   return b;

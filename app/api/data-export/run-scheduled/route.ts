@@ -12,17 +12,33 @@
 // Auth: this is a server-to-server endpoint. Require the
 // CRON_SECRET env var as a Bearer token to prevent random callers
 // from triggering exports on demand.
+//
+// admin-and-org BKP-13: a scheduled push is recorded like a person's export
+// — its DATA_EXPORT audit row is written (a machine row: user_id NULL, the
+// machine named in user_email, DEC-44 (A&O P3)) and CHECKED, so a run whose
+// record is refused fails instead of shipping unrecorded — and it rings the
+// controllers' bell (lib/exportAlerts.ts), as the manual run always did.
+// BILL-3 (Done-when 3): a bucket destination whose plan no longer includes
+// cloud backups is skipped AND disabled under SUBSCRIPTION_ENFORCE (DEC-18),
+// never deleted; an Admin re-enables it once the plan allows (PATCH applies
+// the same entitlement gate to enabling).
 
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
-import { createClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, type ExportDestination } from "@/lib/exportRunner";
-import { scheduledRunGate } from "@/lib/exportEntitlement";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { scheduledRunGate, cloudBucketAllowed } from "@/lib/exportEntitlement";
+import { alertAdminsOfExport } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const cronSecret = process.env.CRON_SECRET || "";
+
+/** DEC-44 (A&O P3): the actor of a row no person wrote — user_id NULL (never a
+ *  string or an invented uuid in the uuid column), the machine named in
+ *  user_email, user_role "system". */
+const SCHEDULED_EXPORT_ACTOR = { email: "system:scheduled-export", role: "system" } as const;
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -36,6 +52,7 @@ type ScheduledDestination = ExportDestination & {
   next_run_at?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
+  name?: string | null;
 };
 
 type ScheduledRunResult = {
@@ -113,7 +130,13 @@ async function handler(req: NextRequest) {
     for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
     if (!gate.ok) {
       const at = new Date().toISOString();
-      const skipMsg = `skipped: ${gate.reason}`;
+      // BILL-3 Done-when 3: a lapsed plan DISABLES a bucket destination (the
+      // skip alone would re-fire the refusal every night) — never deletes it.
+      // Only the plan limb, and only under the flag (the gate refuses on
+      // billing grounds only then); a departed configurer or an unreadable
+      // workspace row skips without disabling.
+      const planLapsed = enforceBilling && !!dest.bucket && await planNoLongerIncludesBuckets(sb, dest.org_id);
+      const skipMsg = `skipped: ${gate.reason}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
       const unrecorded: string[] = [];
       const { error: runErr } = await sb.from("export_runs").insert({
         org_id: dest.org_id,
@@ -132,6 +155,7 @@ async function handler(req: NextRequest) {
         last_run_at: at,
         last_run_status: "failed",
         last_run_error: skipMsg.slice(0, 500),
+        ...(planLapsed ? { enabled: false } : {}),
       }).eq("id", dest.id);
       if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
@@ -154,13 +178,29 @@ async function handler(req: NextRequest) {
         supabaseUrl,
         serviceRoleKey,
         orgId: dest.org_id,
-        exporterUserId: "cron",
-        exporterEmail: "cron@manufacturing-os",
+        exporterUserId: null,
+        exporterEmail: SCHEDULED_EXPORT_ACTOR.email,
+        exporterRole: SCHEDULED_EXPORT_ACTOR.role,
+        auditDetails: {
+          channel: "scheduled", destinationId: dest.id, destinationType: dest.destination_type,
+          configuredBy: dest.updated_by || dest.created_by || null,
+        },
         includeFiles: dest.include_files ?? true,
         delivery: { kind: "destination", destination: dest },
         deadlineAt: exportEmbedDeadline(routeStart, maxDuration),
       });
 
+      // BKP-13: the controllers' bell, as for a manual run — every controller
+      // (no person ran this), naming the destination and its configurer. A
+      // refused alert is recorded on the run, never swallowed.
+      const alert = await alertAdminsOfExport(sb, {
+        orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
+        destination: dest.destination_type,
+        scheduled: { destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null },
+      }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
+      if (!alert.ok) console.error(`[run-scheduled] destination ${dest.id}: the export alert was not sent: ${alert.error}`);
+      // BKP-6: a retention purge that did not finish is said on the run row and the card.
+      const retentionNote = retentionProblem(result.retention);
       const completedAt = new Date().toISOString();
       if (runId) {
         await sb.from("export_runs").update({
@@ -174,7 +214,9 @@ async function handler(req: NextRequest) {
           diagnostics: [
             ...gate.notices.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
             ...result.diagnostics,
+            ...(alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }]),
           ],
+          ...(retentionNote ? { error_message: retentionNote.slice(0, 1000) } : {}),
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
         }).eq("id", runId);
@@ -182,7 +224,7 @@ async function handler(req: NextRequest) {
       await sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
-        last_run_error: null,
+        last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
         last_run_bytes: result.bytes,
         next_run_at: computeNextRunAt({
           schedule_kind: dest.schedule_kind,
@@ -227,6 +269,17 @@ async function handler(req: NextRequest) {
   }
 
   return NextResponse.json({ processed: results.length, results });
+}
+
+/** BILL-3: does this workspace's plan no longer include bucket destinations?
+ *  Read on its own — the gate already refused, so this only decides whether
+ *  to DISABLE as well. An unreadable row does not disable (fail safe: the
+ *  skip already happened; a disable needs a definite answer). */
+async function planNoLongerIncludesBuckets(sb: SupabaseClient, orgId: string): Promise<boolean> {
+  const { data, error } = await sb.from("orgs").select("subscription_status, subscribed_plan").eq("id", orgId).maybeSingle();
+  if (error || !data) return false;
+  const row = data as { subscription_status?: string | null; subscribed_plan?: string | null };
+  return !cloudBucketAllowed(row.subscribed_plan, row.subscription_status);
 }
 
 export async function POST(req: NextRequest) { return handler(req); }

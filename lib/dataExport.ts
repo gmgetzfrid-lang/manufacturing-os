@@ -17,7 +17,13 @@
 //
 // The endpoint uses the Supabase service-role key to bypass RLS, so this
 // function MUST be called from a server context that has already
-// verified the caller is an org admin.
+// verified the caller is an org admin (admin-and-org BKP-8: every export
+// route is held to the Admin-only data-export surface, lib/adminSurfaces.ts,
+// through lib/adminGate.ts — an Admin is in the controller tier, so the
+// ACL-restricted documents the service role reads are ones the exporter may
+// read anyway; DEC-43). What RLS keeps from EVERY other member, the export
+// keeps out too: a standalone note is its author's private scratchpad and is
+// withheld (withholdPrivateNotes).
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -59,7 +65,8 @@ export interface DataExportManifest {
   exportedAt: string;
   orgId: string;
   orgName?: string;
-  exportedBy: { userId: string; email: string };
+  /** userId null: a run no person started (the scheduled push) — DEC-44 (A&O P3). */
+  exportedBy: { userId: string | null; email: string };
   /** Per-table outcome. `error` is set when a table could not be exported
    *  (e.g. it isn't org_id-scoped) — its data is NOT in this backup. `short`
    *  is set when the table WAS exported but its read came up short of the
@@ -98,6 +105,9 @@ export interface DataExportManifest {
    *  be re-issued and destination credentials re-entered rather than
    *  silently arriving dead. */
   redactedColumns: Record<string, string[]>;
+  /** BKP-8: rows the exporter may not read in the app, so the export leaves
+   *  them out — counted here, never silently dropped. */
+  withheld?: { privateNotes: number; reason: string };
   notes: string[];
 }
 
@@ -121,8 +131,16 @@ export async function runOrgExport(params: {
   supabaseUrl: string;
   serviceRoleKey: string;
   orgId: string;
-  exporterUserId: string;
+  /** null for a run no person started (the scheduled push): its audit rows
+   *  carry no user id and name the machine instead (DEC-44 (A&O P3)). */
+  exporterUserId: string | null;
   exporterEmail: string;
+  /** Recorded as the DATA_EXPORT row's user_role (BKP-8): the exporter's
+   *  headline role, or "system" for a machine run. */
+  exporterRole?: string | null;
+  /** Extra facts for the DATA_EXPORT row's details (the delivery channel, a
+   *  scheduled destination and who configured it). */
+  auditDetails?: Record<string, unknown>;
   presignedUrlSeconds?: number;
   /** Override FILE_CHECK_BUDGET_MS (tests). */
   fileCheckBudgetMs?: number;
@@ -184,6 +202,15 @@ export async function runOrgExport(params: {
       console.warn(`[dataExport] table ${tbl} FAILED:`, (e as Error).message);
     }
   }
+
+  // BKP-8 Done-when 2: a standalone note (no document, project or asset) is
+  // its author's private scratchpad — RLS (notes_standalone_own, 20260630)
+  // admits only created_by, and no member, an Admin included, can read
+  // another's in the app. The dump runs as the service role, so it would hand
+  // every member's private notes to whoever exports. They are withheld before
+  // the file scan (an attachment named only by a private note is not carried
+  // either), counted, and named in the manifest.
+  const privateNotes = withholdPrivateNotes(tables, tableCounts);
 
   // 3. File manifest: every storage key the exported rows reference, read
   //    through lib/storageKeyRegistry.ts (document revisions and their native
@@ -282,26 +309,25 @@ export async function runOrgExport(params: {
     files[i] = { path, size, contentType, createdAt, presignedUrl };
   });
 
-  // 4. Audit row — running an export is itself a tracked event.
-  try {
-    await sb.from("audit_logs").insert({
-      action: "DATA_EXPORT",
-      resource_id: params.orgId,
-      resource_type: "org",
-      org_id: params.orgId,
-      user_id: params.exporterUserId,
-      user_email: params.exporterEmail,
-      details: {
-        tableCount: tableCounts.length,
-        totalRows: tableCounts.reduce((s, t) => s + t.rowCount, 0),
-        fileCount: files.length,
-        totalBytes,
-        startedAt,
-      },
-    });
-  } catch (e) {
-    console.warn("[dataExport] audit insert failed", e);
-  }
+  // 4. The audit trail — running an export is itself a tracked event, and
+  //    the record is CHECKED (BKP-13): postgrest resolves a refused insert
+  //    into { error } rather than throwing, so the old try/catch never fired
+  //    and a run whose DATA_EXPORT row was refused (the scheduled push's
+  //    user_id "cron", 22P02 on the uuid column) reported success with no
+  //    record. An export that cannot be recorded is refused before anything
+  //    leaves. BKP-8 Done-when 3: the files the export hands out are named
+  //    too (DATA_EXPORT_FILES), so the chain of custody names the drawings,
+  //    not just the event.
+  await recordExport(sb, params, {
+    startedAt,
+    tableCount: tableCounts.length,
+    totalRows: tableCounts.reduce((s, t) => s + t.rowCount, 0),
+    files,
+    totalBytes,
+    presignedUrlExpiresIn: expiresIn,
+    privateNotes,
+    versions: (tables.document_versions ?? []) as Array<Record<string, unknown>>,
+  });
 
   // Look up org name for the manifest header
   let orgName: string | undefined;
@@ -333,6 +359,9 @@ export async function runOrgExport(params: {
     notes.push(`⚠ INCOMPLETE BACKUP — ${parts.join(" ")} Resolve before relying on this as a full backup.`);
   } else {
     notes.push("This document is a complete export of every record this organization owns.");
+  }
+  if (privateNotes > 0) {
+    notes.push(`${privateNotes} ${PRIVATE_NOTES_WITHHELD}`);
   }
   if (missingFiles > 0) {
     notes.push(
@@ -409,10 +438,115 @@ export async function runOrgExport(params: {
     },
     spaceArchives: shedInfo.archiveIds,
     redactedColumns,
+    ...(privateNotes > 0 ? { withheld: { privateNotes, reason: PRIVATE_NOTES_WITHHELD } } : {}),
     notes,
   };
 
   return { manifest, tables, files };
+}
+
+/** BKP-8: why a private note is not in the backup (manifest note / withheld.reason). */
+export const PRIVATE_NOTES_WITHHELD =
+  "private note(s) — scratchpad notes attached to no document, project or equipment — are personal to their authors " +
+  "(only the author can read one in the app) and are NOT in this backup.";
+
+/** A standalone note: its author's private scratchpad (notes_standalone_own). */
+export function isPrivateNote(row: unknown): boolean {
+  const r = (row ?? {}) as { document_id?: unknown; project_id?: unknown; asset_id?: unknown };
+  return r.document_id == null && r.project_id == null && r.asset_id == null;
+}
+
+/** Remove the private notes from the dump; returns how many were withheld. */
+function withholdPrivateNotes(tables: Record<string, unknown[]>, tableCounts: DataExportManifest["tables"]): number {
+  const rows = tables.notes;
+  if (!Array.isArray(rows)) return 0;
+  const kept = rows.filter((r) => !isPrivateNote(r));
+  const withheld = rows.length - kept.length;
+  if (withheld === 0) return 0;
+  tables.notes = kept;
+  const entry = tableCounts.find((t) => t.name === "notes");
+  if (entry) entry.rowCount = kept.length;
+  return withheld;
+}
+
+/** BKP-8 Done-when 3: how many handed-out files one DATA_EXPORT_FILES audit row names. */
+export const EXPORT_FILES_PER_AUDIT_ROW = 500;
+/** Audit rows per insert statement (each row carries up to 500 file entries). */
+const EXPORT_FILE_ROWS_PER_INSERT = 10;
+
+/** The DATA_EXPORT row, then the DATA_EXPORT_FILES rows naming every file the
+ *  export hands out (a presigned URL in the envelope; the server ZIP embeds
+ *  from those URLs) — with the document and revision for a revision's file,
+ *  so a recall can ask "who took which drawing". Every insert is CHECKED and
+ *  throws: the caller refuses the export (BKP-13). A machine run (no
+ *  exporter uid) carries user_id NULL and the machine's label in user_email
+ *  (DEC-44 (A&O P3)), never a string in the uuid column. */
+async function recordExport(
+  sb: SupabaseClient,
+  params: { orgId: string; exporterUserId: string | null; exporterEmail: string; exporterRole?: string | null; auditDetails?: Record<string, unknown> },
+  info: {
+    startedAt: string; tableCount: number; totalRows: number; totalBytes: number; presignedUrlExpiresIn: number; privateNotes: number;
+    files: DataExportEnvelope["files"]; versions: Array<Record<string, unknown>>;
+  },
+): Promise<void> {
+  const actor = {
+    org_id: params.orgId,
+    user_id: params.exporterUserId,
+    user_email: params.exporterEmail,
+    user_role: params.exporterRole ?? null,
+  };
+  const handedOut = info.files.filter((f) => !!f.presignedUrl);
+  const byKey = new Map<string, { documentId: string | null; versionId: string | null }>();
+  for (const v of info.versions) {
+    const ref = { documentId: typeof v.record_id === "string" ? v.record_id : null, versionId: typeof v.id === "string" ? v.id : null };
+    for (const col of ["file_url", "source_file_key"]) {
+      const k = v[col];
+      if (typeof k === "string" && k && !byKey.has(k)) byKey.set(k, ref);
+    }
+  }
+  const parts = Math.ceil(handedOut.length / EXPORT_FILES_PER_AUDIT_ROW);
+  const { error } = await sb.from("audit_logs").insert({
+    action: "DATA_EXPORT",
+    resource_id: params.orgId,
+    resource_type: "org",
+    ...actor,
+    details: {
+      tableCount: info.tableCount,
+      totalRows: info.totalRows,
+      fileCount: info.files.length,
+      totalBytes: info.totalBytes,
+      startedAt: info.startedAt,
+      presignedUrls: handedOut.length,
+      presignedUrlExpiresIn: info.presignedUrlExpiresIn,
+      fileRecordRows: parts,
+      ...(info.privateNotes > 0 ? { withheld: { privateNotes: info.privateNotes } } : {}),
+      ...(params.auditDetails ?? {}),
+    },
+  });
+  if (error) {
+    throw new Error(`The export could not be recorded in the audit trail (${error.message}) — it was refused, and nothing was exported.`);
+  }
+  const rows = Array.from({ length: parts }, (_, i) => ({
+    action: "DATA_EXPORT_FILES",
+    resource_id: params.orgId,
+    resource_type: "org",
+    ...actor,
+    details: {
+      startedAt: info.startedAt,
+      part: i + 1,
+      parts,
+      files: handedOut.slice(i * EXPORT_FILES_PER_AUDIT_ROW, (i + 1) * EXPORT_FILES_PER_AUDIT_ROW).map((f) => {
+        const ref = byKey.get(f.path);
+        return ref ? { path: f.path, documentId: ref.documentId, versionId: ref.versionId } : { path: f.path };
+      }),
+    },
+  }));
+  for (let i = 0; i < rows.length; i += EXPORT_FILE_ROWS_PER_INSERT) {
+    const { error: filesErr } = await sb.from("audit_logs").insert(rows.slice(i, i + EXPORT_FILE_ROWS_PER_INSERT));
+    if (filesErr) {
+      throw new Error(`The list of files this export hands out could not be recorded in the audit trail (${filesErr.message}) — it was refused, and nothing was exported.`);
+    }
+  }
 }
 
 /** Storage keys whose binaries were shed to offline space archives (plus the

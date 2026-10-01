@@ -4,14 +4,50 @@
 // PATCH treats credential fields as set-only-if-provided. Omitting them
 // leaves the existing encrypted value in place, which lets the UI hide
 // the actual key after creation and still let the user edit other fields.
+//
+// Admin-only (admin-and-org BKP-8 / BKP-13), through the one gate. ENABLING a
+// destination (turning a disabled one on) is held to three rules:
+//   - BKP-11 Done-when 3: it must carry its credentials — an s3 / r2 row its
+//     access key and secret, a webhook row its signing secret — stored or in
+//     this request. A restored destination lands disabled with none of them
+//     (lib/dataRestore.ts landRestoredRow), so this is where an Admin must
+//     re-enter them, and, for a webhook, look at the URL the backup named;
+//   - BILL-3 Done-when 3: a bucket row is the Growth feature, so enabling one
+//     passes the same plan gate as creating one (the scheduled runner
+//     disables a bucket destination whose plan lapsed);
+//   - BKP-13 Done-when 3: every other controller is told, as they are when an
+//     enabled destination is pointed somewhere new.
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret } from "@/lib/serverCrypto";
 import { computeNextRunAt } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
+import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
-const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
+/** The stored row PATCH judges a change against. */
+interface CurrentDestination {
+  enabled?: boolean | null;
+  name?: string | null;
+  destination_type?: string | null;
+  schedule_kind?: string | null;
+  endpoint?: string | null;
+  bucket?: string | null;
+  prefix?: string | null;
+  webhook_url?: string | null;
+  retention_days?: number | null;
+  access_key_id_encrypted?: string | null;
+  secret_access_key_encrypted?: string | null;
+  webhook_secret_encrypted?: string | null;
+}
+const CURRENT_COLUMNS =
+  "enabled, name, destination_type, schedule_kind, endpoint, bucket, prefix, webhook_url, retention_days, " +
+  "access_key_id_encrypted, secret_access_key_encrypted, webhook_secret_encrypted";
+/** Where a destination sends the workspace: changing one of these on an enabled destination re-points the channel. */
+const TARGET_FIELDS = ["destination_type", "endpoint", "bucket", "prefix", "webhook_url"] as const;
+
+const given = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
+const norm = (v: unknown): string => String(v ?? "").trim();
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -42,8 +78,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   let body: DestinationPatchBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const orgId = body?.orgId;
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const orgId = String(body?.orgId ?? "");
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   // XEDGE-8: the Growth gate that create applies must hold on edit too —
@@ -53,6 +89,44 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
     if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
+
+  // The row as stored, read CHECKED: every rule below judges the change against it.
+  const { data: currentRow, error: currentErr } = await auth.admin
+    .from("export_destinations")
+    .select(CURRENT_COLUMNS)
+    .eq("id", id).eq("org_id", orgId)
+    .maybeSingle();
+  if (currentErr) return NextResponse.json({ error: `Could not read the destination (${currentErr.message}) — nothing was changed.` }, { status: 500 });
+  if (!currentRow) return NextResponse.json({ error: "Destination not found" }, { status: 404 });
+  const current = currentRow as CurrentDestination;
+
+  const enabling = body.enabled === true && current.enabled !== true;
+  const nextEnabled = "enabled" in body ? body.enabled === true : current.enabled === true;
+  if (enabling) {
+    // BKP-11 Done-when 3: a destination is enabled only with its credentials.
+    const nextType = norm("destination_type" in body ? body.destination_type : current.destination_type);
+    if (nextType === "webhook" && !given(body.webhook_secret) && !current.webhook_secret_encrypted) {
+      return NextResponse.json(
+        { error: "This webhook destination has no signing secret. Check its URL is yours, enter a signing secret, and enable it again — a destination restored from a backup arrives without one." },
+        { status: 409 },
+      );
+    }
+    if ((nextType === "s3" || nextType === "r2")
+        && ((!given(body.access_key_id) && !current.access_key_id_encrypted) || (!given(body.secret_access_key) && !current.secret_access_key_encrypted))) {
+      return NextResponse.json(
+        { error: "This destination has no access key and secret. Enter them, and enable it again — a destination restored from a backup arrives without credentials." },
+        { status: 409 },
+      );
+    }
+    // BILL-3 Done-when 3: enabling a bucket destination is the act the plan
+    // gate guards (a body that sets the bucket was gated above).
+    if (norm("bucket" in body ? body.bucket : current.bucket) && !("bucket" in body && norm(body.bucket))) {
+      const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
+      if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
+    }
+  }
+  const retargeted = !enabling && nextEnabled
+    && TARGET_FIELDS.some((f) => f in body && norm(body[f]) !== norm(current[f]));
 
   const updates: Record<string, unknown> = { updated_by: auth.userId, updated_at: new Date().toISOString() };
   const fields: (keyof DestinationPatchBody)[] = [
@@ -67,13 +141,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // that adds retention to a prefix-less destination, or clears the prefix on
   // a retained one, would arm a purge that scans the whole bucket.
   if ("retention_days" in body || "prefix" in body) {
-    const { data: current } = await auth.admin
-      .from("export_destinations")
-      .select("prefix, retention_days")
-      .eq("id", id).eq("org_id", orgId)
-      .maybeSingle();
-    const nextPrefix = String(("prefix" in body ? body.prefix : current?.prefix) ?? "").trim();
-    const nextRetention = Number(("retention_days" in body ? body.retention_days : current?.retention_days) ?? 0);
+    const nextPrefix = String(("prefix" in body ? body.prefix : current.prefix) ?? "").trim();
+    const nextRetention = Number(("retention_days" in body ? body.retention_days : current.retention_days) ?? 0);
     if (nextRetention > 0 && !nextPrefix) {
       return NextResponse.json(
         { error: "Retention requires a prefix: the purge only ever deletes this app's export archives under the destination's own prefix. Set a Prefix or clear Retention." },
@@ -127,14 +196,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     details: { changedFields: Object.keys(updates) },
   });
 
-  return NextResponse.json({ destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined } });
+  // BKP-13 Done-when 3: enabling a destination, or re-pointing an enabled
+  // one, tells every other controller. A refused alert is said, never
+  // swallowed; the change stands either way.
+  let warning: string | undefined;
+  if (enabling || retargeted) {
+    const saved = data as CurrentDestination & { id?: string };
+    const alert = await alertAdminsOfDestination(auth.admin, {
+      orgId, actorUserId: auth.userId, actorEmail: auth.email, change: enabling ? "enabled" : "retargeted",
+      destinationId: id, destinationName: String(saved?.name ?? current.name ?? id),
+      destinationType: String(saved?.destination_type ?? current.destination_type ?? ""),
+      enabled: true, schedule: String(saved?.schedule_kind ?? current.schedule_kind ?? "manual"),
+    }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
+    if (!alert.ok) {
+      console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
+      warning = `Saved, but the other Admins could not be alerted: ${alert.error}`;
+    }
+  }
+
+  return NextResponse.json({
+    destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined },
+    ...(warning ? { warning } : {}),
+  });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   const { error } = await auth.admin

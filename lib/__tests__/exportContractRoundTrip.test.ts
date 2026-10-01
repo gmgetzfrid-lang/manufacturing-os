@@ -167,8 +167,10 @@ function seedSource() {
     markup_requests: [{ id: "mr-1", org_id: SRC, document_id: "doc-1", requested_by_user_id: "u-alice", requested_from_user_id: "u-alice", status: "done", shared_markup_url: K.markup }],
     plot_plans: [{ id: "pp-1", org_id: SRC, name: "Unit 100", image_path: K.plot, markers: [] }],
     org_configurations: [{ id: "cfg-1", org_id: SRC, key: "branding", data: { logoPath: K.logo } }],
-    // a key no registered column names (a future evidence field, inside JSON)
-    notes: [{ id: "n-1", org_id: SRC, body: "Field photo", task_meta: { evidence: [{ path: K.unregistered }] } }],
+    // a key no registered column names (a future evidence field, inside JSON). The note is on a
+    // project: a standalone note is its author's private scratchpad and is withheld from every
+    // export (admin-and-org BKP-8, lib/dataExport.ts withholdPrivateNotes).
+    notes: [{ id: "n-1", org_id: SRC, project_id: "proj-1", body: "Field photo", task_meta: { evidence: [{ path: K.unregistered }] } }],
     // history, not a reference
     audit_logs: [{ id: "al-1", org_id: SRC, action: "STORAGE_DELETE", details: { path: MENTIONED_ONLY } }],
     // BKP-1: live bearer credentials
