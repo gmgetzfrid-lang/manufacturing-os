@@ -20,8 +20,13 @@
 //   REGIONS — connected clusters named after their strongest anchor, so the
 //     zoomed-out map reads like a neighborhood map ("Crude Unit" over here,
 //     "Standards" over there) and spatial memory can do its job.
+//
+// Everything here is computed over the nodes and edges it is GIVEN — and the
+// document side of the org graph is the reader's own (documents RLS), so the
+// same plant can show a controller and a viewer different orphans, hubs and
+// bridges (GM-6). `basis` says so, with the count the reader cannot see.
 
-import type { GraphNode, GraphEdge, GraphNodeType } from "@/lib/orgGraph";
+import type { GraphNode, GraphEdge, GraphNodeType, GraphAccess } from "@/lib/orgGraph";
 
 export interface GraphInsights {
   orphans: GraphNode[];
@@ -32,6 +37,20 @@ export interface GraphInsights {
     sideA: number; sideB: number;
   }>;
   regions: Array<{ label: string; ids: string[] }>;
+  /** GM-6 — what these answers were computed over. Always viewer-scoped:
+   *  `outsideAccess` documents (when known) are not in them, and `note` is
+   *  the line to show beside the counts. */
+  basis: { viewerScoped: true; outsideAccess: number | null; note: string };
+}
+
+/** GM-6 — the label the insights carry: computed under the reader's ACL. */
+export function insightsBasisNote(access?: GraphAccess | null): string {
+  const n = access?.outsideAccess ?? null;
+  if (n && n > 0) {
+    return `Computed on the documents you can see — ${n.toLocaleString("en-US")} more ${n === 1 ? "is" : "are"} outside your access, so another reader may get different answers.`;
+  }
+  if (n === 0) return "Computed on every document in the org — you can see all of them.";
+  return "Computed on the documents you can see.";
 }
 
 /** Library-membership edges are organizational, not contextual — every
@@ -42,13 +61,18 @@ const contextEdges = (edges: GraphEdge[]) => edges.filter((e) => e.type !== "lib
  *  dropped at degree 0 during assembly, so only content nodes remain. */
 const ORPHANABLE: ReadonlySet<GraphNodeType> = new Set(["document", "asset"] as GraphNodeType[]);
 
-/** Preference order for naming a region: the unit anchors the neighborhood
- *  if one is present, then the dominant library/project/asset. */
-const REGION_ANCHOR_ORDER: GraphNodeType[] = ["unit", "library", "project", "asset", "plant", "document"];
+/** Preference for naming a region (lower wins): the unit anchors the
+ *  neighborhood if one is present, then the dominant library/project/asset.
+ *  A Record, so a new GraphNodeType that is not ranked here is a compile
+ *  error (GM-9 — "plot" was missing from the old list, indexOf answered -1,
+ *  and a plot plan outranked every unit). */
+const REGION_ANCHOR_RANK: Record<GraphNodeType, number> = {
+  unit: 0, library: 1, project: 2, asset: 3, plant: 4, document: 5, plot: 6,
+};
 
 export function computeInsights(
   nodes: GraphNode[], edges: GraphEdge[],
-  opts?: { hubCount?: number; minBridgeSide?: number; minRegionSize?: number },
+  opts?: { hubCount?: number; minBridgeSide?: number; minRegionSize?: number; access?: GraphAccess | null },
 ): GraphInsights {
   const hubCount = opts?.hubCount ?? 12;
   const minBridgeSide = opts?.minBridgeSide ?? 4;
@@ -74,16 +98,18 @@ export function computeInsights(
     .sort((x, y) => y.degree - x.degree)
     .slice(0, hubCount);
 
-  // ── Adjacency (dedup parallel edges into one logical link, but remember
-  // multiplicity: a pair connected twice can never be a bridge) ─────────
+  // ── Adjacency — one logical link per node PAIR (GM-5) ───────────────
+  // Several edge types between the same two nodes — a drawing both tagged to
+  // a vessel (document_assets) and naming it in its text (entity_mentions),
+  // a flow in each direction — are one relationship between those two
+  // things, not redundant paths: remove the pair and the clusters still
+  // fall apart. Bridges are therefore found on the pair graph, and a pair is
+  // never disqualified for carrying more than one edge type.
   const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-  const multiplicity = new Map<string, number>();
-  for (const e of web) {
-    const k = pairKey(e.a, e.b);
-    multiplicity.set(k, (multiplicity.get(k) ?? 0) + 1);
-  }
+  const pairs = new Set<string>();
+  for (const e of web) pairs.add(pairKey(e.a, e.b));
   const adj = new Map<string, string[]>();
-  for (const k of multiplicity.keys()) {
+  for (const k of pairs) {
     const [a, b] = k.split("|");
     (adj.get(a) ?? adj.set(a, []).get(a)!).push(b);
     (adj.get(b) ?? adj.set(b, []).get(b)!).push(a);
@@ -132,14 +158,14 @@ export function computeInsights(
         } else if (v !== parent) {
           low.set(u, Math.min(low.get(u)!, disc.get(v)!));
         }
-        // v === parent: skip exactly one edge back to the parent —
-        // multiplicity handles genuine parallel edges below.
+        // v === parent: the one pair back to the parent (adjacency holds
+        // each pair once, so there is no parallel edge to tell apart).
       } else {
         stack.pop();
         if (parent !== null) {
           low.set(parent, Math.min(low.get(parent)!, low.get(u)!));
           subtree.set(parent, subtree.get(parent)! + subtree.get(u)!);
-          if (low.get(u)! > disc.get(parent)! && (multiplicity.get(pairKey(parent, u)) ?? 0) === 1) {
+          if (low.get(u)! > disc.get(parent)!) {
             bridgePairs.push({ aId: parent, bId: u, childSide: subtree.get(u)! });
           }
         }
@@ -163,12 +189,12 @@ export function computeInsights(
   for (const members of componentMembers) {
     if (members.length < minRegionSize) continue;
     let anchor: GraphNode | null = null;
-    let anchorRank = REGION_ANCHOR_ORDER.length;
+    let anchorRank = Number.POSITIVE_INFINITY;
     let anchorDegree = -1;
     for (const id of members) {
       const n = byId.get(id);
       if (!n) continue;
-      const rank = REGION_ANCHOR_ORDER.indexOf(n.type);
+      const rank = REGION_ANCHOR_RANK[n.type] ?? Number.POSITIVE_INFINITY;
       const d = degree.get(id) ?? 0;
       if (rank < anchorRank || (rank === anchorRank && d > anchorDegree)) {
         anchor = n; anchorRank = rank; anchorDegree = d;
@@ -178,5 +204,8 @@ export function computeInsights(
   }
   regions.sort((a, b) => b.ids.length - a.ids.length);
 
-  return { orphans, hubs, bridges, regions: regions.slice(0, 12) };
+  return {
+    orphans, hubs, bridges, regions: regions.slice(0, 12),
+    basis: { viewerScoped: true, outsideAccess: opts?.access?.outsideAccess ?? null, note: insightsBasisNote(opts?.access) },
+  };
 }
