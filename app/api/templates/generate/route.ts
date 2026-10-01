@@ -19,18 +19,26 @@
 //
 // The model never touches the file: it supplies words, docxtemplater
 // injects them into the user's own .docx, so formatting is exactly the
-// template's. Drafting spends the caller's own AI key, metered and capped
-// like every other model call in the app.
+// template's. Drafting spends the caller's own AI key behind the one gate
+// stack (lib/ai/aiGates — own key, allowlist, the signed agreement, the cap
+// over every op; GOV-11 / PR-12), each document's call reserved before it is
+// made and settled after (GOV-13).
+//
+// PR-6: a draft whose reply cannot be read as the requested fields — no JSON
+// object, JSON that does not parse (often a reply cut off at its length
+// limit), or a field left out — FAILS: the batch answers an error naming the
+// row, and no document with silently blank AI sections is ever returned. A
+// field the model deliberately wrote as "" is kept as written.
 
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { memberDisplayName } from "@/lib/orgMemberName";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
-import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import { assertAiGates, type AiGatePass } from "@/lib/ai/aiGates";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { renderTemplate, TemplateRenderError } from "@/lib/docxRender";
 import { parseWorkbook } from "@/lib/xlsxData";
 import { fetchBytes } from "@/lib/r2Bytes";
@@ -68,6 +76,40 @@ type TemplateRow = {
  *  render action (every rendered file is held in memory before the zip), and
  *  the client (lib/outputTemplates.ts RENDER_CHUNK) slices to it. */
 const MAX_ROWS_PER_CALL = 25;
+
+/** PR-6: one document's draft could not be read as its fields. */
+class DraftParseError extends Error {
+  constructor(public rowLabel: string, public reason: string) {
+    super(`The AI's draft for ${rowLabel} couldn't be read — ${reason}`);
+    this.name = "DraftParseError";
+  }
+}
+
+/** PR-6: the reply → the requested fields, or why it is not usable. A
+ *  missing key is a failed draft (it would render as a blank section); a key
+ *  present as "" or null is the model's own answer and is kept. */
+function parseDraftFields(text: string, tags: readonly string[]):
+  { ok: true; values: Record<string, string> } | { ok: false; reason: string } {
+  const t = text.trim();
+  const json = t.startsWith("{") ? t : (t.match(/\{[\s\S]*\}/)?.[0] ?? null);
+  if (!json) return { ok: false, reason: "the reply held no JSON object" };
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch {
+    return { ok: false, reason: "the reply's JSON did not parse (a reply cut off at its length limit does this)" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "the reply was not an object of fields" };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const missing = tags.filter((tag) => !Object.prototype.hasOwnProperty.call(obj, tag));
+  if (missing.length > 0) return { ok: false, reason: `the reply left out ${missing.join(", ")}` };
+  const values: Record<string, string> = {};
+  for (const tag of tags) {
+    const v = obj[tag];
+    values[tag] = typeof v === "string" ? v.trim() : v == null ? "" : String(v);
+  }
+  return { ok: true, values };
+}
 
 export async function POST(req: NextRequest) {
   let body: {
@@ -195,33 +237,38 @@ export async function POST(req: NextRequest) {
     };
 
     const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
-    let providerUsed = "", modelUsed = "";
+    let modelUsed = "";
 
-    // Only load an AI key if prose actually has to be written.
-    let conn: { provider: AiProviderId; model: string; api_key: string } | null = null;
-    if (aiFields.length > 0) {
-      const { data: c } = await supabaseAdmin
-        .from("ai_connections").select("provider, model, api_key")
-        .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
-      if (!c || !ALLOWED_PROVIDERS.includes(c.provider as AiProviderId)) {
+    /** A gate refusal, said in this route's words. */
+    const refusal = (e: GovernedCallError) => {
+      if (e.status === 412) {
         return bad(
           "This template has AI-written sections, so it needs your own API key — add a Claude or " +
           "OpenAI key in AI settings (Knowledge → AI settings).",
           412,
         );
       }
-      const [spent, cap] = await Promise.all([
-        getMonthUsage(orgId, user.id), getCapUsd(orgId, user.id),
-      ]);
-      if (cap > 0 && spent.spentUsd >= cap) {
+      if (e.status === 402) {
         return bad(
-          `Monthly AI budget reached — $${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}. ` +
-          "It resets on the 1st; an Admin can raise the cap in AI settings.",
+          `${e.message} It resets on the 1st; someone who manages AI caps (an Admin, unless your ` +
+          "workspace granted it to others) can raise it in AI settings.",
           402,
         );
       }
-      conn = { provider: c.provider as AiProviderId, model: c.model as string, api_key: openAiKey(c.api_key as string) };
-      providerUsed = conn.provider; modelUsed = conn.model;
+      return NextResponse.json({ error: e.message, ...(e.details ?? {}) }, { status: e.status });
+    };
+
+    // Only gate an AI key if prose actually has to be written: own key →
+    // allowlist → agreement → cap over every op (GOV-11 / PR-12).
+    let gate: AiGatePass | null = null;
+    if (aiFields.length > 0) {
+      try {
+        gate = await assertAiGates({ orgId, userId: user.id, op: "templateDraft" });
+      } catch (e) {
+        if (e instanceof GovernedCallError) return refusal(e);
+        throw e;
+      }
+      modelUsed = gate.connection.model;
     }
 
     const styleGuide = (tpl.example_text ?? "").trim();
@@ -243,46 +290,43 @@ export async function POST(req: NextRequest) {
       .map((f) => `- ${f.tag}: ${f.guidance || f.label}`)
       .join("\n");
 
-    const draftOne = async (rowsForDoc: Array<Record<string, string>>, known: Record<string, string>) => {
-      if (aiFields.length === 0 || !conn) return {} as Record<string, string>;
+    const draftOne = async (rowsForDoc: Array<Record<string, string>>, known: Record<string, string>, rowLabel: string) => {
+      if (aiFields.length === 0 || !gate) return {} as Record<string, string>;
       const dataBlock = rowsForDoc.length === 1
         ? Object.entries(rowsForDoc[0]).map(([k, v]) => `${k}: ${v}`).join("\n")
         : rowsForDoc.map((r, i) =>
             `ROW ${i + 1}\n` + Object.entries(r).map(([k, v]) => `  ${k}: ${v}`).join("\n")).join("\n\n");
-      const out = await callAiModel({
-        provider: conn.provider, model: conn.model, apiKey: conn.api_key,
-        system,
-        user:
-          `FIELDS TO WRITE (JSON keys):\n${fieldSpec}\n\n` +
-          `ALREADY-KNOWN VALUES (do not contradict):\n${Object.entries(known)
-            .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n") || "(none)"}\n\n` +
-          `SOURCE DATA:\n${dataBlock}`,
-        maxTokens: 3000,
-      });
+      const userText =
+        `FIELDS TO WRITE (JSON keys):\n${fieldSpec}\n\n` +
+        `ALREADY-KNOWN VALUES (do not contradict):\n${Object.entries(known)
+          .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join("\n") || "(none)"}\n\n` +
+        `SOURCE DATA:\n${dataBlock}`;
+      const { provider, model, apiKey } = gate.connection;
+      // GOV-13: this document's worst case, reserved before the call.
+      const reservation = await gate.reserve({ inputChars: system.length + userText.length, maxTokens: 3000 });
+      let out: Awaited<ReturnType<typeof callAiModel>>;
+      try {
+        out = await callAiModel({ provider: provider as AiProviderId, model, apiKey, system, user: userText, maxTokens: 3000 });
+      } catch (e) {
+        await reservation.settle({ usage: { inputTokens: 0, outputTokens: 0 }, ok: false });
+        throw e;
+      }
       usage.inputTokens += out.usage.inputTokens;
       usage.outputTokens += out.usage.outputTokens;
-      modelUsed = conn.model;
-      // Tolerant JSON parse — models occasionally wrap in prose/fences.
-      const text = out.text.trim();
-      const json = text.startsWith("{") ? text : (text.match(/\{[\s\S]*\}/)?.[0] ?? "{}");
-      try {
-        const parsed = JSON.parse(json) as Record<string, unknown>;
-        const clean: Record<string, string> = {};
-        for (const f of aiFields) {
-          const v = parsed[f.tag];
-          clean[f.tag] = typeof v === "string" ? v.trim() : v == null ? "" : String(v);
-        }
-        return clean;
-      } catch {
-        return Object.fromEntries(aiFields.map((f) => [f.tag, ""])) as Record<string, string>;
-      }
+      // Tolerant of prose / fences around the object — never of a missing or
+      // unreadable one (PR-6).
+      const parsed = parseDraftFields(out.text, aiFields.map((f) => f.tag));
+      await reservation.settle({ usage: out.usage, ok: parsed.ok });
+      if (!parsed.ok) throw new DraftParseError(rowLabel, parsed.reason);
+      return parsed.values;
     };
 
     const documents: Array<{ values: Record<string, string>; filename: string; sourceRow?: number }> = [];
+    let stopped: string | null = null;
     try {
       if (mode === "summary") {
         const known = baseValues(slice[0] ?? {});
-        const drafted = await draftOne(slice, known);
+        const drafted = await draftOne(slice, known, "the summary document");
         const values = { ...known, ...drafted };
         documents.push({
           values,
@@ -291,7 +335,16 @@ export async function POST(req: NextRequest) {
       } else {
         for (let i = 0; i < slice.length; i++) {
           const known = baseValues(slice[i]);
-          const drafted = await draftOne([slice[i]], known);
+          let drafted: Record<string, string>;
+          try {
+            drafted = await draftOne([slice[i]], known, `row ${offset + i + 1}`);
+          } catch (e) {
+            // The cap (or the ledger) stopped the batch part-way: keep what
+            // was drafted and paid for; the next slice starts at this row
+            // and answers the refusal itself.
+            if (e instanceof GovernedCallError && documents.length > 0) { stopped = e.message; break; }
+            throw e;
+          }
           const values = { ...known, ...drafted };
           documents.push({
             values,
@@ -304,25 +357,22 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch (e) {
-      if (usage.inputTokens + usage.outputTokens > 0) {
-        await recordAskUsage({
-          orgId, userId: user.id, provider: providerUsed || "none",
-          model: modelUsed, usage, ok: false, op: "templateDraft",
-        });
+      // Every call already settled its own metering row (GOV-13).
+      if (e instanceof DraftParseError) {
+        return bad(
+          `${e.message}, so no document was produced for this batch and nothing was left blank. ` +
+          "Draft again to retry.",
+          502,
+        );
       }
+      if (e instanceof GovernedCallError) return refusal(e);
       if (e instanceof AiCallError) return bad(e.message, e.status >= 400 && e.status < 600 ? e.status : 502);
       return bad(`Drafting failed: ${(e as Error).message}`, 502);
     }
 
-    if (usage.inputTokens + usage.outputTokens > 0) {
-      await recordAskUsage({
-        orgId, userId: user.id, provider: providerUsed, model: modelUsed,
-        usage, ok: true, op: "templateDraft",
-      });
-    }
-
+    const drafted = mode === "summary" ? slice.length : documents.length;
     const nextOffset = mode === "summary" ? null
-      : (offset + slice.length < sheetData.rows.length ? offset + slice.length : null);
+      : (offset + drafted < sheetData.rows.length ? offset + drafted : null);
 
     return NextResponse.json({
       documents,
@@ -331,6 +381,7 @@ export async function POST(req: NextRequest) {
       sheetNames: sheetData.sheetNames,
       rowCount: sheetData.rows.length,
       nextOffset,
+      ...(stopped ? { stopped } : {}),
       estCostUsd: usage.inputTokens + usage.outputTokens > 0
         ? estimateCostUsd(modelUsed, usage) : 0,
     });
