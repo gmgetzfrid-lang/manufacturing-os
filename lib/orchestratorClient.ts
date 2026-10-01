@@ -21,6 +21,13 @@ export interface PendingAction {
   parameters: Record<string, unknown>;
   /** Set when confirming hands off to the real UI flow instead of executing. */
   href?: string;
+  /** ORCH-4: the server-side record of this proposal. Confirming sends this
+   *  id — never the tool or its parameters — and runs the stored action once. */
+  proposalId?: string;
+  /** When the stored proposal stops being confirmable (ISO). */
+  expiresAt?: string;
+  /** Set when the proposal could not be stored: it cannot be confirmed. */
+  unavailable?: string;
 }
 
 /** A document the answer names, resolved to something clickable. */
@@ -77,25 +84,43 @@ export async function askOrchestrator(
 }
 
 /**
- * Execute one approved write action, exactly as proposed. No model call —
- * the stored tool + parameters run server-side under the caller's own role
- * checks, so "Confirm" always performs precisely what the card said.
+ * Execute one proposed write action, exactly as proposed (ORCH-4). No model
+ * call, and nothing the browser holds decides what runs: the request names
+ * the stored proposal, and the server runs ITS tool and parameters, once,
+ * under the caller's own checks. A refusal (expired, already run, not
+ * yours, a page opened before an update) throws with the server's reason.
  */
 export async function executeAction(
   orgId: string,
-  action: Pick<PendingAction, "tool" | "parameters">,
+  action: Pick<PendingAction, "proposalId" | "fingerprint" | "unavailable">,
 ): Promise<Record<string, unknown>> {
+  if (!action.proposalId) {
+    throw new Error(action.unavailable || "This proposal can't be confirmed. Ask the assistant again.");
+  }
+  const data = await postExecute({ orgId, proposalId: action.proposalId, fingerprint: action.fingerprint });
+  return (data.result as Record<string, unknown> | undefined) ?? {};
+}
+
+/** Dismiss a proposal: it can never be run afterwards (ORCH-4). */
+export async function dismissAction(
+  orgId: string,
+  action: Pick<PendingAction, "proposalId">,
+): Promise<void> {
+  if (!action.proposalId) return;
+  await postExecute({ orgId, proposalId: action.proposalId, decision: "dismiss" });
+}
+
+async function postExecute(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not authenticated");
-
   const res = await fetch("/api/orchestrator/execute", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify({ orgId, tool: action.tool, parameters: action.parameters }),
+    body: JSON.stringify(body),
   });
-  const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: Record<string, unknown>; error?: string } | null;
+  const data = (await res.json().catch(() => null)) as ({ ok?: boolean; error?: string } & Record<string, unknown>) | null;
   if (!res.ok || !data?.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-  return data.result ?? {};
+  return data;
 }
 
 /** Plain-language label for a tool name, for the "what I did" trace. */

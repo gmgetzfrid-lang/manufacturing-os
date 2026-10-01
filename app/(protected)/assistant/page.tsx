@@ -23,7 +23,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import AssistantAnswer from "@/components/assistant/AssistantAnswer";
 import {
-  askOrchestrator, executeAction, describeTool,
+  askOrchestrator, executeAction, dismissAction, describeTool,
   type OrchestratorReply, type PendingAction, type RunStep,
 } from "@/lib/orchestratorClient";
 
@@ -36,6 +36,8 @@ interface Exchange {
   approved: string[];
   /** Per-fingerprint outcome of a confirmed action ("sent", an error, …). */
   outcomes: Record<string, { ok: boolean; note: string }>;
+  /** Fingerprints the user dismissed — never runnable afterwards (ORCH-4). */
+  dismissed?: string[];
   /** Fingerprint of the action currently executing, if any. */
   executing?: string | null;
 }
@@ -96,8 +98,10 @@ export default function AssistantPage() {
   }, [busy, run]);
 
   // Confirming a write executes EXACTLY the proposed action server-side —
-  // stored tool + stored parameters, no second model run. What the card said
-  // is what happens, every time.
+  // the STORED proposal (ORCH-4): the card sends its proposal id, the server
+  // runs its own copy of the tool and parameters, once. What the card said
+  // is what happens; a refusal (expired, already run, a stale page) is shown
+  // on the card in the server's words.
   const confirm = useCallback(async (ex: Exchange, action: PendingAction) => {
     if (!activeOrgId) return;
     const fp = action.fingerprint;
@@ -117,6 +121,25 @@ export default function AssistantPage() {
             approved: outcome.ok ? [...x.approved, fp] : x.approved,
             outcomes: { ...x.outcomes, [fp]: outcome },
           }
+        : x
+    )));
+  }, [activeOrgId]);
+
+  // Dismissing marks the stored proposal so it can never run (ORCH-4).
+  const dismiss = useCallback(async (ex: Exchange, action: PendingAction) => {
+    if (!activeOrgId) return;
+    const fp = action.fingerprint;
+    let outcome: { ok: boolean; note: string } | null = null;
+    try {
+      await dismissAction(activeOrgId, action);
+    } catch (e) {
+      outcome = { ok: false, note: e instanceof Error ? e.message : "Couldn't dismiss it." };
+    }
+    setExchanges((xs) => xs.map((x) => (
+      x.id === ex.id
+        ? outcome
+          ? { ...x, outcomes: { ...x.outcomes, [fp]: outcome } }
+          : { ...x, dismissed: [...(x.dismissed ?? []), fp] }
         : x
     )));
   }, [activeOrgId]);
@@ -166,7 +189,7 @@ export default function AssistantPage() {
           )}
 
           {exchanges.map((ex) => (
-            <ExchangeView key={ex.id} exchange={ex} onConfirm={confirm} />
+            <ExchangeView key={ex.id} exchange={ex} onConfirm={confirm} onDismiss={dismiss} />
           ))}
 
           {busy && (
@@ -207,9 +230,13 @@ export default function AssistantPage() {
 }
 
 function ExchangeView({
-  exchange, onConfirm,
-}: { exchange: Exchange; onConfirm: (ex: Exchange, a: PendingAction) => void }) {
-  const { question, reply, error, approved, outcomes, executing } = exchange;
+  exchange, onConfirm, onDismiss,
+}: {
+  exchange: Exchange;
+  onConfirm: (ex: Exchange, a: PendingAction) => void;
+  onDismiss: (ex: Exchange, a: PendingAction) => void;
+}) {
+  const { question, reply, error, approved, outcomes, executing, dismissed } = exchange;
   const [showTrace, setShowTrace] = useState(false);
 
   return (
@@ -241,9 +268,11 @@ function ExchangeView({
               key={action.fingerprint}
               action={action}
               done={approved.includes(action.fingerprint)}
+              dismissed={(dismissed ?? []).includes(action.fingerprint)}
               outcome={outcomes[action.fingerprint]}
               busy={executing === action.fingerprint}
               onConfirm={() => onConfirm(exchange, action)}
+              onDismiss={() => onDismiss(exchange, action)}
             />
           ))}
 
@@ -296,11 +325,11 @@ function StepView({ step }: { step: RunStep }) {
 }
 
 function PendingCard({
-  action, done, outcome, busy, onConfirm,
+  action, done, dismissed, outcome, busy, onConfirm, onDismiss,
 }: {
-  action: PendingAction; done: boolean;
+  action: PendingAction; done: boolean; dismissed: boolean;
   outcome?: { ok: boolean; note: string };
-  busy: boolean; onConfirm: () => void;
+  busy: boolean; onConfirm: () => void; onDismiss: () => void;
 }) {
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
@@ -317,6 +346,13 @@ function PendingCard({
               <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
                 <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? ` — ${outcome.note}` : ""}
               </span>
+            ) : dismissed ? (
+              <span className="text-xs font-medium text-slate-500">Dismissed — it won&apos;t run.</span>
+            ) : !action.href && !action.proposalId ? (
+              // Not stored server-side, so not confirmable (ORCH-4).
+              <span className="text-xs font-medium text-rose-700">
+                {action.unavailable || "This proposal can't be confirmed. Ask the assistant again."}
+              </span>
             ) : action.href ? (
               // Handed off rather than executed: the real flow enforces guards
               // this assistant must not shortcut.
@@ -328,15 +364,29 @@ function PendingCard({
                 Open and continue there <ArrowUpRight className="h-3.5 w-3.5" />
               </Link>
             ) : (
-              <button
-                onClick={onConfirm}
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5
-                           text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-              >
-                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                Confirm and run
-              </button>
+              <>
+                <button
+                  onClick={onConfirm}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5
+                             text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  Confirm and run
+                </button>
+                <button
+                  onClick={onDismiss}
+                  disabled={busy}
+                  className="rounded-md px-2 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  Dismiss
+                </button>
+                {action.expiresAt && (
+                  <span className="text-[11px] text-amber-700">
+                    Confirm by {new Date(action.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>

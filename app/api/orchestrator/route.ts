@@ -26,6 +26,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
+import { storeProposals } from "@/lib/orchestrator/proposals";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -154,6 +155,13 @@ export async function POST(req: NextRequest) {
     usage: run.usage, ok: !run.stoppedBecause, op: "orchestrator",
   });
 
+  // ORCH-4: every proposal that executes server-side is stored for THIS
+  // user in THIS org with a 15-minute expiry; the card carries its id, and
+  // /api/orchestrator/execute runs only the stored row, once. A proposal
+  // that could not be stored comes back marked unavailable — never
+  // confirmable from what the browser holds.
+  const pending = await storeProposals(orgId, user.id, run.pending);
+
   // Show-me chips: every document the answer NAMES becomes a click — the
   // same designation squash-match the knowledge ask route uses. Checked
   // against the doc-control registry first (number, then title), then the
@@ -226,7 +234,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     answer: run.answer,
     steps: run.steps,
-    pending: run.pending,
+    pending,
     stoppedBecause: run.stoppedBecause ?? null,
     ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
     provider, model,

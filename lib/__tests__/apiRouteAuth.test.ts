@@ -176,51 +176,85 @@ describe("POST /api/orchestrator/execute", () => {
     expect(res.status).toBe(403);
   });
 
+  // ORCH-4: the route runs only a STORED proposal, by id — never a tool and
+  // parameters taken from the request body.
+  const stored = (tool: string, parameters: Record<string, unknown>) => {
+    mockState.single["orchestrator_proposals"] = {
+      data: {
+        id: "p1", org_id: "o1", user_id: "u1", tool, parameters,
+        fingerprint: `${tool}(${Object.keys(parameters).sort().map((k) => `${k}=${String(parameters[k])}`).join("&")})`,
+        summary: "s", created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 600_000).toISOString(), executed_at: null, dismissed_at: null,
+      },
+    };
+    mockState.tables["orchestrator_proposals"] = { data: [{ id: "p1" }] };
+  };
+
+  it("a body carrying a tool and parameters (no stored proposal) is refused — 409, nothing runs", async () => {
+    mockState.user = { id: "u1" };
+    mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
+    const { POST } = await load();
+    const res = await POST(req("http://test/api/orchestrator/execute", {
+      method: "POST",
+      headers: { authorization: "Bearer tok" },
+      body: JSON.stringify({ orgId: "o1", tool: "log_audit_completion", parameters: { sheet_number: "P-101", revision: "C", status: "passed" } }),
+    }));
+    expect(res.status).toBe(409);
+    expect(String((await res.json()).error)).toMatch(/Reload the page/);
+    expect(mockState.calls.some((c) => c.table === "drawing_audit_logs")).toBe(false);
+    expect(mockState.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
   it("refuses read tools — only writes are executable", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
+    stored("find_documents", { query: "x" });
     const { POST } = await load();
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", tool: "find_documents", parameters: { query: "x" } }),
+      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
     }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
+    expect(mockState.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 
-  it("rejects missing required parameters before touching the tool", async () => {
+  it("rejects stored parameters that no longer validate before touching the tool", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
+    stored("log_audit_completion", { revision: "C" });
     const { POST } = await load();
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({ orgId: "o1", tool: "log_audit_completion", parameters: { revision: "C" } }),
+      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
     }));
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     const body = await res.json();
     expect(String(body.error)).toMatch(/sheet_number/);
+    expect(mockState.calls.some((c) => c.table === "drawing_audit_logs")).toBe(false);
   });
 
-  it("executes an approved write end-to-end (audit record logged)", async () => {
+  it("executes a stored proposal end-to-end (audit record logged first)", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
     mockState.tables["drawing_audit_logs"] = { error: null };
+    stored("log_audit_completion", { sheet_number: "P-101", revision: "C", status: "passed" });
     const { POST } = await load();
     const res = await POST(req("http://test/api/orchestrator/execute", {
       method: "POST",
       headers: { authorization: "Bearer tok" },
-      body: JSON.stringify({
-        orgId: "o1", tool: "log_audit_completion",
-        parameters: { sheet_number: "P-101", revision: "C", status: "passed" },
-      }),
+      body: JSON.stringify({ orgId: "o1", proposalId: "p1" }),
     }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.result.status).toBe("logged");
-    expect(mockState.calls.some((c) => c.table === "drawing_audit_logs" && c.method === "upsert")).toBe(true);
-    expect(mockState.calls.some((c) => c.table === "audit_logs" && c.method === "insert")).toBe(true);
+    const upsertAt = mockState.calls.findIndex((c) => c.table === "drawing_audit_logs" && c.method === "upsert");
+    const auditAt = mockState.calls.findIndex((c) => c.table === "audit_logs" && c.method === "insert");
+    expect(upsertAt).toBeGreaterThan(-1);
+    expect(auditAt).toBeGreaterThan(-1);
+    expect(auditAt).toBeLessThan(upsertAt);
   });
 });
 
