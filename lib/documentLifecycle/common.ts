@@ -7,7 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
-import { logRevisionEvent, logHoldEvent } from "@/lib/audit";
+import { logRevisionEvent, logHoldEvent, logAuditAction } from "@/lib/audit";
 import {
   voidPendingDraftAfterPublish,
   revokeLiveSharesForDocument,
@@ -184,22 +184,58 @@ export async function sha256Hex(file: File): Promise<string> {
  *  a roster recompute that stopped on an error). A write the database
  *  filtered to zero rows answers no error and is not reported. The split /
  *  merge creation events (CREATED_FROM_SPLIT / CREATED_FROM_MERGE) are written
- *  inside the saga, before this runs, so they do not carry it. */
-export async function startClocksForIssuedDocuments(documentIds: string[], actor: ActorContext): Promise<string[]> {
+ *  inside the saga, before this runs, so they do not carry it.
+ *
+ *  REV-15 (P13): a sheet whose clocks did not (fully) start records WHY on a
+ *  persisted event — a follow-up COMPLIANCE_CLOCKS_NOT_STARTED audit row on
+ *  the document, written right after the clock start, naming the creation
+ *  event it follows (`creation.event`) and the operation (`creation.details`,
+ *  e.g. the split / merge source). The saga's order is untouched: the
+ *  creation event is still written inside it, and the clocks still start
+ *  only after it committed. A follow-up row that could not be written is
+ *  said in the document's warning (never silent). */
+export async function startClocksForIssuedDocuments(
+  documentIds: string[],
+  actor: ActorContext,
+  creation?: { event: "CREATED_FROM_SPLIT" | "CREATED_FROM_MERGE"; details?: Record<string, unknown> },
+): Promise<string[]> {
   const warnings: string[] = [];
   for (const documentId of documentIds) {
+    let msg: string | null = null;
+    let problems: string[] = [];
+    let threw = false;
     try {
       const writeErrors = await startIssuedDocumentClocks({ orgId: actor.orgId, documentId, actorUserId: actor.actorUserId, actorName: actor.actorEmail ?? null });
       if (writeErrors.length > 0) {
-        const msg = `The review clock / acknowledgment roster of document ${documentId} did not fully start (${writeErrors.join("; ")}); Document Control can set it from the document.`;
-        console.warn(`[documentLifecycle] ${msg}`);
-        warnings.push(msg);
+        problems = writeErrors;
+        msg = `The review clock / acknowledgment roster of document ${documentId} did not fully start (${writeErrors.join("; ")}); Document Control can set it from the document.`;
       }
     } catch (e) {
-      const msg = `The review clock / acknowledgment roster of document ${documentId} did not start (${(e as Error).message}); Document Control can set it from the document.`;
-      console.warn(`[documentLifecycle] ${msg}`);
-      warnings.push(msg);
+      threw = true;
+      problems = [`the start failed (${(e as Error).message})`];
+      msg = `The review clock / acknowledgment roster of document ${documentId} did not start (${(e as Error).message}); Document Control can set it from the document.`;
     }
+    if (!msg) continue;
+    if (creation) {
+      const { error: recordErr } = await logAuditAction({
+        action: "COMPLIANCE_CLOCKS_NOT_STARTED",
+        resourceId: documentId,
+        resourceType: "document",
+        orgId: actor.orgId,
+        userId: actor.actorUserId,
+        userEmail: actor.actorEmail,
+        userRole: actor.actorRole,
+        details: {
+          followsUp: creation.event,
+          ...(creation.details ?? {}),
+          complianceClockErrors: problems,
+          startThrew: threw,
+        },
+      });
+      if (recordErr) msg += ` (The record of this on the document could not be written either: ${recordErr}.)`;
+    }
+    console.warn(`[documentLifecycle] ${msg}`);
+    warnings.push(msg);
   }
   return warnings;
 }

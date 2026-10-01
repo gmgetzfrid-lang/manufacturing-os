@@ -444,7 +444,9 @@ async function finishMerge(
   //     rev-up started its own through the post-publish pipeline; without a
   //     rev-up its content did not change.
   const complianceClockWarnings = target.kind === "create_new"
-    ? await startClocksForIssuedDocuments([targetDocumentId], actor)
+    ? await startClocksForIssuedDocuments([targetDocumentId], actor, {
+      event: "CREATED_FROM_MERGE", details: { sourceDocIds: absorbed.map((s) => s.id) },
+    })
     : [];
 
   // 7. Project memberships from each source — a secondary effect, reported

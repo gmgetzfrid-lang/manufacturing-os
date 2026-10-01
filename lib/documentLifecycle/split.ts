@@ -256,7 +256,9 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   //     clock and read-&-understood roster start now (the call
   //     createDocumentWithFile makes), after the saga, so nobody is asked to
   //     acknowledge a sheet a rollback archived.
-  const complianceClockWarnings = await startClocksForIssuedDocuments(newDocumentIds, actor);
+  const complianceClockWarnings = await startClocksForIssuedDocuments(newDocumentIds, actor, {
+    event: "CREATED_FROM_SPLIT", details: { sourceDocId: sourceId },
+  });
 
   // 5. Project memberships are a SECONDARY effect: the split itself (new
   //    docs + carried holds + supersession) is durable and correct above; a
