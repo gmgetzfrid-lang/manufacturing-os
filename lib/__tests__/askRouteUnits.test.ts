@@ -11,7 +11,7 @@ import { callAiModel, AiCallError } from "@/lib/ai/providerCall";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
-  readAll, columnMissing, provenPageCurrent, sourceColumnMissing, wantsDrawingFacts, drawingFactsScope, drawingFactsDocuments,
+  readAll, columnsMissing, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
 } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 import type { EquipmentTable } from "@/lib/knowledge";
@@ -100,11 +100,19 @@ describe("KACL-4 — readAll pages past max-rows and never takes a short page fo
     expect(out.error?.code).toBe("57014");
   });
 
-  it("columnMissing knows a database that has not applied a migration", () => {
-    expect(columnMissing({ code: "42703", message: 'column "x" does not exist' })).toBe(true);
-    expect(columnMissing({ code: "PGRST204", message: "Could not find the 'context' column" })).toBe(true);
-    expect(columnMissing({ code: "57014", message: "statement timeout" })).toBe(false);
-    expect(columnMissing(null)).toBe(false);
+  it("columnsMissing knows a database that has not applied the migration adding THOSE columns — and nothing else (fix pass 4)", () => {
+    expect(columnsMissing({ code: "42703", message: 'column "context" does not exist' }, "context")).toBe(true);
+    expect(columnsMissing({ code: "PGRST204", message: "Could not find the 'context' column of 'knowledge_questions' in the schema cache" }, "context")).toBe(true);
+    expect(columnsMissing({ code: "PGRST204", message: "Could not find the 'source_model' column of 'knowledge_chunks' in the schema cache" }, "source", "source_model")).toBe(true);
+    // a schema-cache miss on ANOTHER column is a failed read, not this migration
+    expect(columnsMissing({ code: "PGRST204", message: "Could not find the 'library_id' column of 'knowledge_chunks' in the schema cache" }, "source", "source_model")).toBe(false);
+    // "source" is not "source_document_id", nor the other way round
+    expect(columnsMissing({ code: "PGRST204", message: "Could not find the 'source_document_id' column of 'knowledge_documents' in the schema cache" }, "source")).toBe(false);
+    // an error whose message merely mentions a column is a failed read
+    expect(columnsMissing({ code: "42702", message: 'column reference "id" is ambiguous' }, "context", "vision_pages")).toBe(false);
+    expect(columnsMissing({ code: "PGRST100", message: "failed to parse filter on column vision_pages" }, "vision_pages")).toBe(false);
+    expect(columnsMissing({ code: "57014", message: "statement timeout" }, "context")).toBe(false);
+    expect(columnsMissing(null, "context")).toBe(false);
   });
 });
 
@@ -324,36 +332,9 @@ describe("the answer surface marks what the route now says", () => {
   });
 });
 
-// ── ASK-1 (fix pass 3) / KACL-4 — when the drawing facts ride, what they name ─
+// ── ASK-1 / KACL-4 — what the drawing facts name ─────────────────────────────
 
-describe("ASK-1 — the drawing facts ride along only with a drawing question, and the row records what their text can name", () => {
-  it("wantsDrawingFacts: an ordinary question does not get them; a counting, tag, drawing-number, register or connector question does; a drawing set gets them always", () => {
-    for (const q of [
-      "What is the relief valve set pressure limit?",
-      "What does ASME B31.3 require for a hydrotest?",
-      "Is EP 5-1-1 current?",
-      "What does API 510 say about inspection intervals?",
-      "What bolt torque does STD-205 give for flanges?",
-    ]) {
-      expect(wantsDrawingFacts(q, false)).toBe(false);
-      expect(wantsDrawingFacts(q, true)).toBe(true);
-    }
-    // a prefix the site's decoder teaches is a tag; unknown, it is not
-    expect(wantsDrawingFacts("Where is FCV-101?", false)).toBe(false);
-    expect(wantsDrawingFacts("Where is FCV-101?", false, ["FCV"])).toBe(true);
-    for (const q of [
-      "How many pumps are in this unit?",
-      "What is the design pressure of V-101?",
-      "Show me sheet 3 of 025-PID-0107",
-      "List all the exchangers",
-      "Audit the off-page connectors",
-      "Which tags are on the crude preheat P&ID?",
-      "What is the next free vessel number?",
-    ]) {
-      expect(wantsDrawingFacts(q, false)).toBe(true);
-    }
-  });
-
+describe("ASK-1 — the row records what the drawing facts' text can name", () => {
   it("drawingFactsScope: the root series of the sheets with a drawing number, with their holders — never a fragment of another document's filename", () => {
     const docs = [
       { id: "a", name: "025-PID-0001.pdf" },
@@ -397,7 +378,5 @@ describe("ASK-1 — the drawing facts ride along only with a drawing question, a
     expect(sourceColumnMissing({ code: "PGRST100", message: "failed to parse filter on column source_document_id" })).toBe(false);
     expect(sourceColumnMissing({ code: "42702", message: 'column reference "id" is ambiguous' })).toBe(false);
     expect(sourceColumnMissing(null)).toBe(false);
-    // the general helper, by contrast, takes any message mentioning a column
-    expect(columnMissing({ code: "42702", message: 'column reference "id" is ambiguous' })).toBe(true);
   });
 });

@@ -4,24 +4,27 @@
 // fence that keeps document text out of the instructions, and the honesty
 // markers an answer carries.
 
-import {
-  extractDrawingRefs, extractEquipmentTags, matchEquipmentListIntent, refSeries, sheetDrawingNumbers,
-  EQUIPMENT_CATEGORIES,
-} from "@/lib/drawingText";
+import { refSeries, sheetDrawingNumbers } from "@/lib/drawingText";
 
 export type PgErr = { code?: string; message: string };
 
-/** A database that has not applied a migration yet (the column is not there). */
-export const columnMissing = (e: PgErr | null | undefined): boolean =>
-  !!e && (e.code === "42703" || e.code === "PGRST204" || /column/i.test(e.message ?? ""));
+/** A read (or write) failed only because the database has not applied the
+ *  migration that adds one of `columns` — Postgres's undefined column
+ *  (42703), or PostgREST's schema-cache miss (PGRST204) NAMING one of them.
+ *  Any other error — a timeout, a filter that will not parse, an ambiguous
+ *  column reference, a schema-cache miss on another column — is a read that
+ *  failed, and the caller takes its fail-closed path, never the
+ *  pre-migration fallback that drops those columns (I-03 fix pass 4: every
+ *  such fallback in the ask route is narrowed to the columns it drops). */
+export const columnsMissing = (e: PgErr | null | undefined, ...columns: string[]): boolean =>
+  !!e && (e.code === "42703"
+    || (e.code === "PGRST204" && columns.some((c) => new RegExp(`(^|[^a-z0-9_])${c}($|[^a-z0-9_])`, "i").test(e.message ?? ""))));
 
-/** KACL-4: the mirror list's read failed only because the database has no
- *  source columns (pre-20260917) — Postgres's undefined column, or
- *  PostgREST's schema-cache miss naming `source_document_id`. Any other error
- *  (a filter that will not parse, an ambiguous column, a timeout) is a read
- *  that failed, and the ask is refused: never "no mirrors". */
-export const sourceColumnMissing = (e: PgErr | null | undefined): boolean =>
-  !!e && (e.code === "42703" || (e.code === "PGRST204" && /source_document_id/.test(e.message ?? "")));
+/** KACL-4 / KACL-8: a knowledge_documents read failed only because the
+ *  database has no source columns (pre-20260917). Any other error is a read
+ *  that failed: the mirror list refuses the ask, the legend read reads no
+ *  legend — never "every document is an upload". */
+export const sourceColumnMissing = (e: PgErr | null | undefined): boolean => columnsMissing(e, "source_document_id");
 
 export const READ_PAGE = 1000;
 /** Every row a query matches, paged past PostgREST's max-rows (KACL-4). A
@@ -135,48 +138,29 @@ export const PROMPT_TOKENS_PER_IMAGE = 1_600;
  *  cover the full 4,000-token ceiling. */
 export const MIN_ANSWER_TOKENS = 1_000;
 export const ANSWER_MAX_TOKENS = 4_000;
-/** ASK-7: a FLOOR under the answer prompt's length in characters — its fixed
- *  rules alone are longer (askRouteHonesty.test.ts pins that). Before the
- *  first call of a library ask, and again before the refine call, an answer
- *  of MIN_ANSWER_TOKENS over a prompt this short must still fit the month's
- *  headroom; when it cannot, the answer call would be refused anyway, so the
- *  ask is refused before it spends anything more. */
+/** ASK-7: a FLOOR under the answer prompt's fixed rules in characters —
+ *  they alone are longer (askRouteHonesty.test.ts pins that). Before each
+ *  call on the way to the answer (query generation, then refine), that call's
+ *  worst case plus an answer of MIN_ANSWER_TOKENS over this floor, the
+ *  question, the passages already found and (deep read on) its full page
+ *  allowance must still fit the month's headroom; when it cannot, the answer
+ *  call would be refused anyway, so the ask is refused before that call. */
 export const MIN_ANSWER_PROMPT_CHARS = 5_000;
 
 /** ASK-2 / ING-10: the most tag-occurrence rows one census reads. */
 export const DRAWING_FACTS_ROW_CEILING = 20_000;
 
-// ── ASK-1: when the DRAWING FACTS ride along, and what they can name ────────
+// ── ASK-1: what the DRAWING FACTS can name ──────────────────────────────────
 //
-// The facts are tallied over every sheet of every searched library, and the
-// row records what reached the model, so a teammate is shown the answer only
-// when they may read every document recorded. Two rules keep that from
-// withholding ordinary answers (I-03 fix pass 3 — fix pass 2 recorded every
-// mirror of every searched library on every answer once any page had a tag):
-//   - the facts ride along only with a drawing question, or in a library its
-//     owner marked a drawing set (`ai_features.drawingIntel`);
-//   - the row records the documents the facts' TEXT can carry the identity
-//     of, never every mirror they were tallied over.
-
-/** An audit of a drawing set's connectors — the scope checklist's trigger. */
-export const DRAWING_SCOPE_QUESTION = /\b(audit|connector|off[\s-]?page|opc|continuation|cross[\s-]?ref|scope)/i;
-/** Counting, sheet and register phrasing. */
-const DRAWING_QUESTION =
-  /\b(?:how\s+many|count(?:s|ed|ing)?|tally|totals?|number\s+of|sheets?|drawings?|p\s?&\s?ids?|pids?|isometrics?|tags?|equipment|registers?|census|next\s+free|one[\s-]?way|title\s+blocks?)\b/i;
-
-/** Does this question get the DRAWING FACTS? Every question does in a
- *  library marked a drawing set; elsewhere a question that counts, names a
- *  sheet or a drawing number, names an equipment tag (a built-in prefix, or
- *  one the site's decoder teaches — a standard's designation shaped like a
- *  tag, "STD-205", is not one), asks for an equipment list, or audits
- *  connectors. */
-export function wantsDrawingFacts(question: string, drawingSet: boolean, sitePrefixes: readonly string[] = []): boolean {
-  if (drawingSet) return true;
-  if (DRAWING_SCOPE_QUESTION.test(question) || DRAWING_QUESTION.test(question)) return true;
-  if (matchEquipmentListIntent(question).match) return true;
-  const knownPrefix = (p: string) => Object.prototype.hasOwnProperty.call(EQUIPMENT_CATEGORIES, p) || sitePrefixes.includes(p);
-  return extractEquipmentTags(question).some((t) => knownPrefix(t.prefix)) || extractDrawingRefs(question).length > 0;
-}
+// The facts ride along with every question in a library whose pages carry
+// tags, as they did before I-03 (fix pass 4 removed fix pass 3's relevance
+// gate, which changed ordinary answers in every such library). They are
+// tallied over every sheet of every searched library, and the row records
+// what reached the model, so a teammate is shown the answer only when they
+// may read every document recorded. The row therefore records the documents
+// the facts' TEXT can carry the identity of — never every mirror they were
+// tallied over (fix pass 2 recorded every mirror of every searched library,
+// which withheld every answer from a member denied any one of them).
 
 /** The SCOPE the facts print: the root drawing series of the sheets that
  *  carry a drawing number (title block or filename — sheetDrawingNumbers,

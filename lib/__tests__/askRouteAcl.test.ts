@@ -302,6 +302,46 @@ describe("KACL-8 / ASK-8 — legend sheets pass the asker's ACL and the org scop
     expect(res.status).toBe(200);
     expect(allPrompts()).not.toContain("5150");
   });
+
+  /** The legend read (its id and source) fails with `err`. */
+  const legendReadFails = (err: { code: string; message: string }) => db.hooks.push((op, filters) =>
+    op.table === "knowledge_documents" && op.kind === "select"
+      && Array.isArray(op.columns) && op.columns.join(",") === "id,source_document_id"
+      && filters.some((f) => f.col === "id" && f.op === "in")
+      ? { error: { ...err } } : undefined);
+
+  for (const [label, err] of [
+    ["an ambiguous column", { code: "42702", message: 'column reference "id" is ambiguous' }],
+    ["a filter PostgREST cannot parse", { code: "PGRST100", message: "failed to parse filter (in) for column id" }],
+    ["a schema-cache miss naming another column", { code: "PGRST204", message: "Could not find the 'org_id' column of 'knowledge_documents' in the schema cache" }],
+    ["a timeout", { code: "57014", message: "canceling statement due to statement timeout" }],
+  ] as const) {
+    it(`reproduction → fix (fix pass 4): a legend read that fails with ${label} reads NO legend — a restricted mirror legend never reaches the denied Viewer's prompt as an "upload"`, async () => {
+      legendInOtherLibrary();
+      legendReadFails(err);
+      h.script = [QUERY_GEN, REFINE_NONE, answer()];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+      expect(res.status).toBe(200);
+      expect(allPrompts()).not.toContain("7741");
+      expect(answerCall().user).not.toMatch(/P&ID LEGEND \/ DECODER SHEETS/);
+    });
+  }
+
+  it("control: a database without the source columns (a schema-cache miss naming source_document_id) reads its legends as uploads, as before", async () => {
+    seed({
+      knowledge_libraries: [{ id: LIB2, org_id: ORG, name: "Engineering", ai_features: {}, ai_instructions: null }],
+      knowledge_documents: [kdoc(K_OPEN), kdoc(LEGEND, { library_id: LIB2, name: "Legend sheet" })],
+      knowledge_chunks: [
+        kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" }),
+        kchunk(LEGEND, LEGEND_TEXT, { library_id: LIB2, id: "c-legend" }),
+      ],
+    });
+    h.legendDocIds = [LEGEND];
+    legendReadFails({ code: "PGRST204", message: "Could not find the 'source_document_id' column of 'knowledge_documents' in the schema cache" });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "What is the relief valve set pressure?" }, "viewer")).status).toBe(200);
+    expect(answerCall().user).toContain("7741");
+  });
 });
 
 // ── ASK-1 / KACL-1 / IEDGE-5 ────────────────────────────────────────────────
@@ -405,9 +445,10 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
 
-  // ── Fix pass 3: the drawing facts ride along only when relevant, and the
-  //    row records what their TEXT can carry — never every mirror they were
-  //    tallied over.
+  // ── The drawing facts ride along with every question in a library whose
+  //    pages carry tags (as before I-03; fix pass 4 removed fix pass 3's
+  //    relevance gate), and the row records what their TEXT can carry — never
+  //    every mirror they were tallied over.
   const TAGGED_UPLOAD_AND_UNRELATED_MIRROR = () => seed({
     documents: [dcDoc("dc-1", { acl: DENY_VIEWER_ACL })],
     knowledge_documents: [
@@ -422,20 +463,22 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
   const entityReads = () => db.ops.filter((o) => o.table === "knowledge_page_entities" && o.kind === "select"
     && Array.isArray(o.columns) && o.columns.join(",") === "document_id,page,kind,tag,raw").length;
 
-  it("reproduction → fix (fix pass 3): an ORDINARY question in a library with one tagged page and an unrelated restricted mirror — no drawing facts, the row records only what the passages drew on, and the Viewer still sees it", async () => {
+  it("REGRESSION (fix pass 4): an ORDINARY question in a library with one tagged page and an unrelated restricted mirror gets the drawing facts, as before I-03 — the row records the tagged upload, never the mirror the facts only count, and the Viewer still sees it", async () => {
     TAGGED_UPLOAD_AND_UNRELATED_MIRROR();
     h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
     const res = await ask({ question: "What is the relief valve set pressure limit?" });
     expect(res.status).toBe(200);
     expect((await res.json()).citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
-    // No census is read and no facts are sent for an ordinary question…
-    expect(entityReads()).toBe(0);
-    expect(allPrompts()).not.toContain("DRAWING FACTS");
+    // The census is read and the facts ride along with an ordinary question,
+    // as they did before I-03 (fix pass 3's gate left them out)…
+    expect(entityReads()).toBeGreaterThan(0);
+    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+    expect(answerCall().user).toContain("- Sheets: 2");
     expect(allPrompts()).not.toMatch(/UNRELATED/i);
-    // …so the row records the upload alone, as the base route's citations did.
+    // …and the row records what their text can name: the tagged upload.
     const row = rowsOf("knowledge_questions")[0];
     expect(row.context).toMatchObject({ documents: [K_OPEN], complete: true });
-    // The Viewer (denied the unrelated mirror) sees the answer, as before I-03.
+    // The Viewer (denied the unrelated mirror) sees the answer.
     const viewerList = await (await history({ action: "list" }, "viewer")).json();
     expect(viewerList.rows.map((r: { id: string }) => r.id)).toEqual([row.id]);
     expect(viewerList.withheld).toBe(0);
@@ -460,13 +503,33 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect(viewerList.rows).toHaveLength(1);
   });
 
-  it("a library its owner marked a drawing set sends the facts with every question", async () => {
-    TAGGED_UPLOAD_AND_UNRELATED_MIRROR();
-    db.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, name: "Unit 25 P&IDs", ai_features: { drawingIntel: true }, ai_instructions: null }];
-    h.script = [QUERY_GEN, REFINE_NONE, answer()];
-    expect((await ask({ question: "What is the relief valve set pressure limit?" })).status).toBe(200);
-    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
-    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toEqual([K_OPEN]);
+  it("REGRESSION (fix pass 4): a library NOT marked a drawing set, with tag rows and no passage the question matches — the facts ride along and the answer is made from them, as before I-03, never 'Nothing matches'", async () => {
+    const S1 = U(51);
+    const S2 = U(52);
+    seed({
+      knowledge_documents: [kdoc(S1, { name: "025-PID-0001.pdf" }), kdoc(S2, { name: "025-PID-0002.pdf" })],
+      knowledge_page_entities: [
+        { id: "e-1", org_id: ORG, library_id: LIB, document_id: S1, page: 1, kind: "equipment", tag: "V-101", raw: "V-101 DESALTER" },
+        { id: "e-2", org_id: ORG, library_id: LIB, document_id: S1, page: 1, kind: "ref", tag: "025-PID-0002", raw: "025-PID-0002" },
+        { id: "e-3", org_id: ORG, library_id: LIB, document_id: S2, page: 1, kind: "equipment", tag: "E-201", raw: "E-201 CRUDE PREHEAT" },
+        { id: "e-4", org_id: ORG, library_id: LIB, document_id: S2, page: 1, kind: "ref", tag: "025-PID-0001", raw: "025-PID-0001" },
+      ],
+    });
+    expect(rowsOf("knowledge_libraries")[0].ai_features).toEqual({});
+    for (const question of ["Where does the crude go after the desalter?", "Where is FCV-101?"]) {
+      resetHarness();
+      db.tables.knowledge_questions = [];
+      h.script = [{ text: '["crude after desalter"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** From V-101 on 025-PID-0001 to E-201 on 025-PID-0002.")];
+      const body = await (await ask({ question })).json();
+      // Three calls: the answer is made from the facts (fix pass 3: two, and
+      // "Nothing in this library matches the question").
+      expect(h.calls).toHaveLength(3);
+      expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+      expect(answerCall().user).toContain("no text passages matched the question's search terms — answer from the DRAWING FACTS");
+      expect(body.answer).toMatch(/^\*\*Answer:\*\* From V-101/);
+      expect(body.answer).not.toMatch(/Nothing in this library matches/);
+      expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents.sort()).toEqual([S1, S2].sort());
+    }
   });
 
   it("reproduction → fix: a drawing series only a restricted MIRROR holds is printed in the scope — the row records that mirror and the Viewer denied it never gets the answer; a mirror of a series a recorded sheet holds is not recorded", async () => {
@@ -725,6 +788,18 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     expect(sent).toContain("Q: What is the flare tip velocity limit?");
   });
 
+  it("reproduction → fix (fix pass 4): a thread read that fails with an error that merely mentions a column is refused (503) — never taken as a database without threads, with the client's history sent instead", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.hooks.push((op, filters) => op.table === "knowledge_questions" && op.kind === "select"
+      && filters.some((f) => f.col === "thread_id" && f.op === "eq")
+      ? { error: { code: "42702", message: 'column reference "created_at" is ambiguous' } } : undefined);
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const res = await ask({ question: "And the set pressure?", threadId: THREAD, history: [{ question: "Earlier?", answer: "FORGED client turn." }] });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/Couldn't read this conversation's earlier turns/);
+    expect(h.calls).toHaveLength(0);
+  });
+
   it("a database without threads saves the internet and nothing-matched turns without one, as before", async () => {
     seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
     db.missingColumns.knowledge_questions = ["thread_id"];
@@ -881,6 +956,17 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
     }
   });
 
+  it("reproduction → fix (fix pass 4): a proven-ground read that fails with an error that merely mentions a column seats nothing — never rows read again without their partial / unverified-arithmetic marks", async () => {
+    rated("B", "B", { v: 1, documents: [], complete: true, history: "none", arithmetic: "unverified" });
+    db.hooks.push((op, filters) => op.table === "knowledge_questions" && op.kind === "select"
+      && filters.some((f) => f.col === "rating" && f.op === "eq")
+      && Array.isArray(op.columns) && op.columns.includes("context")
+      ? { error: { code: "42702", message: 'column reference "created_at" is ambiguous' } } : undefined);
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    await ask({ question: "What is the relief valve set pressure?" });
+    expect(allPrompts()).not.toContain(PROVEN_PAGE);
+  });
+
   it("the team's record badges an answer whose cited mirror has been revised since (revisedSince)", async () => {
     openAndRestricted({ acl: null });
     h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** Open [1]; incident [2].")];
@@ -957,6 +1043,18 @@ describe("IEDGE-4 — citations carry the mirror's revision; proven ground never
   it("a draft made before the answer but released (made current) after it is not what was rated — not seated", async () => {
     ratedVersion(null, "ver-2", [{ id: "ver-2", created_at: "2026-08-01T00:00:00Z", released_at: "2026-09-05T00:00:00Z" }], null);
     expect(await seats()).toBe(false);
+  });
+
+  it("reproduction → fix (fix pass 4): a version read that fails with an error that merely mentions a column is not read again without released_at — a draft released after the answer is never seated", async () => {
+    ratedVersion(null, "ver-2", [{ id: "ver-2", created_at: "2026-08-01T00:00:00Z", released_at: "2026-09-05T00:00:00Z" }], null);
+    db.hooks.push((op) => op.table === "document_versions" && Array.isArray(op.columns) && op.columns.includes("released_at")
+      ? { error: { code: "42702", message: 'column reference "created_at" is ambiguous' } } : undefined);
+    expect(await seats()).toBe(false);
+    // control: a database without released_at reads the creation time alone, as before
+    resetHarness();
+    ratedVersion(null, "ver-1", [{ id: "ver-1", created_at: "2026-08-01T00:00:00Z" }], null);
+    db.missingColumns.document_versions = ["released_at"];
+    expect(await seats()).toBe(true);
   });
 
   it("a version whose time cannot be known — no such version of that document, or a read that fails — is not seated", async () => {
