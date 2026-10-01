@@ -836,7 +836,7 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
   const tab = src("components/projects/QualityTab.tsx");
 
   it("reads the database's decision and passes it — never the page's canManage — to every section", () => {
-    expect(tab).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
+    expect(tab).toContain("return loadSignoffAuthority(orgId, projectId, actor).then((a) => {");
     expect(tab).toContain("const canSignOff = authority && !authority.error ? authority.maySign : canManage;");
     const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
     for (const section of ["ChecklistsSection", "TurnoverSection", "PunchSection"]) {
@@ -851,21 +851,27 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
   });
   // J2b integration: the decision was read once on mount — Retry and every
   // onChanged re-read the lists but never the decision.
+  // projects Round G J10b (PERF-4): the loaders set state in their settled
+  // callbacks (react-hooks/set-state-in-effect, live once the suppression
+  // went), and every section's onChanged is afterWrite — refresh, then the
+  // page is told. Retry stays refresh alone.
   it("refresh() — mount, Retry and every section's onChanged — re-reads the sign-off decision beside the lists; only the newest answer lands", () => {
-    const loader = tab.slice(tab.indexOf("const loadAuthority = useCallback(async () => {"), tab.indexOf("}, [orgId, projectId, actor]);", tab.indexOf("const loadAuthority = useCallback(")));
+    const loader = tab.slice(tab.indexOf("const loadAuthority = useCallback((): Promise<void> => {"), tab.indexOf("}, [orgId, projectId, actor]);", tab.indexOf("const loadAuthority = useCallback(")));
     expect(loader).toContain("const seq = ++authoritySeq.current;");
-    expect(loader).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
+    expect(loader).toContain("return loadSignoffAuthority(orgId, projectId, actor).then((a) => {");
     expect(loader).toContain("if (seq === authoritySeq.current) setAuthority(a);");
-    const refresh = tab.slice(tab.indexOf("const refresh = useCallback(async () => {"), tab.indexOf("useEffect(() => { void refresh(); }, [refresh]);"));
+    const refresh = tab.slice(tab.indexOf("const refresh = useCallback((): Promise<void> => {"), tab.indexOf("useEffect(() => { void refresh(); }, [refresh]);"));
     expect(refresh).toContain("void loadAuthority();");
-    expect(refresh.indexOf("void loadAuthority();")).toBeLessThan(refresh.indexOf("await Promise.allSettled(["));
+    expect(refresh.indexOf("void loadAuthority();")).toBeLessThan(refresh.indexOf("return Promise.allSettled(["));
     expect(refresh).toContain("}, [orgId, projectId, loadAuthority]);");
     // the decision is read in ONE place — no separate mount-only effect remains
     expect((tab.match(/loadSignoffAuthority\(/g) ?? []).length).toBe(1);
-    // Retry and onChanged are refresh
+    // Retry is refresh; every section's onChanged is afterWrite, which is refresh first
     expect(tab).toContain("const retry = () => void refresh();");
+    expect(tab).toContain("void refresh().then(() => {");
     const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
-    expect((top.match(/onChanged=\{retry\}/g) ?? []).length).toBe(3);
+    expect((top.match(/onChanged=\{afterWrite\}/g) ?? []).length).toBe(3);
+    expect((top.match(/onRetry=\{retry\}/g) ?? []).length).toBe(3);
   });
   it("the fallback notice names everyone the fallback admits: the project owner, Admin and Document Control", () => {
     expect(tab).toContain("<Notice notice={info(`Couldn't read who may sign off on this project (${asClause(authority.error)}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />");

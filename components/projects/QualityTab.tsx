@@ -73,6 +73,7 @@ import Link from "next/link";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
 import { TURNOVER_STATUS_MEANING } from "@/lib/projectVocabulary";
+import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 
 /** A11Y-8: a decision control is never under 24 px, and on a coarse
  *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
@@ -127,7 +128,9 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   orgId: string; projectId: string; canManage: boolean;
   uid: string; userEmail?: string | null;
   jobKind: string | null;
-  /** Fires after each data reload so the page's coach/health re-gathers. */
+  /** Fires after each WRITE on this tab (once its re-read has landed) so the
+   *  page's coach/health re-gathers — never on mount or a read retry
+   *  (PERF-3 / PERF-4). */
   onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
@@ -138,10 +141,13 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [authority, setAuthority] = useState<SignoffAuthority | null>(null);
   /** Only the newest read may land: an older answer never overwrites it. */
   const authoritySeq = useRef(0);
-  const loadAuthority = useCallback(async () => {
+  const loadAuthority = useCallback((): Promise<void> => {
     const seq = ++authoritySeq.current;
-    const a = await loadSignoffAuthority(orgId, projectId, actor);
-    if (seq === authoritySeq.current) setAuthority(a);
+    // Lands in the settled callback, never synchronously in the load effect
+    // that calls this (react-hooks/set-state-in-effect).
+    return loadSignoffAuthority(orgId, projectId, actor).then((a) => {
+      if (seq === authoritySeq.current) setAuthority(a);
+    });
   }, [orgId, projectId, actor]);
   // QUAL-4 done-when 4: the write controls follow the decision the policies
   // apply. Until it answers — or when it cannot be read — they follow the
@@ -195,30 +201,43 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
     return () => { cancelled = true; };
   }, [orgId, projectId, contractorsTry]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<void> => {
     // The sign-off decision is re-read beside the lists (it never throws:
     // a failed read comes back as authority.error and the controls fall back).
     void loadAuthority();
     // allSettled: one failing read never hides the three that answered, and
     // a denied policy or a missing migration is a failure to load — never
     // "No checklists yet" (UX-10).
-    const [cl, to, ev, pu] = await Promise.allSettled([
+    // The lists land in the settled callback — never synchronously in the
+    // load effect that calls this (react-hooks/set-state-in-effect).
+    return Promise.allSettled([
       listChecklists(orgId, projectId),
       listTurnoverItems(orgId, projectId),
       listTurnoverReviewEvents(orgId, projectId),
       listPunchItems(orgId, projectId),
-    ]);
-    const why = (r: PromiseSettledResult<unknown>) => (r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined);
-    setChecklists(cl.status === "fulfilled" ? cl.value : []);
-    setTurnover(to.status === "fulfilled" ? to.value : []);
-    setEvents(ev.status === "fulfilled" ? ev.value : []);
-    setPunch(pu.status === "fulfilled" ? pu.value : []);
-    setLoadErrors({ checklists: why(cl), turnover: why(to), history: why(ev), punch: why(pu) });
-    setLoading(false);
-    onDataChanged?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ]).then(([cl, to, ev, pu]) => {
+      const why = (r: PromiseSettledResult<unknown>) => (r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined);
+      setChecklists(cl.status === "fulfilled" ? cl.value : []);
+      setTurnover(to.status === "fulfilled" ? to.value : []);
+      setEvents(ev.status === "fulfilled" ? ev.value : []);
+      setPunch(pu.status === "fulfilled" ? pu.value : []);
+      setLoadErrors({ checklists: why(cl), turnover: why(to), history: why(ev), punch: why(pu) });
+      setLoading(false);
+    });
   }, [orgId, projectId, loadAuthority]);
   useEffect(() => { void refresh(); }, [refresh]);
+  /** PERF-4 / PERF-3: after a WRITE on this tab — re-read, drop any snapshot
+   *  round issued before the write, then tell the page, so the coach
+   *  re-gathers from a fresh round. The load effect never calls the page:
+   *  the coach gathers its own round when it mounts (a tab mount costs no
+   *  second round), and no callback identity can re-fire the load — the
+   *  loop the old eslint suppression held back cannot form. */
+  const afterWrite = useCallback(() => {
+    void refresh().then(() => {
+      invalidateProjectSnapshot(orgId, projectId);
+      onDataChanged?.();
+    });
+  }, [refresh, orgId, projectId, onDataChanged]);
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
@@ -233,12 +252,12 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
           action={<button type="button" onClick={() => setContractorsTry((n) => n + 1)} className="underline">Retry</button>} />
       )}
       <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
-        checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
+        checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={afterWrite} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
-        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} contractorsState={contractorsState} />
+        jobKind={jobKind} onChanged={afterWrite} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} contractorsState={contractorsState} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
-        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} contractors={contractors} contractorsState={contractorsState} />
+        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={afterWrite} contractors={contractors} contractorsState={contractorsState} />
     </div>
   );
 }

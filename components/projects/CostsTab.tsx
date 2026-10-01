@@ -40,6 +40,7 @@ import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 import { listCompanies, type Company } from "@/lib/companies";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 /** COST-8: the account form offers a currency instead of hardcoding USD. */
@@ -54,7 +55,9 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
 
 export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
-  /** Fires after each data reload so the page's coach/health re-gathers. */
+  /** Fires after each WRITE on this tab (once its re-read has landed) so the
+   *  page's coach/health re-gathers — never on mount or a read retry
+   *  (PERF-3 / PERF-4). */
   onDataChanged?: () => void;
 }) {
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
@@ -125,10 +128,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     } catch (e) {
       setErr(userFacingCaughtError(e, { action: "read", context: "CostsTab" }));
     } finally { setLoading(false); }
-    onDataChanged?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
+  /** PERF-4 / PERF-3: after a WRITE on this tab — re-read, drop any snapshot
+   *  round issued before the write, then tell the page, so the coach
+   *  re-gathers from a fresh round. The load effect never calls the page:
+   *  the coach gathers its own round when it mounts (a tab mount costs no
+   *  second round), and no callback identity can re-fire the load — the
+   *  loop the old eslint suppression held back cannot form. */
+  const afterWrite = useCallback(() => {
+    void refresh().then(() => {
+      invalidateProjectSnapshot(orgId, projectId);
+      onDataChanged?.();
+    });
+  }, [refresh, orgId, projectId, onDataChanged]);
 
   // Planned average crew input: the awarded quote's stated labor hours.
   const awardedLaborHours = useMemo(() => {
@@ -208,7 +221,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
              claim-then-post design can produce, with the audited repair. ── */}
       {hasOrphans && (
         <LedgerHealth orphans={orphans} accounts={accounts} entries={entries} cos={cos} canManage={canManage} actor={actor} busy={busy} setBusy={setBusy}
-          onChanged={() => void refresh()} onCoRepaired={() => { setCoReload((n) => n + 1); void refresh(); }} setErr={setErr} />
+          onChanged={afterWrite} onCoRepaired={() => { setCoReload((n) => n + 1); afterWrite(); }} setErr={setErr} />
       )}
 
       {/* ── Stat strip ── */}
@@ -269,11 +282,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
       <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+        accounts={accounts} docs={docs} onChanged={afterWrite} setErr={setErr} />
 
       {/* ── Change orders — never a silent budget edit ── */}
       <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} reloadKey={coReload} />
+        accounts={accounts} parties={parties} onMoneyMoved={afterWrite} setErr={setErr} reloadKey={coReload} />
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -292,7 +305,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <AccountForm
             orgId={orgId} projectId={projectId} actor={actor}
             parties={parties} milestones={milestones}
-            onDone={() => { setShowNewAccount(false); void refresh(); }}
+            onDone={() => { setShowNewAccount(false); afterWrite(); }}
             onCancel={() => setShowNewAccount(false)}
           />
         )}
@@ -355,7 +368,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       orgId={orgId} projectId={projectId} actor={actor}
                       rollup={r} entries={accEntries} parties={parties} milestones={milestones}
                       canManage={canManage} busy={busy} setBusy={setBusy}
-                      onChanged={() => void refresh()} setErr={setErr} sourceLabel={sourceLabel}
+                      onChanged={afterWrite} setErr={setErr} sourceLabel={sourceLabel}
                     />
                   )}
                 </div>
@@ -374,7 +387,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
-          <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />
+          <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={afterWrite} />
         )}
       </div>
 
