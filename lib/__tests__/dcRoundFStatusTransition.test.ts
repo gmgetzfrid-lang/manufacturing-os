@@ -380,8 +380,9 @@ describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-b
       '.select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();',
       "const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;",
       "if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: \"Draft\", basis: \"not-issued\" };",
-      // REV-19 (P14): readStatusIssueBasis — a select("*") read, before a status change, of whether an exit puts back the stamped issue (the clocks it had are not restarted)
-      "const stamped = (row.retired_issue_version_id as string | null | undefined) ?? null;",
+      // REV-19 (P14): readStatusIssueBasis — a select("*") read, before a status change, of whether an exit puts back the stamped issue (putBackFromRetirementStamp: three-state — P14 review fix)
+      "retiredIssueStatus: (row.retired_issue_status as string | null | undefined) ?? null,",
+      "retiredIssueVersionId: (row.retired_issue_version_id as string | null | undefined) ?? null,",
     ]);
   });
 });

@@ -44,7 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP } from "@/lib/issueStatus";
+import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP, WORK_IN_PROGRESS_STATUSES } from "@/lib/issueStatus";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
@@ -2164,9 +2164,20 @@ export type StatusIssueDoor = "metadata" | "bulk" | "unarchive";
 export interface StatusIssueOutcome {
   /** The write made the document a controlled issue (isIssueTransition). */
   issued: boolean;
-  /** The put-back of the issue its retirement took away (20261144's stamp
-   *  names this revision): the clocks it had keep running and are not
-   *  restarted. NULL when the stamp could not be read. */
+  /** The put-back of the issue its retirement took away, read from
+   *  20261144's retirement stamp — three-state (P14 review fix):
+   *   - true: the stamp names this revision — the clocks it had keep running
+   *     and are not restarted;
+   *   - false: evidence of a NEW issue — the document left a Draft / In
+   *     Review, or a retirement the guard stamped 'not-issued' — the review
+   *     clock and the acknowledgment roster start;
+   *   - null: no evidence either way — the retirement carries no stamp
+   *     (retired before 20261144 or by the service role), its stamp names
+   *     another revision, the stamp columns are absent, or the row could not
+   *     be read. The review clock is NOT reset (a reset would mark the
+   *     document reviewed today by whoever restored it and could hide a
+   *     review already due); only the acknowledgment roster is opened
+   *     (idempotent per revision). */
   putBack: boolean | null;
   /** What of the review clock / acknowledgment roster did not start. */
   complianceClockErrors: string[];
@@ -2178,11 +2189,34 @@ const NO_STATUS_ISSUE: StatusIssueOutcome = { issued: false, putBack: false, com
 
 interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null }
 
+/** P14 review fix (REV-19): is an issue out of this status the put-back of
+ *  the issue its retirement took away? Three-state, from the evidence alone
+ *  (StatusIssueOutcome.putBack): `true` only when 20261144's stamp names the
+ *  current revision; `false` only on evidence of a new issue — the document
+ *  is leaving a Draft / In Review (WORK_IN_PROGRESS_STATUSES), or a
+ *  retirement the guard stamped 'not-issued' (RETIRED_NOT_ISSUED_STAMP, no
+ *  revision); `null` otherwise — a retirement with no stamp (before
+ *  20261144, or the service role), a stamp naming another revision, a
+ *  database without the stamp columns. A missing stamp is no evidence
+ *  (P13 third review fix), so it never restarts the review clock. */
+export function putBackFromRetirementStamp(row: {
+  status: string | null; currentVersionId: string | null;
+  retiredIssueStatus?: string | null; retiredIssueVersionId?: string | null;
+}): boolean | null {
+  if (WORK_IN_PROGRESS_STATUSES.has((row.status ?? "").trim())) return false;
+  if (!isRetiredStatus(row.status)) return null;
+  const stampedVersion = row.retiredIssueVersionId ?? null;
+  if (row.currentVersionId && stampedVersion === row.currentVersionId) return true;
+  if (!stampedVersion && row.retiredIssueStatus === RETIRED_NOT_ISSUED_STAMP) return false;
+  return null;
+}
+
 /** The document as a status change finds it — its status, current revision
- *  and whether an exit from its retirement puts back the stamped issue.
- *  `select("*")` so a database without 20261144's stamp columns still
- *  answers (the stamp reads as absent: no put-back known). An unreadable
- *  row falls back to what the caller holds, with the put-back unknown. */
+ *  and whether an exit from its retirement puts back the stamped issue
+ *  (putBackFromRetirementStamp). `select("*")` so a database without
+ *  20261144's stamp columns still answers (the stamp reads as absent: the
+ *  put-back unknown). An unreadable row falls back to what the caller holds,
+ *  with the put-back unknown. */
 async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentRecord, "status" | "currentVersionId" | "rev">): Promise<StatusIssueBasis> {
   const { data, error } = await supabase.from("documents").select("*").eq("id", documentId).maybeSingle();
   if (error || !data) {
@@ -2191,19 +2225,35 @@ async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentReco
   const row = data as Record<string, unknown>;
   const fromStatus = (row.status as string | null) ?? null;
   const versionId = (row.current_version_id as string | null) ?? null;
-  const stamped = (row.retired_issue_version_id as string | null | undefined) ?? null;
   return {
     fromStatus, versionId, rev: (row.rev as string | null) ?? null,
-    putBack: isRetiredStatus(fromStatus) && !!versionId && stamped === versionId,
+    putBack: putBackFromRetirementStamp({
+      status: fromStatus, currentVersionId: versionId,
+      retiredIssueStatus: (row.retired_issue_status as string | null | undefined) ?? null,
+      retiredIssueVersionId: (row.retired_issue_version_id as string | null | undefined) ?? null,
+    }),
   };
 }
 
-/** REV-19: what a landed status-change issue owes. A NEW issue starts the
- *  compliance clocks through the one path every creation door uses
- *  (startIssuedDocumentClocks: the review clock and the read-&-understood
- *  roster); the put-back of a stamped issue does not (its clocks were never
- *  stopped — restarting them would mark it reviewed today and could hide a
- *  review already due). Either way the issue is RECORDED: DOCUMENT_ISSUED
+/** What a landed status-change issue did to its compliance clocks, by the
+ *  put-back's three states — the sentence DOCUMENT_ISSUED records. */
+const STATUS_ISSUE_CLOCKS_NOTE = {
+  putBack: "the put-back of the issue its retirement took away (the retirement stamp names this revision): the review clock and the acknowledgment roster it had keep running, not restarted",
+  newIssue: "a new issue: the review clock and the acknowledgment roster were started",
+  unknown: "no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — names another revision, or could not be read): the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); only the acknowledgment roster was opened for this revision",
+} as const;
+
+/** REV-19: what a landed status-change issue owes. A NEW issue (putBack
+ *  false) starts the compliance clocks through the one path every creation
+ *  door uses (startIssuedDocumentClocks: the review clock and the
+ *  read-&-understood roster); the put-back of a stamped issue (true) does
+ *  not (its clocks were never stopped — restarting them would mark it
+ *  reviewed today and could hide a review already due); an issue the stamp
+ *  cannot place (null — P14 review fix) does not reset the review clock
+ *  either, on no evidence, and opens only the acknowledgment roster
+ *  (onDocumentIssuedAck, idempotent per revision: nobody who already
+ *  acknowledged this revision is asked again). Either way the issue is
+ *  RECORDED, with what the clocks did and why: DOCUMENT_ISSUED
  *  naming the document, the revision, the status before and after, the door,
  *  the actor, and the policy decision (DEC-63 §2: an issue under a policy
  *  that requires sign-off made without a complete roster — which only a
@@ -2216,7 +2266,7 @@ export async function recordStatusIssue(input: {
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
 }): Promise<StatusIssueOutcome> {
   const complianceClockErrors: string[] = [];
-  if (input.putBack !== true) {
+  if (input.putBack === false) {
     try {
       complianceClockErrors.push(...await startIssuedDocumentClocks({
         orgId: input.orgId, documentId: input.documentId, actorUserId: input.actorUserId, actorName: input.actorEmail ?? null,
@@ -2224,6 +2274,13 @@ export async function recordStatusIssue(input: {
     } catch (e) {
       complianceClockErrors.push(`the start failed (${(e as Error).message})`);
     }
+  } else if (input.putBack === null) {
+    // No evidence: the review clock is left as it was; the roster for this
+    // revision is opened (onDocumentIssuedAck reports, never throws).
+    await onDocumentIssuedAck({
+      orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? null,
+      writeErrors: complianceClockErrors,
+    });
   }
   // The policy decision, best-effort: an unreadable policy or roster is
   // recorded as unknown (null), never guessed.
@@ -2259,7 +2316,11 @@ export async function recordStatusIssue(input: {
       reviewPolicyMode,
       rosterComplete,
       issuedWithoutSignOff: reviewPolicyMode === "require" && rosterComplete === false,
-      complianceClocksStarted: input.putBack !== true,
+      complianceClocksStarted: input.putBack === false,
+      reviewClockReset: input.putBack === false,
+      acknowledgmentRosterOpened: input.putBack !== true,
+      complianceClocksNote: input.putBack === true ? STATUS_ISSUE_CLOCKS_NOTE.putBack
+        : input.putBack === false ? STATUS_ISSUE_CLOCKS_NOTE.newIssue : STATUS_ISSUE_CLOCKS_NOTE.unknown,
       complianceClockErrors: complianceClockErrors.length > 0 ? complianceClockErrors : null,
     },
   });

@@ -7,7 +7,10 @@
 // changeDocumentStatus — THE status write for a status editor (the library
 // page's metadata save and the bulk editor adopt it as their owners next
 // touch those files). The put-back of the stamped issue (20261144's
-// retirement stamp names the current revision) keeps the clocks it had.
+// retirement stamp names the current revision) keeps the clocks it had; an
+// issue the stamp cannot place (no stamp, another revision's, unreadable —
+// P14 review fix) resets no review clock and opens only the acknowledgment
+// roster.
 //
 // Driven against the in-memory PostgREST (helpers/fakeSupabase) with the real
 // lib/revisions.ts and lib/reviewControl.ts; a BEFORE UPDATE hook clears the
@@ -23,9 +26,32 @@ const state = vi.hoisted(() => ({
   clockErrors: [] as string[],
   clockThrows: false,
   refuse: null as null | { code: string; message: string },
+  /** Fail the next documents select("*") (the status-issue basis read). */
+  failBasisRead: false,
 }));
 
-vi.mock("@/lib/supabase", () => ({ get supabase() { return makeFakeSupabase(state.db); } }));
+vi.mock("@/lib/supabase", () => ({
+  get supabase() {
+    const real = makeFakeSupabase(state.db);
+    return {
+      ...real,
+      from: (t: string) => {
+        const b = real.from(t) as unknown as { select: (c: string) => unknown; update: (p: Row) => unknown };
+        if (t === "documents" && state.failBasisRead) {
+          return {
+            select: (cols: string) => {
+              if (cols !== "*") return b.select(cols);
+              state.failBasisRead = false;
+              return { eq: () => ({ maybeSingle: async () => ({ data: null, error: { code: "08006", message: "connection reset" } }) }) };
+            },
+            update: (patch: Row) => b.update(patch),
+          };
+        }
+        return b;
+      },
+    };
+  },
+}));
 vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn(), makeLibraryStoragePath: vi.fn(), uniqueUploadName: (n: string) => n }));
 vi.mock("@/lib/principal", () => ({ resolveActorPrincipal: vi.fn(async (i: { uid: string }) => ({ uid: i.uid, role: "DocCtrl", roles: ["DocCtrl"] })) }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
@@ -49,7 +75,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
   return { ...real, effectiveReviewControlForDocument: vi.fn(async () => ({ mode: state.reviewMode })) };
 });
 
-import { changeDocumentStatus, unarchiveDocument, recordStatusIssue } from "@/lib/revisions";
+import { changeDocumentStatus, unarchiveDocument, recordStatusIssue, putBackFromRetirementStamp } from "@/lib/revisions";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { isIssueRefusal } from "@/lib/issueStatus";
@@ -84,6 +110,7 @@ beforeEach(() => {
   state.clockErrors = [];
   state.clockThrows = false;
   state.refuse = null;
+  state.failBasisRead = false;
   // The guard's part this test needs: a refusal when asked, and the stamp
   // cleared on any write that leaves a retirement (20261144).
   state.db.beforeUpdate!.documents = (next) => {
@@ -181,13 +208,73 @@ describe("REV-19 — unarchiveDocument into an issue status", () => {
     expect(T("audit_logs").some((a) => a.action === "ARCHIVE_DOC")).toBe(true);
   });
 
-  it("an un-archive that issues a revision the archive did not take away (no stamp: before 20261144 or the service role; or 'not-issued') starts the clocks and is recorded", async () => {
-    const legacy = seedDoc("u2", { status: "Archived" });
-    expect((await unarchive(legacy, "Issued")).putBack).toBe(false);
+  it("an un-archive the guard stamped 'not-issued' (its retirement took away no issue — the evidence of a new issue) starts the clocks and is recorded", async () => {
     const neverIssued = seedDoc("u3", { status: "Archived", retired_issue_status: "not-issued" });
-    expect((await unarchive(neverIssued, "Issued")).putBack).toBe(false);
-    expect(onDocumentIssued).toHaveBeenCalledTimes(2);
-    expect(issued().map((a) => (a.details as Row).putBack)).toEqual([false, false]);
+    expect(await unarchive(neverIssued, "Issued")).toEqual({ issued: true, putBack: false, complianceClockErrors: [], recordError: null });
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(issued()[0].details).toMatchObject({ putBack: false, complianceClocksStarted: true, reviewClockReset: true, acknowledgmentRosterOpened: true });
+    expect(String((issued()[0].details as Row).complianceClocksNote)).toMatch(/^a new issue/);
+  });
+
+  it("P14 review fix (blocker) — an UNSTAMPED archive (before 20261144, or the service role) restored to Issued resets NO review clock: put-back unknown, only the acknowledgment roster opened, and the record says why", async () => {
+    // P-101 Rev C: archived in 2025, its periodic review overdue since June.
+    const legacy = seedDoc("u2", { status: "Archived", last_reviewed_at: "2024-06-01T00:00:00.000Z", last_reviewed_by: "rev1", next_review_date: "2026-06-01" });
+    const out = await unarchive(legacy, "Issued");
+    expect(out).toEqual({ issued: true, putBack: null, complianceClockErrors: [], recordError: null });
+    // the clock that reset last_reviewed_at to now (and named the un-archiver) never ran
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(docRow("u2")).toMatchObject({ status: "Issued", last_reviewed_at: "2024-06-01T00:00:00.000Z", last_reviewed_by: "rev1", next_review_date: "2026-06-01" });
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(onDocumentIssuedAck).toHaveBeenCalledWith(expect.objectContaining({ orgId: ORG, documentId: "u2", actorId: ME }));
+    expect(issued()[0].details).toMatchObject({
+      door: "unarchive", fromStatus: "Archived", toStatus: "Issued", putBack: null,
+      complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
+    });
+    expect(String((issued()[0].details as Row).complianceClocksNote)).toMatch(/no evidence.*review clock was NOT reset/);
+  });
+
+  it("P14 review fix — a stamp naming ANOTHER revision is no evidence either: no review-clock reset", async () => {
+    const d = seedDoc("u6", { status: "Superseded", retired_issue_status: "Issued", retired_issue_version_id: "u6-v1" });
+    expect((await unarchive(d, "Issued")).putBack).toBeNull();
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+  });
+
+  it("P14 review fix — a stamp that could not be read (the row read fails) is unknown, never a new issue: no review-clock reset", async () => {
+    const d = seedDoc("u7", { status: "Archived", retired_issue_status: "not-issued" });
+    // The basis read is a select("*") on documents; it fails once. (Even a
+    // 'not-issued' stamp that could not be READ is no evidence.)
+    state.failBasisRead = true;
+    const out = await unarchive(d, "Issued");
+    expect(state.failBasisRead).toBe(false);
+    expect(docRow("u7").status).toBe("Issued");
+    expect(out.putBack).toBeNull();
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(issued()[0].details).toMatchObject({ putBack: null, complianceClocksStarted: false });
+  });
+
+  it("an acknowledgment roster that did not open under an unknown put-back is returned AND recorded", async () => {
+    const d = seedDoc("u8", { status: "Archived" });
+    vi.mocked(onDocumentIssuedAck).mockImplementationOnce(async (i: { writeErrors?: string[] }) => { i.writeErrors?.push("the acknowledgment roster could not be saved (permission denied)"); });
+    const out = await unarchive(d, "Issued");
+    expect(out.complianceClockErrors).toEqual(["the acknowledgment roster could not be saved (permission denied)"]);
+    expect(issued()[0].details).toMatchObject({ putBack: null, complianceClockErrors: ["the acknowledgment roster could not be saved (permission denied)"] });
+  });
+
+  it("putBackFromRetirementStamp: true only on the stamp naming the current revision; false only on Draft / In Review or a 'not-issued' stamp; otherwise unknown (null)", () => {
+    const at = (status: string | null, retiredIssueStatus?: string | null, retiredIssueVersionId?: string | null, currentVersionId: string | null = "v2") =>
+      putBackFromRetirementStamp({ status, currentVersionId, retiredIssueStatus, retiredIssueVersionId });
+    expect(at("Archived", "Issued", "v2")).toBe(true);
+    expect(at("Void", "IFC", "v2")).toBe(true);
+    expect(at("Draft")).toBe(false);
+    expect(at(" In Review ")).toBe(false);
+    expect(at("Archived", "not-issued", null)).toBe(false);
+    expect(at("Superseded", "not-issued", null)).toBe(false);
+    expect(at("Archived", null, null)).toBeNull();          // no stamp: before 20261144 / service role
+    expect(at("Archived", undefined, undefined)).toBeNull(); // the stamp columns absent
+    expect(at("Archived", "Issued", "v1")).toBeNull();      // another revision's stamp
+    expect(at("Archived", "Issued", "v2", null)).toBeNull(); // no current revision
   });
 
   it("regression — an un-archive to Draft / In Review is not an issue: no clock, no DOCUMENT_ISSUED (the write and its ARCHIVE_DOC record as before)", async () => {
