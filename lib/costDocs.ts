@@ -587,7 +587,7 @@ export async function awardQuote(input: {
       .select("id");
     declined = hit?.length ?? 0;
     if (error || declined < rivals.length) {
-      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${userFacingError(error, { context: "declineRivals" })})` : ""} — refresh and decline them by hand.`);
+      warnings.push(`Awarded, but ${rivals.length - declined} of ${rivals.length} competing bid(s) could not be marked not-selected${error ? ` (${userFacingError(error, { context: "declineRivals", embed: true })})` : ""} — refresh and decline them by hand.`);
     }
   }
   if (ungroupedOpen.length > 0) {

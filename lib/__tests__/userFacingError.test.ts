@@ -26,7 +26,7 @@ vi.mock("@/lib/supabase", () => {
 });
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
 
-import { userFacingError, userFacingReadError, userFacingCaughtError, classifyDbError } from "@/lib/userFacingError";
+import { userFacingError, userFacingReadError, userFacingCaughtError, classifyDbError, type UserFacingKind, type DbErrorLike } from "@/lib/userFacingError";
 import { describeWriteError } from "@/lib/checkedWrite";
 import { saveCompany, listCompanies, addCompanyEvent } from "@/lib/companies";
 import { saveParty, listParties, addEntry } from "@/lib/costs";
@@ -107,20 +107,20 @@ describe("REL-3 — a refusal written for users passes through untouched (never 
 });
 
 describe("REL-3 — a caught error shown on a screen: the library's lead-in is kept, only the driver fragment is replaced", () => {
-  it("a partial success keeps what DID happen (never a blanket 'nothing was changed')", () => {
+  it("a partial success keeps what DID happen, and is never followed by 'nothing was changed' (the embedded reason)", () => {
     const e = new Error('The new revision is published, but the prior revision could not be marked superseded: new row violates row-level security policy for table "document_versions"');
-    expect(userFacingCaughtError(e)).toBe("The new revision is published, but the prior revision could not be marked superseded: You don't have permission to do this — nothing was changed.");
+    expect(userFacingCaughtError(e)).toBe("The new revision is published, but the prior revision could not be marked superseded: You don't have permission to do this.");
     expect(errSpy).toHaveBeenCalledTimes(1);
   });
   it("a parenthesised fragment is replaced in place and the sentences after it are kept", () => {
     const e = new Error('The reviewer roster could not be saved (insert or update on table "document_review_signoffs" violates foreign key constraint "x_fkey"). The submission was withdrawn: nothing is in review. Fix the cause and submit again.');
     const out = userFacingCaughtError(e);
-    expect(out).toBe("The reviewer roster could not be saved (Something this refers to has been removed, or is still in use — nothing was changed. Refresh and try again). The submission was withdrawn: nothing is in review. Fix the cause and submit again.");
+    expect(out).toBe("The reviewer roster could not be saved (Something this refers to has been removed, or is still in use — refresh and try again). The submission was withdrawn: nothing is in review. Fix the cause and submit again.");
     expect(out).not.toMatch(INTERNALS);
   });
   it("a fragment followed by the library's own next sentence keeps that sentence; a schema-cache text loses its 'Could not find…' preamble", () => {
     expect(userFacingCaughtError(new Error('Name and visibility were saved, but purpose was not: column "purpose" of relation "projects" does not exist. Save changes retries just those.')))
-      .toBe("Name and visibility were saved, but purpose was not: This needs the latest database migration applied — nothing was changed. Save changes retries just those.");
+      .toBe("Name and visibility were saved, but purpose was not: This needs the latest database migration applied. Save changes retries just those.");
     const out = userFacingCaughtError(new Error("Couldn't publish: Could not find the 'pages_read' column of 'documents' in the schema cache"), { action: "read" });
     expect(out).toBe("Couldn't publish: This needs the latest database migration applied.");
   });
@@ -135,6 +135,136 @@ describe("REL-3 — a caught error shown on a screen: the library's lead-in is k
   it("an Error that keeps its driver code and a translated message (listChangeOrders) reads as that sentence", () => {
     const e = Object.assign(new Error("You don't have permission to see this."), { code: "42501" });
     expect(userFacingCaughtError(e, { action: "read" })).toBe("You don't have permission to see this.");
+  });
+});
+
+/** One driver error per kind — the Record type keeps the list complete
+ *  (a kind added to the translator without a sample fails to compile). */
+const SAMPLE: Record<Exclude<UserFacingKind, "passthrough">, DbErrorLike> = {
+  permission: { message: 'new row violates row-level security policy for table "cost_entries"', code: "42501" },
+  migration: { message: 'relation "public.cost_accounts" does not exist', code: "42P01" },
+  duplicate: { message: 'duplicate key value violates unique constraint "change_orders_project_co_number_key"', code: "23505" },
+  reference: { message: 'insert or update on table "cost_entries" violates foreign key constraint "cost_entries_cost_account_id_fkey"', code: "23503" },
+  required: { message: 'null value in column "planned_at" of relation "milestones" violates not-null constraint', code: "23502" },
+  invalid: { message: 'invalid input syntax for type uuid: "abc"', code: "22P02" },
+  rejected_value: { message: 'new row for relation "cost_documents" violates check constraint "cost_documents_status_check"', code: "23514" },
+  busy: { message: "canceling statement due to lock timeout", code: "55P03" },
+  conflict: { message: "deadlock detected", code: "40P01" },
+  timeout: { message: "canceling statement due to statement timeout", code: "57014" },
+  unavailable: { message: "Could not connect to the database", code: "PGRST000" },
+  not_found: { message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" },
+  session: { message: "JWT expired", code: "PGRST303" },
+  network: { message: "Failed to fetch" },
+  unexpected: { message: 'could not open file "base/16384/2619": No such file or directory', code: "58P01" },
+};
+const KINDS = Object.keys(SAMPLE) as Array<keyof typeof SAMPLE>;
+const NOTHING_CHANGED = /nothing was changed/i;
+
+describe("REL-3 (fix pass) — a read is worded as a read, and a partial success is never followed by 'nothing was changed'", () => {
+  it("every sample is classified as its own kind (the iterations below cover every kind)", () => {
+    for (const k of KINDS) expect(classifyDbError(SAMPLE[k]), k).toBe(k);
+  });
+
+  it("a failed READ is worded as a load for EVERY kind — none says 'nothing was changed', none names internals", () => {
+    for (const k of KINDS) {
+      const out = userFacingError(SAMPLE[k], { action: "read" });
+      expect(out, k).not.toMatch(NOTHING_CHANGED);
+      expect(out, k).not.toMatch(INTERNALS);
+      expect(userFacingReadError(SAMPLE[k]), k).toBe(out);
+    }
+    // the cited case: a malformed id filter on a load (22P02)
+    expect(userFacingReadError(SAMPLE.invalid)).toBe("A value in the request isn't in the expected format.");
+  });
+
+  it("the embedded reason (embed: true) never says 'nothing was changed', for every kind; the stand-alone write sentence still does where it is true", () => {
+    for (const k of KINDS) {
+      const out = userFacingError(SAMPLE[k], { embed: true });
+      expect(out, k).not.toMatch(NOTHING_CHANGED);
+      expect(out, k).not.toMatch(INTERNALS);
+      expect(out, k).toMatch(/[.]$/);
+    }
+    expect(userFacingError(SAMPLE.permission, { embed: true })).toBe("You don't have permission to do this.");
+    expect(userFacingError(SAMPLE.permission)).toBe("You don't have permission to do this — nothing was changed.");
+  });
+
+  /** Lead-ins that report a write which LANDED (the reviewer's cited shapes). */
+  const LANDED = [
+    "The new revision is published, but the prior revision could not be marked superseded",
+    "CO-003 was approved and its money posted, but the link to its cost entry could not be saved",
+    "Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not",
+    "Link created, but its audit record failed",
+    "Ownership moved, but the roster was not updated",
+    "Awarded, but 2 of 3 competing bid(s) could not be marked not-selected",
+    "The project is completed, but its active checkouts were NOT released",
+  ];
+
+  it("census: through userFacingCaughtError, no message holds both a landed-write lead-in and 'nothing was changed' — every lead-in × every kind × colon and parenthesised forms", () => {
+    let checked = 0;
+    for (const lead of LANDED) {
+      for (const k of KINDS) {
+        const raw = SAMPLE[k].message!;
+        for (const msg of [`${lead}: ${raw}`, `${lead} (${raw}) — refresh and decline them by hand.`]) {
+          const out = userFacingCaughtError(Object.assign(new Error(msg), { code: SAMPLE[k].code }));
+          expect(out, `${k}: ${msg}`).not.toMatch(NOTHING_CHANGED);
+          expect(out, `${k}: ${msg}`).not.toMatch(INTERNALS);
+          // where the driver fragment is found, what DID happen is kept
+          if (k !== "network" && k !== "unexpected") expect(out.startsWith(lead), `${k}: ${out}`).toBe(true);
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBe(LANDED.length * KINDS.length * 2);
+  });
+
+  /** The text of each translator call (balanced parentheses) on a line. */
+  const calls = (line: string): string[] => {
+    const out: string[] = [];
+    const re = /userFacing(?:Error|CaughtError)\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line))) {
+      let depth = 1, i = m.index + m[0].length;
+      for (; i < line.length && depth > 0; i++) { if (line[i] === "(") depth++; else if (line[i] === ")") depth--; }
+      out.push(line.slice(m.index, i));
+    }
+    return out;
+  };
+
+  it("source census: every translator call on a line that reports a landed write ('…, but …') uses the embedded reason", () => {
+    const files = ["lib/companies.ts", "lib/costs.ts", "lib/costDocs.ts", "lib/changeOrders.ts", "lib/checklists.ts", "lib/turnover.ts",
+      "lib/milestones.ts", "lib/projects.ts", "lib/timeline.ts", "lib/transitionIn.ts", "lib/intakeLinks.ts", "lib/projectExport.ts", "lib/projectReport.ts",
+      "components/projects/EditProjectModal.tsx", "components/projects/IntakePanel.tsx", "components/projects/cost/QuotesPanel.tsx",
+      "components/projects/QualityTab.tsx", "components/projects/CostsTab.tsx", "app/(protected)/projects/[id]/page.tsx"];
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const f of files) {
+      readFileSync(join(process.cwd(), f), "utf8").split("\n").forEach((line, i) => {
+        if (!/\bbut\b/i.test(line)) return;
+        for (const c of calls(line)) {
+          seen++;
+          if (!/embed: true/.test(c)) offenders.push(`${f}:${i + 1}: ${c}`);
+        }
+      });
+    }
+    expect(seen).toBeGreaterThanOrEqual(15);
+    expect(offenders).toEqual([]);
+  });
+
+  it("the sub-clauses a caller puts after a landed write carry the embedded reason too (activity row, released checkouts, schedule rows, audit rows, delete follow-ups)", () => {
+    const at = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+    const projects = at("lib/projects.ts");
+    expect(projects).toContain('return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects", embed: true })}` : null;');
+    expect(projects).toContain('return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects", embed: true })}`;');
+    expect(projects).toContain("NOT released: ${userFacingError(res.error, { context: \"projects\", embed: true })}");
+    expect(projects).toContain('scheduleError = userFacingError(mdErr, { context: "projects", embed: true });');
+    // the paged reads are reads
+    expect(projects).toContain('if (error) throw new Error(`${label}: ${userFacingReadError(error, "projects")}`);');
+    const ms = at("lib/milestones.ts");
+    for (const s of ["breadcrumbs: ${userFacingError(noteErr, { context: \"milestones\", embed: true })}", "audit: ${userFacingError(auditRes.error, { context: \"milestones\", embed: true })}",
+      "moved up a level (${userFacingError(upErr, { context: \"milestones\", embed: true })})", "could not be removed (${userFacingError(linkErr, { context: \"milestones\", embed: true })})"]) {
+      expect(ms).toContain(s);
+    }
+    expect(at("lib/intakeLinks.ts")).toContain('auditError: userFacingError(auditErr, { context: "intakeLinks", embed: true })');
+    expect(at("components/projects/cost/QuotesPanel.tsx")).toContain("return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };");
   });
 });
 
@@ -240,7 +370,7 @@ describe("REL-3 — the Projects and Companies libraries route through it", () =
 
   it("the cited leaks are closed: the edit dialog's second write and the stale-checkout release translate the driver's text", () => {
     const edit = readFileSync(join(process.cwd(), "components/projects/EditProjectModal.tsx"), "utf8");
-    expect(edit).toContain('were not: ${userFacingError(extErr, { context: "EditProjectModal" }).replace(/\\.$/, "")}. Save changes retries just those.');
+    expect(edit).toContain('were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\\.$/, "")}. Save changes retries just those.');
     expect(edit).not.toContain("${extErr.message}");
     const banner = readFileSync(join(process.cwd(), "components/projects/StaleCheckoutBanner.tsx"), "utf8");
     expect(banner).toContain("Couldn't release ${row.docNumber || \"the checkout\"}: ${userFacingCaughtError(e, { context: \"StaleCheckoutBanner release\" })}");

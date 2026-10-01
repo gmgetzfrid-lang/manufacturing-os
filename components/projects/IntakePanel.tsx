@@ -227,7 +227,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       setCompany(""); setEmail(""); setExpires(isoDateInDays(INTAKE_LINK_DEFAULT_DAYS)); setTrusted(false);
       await refresh();
       setMsg(auditErr
-        ? `Link created, but its audit record failed: ${userFacingError(auditErr)}`
+        ? `Link created, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
         : "Link created — copy it below now and send it to the company. Its address is shown only this once; if it is lost, re-issue the link.",
       auditErr ? "error" : "success");
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
@@ -265,7 +265,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { company: l.companyName, projectId },
       });
-      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${userFacingError(auditErr)}`);
+      if (auditErr) setMsg(`The link was revoked, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       await refresh();
     } finally { setBusy(null); }
   };
@@ -457,7 +457,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const { error: voidErr } = await supabase.from("document_review_signoffs")
         .update({ status: "void", updated_at: new Date().toISOString() })
         .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
-      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${userFacingError(voidErr)}`);
+      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${userFacingError(voidErr, { embed: true })}`);
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
@@ -465,7 +465,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
       });
       setMsg(auditErr
-        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr)}`
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
         : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
       auditErr ? "error" : "success");
       await refresh();

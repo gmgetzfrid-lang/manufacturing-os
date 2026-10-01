@@ -587,7 +587,7 @@ export async function applyMilestoneMoves(input: {
   }
   for (let i = 0; i < notes.length; i += 200) {
     const { error: noteErr } = await supabase.from("milestone_notes").insert(notes.slice(i, i + 200));
-    if (noteErr) { errs.push(`breadcrumbs: ${userFacingError(noteErr, { context: "milestones" })}`); break; }
+    if (noteErr) { errs.push(`breadcrumbs: ${userFacingError(noteErr, { context: "milestones", embed: true })}`); break; }
   }
 
   // The batch audit row: before/after per moved row, never silently lost.
@@ -608,7 +608,7 @@ export async function applyMilestoneMoves(input: {
   };
   let auditRes = await supabase.from("audit_logs").insert(auditRow);
   if (auditRes.error) auditRes = await supabase.from("audit_logs").insert(auditRow); // one retry
-  if (auditRes.error) errs.push(`audit: ${userFacingError(auditRes.error, { context: "milestones" })}`);
+  if (auditRes.error) errs.push(`audit: ${userFacingError(auditRes.error, { context: "milestones", embed: true })}`);
   if (errs.length) result.auditError = errs.join("; ");
 
   // Read back the moved rows' new updated_at — the lock an Undo of THIS move
@@ -1024,7 +1024,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ parent_id: newParent, updated_at: now, updated_by: actorUserId })
       .in("id", children.map((c) => c.id))
       .select("id");
-    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${userFacingError(upErr, { context: "milestones" })}) — they are at the top level now`);
+    if (upErr) incomplete.push(`its ${plural(children.length)} could not be moved up a level (${userFacingError(upErr, { context: "milestones", embed: true })}) — they are at the top level now`);
     else if (!Array.isArray(moved) || moved.length < children.length) {
       const n = children.length - (Array.isArray(moved) ? moved.length : 0);
       incomplete.push(`${plural(n)} could not be moved up a level — ${n === 1 ? "it is" : "they are"} at the top level now`);
@@ -1040,7 +1040,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
       .update({ depends_on: next, updated_at: now, updated_by: actorUserId })
       .eq("id", d.id)
       .select("id");
-    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${userFacingError(linkErr, { context: "milestones" })}) — it still names the deleted task; remove it in that task's links`);
+    if (linkErr) incomplete.push(`the link from “${d.name}” could not be removed (${userFacingError(linkErr, { context: "milestones", embed: true })}) — it still names the deleted task; remove it in that task's links`);
     else if (!Array.isArray(linkRows) || linkRows.length === 0) incomplete.push(`the link from “${d.name}” was not removed (the task could not be changed, or is gone) — if it is still there it names the deleted task; remove it in that task's links`);
     else unlinked.push(d);
   }

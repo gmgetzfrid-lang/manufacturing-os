@@ -410,7 +410,7 @@ export async function decideChangeOrder(input: {
       const { data: linked, error: linkErr } = await supabase.from("change_orders")
         .update({ posted_entry_id: posted.entryId }).eq("id", co.id).select("id");
       if (linkErr || !linked || linked.length === 0) {
-        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${userFacingError(linkErr, { context: "decideChangeOrder link" })})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
+        warning = `${co.coNumber} was approved and its money posted, but the link to its cost entry could not be saved${linkErr ? ` (${userFacingError(linkErr, { context: "decideChangeOrder link", embed: true })})` : ""} — it is listed under "Ledger needs attention" on the Costs tab until repaired.`;
       }
     }
   }
@@ -550,7 +550,7 @@ export async function unwindChangeOrder(input: {
     if (cur?.status === "approved" && cur.posted_entry_id && cur.posted_entry_id !== entryId) {
       throw new Error(`${co.coNumber} was re-linked to another cost entry while it was being reversed — its old entry is void, and it stays approved on the new one. Refresh, and Reverse it again if it should go.`);
     }
-    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${userFacingError(error, { context: "voidChangeOrder" })})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
+    throw new Error(`${co.coNumber}'s cost entry is void, but the change order could not be marked void${error ? ` (${userFacingError(error, { context: "voidChangeOrder", embed: true })})` : ""} — it no longer revises the budget and is listed under "Ledger needs attention" on the Costs tab: Reverse it there.`);
   }
 
   await logAuditAction({

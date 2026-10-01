@@ -56,13 +56,46 @@ const WRITE: Record<Exclude<UserFacingKind, "passthrough">, string> = {
   unexpected: "Something went wrong on the server — try again. If it keeps happening, tell your administrator.",
 };
 
-/** Sentences for a failed READ (nothing to "change"). */
-const READ: Record<Exclude<UserFacingKind, "passthrough">, string> = {
-  ...WRITE,
-  permission: "You don't have permission to see this.",
+/** The REASON alone, for a sentence embedded after a lead-in that already
+ *  says what happened — "X was saved, but Y was not: <reason>". A lead-in
+ *  that reports a write which LANDED must never be followed by "nothing was
+ *  changed", so the embedded form never says it (`embed: true`). */
+const REASON: Record<Exclude<UserFacingKind, "passthrough">, string> = {
+  permission: "You don't have permission to do this.",
   migration: "This needs the latest database migration applied.",
+  duplicate: "That already exists.",
+  reference: "Something this refers to has been removed, or is still in use — refresh and try again.",
+  required: "A required value is missing.",
+  invalid: "A value isn't in the expected format.",
+  rejected_value: "That value isn't allowed here.",
   busy: "Someone else is changing this right now — try again.",
   conflict: "Someone else changed this at the same moment — try again.",
+  timeout: WRITE.timeout,
+  unavailable: WRITE.unavailable,
+  not_found: WRITE.not_found,
+  session: WRITE.session,
+  network: WRITE.network,
+  unexpected: WRITE.unexpected,
+};
+
+/** Sentences for a failed READ — every kind worded as a load; none says
+ *  "nothing was changed" (a read changes nothing). */
+const READ: Record<Exclude<UserFacingKind, "passthrough">, string> = {
+  permission: "You don't have permission to see this.",
+  migration: "This needs the latest database migration applied.",
+  duplicate: "The database reported a duplicate record — refresh and try again.",
+  reference: "Something this refers to has been removed — refresh and try again.",
+  required: "A required value is missing from the request.",
+  invalid: "A value in the request isn't in the expected format.",
+  rejected_value: "A value in the request isn't allowed here.",
+  busy: "Someone else is changing this right now — try again.",
+  conflict: "Someone else changed this at the same moment — try again.",
+  timeout: WRITE.timeout,
+  unavailable: WRITE.unavailable,
+  not_found: WRITE.not_found,
+  session: WRITE.session,
+  network: WRITE.network,
+  unexpected: WRITE.unexpected,
 };
 
 const MISSING_SCHEMA_CODES = new Set(["42P01", "42703", "42883", "PGRST202", "PGRST204", "PGRST205"]);
@@ -144,17 +177,28 @@ export function classifyDbError(err: unknown): UserFacingKind {
   return "passthrough";
 }
 
+export interface UserFacingOptions {
+  action?: "read" | "write";
+  context?: string;
+  /** The sentence goes after a lead-in that already says what happened
+   *  (a partial success: "X was saved, but Y was not: …") — the reason
+   *  alone, never "nothing was changed". */
+  embed?: boolean;
+}
+
 /**
  * The sentence a user reads for `err` — a database / PostgREST error object,
  * an Error, or a string. `action: "read"` words the sentence for a failed
- * load (no "nothing was changed"). `context` labels the console line.
- * When the text is replaced, the raw detail is logged with console.error.
+ * load (no "nothing was changed"); `embed: true` gives the reason alone, for
+ * a lead-in that reports a write which landed. `context` labels the console
+ * line. When the text is replaced, the raw detail is logged with
+ * console.error.
  */
-export function userFacingError(err: unknown, opts: { action?: "read" | "write"; context?: string } = {}): string {
+export function userFacingError(err: unknown, opts: UserFacingOptions = {}): string {
   const kind = classifyDbError(err);
   const e = normalize(err);
   if (kind === "passthrough") return (e.message ?? "").trim();
-  const text = (opts.action === "read" ? READ : WRITE)[kind];
+  const text = (opts.action === "read" ? READ : opts.embed ? REASON : WRITE)[kind];
   try {
     console.error(`[userFacingError]${opts.context ? ` ${opts.context}:` : ""} ${kind}`, {
       code: e.code ?? null, message: e.message ?? null, details: e.details ?? null, hint: e.hint ?? null,
@@ -192,24 +236,27 @@ function driverFragmentAt(msg: string): number {
  * published, but the prior revision could not be marked superseded: <driver
  * text>". Translating the whole would drop what DID happen and claim nothing
  * changed, so the library's lead-in is kept and only the driver fragment is
- * replaced by its plain sentence (what follows a parenthesised fragment, or a
- * new sentence after it, is kept too). A lead-in or tail that would itself
- * name a table, column or policy is dropped. A message with no driver text
- * passes through untouched; a bare driver message becomes its sentence. The
- * raw detail is logged exactly as userFacingError logs it.
+ * replaced — by the REASON alone (the embedded form: never "nothing was
+ * changed" after a lead-in, which may report a write that landed). What
+ * follows a parenthesised fragment, or a new sentence after it, is kept
+ * too. A lead-in or tail that would itself name a table, column or policy is
+ * dropped. A message with no driver text passes through untouched; a bare
+ * driver message becomes its full sentence. The raw detail is logged exactly
+ * as userFacingError logs it.
  */
-export function userFacingCaughtError(err: unknown, opts: { action?: "read" | "write"; context?: string } = {}): string {
+export function userFacingCaughtError(err: unknown, opts: UserFacingOptions = {}): string {
   const kind = classifyDbError(err);
   const e = normalize(err);
   const msg = (e.message ?? "").trim();
   if (kind === "passthrough") return msg;
-  const sentence = userFacingError(err, opts);
   const at = driverFragmentAt(msg);
-  if (at <= 0) return sentence;
-  const before = msg.slice(0, at).replace(DRIVER_PREAMBLE, "");
+  const before = at > 0 ? msg.slice(0, at).replace(DRIVER_PREAMBLE, "") : "";
   const paren = /\(\s*$/.test(before);
   const lead = before.replace(/[\s:;,(—–-]+$/, "").trim();
-  if (!lead || LEAKS.test(lead) || driverFragmentAt(lead) >= 0) return sentence;
+  if (!lead || LEAKS.test(lead) || driverFragmentAt(lead) >= 0) return userFacingError(err, opts);
+  // A kept lead-in says what happened (often a write that LANDED — "The new
+  // revision is published, but …"), so what follows it is the reason alone.
+  const sentence = userFacingError(err, { ...opts, embed: true });
   let rest = "";
   if (paren) {
     // the fragment runs to the parenthesis that closes it

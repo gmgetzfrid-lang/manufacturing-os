@@ -104,7 +104,7 @@ export async function guardedCostDocWrite(input: {
     org_id: input.doc.orgId, user_id: input.actor.uid, user_email: input.actor.email,
     details: input.audit.details,
   });
-  return { ok: true, auditError: auditErr ? userFacingError(auditErr) : null };
+  return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -248,11 +248,11 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         const undone = !revertErr && !!reverted && (reverted as unknown[]).length > 0;
         setErr(undone
           ? `The override could not be recorded (${userFacingError(auditErr)}) — the link was put back.`
-          : `The link changed but its override record failed (${userFacingError(auditErr)}) and it could not be undone (${revertErr ? userFacingError(revertErr) : "no row was updated"}) — relink it by hand.`);
+          : `The link changed but its override record failed (${userFacingError(auditErr, { embed: true })}) and it could not be undone (${revertErr ? userFacingError(revertErr, { embed: true }) : "no row was updated"}) — relink it by hand.`);
         if (!undone) setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
         return;
       }
-      setErr(`The company was linked but its audit record failed: ${userFacingError(auditErr)}`);
+      setErr(`The company was linked but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
     }
     setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
   };
@@ -714,7 +714,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: overridden.id, company: overridden.name, why: failure },
       });
-      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error)})`;
+      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error, { embed: true })})`;
     }
     setErr(failure);
   };
@@ -1366,7 +1366,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: company.trim(), rfqGroup: snapRfqGroup(group, snapTargets) || null, projectId, expiresAt: expiresAt.toISOString() },
       });
-      if (auditErr) setErr(`The link was created but its audit record failed: ${userFacingError(auditErr)}`);
+      if (auditErr) setErr(`The link was created but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       setFreshUrls((prev) => new Map(prev).set(String((created as { id: string }).id), portalUrl(token)));
       setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
@@ -1390,7 +1390,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { company: l.companyName, rfqGroup: l.rfqGroup, projectId },
       });
-      if (auditErr) setErr(`The link was revoked but its audit record failed: ${userFacingError(auditErr)}`);
+      if (auditErr) setErr(`The link was revoked but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       await refresh();
     } finally { setRevoking(null); }
   };

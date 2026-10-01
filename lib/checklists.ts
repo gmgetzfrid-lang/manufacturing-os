@@ -239,7 +239,7 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
       return { maySign: d?.maySign === true, otherSigners: Number.isFinite(others) ? Math.max(0, others) : null, source: "database" };
     }
     if (!isMissingFunction(error)) {
-      return { maySign: false, otherSigners: null, source: "database", error: describeWriteError(error) };
+      return { maySign: false, otherSigners: null, source: "database", error: userFacingReadError(error, "signoff check") };
     }
   } catch (e) {
     return { maySign: false, otherSigners: null, source: "database", error: (e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "signoff check" }) : "the sign-off check failed" };
@@ -249,7 +249,7 @@ export async function loadSignoffAuthority(orgId: string, projectId: string, act
     supabase.from("projects").select("owner_user_id").eq("id", projectId).maybeSingle(),
   ]);
   const readError = membersRes.error ?? projectRes.error;
-  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: describeWriteError(readError) };
+  if (readError) return { maySign: false, otherSigners: null, source: "fallback", error: userFacingReadError(readError, "signoff check") };
   const members = ((membersRes.data ?? []) as Array<{ uid?: string | null; role?: string | null; roles?: string[] | null }>);
   const eligible = new Set<string>();
   for (const m of members) {
@@ -331,7 +331,7 @@ export async function listChecklists(orgId: string, projectId: string): Promise<
   const { data, error } = await supabase.from("project_checklists").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(50);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listChecklists"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapChecklist);
 }
 
@@ -340,7 +340,7 @@ export async function listChecklists(orgId: string, projectId: string): Promise<
 export async function readChecklistItems(checklistId: string): Promise<{ rows: ChecklistItem[]; error: string | null }> {
   const { data, error } = await supabase.from("checklist_items").select("*")
     .eq("checklist_id", checklistId).order("seq", { ascending: true }).limit(600);
-  if (error) return { rows: [], error: describeWriteError(error) };
+  if (error) return { rows: [], error: userFacingReadError(error, "readChecklistItems") };
   return { rows: (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem), error: null };
 }
 

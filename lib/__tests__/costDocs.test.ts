@@ -364,6 +364,15 @@ describe("awardQuote — the award as a checked transaction (MON-1 / MON-10 / MO
     expect(db.tables.cost_documents[1].status).toBe("parsed");
   });
 
+  it("REL-3 (fix pass): a rival-decline refused by the database is an embedded REASON — 'Awarded, but …' is never followed by 'nothing was changed'", async () => {
+    db.tables.cost_documents.push(docRow({}), docRow({ id: "r1", status: "parsed" }));
+    db.fail["cost_documents:update"] = [null, { message: 'new row violates row-level security policy for table "cost_documents"', code: "42501" }];
+    const res = await awardQuote({ doc: doc(), siblings: [doc(), doc({ id: "r1" })], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.warning).toMatch(/^Awarded, but 1 of 1 competing bid\(s\) could not be marked not-selected \(You don't have permission to do this\.\) — refresh and decline them by hand\./);
+    expect(res.warning).not.toMatch(/nothing was changed|row-level|cost_documents/);
+  });
+
   it("COST-8: a document in another currency than the budget line is refused BEFORE the claim", async () => {
     db.tables.cost_documents.push(docRow({ currency: "EUR" }));
     const res = await awardQuote({ doc: doc({ currency: "EUR" }), siblings: [], costAccountId: "a1", actor });
@@ -552,6 +561,14 @@ describe("change orders — numbering, authority, unwind (MON-9 / COST-6 / COST-
     const out = await decideChangeOrder({ co: co({ id: "co2", coNumber: "CO-002" }), decision: "approved", shownAmount: 500, shownAccountId: "a1", actorId: "u-owner" });
     expect(out.warning).toMatch(/CO-002 was approved and its money posted, but the link/);
     expect(entries()).toHaveLength(1);
+  });
+
+  it("REL-3 (fix pass): a link write refused by the database after the money posted reads as a reason, never 'nothing was changed'", async () => {
+    db.tables.change_orders = [coRow({ id: "co3", co_number: "CO-003" })];
+    db.fail["change_orders:update"] = [null, { message: 'new row violates row-level security policy for table "change_orders"', code: "42501" }];
+    const out = await decideChangeOrder({ co: co({ id: "co3", coNumber: "CO-003" }), decision: "approved", shownAmount: 500, shownAccountId: "a1", actorId: "u-owner" });
+    expect(out.warning).toBe('CO-003 was approved and its money posted, but the link to its cost entry could not be saved (You don\'t have permission to do this.) — it is listed under "Ledger needs attention" on the Costs tab until repaired.');
+    expect(out.warning).not.toMatch(/nothing was changed/);
   });
 
   it("REL-9 / COST-9: the unwind voids EXACTLY posted_entry_id, marks the CO void and records the entry id", async () => {

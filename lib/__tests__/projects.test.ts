@@ -505,7 +505,9 @@ describe("PM-7 / PM-9 — the feed write is checked and no longer touches projec
   it("a refused insert comes back as text (never a throw); writeActivityChecked throws it; the client never UPDATEs projects.last_activity_at", async () => {
     const RLS = { message: "new row violates row-level security policy for table \"project_activity\"" };
     state.queue["project_activity.insert"] = [{ error: RLS }, { error: RLS }];
-    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toMatch(/^The project activity row was not written: You don't have permission to do this/);   // REL-3
+    // REL-3: the reason alone — every caller shows it after a write that landed
+    // ("X was attached, but the project activity row was not written: …").
+    await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toBe("The project activity row was not written: You don't have permission to do this.");
     await expect(writeActivityChecked({ projectId: "p1", orgId: "o1", userId: "u1", type: "comment", body: "x" })).rejects.toThrow(/^The project activity row was not written: You don't have permission to do this/);
     await expect(writeActivity({ projectId: "p1", orgId: "o1", userId: "u1", type: "checkout_added" })).resolves.toBeNull();
     expect(writesTo("projects")).toHaveLength(0);

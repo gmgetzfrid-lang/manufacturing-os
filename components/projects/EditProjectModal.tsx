@@ -168,7 +168,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             updated_at: new Date().toISOString(),
             updated_by: actorUserId,
           }).eq("id", project.id!);
-          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${userFacingError(extErr, { context: "EditProjectModal" }).replace(/\.$/, "")}. Save changes retries just those.`);
+          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\.$/, "")}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",

@@ -40,8 +40,8 @@
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
-import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
-import { userFacingCaughtError } from "@/lib/userFacingError";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { userFacingCaughtError, userFacingReadError } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
@@ -222,7 +222,7 @@ export async function listTurnoverItems(orgId: string, projectId: string): Promi
   const { data, error } = await supabase.from("turnover_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: true }).limit(300);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listTurnoverItems"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapItem);
 }
 
@@ -236,7 +236,7 @@ export async function listTurnoverReviewEvents(orgId: string, projectId: string)
     .order("created_at", { ascending: true }).limit(1000);
   if (error) {
     if (isMissingSchemaError(error)) return [];
-    throw new Error(describeWriteError(error));
+    throw new Error(userFacingReadError(error, "listTurnoverReviewEvents"));
   }
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapEvent);
 }
@@ -438,7 +438,7 @@ export async function listPunchItems(orgId: string, projectId: string): Promise<
   const { data, error } = await supabase.from("punch_items").select("*")
     .eq("org_id", orgId).eq("project_id", projectId)
     .order("created_at", { ascending: false }).limit(500);
-  if (error) throw new Error(describeWriteError(error));
+  if (error) throw new Error(userFacingReadError(error, "listPunchItems"));
   return (((data ?? []) as Array<Record<string, unknown>>)).map(mapPunch);
 }
 

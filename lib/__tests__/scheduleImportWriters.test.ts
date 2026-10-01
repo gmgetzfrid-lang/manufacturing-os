@@ -882,7 +882,7 @@ describe("SCH-7 / SCHED-11 · applyMilestoneMoves", () => {
     db.failInsert = (t) => (t === "audit_logs" ? (attempts++, "new row violates row-level security policy") : null);
     const res = await applyMilestoneMoves({ ...actor, moves: many });
     expect(attempts).toBe(2);
-    expect(res.auditError).toBe("audit: You don't have permission to do this — nothing was changed.");   // REL-3
+    expect(res.auditError).toBe("audit: You don't have permission to do this.");   // REL-3 — the reason alone: the moves landed ("Moved, but audit: …")
     // and the payload shape it tried to write
     const tried = db.writes.filter((w) => w.table === "audit_logs").at(-1)!.payload as Row[];
     expect((tried[0].details as Row)).toMatchObject({ shown: 50, total: 60, truncated: true });

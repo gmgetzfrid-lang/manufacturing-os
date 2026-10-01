@@ -182,7 +182,7 @@ export async function revokeProjectIntakeLinks(input: {
       org_id: input.orgId, user_id: input.actorId ?? null, user_email: input.actorEmail ?? null,
       details: { linkIds: revoked, reason: input.reason },
     });
-    if (auditErr) return { ok: true, revoked, error: `The links were revoked, but the audit record failed: ${userFacingError(auditErr, { context: "intakeLinks" })}` };
+    if (auditErr) return { ok: true, revoked, error: `The links were revoked, but the audit record failed: ${userFacingError(auditErr, { context: "intakeLinks", embed: true })}` };
   }
   return { ok: true, revoked };
 }
@@ -287,5 +287,5 @@ export async function reissueIntakeLink(input: {
     org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,
     details: { company: input.company, projectId: input.projectId },
   });
-  return auditErr ? { ok: true, token, auditError: userFacingError(auditErr, { context: "intakeLinks" }) } : { ok: true, token };
+  return auditErr ? { ok: true, token, auditError: userFacingError(auditErr, { context: "intakeLinks", embed: true }) } : { ok: true, token };
 }

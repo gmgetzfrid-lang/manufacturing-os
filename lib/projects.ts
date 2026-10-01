@@ -213,9 +213,9 @@ export async function writeActivity(input: WriteActivityInput): Promise<string |
       metadata: input.metadata || null,
       created_at: now,
     });
-    return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects" })}` : null;
+    return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects", embed: true })}` : null;
   } catch (e) {
-    return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects" })}`;
+    return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects", embed: true })}`;
   }
 }
 
@@ -773,7 +773,7 @@ export async function releaseAllCheckoutsForProject(params: {
   // exceed the API gateway's URL limit.
   for (let i = 0; i < own.length; i += IN_FILTER_CHUNK) {
     const res = await endSessions(own.slice(i, i + IN_FILTER_CHUNK).map((r) => r.id));
-    if (res.error) throw new Error(`The project's active checkouts were NOT released: ${userFacingError(res.error, { context: "projects" })}`);
+    if (res.error) throw new Error(`The project's active checkouts were NOT released: ${userFacingError(res.error, { context: "projects", embed: true })}`);
     endedRows.push(...res.ended);
   }
   // Everyone else's: one session at a time, so a refusal holds only itself.
@@ -1325,7 +1325,7 @@ async function legacyDeleteRecordlessProject(
   let scheduleError: string | null = null;
   if (milestoneIds.length > 0) {
     const { error: mdErr } = await supabase.from("milestones").delete().in("id", milestoneIds);
-    if (mdErr) scheduleError = userFacingError(mdErr, { context: "projects" });
+    if (mdErr) scheduleError = userFacingError(mdErr, { context: "projects", embed: true });
   }
   await logAuditAction({
     action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
@@ -1391,11 +1391,11 @@ async function legacyTransferOwnership(
     project_id: input.projectId, user_id: input.newOwnerUserId,
     user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
   }, { onConflict: "project_id,user_id" });
-  if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${userFacingError(upErr, { context: "projects" })}`);
+  if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${userFacingError(upErr, { context: "projects", embed: true })}`);
   if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
     const { error: dErr } = await supabase.from("project_members").update({ role: "collaborator" })
       .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
-    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${userFacingError(dErr, { context: "projects" })}`);
+    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${userFacingError(dErr, { context: "projects", embed: true })}`);
   }
   const activityError = await writeActivity({
     projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
@@ -1879,7 +1879,7 @@ async function readAllPages(label: string, page: RowPage): Promise<Array<Record<
   const rows: Array<Record<string, unknown>> = [];
   for (let from = 0; ; from += PAGE_ROWS) {
     const { data, error } = await page(from, from + PAGE_ROWS - 1);
-    if (error) throw new Error(`${label}: ${userFacingError(error, { context: "projects" })}`);
+    if (error) throw new Error(`${label}: ${userFacingReadError(error, "projects")}`);
     const batch = (data ?? []) as Array<Record<string, unknown>>;
     rows.push(...batch);
     if (batch.length < PAGE_ROWS) return rows;

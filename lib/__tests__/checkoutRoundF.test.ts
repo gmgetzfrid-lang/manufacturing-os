@@ -499,7 +499,7 @@ describe("DCK-9 — the project release is a check-in with an outcome, a CHECK_I
   it("a refused write of the actor's OWN sessions is thrown, not discarded", async () => {
     state.seq["checkout_sessions.select"] = [[{ ...row, user_id: "mgr" }]];
     state.errors["checkout_sessions.update"] = { message: "permission denied for table checkout_sessions", code: "42501" };
-    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr" })).rejects.toThrow(/NOT released: You don't have permission to do this — nothing was changed\./);   // REL-3: a sentence, never the driver text
+    await expect(releaseAllCheckoutsForProject({ projectId: "p1", reason: "Project completed", actorUserId: "mgr" })).rejects.toThrow(/NOT released: You don't have permission to do this\.$/);   // REL-3: a sentence, never the driver text — and never "nothing was changed" (the project's status change landed)
     expect(state.audits.filter((a) => a.action === "CHECK_IN")).toHaveLength(0);
   });
 
