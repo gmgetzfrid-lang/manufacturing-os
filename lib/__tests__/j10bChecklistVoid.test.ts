@@ -9,12 +9,17 @@
 // controller tier only (is_org_controller: Admin / DocCtrl held anywhere),
 // so the control is offered to exactly that tier:
 //   * a controller sees "Void checklist" on an open or completed checklist,
-//     confirms (the consequence is said; a signed-off one says so), and the
-//     checklist is written 'void' through the checked lib write, the tab
-//     re-reads (the card leaves the list) and the page is told;
+//     gives a reason (the consequence is said; a signed-off one says so; the
+//     reason meets the record's bar), and the checklist is written 'void'
+//     through the checked lib write with that reason, the tab re-reads (the
+//     card leaves the list) and the page is told;
+//   * the void's audit row is its only record of who voided it (the table
+//     keeps no voided_by): when that insert fails the lib says so
+//     (auditError) and the section — which outlives the card — says the
+//     void landed unrecorded (the review's REL-9 minor);
 //   * anyone else is not offered it;
 //   * a refusal (the rail's own sentence) is shown on the card, nothing else
-//     changes; declining the confirm writes nothing.
+//     changes; cancelling the prompt writes nothing.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -25,7 +30,7 @@ import { join } from "node:path";
 const m = vi.hoisted(() => ({
   roles: [] as string[],
   listChecklists: vi.fn(), listChecklistItems: vi.fn(), setChecklistStatus: vi.fn(), loadSignoffAuthority: vi.fn(),
-  appConfirm: vi.fn(), invalidate: vi.fn(),
+  appConfirm: vi.fn(), appPrompt: vi.fn(), invalidate: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -42,7 +47,7 @@ vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn() }));
 vi.mock("@/components/providers/RoleContext", () => ({
   useRole: () => ({ member: { displayName: "Dana Controller" }, activeRole: m.roles[0] ?? null, roles: m.roles }),
 }));
-vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: m.appConfirm, appPrompt: vi.fn() }));
+vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: m.appConfirm, appPrompt: m.appPrompt }));
 vi.mock("@/components/signatures/SignatureCeremony", () => ({ default: () => null }));
 vi.mock("@/lib/costs", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/costs")>();
@@ -66,6 +71,7 @@ vi.mock("@/lib/projectSnapshot", async (importOriginal) => {
 
 import QualityTab from "@/components/projects/QualityTab";
 import type { Checklist } from "@/lib/checklists";
+import { REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -82,7 +88,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  for (const f of [m.listChecklists, m.listChecklistItems, m.setChecklistStatus, m.loadSignoffAuthority, m.appConfirm, m.invalidate]) f.mockReset();
+  for (const f of [m.listChecklists, m.listChecklistItems, m.setChecklistStatus, m.loadSignoffAuthority, m.appConfirm, m.appPrompt, m.invalidate]) f.mockReset();
   m.roles = [];
   told = 0;
   m.listChecklists.mockResolvedValue([checklist()]);
@@ -110,7 +116,7 @@ async function openCard() {
 }
 
 describe("REL-9 — a mistaken checklist can be voided, by the tier the database admits", () => {
-  it("a controller (DocCtrl held beside a headline Engineer role) voids an open checklist: confirm names the consequence, the lib writes 'void', the card leaves the list and the page is told", async () => {
+  it("a controller (DocCtrl held beside a headline Engineer role) voids an open checklist: the prompt names the consequence and asks the reason, the lib writes 'void' with it, the card leaves the list and the page is told", async () => {
     m.roles = ["Engineer", "DocCtrl"];
     await render();
     await openCard();
@@ -118,37 +124,54 @@ describe("REL-9 — a mistaken checklist can be voided, by the tier the database
     expect(voidBtn).toBeTruthy();
     expect(voidBtn.className).toContain("pointer-coarse:min-h-11");   // a decision control (A11Y-8 floor)
 
-    m.appConfirm.mockResolvedValueOnce(true);
+    m.appPrompt.mockResolvedValueOnce("  Created against the wrong unit  ");
     m.setChecklistStatus.mockResolvedValueOnce({ ok: true });
     m.listChecklists.mockResolvedValue([]);   // the re-read: void checklists are not listed
     await act(async () => { voidBtn.click(); });
     await settle();
 
-    const ask = m.appConfirm.mock.calls[0][0] as { title: string; message: string; confirmLabel: string; tone: string };
+    expect(m.appConfirm).not.toHaveBeenCalled();
+    const ask = m.appPrompt.mock.calls[0][0] as Record<string, unknown>;
     expect(ask.title).toBe("Void the checklist “PSSR — Unit 300 tie-in”?");
-    expect(ask.message).toBe("Use this for a checklist created by mistake. Voiding takes it out of this project's checklists and every closeout count. Its items stay on the record, and the void is recorded under your name. Only Admin / Document Control can void a checklist.");
-    expect(ask).toMatchObject({ confirmLabel: "Void checklist", tone: "danger" });
+    expect(ask.message).toBe("Use this for a checklist created by mistake. Voiding takes it out of this project's checklists and every closeout count. Its items stay on the record, and the void is recorded under your name with the reason you give. Only Admin / Document Control can void a checklist.");
+    expect(ask).toMatchObject({ confirmLabel: "Void checklist", tone: "danger", required: true, minLength: REASON_MIN_LENGTH });
     expect(m.setChecklistStatus).toHaveBeenCalledTimes(1);
     expect(m.setChecklistStatus).toHaveBeenCalledWith(expect.objectContaining({
       orgId: "o1", projectId: "p1", status: "void", checklist: expect.objectContaining({ id: "cl1" }),
-      actor: { uid: "u-dana", email: "dana@plant.example" },
+      actor: { uid: "u-dana", email: "dana@plant.example" }, reason: "Created against the wrong unit",
     }));
     expect(m.listChecklists).toHaveBeenCalledTimes(2);
     expect(buttonByText(/PSSR — Unit 300 tie-in/)).toBeUndefined();
+    expect(host.querySelector('[role="alert"]')).toBeNull();   // the record landed: nothing to say
     expect(m.invalidate).toHaveBeenCalledWith("o1", "p1");
     expect(told).toBe(1);
   });
 
-  it("a completed (signed-off) checklist says so in the confirm; declining writes nothing", async () => {
+  it("the void landed but its audit row failed: the section says so after the card has left the list — the void is not recorded under the voider's name", async () => {
+    m.roles = ["Admin"];
+    await render();
+    await openCard();
+    m.appPrompt.mockResolvedValueOnce("Duplicate of the Unit 300 PSSR");
+    m.setChecklistStatus.mockResolvedValueOnce({ ok: true, auditError: "You don't have permission to do this." });
+    m.listChecklists.mockResolvedValue([]);
+    await act(async () => { buttonByText(/Void checklist/)!.click(); });
+    await settle();
+    expect(buttonByText(/PSSR — Unit 300 tie-in/)).toBeUndefined();   // the card is gone …
+    // … and the section's notice says what the card cannot
+    expect(host.querySelector('[role="alert"]')?.textContent?.trim()).toBe("The checklist “PSSR — Unit 300 tie-in” was voided, but its audit record failed (You don't have permission to do this) — the void is not recorded under your name, so closeout cannot say who voided it or why.");
+    expect(told).toBe(1);   // the void landed, so the page re-gathers
+  });
+
+  it("a completed (signed-off) checklist says so in the prompt; cancelling writes nothing", async () => {
     m.roles = ["Admin"];
     m.listChecklists.mockResolvedValue([checklist({ status: "complete", completedByName: "Sam Signer" } as Partial<Checklist>)]);
     await render();
     await openCard();
-    m.appConfirm.mockResolvedValueOnce(false);
+    m.appPrompt.mockResolvedValueOnce(null);
     await act(async () => { buttonByText(/Void checklist/)!.click(); });
     await settle();
-    const ask = m.appConfirm.mock.calls[0][0] as { message: string };
-    expect(ask.message).toBe("It was signed off by Sam Signer. Voiding withdraws it from this project's checklists and every closeout count. Its items and its signature stay on the record, and the void is recorded under your name. Only Admin / Document Control can void a checklist.");
+    const ask = m.appPrompt.mock.calls[0][0] as { message: string };
+    expect(ask.message).toBe("It was signed off by Sam Signer. Voiding withdraws it from this project's checklists and every closeout count. Its items and its signature stay on the record, and the void is recorded under your name with the reason you give. Only Admin / Document Control can void a checklist.");
     expect(m.setChecklistStatus).not.toHaveBeenCalled();
     expect(told).toBe(0);
   });
@@ -157,7 +180,7 @@ describe("REL-9 — a mistaken checklist can be voided, by the tier the database
     m.roles = ["DocCtrl"];
     await render();
     await openCard();
-    m.appConfirm.mockResolvedValueOnce(true);
+    m.appPrompt.mockResolvedValueOnce("Created against the wrong unit");
     m.setChecklistStatus.mockResolvedValueOnce({ ok: false, error: "Voiding a checklist takes it out of the project's closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136" });
     await act(async () => { buttonByText(/Void checklist/)!.click(); });
     await settle();

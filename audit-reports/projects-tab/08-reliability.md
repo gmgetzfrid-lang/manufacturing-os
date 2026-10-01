@@ -510,21 +510,25 @@ also pure cost, per report `09`).
 **Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS landed the checklist void and removed one dead declaration.
 - **The checklist void.** `components/projects/QualityTab.tsx` `ChecklistCard` offers "Void checklist" on an open or completed checklist, to the controller tier only.
   - The tier is `isControllerPrincipal({ role: activeRole, roles })` (`lib/permissions.ts`). It mirrors `is_org_controller`, Admin or DocCtrl held as the active role or in `roles[]`, which is the tier the database rail `project_checklists_signoff_rail` (`20261136`, QUAL-15) admits a void from.
-  - The confirm says what voiding does. For a signed-off checklist it also says the sign-off leaves the closeout count with it.
-  - Confirming writes `void` through `lib/checklists.setChecklistStatus`, the checked write, unchanged.
+  - The dialog says what voiding does. For a signed-off checklist it also says the sign-off leaves the closeout count with it.
+  - It asks for a reason, required at the record's bar (`REASON_MIN_LENGTH`, an `appPrompt` with the danger tone). `project_checklists` has no reason column and no `voided_by`: `20261136` stamps only `status_changed_at`. So the void's `CHECKLIST_STATUS` audit row is its only record of who voided it and why, and closeout names the voider from that row (`lib/projectSnapshot.ts`).
+  - Confirming writes `void` through `lib/checklists.setChecklistStatus`, the checked write. *Review fix:* for a void, that function's audit insert is now CHECKED (`auditChecked`). The reason goes on the row (`details.reason`, trimmed, and absent when blank). A failed insert, whether refused or thrown, comes back as `auditError` on the void that landed, where the first pass dropped it silently (`audit()` swallows every failure). The tab then says so in the Checklists section's notice, which outlives the card: "The checklist "…" was voided, but its audit record failed (…) — the void is not recorded under your name, so closeout cannot say who voided it or why." The other statuses' audit rows keep their old shape.
   - A refusal shows the rail's sentence on the card, and nothing else changes.
   - On success the tab re-reads, so the card leaves the list and the `!== "void"` filters are no longer dead, and the page is told (`afterWrite`, `PERF-4`).
   - The project owner, a sign-off grantee and every other role see no control, and the rail would refuse them anyway. DEC-35 holds: the tab names no role literal.
 - **The dead `scorecard` prop.** In `app/(protected)/companies/[id]/page.tsx`, `HistoryPanels` no longer takes the `scorecard` it discarded. `void scorecard;` is gone, and the dial above is the scorecard's only reader on the page.
 - Tests: `lib/__tests__/j10bChecklistVoid.test.ts`.
-  - Rendered: a controller (DocCtrl in `roles[]` beside a headline Engineer role) voids an open checklist; the test checks the confirm's wording, the lib write, the card leaving and the page being told.
-  - Rendered: a completed checklist's confirm, and that declining it writes nothing.
+  - Rendered: a controller (DocCtrl in `roles[]` beside a headline Engineer role) voids an open checklist. The test checks the prompt's wording and its required reason at `REASON_MIN_LENGTH`, the lib write carrying the trimmed reason, the card leaving and the page being told.
+  - Rendered: the void lands but its audit row fails. The section's alert names the failure after the card has left the list, and the page is still told.
+  - Rendered: a completed checklist's prompt, and that cancelling it writes nothing.
   - Rendered: a refusal shown on the card.
   - Rendered: no control for no role, Engineer, Manager + Supervisor, or Viewer.
   - Source: the client gate pinned against `isControllerPrincipal`, the 20261136 rail and the controller predicate.
   - Source: `HistoryPanels`' signature.
 
-  In `lib/__tests__/qualitySignoff.test.ts`, "tab calls setChecklistStatus …" now counts the complete call and the void call, and still finds no reopen.
+  In `lib/__tests__/qualitySignoff.test.ts`, "tab calls setChecklistStatus …" now counts the complete call and the void call (with its reason), and still finds no reopen. Two lib tests run against the in-memory database:
+  - A void's audit row carries the reason. An RLS refusal of the audit insert comes back as `auditError` ("You don't have permission to do this."), while the checklist is still void. A reopen's result is unchanged.
+  - A blank reason records no `reason` key.
 
 **Done-when.**
 1. ✓ A mistaken checklist can be voided, by the tier the database lets void it.
@@ -536,7 +540,7 @@ also pure cost, per report `09`).
    - `addEvidence` (`lib/checklists.ts` `updateChecklistItem`): a patch field with no interface caller.
    - `kind: "po"`: retained under J3's CHECK decision.
 
-**Scope / residual.** OPEN for the dead declarations above, which belong to the owners of those files.
+**Scope / residual.** OPEN for the dead declarations above, which belong to the owners of those files. `lib/checklists.ts` is outside this package's file list. Its edit is confined to `setChecklistStatus`'s void audit plus one new private helper, and it is reported as `filesOutsidePlan`. Notifications N8 adds `emit()` calls to the same file, so the integrator should expect a merge. The comment on the `20261136` rail ("no product path reopens or voids a checklist") is now stale on voids. That file is a migration, so the integrator notes it rather than editing it.
 
 ---
 

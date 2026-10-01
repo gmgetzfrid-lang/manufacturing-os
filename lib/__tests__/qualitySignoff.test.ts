@@ -333,6 +333,32 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     expect(ceremony.calls).toHaveLength(0);
   });
 
+  // projects Round G J10b (REL-9 review): the void's audit row is the only
+  // record of who voided a checklist (the table keeps no voided_by; closeout
+  // names the voider from it) — so its insert is CHECKED, and the reason the
+  // Quality tab asks for goes on it.
+  it("REL-9: a void's audit row carries the reason, and a failed insert comes back as auditError on the void that landed — never dropped", async () => {
+    const ok = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "  Created against the wrong unit  " });
+    expect(ok).toEqual({ ok: true });   // the row landed: no auditError key
+    expect(audits().at(-1)).toMatchObject({ action: "CHECKLIST_STATUS", details: { checklistId: "cl1", status: "void", title: "PSSR", reason: "Created against the wrong unit" } });
+
+    state.tables.project_checklists[0].status = "open";
+    state.tableWriteError = { audit_logs: { message: 'new row violates row-level security policy for table "audit_logs"', code: "42501" } };
+    const lost = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "Duplicate of the Unit 300 PSSR" });
+    expect(lost.ok).toBe(true);
+    expect(lost.auditError).toBe("You don't have permission to do this.");
+    expect(state.tables.project_checklists[0].status).toBe("void");   // the void landed; only its record failed
+
+    // a reopen's audit keeps its old (unchecked) shape — this limb is the void's alone
+    state.tables.project_checklists[0].status = "void";
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "open", actor: actorOf(ADMIN) })).toEqual({ ok: true });
+  });
+
+  it("REL-9: a void with no reason records none (the key is absent, never an empty string)", async () => {
+    await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "   " });
+    expect(audits().at(-1)!.details).not.toHaveProperty("reason");
+  });
+
   // QUAL-15's void half (J2b integration): voiding takes a checklist out of
   // every count closeout reads, so the author the separation rule refused
   // could void it away — 20261136 keeps every void to controllers.
@@ -678,7 +704,7 @@ describe("20261136 — the sign-off helpers and rails", () => {
     const tab = src("components/projects/QualityTab.tsx");
     expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(2);
     expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "complete"');
-    expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "void", actor });');
+    expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "void", actor, reason: reason.trim() });');
     expect(tab).not.toMatch(/setChecklistStatus\(\{[^}]*status: "open"/);
     // an org always keeps an active Admin (the last-Admin guard), so a controller exists to undo one
     expect(read("20260831_capability_policy_and_rails.sql")).toContain("CREATE OR REPLACE FUNCTION prevent_last_admin_removal()");
@@ -691,7 +717,7 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(r.indexOf(voidRule)).toBeLessThan(r.indexOf("NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status"));
     // the service pass (restores, server routes) still passes first
     expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(voidRule));
-    // checklists carry no reason column, so the void asks none (the schema was checked: 20261013's table, 20261091 and 20261136's columns)
+    // checklists carry no reason column (the schema was checked: 20261013's table, 20261091 and 20261136's columns) — the void's reason goes on its audit row (REL-9, J10b)
     const ddl = m13.slice(m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists ("), m13.indexOf(");", m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists (")));
     expect(ddl).not.toMatch(/reason|note/i);
     const added = numbered.flatMap((f) => [...read(f).matchAll(/ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS (\w+)/g)].map((m) => m[1]));

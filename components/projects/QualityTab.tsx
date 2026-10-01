@@ -347,7 +347,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, mayVoi
         <div className="divide-y divide-[var(--color-border)]">
           {checklists.filter((c) => c.status !== "void").map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
-              canManage={canManage} actor={actor} signoff={signoff} mayVoid={mayVoid} onChanged={onChanged} />
+              canManage={canManage} actor={actor} signoff={signoff} mayVoid={mayVoid} onChanged={onChanged} notify={setNotice} />
           ))}
         </div>
       )}
@@ -498,11 +498,14 @@ type ReviewProposal = AssessmentProposal & {
 /** The cited document's current standing, for the evidence chip (SAF-1 / QUAL-1). */
 type DocStanding = { status: string | null; rev: string | null; label: string };
 
-function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, mayVoid = false, onChanged }: {
+function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, mayVoid = false, onChanged, notify }: {
   orgId: string; projectId: string; checklist: Checklist;
   canManage: boolean; actor: Actor; signoff: SignoffContext;
   mayVoid?: boolean;
   onChanged: () => void;
+  /** The section's notice — for what must outlive this card (a voided
+   *  checklist's card leaves the list on the re-read). */
+  notify?: Notify;
 }) {
   const [open, setOpen] = useState(false);
   /** QUAL-4: the signing ceremony is open for "Mark complete". */
@@ -641,21 +644,31 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
    *  20261136): it leaves the project's checklists and every count closeout
    *  reads; its items, any sign-off signature and the audit row stay. The
    *  write is checked (lib/checklists setChecklistStatus → checkedWrite): a
-   *  refusal or a row that did not change is said, never a silent success. */
+   *  refusal or a row that did not change is said, never a silent success.
+   *  The checklist keeps no voided_by and no reason column, so the void's
+   *  audit row is its only record of who voided it and why: the reason is
+   *  asked (the record's bar, SAF-4) and goes on that row, and the row's
+   *  insert is checked too — a failure is said in the section's notice,
+   *  which outlives this card (it leaves the list on the re-read). */
   const voidChecklist = async () => {
-    const ok = await appConfirm({
+    const reason = await appPrompt({
       title: `Void the checklist “${checklist.title}”?`,
       message: `${checklist.status === "complete"
         ? `It was signed off${checklist.completedByName ? ` by ${checklist.completedByName}` : ""}. Voiding withdraws it from`
-        : "Use this for a checklist created by mistake. Voiding takes it out of"} this project's checklists and every closeout count. Its items${checklist.status === "complete" ? " and its signature" : ""} stay on the record, and the void is recorded under your name. Only Admin / Document Control can void a checklist.`,
+        : "Use this for a checklist created by mistake. Voiding takes it out of"} this project's checklists and every closeout count. Its items${checklist.status === "complete" ? " and its signature" : ""} stay on the record, and the void is recorded under your name with the reason you give. Only Admin / Document Control can void a checklist.`,
+      placeholder: "Why is it voided? (at least 10 characters)",
+      required: true, minLength: REASON_MIN_LENGTH,
       confirmLabel: "Void checklist",
       tone: "danger",
     });
-    if (!ok) return;
+    if (reason == null) return;
     setBusy("void"); setNotice(null);
-    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "void", actor });
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "void", actor, reason: reason.trim() });
     setBusy(null);
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't void the checklist.")); return; }
+    if (res.auditError) {
+      notify?.(failure(`The checklist “${checklist.title}” was voided, but its audit record failed (${asClause(res.auditError)}) — the void is not recorded under your name, so closeout cannot say who voided it or why.`));
+    }
     onChanged();
   };
   /** DEC-12: the author signs off only when nobody else on the project can

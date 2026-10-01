@@ -179,6 +179,23 @@ async function audit(action: string, orgId: string, resourceId: string, actor: A
   }).then(() => undefined, () => undefined);
 }
 
+/** The same audit row, CHECKED: the failure comes back as a user-facing
+ *  reason (null when the row landed) instead of being dropped — for a write
+ *  whose audit row is its only record of who did it (REL-9: a checklist's
+ *  void). */
+async function auditChecked(action: string, orgId: string, resourceId: string, actor: Actor, details: Record<string, unknown>): Promise<string | null> {
+  try {
+    const { error } = await supabase.from("audit_logs").insert({
+      action, resource_type: "project", resource_id: resourceId,
+      org_id: orgId, user_id: actor.uid, user_email: actor.email,
+      details,
+    });
+    return error ? userFacingError(error, { context: "checklist audit", embed: true }) : null;
+  } catch (e) {
+    return userFacingCaughtError(e, { context: "checklist audit", embed: true });
+  }
+}
+
 // ── Sign-off authority (QUAL-4) ──────────────────────────────────────────
 
 /** The e_signatures binding of a quality sign-off: the resource_type each
@@ -582,15 +599,22 @@ export async function updateChecklistItem(input: {
  *  else could otherwise erase a second person's signed sign-off), and so is
  *  voiding an OPEN one (QUAL-15: a void takes the checklist out of every
  *  count closeout reads — the author refused the sign-off could otherwise
- *  void it away; checklists have no reason column, so none is asked); the
- *  database refuses anyone else and that refusal comes back here as the
- *  error, with nothing audited. No product surface reopens or voids one. */
+ *  void it away; checklists have no reason column, so a void's reason goes
+ *  on its audit row — REL-9); the database refuses anyone else and that
+ *  refusal comes back here as the error, with nothing audited. A void's
+ *  audit row is CHECKED (REL-9): it is the only record of who voided the
+ *  checklist, so a failed insert comes back as `auditError` on a void that
+ *  landed. The Quality tab voids (controller tier, REL-9); no product
+ *  surface reopens one. */
 export async function setChecklistStatus(input: {
   orgId: string; projectId: string; checklist: Checklist;
   status: "open" | "complete" | "void"; actor: Actor;
   /** QUAL-4: the signing ceremony's output — required to complete. */
   signoff?: SignoffInput | null;
-}): Promise<{ ok: boolean; error?: string; basis?: "human" | "auto" }> {
+  /** REL-9: why a checklist is voided — recorded on the void's audit row
+   *  (the table has no reason column). */
+  reason?: string | null;
+}): Promise<{ ok: boolean; error?: string; basis?: "human" | "auto"; auditError?: string }> {
   let basis: "human" | "auto" | undefined;
   let signatureId: string | undefined;
   let singleSigner = false;
@@ -640,11 +664,23 @@ export async function setChecklistStatus(input: {
     if (stored === "human" || stored === "auto") basis = stored;
     if (typeof row?.completed_single_signer === "boolean") singleSigner = row.completed_single_signer;
   }
-  await audit("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, {
+  const details = {
     checklistId: input.checklist.id, status: input.status, title: input.checklist.title,
     ...(basis ? { completedBasis: basis } : {}),
     ...(signatureId ? { signatureId, singleSigner } : {}),
-  });
+  };
+  if (input.status === "void") {
+    // REL-9: a void takes the checklist out of every closeout count, and
+    // project_checklists keeps no voided_by (20261136 stamps only the time)
+    // — this audit row is the only record of who voided it and why (closeout
+    // names the voider from it). Its failure is returned, never dropped.
+    const reason = input.reason?.trim();
+    const auditError = await auditChecked("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, {
+      ...details, ...(reason ? { reason } : {}),
+    });
+    return { ok: true, ...(auditError ? { auditError } : {}) };
+  }
+  await audit("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, details);
   return { ok: true, ...(basis ? { basis } : {}) };
 }
 
