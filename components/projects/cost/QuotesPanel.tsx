@@ -1157,10 +1157,12 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
 
   return (
     <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap">
-      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs">
+      {/* A11Y-1: the input is visually hidden but stays in the tab order
+          (sr-only, never display:none); the label shows its focus ring. */}
+      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)] text-xs">
         <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />
         <span className="text-[var(--color-text-muted)] max-w-48 truncate">{file ? file.name : `${kind === "quote" ? "Quote" : "Invoice"} PDF…`}</span>
-        <input type="file" accept=".pdf,application/pdf" className="hidden"
+        <input type="file" accept=".pdf,application/pdf" className="sr-only"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
       </label>
       <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
