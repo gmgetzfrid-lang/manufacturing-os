@@ -10,7 +10,9 @@
 // rows that landed, insert, and rpc. A database that has not applied a
 // migration is `missingTables` (42P01) / `missingColumns` (42703); a failing
 // read is `readError`; RLS is `hidden` (rows a reader cannot see are absent
-// from reads AND counts); `refuseWrites` makes an UPDATE match zero rows.
+// from reads AND counts); `refuseWrites` makes an UPDATE match zero rows;
+// `triggers` stands in for a BEFORE UPDATE trigger (row, patch) → the patch
+// that lands.
 // Every call is recorded in `calls`. Not a database — it exists to prove what
 // the app code does with the answers.
 
@@ -28,12 +30,13 @@ export interface GraphFakeDb {
   rpc: Record<string, (args: Record<string, unknown>) => { data: unknown; error: PgErr | null }>;
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   seq: number;
+  triggers?: Record<string, (row: Row, patch: Row) => Row>;
 }
 
 export function newGraphFakeDb(): GraphFakeDb {
   return {
     tables: {}, missingTables: new Set(), missingColumns: {}, readError: {}, hidden: {},
-    refuseWrites: new Set(), writeError: {}, rpc: {}, calls: [], seq: 0,
+    refuseWrites: new Set(), writeError: {}, rpc: {}, calls: [], seq: 0, triggers: {},
   };
 }
 
@@ -48,6 +51,7 @@ export function resetGraphFakeDb(db: GraphFakeDb, tables: Record<string, Row[]> 
   db.rpc = {};
   db.calls = [];
   db.seq = 0;
+  db.triggers = {};
 }
 
 type Filter = (r: Row) => boolean;
@@ -95,7 +99,8 @@ export function makeGraphFake(db: GraphFakeDb) {
         }
         if (db.writeError[table]) return { data: null, error: db.writeError[table] };
         const hit = db.refuseWrites.has(table) ? [] : matches();
-        for (const r of hit) Object.assign(r, patch);
+        const trig = db.triggers?.[table];
+        for (const r of hit) Object.assign(r, trig ? trig({ ...r }, patch) : patch);
         return { data: returning ? hit.map((r) => ({ ...r })) : null, error: null };
       }
       if (op === "insert") {

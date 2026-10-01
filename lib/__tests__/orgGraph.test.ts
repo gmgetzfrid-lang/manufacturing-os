@@ -406,7 +406,7 @@ describe("GM-6 — the reader's ACL is reported, not presented as a fact about t
     reset(twoDocs());
     db.rpc = { documents_total_for_org: () => ({ data: 2, error: null }) };
     const controller = await buildOrgGraph(ORG);
-    expect(controller.access).toEqual({ documentsVisible: 2, documentsTotal: 2, outsideAccess: 0 });
+    expect(controller.access).toEqual({ documentsVisible: 2, documentsTotal: 2, outsideAccess: 0, documentsDrawn: 2, scoped: false });
     expect(controller.truncations.join("\n")).not.toMatch(/outside your access/);
     const cIns = computeInsights(controller.nodes, controller.edges, { access: controller.access });
 
@@ -415,7 +415,7 @@ describe("GM-6 — the reader's ACL is reported, not presented as a fact about t
     db.rpc = { documents_total_for_org: () => ({ data: 2, error: null }) };
     db.hidden = { documents: (r) => r.visibility === "private" };
     const member = await buildOrgGraph(ORG);
-    expect(member.access).toEqual({ documentsVisible: 1, documentsTotal: 2, outsideAccess: 1 });
+    expect(member.access).toEqual({ documentsVisible: 1, documentsTotal: 2, outsideAccess: 1, documentsDrawn: 1, scoped: false });
     expect(member.truncations.join("\n")).toMatch(/1 document in this org is outside your access and not on this map — orphans, hubs and bridges are computed on what you can see\./);
     const mIns = computeInsights(member.nodes, member.edges, { access: member.access });
 
@@ -424,7 +424,23 @@ describe("GM-6 — the reader's ACL is reported, not presented as a fact about t
     expect(mIns.orphans.map((n) => n.id)).toContain("asset:a2");
     expect(mIns.basis).toMatchObject({ viewerScoped: true, outsideAccess: 1 });
     expect(mIns.basis.note).toMatch(/1 more is outside your access/);
-    expect(cIns.basis.note).toMatch(/you can see all of them/);
+    expect(cIns.basis.note).toBe("Computed on the documents on this map; none of the org's documents are hidden from you.");
+    expect(cIns.basis.note).not.toMatch(/every document in the org/);
+  });
+
+  it("an org-wide map past the document cap never claims to cover every document — the basis says how many are drawn", async () => {
+    const N = GRAPH_CAPS.DOC_CAP + 20;
+    const documents = Array.from({ length: N }, (_, i) => o({
+      id: `d${String(i).padStart(5, "0")}`, document_number: `N-${i}`, title: null, library_id: "L1", unit_id: null, unit_code: null,
+      sheet_number: null, sheet_total: null, updated_at: `2026-09-${String(1 + (i % 28)).padStart(2, "0")}`,
+    }));
+    reset(plant({ documents }));
+    db.rpc = { documents_total_for_org: () => ({ data: N, error: null }) };
+    const g = await buildOrgGraph(ORG);
+    expect(g.access).toEqual({ documentsVisible: N, documentsTotal: N, outsideAccess: 0, documentsDrawn: GRAPH_CAPS.DOC_CAP, scoped: false });
+    const note = computeInsights(g.nodes, g.edges, { access: g.access }).basis.note;
+    expect(note).toBe(`Computed on the documents on this map; none of the org's documents are hidden from you, but only ${GRAPH_CAPS.DOC_CAP.toLocaleString("en-US")} of ${N.toLocaleString("en-US")} are drawn (a cap).`);
+    expect(note).not.toMatch(/every document in the org/);
   });
 
   it("before 20261138 (no count function) the graph makes no claim", async () => {

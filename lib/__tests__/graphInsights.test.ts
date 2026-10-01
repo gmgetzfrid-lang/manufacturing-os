@@ -178,6 +178,26 @@ describe("computeInsights — basis (GM-6)", () => {
     const hidden = computeInsights(nodes, edges, { access: { documentsVisible: 1, documentsTotal: 4, outsideAccess: 3 } }).basis;
     expect(hidden.outsideAccess).toBe(3);
     expect(hidden.note).toBe("Computed on the documents you can see — 3 more are outside your access, so another reader may get different answers.");
-    expect(insightsBasisNote({ documentsVisible: 4, documentsTotal: 4, outsideAccess: 0 })).toMatch(/you can see all of them/);
+    expect(insightsBasisNote({ documentsVisible: 4, documentsTotal: 4, outsideAccess: 0 })).toBe("Computed on the documents on this map; none of the org's documents are hidden from you.");
+  });
+
+  it("never claims 'every document in the org': a scoped map makes no total claim, and a capped map says how many are drawn", () => {
+    expect(insightsBasisNote({ documentsVisible: 40, documentsTotal: null, outsideAccess: null, documentsDrawn: 40, scoped: true }))
+      .toBe("Computed on the documents in this scope that you can see — documents outside your access are not in it, so another reader may get different answers.");
+    expect(insightsBasisNote({ documentsVisible: 4000, documentsTotal: 4000, outsideAccess: 0, documentsDrawn: 1500, scoped: false }))
+      .toBe("Computed on the documents on this map; none of the org's documents are hidden from you, but only 1,500 of 4,000 are drawn (a cap).");
+    expect(insightsBasisNote({ documentsVisible: 4000, documentsTotal: 4100, outsideAccess: 100, documentsDrawn: 1500, scoped: false }))
+      .toBe("Computed on the documents you can see — 100 more are outside your access, so another reader may get different answers. Only 1,500 of the 4,000 documents you can see are on this map (a cap).");
+    // a scope that knows a floor of hidden documents still makes no org-wide claim
+    expect(insightsBasisNote({ documentsVisible: 39, documentsTotal: null, outsideAccess: null, documentsDrawn: 39, scoped: true })).not.toMatch(/none of the org|every document/);
+    for (const a of [
+      null, undefined,
+      { documentsVisible: 1, documentsTotal: 1, outsideAccess: 0 },
+      { documentsVisible: 1, documentsTotal: 1, outsideAccess: 0, documentsDrawn: 1, scoped: true },
+      { documentsVisible: 2000, documentsTotal: 2000, outsideAccess: 0, documentsDrawn: 1500 },
+      { documentsVisible: null, documentsTotal: null, outsideAccess: null, scoped: true },
+    ]) {
+      expect(insightsBasisNote(a)).not.toMatch(/every document in the org|you can see all of them/);
+    }
   });
 });

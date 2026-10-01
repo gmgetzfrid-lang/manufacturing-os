@@ -124,12 +124,23 @@ export interface MentionCoverage {
 
 /** GM-6 — the document side of the map is the reader's own (documents RLS);
  *  the equipment side is org-wide. null = not known (pre-migration, or the
- *  count could not be read). On a scoped graph the counts are over the
- *  documents the scope resolved. */
+ *  count could not be read). */
 export interface GraphAccess {
+  /** Documents the reader can see: org-wide, the org's documents under the
+   *  reader's RLS (a head count); scoped, the scope's documents the reader's
+   *  reads returned. */
   documentsVisible: number | null;
+  /** Org-wide only: the org's document count (documents_total_for_org).
+   *  null on a SCOPED graph — the scope is resolved from the reader's own
+   *  reads, so a restricted document decoded, filed or pinned to the unit
+   *  never enters it and nothing can count what the reader cannot see. */
   documentsTotal: number | null;
+  /** Org-wide only: documentsTotal − documentsVisible. null when scoped. */
   outsideAccess: number | null;
+  /** Documents on this map, after the cap (≤ documentsVisible). */
+  documentsDrawn?: number | null;
+  /** Set on a scoped graph. */
+  scoped?: boolean;
 }
 
 export interface OrgGraph {
@@ -632,7 +643,12 @@ async function readScopeRows(
       related: union(relA, relB), supersessions: union(supA, supB),
       mentions, mirrorOf, flows: flows.rows,
     },
-    mentions: { installed: !mentByAsset.missing, capped: mentByAsset.capped || mentByDoc.capped || mentByMirror.capped },
+    // A read with no ids issues no request and cannot report a missing
+    // table, so the index is installed only if no read found it missing.
+    mentions: {
+      installed: !(mentByAsset.missing || mentByDoc.missing || mentByMirror.missing),
+      capped: mentByAsset.capped || mentByDoc.capped || mentByMirror.capped,
+    },
     requestedDocs: docIds.length,
     fetchedDocs,
     filingLibraries,
@@ -968,7 +984,7 @@ export async function buildOrgGraph(
     if (hidden > 0) {
       // Only the relation can name a document the reader cannot open (the
       // filed / decoded / pinned reads are the reader's own), so this is
-      // what the scope KNOWS it leaves out.
+      // what the scope KNOWS it leaves out — a floor, never the whole count.
       notes.push(`${plural(hidden, "document")} linked to ${scope.label}'s equipment ${hidden === 1 ? "is" : "are"} outside your access — not drawn.`);
     }
     const g = assembleOrgGraph(read.rows, {
@@ -979,12 +995,19 @@ export async function buildOrgGraph(
         keep: new Set(scope.unitCodes.map((c) => `cbunit:${c}`)),
       },
     });
+    // GM-6: a scope cannot say how many of ITS documents the reader cannot
+    // see (restricted documents decoded, filed or pinned to the unit never
+    // enter a reader's resolution), so it makes no total or outside claim.
     return {
       ...g,
-      access: { documentsVisible: read.fetchedDocs, documentsTotal: read.requestedDocs, outsideAccess: hidden },
+      access: {
+        documentsVisible: read.fetchedDocs, documentsTotal: null, outsideAccess: null,
+        documentsDrawn: read.rows.documents.length, scoped: true,
+      },
     };
   }
-  const [read, access] = await Promise.all([readOrgRows(orgId, notes), readAccess(orgId)]);
+  const [read, counted] = await Promise.all([readOrgRows(orgId, notes), readAccess(orgId)]);
+  const access: GraphAccess = { ...counted, documentsDrawn: read.rows.documents.length, scoped: false };
   const an = accessNote(access);
   if (an) notes.push(an);
   return { ...assembleOrgGraph(read.rows, { notes, mentions: read.mentions }), access };

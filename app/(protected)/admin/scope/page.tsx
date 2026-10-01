@@ -16,9 +16,13 @@
 // Site Codebook unit it is (units.codebook_code — the mapping is data, one
 // codebook unit per operational unit), and the "Unit identity" panel runs
 // the decode that writes documents.unit_code from each drawing number and
-// assets.unit_id from the mapping (POST /api/admin/unit-identity). Numbers
-// that do not decode are listed, never guessed. Unit names in the mapping
-// come from the codebook (DEC-35).
+// fills an empty assets.unit_id from the mapping (POST /api/admin/unit-
+// identity; a value already there is never rewritten). Numbers that do not
+// decode are listed, never guessed — a restricted document's number only to
+// a controller (the rest are counted). Unit names in the mapping come from
+// the codebook (DEC-35). The mapping itself is guarded in the database
+// (20261138: only the scope writer tier sets units.codebook_code, and
+// archiving a unit releases its code).
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -75,6 +79,8 @@ export default function ScopePage() {
   }, [activeOrgId]);
 
   // Codebook code → the operational unit it is mapped to (one each, 20261138).
+  // An archived unit holds no code (20261138's guard releases it on archive),
+  // so the units on screen are every unit that can hold one.
   const mappedTo = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const { units } of tree) for (const u of units) if (u.codebookCode) m.set(u.codebookCode, u.unit.id!);
@@ -497,7 +503,7 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
         )}
       </div>
       <div className="text-[11px] text-[var(--color-text-muted)]">
-        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment takes the operational unit its codebook unit is mapped to. A number that does not decode is listed here — never guessed.
+        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to (a unit already set is never changed). A number that does not decode is listed here — never guessed.
       </div>
       {err && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -519,12 +525,21 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
                 {d.notDecoding.samples.map((s) => (
                   <li key={s.number}><span className="font-mono">{s.number}</span> — {s.reason}</li>
                 ))}
-                {d.notDecoding.count > d.notDecoding.samples.length && <li>… and {d.notDecoding.count - d.notDecoding.samples.length} more</li>}
+                {d.notDecoding.count - (d.notDecoding.unlisted ?? 0) > d.notDecoding.samples.length && (
+                  <li>… and {d.notDecoding.count - (d.notDecoding.unlisted ?? 0) - d.notDecoding.samples.length} more</li>
+                )}
+                {(d.notDecoding.unlisted ?? 0) > 0 && (
+                  <li>{d.notDecoding.unlisted} restricted number{d.notDecoding.unlisted === 1 ? "" : "s"} do not decode (not listed — a controller sees them)</li>
+                )}
               </ul>
             </details>
           )}
           {d.unknownUnit.count > 0 && (
-            <div>{d.unknownUnit.count} decode to a unit the codebook does not hold: {d.unknownUnit.codes.map((c) => `${c.code} (${c.count})`).join(", ")}</div>
+            <div>
+              {d.unknownUnit.count} decode to a unit the codebook does not hold
+              {d.unknownUnit.codes.length > 0 ? `: ${d.unknownUnit.codes.map((c) => `${c.code} (${c.count})`).join(", ")}` : ""}
+              {(d.unknownUnit.unlisted ?? 0) > 0 ? ` (${d.unknownUnit.unlisted} restricted, not listed)` : ""}
+            </div>
           )}
           {d.noUnitSegment > 0 && <div>{d.noUnitSegment} decode, but the number format has no unit segment.</div>}
           {d.noNumber > 0 && <div>{d.noNumber} have no document number.</div>}
@@ -535,10 +550,18 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
             </div>
           )}
           <div>
-            Equipment: {a.scanned} read · {report.dryRun ? `${a.toSet} to set, ${a.toRepoint} to re-point, ${a.toClear} to clear` : `${a.written} written`}
-            {a.keptUnmapped > 0 ? ` · ${a.keptUnmapped} kept (point at an unmapped operational unit)` : ""}
+            Equipment: {a.scanned} read · {report.dryRun ? `${a.toSet} to fill` : `${a.written} filled`}
             {a.refused > 0 ? ` · ${a.refused} refused` : ""}
           </div>
+          {(a.disagreeWithFiling > 0 || a.keptWithoutFiling > 0) && (
+            <div>
+              {a.disagreeWithFiling > 0 && `${a.disagreeWithFiling} already point at a different operational unit than their codebook filing maps to (kept — the decode never overwrites a unit already set). `}
+              {a.keptWithoutFiling > 0 && `${a.keptWithoutFiling} point at an operational unit while their filing maps to none (kept).`}
+            </div>
+          )}
+          {!report.dryRun && report.remaining > 0 && (
+            <div className="text-amber-700">{report.remaining} write(s) still to do — run &quot;Decode and write&quot; again to continue.</div>
+          )}
           {report.mapping.codebookUnitsUnmapped.length > 0 && (
             <div>Codebook units with no operational unit: {report.mapping.codebookUnitsUnmapped.join(", ")}</div>
           )}

@@ -16,6 +16,7 @@
 --   1. units.codebook_code TEXT + UNIQUE (org_id, codebook_code) where set:
 --      the mapping. A Site Codebook unit code resolves to AT MOST ONE
 --      operational unit, and the mapping is a row, set on /admin/scope.
+--      trg_units_codebook_code_guard (5. below) decides who sets it.
 --   2. documents.unit_code TEXT (+ index): the drawing-number decode,
 --      written by the unit-identity backfill (POST /api/admin/unit-identity,
 --      service role, the codebook's own parser) — a number that does not
@@ -35,11 +36,33 @@
 --      SECURITY DEFINER (the count must be whole whatever the caller reads),
 --      search_path pinned, EXECUTE revoked from PUBLIC and anon, granted to
 --      authenticated only; a NULL auth.uid() matches no member and gets 0.
+--   5. trg_units_codebook_code_guard (BEFORE INSERT OR UPDATE OF
+--      codebook_code, archived OR DELETE ON units): the mapping decides which
+--      operational unit IS a codebook unit on the graph, what a unit's scope
+--      holds and what the decode writes into assets.unit_id — and the only
+--      policy on units (units_member_all, 20260606) lets ANY active member
+--      write the row. So every change to the mapping (a code set, cleared,
+--      released by an archive, or deleted with its row) is refused 42501
+--      unless the caller holds a role of the Operational scope page's
+--      writer tier (ADMIN_SURFACES
+--      "scope".writes — Admin, Manager, Supervisor, DocCtrl — read from the
+--      role collection by caller_holds_any_role, 20261045; a test pins the
+--      list to lib/adminSurfaces.ts). The service role passes. An archived
+--      unit holds no code: archiving releases it, so the codebook unit can
+--      be mapped to the unit that replaces it (the UNIQUE index would
+--      otherwise hold it on a row the page no longer shows). Not SECURITY
+--      DEFINER; search_path pinned.
 --
 -- WIDENS one read: an active member may learn how many documents the org
 -- holds, including ones they cannot open (a count only — the same class as
--- 20261120's entity_mentions_total_for_asset). Nothing else is widened; the
--- guard narrows (members can no longer hand-write a unit decode).
+-- 20261120's entity_mentions_total_for_asset). Nothing else in this file
+-- widens; both guards narrow (members can no longer hand-write a unit
+-- decode, and only the scope writer tier can change the mapping). The
+-- application half — POST /api/admin/unit-identity reads every document
+-- with the service role — lists a document's number in its report only to
+-- a caller who may read it (the controller tier sees all; the rest of the
+-- scope writer tier sees open-visibility numbers and a count of the others),
+-- and it FILLS an empty assets.unit_id but never rewrites one already set.
 --
 -- DEC-30. The pre-apply inventory (aggregate counts only) is captured into a
 -- TEMP TABLE BEFORE the transaction. The decode runs in TypeScript after the
@@ -67,7 +90,7 @@ SELECT 'operational units whose code equals a Site Codebook unit code (a hint fo
  WHERE NOT u.archived
    AND EXISTS (SELECT 1 FROM codebook_entries c WHERE c.org_id = u.org_id AND c.kind = 'unit' AND c.code = u.code)
 UNION ALL
-SELECT 'assets with assets.unit_id set (the backfill makes it the mapping''s projection of unit_code)', COUNT(*)
+SELECT 'assets with assets.unit_id set (kept as they are — the backfill only fills an EMPTY unit_id from the mapping)', COUNT(*)
   FROM assets WHERE unit_id IS NOT NULL
 UNION ALL
 SELECT 'assets filed under a Site Codebook unit (assets.unit_code set)', COUNT(*)
@@ -128,6 +151,49 @@ $$;
 REVOKE ALL ON FUNCTION documents_total_for_org(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION documents_total_for_org(uuid) TO authenticated;
 
+-- ── 5. Who sets the mapping; an archived unit holds none ────────────────────
+CREATE OR REPLACE FUNCTION units_codebook_code_guard()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+DECLARE
+  v_changed boolean;
+  v_org     uuid;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_changed := OLD.codebook_code IS NOT NULL;
+    v_org := OLD.org_id;
+  ELSE
+    -- An archived unit is no longer the codebook unit: archiving releases
+    -- its code (so the code can be mapped to the unit that replaces it).
+    IF NEW.archived THEN
+      NEW.codebook_code := NULL;
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+      v_changed := NEW.codebook_code IS NOT NULL;
+    ELSE
+      v_changed := NEW.codebook_code IS DISTINCT FROM OLD.codebook_code;
+    END IF;
+    v_org := NEW.org_id;
+  END IF;
+  -- Every change to the mapping (a code set, cleared, released by an
+  -- archive, or deleted with its row) is the Operational scope writer
+  -- tier's. The service role passes.
+  IF v_changed AND auth.uid() IS NOT NULL
+     AND NOT caller_holds_any_role(v_org, ARRAY['Admin','Manager','Supervisor','DocCtrl']::text[]) THEN
+    RAISE EXCEPTION 'units_codebook_code_scope_writers: only the Operational scope writer roles map a unit to the Site Codebook'
+      USING ERRCODE = '42501';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_units_codebook_code_guard ON units;
+CREATE TRIGGER trg_units_codebook_code_guard
+  BEFORE INSERT OR UPDATE OF codebook_code, archived OR DELETE ON units
+  FOR EACH ROW EXECUTE FUNCTION units_codebook_code_guard();
+
 COMMIT;
 
 -- ── Verification (read-only) + inventory — ONE result set ───────────────────
@@ -174,10 +240,28 @@ SELECT 'documents_total_for_org: anon cannot execute it; authenticated can (DRLS
        AND has_function_privilege('authenticated', 'documents_total_for_org(uuid)', 'EXECUTE'),
        NULL
 UNION ALL
+SELECT 'units.codebook_code is the scope writer tier''s: a change by anyone else (set, cleared, released by an archive, deleted with its row) is refused (42501), an archived unit holds no code, the service role passes (trigger, not SECURITY DEFINER, search_path pinned)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_units_codebook_code_guard'
+                AND tgrelid = 'units'::regclass AND NOT tgisinternal
+                AND (tgtype & 8) <> 0)
+       AND (SELECT prosrc LIKE '%IF NEW.archived THEN%NEW.codebook_code := NULL;%'
+                   AND prosrc LIKE '%v_changed := OLD.codebook_code IS NOT NULL;%'
+                   AND prosrc LIKE '%IF v_changed AND auth.uid() IS NOT NULL%'
+                   AND prosrc LIKE '%caller_holds_any_role(v_org, ARRAY[''Admin'',''Manager'',''Supervisor'',''DocCtrl'']::text[])%'
+                   AND prosrc LIKE '%USING ERRCODE = ''42501''%'
+                   AND NOT prosecdef
+                   AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
+              FROM pg_proc WHERE proname = 'units_codebook_code_guard'),
+       NULL
+UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g38_before
 UNION ALL
 SELECT 'inventory (after): operational units mapped to a Site Codebook unit', NULL,
        (SELECT COUNT(*) FROM units WHERE codebook_code IS NOT NULL)::text
+UNION ALL
+SELECT 'inventory (after): assets whose unit_id differs from the operational unit their filing maps to (kept — the backfill never rewrites a unit_id)', NULL,
+       (SELECT COUNT(*) FROM assets a JOIN units u ON u.org_id = a.org_id AND u.codebook_code = a.unit_code
+         WHERE a.unit_id IS NOT NULL AND a.unit_id <> u.id)::text
 UNION ALL
 SELECT 'inventory (after): documents carrying a decoded unit (0 until the first backfill)', NULL,
        (SELECT COUNT(*) FROM documents WHERE unit_code IS NOT NULL)::text

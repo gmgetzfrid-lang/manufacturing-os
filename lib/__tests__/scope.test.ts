@@ -19,6 +19,7 @@ vi.mock("@/lib/supabase", async () => {
 });
 
 import { buildOrgGraph, GRAPH_CAPS } from "@/lib/orgGraph";
+import { computeInsights } from "@/lib/graphInsights";
 import { resolveScope, parseScopeParam, formatScopeParam, scopeMembership, type ResolvedScope } from "@/lib/scope";
 
 const ORG = "org-1";
@@ -194,7 +195,44 @@ describe("GAP-306 acceptance 4 — scoped assembly is complete for a unit that e
     const g = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
     expect(g.nodes.some((n) => n.id === "doc:dGov-9")).toBe(false);
     expect(g.truncations.join("\n")).toMatch(/1 document linked to Crude Unit's equipment is outside your access — not drawn\./);
-    expect(g.access).toMatchObject({ documentsVisible: 39, documentsTotal: 40, outsideAccess: 1 });
+    // GM-6: the scope knows a floor (the relation named it), never the whole —
+    // so it makes no total or outside-access claim
+    expect(g.access).toEqual({ documentsVisible: 39, documentsTotal: null, outsideAccess: null, documentsDrawn: 39, scoped: true });
+  });
+
+  it("a private drawing DECODED to the unit never enters the reader's resolution — the scoped graph claims no count and the basis never says 'all'", async () => {
+    const t = fixFolderIds(bigPlant());
+    for (let i = 0; i < 12; i++) t.documents.push(doc(`dPriv-${i}`, { unit_code: "20", visibility: "private", updated_at: "2020-01-01" }));
+    reset(t);
+    // controller: sees them
+    const controller = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
+    expect(controller.nodes.filter((n) => n.id.startsWith("doc:dPriv-"))).toHaveLength(12);
+    // granted-nothing member: documents RLS hides them from every read, resolution included
+    db.hidden = { documents: (r) => r.visibility === "private" };
+    db.rpc = { documents_total_for_org: () => ({ data: 9999, error: null }) };
+    const g = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
+    expect(g.nodes.some((n) => n.id.startsWith("doc:dPriv-"))).toBe(false);
+    expect(g.access).toEqual({ documentsVisible: 40, documentsTotal: null, outsideAccess: null, documentsDrawn: 40, scoped: true });
+    expect(g.truncations.join("\n")).not.toMatch(/outside your access/); // the scope cannot know these 12
+    const note = computeInsights(g.nodes, g.edges, { access: g.access }).basis.note;
+    expect(note).toMatch(/^Computed on the documents in this scope that you can see — documents outside your access are not in it/);
+    expect(note).not.toMatch(/every document in the org|none of the org's documents are hidden/);
+  });
+
+  it("mention coverage: a unit with paper but no filed equipment, on an org without the mention index, reads 'not installed'", async () => {
+    const t = fixFolderIds(bigPlant());
+    t.assets = t.assets.filter((a) => a.unit_code !== "20");
+    t.document_assets = [];
+    t.process_flows = [];
+    reset(t);
+    db.missingTables = new Set(["entity_mentions"]);
+    const g = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
+    expect(g.nodes.some((n) => n.type === "asset")).toBe(false);
+    expect(g.nodes.some((n) => n.type === "document")).toBe(true);
+    expect(g.mentionCoverage).toMatchObject({ installed: false, rows: 0 });
+    db.missingTables = new Set();
+    const ok = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
+    expect(ok.mentionCoverage).toMatchObject({ installed: true });
   });
 
   it("a pre-resolved scope is accepted as is (the operating area can resolve once and hand it over)", async () => {

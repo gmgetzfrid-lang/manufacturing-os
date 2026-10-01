@@ -43,14 +43,30 @@ export interface GraphInsights {
   basis: { viewerScoped: true; outsideAccess: number | null; note: string };
 }
 
-/** GM-6 — the label the insights carry: computed under the reader's ACL. */
+/** GM-6 — the label the insights carry: computed on the documents on THIS
+ *  map, under the reader's ACL. It never claims "every document in the org":
+ *  a scoped map cannot count what the reader's reads never name (its
+ *  outsideAccess is null), and an org-wide map past the document cap draws
+ *  only part of what the reader can see. */
 export function insightsBasisNote(access?: GraphAccess | null): string {
+  const fmt = (x: number) => x.toLocaleString("en-US");
   const n = access?.outsideAccess ?? null;
-  if (n && n > 0) {
-    return `Computed on the documents you can see — ${n.toLocaleString("en-US")} more ${n === 1 ? "is" : "are"} outside your access, so another reader may get different answers.`;
+  const drawn = access?.documentsDrawn ?? null;
+  const visible = access?.documentsVisible ?? null;
+  const capped = drawn !== null && visible !== null && drawn < visible;
+  const cap = capped ? ` Only ${fmt(drawn)} of the ${fmt(visible)} documents you can see are on this map (a cap).` : "";
+  if (access?.scoped) {
+    return `Computed on the documents in this scope that you can see — documents outside your access are not in it, so another reader may get different answers.${cap}`;
   }
-  if (n === 0) return "Computed on every document in the org — you can see all of them.";
-  return "Computed on the documents you can see.";
+  if (n && n > 0) {
+    return `Computed on the documents you can see — ${fmt(n)} more ${n === 1 ? "is" : "are"} outside your access, so another reader may get different answers.${cap}`;
+  }
+  if (n === 0) {
+    return capped
+      ? `Computed on the documents on this map; none of the org's documents are hidden from you, but only ${fmt(drawn as number)} of ${fmt(visible as number)} are drawn (a cap).`
+      : "Computed on the documents on this map; none of the org's documents are hidden from you.";
+  }
+  return `Computed on the documents you can see.${cap}`;
 }
 
 /** Library-membership edges are organizational, not contextual — every

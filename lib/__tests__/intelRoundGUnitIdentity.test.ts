@@ -41,8 +41,12 @@ vi.mock("@/lib/supabase", async () => {
   return { supabase: makeGraphFake(db) };
 });
 
-import { planUnitIdentity, setUnitCodebookCode, getScopeTree } from "@/lib/operationalGraph";
+import {
+  planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill,
+  UNIT_IDENTITY_WRITE_BUDGET, type UnitIdentityReport,
+} from "@/lib/operationalGraph";
 import { EMPTY_CODEBOOK, type Codebook, type CodebookEntry } from "@/lib/codebook";
+import { adminSurface } from "@/lib/adminSurfaces";
 import { POST } from "@/app/api/admin/unit-identity/route";
 
 const ORG = "org-1";
@@ -75,7 +79,7 @@ describe("planUnitIdentity — the decode is written, never guessed", () => {
     });
     const r = plan.report.documents;
     expect(r).toMatchObject({ scanned: 6, decoded: 3, toWrite: 3, toClear: 1, noNumber: 1, disagreeWithUnitId: 1, unitIdUnmapped: 1 });
-    expect(r.unknownUnit).toEqual({ count: 1, codes: [{ code: "44", count: 1 }] });
+    expect(r.unknownUnit).toEqual({ count: 1, codes: [{ code: "44", count: 1 }], unlisted: 0 });
     expect(r.notDecoding.count).toBe(1);
     expect(r.notDecoding.samples[0].number).toBe("CU-PID-7");
     expect(r.notDecoding.samples[0].reason).toMatch(/expects 2 digits but found "CU"/);
@@ -94,23 +98,49 @@ describe("planUnitIdentity — the decode is written, never guessed", () => {
     }
   });
 
-  it("assets.unit_id = the mapping's projection of assets.unit_code; a hand-set value on an UNMAPPED unit is kept", () => {
+  it("assets.unit_id is FILLED from the mapping where it is empty — a value already there is never re-pointed or cleared, only counted", () => {
     const plan = planUnitIdentity({
       book: BOOK, units, docs: [], dryRun: true,
       assets: [
-        { id: "a1", unit_code: "20", unit_id: null },    // set
-        { id: "a2", unit_code: "30", unit_id: "u20" },   // stale projection: re-point
-        { id: "a3", unit_code: null, unit_id: "u30" },   // unfiled, points at a mapped unit: clear
-        { id: "a4", unit_code: null, unit_id: "u99" },   // points at an unmapped unit: kept
+        { id: "a1", unit_code: "20", unit_id: null },    // empty: filled
+        { id: "a2", unit_code: "30", unit_id: "u20" },   // held, filing maps elsewhere: kept, counted
+        { id: "a3", unit_code: null, unit_id: "u30" },   // held (a mapped unit), unfiled: kept — never cleared
+        { id: "a4", unit_code: null, unit_id: "u99" },   // held (an unmapped unit), unfiled: kept
         { id: "a5", unit_code: "20", unit_id: "u20" },   // already right
         { id: "a6", unit_code: "77", unit_id: null },    // unmapped code: nothing to project
+        { id: "a7", unit_code: "77", unit_id: "u20" },   // held, filing maps to none: kept
       ],
     });
-    expect(plan.report.assets).toMatchObject({ scanned: 6, toSet: 1, toRepoint: 1, toClear: 1, keptUnmapped: 1 });
-    expect(plan.assetWrites.get("u20")).toEqual(["a1"]);
-    expect(plan.assetWrites.get("u30")).toEqual(["a2"]);
-    expect(plan.assetWrites.get(null)).toEqual(["a3"]);
+    expect(plan.report.assets).toMatchObject({ scanned: 7, toSet: 1, disagreeWithFiling: 1, keptWithoutFiling: 3 });
+    expect([...plan.assetWrites.entries()]).toEqual([["u20", ["a1"]]]);
+    for (const ids of plan.assetWrites.values()) {
+      for (const id of ids) expect(["a1"]).toContain(id); // only an empty unit_id is ever written
+    }
     expect(plan.report.mapping).toEqual({ operationalUnits: 3, mapped: 2, codebookUnitsUnmapped: [] });
+    expect(plan.report.remaining).toBe(0);
+  });
+
+  it("a restricted document's number (and the unknown unit it names) is listed only to a caller who sees every document", () => {
+    const docs = [
+      { id: "d1", document_number: "HR-INV-2026-004", unit_code: null, unit_id: null, visibility: "private" },
+      { id: "d2", document_number: "CU-PID-7", unit_code: null, unit_id: null, visibility: "normal" },
+      { id: "d3", document_number: "OPS-1", unit_code: null, unit_id: null, visibility: null },
+      { id: "d4", document_number: "5502-D-1", unit_code: null, unit_id: null, visibility: "hidden" },
+      { id: "d5", document_number: "4402-D-1", unit_code: null, unit_id: null, visibility: "normal" },
+    ];
+    const member = planUnitIdentity({ book: BOOK, units, assets: [], dryRun: true, docs }).report.documents;
+    expect(member.notDecoding.count).toBe(3);
+    expect(member.notDecoding.unlisted).toBe(1);
+    expect(member.notDecoding.samples.map((x) => x.number)).toEqual(["CU-PID-7", "OPS-1"]);
+    expect(JSON.stringify(member)).not.toContain("HR-INV");
+    expect(member.unknownUnit).toEqual({ count: 2, codes: [{ code: "44", count: 1 }], unlisted: 1 });
+    expect(JSON.stringify(member)).not.toContain('"55"');
+
+    const controller = planUnitIdentity({ book: BOOK, units, assets: [], dryRun: true, docs, seesRestricted: true }).report.documents;
+    expect(controller.notDecoding).toMatchObject({ count: 3, unlisted: 0 });
+    expect(controller.notDecoding.samples.map((x) => x.number)).toContain("HR-INV-2026-004");
+    expect(controller.unknownUnit.unlisted).toBe(0);
+    expect(controller.unknownUnit.codes.map((c) => c.code).sort()).toEqual(["44", "55"]);
   });
 });
 
@@ -138,7 +168,7 @@ function seed(over: Partial<Record<string, Row[]>> = {}) {
     ...over,
   } as Record<string, Row[]>;
   db.missingTables = new Set(); db.missingColumns = {}; db.readError = {}; db.hidden = {};
-  db.refuseWrites = new Set(); db.writeError = {}; db.rpc = {}; db.calls = []; db.seq = 0;
+  db.refuseWrites = new Set(); db.writeError = {}; db.rpc = {}; db.calls = []; db.seq = 0; db.triggers = {};
 }
 
 const call = (body: unknown, token: string | null = "good") => POST(new NextRequest("http://x/api/admin/unit-identity", {
@@ -182,7 +212,8 @@ describe("POST /api/admin/unit-identity", () => {
     expect(body.documents).toMatchObject({ scanned: 3, decoded: 1, toWrite: 2, toClear: 1, written: 0 });
     expect(body.documents.unknownUnit.codes).toEqual([{ code: "99", count: 1 }]);
     expect(body.documents.notDecoding.samples[0].number).toBe("PID-OLD-7");
-    expect(body.assets).toMatchObject({ toSet: 1, keptUnmapped: 1, written: 0 });
+    expect(body.assets).toMatchObject({ toSet: 1, keptWithoutFiling: 1, disagreeWithFiling: 0, written: 0 });
+    expect(body.remaining).toBe(0);
     expect(row("documents", "d1").unit_code).toBeNull();
     expect(db.calls.some((c) => c.method === "update")).toBe(false);
     expect(db.tables.audit_logs).toHaveLength(0);
@@ -197,14 +228,90 @@ describe("POST /api/admin/unit-identity", () => {
     expect(row("documents", "d3").unit_code).toBeNull();     // unit 99 is not in the codebook → never written
     expect(row("documents", "d1").unit_id).toBeNull();       // documents.unit_id is never written
     expect(row("assets", "a1").unit_id).toBe("u20");
-    expect(row("assets", "a2").unit_id).toBe("u30");         // points at an unmapped unit: kept
-    expect(db.tables.audit_logs).toHaveLength(1);
-    expect(db.tables.audit_logs[0]).toMatchObject({ action: "UNIT_IDENTITY_BACKFILL", org_id: ORG, user_id: "uid-1" });
-    // every write is org-scoped
-    expect(db.calls.filter((c) => c.method === "update").length).toBeGreaterThan(0);
+    expect(row("assets", "a2").unit_id).toBe("u30");         // held while unfiled: kept
+    // audited before the writes (what it set out to do) and after (what landed)
+    expect(db.tables.audit_logs).toHaveLength(2);
+    expect(db.tables.audit_logs[0]).toMatchObject({ action: "UNIT_IDENTITY_BACKFILL", org_id: ORG, user_id: "uid-1", details: { phase: "started", remaining: 0 } });
+    expect(db.tables.audit_logs[1]).toMatchObject({ action: "UNIT_IDENTITY_BACKFILL", details: { phase: "finished", documents: { written: 2, refused: 0 }, assets: { written: 1, refused: 0 } } });
+    const firstAudit = db.calls.findIndex((c) => c.table === "audit_logs" && c.method === "insert");
+    const firstUpdate = db.calls.findIndex((c) => c.method === "update");
+    expect(firstAudit).toBeGreaterThan(-1);
+    expect(firstAudit).toBeLessThan(firstUpdate);
+    // counts only — never a number, a title or an id in the audit row
+    expect(JSON.stringify(db.tables.audit_logs)).not.toMatch(/2002-D|PID-OLD|"d1"|"a1"/);
     const again = await (await call({ orgId: ORG, dryRun: false })).json();
     expect(again.documents.toWrite).toBe(0);
     expect(again.assets.written).toBe(0);
+  });
+
+  it("a hand-set or imported assets.unit_id is never overwritten: a first run on a mapped unit keeps every value and counts the disagreements", async () => {
+    seed({
+      units: [o({ id: "u20", codebook_code: "20", archived: false }), o({ id: "u30", codebook_code: "30", archived: false })],
+      assets: [
+        o({ id: "a1", unit_code: null, unit_id: "u20" }),   // imported scope, not filed yet
+        o({ id: "a2", unit_code: "30", unit_id: "u20" }),   // filed elsewhere
+        o({ id: "a3", unit_code: "20", unit_id: null }),    // empty: filled
+      ],
+    });
+    const body = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(body.assets).toMatchObject({ toSet: 1, disagreeWithFiling: 1, keptWithoutFiling: 1, written: 1 });
+    expect(row("assets", "a1").unit_id).toBe("u20");
+    expect(row("assets", "a2").unit_id).toBe("u20");
+    expect(row("assets", "a3").unit_id).toBe("u20");
+    const assetUpdates = db.calls.filter((c) => c.table === "assets" && c.method === "update");
+    expect(assetUpdates.every((c) => (c.args[0] as { unit_id: unknown }).unit_id !== null)).toBe(true);
+  });
+
+  it("a Supervisor (a scope writer outside the controller tier) never sees a private document's number; a DocCtrl does", async () => {
+    seed({
+      documents: [
+        o({ id: "d1", document_number: "HR-INV-2026-004", unit_code: null, unit_id: null, visibility: "private" }),
+        o({ id: "d2", document_number: "PID-OLD-7", unit_code: null, unit_id: null, visibility: "normal" }),
+        o({ id: "d3", document_number: "9902-D-1", unit_code: null, unit_id: null, visibility: "hidden" }),
+      ],
+    });
+    db.tables.org_members = db.tables.org_members.map((m) => (m.uid === "uid-1" ? { ...m, role: "Supervisor", roles: ["Supervisor"] } : m));
+    const sup = await (await call({ orgId: ORG })).json();
+    expect(sup.documents.notDecoding).toMatchObject({ count: 2, unlisted: 1 });
+    expect(sup.documents.notDecoding.samples.map((x: { number: string }) => x.number)).toEqual(["PID-OLD-7"]);
+    expect(sup.documents.unknownUnit).toEqual({ count: 1, codes: [], unlisted: 1 });
+    expect(JSON.stringify(sup)).not.toMatch(/HR-INV|"99"/);
+
+    db.tables.org_members = db.tables.org_members.map((m) => (m.uid === "uid-1" ? { ...m, role: "Viewer", roles: ["Viewer", "DocCtrl"] } : m));
+    const dc = await (await call({ orgId: ORG })).json();
+    expect(dc.documents.notDecoding).toMatchObject({ count: 2, unlisted: 0 });
+    expect(dc.documents.notDecoding.samples.map((x: { number: string }) => x.number)).toContain("HR-INV-2026-004");
+    expect(dc.documents.unknownUnit.codes).toEqual([{ code: "99", count: 1 }]);
+    // the controller test reads the held collection, never a role literal
+    const src = readFileSync("app/api/admin/unit-identity/route.ts", "utf8");
+    expect(src).toContain("heldRoles(member).some((r) => isControllerRole(r as Role))");
+    expect(src).toContain('"id, document_number, unit_code, unit_id, visibility"');
+  });
+
+  it("an apply is bounded per call and continues: the rest is `remaining`, and the next call writes only what is still missing", async () => {
+    const n = UNIT_IDENTITY_WRITE_BUDGET + 150;
+    const documents = Array.from({ length: n }, (_, i) => o({ id: `d${String(i).padStart(5, "0")}`, document_number: "2002-D-1", unit_code: null, unit_id: null }));
+    seed({ documents });
+    const first = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(first.documents).toMatchObject({ toWrite: n, written: UNIT_IDENTITY_WRITE_BUDGET, refused: 0 });
+    expect(first.assets.written).toBe(0);              // the budget went to documents first
+    expect(first.remaining).toBe(150 + 1);             // 150 documents + 1 asset
+    expect(db.tables.documents.filter((d) => d.unit_code === "20")).toHaveLength(UNIT_IDENTITY_WRITE_BUDGET);
+    const second = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(second.documents).toMatchObject({ toWrite: 150, written: 150 });
+    expect(second.assets.written).toBe(1);
+    expect(second.remaining).toBe(0);
+    expect(db.tables.documents.every((d) => d.unit_code === "20")).toBe(true);
+    // each call audited before and after its writes
+    expect(db.tables.audit_logs.map((r) => (r.details as { phase: string }).phase)).toEqual(["started", "finished", "started", "finished"]);
+  });
+
+  it("if the opening audit row cannot be written, nothing is written", async () => {
+    db.writeError = { audit_logs: { message: "audit_logs is read-only" } };
+    const r = await call({ orgId: ORG, dryRun: false });
+    expect(r.status).toBe(500);
+    expect((await r.json()).error).toMatch(/did not run: its audit record could not be written/);
+    expect(db.calls.some((c) => c.method === "update")).toBe(false);
   });
 
   it("a refused write is counted and said — never a silent partial success", async () => {
@@ -217,6 +324,58 @@ describe("POST /api/admin/unit-identity", () => {
     const b2 = await (await call({ orgId: ORG, dryRun: false })).json();
     expect(b2.assets.refused).toBe(1);
     expect(b2.notes.join("\n")).toMatch(/equipment write\(s\) were refused: assets_guard_registry: refused/);
+  });
+});
+
+describe("runUnitIdentityBackfill — the panel works through the bounded calls", () => {
+  const report = (over: Partial<UnitIdentityReport> & { dw?: number; aw?: number; dr?: number }): UnitIdentityReport => ({
+    dryRun: false,
+    documents: {
+      scanned: 10, decoded: 10, toWrite: 10, toClear: 0, written: over.dw ?? 0, refused: over.dr ?? 0, noNumber: 0,
+      notDecoding: { count: 0, samples: [], unlisted: 0 }, noUnitSegment: 0, unknownUnit: { count: 0, codes: [], unlisted: 0 },
+      disagreeWithUnitId: 0, unitIdUnmapped: 0,
+    },
+    assets: { scanned: 1, toSet: 1, disagreeWithFiling: 0, keptWithoutFiling: 0, written: over.aw ?? 0, refused: 0 },
+    mapping: { operationalUnits: 1, mapped: 1, codebookUnitsUnmapped: [] },
+    remaining: over.remaining ?? 0,
+    notes: over.notes ?? [],
+  });
+  const respond = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+  it("loops while writes remain and a round landed something; sums what was written, keeps the first round's plan", async () => {
+    const replies = [respond(200, report({ dw: 6, remaining: 5 })), respond(200, report({ dw: 4, aw: 1, remaining: 0 }))];
+    const fetchMock = vi.fn(async () => replies.shift()!);
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const r = await runUnitIdentityBackfill(ORG, { dryRun: false });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(r.documents).toMatchObject({ toWrite: 10, written: 10 });
+      expect(r.assets.written).toBe(1);
+      expect(r.remaining).toBe(0);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("stops when a round lands nothing (the rest is refused) — never loops on refusals", async () => {
+    const fetchMock = vi.fn(async () => respond(200, report({ dr: 3, remaining: 2 })));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const r = await runUnitIdentityBackfill(ORG, { dryRun: false });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(r.documents.refused).toBe(3);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("a call the platform stops (no JSON body) is 'interrupted', not 'did not run', and says what earlier rounds landed", async () => {
+    const replies = [respond(200, report({ dw: 4000, remaining: 900 })), { ok: false, status: 504, json: async () => { throw new Error("not json"); } }];
+    vi.stubGlobal("fetch", vi.fn(async () => replies.shift()!));
+    try {
+      await expect(runUnitIdentityBackfill(ORG, { dryRun: false })).rejects.toThrow(/interrupted \(504\) — writes that landed are kept.*4000 write\(s\) landed in the earlier round/);
+    } finally { vi.unstubAllGlobals(); }
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 504, json: async () => { throw new Error("not json"); } })));
+    try {
+      await expect(runUnitIdentityBackfill(ORG, { dryRun: false })).rejects.toThrow(/interrupted \(504\)/);
+      await expect(runUnitIdentityBackfill(ORG, { dryRun: false })).rejects.not.toThrow(/did not run/);
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 
@@ -245,9 +404,22 @@ describe("the mapping on /admin/scope — data, and every write checked", () => 
     db.refuseWrites = new Set();
     db.writeError = { units: { code: "23505", message: 'duplicate key value violates unique constraint "units_org_codebook_code_uniq"' } };
     await expect(setUnitCodebookCode("u30", "20", "uid-1")).rejects.toThrow(/Site Codebook unit 20 is already mapped to another operational unit/);
+    db.writeError = { units: { code: "42501", message: "units_codebook_code_scope_writers: only the Operational scope writer roles map a unit to the Site Codebook" } };
+    await expect(setUnitCodebookCode("u30", "30", "uid-1")).rejects.toThrow(/only the roles that edit the operational scope can map a unit/);
     db.writeError = {};
     db.missingColumns = { units: ["codebook_code"] };
     await expect(setUnitCodebookCode("u30", "20", "uid-1")).rejects.toThrow(/20261138\) is not applied/);
+  });
+
+  it("the value is read back: an archived unit (whose code the database releases) is not a green save", async () => {
+    // stand-in for 20261138's units_codebook_code_guard: an archived row holds no code
+    db.triggers = { units: (r, patch) => ({ ...patch, ...((patch.archived ?? r.archived) ? { codebook_code: null } : {}) }) };
+    row("units", "u30").archived = true;
+    await expect(setUnitCodebookCode("u30", "30", "uid-1")).rejects.toThrow(/an archived unit holds no Site Codebook unit/);
+    expect(row("units", "u30").codebook_code).toBeNull();
+    row("units", "u30").archived = false;
+    await setUnitCodebookCode("u30", "30", "uid-1");
+    expect(row("units", "u30").codebook_code).toBe("30");
   });
 });
 
@@ -293,6 +465,7 @@ describe("20261138 — one paste, counts only, every object new", () => {
     for (const name of [
       "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",
       "units_org_codebook_code_uniq", "documents_org_unit_code_idx", "codebook_code",
+      "units_codebook_code_guard", "trg_units_codebook_code_guard",
     ]) {
       expect(others.some((s) => s.includes(name)), name).toBe(false);
     }
@@ -318,6 +491,37 @@ describe("20261138 — one paste, counts only, every object new", () => {
     expect(g).toMatch(/IF TG_OP = 'INSERT' THEN\s*NEW\.unit_code := NULL;/);
     expect(g).toMatch(/USING ERRCODE = '42501'/);
     expect(code).toMatch(/BEFORE INSERT OR UPDATE OF unit_code, document_number ON documents/);
+  });
+
+  it("units.codebook_code is the Operational scope writer tier's in the database — the same roles as ADMIN_SURFACES 'scope'.writes — and an archived unit holds none", () => {
+    const g = code.slice(code.indexOf("FUNCTION units_codebook_code_guard"), code.indexOf("DROP TRIGGER IF EXISTS trg_units_codebook_code_guard"));
+    expect(g).not.toMatch(/SECURITY DEFINER/);
+    expect(g).toMatch(/SET search_path = public/);
+    // the release on archive comes FIRST, so releasing a code is a mapping change too
+    expect(g.indexOf("IF NEW.archived THEN")).toBeLessThan(g.indexOf("v_changed := NEW.codebook_code"));
+    expect(g).toMatch(/IF NEW\.archived THEN\s*NEW\.codebook_code := NULL;/);
+    expect(g).toMatch(/v_changed := NEW\.codebook_code IS DISTINCT FROM OLD\.codebook_code;/);
+    // deleting a mapped row removes the mapping too
+    expect(g).toMatch(/IF TG_OP = 'DELETE' THEN\s*v_changed := OLD\.codebook_code IS NOT NULL;\s*v_org := OLD\.org_id;/);
+    expect(g).toMatch(/IF TG_OP = 'DELETE' THEN\s*RETURN OLD;\s*END IF;\s*RETURN NEW;/);
+    expect(g).toMatch(/IF v_changed AND auth\.uid\(\) IS NOT NULL/);
+    expect(g).toMatch(/USING ERRCODE = '42501'/);
+    const roles = g.match(/caller_holds_any_role\(v_org, ARRAY\[([^\]]*)\]::text\[\]\)/);
+    expect(roles).not.toBeNull();
+    const sqlRoles = roles![1].split(",").map((r) => r.trim().replace(/^'|'$/g, "")).sort();
+    expect(sqlRoles).toEqual([...(adminSurface("scope")?.writes ?? [])].sort());
+    expect(code).toMatch(/CREATE TRIGGER trg_units_codebook_code_guard\s*BEFORE INSERT OR UPDATE OF codebook_code, archived OR DELETE ON units/);
+    // probed in the final SELECT (tgtype bit 8 = DELETE)
+    expect(code).toContain("tgname = 'trg_units_codebook_code_guard'");
+    expect(code).toContain("AND (tgtype & 8) <> 0)");
+    expect(code).toContain("prosrc LIKE '%caller_holds_any_role(v_org, ARRAY[''Admin'',''Manager'',''Supervisor'',''DocCtrl'']::text[])%'");
+  });
+
+  it("the header no longer claims nothing else is widened without naming the route's disclosure rule and the fill-only projection", () => {
+    const header = sql.slice(0, sql.indexOf("CREATE TEMP TABLE"));
+    expect(header).not.toMatch(/Nothing else is widened;/);
+    expect(header).toMatch(/lists a document's number in its report only to\s*\n--\s*a caller who may read it/);
+    expect(header).toMatch(/FILLS an empty assets\.unit_id but never rewrites one already set/);
   });
 
   it("pg_proc probes double the apostrophes of the body's literals; no bare cast inside a LIKE pattern", () => {

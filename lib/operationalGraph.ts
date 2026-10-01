@@ -22,7 +22,8 @@
 // run by POST /api/admin/unit-identity) writes the two derived columns the
 // join needs: documents.unit_code = the drawing-number decode (never a
 // guess — a number that does not decode is reported) and assets.unit_id =
-// the mapping's projection of assets.unit_code.
+// the mapping's projection of assets.unit_code, FILLED where it is empty
+// (a value already there is never rewritten — a disagreement is counted).
 
 import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
@@ -164,20 +165,28 @@ export async function listUnits(orgId: string, opts?: { plantId?: string; includ
 
 /** GAP-305 — map an operational unit to the Site Codebook unit it is (or
  *  unmap it with null). Checked: a refusal or a code already mapped to
- *  another unit (UNIQUE per org, 20261138) is an error, never a green save. */
+ *  another unit (UNIQUE per org, 20261138) is an error, never a green save.
+ *  The database decides who may (20261138's units_codebook_code_guard: the
+ *  Operational scope writer tier — a browser check alone is not a rail) and
+ *  releases an archived unit's code, so the value is read back. */
 export async function setUnitCodebookCode(unitId: string, codebookCode: string | null, updatedBy: string): Promise<void> {
   const code = codebookCode?.trim() || null;
   const { data, error } = await supabase.from("units")
     .update({ codebook_code: code, updated_by: updatedBy, updated_at: new Date().toISOString() })
-    .eq("id", unitId).select("id");
+    .eq("id", unitId).select("id, codebook_code");
   if (error) {
     if (error.code === "23505" || /units_org_codebook_code_uniq/.test(error.message)) {
       throw new Error(`Site Codebook unit ${code} is already mapped to another operational unit — unmap it there first.`);
+    }
+    if (error.code === "42501" || /units_codebook_code_scope_writers/.test(error.message)) {
+      throw new Error("Not saved — only the roles that edit the operational scope can map a unit to the Site Codebook.");
     }
     if (isMissingColumn(error)) throw new Error("The unit-identity migration (20261138) is not applied yet — the mapping cannot be saved.");
     throw new Error(error.message);
   }
   if (!data || data.length === 0) throw new Error("Not saved — the mapping was refused.");
+  const saved = ((data[0] as { codebook_code?: string | null }).codebook_code ?? null);
+  if (saved !== code) throw new Error("Not saved — an archived unit holds no Site Codebook unit (restore it first).");
 }
 
 export async function createUnit(input: {
@@ -288,7 +297,14 @@ export async function getScopeTree(orgId: string, opts?: { includeArchived?: boo
 
 // ─── Unit identity backfill (GAP-305) ───────────────────────────
 
-export interface UnitIdentityDoc { id: string; document_number: string | null; unit_code: string | null; unit_id: string | null }
+export interface UnitIdentityDoc {
+  id: string; document_number: string | null; unit_code: string | null; unit_id: string | null;
+  /** documents.visibility — NULL / 'normal' is open to every active member
+   *  (node_visible); anything else is restricted (controllers, the owner, an
+   *  ACL grant). The report names a restricted document's number only to a
+   *  caller who sees every document (DEC-44). */
+  visibility?: string | null;
+}
 export interface UnitIdentityAsset { id: string; unit_code: string | null; unit_id: string | null }
 export interface UnitMappingRow { id: string; codebook_code: string | null }
 
@@ -307,11 +323,16 @@ export interface UnitIdentityReport {
     written: number;
     refused: number;
     noNumber: number;
-    notDecoding: { count: number; samples: Array<{ number: string; reason: string }> };
+    /** `unlisted`: restricted documents among `count` whose numbers are not
+     *  listed — the caller is not a controller, and the decode reads every
+     *  document with the service role, so the report names only what any
+     *  member may see. */
+    notDecoding: { count: number; samples: Array<{ number: string; reason: string }>; unlisted: number };
     /** decode, but the number format has no unit segment. */
     noUnitSegment: number;
-    /** decode to a unit code the Site Codebook does not hold. */
-    unknownUnit: { count: number; codes: Array<{ code: string; count: number }> };
+    /** decode to a unit code the Site Codebook does not hold. `codes` comes
+     *  from the documents the caller may see; `unlisted` counts the rest. */
+    unknownUnit: { count: number; codes: Array<{ code: string; count: number }>; unlisted: number };
     /** DEC-30: the document's operational unit (documents.unit_id) is mapped
      *  to a different codebook unit than the one its number decodes to (both
      *  are kept; nothing is rewritten) — 20261138's re-paste counts the same. */
@@ -320,20 +341,35 @@ export interface UnitIdentityReport {
      *  Site Codebook, so the two cannot be compared. */
     unitIdUnmapped: number;
   };
-  assets: { scanned: number; toSet: number; toRepoint: number; toClear: number; keptUnmapped: number; written: number; refused: number };
+  /** assets.unit_id is FILLED, never rewritten: `toSet` empty values the
+   *  filing maps; `disagreeWithFiling` hold a different operational unit
+   *  than the filing maps to (both kept — counted, as for documents);
+   *  `keptWithoutFiling` hold a unit while the filing maps to none (no
+   *  unit_code, or its codebook unit is not mapped) — kept. */
+  assets: { scanned: number; toSet: number; disagreeWithFiling: number; keptWithoutFiling: number; written: number; refused: number };
   mapping: { operationalUnits: number; mapped: number; codebookUnitsUnmapped: string[] };
+  /** Writes still to do after this call (an apply works through at most a
+   *  budget per call — POST /api/admin/unit-identity; the panel calls again
+   *  until it is 0). Always 0 on a preview. */
+  remaining: number;
   notes: string[];
 }
 
 export interface UnitIdentityPlan {
   /** documents.unit_code value (null = clear) → document ids. */
   docWrites: Map<string | null, string[]>;
-  /** assets.unit_id value (null = clear) → asset ids. */
-  assetWrites: Map<string | null, string[]>;
+  /** assets.unit_id value → asset ids (only ever an empty unit_id filled). */
+  assetWrites: Map<string, string[]>;
   report: UnitIdentityReport;
 }
 
 const MAX_SAMPLES = 50;
+
+/** node_visible's open arm: NULL / 'normal' visibility is readable by every
+ *  active member; anything else is restricted. */
+export function isOpenVisibility(visibility: string | null | undefined): boolean {
+  return visibility === null || visibility === undefined || visibility === "normal";
+}
 
 /** Pure: decode every document number with the org's own codebook and
  *  project every asset's filing through the mapping. Rules:
@@ -343,15 +379,23 @@ const MAX_SAMPLES = 50;
  *   * with no drawing-number format (or no units) in the codebook nothing is
  *     written to documents at all — an empty book is "no opinion", and a
  *     codebook that failed to load must never clear the decodes;
- *   * assets.unit_id = the operational unit mapped to assets.unit_code; a
- *     value pointing at a MAPPED unit that the filing no longer maps to is
- *     the projection's own stale output and is re-pointed or cleared; a value
- *     pointing at an UNMAPPED unit was never the projection's and is kept;
+ *   * the report lists a document's number (or its unknown unit code) only
+ *     when the caller may read that document: every number for a caller who
+ *     sees every document (`seesRestricted` — the controller tier), otherwise
+ *     only open-visibility documents; the rest are counted as `unlisted`;
+ *   * assets.unit_id = the operational unit mapped to assets.unit_code, set
+ *     ONLY where unit_id is empty. A value already there — set by hand, by an
+ *     import, or by an earlier pass under an older mapping — is never
+ *     re-pointed or cleared (nothing records what it was): a value that
+ *     disagrees with the filing is counted, as a document's disagreement is;
  *   * documents.unit_id is never written (a configured scope, not a decode). */
 export function planUnitIdentity(input: {
   docs: UnitIdentityDoc[]; assets: UnitIdentityAsset[]; units: UnitMappingRow[]; book: Codebook; dryRun: boolean;
+  /** The caller sees every document (the controller tier — is_org_controller). */
+  seesRestricted?: boolean;
 }): UnitIdentityPlan {
   const { docs, assets, units, book } = input;
+  const seesRestricted = input.seesRestricted === true;
   const notes: string[] = [];
   const rowOfCode = new Map<string, string>();
   const codeOfRow = new Map<string, string>();
@@ -367,9 +411,9 @@ export function planUnitIdentity(input: {
   const push = <K,>(m: Map<K, string[]>, k: K, id: string) => { const a = m.get(k) ?? []; a.push(id); m.set(k, a); };
   const d = {
     scanned: docs.length, decoded: 0, toWrite: 0, toClear: 0, written: 0, refused: 0, noNumber: 0,
-    notDecoding: { count: 0, samples: [] as Array<{ number: string; reason: string }> },
+    notDecoding: { count: 0, samples: [] as Array<{ number: string; reason: string }>, unlisted: 0 },
     noUnitSegment: 0,
-    unknownUnit: { count: 0, codes: [] as Array<{ code: string; count: number }> },
+    unknownUnit: { count: 0, codes: [] as Array<{ code: string; count: number }>, unlisted: 0 },
     disagreeWithUnitId: 0, unitIdUnmapped: 0,
   };
   const unknown = new Map<string, number>();
@@ -379,8 +423,10 @@ export function planUnitIdentity(input: {
       ? "The Site Codebook has no drawing-number format, so no document number can be decoded — nothing was written to documents (Admin → Site Codebook)."
       : "The Site Codebook has no units, so no decoded number can name one — nothing was written to documents.");
   }
+  let unknownTotal = 0;
   for (const doc of docs) {
     const number = (doc.document_number ?? "").trim();
+    const listable = seesRestricted || isOpenVisibility(doc.visibility);
     let target: string | null = null;
     if (!number) {
       d.noNumber += 1;
@@ -388,13 +434,16 @@ export function planUnitIdentity(input: {
       const parsed = parseDrawingNumber(number, book);
       if (!parsed) {
         d.notDecoding.count += 1;
-        if (d.notDecoding.samples.length < MAX_SAMPLES) {
+        if (!listable) d.notDecoding.unlisted += 1;
+        else if (d.notDecoding.samples.length < MAX_SAMPLES) {
           d.notDecoding.samples.push({ number, reason: explainDrawingNumberMiss(number, book) ?? "Doesn't match the segments." });
         }
       } else if (!parsed.unitCode) {
         d.noUnitSegment += 1;
       } else if (!knownUnits.has(parsed.unitCode)) {
-        unknown.set(parsed.unitCode, (unknown.get(parsed.unitCode) ?? 0) + 1);
+        unknownTotal += 1;
+        if (!listable) d.unknownUnit.unlisted += 1;
+        else unknown.set(parsed.unitCode, (unknown.get(parsed.unitCode) ?? 0) + 1);
       } else {
         target = parsed.unitCode;
         d.decoded += 1;
@@ -412,24 +461,25 @@ export function planUnitIdentity(input: {
       if (target === null) d.toClear += 1;
     }
   }
-  d.unknownUnit.count = [...unknown.values()].reduce((s, n) => s + n, 0);
+  d.unknownUnit.count = unknownTotal;
   d.unknownUnit.codes = [...unknown.entries()].sort((x, y) => y[1] - x[1]).map(([code, count]) => ({ code, count }));
 
-  const assetWrites = new Map<string | null, string[]>();
-  const a = { scanned: assets.length, toSet: 0, toRepoint: 0, toClear: 0, keptUnmapped: 0, written: 0, refused: 0 };
+  const assetWrites = new Map<string, string[]>();
+  const a = { scanned: assets.length, toSet: 0, disagreeWithFiling: 0, keptWithoutFiling: 0, written: 0, refused: 0 };
   for (const asset of assets) {
     const target = asset.unit_code ? rowOfCode.get(asset.unit_code) ?? null : null;
     const current = asset.unit_id ?? null;
     if (current === target) continue;
-    if (target === null) {
-      // A unit_id pointing at an unmapped unit was never the projection's
-      // output (it only writes mapped units): leave it, and say so.
-      if (current && !codeOfRow.has(current)) { a.keptUnmapped += 1; continue; }
-      push(assetWrites, null, asset.id); a.toClear += 1;
-    } else if (current === null) {
-      push(assetWrites, target, asset.id); a.toSet += 1;
+    if (current === null) {
+      // Only an EMPTY unit_id is filled (target is non-null here).
+      push(assetWrites, target as string, asset.id); a.toSet += 1;
+    } else if (target === null) {
+      // Held while the filing maps to no operational unit: kept.
+      a.keptWithoutFiling += 1;
     } else {
-      push(assetWrites, target, asset.id); a.toRepoint += 1;
+      // Held, and the filing maps elsewhere: both kept, the disagreement
+      // counted — a hand-set or imported value is never overwritten.
+      a.disagreeWithFiling += 1;
     }
   }
 
@@ -445,25 +495,78 @@ export function planUnitIdentity(input: {
         mapped: mapped.size,
         codebookUnitsUnmapped: book.units.map((u) => u.code).filter((c) => !mapped.has(c)),
       },
+      remaining: 0,
       notes,
     },
   };
 }
 
+/** Rows one apply call writes at most (POST /api/admin/unit-identity); the
+ *  rest is the report's `remaining`, for the next call. */
+export const UNIT_IDENTITY_WRITE_BUDGET = 4000;
+
+/** An apply works through a bounded batch per call; the panel calls again
+ *  while writes remain and the last call made progress, at most this often. */
+export const UNIT_IDENTITY_MAX_ROUNDS = 100;
+
 /** Run the backfill on the server (service role — the decode is the one
- *  writer of documents.unit_code). `dryRun` reports without writing. */
+ *  writer of documents.unit_code). `dryRun` reports without writing. An
+ *  apply loops over the route's bounded batches (each call plans afresh, so
+ *  a round writes only what is still missing) until nothing remains, a
+ *  round lands nothing (the rest is refused), or UNIT_IDENTITY_MAX_ROUNDS.
+ *  The result keeps the first round's plan (what the whole pass found),
+ *  sums what was written, and takes the last round's refusals and remainder
+ *  (a refused row is planned again by the next round, so summing would count
+ *  it twice). A round that fails after earlier rounds says how much landed. */
 export async function runUnitIdentityBackfill(orgId: string, opts: { dryRun: boolean }): Promise<UnitIdentityReport> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in.");
-  const res = await fetch("/api/admin/unit-identity", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ orgId, dryRun: opts.dryRun }),
-  });
-  const body = (await res.json().catch(() => ({}))) as { error?: string } & Partial<UnitIdentityReport>;
-  if (!res.ok) throw new Error(body.error || `The decode did not run (${res.status}).`);
-  return body as UnitIdentityReport;
+  const once = async (): Promise<UnitIdentityReport> => {
+    const res = await fetch("/api/admin/unit-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ orgId, dryRun: opts.dryRun }),
+    });
+    const body = (await res.json().catch(() => ({}))) as { error?: string } & Partial<UnitIdentityReport>;
+    if (!res.ok) {
+      // No JSON error: the platform stopped the call (a timeout) — writes that
+      // landed before it stopped are kept, so never say "did not run".
+      throw new Error(body.error || (opts.dryRun
+        ? `The preview did not finish (${res.status}).`
+        : `The decode was interrupted (${res.status}) — writes that landed are kept; run "Decode and write" again to finish (it writes only what is still missing).`));
+    }
+    return body as UnitIdentityReport;
+  };
+  if (opts.dryRun) return once();
+
+  const first = await once();
+  let last = first;
+  let docsWritten = first.documents.written, assetsWritten = first.assets.written;
+  const notes = [...first.notes];
+  const progressed = (r: UnitIdentityReport) => r.documents.written + r.assets.written > 0;
+  let rounds = 1;
+  while (last.remaining > 0 && progressed(last) && rounds < UNIT_IDENTITY_MAX_ROUNDS) {
+    try {
+      last = await once();
+    } catch (e) {
+      throw new Error(`${(e as Error).message} ${docsWritten + assetsWritten} write(s) landed in the earlier round(s).`);
+    }
+    rounds += 1;
+    docsWritten += last.documents.written;
+    assetsWritten += last.assets.written;
+    for (const n of last.notes) if (!notes.includes(n)) notes.push(n);
+  }
+  if (last.remaining > 0 && progressed(last)) {
+    notes.push(`Stopped after ${rounds} rounds with ${last.remaining} write(s) still to do — run "Decode and write" again to continue.`);
+  }
+  return {
+    ...first,
+    documents: { ...first.documents, written: docsWritten, refused: last.documents.refused },
+    assets: { ...first.assets, written: assetsWritten, refused: last.assets.refused },
+    remaining: last.remaining,
+    notes,
+  };
 }
 
 // ─── Join-table reads (document_assets, project_documents) ──────
