@@ -2160,9 +2160,9 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
 // issue a guarded write; the write it admits still started no compliance
 // clock and recorded nothing. These are the app's doors for it: the
 // un-archive above, and changeDocumentStatus — the one function a status
-// editor calls (the library page's metadata save and the bulk editor adopt
-// it as their next owners touch them: identity IS-P1 / intelligence I-12 for
-// the page, document-control P15 for the bulk editor).
+// editor calls (the bulk editor's issuing rows go through it since
+// document-control P17; the library page's metadata save adopts it as its
+// next owner touches the page: identity IS-P1 / intelligence I-12).
 
 export type StatusIssueDoor = "metadata" | "bulk" | "unarchive";
 

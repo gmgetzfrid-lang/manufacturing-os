@@ -27,6 +27,18 @@
 // fail closed) — a held row is refused and named; the publisher tier holds
 // (the Bulk Edit button is Document Control's only). REV-21 is the database
 // limb.
+//
+// REV-19 (P17): a row the status change ISSUES (isIssueTransition, the rows
+// the note above names) is written through lib/revisions.ts
+// changeDocumentStatus — the same one checked UPDATE (the status, the
+// recomputed uniqueness key, updated_at / updated_by), then, when the
+// database admitted it as an issue, the compliance clocks it owes (the
+// review clock and the read-&-understood roster, or only the roster where
+// the retirement stamp gives no evidence of a new issue) and the
+// DOCUMENT_ISSUED record. A refused row is named exactly as before. An issue
+// that landed but whose clocks or record did not follow is named after the
+// apply — the change stands and is not to be repeated. Every other row
+// (a status that issues nothing, a custom field) is written as before.
 
 import React, { useState } from "react";
 import {
@@ -38,6 +50,7 @@ import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
+import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
 
 interface BulkEditModalProps {
   isOpen: boolean;
@@ -63,7 +76,12 @@ export default function BulkEditModal({
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<{ ok: number; failed: Array<{ doc: string; reason: string; issue: boolean }> } | null>(null);
+  const [results, setResults] = useState<{
+    ok: number;
+    failed: Array<{ doc: string; reason: string; issue: boolean }>;
+    /** REV-19: issued rows whose clocks or issue record did not follow. */
+    followUps: Array<{ doc: string; problems: string[] }>;
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -84,6 +102,7 @@ export default function BulkEditModal({
     setBusy(true);
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
+    const followUps: Array<{ doc: string; problems: string[] }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
@@ -117,6 +136,25 @@ export default function BulkEditModal({
               : (doc.metadata as Record<string, unknown> ?? {}),
           }, library.uniquenessKeys);
         }
+        if (target.kind === "status" && doc.id && issuingIds.has(doc.id)) {
+          // REV-19: an issuing row — the same checked write, then the clocks
+          // and the DOCUMENT_ISSUED record (a refusal throws in the
+          // database's words, as the bare write's did).
+          // changeDocumentStatus writes the status, updated_at and updated_by
+          // itself; the recomputed uniqueness key rides in the same UPDATE.
+          const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
+          const outcome: StatusIssueOutcome = await changeDocumentStatus({
+            orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
+            actorUserId, patch,
+          });
+          const problems = [
+            ...outcome.complianceClockErrors,
+            ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
+          ];
+          if (problems.length > 0) followUps.push({ doc: doc.documentNumber || doc.title || doc.id, problems });
+          ok += 1;
+          continue;
+        }
         // Checked: an error, or a write the database filtered to no row, is a failure on this row.
         const { data: written, error } = await supabase.from("documents").update(updates).eq("id", doc.id).select("id");
         if (error) throw error;
@@ -127,7 +165,7 @@ export default function BulkEditModal({
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: issuingIds.has(doc.id) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed });
+    setResults({ ok, failed, followUps });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -236,6 +274,20 @@ export default function BulkEditModal({
                   {results.ok > 0 && (
                     <div className="mt-1">The other {results.ok} row{results.ok === 1 ? " was" : "s were"} applied — each row is its own write, so nothing was rolled back.</div>
                   )}
+                </div>
+              )}
+              {results.followUps.length > 0 && (
+                // REV-19: an issue that landed without everything it owes.
+                <div data-testid="bulk-issue-follow-ups" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-4 h-4" /> {results.followUps.length} issued row{results.followUps.length === 1 ? "" : "s"} — follow-up steps did not complete
+                  </div>
+                  <div className="mb-1">The status change stands and is not rolled back — do not apply it again. Document Control can set what did not complete from the document.</div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.followUps.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>

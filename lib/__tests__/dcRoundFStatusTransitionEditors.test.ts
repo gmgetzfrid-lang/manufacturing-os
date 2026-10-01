@@ -27,6 +27,10 @@ const s = vi.hoisted(() => ({
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: (table: string) => ({
+      // REV-19 (P17): the bulk editor's issuing rows go through
+      // changeDocumentStatus, which reads the row before its write (no row
+      // here: the outcome is the write's alone).
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
       update: (payload: Record<string, unknown>) => ({
         eq: (_col: string, val: unknown) => ({
           select: () => {
