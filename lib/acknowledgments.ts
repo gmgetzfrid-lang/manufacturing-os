@@ -550,6 +550,30 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
 
 // ── Policy set (doc / folder / library) ──────────────────────────────────────
 
+const errorText = (e: unknown): string => (e as { message?: string } | null)?.message || String(e);
+
+/** PKG-9 (P14 final review): setAckPolicy SAVED the policy, but some of the
+ *  acknowledgment rosters it covers were not recomputed (`failedDocumentIds`;
+ *  none listed when the covered documents could not even be read —
+ *  `total` null). The message says so in plain words; saving the policy again
+ *  retries every roster (the recompute is idempotent). */
+export class AckRosterRecomputeError extends Error {
+  readonly failedDocumentIds: string[];
+  readonly total: number | null;
+  constructor(input: { level: Level; failedDocumentIds: string[]; total: number | null; reason: string }) {
+    const n = input.failedDocumentIds.length;
+    const what = input.level === "document"
+      ? "this document's acknowledgment roster was not recomputed"
+      : input.total === null
+        ? "the documents it covers could not be read, so no acknowledgment roster was recomputed"
+        : `${n} of the ${input.total} issued document${input.total === 1 ? "" : "s"} it covers did not have ${n === 1 ? "its" : "their"} acknowledgment roster recomputed`;
+    super(`The read-&-understood policy was saved, but ${what} (${n > 1 ? "first error: " : ""}${input.reason}). Save the policy again to retry.`);
+    this.name = "AckRosterRecomputeError";
+    this.failedDocumentIds = input.failedDocumentIds;
+    this.total = input.total;
+  }
+}
+
 /** Set (or clear) the acknowledgment policy at a level, then (re)open rosters so
  *  the change takes effect immediately on already-issued documents — not only on
  *  the next revision. */
@@ -574,16 +598,40 @@ export async function setAckPolicy(input: {
   }).catch(() => {});
 
   if (input.level === "document") {
-    await recomputeDocumentAck({ orgId: input.orgId, documentId: input.id, actorId: input.actorId, actorName: input.actorName });
+    try {
+      await recomputeDocumentAck({ orgId: input.orgId, documentId: input.id, actorId: input.actorId, actorName: input.actorName });
+    } catch (e) {
+      throw new AckRosterRecomputeError({ level: "document", failedDocumentIds: [input.id], total: 1, reason: errorText(e) });
+    }
     return;
   }
   // Library / folder: recompute every Issued document it covers, in batches.
+  // PKG-9 (P14 final review): a recompute can now THROW (an unreadable
+  // inherited policy — effectiveAckPolicyForDocument), and Promise.all
+  // abandoned every later batch at the first one. Each batch is settled
+  // whole, every batch runs, and the documents that were not recomputed are
+  // reported once, after the last — the policy itself is already saved.
   const col = input.level === "library" ? "library_id" : "collection_id";
-  const { data } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
+  const { data, error: listErr } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
+  if (listErr) {
+    throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: [], total: null, reason: listErr.message });
+  }
   const ids = ((data ?? []) as Array<Record<string, unknown>>).map((r) => r.id as string);
+  const failed: string[] = [];
+  let firstReason: string | null = null;
   for (let i = 0; i < ids.length; i += 20) {
-    await Promise.all(ids.slice(i, i + 20).map((id) =>
+    const batch = ids.slice(i, i + 20);
+    const settled = await Promise.allSettled(batch.map((id) =>
       recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName })));
+    settled.forEach((r, k) => {
+      if (r.status === "rejected") {
+        failed.push(batch[k]);
+        firstReason ??= errorText(r.reason);
+      }
+    });
+  }
+  if (failed.length > 0) {
+    throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: failed, total: ids.length, reason: firstReason ?? "unknown error" });
   }
 }
 
