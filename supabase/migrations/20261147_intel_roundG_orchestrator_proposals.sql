@@ -109,7 +109,10 @@ UNION ALL SELECT 'orchestrator_proposals: anon and authenticated hold no SELECT 
        NOT has_table_privilege('anon', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE')
        AND NOT has_table_privilege('authenticated', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE'), NULL
 UNION ALL SELECT 'orchestrator_proposals: the service role may read and write it',
-       has_table_privilege('service_role', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE'), NULL
+       has_table_privilege('service_role', 'public.orchestrator_proposals', 'SELECT')
+       AND has_table_privilege('service_role', 'public.orchestrator_proposals', 'INSERT')
+       AND has_table_privilege('service_role', 'public.orchestrator_proposals', 'UPDATE')
+       AND has_table_privilege('service_role', 'public.orchestrator_proposals', 'DELETE'), NULL
 UNION ALL SELECT 'orchestrator_proposals carries id, run_id, org_id, user_id, fingerprint, tool, parameters, summary, created_at, expires_at, executed_at, dismissed_at',
        (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'orchestrator_proposals'

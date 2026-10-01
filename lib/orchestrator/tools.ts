@@ -414,7 +414,9 @@ const checkAuditHistory: ToolDef = {
       const provisional = storedProvisional(r.audit_details);
       return {
         revision: r.revision_code, status: r.status, audited_at: r.audited_at,
-        scope: (typeof r.library_id === "string" && r.library_id) || libraryOf(r.audit_details) ? "library" : "org-wide",
+        // The library_id column decides once it exists (20261124); only a read
+        // without the column falls back to what the details name (integration fix).
+        scope: ("library_id" in r ? !!r.library_id : !!libraryOf(r.audit_details)) ? "library" : "org-wide",
         ...(typeof d.note === "string" && d.note ? { note: d.note.slice(0, 300) } : {}),
         ...(provisional ? {
           provisional: true,
@@ -812,9 +814,21 @@ function filedByLibrary(details: unknown): boolean {
  *  verdict at or above what the row settled (lowersStored) settles it, as a
  *  settled computation does in the drawing route (replaceDecision: a
  *  settled `next` replaces a provisional row). */
-function keptDetails(details: unknown): Record<string, unknown> {
+function keptDetails(details: unknown, opts: { dropWaiting?: boolean } = {}): Record<string, unknown> {
   if (!details || typeof details !== "object" || Array.isArray(details)) return {};
-  const { provisional: _provisional, waitingFindings: _waiting, ...kept } = details as Record<string, unknown>;
+  const { provisional: _provisional, waitingFindings: waiting, ...kept } = details as Record<string, unknown>;
+  // A confirmed verdict BELOW the stored row's status (at or above what it
+  // settled) does not confirm the findings the row was still waiting on —
+  // they are dropped, never kept unmarked as if settled (integration fix,
+  // 2026-10-01). At or above the stored status the person confirms them.
+  if (opts.dropWaiting && waiting && typeof waiting === "object" && !Array.isArray(waiting)) {
+    for (const [list, at] of Object.entries(waiting as Record<string, unknown>)) {
+      const items = kept[list];
+      if (!Array.isArray(items) || !Array.isArray(at)) continue;
+      const drop = new Set(at.filter((i): i is number => typeof i === "number"));
+      kept[list] = items.filter((_, i) => !drop.has(i));
+    }
+  }
   return kept;
 }
 
@@ -951,7 +965,9 @@ const logAuditCompletion: ToolDef = {
       revision_code: revision, status,
       audited_at: new Date().toISOString(),
       audit_details: {
-        ...keptDetails(stored.row?.audit_details),
+        ...keptDetails(stored.row?.audit_details, {
+          dropWaiting: !!stored.row && (RANK[status as AuditStatus] ?? 0) < (RANK[stored.row.status as AuditStatus] ?? 0),
+        }),
         note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator",
       },
     };

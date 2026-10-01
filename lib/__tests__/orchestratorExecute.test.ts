@@ -456,6 +456,13 @@ describe("20261147 — orchestrator_proposals: one paste, service role only, pro
     for (const sel of inv.split(/UNION ALL/)) expect(sel).toMatch(/COUNT\(\*\)|to_regclass/);
   });
 
+  it("integration fix: the service-role probe tests EACH privilege (a comma list in has_table_privilege is true when ANY one is held)", () => {
+    for (const priv of ["SELECT", "INSERT", "UPDATE", "DELETE"]) {
+      expect(sql).toContain(`has_table_privilege('service_role', 'public.orchestrator_proposals', '${priv}')`);
+    }
+    expect(sql).not.toContain("has_table_privilege('service_role', 'public.orchestrator_proposals', 'SELECT, INSERT, UPDATE, DELETE')");
+  });
+
   it("the table is RLS-on with no policies and no anon / authenticated grants; no function, policy or trigger is created", () => {
     expect(ddl).toMatch(/CREATE TABLE IF NOT EXISTS orchestrator_proposals \(/);
     for (const col of ["run_id       UUID NOT NULL", "org_id       UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE", "user_id      UUID NOT NULL", "fingerprint  TEXT NOT NULL",
@@ -790,6 +797,26 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     const h = (await toolByName("check_audit_history")!.run({ sheet_number: "025-PID-0103", revision: "C" }, ctx)).data as { audited: boolean; recommendation: string };
     expect(h.audited).toBe(true);
     expect(h.recommendation).toMatch(/Already audited at this revision \(broken_connectors\)/);
+    });
+
+  it("integration fix: a confirmed verdict BELOW the stored status (at its floor) drops the findings the provisional row was still waiting on — never keeps them as if settled", async () => {
+    const libraryDetails = {
+      knowledgeDocumentId: "11111111-1111-4111-8111-111111111111", libraryId: "KL-gone",
+      brokenConnectors: [{ tag: "OPC-7", box: "B-4" }], oneWay: ["025-PID-0101"], coverage: { pages: 3, read: 3 },
+      provisional: { waitingOn: ["025-PID-0104.pdf"], settledStatus: "flagged" }, waitingFindings: { brokenConnectors: [0] },
+    };
+    db.tables.drawing_audit_logs.push(verdict({ status: "broken_connectors", document_id: "d-1", audit_details: libraryDetails }));
+    net.script = [JSON.stringify({ tool_name: "log_audit_completion", parameters: { sheet_number: "025-PID-0103", revision: "C", status: "flagged", details: "only the one-way" } }), "Proposed."];
+    const [card] = pendingOf((await ask("dc", "record 0103 rev C flagged")).body);
+    const res = await execute("dc", { proposalId: card.proposalId });
+    expect(res.status).toBe(200);
+    const [stored] = rowsOf("drawing_audit_logs");
+    expect(stored).toMatchObject({ status: "flagged" });
+    const d = stored.audit_details as Record<string, unknown>;
+    expect(d.brokenConnectors).toEqual([]);           // the waiting finding is not confirmed by a lower verdict
+    expect(d.oneWay).toEqual(["025-PID-0101"]);       // what was settled stays
+    expect(d.provisional).toBeUndefined();
+    expect(d.waitingFindings).toBeUndefined();
   });
 });
 
@@ -860,6 +887,9 @@ describe("DEC-68 handoff — check_audit_history never answers 'already audited'
     db.tables.drawing_audit_logs.push(row({ status: "passed", library_id: "KL-1", audit_details: {} }));
     expect((await history("C")).history[0]).toMatchObject({ scope: "library" });
     db.tables.drawing_audit_logs = [row({ status: "passed", library_id: null, audit_details: {} })];
+    expect((await history("C")).history[0]).toMatchObject({ scope: "org-wide" });
+    // integration fix: once the column exists it decides — an ORG-WIDE row whose details still name a library is org-wide
+    db.tables.drawing_audit_logs = [row({ status: "passed", library_id: null, audit_details: { libraryId: "KL-gone" } })];
     expect((await history("C")).history[0]).toMatchObject({ scope: "org-wide" });
     // Before 20261124 there is no column: the read falls back, and the details decide.
     db.missingColumns.drawing_audit_logs = ["library_id"];

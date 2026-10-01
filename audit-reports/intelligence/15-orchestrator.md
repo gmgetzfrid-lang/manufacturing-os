@@ -70,6 +70,13 @@ tools.ts:532-551 — `async run(args, ctx) { const status = String(args.status);
 
 **Scope / residual.** `20261048`'s `drawing_audit_logs` write policy still admits Manager / Supervisor for a person's DIRECT write (`caller_holds_any_role` with four roles); every app writer is Admin / DocCtrl, the orchestrator writes on the service role, and the policy is outside this package's files — noted, not changed. `20261124` may now be pasted after this merge (its 42P10 risk for this tool is closed; `DEC-68` landed line).
 
+
+*Integration (2026-10-01, at the I-04 merge; the final review's three minors):*
+- *A confirmed verdict below the stored row's status, but at or above what that row settled, no longer keeps the findings the provisional row was still waiting on as if they were settled. `keptDetails` now drops them by their `waitingFindings` positions. At or above the stored status, the person's confirmation covers them.*
+- *`check_audit_history` labels a row's scope from the `library_id` column once it exists. The details' `libraryId` is used only for a read without the column, before `20261124`.*
+- *`20261147`'s service-role probe now tests each privilege separately. `has_table_privilege` with a comma list is true when any one of them is held.*
+
+*Tests are in `lib/__tests__/orchestratorExecute.test.ts`. The first two fail against the fix-pass-3 `tools.ts`.*
 ---
 
 <a id="orch-2"></a>
