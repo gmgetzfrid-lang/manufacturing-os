@@ -190,12 +190,17 @@ export interface DocumentUnitDecode {
   reason: string | null;
 }
 
+/** Can this Site Codebook decode a number at all — a number format with
+ *  segments, and units? Without both the planner has no opinion. */
+function bookCanDecode(book: Codebook): boolean {
+  return !!book.drawingNumber && book.drawingNumber.segments.length > 0 && book.units.length > 0;
+}
+
 /** The reason the planner gives for ONE document (its report, never a guess). */
 function reasonFor(doc: UnitIdentityDoc, units: UnitMappingRow[], book: Codebook): { reason: string | null; noOpinion: boolean } {
   const plan = planUnitIdentity({ docs: [doc], assets: [], units, book, dryRun: true, seesRestricted: true });
   const d = plan.report.documents;
-  const canDecode = !!book.drawingNumber && book.drawingNumber.segments.length > 0 && book.units.length > 0;
-  if (!canDecode) return { reason: plan.report.notes[0] ?? "The Site Codebook cannot decode a number.", noOpinion: true };
+  if (!bookCanDecode(book)) return { reason: plan.report.notes[0] ?? "The Site Codebook cannot decode a number.", noOpinion: true };
   if (d.noNumber > 0) return { reason: "The document has no number to decode.", noOpinion: false };
   if (d.notDecoding.count > 0) return { reason: d.notDecoding.samples[0]?.reason ?? "The number does not match the Site Codebook's number format.", noOpinion: false };
   if (d.noUnitSegment > 0) return { reason: "The number decodes, but the Site Codebook's number format has no unit segment.", noOpinion: false };
@@ -211,13 +216,20 @@ function reasonFor(doc: UnitIdentityDoc, units: UnitMappingRow[], book: Codebook
  *  document whose number changed between the read and the write is left as
  *  it is (`changed`); nothing is ever guessed. Throws only when the decode
  *  could not be planned at all (the codebook's units or the documents could
- *  not be read); `notApplied` when 20261138 is not pasted yet. */
-export async function decodeDocumentUnitCodes(input: { orgId: string; documentIds: string[] }): Promise<{ results: DocumentUnitDecode[]; notApplied: boolean }> {
+ *  not be read); `notApplied` when 20261138 is not pasted yet.
+ *
+ *  `noOpinion` (P13 third review fix): the org's Site Codebook cannot decode
+ *  a number at all (no number format, or no units) — checked ONCE, before
+ *  the units and the documents are read: nothing is read, decided or
+ *  written, and `results` is empty (the caller records and reports
+ *  nothing; an org without a codebook is not a follow-up). */
+export async function decodeDocumentUnitCodes(input: { orgId: string; documentIds: string[] }): Promise<{ results: DocumentUnitDecode[]; notApplied: boolean; noOpinion?: boolean }> {
   const ids = [...new Set(input.documentIds.filter((x) => typeof x === "string" && x.length > 0))].slice(0, DECODE_MAX_DOCUMENTS);
   if (ids.length === 0) return { results: [], notApplied: false };
   const whole = await loadDecodeBook(input.orgId);
   if (whole.error) throw new Error(`The Site Codebook's units could not be read: ${whole.error.message}`);
   const book = whole.book;
+  if (!bookCanDecode(book)) return { results: [], notApplied: false, noOpinion: true };
   const units = await readAll<UnitMappingRow>("units", "id, codebook_code", input.orgId, (q) => q.eq("archived", false));
   if (units.error) {
     if (isMissingColumn(units.error)) return { results: [], notApplied: true };

@@ -25,6 +25,13 @@
 // service role, per document: id, outcome, code, reason) — the "NULL with the
 // reason recorded" of GAP-314's acceptance 1. A call that only confirmed
 // current codes writes no row.
+//
+// No opinion (P13 third review fix): before 20261138 is pasted, or while the
+// org's Site Codebook cannot decode a number (no number format, or no units),
+// the route decides, writes and records NOTHING and answers no note — that is
+// no follow-up for the door that asked (its dialog never holds for it), and
+// no audit row per created document. The next unit-identity run on
+// Operational scope places the documents once a decode can run.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -71,8 +78,9 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     return bad(`The unit decode did not run: ${(e as Error).message}`, 500);
   }
-  if (decoded.notApplied) {
-    return NextResponse.json({ results: [], notes: ["The unit-identity migration (20261138) is not applied yet — nothing was decoded."] }, { headers: { "Cache-Control": "no-store" } });
+  if (decoded.notApplied || decoded.noOpinion) {
+    // no opinion: nothing decided, written or recorded — and nothing to report
+    return NextResponse.json({ results: [], notes: [] }, { headers: { "Cache-Control": "no-store" } });
   }
   const seenSet = new Set(visible);
   const results = [
@@ -82,7 +90,8 @@ export async function POST(req: NextRequest) {
   ];
 
   const notes: string[] = [];
-  const worthRecording = decoded.results.filter((r) => r.outcome !== "unchanged" && r.outcome !== "decoded" && r.outcome !== "not_found");
+  // no_opinion is never worth a row (P13 third review fix): it says only that the codebook cannot decode
+  const worthRecording = decoded.results.filter((r) => r.outcome !== "unchanged" && r.outcome !== "decoded" && r.outcome !== "not_found" && r.outcome !== "no_opinion");
   const wrote = decoded.results.some((r) => r.outcome === "decoded" || r.outcome === "cleared");
   if (worthRecording.length > 0 || wrote) {
     const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
@@ -93,7 +102,7 @@ export async function POST(req: NextRequest) {
       details: {
         via,
         documents: decoded.results
-          .filter((r) => r.outcome !== "unchanged" && r.outcome !== "not_found")
+          .filter((r) => r.outcome !== "unchanged" && r.outcome !== "not_found" && r.outcome !== "no_opinion")
           .map((r) => ({ id: r.documentId, outcome: r.outcome, unitCode: r.unitCode, reason: r.reason })),
       },
     });

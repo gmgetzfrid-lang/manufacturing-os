@@ -2030,28 +2030,36 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
  *  string (documents.status has no CHECK constraint). */
 export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
 
-/** REV-18 (P13 second review fix): which status the un-archive dialog
- *  offers first, and why. 20261144's retirement stamp (written only by the
- *  publish guard; read here, never written) says what an archived document
- *  WAS: an issue whose revision is still current (`issued`) comes back
- *  Issued — the put-back the rule spares; a retirement that took away no
- *  issue (`not-issued`, RETIRED_NOT_ISSUED_STAMP) comes back a Draft, so a
- *  Draft is never issued by its un-archive. Anything else — archived before
- *  20261144 or by the service role, its revision moved since, no current
- *  revision, a database without the stamp, an unreadable row — is not known
- *  to have been issued (`unknown`): Draft, the fail-safe side. The dialog
- *  offers every UNARCHIVE_RESTORE_STATUSES either way. Read-only. */
+/** REV-18 (P13 second review fix; third review fix): which status the
+ *  un-archive dialog offers first, and why. 20261144's retirement stamp
+ *  (written only by the publish guard; read here, never written) says what
+ *  an archived document WAS: an issue whose revision is still current
+ *  (`issued`) comes back Issued — the put-back the rule spares; a retirement
+ *  that took away no issue of the revision that is current now
+ *  (`not-issued`, RETIRED_NOT_ISSUED_STAMP, with a current revision) comes
+ *  back a Draft, so a Draft is never issued by its un-archive — the evidence
+ *  is the guard's own record. Anything else is NOT evidence of a Draft
+ *  (`unknown`) and keeps the default every un-archive had before 20261144:
+ *  Issued — archived before 20261144 or by the service role (no stamp), its
+ *  stamped revision no longer current, no current revision (a register row:
+ *  a 'not-issued' stamp cannot tell an Issued row from a Draft one, and
+ *  restoring it issues no revision), a database without the stamp columns
+ *  (the app running ahead of the paste), an unreadable row. The database
+ *  decides that restore (20261144: the publisher tier, the hold, and under
+ *  require the roster unless it is the stamped put-back), and a refused one
+ *  leaves the Draft restore open. The dialog offers every
+ *  UNARCHIVE_RESTORE_STATUSES either way. Read-only. */
 export async function unarchiveRestoreDefault(documentId: string): Promise<{
   status: (typeof UNARCHIVE_RESTORE_STATUSES)[number]; basis: "issued" | "not-issued" | "unknown";
 }> {
   const { data, error } = await supabase.from("documents")
     .select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();
-  if (error || !data) return { status: "Draft", basis: "unknown" };
+  if (error || !data) return { status: "Issued", basis: "unknown" };
   const current = (data.current_version_id as string | null) ?? null;
   const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;
   if (current && stampedVersion === current) return { status: "Issued", basis: "issued" };
-  if (!stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: "Draft", basis: "not-issued" };
-  return { status: "Draft", basis: "unknown" };
+  if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: "Draft", basis: "not-issued" };
+  return { status: "Issued", basis: "unknown" };
 }
 
 export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<void> {
@@ -2061,20 +2069,28 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     throw new Error(`Cannot restore to "${restoreStatus}" — choose Issued, Draft or In Review.`);
   }
 
+  const restoredStatus = restoreStatus || "Issued";
   const now = new Date().toISOString();
-  const { error } = await supabase
+  // P13 third review fix: a checked write, as archiveDocument's — a restore
+  // the database filtered to zero rows (no edit access to the row) is a
+  // refusal, never a silent success, and writes no un-archive event.
+  const { data: restored, error } = await supabase
     .from("documents")
     .update({
-      status: restoreStatus || "Issued",
+      status: restoredStatus,
       archived_at: null,
       archived_by: null,
       archive_reason: null,
       updated_at: now,
       updated_by: actorUserId,
     })
-    .eq("id", doc.id);
+    .eq("id", doc.id)
+    .select("id");
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The document was NOT restored (${error.message}) — nothing was changed.`);
+  if (((restored as unknown[] | null) ?? []).length === 0) {
+    throw new Error("The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.");
+  }
 
   await logRevisionEvent({
     orgId,
@@ -2084,7 +2100,7 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     userEmail: actorEmail ?? "",
     userRole: actorRole ?? "",
     type: "ARCHIVE_DOC",
-    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive" },
+    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive", restoredStatus },
   });
 }
 

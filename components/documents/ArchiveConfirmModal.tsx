@@ -7,8 +7,11 @@
 // REV-18 (P13 second review fix): the un-archive asks what the document
 // comes back as (UNARCHIVE_RESTORE_STATUSES). Restoring to Issued is a
 // controlled issue the database decides (20261144): a Draft archived after
-// that migration comes back a Draft by default, and a refused restore to
-// Issued says the Draft restore is still open — never a dead end.
+// that migration (the guard stamped it 'not-issued') comes back a Draft by
+// default, and a refused restore to Issued says the Draft restore is still
+// open — never a dead end. Anything the stamp does not record keeps the
+// default every un-archive had before (Issued — third review fix): Draft is
+// pre-selected only on the guard's evidence, never by default.
 
 import React, { useEffect, useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore } from "lucide-react";
@@ -43,8 +46,9 @@ export default function ArchiveConfirmModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // REV-18: what an un-archive restores to, defaulted from what the document
-  // WAS (unarchiveRestoreDefault reads the guard's retirement stamp).
-  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Draft");
+  // WAS (unarchiveRestoreDefault reads the guard's retirement stamp; when it
+  // records nothing, Issued — the default before 20261144).
+  const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Issued");
   const [basis, setBasis] = useState<"loading" | "issued" | "not-issued" | "unknown">("loading");
 
   useEffect(() => {
@@ -53,8 +57,8 @@ export default function ArchiveConfirmModal({
     setBasis("loading");
     (async () => {
       const d = doc.id
-        ? await unarchiveRestoreDefault(doc.id).catch(() => ({ status: "Draft" as RestoreStatus, basis: "unknown" as const }))
-        : { status: "Draft" as RestoreStatus, basis: "unknown" as const };
+        ? await unarchiveRestoreDefault(doc.id).catch(() => ({ status: "Issued" as RestoreStatus, basis: "unknown" as const }))
+        : { status: "Issued" as RestoreStatus, basis: "unknown" as const };
       if (alive) { setRestoreStatus(d.status); setBasis(d.basis); }
     })();
     return () => { alive = false; };
@@ -82,7 +86,7 @@ export default function ArchiveConfirmModal({
       // REV-18: a refused restore to Issued is the issue rule — the Draft
       // restore is still open (then submit the revision for review).
       setError(!isArchive && restoreStatus === "Issued" && isIssueRefusal(message)
-        ? `${message} Nothing was restored. You can restore it as a Draft instead (choose Draft above), then submit its revision for review.`
+        ? `${message} You can restore it as a Draft instead (choose Draft above), then submit its revision for review.`
         : message);
     } finally {
       setBusy(false);
@@ -139,9 +143,9 @@ export default function ArchiveConfirmModal({
                   {basis === "loading" && "Checking what it was before it was archived…"}
                   {basis === "issued" && "It was issued when it was archived — restoring it as Issued puts that issue back."}
                   {basis === "not-issued" && "It was not issued when it was archived (a Draft or In Review), so it comes back as a Draft unless you choose otherwise."}
-                  {basis === "unknown" && "What it was before it was archived isn't recorded, so it comes back as a Draft unless you choose otherwise."}
+                  {basis === "unknown" && "What it was before it was archived isn't recorded, so it comes back as Issued, as un-archiving always has, unless you choose otherwise. The database decides that restore: if it is refused, nothing changes and you can restore it as a Draft."}
                 </p>
-                {restoreStatus === "Issued" && basis !== "issued" && (
+                {restoreStatus === "Issued" && basis === "not-issued" && (
                   <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
                     Restoring as <b>Issued</b> makes its current revision a controlled issue: in a library that requires
                     reviewer sign-off an unreviewed revision needs Document Control, and an active hold refuses it.

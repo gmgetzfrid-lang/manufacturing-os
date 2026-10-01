@@ -39,7 +39,10 @@ export interface UnitCodeAnswer {
   /** A sentence for the caller's report when the decode did not run, or ran
    *  and left something undone (refused / changed under it). null: nothing
    *  to report. A number that simply does not decode is not an error — the
-   *  route records its reason. */
+   *  route records its reason. Nor is "no opinion" (P13 third review fix):
+   *  before 20261138 is pasted, or while the Site Codebook cannot decode a
+   *  number, the route answers no results and no note, so no door holds a
+   *  dialog for it. */
   note: string | null;
 }
 

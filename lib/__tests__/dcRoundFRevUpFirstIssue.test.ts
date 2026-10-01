@@ -711,7 +711,7 @@ describe("P13 second review fix — a RETIRED document is not revised: every rev
 describe("P13 second review fix — the un-archive dialog's default restore status comes from the guard's stamp (unarchiveRestoreDefault)", () => {
   beforeEach(() => { state.reviewMode = "require"; state.canControl = true; state.isOwner = false; });
 
-  it("an archived ISSUE comes back Issued (and its put-back is admitted); an archived Draft comes back a Draft (and stays a Draft); anything unrecorded defaults to Draft", async () => {
+  it("an archived ISSUE comes back Issued (and its put-back is admitted); an archived Draft comes back a Draft (and stays a Draft); anything unrecorded keeps the default every un-archive had before — Issued (third review fix)", async () => {
     seedDoc("ud1", { status: "Issued" });
     await archiveDocument({ doc: asRecord(docRow("ud1")), reason: "tidy", orgId: ORG, actorUserId: ME });
     expect(await unarchiveRestoreDefault("ud1")).toEqual({ status: "Issued", basis: "issued" });
@@ -724,20 +724,69 @@ describe("P13 second review fix — the un-archive dialog's default restore stat
     await unarchiveDocument({ doc: asRecord(docRow("ud2")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Draft" });
     expect(docRow("ud2").status).toBe("Draft"); // the dead end the review found: the Draft restore is open to the publisher
 
-    seedDoc("ud3", { status: "Archived" }); // archived before 20261144: no stamp
-    expect(await unarchiveRestoreDefault("ud3")).toEqual({ status: "Draft", basis: "unknown" });
-    seedDoc("ud4", { status: "Archived", current_version_id: null }); // nothing to issue
-    expect(await unarchiveRestoreDefault("ud4")).toEqual({ status: "Draft", basis: "unknown" });
-    // the stamped revision is no longer current (a pointer moved while archived): not known to be the issue
+    seedDoc("ud3", { status: "Archived" }); // archived before 20261144 (or by the service role): no stamp
+    expect(await unarchiveRestoreDefault("ud3")).toEqual({ status: "Issued", basis: "unknown" });
+    // a register row (no current revision): a 'not-issued' stamp cannot tell an Issued row from a Draft one, and restoring it issues no revision
+    seedDoc("ud4", { status: "Archived", current_version_id: null, retired_issue_status: "not-issued", retired_issue_version_id: null });
+    expect(await unarchiveRestoreDefault("ud4")).toEqual({ status: "Issued", basis: "unknown" });
+    // the stamped revision is no longer current (a pointer moved while archived): not known to be the issue — the database decides
     seedDoc("ud5", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "other" });
-    expect(await unarchiveRestoreDefault("ud5")).toEqual({ status: "Draft", basis: "unknown" });
-    expect(await unarchiveRestoreDefault("missing")).toEqual({ status: "Draft", basis: "unknown" });
+    expect(await unarchiveRestoreDefault("ud5")).toEqual({ status: "Issued", basis: "unknown" });
+    expect(await unarchiveRestoreDefault("missing")).toEqual({ status: "Issued", basis: "unknown" });
   });
 
-  it("a database without the stamp (before 20261144) or an unreadable row: unknown, Draft — never a guess of Issued", async () => {
+  it("the reviewer's scenario: a legacy archive (no stamp) of an Issued document in a library that does not require sign-off, restored by a publisher with the dialog's default — Issued, as before P13", async () => {
+    state.reviewMode = "none";
+    seedDoc("ud7", { status: "Archived", owner_user_id: "someone-else" });
+    const d = await unarchiveRestoreDefault("ud7");
+    expect(d.status).toBe("Issued");
+    await unarchiveDocument({ doc: asRecord(docRow("ud7")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: d.status });
+    expect(docRow("ud7").status).toBe("Issued");
+    // and in a require library the database still decides it (unstamped: the require limb), the Draft restore still open
+    state.reviewMode = "require";
+    seedDoc("ud8", { status: "Archived", owner_user_id: "someone-else" });
+    await expect(unarchiveDocument({ doc: asRecord(docRow("ud8")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: (await unarchiveRestoreDefault("ud8")).status }))
+      .rejects.toThrow(UNREVIEWED);
+    expect(docRow("ud8").status).toBe("Archived");
+    await unarchiveDocument({ doc: asRecord(docRow("ud8")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Draft" });
+    expect(docRow("ud8").status).toBe("Draft");
+  });
+
+  it("a database without the stamp (before 20261144 — the app deployed ahead of the paste) or an unreadable row: unknown, Issued — the default before 20261144, never a silent Draft", async () => {
     seedDoc("ud6", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "ud6-v0" });
     expect(await unarchiveRestoreDefault("ud6")).toEqual({ status: "Issued", basis: "issued" }); // readable: the stamp decides
     state.readError = { table: "documents", error: { code: "42703", message: "column documents.retired_issue_status does not exist" } };
-    expect(await unarchiveRestoreDefault("ud6")).toEqual({ status: "Draft", basis: "unknown" });
+    expect(await unarchiveRestoreDefault("ud6")).toEqual({ status: "Issued", basis: "unknown" });
+  });
+});
+
+describe("P13 third review fix — unarchiveDocument is a checked write", () => {
+  const unarchiveEvents = () => T("audit_logs").filter((r) => r.action === "ARCHIVE_DOC" && (r.details as Record<string, unknown>)?.action === "unarchive");
+
+  it("a restore the database filters to zero rows (no edit access) is refused — the document stays Archived and no un-archive event is written", async () => {
+    seedDoc("rc1", { status: "Archived" });
+    state.db.refuseWrites.add("documents");
+    await expect(unarchiveDocument({ doc: asRecord(docRow("rc1")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" }))
+      .rejects.toThrow(/The document was NOT restored — you don't have authority to change it, or it is no longer visible to you\. Nothing was changed\./);
+    expect(docRow("rc1").status).toBe("Archived");
+    expect(unarchiveEvents()).toHaveLength(0);
+  });
+
+  it("a refused restore keeps the guard's sentence (the dialog recognises it) and writes no event; a landed one records the status it restored to", async () => {
+    state.reviewMode = "require";
+    seedDoc("rc2", { status: "Archived" });
+    await expect(unarchiveDocument({ doc: asRecord(docRow("rc2")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" }))
+      .rejects.toThrow(`The document was NOT restored (${UNREVIEWED}) — nothing was changed.`);
+    expect(unarchiveEvents()).toHaveLength(0);
+    await unarchiveDocument({ doc: asRecord(docRow("rc2")), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Draft" });
+    expect(docRow("rc2").status).toBe("Draft");
+    expect(unarchiveEvents()).toHaveLength(1);
+    expect(unarchiveEvents()[0].details).toMatchObject({ action: "unarchive", restoredStatus: "Draft", reason: "back" });
+    // no restoreStatus: Issued, as before — recorded as such
+    state.reviewMode = "none";
+    seedDoc("rc3", { status: "Archived" });
+    await unarchiveDocument({ doc: asRecord(docRow("rc3")), reason: "", orgId: ORG, actorUserId: ME });
+    expect(docRow("rc3").status).toBe("Issued");
+    expect(unarchiveEvents()[1].details).toMatchObject({ restoredStatus: "Issued", reason: "Restored from archive" });
   });
 });

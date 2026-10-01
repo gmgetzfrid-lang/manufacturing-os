@@ -142,6 +142,9 @@ export default function CsvImportModal({
     setBusy(true); setError(null);
     const failed: Array<{ row: number; reason: string }> = [];
     let ok = 0;
+    // GAP-314 (P13 third review fix): the ids the inserts returned; a number
+    // only for a row whose insert returned no id (the read-back fallback).
+    const importedIds: string[] = [];
     const importedNumbers: string[] = [];
     const now = new Date().toISOString();
     const headerIndex: Record<string, number> = {};
@@ -172,7 +175,7 @@ export default function CsvImportModal({
           { documentNumber, title, rev, status, customFields: metadata },
           library.uniquenessKeys,
         );
-        const { error: insertErr } = await supabase.from("documents").insert({
+        const { data: inserted, error: insertErr } = await supabase.from("documents").insert({
           org_id: orgId,
           library_id: library.id,
           collection_id: collectionId ?? null,
@@ -187,19 +190,25 @@ export default function CsvImportModal({
           created_by: actorUserId,
           updated_at: now,
           updated_by: actorUserId,
-        });
+        }).select("id");
         if (insertErr) throw insertErr;
         ok += 1;
-        importedNumbers.push(documentNumber);
+        const insertedId = ((inserted ?? []) as Array<{ id?: unknown }>)[0]?.id;
+        if (insertedId) importedIds.push(String(insertedId));
+        else importedNumbers.push(documentNumber);
       } catch (e) {
         failed.push({ row: rIdx + 2, reason: (e as Error).message });
       }
     }
     // GAP-314: decode the imported rows' unit codes, server-side, from the
-    // numbers as stored (ids read back by number; never a code from here).
+    // numbers as stored (never a code from here). The ids are the ones the
+    // inserts returned (P13 third review fix): a read-back by number also
+    // matched a document that was already in the library under the same
+    // number (a library keyed on number + rev), decoding and counting it.
+    // Only a row whose insert returned no id is read back by its number.
     let unitCodes: ImportResult["unitCodes"] = null;
-    if (importedNumbers.length > 0) {
-      const ids: string[] = [];
+    if (importedIds.length + importedNumbers.length > 0) {
+      const ids: string[] = [...importedIds];
       let readFailed = false;
       for (let i = 0; i < importedNumbers.length; i += 100) {
         const { data, error: readErr } = await supabase.from("documents").select("id")
@@ -208,7 +217,8 @@ export default function CsvImportModal({
         ids.push(...((data ?? []) as Array<{ id: string }>).map((r) => String(r.id)));
       }
       const answer = await requestUnitCodeDecode(orgId, ids, "csv_import");
-      unitCodes = {
+      // no opinion (no results, no note — the codebook cannot decode, or 20261138 is not applied): nothing to show
+      if (answer.results.length > 0 || answer.note || readFailed) unitCodes = {
         decoded: answer.results.filter((r) => r.unitCode !== null && (r.outcome === "decoded" || r.outcome === "unchanged")).length,
         undecoded: answer.results.filter((r) => r.outcome === "not_decoded" || r.outcome === "cleared").length,
         note: [readFailed ? "Some imported rows could not be read back, so their unit codes were not decoded — the next unit-identity run on Operational scope will place them." : null, answer.note]

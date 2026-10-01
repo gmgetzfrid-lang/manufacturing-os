@@ -7,8 +7,13 @@
 // an unreviewed revision retired before the paste) AS Issued. The dialog now
 // asks what the document comes back as (UNARCHIVE_RESTORE_STATUSES), offers
 // first what the guard's retirement stamp says it WAS (unarchiveRestoreDefault:
-// an archived issue -> Issued; a Draft, or anything unrecorded -> Draft), and
-// a refused restore to Issued says the Draft restore is still open.
+// an archived issue -> Issued; a Draft -> Draft), and a refused restore to
+// Issued says the Draft restore is still open.
+//
+// Third review fix: anything the stamp does not record (archived before
+// 20261144, by the service role, the app ahead of the paste) keeps the
+// default every un-archive had before — Issued, decided by the database —
+// never a silent Draft.
 //
 // Driven as rendered (jsdom); the data layer is mocked (its behaviour is
 // driven end to end in dcRoundFRevUpFirstIssue.test.ts).
@@ -18,7 +23,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const s = vi.hoisted(() => ({
-  defaultAnswer: { status: "Draft", basis: "unknown" } as { status: string; basis: string },
+  defaultAnswer: { status: "Issued", basis: "unknown" } as { status: string; basis: string },
   /** when set, the default read waits for it (the dialog's loading state) */
   gate: null as null | Promise<void>,
   unarchiveDocument: vi.fn(),
@@ -44,7 +49,7 @@ let root: Root;
 beforeEach(() => {
   s.unarchiveDocument.mockReset().mockResolvedValue(undefined);
   s.archiveDocument.mockReset().mockResolvedValue(undefined);
-  s.defaultAnswer = { status: "Draft", basis: "unknown" };
+  s.defaultAnswer = { status: "Issued", basis: "unknown" };
   s.gate = null;
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -115,23 +120,45 @@ describe("REV-18 (P13 second review fix) — the un-archive dialog asks what the
     expect(onSuccess).toHaveBeenCalledWith("Issued");
   });
 
-  it("unrecorded: Draft first; choosing Issued warns; a refused restore to Issued keeps the dialog open and says the Draft restore is still open — which then lands", async () => {
-    const { onSuccess, onClose } = await open("unarchive");
+  it("an archived Draft offered as a Draft: choosing Issued warns that it would be a first controlled issue", async () => {
+    s.defaultAnswer = { status: "Draft", basis: "not-issued" };
+    await open("unarchive");
     await tick();
     expect(select()!.value).toBe("Draft");
-    expect(host.textContent).toContain("isn't recorded");
+    expect(host.textContent).not.toContain("makes its current revision a controlled issue");
     await choose("Issued");
     expect(host.textContent).toContain("makes its current revision a controlled issue");
-    s.unarchiveDocument.mockRejectedValueOnce(new Error(UNREVIEWED));
+  });
+
+  it("unrecorded (third review fix): Issued first, as every un-archive was before — never a silent Draft; a refused restore to Issued keeps the dialog open and says the Draft restore is still open — which then lands", async () => {
+    const { onSuccess, onClose } = await open("unarchive");
+    await tick();
+    expect(select()!.value).toBe("Issued");
+    expect(host.textContent).toContain("returned to Issued status");
+    expect(host.textContent).toContain("isn't recorded, so it comes back as Issued, as un-archiving always has");
+    expect(host.textContent).not.toContain("makes its current revision a controlled issue");
+    s.unarchiveDocument.mockRejectedValueOnce(new Error(`The document was NOT restored (${UNREVIEWED}) — nothing was changed.`));
     await click(button("Restore Document"));
     expect(host.textContent).toContain(UNREVIEWED);
-    expect(host.textContent).toContain("Nothing was restored. You can restore it as a Draft instead");
+    expect(host.textContent).toContain("nothing was changed. You can restore it as a Draft instead");
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     await choose("Draft");
     await click(button("Restore Document"));
     expect(s.unarchiveDocument.mock.calls[1][0]).toMatchObject({ restoreStatus: "Draft" });
     expect(onSuccess).toHaveBeenCalledWith("Draft");
+  });
+
+  it("a default read that throws (the stamp columns missing before the paste) keeps Issued — the user clicks Restore as they always have", async () => {
+    const { unarchiveRestoreDefault } = await import("@/lib/revisions");
+    (unarchiveRestoreDefault as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("column documents.retired_issue_status does not exist"));
+    const { onSuccess } = await open("unarchive");
+    await tick();
+    expect(select()!.value).toBe("Issued");
+    expect(button("Restore Document").disabled).toBe(false);
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls[0][0]).toMatchObject({ restoreStatus: "Issued" });
+    expect(onSuccess).toHaveBeenCalledWith("Issued");
   });
 
   it("any other refusal is shown as it is (no Draft hint), and the archive side is unchanged (no status choice)", async () => {

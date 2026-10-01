@@ -266,7 +266,10 @@ review fix). The script also grants EXECUTE on `is_controlled_issue_status`
 to the guard's own owner when that role cannot already run it (the guard
 runs as its owner) and probes it: a `false` on that row means every
 signed-in issue write would fail with "permission denied" — stop and report
-it.
+it. The un-archive dialog (third review fix) pre-selects Issued, as before,
+unless the guard's stamp says the archive took away no issue — so before the
+paste (no stamp columns) and for any legacy or service-role archive it
+restores Issued exactly as it always did, and the database decides.
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,

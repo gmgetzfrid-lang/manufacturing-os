@@ -265,6 +265,13 @@ export default function RevUpModal({
   const policyResolved = reviewPolicyStatus === "resolved";
   const effMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType, firstIssueMustReview });
   const willReview = effMode === "require" || (effMode === "publisher_choice" && routeThroughReview);
+  // REV-18 (P13 third review fix): a BRANCH publish moves neither the pointer
+  // nor the status (revUpDocument does not ask the first-issue gate for it),
+  // so the first-issue rule does not route it — its mode is the policy's
+  // after the hatch, as before. REV-7 still binds it: a branch can't skip a
+  // review the change needs.
+  const branchEffMode = effectiveModeForRevUp({ control: reviewControl ?? { mode: "none" }, changeType, firstIssueMustReview, asBranch: true });
+  const branchWillReview = branchEffMode === "require" || (branchEffMode === "publisher_choice" && routeThroughReview);
 
   // THE PSM GATE (OSHA 1910.119(l)): a non-minor revision of a declared
   // DRAWING requires its Management of Change reference before it may
@@ -341,7 +348,7 @@ export default function RevUpModal({
       return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
     }
     // REV-7: a branch is still a publish — it cannot skip a required review.
-    if (asBranch && willReview) {
+    if (asBranch && branchWillReview) {
       return setError("This library requires reviewer sign-off for this change — a branch can't skip it. Go back and submit the revision for review instead.");
     }
     if (lockedByOther && !overrideReason.trim()) {
@@ -407,7 +414,7 @@ export default function RevUpModal({
         // RG-11: taking the Minor/Correction hatch in a gated library is a
         // distinct, auditable act — the declared reason is the change
         // narrative the publisher wrote for it.
-        if (reviewControl && reviewControl.mode !== "none" && effMode === "none") {
+        if (reviewControl && reviewControl.mode !== "none" && (asBranch ? branchEffMode : effMode) === "none") {
           void logAuditAction({
             action: "REVIEW_GATE_SKIPPED", resourceType: "document", resourceId: doc.id ?? "",
             orgId, userId: actorUserId, userEmail: actorEmail, userRole: actorRole,
@@ -604,8 +611,8 @@ export default function RevUpModal({
                     </button>
                     <button
                       onClick={() => doPublish(true)}
-                      disabled={submitting || branchReason.trim().length < 5 || willReview || !policyResolved}
-                      title={willReview ? "This revision requires reviewer sign-off — a branch cannot skip it (REV-7)" : undefined}
+                      disabled={submitting || branchReason.trim().length < 5 || branchWillReview || !policyResolved}
+                      title={branchWillReview ? "This revision requires reviewer sign-off — a branch cannot skip it (REV-7)" : undefined}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50"
                     >
                       {submitting ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}

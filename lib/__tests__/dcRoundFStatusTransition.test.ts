@@ -379,7 +379,7 @@ describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-b
     expect(lines.map((l) => l.trim())).toEqual([
       '.select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();',
       "const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;",
-      "if (!stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: \"Draft\", basis: \"not-issued\" };",
+      "if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: \"Draft\", basis: \"not-issued\" };",
     ]);
   });
 });
@@ -606,7 +606,7 @@ describe("REV-18 — the census of every app write of documents.status (each cla
       "lib/reviewControl.ts update",                             // finalizeReviewedRevision: pointer + Issued — a complete roster, a controller, or a non-require library (intake: SEC-13 already)
       "lib/revisions.ts insert",                                 // createDocumentWithFile: INSERT; first pointer REV-17's
       "lib/revisions.ts update",                                 // archiveDocument: entry into Archived — not an issue
-      "lib/revisions.ts update",                                 // unarchiveDocument: Archived -> Issued: publisher tier (as before); the require-mode limb unless it puts back the stamped issue
+      "lib/revisions.ts update",                                 // unarchiveDocument: Archived -> the status the dialog asks (P13 second review fix; was always Issued). Default Issued, as before, unless 20261144's stamp says the archive took away no issue of the current revision (then Draft — P13 third review fix: never Draft on no evidence). To an issue: publisher tier (as before) + the require-mode limb unless it puts back the stamped issue; checked write (.select("id"), zero rows refused)
       "lib/revisions.ts update",                                 // undoFailedSupersede: Superseded -> prior: the put-back of the stamped issue (publisher tier); a refused restore is thrown with "ask Doc Control"
       "lib/revisions.ts update",                                 // supersedeDocument: entry into Superseded — not an issue
     ].sort());

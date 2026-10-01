@@ -194,6 +194,39 @@ describe("REV-15 remainder — the Merge wizard shows complianceClockWarnings", 
   });
 });
 
+describe("GAP-314 (P13 third review fix) — a unit decode that did not complete is worded apart from the clock follow-ups", () => {
+  const UNIT = "The unit code of 2 document(s) was not decoded (no answer within 15s) — the next unit-identity run on Operational scope will place it.";
+  it("split, unit decode only: shown on its own — never as 'recorded on each document's history; Document Control can set it'", async () => {
+    s.roles = ["DocCtrl"]; s.activeRole = "DocCtrl";
+    s.splitDocument.mockResolvedValueOnce({ newDocumentIds: ["d-1", "d-2"], complianceClockWarnings: [], unitCodeNote: UNIT });
+    const onSuccess = vi.fn();
+    await splitToConfirm(onSuccess);
+    await click(button("Confirm Split"));
+    await tick();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(text()).toMatch(/The split is done — 1 follow-up step did not complete/);
+    expect(host.querySelector('[data-testid="lifecycle-follow-ups"]')).toBeNull();
+    const unit = host.querySelector('[data-testid="lifecycle-unit-code-note"]')?.textContent ?? "";
+    expect(unit).toContain(UNIT);
+    expect(unit).toContain("This is not recorded on the document's history, and the unit code is not set by hand");
+    expect(text()).not.toMatch(/recorded on each document's history; Document Control can set it/);
+    await click(button("Done"));
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+  it("merge, both: the clock items keep their sentence; the unit decode is worded on its own", async () => {
+    s.roles = ["DocCtrl"]; s.activeRole = "DocCtrl";
+    s.mergeDocuments.mockResolvedValueOnce({ targetDocumentId: "t-1", complianceClockWarnings: [WARN], unitCodeNote: UNIT });
+    const onSuccess = vi.fn();
+    await mergeToConfirm(onSuccess);
+    await click(button("Confirm Merge"));
+    await tick();
+    expect(text()).toMatch(/The merge is done — 2 follow-up steps did not complete/);
+    expect(text()).toMatch(/What did not complete below is recorded on each document's history; Document Control can set it from the document\./);
+    expect(Array.from(host.querySelectorAll('[data-testid="lifecycle-follow-ups"] li')).map((li) => li.textContent)).toEqual([WARN]);
+    expect(host.querySelector('[data-testid="lifecycle-unit-code-note"]')?.textContent).toContain(UNIT);
+  });
+});
+
 describe("GAP-314 (P13 review fix) — the Renumber dialog says when the new number's unit decode did not run, before it closes", () => {
   async function renumberTo(onSuccess: () => void) {
     await act(async () => {

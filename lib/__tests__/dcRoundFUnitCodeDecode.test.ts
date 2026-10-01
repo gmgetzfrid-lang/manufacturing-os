@@ -239,13 +239,33 @@ describe("POST /api/documents/unit-code — who may ask, what is read, what is r
     expect(h.admin.tables.audit_logs).toHaveLength(0);
   });
 
-  it("an empty codebook (no number format) has no opinion: nothing is written or cleared", async () => {
+  it("an empty codebook (no number format) has no opinion: nothing is written or cleared — and (P13 third review fix) nothing is read past the codebook, recorded or reported", async () => {
     h.admin.tables.codebook_config = [];
     create("a6", "2002-D-6", { unit_code: "20" });
+    h.admin.calls = [];
     const r = await (await call({ orgId: ORG, documentIds: ["a6"] })).json();
-    expect(r.results[0]).toMatchObject({ outcome: "no_opinion", unitCode: "20" });
-    expect(r.results[0].reason).toMatch(/no drawing-number format/);
+    expect(r).toEqual({ results: [], notes: [] });
     expect(doc("a6").unit_code).toBe("20");
+    expect(h.admin.tables.audit_logs).toHaveLength(0); // no UNIT_CODE_DECODE row per created document
+    // checked once, before the units and the documents are read
+    expect(h.admin.calls.some((c) => c.table === "units")).toBe(false);
+    expect(h.admin.calls.some((c) => c.table === "documents")).toBe(false);
+  });
+
+  it("a codebook with a number format but no units has no opinion too: no row, no note, through the browser helper as well", async () => {
+    h.admin.tables.codebook_entries = [];
+    create("a10", "2002-D-10");
+    const g = globalThis as unknown as { window?: unknown; fetch: typeof fetch };
+    const realFetch = g.fetch;
+    g.window = {};
+    g.fetch = (async (url: string, init?: RequestInit) => POST(new NextRequest(`http://x${url}`, init as never))) as typeof fetch;
+    try {
+      await expect(requestUnitCodeDecode(ORG, ["a10"], "upload")).resolves.toEqual({ results: [], note: null });
+    } finally {
+      delete g.window; g.fetch = realFetch;
+    }
+    expect(h.admin.tables.audit_logs).toHaveLength(0);
+    expect(doc("a10").unit_code).toBeNull();
   });
 
   it("a number that changes between the read and the write is left as it is (the backfill's guarded write), and said", async () => {
@@ -256,12 +276,29 @@ describe("POST /api/documents/unit-code — who may ask, what is read, what is r
     expect(doc("a7").unit_code).toBeNull(); // never the old number's unit on the new number
   });
 
-  it("before 20261138 it decodes nothing and says so", async () => {
+  it("before 20261138 it decodes nothing — and (P13 third review fix) that is no opinion, not a follow-up: no note from the route or the client, no row", async () => {
     h.admin.missingColumns = { units: ["codebook_code"], documents: ["unit_code"] };
     create("a8", "2002-D-8");
     const r = await (await call({ orgId: ORG, documentIds: ["a8"] })).json();
-    expect(r.results).toEqual([]);
-    expect(r.notes[0]).toMatch(/20261138/);
+    expect(r).toEqual({ results: [], notes: [] });
+    expect(h.admin.tables.audit_logs).toHaveLength(0);
+    const g = globalThis as unknown as { window?: unknown; fetch: typeof fetch };
+    const realFetch = g.fetch;
+    g.window = {};
+    g.fetch = (async (url: string, init?: RequestInit) => POST(new NextRequest(`http://x${url}`, init as never))) as typeof fetch;
+    try {
+      // so a split / merge / renumber / CSV import never holds its dialog for it
+      await expect(requestUnitCodeDecode(ORG, ["a8"], "split")).resolves.toEqual({ results: [], note: null });
+    } finally {
+      delete g.window; g.fetch = realFetch;
+    }
+  });
+
+  it("no_opinion is never recorded (worthRecording excludes it — pinned)", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/documents/unit-code/route.ts"), "utf8");
+    expect(route).toContain('const worthRecording = decoded.results.filter((r) => r.outcome !== "unchanged" && r.outcome !== "decoded" && r.outcome !== "not_found" && r.outcome !== "no_opinion");');
+    expect(route).toContain("if (decoded.notApplied || decoded.noOpinion) {");
+    expect(route).not.toMatch(/is not applied yet — nothing was decoded/);
   });
 
   it("the helper is the backfill's own: decodeDocumentUnitCodes uses the extracted planner and guarded writes", async () => {
@@ -300,9 +337,10 @@ describe("GAP-314 — every door this package owns asks for the decode after its
     expect(rv.indexOf('requestUnitCodeDecode(input.orgId, [docId], "renumber_reversed")')).toBeGreaterThan(rv.indexOf('type: "DOC_RENUMBER_REVERSED"'));
     expect(src("components/documents/CsvImportModal.tsx")).toMatch(/const answer = await requestUnitCodeDecode\(orgId, ids, "csv_import"\);/);
     expect(src("components/documents/MetadataEditor.tsx")).toMatch(/void requestUnitCodeDecode\(orgId, \[document\.id\], "metadata_edit"\)/);
-    // the wizards show a decode that did not run with the other follow-ups
+    // the wizards show a decode that did not run with the other follow-ups — worded apart from the clock items (P13 third review fix)
     for (const w of ["components/documents/lifecycle/SplitWizard.tsx", "components/documents/lifecycle/MergeWizard.tsx"]) {
-      expect(src(w)).toMatch(/\.\.\.\(result\?\.unitCodeNote \? \[result\.unitCodeNote\] : \[\]\)/);
+      expect(src(w)).toContain("const outstanding = { items: result?.complianceClockWarnings ?? [], unitCodeNote: result?.unitCodeNote ?? null };");
+      expect(src(w)).toMatch(/<LifecycleFollowUps operation="(split|merge)" items=\{followUps\.items\} unitCodeNote=\{followUps\.unitCodeNote\} onDone=\{onSuccess\} \/>/);
     }
   });
   it("the browser never writes documents.unit_code itself (20261138 refuses a person's write; only the route's service role writes it)", () => {
