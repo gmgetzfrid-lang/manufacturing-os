@@ -371,8 +371,10 @@ conflicts with them). Each owner that next edits the file keeps the limb:
   `AiUsageSummary` gains `locked` / `calls` / `byOp` / `canManageCaps`.
   Keep `aiUsageLockedReason`. Keep `setAiCap`, which returns the POST's
   answer (`AiCapSetResult`). AI settings types what POST adds beyond that
-  (`selfCapUsd`, `selfCapSetByAnother`, `selfCapOwnLowering`, `unchanged`)
-  locally, as `CapSetView`. The `ownVisionKeyProblem` MERGE GATE above
+  (`selfCapUsd`, `selfCapSetByAnother`, `selfCapOwnLowering`, `unchanged`,
+  and since fix pass 12 `pinnedAtDefault`) locally, as `CapSetView`, and
+  what GET adds (`teamUnavailable`, fix pass 12) as `UsageView`; neither
+  touches `lib/knowledge.ts`. The `ownVisionKeyProblem` MERGE GATE above
   still applies.
 - `app/api/admin/purge/route.ts` (A&O P7's; N6 edits its status filters).
   Keep `cutoffFor`: the `ai_usage_events` cutoff is never later than
@@ -390,9 +392,21 @@ REPLACES the route's app-side machinery: `capChangesSince`, `signedFigure`,
 `holdOwnCapAt`, `recheckOwnCap`, the guarded writes, re-reads and
 put-backs, and `writeId` / `limitRowId`. It does not extend them. Its
 inputs are the residual under GOV-10's "What the race machinery leaves
-open" and "Noted for `GOV-15`". The same package (or `GOV-13`'s) moves
-`readMonthRows` off offset paging: a keyset cursor on (`created_at`, `id`),
-or one server-side sum.
+open" and "Noted for `GOV-15`". One input is a rule to loosen, not
+machinery to replace (I-05 fix pass 12): clearing one's OWN override is
+refused outright while another holder exists, even when the clear changes
+nothing or lowers the cap (an override of $50 another holder set, over a $5
+default). At `052271b` that clear was allowed. It is refused only because
+racing it against a default raise once deleted the hold the raise had just
+written. Inside `GOV-15`'s transaction, allow a self-clear that is not a
+raise: the default is read under the same lock. Since fix pass 12 a
+self-clear that finds no override answers `unchanged` (200) instead of the
+403. The same package (or `GOV-13`'s) moves `readMonthRows` off offset
+paging: a keyset cursor on (`created_at`, `id`), or one server-side sum.
+That also lifts the 100,000-row read ceiling. Since fix pass 12, a team
+ledger past the ceiling leaves the usage GET up (the viewer's own meter and
+the default's editor) and says the team view is unavailable
+(`teamUnavailable`).
 
 ---
 
