@@ -16,7 +16,7 @@ import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocumen
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
-import { listActiveHoldsForDocument } from "@/lib/holds";
+import { readActiveHolds, decideHoldGate, HoldBlockedError } from "@/lib/holdGate";
 import {
   resolveEffectiveRetentionPolicy, computeRetentionUntil, disposeActionFor, scheduledActionLabel,
 } from "@/lib/retentionPolicy";
@@ -224,9 +224,16 @@ export async function disposeDocument(input: {
   // the hold first; the hold queue shows who placed it and why), and the
   // retention guard (20261077) refuses the same write at the database for
   // non-controllers. The hold read fails CLOSED: it throws, disposal waits.
-  // Wave 2 unifies this onto lib/holdGate.ts assertNotOnHold.
-  const activeHolds = await listActiveHoldsForDocument(input.documentId);
-  if (activeHolds.length > 0) return { ok: false, reason: "active_hold" };
+  // Through lib/holdGate.ts — THE one hold gate (HLD-1; document-control
+  // Round F wave 3, P14): one read, one decision. A known hold is the
+  // dispose gate's own answer (`active_hold`, as P9 shipped it, which the
+  // panel turns into "release the hold first"); an unreadable hold set
+  // throws the gate's HoldBlockedError (fail closed).
+  const holdGate = decideHoldGate(await readActiveHolds(input.documentId), "disposing it");
+  if (holdGate.blocked) {
+    if (holdGate.unreadable) throw new HoldBlockedError(holdGate);
+    return { ok: false, reason: "active_hold" };
+  }
   // RET-11: the action recorded is the schedule's, not a hard-coded "archive",
   // unless the caller names one explicitly.
   let action: "archive" | "destroy" = input.action ?? "archive";

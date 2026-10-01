@@ -111,6 +111,14 @@ supabase/migrations/20260822_review_completion_guard.sql:36-40 — `v_advancing 
 
 Every other door now calls the shared gate. The share link (P1) and the transmittal issue (P7, `issueTransmittal` → `assertNotOnHold`) were verified at the branch; `correctRevisionLabel`, `renumberDocument` and `reverseRenumber` are P3's; distribution-ack assignment is P5's.
 
+**Partial (2026-10-01, document-control Round F wave 3).** Package **P14 RECORDS & REVIEW REMAINDERS** — limb 1 of the two re-owned at the I-05 merge: the dispose gate onto the shared helper. Reproduced on `4dd0df7`: `lib/retention.ts` imported `listActiveHoldsForDocument` from `lib/holds.ts` and `disposeDocument` read holds through it (the 2026-09-29 integration note's "wave 2 unifies this onto `lib/holdGate.ts`" had not happened).
+- `lib/retention.ts` `disposeDocument` now asks THE gate: `decideHoldGate(await readActiveHolds(input.documentId), "disposing it")`, before anything is read or written for the disposal. P9's behaviour is kept: a known hold answers `{ ok: false, reason: "active_hold" }` with nothing written (the panel's "release the hold first" wording is unchanged); an unreadable hold set still throws — now the gate's `HoldBlockedError` (`code: "on_hold"`, `unreadable: true`, naming the read error and "disposing it"). The `lib/holds.ts` import is gone from the file.
+- Tests: `lib/__tests__/dcRoundFP14Remainders.test.ts` "HLD-1 (the dispose limb) — …": the gate is `lib/holdGate.ts` and is asked before the disposal write (source pin); a known hold → `active_hold`, nothing written; an unreadable hold set → `HoldBlockedError` (unreadable), nothing written; **regression** — a clear document is disposed as before. P9's `dcRoundFRecords.test.ts` dispose cases pass unchanged (`active_hold`; the read error's message still names it).
+
+**Done-when (this limb).** (1) ✓ `disposeDocument` now calls the shared gate (`readActiveHolds` + `decideHoldGate`, the decision `assertNotOnHold` makes, keeping the dispose gate's `active_hold` answer for a known hold). (2) and (3) unchanged by this pass.
+
+**Scope / residual.** Stays OPEN for limb 2 only — `components/viewers/FullScreenViewer.tsx`'s markup export carries no hold line — owned by document-control P15 SURFACE REMAINDERS (running in parallel; this package does not edit that file). Every other door now calls the shared gate.
+
 ---
 
 <a id="hld-2"></a>

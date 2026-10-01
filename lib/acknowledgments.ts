@@ -38,16 +38,31 @@ export function resolveEffectiveAckPolicy(
   return null;
 }
 
+/** The document's inherited policy, read CHECKED (PKG-9's residual, handed
+ *  off by P8; document-control Round F wave 3, P14). supabase-js RESOLVES with
+ *  `{ error }` on a PostgREST error or a dropped connection — it does not
+ *  throw — so an unchecked folder / library read used to resolve as "no
+ *  policy here", and recomputeDocumentAck then VOIDED every pending
+ *  acknowledgment row and assigned nobody. A failed read now throws
+ *  (onDocumentIssuedAck records it as a roster error; setAckPolicy surfaces
+ *  it). As lib/downloads.ts readEffectiveAckPolicy reads it, the most specific
+ *  DEFINED level wins, so a level is read only while every more specific one
+ *  is undefined: a document's own policy needs no read at all. */
 export async function effectiveAckPolicyForDocument(doc: {
   ackPolicy?: AckPolicy | null; collectionId?: string | null; libraryId: string;
 }): Promise<AckPolicy | null> {
+  const own = doc.ackPolicy ?? null;
+  if (own) return resolveEffectiveAckPolicy(own, null, null);
   let folder: AckPolicy | null = null;
   if (doc.collectionId) {
-    const { data } = await supabase.from("collections").select("ack_policy").eq("id", doc.collectionId).maybeSingle();
-    folder = (data as PolicyCols)?.ack_policy ?? null;
+    const { data, error } = await supabase.from("collections").select("ack_policy").eq("id", doc.collectionId).maybeSingle();
+    if (error) throw new Error(`Couldn't read the folder's read-&-understood policy (${error.message}); the acknowledgment roster was not recomputed.`);
+    folder = (data as PolicyCols | null)?.ack_policy ?? null;
+    if (folder) return resolveEffectiveAckPolicy(null, folder, null);
   }
-  const { data: lib } = await supabase.from("libraries").select("ack_policy").eq("id", doc.libraryId).maybeSingle();
-  return resolveEffectiveAckPolicy(doc.ackPolicy ?? null, folder, (lib as PolicyCols)?.ack_policy ?? null);
+  const { data: lib, error: libError } = await supabase.from("libraries").select("ack_policy").eq("id", doc.libraryId).maybeSingle();
+  if (libError) throw new Error(`Couldn't read the library's read-&-understood policy (${libError.message}); the acknowledgment roster was not recomputed.`);
+  return resolveEffectiveAckPolicy(null, folder, (lib as PolicyCols | null)?.ack_policy ?? null);
 }
 
 // ── Assignee expansion (named people + role members) ─────────────────────────
