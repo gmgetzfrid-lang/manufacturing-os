@@ -452,13 +452,15 @@ Tests: `mon7Scorecard.test.ts` (7, through the real `gatherCompanyProfile` on an
 
 **Review fix (2026-10-01, projects Round G).** (1) **The wizard meets the same rule.** The project wizard binds its contractor rows to Known Companies by exact name and wrote `company_id` with no check, so a contractor named like a do-not-use company ("Acme Piping Inc" beside a barred "Acme Piping LLC") was linked to the clean one with no reason asked, and its awards would read the clean company. `lib/projectWizardWrites.ts` now runs every name-bound link through a required `checkPartyLink` dependency — `lib/costs.ts` `checkPartyCompanyLink`, the same `partyLinkCheck` — and, since the wizard cannot ask for a reason, a link that would need one (or that the registry could not be read to check) is left off: the contractor is added unlinked and the wizard says so before it moves on ("… was added without a company link: the name could be …, flagged DO NOT USE … Link it on the project's Costs tab, where the link records a reason."). (2) **What the rule is.** "Set once, never re-pointed; a do-not-use name linked elsewhere needs a recorded reason" is an **app-level rule** — `lib/costs.ts` (`saveParty`, `linkPartyToCompany`, `checkPartyCompanyLink`) and the wizard — with **no database enforcement**; DEC-44 (J10) item 3 is reworded to say so. Tests: `projectWizard.test.ts` (the refused link goes in unlinked with its note; the clean one is written; an unlinked row is not checked), `mon7Scorecard.test.ts` (9, +2: `checkPartyCompanyLink` refuses the do-not-use look-alike, passes the clean name and the barred company itself, writes nothing; the wizard wiring is required).
 
+**Second review fix (2026-10-01, projects Round G) — the normal workflow.** The review above ticked done-when 2 while the normal workflow still missed it: the standard turnover package comes from `seedTurnoverItems` (the wizard, and the Quality tab's **Seed required contents**), which wrote no `party_id`, and nothing on screen could assign a contractor to a seeded or existing item — so a PM who seeded the package, linked the contractor on the Costs tab and accepted every deliverable still saw the company's Quality as Unrated. Built now: (1) **an assignment control on every turnover and punch row** (`components/projects/QualityTab.tsx` — a compact contractor select on the row, shown to whoever may manage the tab while the item is unassigned or undecided), writing through `lib/turnover.ts` `assignTurnoverContractor` / `assignPunchContractor` (one `assignContractor`): the contractor must belong to the item's own project; an **unassigned** item may be assigned at any status — so a package seeded and accepted before anyone named its contractor reaches the company; an **assigned** item changes contractor (or is cleared) only while undecided (turnover not received / received; punch open), so a standing acceptance, a rejection's nonconformance or a close-out never moves from one company's record to another's ("This turnover item is accepted — its contractor stays as recorded. Reopen it to change who it counts for."). The UPDATE is guarded on the contractor and the status the caller saw (`.eq("status")` + `.eq/.is("party_id")` — a concurrent decision or reassignment is refused, never overwritten), checked (`checkedWrite`, GAP-402) and audited (`TURNOVER_CONTRACTOR_SET` / `PUNCH_CONTRACTOR_SET`, from / to / status). A `party_id`-only UPDATE passes the existing rails: `turnover_items_decision_rail` and `punch_items_void_rail` fire on other columns, `turnover_items_signoff_rail` keeps a standing sign-off untouched, the QUAL-12 org trigger checks the org, and a closed project's records stay read-only (20261103). (2) **A contractor picker beside Seed required contents**, passed to `seedTurnoverItems` (`partyId`, already a parameter) — a package can be seeded straight onto its contractor. The wizard still seeds without one (it has no single contractor to choose); its items are assigned on the row. Tests: `mon7Scorecard.test.ts` (14, +5, through the real `gatherCompanyProfile`): the package seeded with no contractor and accepted is Unrated; each seeded item assigned on the row moves Quality off Unrated ("turnover 3/3 accepted"), the update filtered on id / org / status / `party_id IS NULL` and audited; the seed carries the picked contractor; a decided item keeps its contractor (re-point and clear refused), a contractor from another project is refused, a refusal writes nothing, an undecided item moves and is audited from → to, a stale view (decided meanwhile) is refused by the guard; a closed punch item is assigned after the fact and its close-out counts, then keeps its contractor; the Quality tab's wiring (row controls, the seed picker).
+
 **Done-when.**
 - ✓ A contractor added from the Costs tab appears on their company profile.
-- ✓ An accepted turnover item moves the company's Quality dimension off Unrated — for an item added with its contractor (the Quality tab's add rows). Seeded and existing items cannot be assigned from the screen; see the residual.
+- ✓ An accepted turnover item moves the company's Quality dimension off Unrated — for any item: added with its contractor, seeded onto one, or (seeded / existing, before or after its acceptance) assigned on its row (`mon7Scorecard.test.ts` "the normal workflow: …").
 - ✓ An awarded quote appears in the company's bid history (through the quote's contractor or its own company link).
 - ✓ A test with a fully-populated fixture asserts each dimension is non-null.
 
-**Scope / residual.** Remediation 4 (backfilling old rows by name) was 20261096's for `project_parties`. **Seeded and existing turnover / punch items cannot be assigned a contractor from the UI**: the add rows are the only writer of `party_id`, and the wizard seeds the standard turnover package with none — so on a wizard-seeded project, accepted turnover reaches no company. The follow-up is an edit control for an existing item's contractor (turnover and punch rows); it is not built here and is left for the integrator to assign. The link rule is not enforced by the database: a member allowed to update `project_parties` can still re-point `company_id` over PostgREST. Enforcing it needs a migration (a `BEFORE UPDATE OF company_id` trigger refusing a non-null OLD value changed to a different NEW one), which belongs to J12's server remainder. No migration here.
+**Scope / residual.** Remediation 4 (backfilling old rows by name) was 20261096's for `project_parties`. Both rules — a contractor's company link set once and never re-pointed (DEC-44 (J10) item 3), and an item's contractor fixed once it is decided — are **app-level** (`lib/costs.ts`, the wizard, `lib/turnover.ts`): a member allowed to update `project_parties`, `turnover_items` or `punch_items` can still change them over PostgREST. Enforcing them needs a trigger migration; that is recorded as the new finding `MON-13` below — OPEN, with no owner yet: the integrator assigns a package and a migration number from its queue (J10's brief has no migration). No migration here.
 
 ---
 
@@ -697,6 +699,34 @@ explicit override that captures a reason and writes an audit row. Decide what
 
 ---
 
+## MON-13 · The contractor-link and item-contractor rules are enforced only in the browser
+
+*Numbered MON-13 on this branch (opened by projects Round G J10's second review fix). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — unassigned: for the integrator to assign a package and a migration number from its queue (J10 SURFACE-SWEEP has no migration; this was not in J12's brief either).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** process / governance
+- **Locations:**
+  - `lib/costs.ts` `saveParty` / `linkPartyToCompany` / `checkPartyCompanyLink` — the link is written only where `company_id IS NULL`, and a do-not-use look-alike needs a recorded reason (DEC-44 (J10) item 3)
+  - `lib/turnover.ts` `assignContractor` — an item's `party_id` changes only while it is undecided
+  - `supabase/migrations/20261013_project_controls_program.sql` (`project_parties`, `turnover_items`, `punch_items`), `20261136_prj_roundG_quality_signoff.sql` (`turnover_items_write` / `punch_items_write`) — no trigger guards `company_id` or `party_id`
+- **Related:** `MON-7`, `COST-12`, `MON-12`, DEC-44 (J10) item 3
+- **Independently verified:** — (`author`: opened by projects Round G J10's second review fix from the reviewer's minor on DEC-44 (J10) item 3, per `DEC-31`; not yet challenged)
+
+**Mechanism.** An award reads its company THROUGH the quote's contractor, and the scorecard counts a turnover or punch item for the company of the item's contractor. The rules that keep those links honest — a contractor's Known Company link is set once and never re-pointed (a do-not-use look-alike linked elsewhere needs a recorded reason), and a decided item's contractor stays as recorded — live in the browser libraries. The write policies let the same people update the columns directly.
+
+**Failure scenario.** A project owner (or a quality.sign_off holder, for an item) updates `project_parties.company_id` — or a decided `turnover_items.party_id` — over PostgREST: a barred contractor's awards then read a clean company, or an accepted item's credit moves to another company's scorecard, with no reason and no audit row.
+
+**Remediation.** One migration: a `BEFORE UPDATE OF company_id ON project_parties` trigger refusing a non-null OLD value changed to a different NEW one for a signed-in caller (the service pass and an `ON DELETE SET NULL` one trigger level down pass, as the 20261091 / 20261103 rails do); and a `BEFORE UPDATE OF party_id` trigger on `turnover_items` / `punch_items` refusing a change of a non-null OLD value unless the row is undecided (turnover `open` / `received`; punch `open`). The do-not-use reason stays an app-level confirmation unless the link moves server-side. A shape test per trigger (DEC-30; no widening).
+
+**Done when.**
+- A direct PostgREST update re-pointing a linked contractor's company is refused.
+- A direct update moving a decided turnover or punch item to another contractor is refused; assigning an unassigned one still passes.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -713,3 +743,4 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-10 | MEDIUM | OPEN |
 | MON-11 | MEDIUM | OPEN |
 | MON-12 | MEDIUM | OPEN |
+| MON-13 | LOW | OPEN |
