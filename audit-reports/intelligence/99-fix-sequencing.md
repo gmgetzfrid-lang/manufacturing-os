@@ -281,6 +281,15 @@ missing column), and when `context?.partial === true` refuse with
 before the update. Test: a partial row is refused 409 and keeps `rating` null;
 a complete row is rated as before.
 
+*Landed 2026-10-01 (intelligence Round G, I-03 fix pass 3): the review asked for
+the limb on this branch, and no package owns the route. The feedback route
+selects `answer` and `context` (retrying without `context` on a database before
+`20261153`) and refuses with that 409 when `context.partial` is true or the
+answer contains `CUT_OFF_LINE`; clearing a rating (0) is still allowed
+(`askRouteHonesty.test.ts` "reproduction → fix: a rating POSTed by id for a
+cut-off answer is refused (409) …" and "on a database before 20261153 … by its
+cut-off line").*
+
 **Known overlap — `components/knowledge/AiSettingsModal.tsx`** (`SEM-3`
 done-when 4, I-03; the file is also in I-20's list). The integrator's orphan
 sweep gave I-03 `SEM-3`'s remainder, including "the removal dialog must say

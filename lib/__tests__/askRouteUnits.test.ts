@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { callAiModel, AiCallError } from "@/lib/ai/providerCall";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readAll, columnMissing, provenPageCurrent } from "@/lib/knowledgeAskGuards";
+import {
+  readAll, columnMissing, provenPageCurrent, sourceColumnMissing, wantsDrawingFacts, drawingFactsScope, drawingFactsDocuments,
+} from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 import type { EquipmentTable } from "@/lib/knowledge";
 import { planVisibleHistory, parseAnswerContext, contextKnowledgeDocIds, type StoredAnswerRow } from "@/lib/knowledgeHistory";
@@ -319,5 +321,83 @@ describe("the answer surface marks what the route now says", () => {
     const whole = renderToStaticMarkup(React.createElement(EquipmentTablePanel, { table: { ...table, partial: undefined }, onOpenTag: () => undefined }));
     expect(whole).not.toMatch(/PARTIAL|at least/);
     expect(whole).toMatch(/Pumps — (<!-- -->)?1(<!-- -->)? distinct tag/);
+  });
+});
+
+// ── ASK-1 (fix pass 3) / KACL-4 — when the drawing facts ride, what they name ─
+
+describe("ASK-1 — the drawing facts ride along only with a drawing question, and the row records what their text can name", () => {
+  it("wantsDrawingFacts: an ordinary question does not get them; a counting, tag, drawing-number, register or connector question does; a drawing set gets them always", () => {
+    for (const q of [
+      "What is the relief valve set pressure limit?",
+      "What does ASME B31.3 require for a hydrotest?",
+      "Is EP 5-1-1 current?",
+      "What does API 510 say about inspection intervals?",
+      "What bolt torque does STD-205 give for flanges?",
+    ]) {
+      expect(wantsDrawingFacts(q, false)).toBe(false);
+      expect(wantsDrawingFacts(q, true)).toBe(true);
+    }
+    // a prefix the site's decoder teaches is a tag; unknown, it is not
+    expect(wantsDrawingFacts("Where is FCV-101?", false)).toBe(false);
+    expect(wantsDrawingFacts("Where is FCV-101?", false, ["FCV"])).toBe(true);
+    for (const q of [
+      "How many pumps are in this unit?",
+      "What is the design pressure of V-101?",
+      "Show me sheet 3 of 025-PID-0107",
+      "List all the exchangers",
+      "Audit the off-page connectors",
+      "Which tags are on the crude preheat P&ID?",
+      "What is the next free vessel number?",
+    ]) {
+      expect(wantsDrawingFacts(q, false)).toBe(true);
+    }
+  });
+
+  it("drawingFactsScope: the root series of the sheets with a drawing number, with their holders — never a fragment of another document's filename", () => {
+    const docs = [
+      { id: "a", name: "025-PID-0001.pdf" },
+      { id: "b", name: "025-PID-0002.pdf" },
+      { id: "c", name: "030-PID-0001 Secret unit.pdf" },
+      { id: "m", name: "Unrelated controlled procedure" },
+      { id: "u", name: "Relief standard.pdf" },
+    ];
+    const scope = drawingFactsScope(docs, new Map());
+    expect(scope.series).toEqual(["025-PID", "030-PID"]);
+    expect(scope.holders.get("025-PID")).toEqual(["a", "b"]);
+    expect(scope.holders.get("030-PID")).toEqual(["c"]);
+    // a title block's declared number counts like a filename's
+    expect(drawingFactsScope([{ id: "t", name: "scan 7.pdf" }], new Map([["t", ["040-PID-0003"]]])).series).toEqual(["040-PID"]);
+  });
+
+  it("drawingFactsDocuments: tag-row sheets, unread sheets, sheets a printed name names, and mirrors that alone hold a printed series — nothing that only adds to a count", () => {
+    const docs = [
+      { id: "t", name: "025-PID-0001.pdf" },              // tag rows
+      { id: "x", name: "025-PID-0002 SECRET.pdf" },       // named as a one-way target
+      { id: "s", name: "030-PID-0001.pdf" },              // the only holder of 030-PID, a mirror
+      { id: "same", name: "025-PID-0003.pdf" },           // a mirror of a series a recorded sheet holds
+      { id: "up40", name: "040-PID-0001.pdf" },           // an upload holding 040-PID
+      { id: "m40", name: "040-PID-0002.pdf" },            // a mirror of 040-PID beside that upload
+      { id: "r", name: "Unrelated controlled procedure" }, // counted only
+      { id: "late", name: "025-PID-0009.pdf" },           // past the census ceiling
+    ];
+    const mirrors = new Set(["x", "s", "same", "m40", "r", "late"]);
+    const scope = drawingFactsScope(docs, new Map());
+    const recorded = drawingFactsDocuments({
+      docs, tagDocIds: ["t"], unreadDocIds: ["late"], namesShown: ["025-PID-0001.pdf", "025-PID-0002 SECRET.pdf"],
+      scopeHolders: scope.holders, isMirror: (id) => mirrors.has(id),
+    });
+    expect(recorded.sort()).toEqual(["late", "s", "t", "x"].sort());
+  });
+
+  it("KACL-4 sourceColumnMissing: only an undefined column, or a schema-cache miss naming source_document_id, means a database without mirrors", () => {
+    expect(sourceColumnMissing({ code: "42703", message: 'column "source_document_id" does not exist' })).toBe(true);
+    expect(sourceColumnMissing({ code: "PGRST204", message: "Could not find the 'source_document_id' column of 'knowledge_documents' in the schema cache" })).toBe(true);
+    expect(sourceColumnMissing({ code: "PGRST204", message: "Could not find the 'library_id' column of 'knowledge_documents' in the schema cache" })).toBe(false);
+    expect(sourceColumnMissing({ code: "PGRST100", message: "failed to parse filter on column source_document_id" })).toBe(false);
+    expect(sourceColumnMissing({ code: "42702", message: 'column reference "id" is ambiguous' })).toBe(false);
+    expect(sourceColumnMissing(null)).toBe(false);
+    // the general helper, by contrast, takes any message mentioning a column
+    expect(columnMissing({ code: "42702", message: 'column reference "id" is ambiguous' })).toBe(true);
   });
 });

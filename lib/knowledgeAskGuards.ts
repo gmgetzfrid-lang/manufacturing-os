@@ -4,11 +4,24 @@
 // fence that keeps document text out of the instructions, and the honesty
 // markers an answer carries.
 
+import {
+  extractDrawingRefs, extractEquipmentTags, matchEquipmentListIntent, refSeries, sheetDrawingNumbers,
+  EQUIPMENT_CATEGORIES,
+} from "@/lib/drawingText";
+
 export type PgErr = { code?: string; message: string };
 
 /** A database that has not applied a migration yet (the column is not there). */
 export const columnMissing = (e: PgErr | null | undefined): boolean =>
   !!e && (e.code === "42703" || e.code === "PGRST204" || /column/i.test(e.message ?? ""));
+
+/** KACL-4: the mirror list's read failed only because the database has no
+ *  source columns (pre-20260917) — Postgres's undefined column, or
+ *  PostgREST's schema-cache miss naming `source_document_id`. Any other error
+ *  (a filter that will not parse, an ambiguous column, a timeout) is a read
+ *  that failed, and the ask is refused: never "no mirrors". */
+export const sourceColumnMissing = (e: PgErr | null | undefined): boolean =>
+  !!e && (e.code === "42703" || (e.code === "PGRST204" && /source_document_id/.test(e.message ?? "")));
 
 export const READ_PAGE = 1000;
 /** Every row a query matches, paged past PostgREST's max-rows (KACL-4). A
@@ -122,9 +135,97 @@ export const PROMPT_TOKENS_PER_IMAGE = 1_600;
  *  cover the full 4,000-token ceiling. */
 export const MIN_ANSWER_TOKENS = 1_000;
 export const ANSWER_MAX_TOKENS = 4_000;
+/** ASK-7: a FLOOR under the answer prompt's length in characters — its fixed
+ *  rules alone are longer (askRouteHonesty.test.ts pins that). Before the
+ *  first call of a library ask, and again before the refine call, an answer
+ *  of MIN_ANSWER_TOKENS over a prompt this short must still fit the month's
+ *  headroom; when it cannot, the answer call would be refused anyway, so the
+ *  ask is refused before it spends anything more. */
+export const MIN_ANSWER_PROMPT_CHARS = 5_000;
 
 /** ASK-2 / ING-10: the most tag-occurrence rows one census reads. */
 export const DRAWING_FACTS_ROW_CEILING = 20_000;
+
+// ── ASK-1: when the DRAWING FACTS ride along, and what they can name ────────
+//
+// The facts are tallied over every sheet of every searched library, and the
+// row records what reached the model, so a teammate is shown the answer only
+// when they may read every document recorded. Two rules keep that from
+// withholding ordinary answers (I-03 fix pass 3 — fix pass 2 recorded every
+// mirror of every searched library on every answer once any page had a tag):
+//   - the facts ride along only with a drawing question, or in a library its
+//     owner marked a drawing set (`ai_features.drawingIntel`);
+//   - the row records the documents the facts' TEXT can carry the identity
+//     of, never every mirror they were tallied over.
+
+/** An audit of a drawing set's connectors — the scope checklist's trigger. */
+export const DRAWING_SCOPE_QUESTION = /\b(audit|connector|off[\s-]?page|opc|continuation|cross[\s-]?ref|scope)/i;
+/** Counting, sheet and register phrasing. */
+const DRAWING_QUESTION =
+  /\b(?:how\s+many|count(?:s|ed|ing)?|tally|totals?|number\s+of|sheets?|drawings?|p\s?&\s?ids?|pids?|isometrics?|tags?|equipment|registers?|census|next\s+free|one[\s-]?way|title\s+blocks?)\b/i;
+
+/** Does this question get the DRAWING FACTS? Every question does in a
+ *  library marked a drawing set; elsewhere a question that counts, names a
+ *  sheet or a drawing number, names an equipment tag (a built-in prefix, or
+ *  one the site's decoder teaches — a standard's designation shaped like a
+ *  tag, "STD-205", is not one), asks for an equipment list, or audits
+ *  connectors. */
+export function wantsDrawingFacts(question: string, drawingSet: boolean, sitePrefixes: readonly string[] = []): boolean {
+  if (drawingSet) return true;
+  if (DRAWING_SCOPE_QUESTION.test(question) || DRAWING_QUESTION.test(question)) return true;
+  if (matchEquipmentListIntent(question).match) return true;
+  const knownPrefix = (p: string) => Object.prototype.hasOwnProperty.call(EQUIPMENT_CATEGORIES, p) || sitePrefixes.includes(p);
+  return extractEquipmentTags(question).some((t) => knownPrefix(t.prefix)) || extractDrawingRefs(question).length > 0;
+}
+
+/** The SCOPE the facts print: the root drawing series of the sheets that
+ *  carry a drawing number (title block or filename — sheetDrawingNumbers,
+ *  the rule the audit record's scope reads), never a fragment of another
+ *  document's filename ("Pump Manual.pdf" is no series "PUMP"), with the
+ *  sheets that hold each. */
+export function drawingFactsScope(
+  docs: ReadonlyArray<{ id: string; name: string }>,
+  selfByDoc: ReadonlyMap<string, readonly string[]>,
+): { series: string[]; holders: Map<string, string[]> } {
+  const byDoc = docs.map((d) => ({
+    id: d.id,
+    series: [...new Set(sheetDrawingNumbers(d.name, selfByDoc.get(d.id) ?? []).map(refSeries))].filter(Boolean),
+  }));
+  const all = [...new Set(byDoc.flatMap((d) => d.series))].sort();
+  const series = all.filter((s) => !all.some((r) => r !== s && s.startsWith(`${r}-`)));
+  const holders = new Map<string, string[]>();
+  for (const root of series) {
+    holders.set(root, byDoc.filter((d) => d.series.some((s) => s === root || s.startsWith(`${root}-`))).map((d) => d.id));
+  }
+  return { series, holders };
+}
+
+/** The documents the DRAWING FACTS' text can carry the identity of — what
+ *  the row records for them (ASK-1):
+ *   - every sheet whose tag rows fed them (tags, connector text, box numbers);
+ *   - every sheet the census could not read whole (the facts count them);
+ *   - every sheet of a name the facts print (a one-way connector's ends);
+ *   - for a series the scope prints that no recorded sheet and no upload
+ *     holds, the mirrors that hold it (its name is theirs alone).
+ *  A sheet that only adds to a count — the sheet total, a resolved
+ *  reference — is named nowhere in the facts and is not recorded. */
+export function drawingFactsDocuments(input: {
+  docs: ReadonlyArray<{ id: string; name: string }>;
+  tagDocIds: Iterable<string>;
+  unreadDocIds: Iterable<string>;
+  namesShown: Iterable<string>;
+  scopeHolders: ReadonlyMap<string, readonly string[]>;
+  isMirror: (id: string) => boolean;
+}): string[] {
+  const out = new Set<string>([...input.tagDocIds, ...input.unreadDocIds]);
+  const names = new Set(input.namesShown);
+  for (const d of input.docs) if (names.has(d.name)) out.add(d.id);
+  for (const ids of input.scopeHolders.values()) {
+    if (ids.some((id) => out.has(id) || !input.isMirror(id))) continue;
+    for (const id of ids) out.add(id);
+  }
+  return [...out];
+}
 
 // ── IEDGE-4: may a rated answer's citation still seat its page? ─────────────
 //

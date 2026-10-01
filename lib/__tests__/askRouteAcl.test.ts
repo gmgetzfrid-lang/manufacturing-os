@@ -149,6 +149,33 @@ describe("KACL-4 — the per-asker exclusion set fails CLOSED and is never cut a
     expect((await res.json()).citations[0].documentId).toBe(K_OPEN);
   });
 
+  it("a PostgREST schema-cache miss naming source_document_id (PGRST204) is a database without the column too", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.hooks.push((op, filters) =>
+      op.table === "knowledge_documents" && filters.some((f) => f.col === "source_document_id")
+        ? { error: { code: "PGRST204", message: "Could not find the 'source_document_id' column of 'knowledge_documents' in the schema cache" } } : undefined);
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "What is the relief valve set pressure?" }, "viewer")).status).toBe(200);
+  });
+
+  for (const [label, err] of [
+    ["a filter PostgREST cannot parse", { code: "PGRST100", message: "failed to parse filter (not.is.null) for column source_document_id" }],
+    ["an ambiguous column", { code: "42702", message: 'column reference "id" is ambiguous' }],
+    ["a schema-cache miss naming another column", { code: "PGRST204", message: "Could not find the 'library_id' column of 'knowledge_documents' in the schema cache" }],
+  ] as const) {
+    it(`reproduction → fix: a mirror read that fails with ${label} — its message mentions a column — refuses the ask (503); it is never "no mirrors"`, async () => {
+      openAndRestricted();
+      db.hooks.push((op, filters) =>
+        op.table === "knowledge_documents" && filters.some((f) => f.col === "source_document_id" && f.op === "notis")
+          ? { error: { ...err } } : undefined);
+      h.script = [QUERY_GEN, REFINE_NONE, answer()];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+      expect(res.status).toBe(503);
+      expect(h.calls).toHaveLength(0);
+      expect(allPrompts()).not.toContain("312 psig");
+    });
+  }
+
   it("reproduction → fix: a library of more mirrors than one response holds — the restricted mirror at the tail is still excluded", async () => {
     const docs: Row[] = [];
     const kdocs: Row[] = [];
@@ -378,6 +405,139 @@ describe("ASK-1 / KACL-1 / IEDGE-5 — the row records every document that reach
     expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
 
+  // ── Fix pass 3: the drawing facts ride along only when relevant, and the
+  //    row records what their TEXT can carry — never every mirror they were
+  //    tallied over.
+  const TAGGED_UPLOAD_AND_UNRELATED_MIRROR = () => seed({
+    documents: [dcDoc("dc-1", { acl: DENY_VIEWER_ACL })],
+    knowledge_documents: [
+      kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+      kdoc(K_MIRROR, { name: "Unrelated controlled procedure", source_document_id: "dc-1", source_rev: "A" }),
+    ],
+    knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 })],
+    // One equipment tag on a figure page of the upload.
+    knowledge_page_entities: [{ id: "e-1", org_id: ORG, library_id: LIB, document_id: K_OPEN, page: 2, kind: "equipment", tag: "P-101", raw: "P-101" }],
+  });
+  /** The census read (every tag of every searched library). */
+  const entityReads = () => db.ops.filter((o) => o.table === "knowledge_page_entities" && o.kind === "select"
+    && Array.isArray(o.columns) && o.columns.join(",") === "document_id,page,kind,tag,raw").length;
+
+  it("reproduction → fix (fix pass 3): an ORDINARY question in a library with one tagged page and an unrelated restricted mirror — no drawing facts, the row records only what the passages drew on, and the Viewer still sees it", async () => {
+    TAGGED_UPLOAD_AND_UNRELATED_MIRROR();
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    const res = await ask({ question: "What is the relief valve set pressure limit?" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    // No census is read and no facts are sent for an ordinary question…
+    expect(entityReads()).toBe(0);
+    expect(allPrompts()).not.toContain("DRAWING FACTS");
+    expect(allPrompts()).not.toMatch(/UNRELATED/i);
+    // …so the row records the upload alone, as the base route's citations did.
+    const row = rowsOf("knowledge_questions")[0];
+    expect(row.context).toMatchObject({ documents: [K_OPEN], complete: true });
+    // The Viewer (denied the unrelated mirror) sees the answer, as before I-03.
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows.map((r: { id: string }) => r.id)).toEqual([row.id]);
+    expect(viewerList.withheld).toBe(0);
+  });
+
+  it("a DRAWING question there gets the facts — the row records the tagged sheet, not the unrelated mirror the facts only count (its filename is no drawing series and is never printed)", async () => {
+    TAGGED_UPLOAD_AND_UNRELATED_MIRROR();
+    h.script = [{ text: '["pumps"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One pump, P-101.")];
+    const res = await ask({ question: "How many pumps are in this unit?" });
+    expect(res.status).toBe(200);
+    expect(entityReads()).toBeGreaterThan(0);
+    const data = answerCall().user;
+    expect(data).toContain("DRAWING FACTS — tallied by the app");
+    expect(data).toContain("- Sheets: 2");
+    // The scope prints drawing series only — never a fragment of a
+    // document's filename (fix pass 2's facts printed "UNRELATED-CONTROLLED").
+    expect(data).toContain("series loaded: (unknown)");
+    expect(allPrompts()).not.toMatch(/UNRELATED/i);
+    const row = rowsOf("knowledge_questions")[0];
+    expect((row.context as { documents: string[] }).documents).toEqual([K_OPEN]);
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toHaveLength(1);
+  });
+
+  it("a library its owner marked a drawing set sends the facts with every question", async () => {
+    TAGGED_UPLOAD_AND_UNRELATED_MIRROR();
+    db.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, name: "Unit 25 P&IDs", ai_features: { drawingIntel: true }, ai_instructions: null }];
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await ask({ question: "What is the relief valve set pressure limit?" })).status).toBe(200);
+    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toEqual([K_OPEN]);
+  });
+
+  it("reproduction → fix: a drawing series only a restricted MIRROR holds is printed in the scope — the row records that mirror and the Viewer denied it never gets the answer; a mirror of a series a recorded sheet holds is not recorded", async () => {
+    const S_UP = U(31);
+    const S_SECRET = U(32);
+    const S_SAME = U(33);
+    seed({
+      documents: [dcDoc("dc-1", { acl: DENY_VIEWER_ACL }), dcDoc("dc-2", { acl: DENY_VIEWER_ACL })],
+      knowledge_documents: [
+        kdoc(S_UP, { name: "025-PID-0001.pdf" }),
+        kdoc(S_SECRET, { name: "030-PID-0001 Secret unit.pdf", source_document_id: "dc-1", source_rev: "A" }),
+        kdoc(S_SAME, { name: "025-PID-0002.pdf", source_document_id: "dc-2", source_rev: "A" }),
+      ],
+      knowledge_page_entities: [{ id: "e-1", org_id: ORG, library_id: LIB, document_id: S_UP, page: 1, kind: "equipment", tag: "V-101", raw: "V-101" }],
+    });
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel, V-101.")];
+    expect((await ask({ question: "How many vessels are in this unit?" })).status).toBe(200);
+    expect(answerCall().user).toContain("series loaded: 025-PID, 030-PID");
+    const docs = (rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents;
+    expect(docs.sort()).toEqual([S_UP, S_SECRET].sort());
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toEqual([]);
+    expect(viewerList.withheld).toBe(1);
+
+    // Control: without the 030 sheet, the 025 mirror adds only to the count —
+    // "025-PID" is the upload's series too — so it is not recorded and the
+    // Viewer sees the answer.
+    resetHarness();
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== S_SECRET);
+    db.tables.knowledge_questions = [];
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel, V-101.")];
+    expect((await ask({ question: "How many vessels are in this unit?" })).status).toBe(200);
+    expect(answerCall().user).toContain("series loaded: 025-PID.");
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toEqual([S_UP]);
+    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
+  });
+
+  it("reproduction → fix: a GRAPH HOPS line names a restricted mirror whose passages the prompt budget trimmed — the row still records it", async () => {
+    const K_HOP = U(41);
+    // Three open passages match the first-round query; the first cites EP 5-1-1.
+    const opens = [
+      "The relief valve set pressure shall not exceed the design pressure per EP 5-1-1.",
+      "Relief valve design pressure margins are listed in the data sheet.",
+      "Relief valve design pressure records are kept by the inspection group.",
+    ];
+    seed({
+      documents: [dcDoc("dc-1", { acl: DENY_VIEWER_ACL })],
+      knowledge_documents: [
+        kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+        kdoc(K_HOP, { name: "EP 5-1-1 Relief design.pdf", source_document_id: "dc-1", source_rev: "A" }),
+      ],
+      knowledge_chunks: [
+        ...opens.map((t, i) => kchunk(K_OPEN, t, { id: `c-0open-${i}`, page: i + 1 })),
+        // The hopped page answers the question but is larger than one prompt.
+        kchunk(K_HOP, `What is the relief valve set pressure? HOP-PAGE ${"engineering practice text ".repeat(20_000)}`, { id: "c-hop", page: 7 }),
+      ],
+    });
+    h.script = [{ text: '["relief valve design pressure"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** See [1].")];
+    const body = await (await ask({ question: "What is the relief valve set pressure?" })).json();
+    expect(body.graphHops).toEqual([{ from: "Relief standard.pdf", to: "EP 5-1-1 Relief design.pdf", via: "EP 5-1-1" }]);
+    expect(body.trimmed.passages).toBe(1);
+    const user = answerCall().user;
+    expect(user).not.toContain("HOP-PAGE");
+    expect(user).toMatch(/GRAPH HOPS:\n- Relief standard\.pdf references "EP 5-1-1" → passages from EP 5-1-1 Relief design\.pdf were attached/);
+    const docs = (rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents;
+    expect(docs).toEqual(expect.arrayContaining([K_OPEN, K_HOP]));
+    const viewerList = await (await history({ action: "list" }, "viewer")).json();
+    expect(viewerList.rows).toEqual([]);
+    expect(viewerList.withheld).toBe(1);
+  });
+
   it("a database before 20261153 (no context column) still saves the answer, without it, and says nothing is wrong", async () => {
     openAndRestricted();
     db.missingColumns.knowledge_questions = ["context"];
@@ -491,6 +651,45 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     });
     h.script = [QUERY_GEN, REFINE_NONE, answer()];
     expect((await ask({ question: "And the set pressure?", threadId: THREAD })).status).toBe(409);
+  });
+
+  it("reproduction → fix: an INTERNET-mode ask in a thread needs only the ownership check — a failed access check of the earlier answers (which it never sends) does not refuse it", async () => {
+    seed({
+      knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })],
+      knowledge_questions: [turn({ question: "Which standard governs relief sizing?", answer: "EP 5-1-1 governs [1].", citations: [{ n: 1, documentId: K_OPEN, page: 1 }] })],
+    });
+    // The check of which earlier answers the asker may still read fails.
+    db.hooks.push((op) => op.table === "knowledge_documents" && op.kind === "select"
+      && Array.isArray(op.columns) && op.columns.join(",") === "id,org_id,source_document_id"
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    h.script = [{ text: "API 520 covers relief sizing.", usage: { inputTokens: 200, outputTokens: 30 } }];
+    const res = await ask({ question: "What does API 520 cover?", mode: "internet", threadId: THREAD });
+    expect(res.status).toBe(200);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].user).toBe("What does API 520 cover?");
+    expect(rowsOf("knowledge_questions").find((r) => r.question === "What does API 520 cover?")?.thread_id).toBe(THREAD);
+    // The access check was never made for it.
+    expect(db.ops.some((o) => o.table === "knowledge_documents" && Array.isArray(o.columns)
+      && o.columns.join(",") === "id,org_id,source_document_id")).toBe(false);
+
+    // A library ask in the same thread still needs that check, and is refused without it.
+    resetHarness();
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const lib = await ask({ question: "And the set pressure?", threadId: THREAD });
+    expect(lib.status).toBe(503);
+    expect((await lib.json()).error).toMatch(/Couldn't check access to this conversation's earlier answers/);
+  });
+
+  it("an internet-mode ask is still refused (409) on another member's thread", async () => {
+    seed({
+      knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })],
+      knowledge_questions: [turn({ user_id: VIEWER, user_name: "Vic Viewer" })],
+    });
+    h.script = [{ text: "API 520 covers relief sizing.", usage: { inputTokens: 200, outputTokens: 30 } }];
+    const res = await ask({ question: "What does API 520 cover?", mode: "internet", threadId: THREAD });
+    expect(res.status).toBe(409);
+    expect(h.calls).toHaveLength(0);
+    expect(rowsOf("knowledge_questions")).toHaveLength(1);
   });
 
   it("a stored turn citing a document the asker can no longer read is not sent back to the model", async () => {
