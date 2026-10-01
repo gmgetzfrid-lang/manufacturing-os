@@ -120,7 +120,7 @@ export default function CompanyProfilePage() {
               <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
                 <HardHat className="w-5 h-5 text-[var(--color-accent)]" /> {company.name}
               </h1>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind]}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind] ?? company.kind}</span>
               {company.trade && <span className="text-xs text-[var(--color-text-muted)]">{company.trade}</span>}
               {company.status !== "active" && (
                 <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${company.status === "do_not_use" ? "border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -457,7 +457,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
                 : e.kind === "commendation" ? "bg-emerald-500"
                 : "bg-[var(--color-text-faint)]"}`} />
               <div className="min-w-0">
-                <span className="font-bold text-[var(--color-text)]">{EVENT_KIND_LABEL[e.kind]}</span>
+                <span className="font-bold text-[var(--color-text)]">{EVENT_KIND_LABEL[e.kind] ?? e.kind}</span>
                 <span className="text-[var(--color-text-muted)]"> · {new Date(e.eventDate + "T00:00:00").toLocaleDateString()}{e.createdByName ? ` · logged by ${e.createdByName}` : ""}</span>
                 <div className="text-[var(--color-text-muted)]">{e.description}</div>
               </div>

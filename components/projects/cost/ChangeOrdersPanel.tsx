@@ -176,7 +176,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
                 Approved changes by reason — who owns the growth
               </div>
               <Donut
-                segments={summary.byReason.map((r) => ({ label: CO_REASON_LABEL[r.reason], value: Math.abs(r.amount) }))}
+                segments={summary.byReason.map((r) => ({ label: CO_REASON_LABEL[r.reason] ?? r.reason, value: Math.abs(r.amount) }))}
                 fmt={(n) => fmtMoney(n)} size={84}
                 centerLabel={`${summary.approvedCount} CO${summary.approvedCount === 1 ? "" : "s"}`} />
             </div>

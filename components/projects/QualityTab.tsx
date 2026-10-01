@@ -81,6 +81,19 @@ import { isControllerPrincipal } from "@/lib/permissions";
  *  by a bare element rule in the shared stylesheet. */
 const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";
 
+/** PERF-10: ONE date formatter for every row of the tab — a checklist's
+ *  sign-off, an item's machine verification, a turnover review and its
+ *  history, a punch item's due date and closure — created on first use,
+ *  never `toLocaleDateString()` per row per render. The same output: the
+ *  default numeric date in the viewer's locale (an unreadable date still
+ *  reads "Invalid Date", as before — formatting it would throw). */
+let dayFormatter: Intl.DateTimeFormat | null = null;
+function fmtDay(d: Date): string {
+  if (!Number.isFinite(d.getTime())) return d.toLocaleDateString();
+  dayFormatter ??= new Intl.DateTimeFormat(undefined, { year: "numeric", month: "numeric", day: "numeric" });
+  return dayFormatter.format(d);
+}
+
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {};
@@ -678,7 +691,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <span className="text-xs font-black text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind] ?? checklist.kind}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
             title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green or an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
@@ -688,7 +701,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
         {checklist.status === "complete" && checklist.completedByName && (
           <span className="text-[9px] font-bold text-[var(--color-text-muted)]"
             title={checklist.completedSignatureId ? "Signed off with an e-signature (re-authenticated at signing)" : undefined}>
-            signed off by {checklist.completedByName}{checklist.completedAt ? ` · ${new Date(checklist.completedAt).toLocaleDateString()}` : ""}
+            signed off by {checklist.completedByName}{checklist.completedAt ? ` · ${fmtDay(new Date(checklist.completedAt))}` : ""}
           </span>
         )}
         {checklist.status === "complete" && checklist.completedSingleSigner && (
@@ -939,7 +952,7 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
           )}
           {machine && (
             <div className="mt-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300" title="Set by the deterministic evidence sweep from a document on file — no person has verified this line.">
-              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleDateString()}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
+              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${fmtDay(new Date(item.updatedAt))}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
             </div>
           )}
           {unreasonedNa && (
@@ -1334,7 +1347,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                 <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
                   {[
                     it.description,
-                    it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
+                    it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${fmtDay(new Date(it.reviewedAt))}` : ""}` : null,
                     (it.status === "accepted" || it.status === "waived") && it.reviewedSignatureId ? "signed" : null,
                     (it.status === "accepted" || it.status === "waived") && it.reviewedSingleSigner ? "single-signer (nobody else could sign it off)" : null,
                     it.reviewNote ? `“${it.reviewNote}”` : null,
@@ -1361,7 +1374,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                       <li key={e.id}>
                         {e.kind === "nonconformance" ? <span className="font-black uppercase text-rose-600 dark:text-rose-400 mr-1">nonconformance</span>
                           : e.kind === "reopen" ? <span className="font-black uppercase mr-1">reopened</span> : null}
-                        {e.fromStatus ? `${e.fromStatus} → ` : ""}{e.toStatus}{e.reviewerName ? ` by ${e.reviewerName}` : ""}{e.createdAt ? ` on ${new Date(e.createdAt).toLocaleDateString()}` : ""}{e.note ? ` — “${e.note}”` : ""}
+                        {e.fromStatus ? `${e.fromStatus} → ` : ""}{e.toStatus}{e.reviewerName ? ` by ${e.reviewerName}` : ""}{e.createdAt ? ` on ${fmtDay(new Date(e.createdAt))}` : ""}{e.note ? ` — “${e.note}”` : ""}
                       </li>
                     ))}
                   </ul>
@@ -1576,7 +1589,7 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
-      {TURNOVER_STATUS_LABEL[status]}
+      {TURNOVER_STATUS_LABEL[status] ?? status}
     </span>
   );
 }
@@ -1721,13 +1734,13 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   ) : null}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-                      due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}
+                      due {fmtDay(new Date(it.dueDate + "T00:00:00"))}{overdue ? " — overdue" : ""}
                     </span>
                   )}
                   {it.createdByName && <span className="text-[10px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                   {it.status !== "open" && (
                     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${it.status === "done" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "border-rose-500/40 text-rose-700 dark:text-rose-300"}`}>
-                      {it.status === "done" ? "done" : "voided"}{it.closedByName ? ` by ${it.closedByName}` : ""}{it.closedAt ? ` on ${new Date(it.closedAt).toLocaleDateString()}` : ""}
+                      {it.status === "done" ? "done" : "voided"}{it.closedByName ? ` by ${it.closedByName}` : ""}{it.closedAt ? ` on ${fmtDay(new Date(it.closedAt))}` : ""}
                     </span>
                   )}
                   {canManage && it.status === "open" && busy !== it.id && (

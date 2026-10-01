@@ -67,6 +67,15 @@ export interface TimelineEvent {
   /** Plant/Unit/System context if the event ties to a scoped document.
    *  Null on project_activity events that don't carry a document ref. */
   scope?: TimelineEventScope | null;
+  /** GAP-408: where the event's record lives — set on the project feed's
+   *  controls-program milestones (projectEventLink); absent elsewhere. */
+  link?: TimelineEventLink | null;
+}
+
+/** GAP-408: a feed row's way to its record. */
+export interface TimelineEventLink {
+  href: string;
+  label: string;
 }
 
 export interface AuditRow {
@@ -464,6 +473,48 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   PROJECT_LESSONS_SAVED: "milestone",
 };
 
+/** GAP-408: the tab of the project page that holds a controls milestone's
+ *  record — the change order and the award on Costs; the checklist, the
+ *  turnover item and the punch item on Quality; the task on Schedule. Keyed
+ *  by the same actions as PROJECT_EVENT_VOCABULARY and extended with it:
+ *  every key here is a milestone there (a test holds the two together). A
+ *  milestone with no tab here (lessons learned — the record is the project
+ *  itself) links nowhere. */
+export type ProjectRecordTab = "costs" | "quality" | "schedule";
+export const PROJECT_EVENT_TAB: Readonly<Record<string, ProjectRecordTab>> = {
+  COST_DOC_AWARDED: "costs",
+  COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "costs",
+  CHANGE_ORDER_PROPOSED: "costs",
+  CHANGE_ORDER_APPROVED: "costs",
+  CHANGE_ORDER_REJECTED: "costs",
+  CHANGE_ORDER_VOIDED: "costs",
+  CHECKLIST_CREATED: "quality",
+  CHECKLIST_ASSESSED: "quality",
+  CHECKLIST_STATUS: "quality",
+  TURNOVER_SEEDED: "quality",
+  TURNOVER_REVIEWED: "quality",
+  PUNCH_STATUS: "quality",
+  MILESTONE_COMPLETED: "schedule",
+  MILESTONE_MISSED: "schedule",
+  MILESTONE_BLOCKED: "schedule",
+  MILESTONES_RESCHEDULED: "schedule",
+  SCHEDULE_BASELINED: "schedule",
+  SCHEDULE_REBASED: "schedule",
+};
+const PROJECT_TAB_LINK_LABEL: Readonly<Record<ProjectRecordTab, string>> = {
+  costs: "Open in Costs",
+  quality: "Open in Quality",
+  schedule: "Open in Schedule",
+};
+
+/** GAP-408: the link a project-feed row carries to its record's tab, or
+ *  null when the action has none. Pure. */
+export function projectEventLink(action: string, projectId: string): TimelineEventLink | null {
+  const tab = PROJECT_EVENT_TAB[action];
+  if (!tab || !projectId) return null;
+  return { href: `/projects/${encodeURIComponent(projectId)}?tab=${tab}`, label: PROJECT_TAB_LINK_LABEL[tab] };
+}
+
 /** The actions the project timeline leaves off the feed (noise + mirrored),
  *  as the PostgREST `not.in` list its queries use. Pure. */
 export function hiddenProjectActions(): string[] {
@@ -734,9 +785,15 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
   const events: TimelineEvent[] = ((activityResult.data as ProjectActivityRow[]) ?? []).map(projectActivityRowToEvent);
   // The query already left noise out; the map is re-applied so a row the
   // database returned for any other reason is still classified the same way.
+  // GAP-408: each controls milestone links to the tab holding its record.
+  const linked = (r: AuditRow): TimelineEvent => {
+    const ev = auditRowToEvent(r);
+    const link = projectEventLink(r.action, projectId);
+    return link ? { ...ev, link } : ev;
+  };
   events.push(...((projectAuditResult.data as AuditRow[]) ?? [])
     .filter((r) => isProjectFeedAction(r.action))
-    .map(auditRowToEvent));
+    .map(linked));
 
   const costDocIds = costDocRows.map((r) => r.id);
   if (costDocIds.length > 0) {
@@ -750,7 +807,7 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
       .limit(limit));
     events.push(...costAudit
       .filter((r) => isProjectFeedAction(r.action))
-      .map(auditRowToEvent));
+      .map(linked));
   }
 
   const linkedDocIds = linkedDocRows.map((r) => r.document_id);

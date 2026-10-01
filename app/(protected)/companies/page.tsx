@@ -245,7 +245,7 @@ function CompanyCard({ company: c, profile }: { company: Company; profile: Compa
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-black text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{c.name}</span>
-            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind]}</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[c.kind] ?? c.kind}</span>
             {c.trade && <span className="text-[10px] text-[var(--color-text-muted)]">{c.trade}</span>}
             {c.status === "do_not_use" && (
               <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">Do not use</span>

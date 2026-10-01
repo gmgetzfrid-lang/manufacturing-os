@@ -19,7 +19,7 @@
 //     loop — and opening the tab under the coach costs ONE snapshot round.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import React, { act, useState } from "react";
+import React, { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -148,11 +148,11 @@ const count = (what: string) => order.log.filter((x) => x === what).length;
  *  every render) that bumps the page's own state, the coach keyed on it,
  *  and a page state the test can bump to force a re-render with nothing
  *  else changed. */
-let bumpPage: () => void = () => undefined;
+const pageCtl = { bump: () => undefined as void };
 function Page({ tab, coach }: { tab: "costs" | "quality"; coach: boolean }) {
   const [coachKey, setCoachKey] = useState(0);
   const [, setNoise] = useState(0);
-  bumpPage = () => setNoise((n) => n + 1);
+  useEffect(() => { pageCtl.bump = () => setNoise((n) => n + 1); }, []);
   return React.createElement("div", null,
     React.createElement("span", { "data-coach-key": coachKey }),
     coach ? React.createElement(ProjectCoach, { orgId: "o1", projectId: "p1", refreshKey: coachKey }) : null,
@@ -183,14 +183,14 @@ describe("PERF-4 — the Costs tab: the page is told after every write, never by
 
   it("no loop: the page's fresh inline callback on every render never re-fires the load", async () => {
     await open("costs");
-    for (let i = 0; i < 5; i++) { await act(async () => { bumpPage(); }); }
+    for (let i = 0; i < 5; i++) { await act(async () => { pageCtl.bump(); }); }
     await settle();
     expect(count("costs-read")).toBe(1);
     // a write: one more read, one tell — and the page's re-render (the coach
     // key bump, a new callback identity) starts no further read
     await act(async () => { (host.querySelector("[data-write]") as HTMLButtonElement).click(); });
     await settle();
-    for (let i = 0; i < 5; i++) { await act(async () => { bumpPage(); }); }
+    for (let i = 0; i < 5; i++) { await act(async () => { pageCtl.bump(); }); }
     await settle();
     expect(count("costs-read")).toBe(2);
     expect(count("told")).toBe(1);
@@ -214,7 +214,7 @@ describe("PERF-4 — the Quality tab: the page is told after every write, never 
     await open("quality");
     expect(count("quality-read")).toBe(1);
     expect(count("told")).toBe(0);
-    for (let i = 0; i < 5; i++) { await act(async () => { bumpPage(); }); }
+    for (let i = 0; i < 5; i++) { await act(async () => { pageCtl.bump(); }); }
     await settle();
     expect(count("quality-read")).toBe(1);
 
@@ -229,7 +229,7 @@ describe("PERF-4 — the Quality tab: the page is told after every write, never 
     await settle();
     expect(reads.assignTurnoverContractor).toHaveBeenCalledTimes(1);
     expect(order.log).toEqual(["quality-read", "quality-read", "invalidate", "told"]);
-    for (let i = 0; i < 5; i++) { await act(async () => { bumpPage(); }); }
+    for (let i = 0; i < 5; i++) { await act(async () => { pageCtl.bump(); }); }
     await settle();
     expect(count("quality-read")).toBe(2);
     expect(count("told")).toBe(1);

@@ -47,7 +47,7 @@ import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
 import {
-  type CostDocument, COST_DOC_STATUS_LABEL,
+  type CostDocument, costDocStatusLabel,
   uploadCostDoc, awardQuote, postInvoice,
   parsedQuoteFrom, quoteGroups, normalizeCurrency,
 } from "@/lib/costDocs";
@@ -987,7 +987,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
-      {COST_DOC_STATUS_LABEL[status]}
+      {costDocStatusLabel(status)}
     </span>
   );
 }
