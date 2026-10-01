@@ -780,6 +780,66 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     expect(state.audits).toHaveLength(0);
   });
 
+  it("the bound also clocks from the CURRENT revision's created_at less a day: created 6 years ago, revised 3 years ago, 'issued' 5 years, disposed with a run-out stored date → 423 (was: deleted with a 200)", async () => {
+    member("Admin");
+    const revised = ts(-3 * 365);
+    const bound = new Date(Date.parse(revised) - 86_400_000).toISOString();
+    for (const basis of ["issued", "superseded", "effective"] as const) {
+      inLibrary(
+        { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" },
+        { enabled: true, years: 5, basis },
+      );
+      (state.rows.document_versions[0] as Row).created_at = revised;
+      const res = await del(SOURCE);
+      expect(res.status, basis).toBe(423);
+      expect(((await res.json()) as { error: string }).error, basis).toContain(`until at least ${plusYears(bound, 5)}`);
+    }
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("control: a current revision as old as the record adds nothing — once created_at + years has run it is deleted", async () => {
+    member("Admin");
+    inLibrary(
+      { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" },
+      { enabled: true, years: 5, basis: "issued" },
+    );
+    (state.rows.document_versions[0] as Row).created_at = ts(-6 * 365);
+    expect((await del(SOURCE)).status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a failed current-revision read refuses 503; a pointer to a missing revision or an unreadable date falls back to created_at", async () => {
+    member("Admin");
+    const doc = { created_at: ts(-6 * 365), updated_at: ts(0), effective_date: null, retention_until: iso(-10), current_version_id: "v1" };
+    const issued5 = { enabled: true, years: 5, basis: "issued" } as const;
+    inLibrary(doc, issued5);
+    (state.rows.document_versions[0] as Row).created_at = ts(-365);
+    state.failEq.add("document_versions|id");
+    expect((await del(SOURCE)).status).toBe(503);
+    state.failEq.delete("document_versions|id");
+    expect(state.r2sends).toBe(0);
+    // dangling pointer: created_at alone, which has run
+    inLibrary({ ...doc, current_version_id: "v-missing" }, issued5);
+    expect((await del(SOURCE)).status).toBe(200);
+    // unreadable revision date: created_at alone
+    inLibrary(doc, issued5);
+    (state.rows.document_versions[0] as Row).created_at = "not-a-date";
+    expect((await del(SOURCE)).status).toBe(200);
+  });
+
+  it("the current revision is read only for the bound — not for a fixed basis, nor for an undisposed record", async () => {
+    member("Admin");
+    inLibrary({ created_at: ts(-30), retention_until: iso(-10), current_version_id: "v1" }, TEN_YEARS);
+    await del(SOURCE);
+    inLibrary(
+      { created_at: ts(-30), updated_at: ts(-30), retention_until: iso(-10), disposition_state: null, current_version_id: "v1" },
+      { enabled: true, years: 5, basis: "issued" },
+    );
+    await del(SOURCE);
+    expect(state.eqs.filter((e) => e.startsWith("document_versions|id="))).toEqual([]);
+  });
+
   it("a disposed record under an updated_at basis with no readable created_at refuses — fail closed, as an undisposed record with no basis date does", async () => {
     member("Admin");
     for (const created of [null, "not-a-date"]) {

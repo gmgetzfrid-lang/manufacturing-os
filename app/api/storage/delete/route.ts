@@ -39,7 +39,7 @@ interface OwnerDoc {
   effective_date?: string | null;
 }
 const OWNER_DOC_COLUMNS =
-  "legal_hold, retention_until, disposition_state, retention_policy, collection_id, library_id, created_at, updated_at, effective_date";
+  "legal_hold, retention_until, disposition_state, retention_policy, collection_id, library_id, created_at, updated_at, effective_date, current_version_id";
 
 /** The only retention date shape the refusal compares or quotes: a four-digit
  *  year. computeRetentionUntil ends in toISOString(), which past year 9999
@@ -181,9 +181,9 @@ export async function DELETE(req: NextRequest) {
       // bases clock from updated_at || created_at, and disposal resets
       // updated_at to today; every write path stamps updated_at with the time
       // of the write, so before disposal that basis was never earlier than
-      // created_at. For those, (2) clocks from created_at: a LOWER BOUND on
-      // the true date, so a record whose bound is still ahead (or cannot be
-      // computed) is certainly in force and refuses.
+      // created_at, nor than the current revision's created_at less a day:
+      // (2) clocks from the later (disposedBasisLowerBound, a LOWER BOUND on
+      // the true date), and a bound still ahead or uncomputable refuses.
       // Either container read failing throws → 503.
       if (row) {
         const disposed = row.disposition_state === "disposed";
@@ -203,7 +203,7 @@ export async function DELETE(req: NextRequest) {
         const computed = policy
           ? computeRetentionUntil(
               lowerBound
-                ? row.created_at ?? null
+                ? await disposedBasisLowerBound(row)
                 : retentionBasisISO(policy, {
                     created_at: row.created_at ?? null,
                     updated_at: row.updated_at ?? null,
@@ -286,4 +286,36 @@ export async function DELETE(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+/** A disposed record's LOWER BOUND on its pre-disposal updated_at (the basis
+ *  disposal overwrote): the later of created_at and the current revision's
+ *  created_at less one day. Every write that makes a revision current stamps
+ *  documents.updated_at in the same write (publish_revision, lib/revisions.ts,
+ *  lib/reviewControl.ts, lib/documentLifecycle/common.ts), and a revision is
+ *  created before it is made current, so its created_at is never after the
+ *  updated_at disposal replaced. The one writer that does not stamp is the
+ *  library page's create-with-file, which inserts the document row a moment
+ *  BEFORE its first revision — milliseconds, but across midnight a whole day,
+ *  hence the day's margin (which also absorbs a modest clock difference
+ *  between the browser that drafted a revision and the one that approved it).
+ *  A reversal that points back at an older revision only lowers the bound.
+ *  The revision read is CHECKED: a failed read throws (the caller answers 503). */
+async function disposedBasisLowerBound(row: OwnerDoc): Promise<string | null> {
+  const DAY_MS = 86_400_000;
+  const created = row.created_at ?? null;
+  const currentVersionId = (row as OwnerDoc & { current_version_id?: string | null }).current_version_id;
+  if (!currentVersionId) return created;
+  const { data, error } = await supabaseAdmin
+    .from("document_versions")
+    .select("created_at")
+    .eq("id", currentVersionId)
+    .maybeSingle();
+  if (error) throw error;
+  const vt = Date.parse(String((data as { created_at?: string | null } | null)?.created_at ?? ""));
+  if (!Number.isFinite(vt)) return created;
+  const fromRevision = vt - DAY_MS;
+  const ct = Date.parse(String(created ?? ""));
+  if (Number.isFinite(ct) && ct >= fromRevision) return created;
+  return new Date(fromRevision).toISOString();
 }

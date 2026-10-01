@@ -407,7 +407,9 @@
    "files": [
     "app/api/storage/delete/route.ts \u2014 resolve the key against BOTH document_versions.file_url and source_file_key (upload-url's pattern, app/api/storage/upload-url/route.ts:60) before the legal_hold / document_holds / retention checks",
     "lib/__tests__/storageDeleteRoute.test.ts",
-    "lib/__tests__/intelRoundGRecords.test.ts \u2014 flip the two DACL-2 `it.fails` tripwires to `it`"
+    "lib/__tests__/intelRoundGRecords.test.ts \u2014 flip the two DACL-2 `it.fails` tripwires to `it`",
+    "lib/retentionPolicy.ts \u2014 retentionStatusFor / RetentionStatus moved here verbatim from lib/retention.ts so the route reads the shared verdict without importing the browser client (DACL-2; recorded at merge 2026-10-01 \u2014 P9 RECORDS owned the file in wave 1)",
+    "lib/retention.ts \u2014 re-exports retentionStatusFor / RetentionStatus from lib/retentionPolicy (every import site unchanged; P9's own pattern for its other pure helpers)"
    ],
    "migrationsLikely": 0,
    "dependsOn": [
