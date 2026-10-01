@@ -11,7 +11,8 @@
 //     * an open UNGROUPED quote offers Decline — lib/costDocs declineQuote,
 //       an optional recorded reason — and a refusal is said;
 //     * a DECLINED bid offers Void (it moved no money) through
-//       lib/costDocs voidCostDoc.
+//       lib/costDocs voidCostDoc — in an awarded RFQ group too, where a
+//       grouped award's own decline leaves it (the common case).
 //   PR-2 criterion 2 (intelligence) the bid table shows the extraction's
 //     total check beside the total ("lines ≠ total" and the sentence) when
 //     the AI read lines that do not add up to the total it read; a total a
@@ -194,6 +195,38 @@ describe("MON-10 — the award's warning, its promise, and the hand decline", ()
     expect(cd.voidCostDoc).toHaveBeenCalledWith({ doc: DECLINED, actor: { uid: "u1", email: "u1@example.com" } });
     expect(db.calls.filter((c) => c.table === "cost_documents" && c.op === "update")).toHaveLength(0);
     expect(events).toContain("changed");
+  });
+
+  it("the common shape — a GROUPED award declined its rival: the declined row in the AWARDED group still offers Void; the awarded row offers nothing", async () => {
+    const WON = doc({ ...BAY, rfqGroup: "Unit 300 Repipe", status: "awarded" });
+    const LOST = doc({ ...COLE, rfqGroup: "Unit 300 Repipe", status: "declined" });
+    await render([WON, LOST]);
+    expect(host.textContent).toContain("Awarded to Bayline");
+    // the actions column is kept for the declined row: header and cells line up
+    expect(host.querySelectorAll("thead th")).toHaveLength(8);
+    for (const vendor of ["Bayline", "Cole Paint"]) expect(rowOf(vendor).children, vendor).toHaveLength(8);
+    // award-gated actions stay gone in an awarded group
+    for (const re of [/Award/, /correct total/, /Decline/, /Void/]) expect(btn(rowOf("Bayline"), re), String(re)).toBeUndefined();
+    const row = rowOf("Cole Paint");
+    expect(row.textContent).toContain("not selected");
+    for (const re of [/Award/, /correct total/, /Decline/]) expect(btn(row, re), String(re)).toBeUndefined();
+    const voidBtn = btn(row, /Void/)!;
+    expect(voidBtn).toBeTruthy();
+    expect(voidBtn.className).toContain("min-h-6");
+    dlg.appConfirm.mockResolvedValueOnce(true);
+    cd.voidCostDoc.mockResolvedValueOnce({ ok: true });
+    await act(async () => { voidBtn.click(); });
+    await settle();
+    expect(cd.voidCostDoc).toHaveBeenCalledWith({ doc: LOST, actor: { uid: "u1", email: "u1@example.com" } });
+    expect(db.calls.filter((c) => c.table === "cost_documents" && c.op === "update")).toHaveLength(0);
+    expect(events).toContain("changed");
+  });
+
+  it("an awarded group with no declined bid has no actions column at all", async () => {
+    await render([doc({ ...BAY, rfqGroup: "Unit 300 Repipe", status: "awarded" })]);
+    expect(host.querySelectorAll("thead th")).toHaveLength(7);
+    expect(rowOf("Bayline").children).toHaveLength(7);
+    expect(btn(rowOf("Bayline"), /Void/)).toBeUndefined();
   });
 });
 

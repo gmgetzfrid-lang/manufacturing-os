@@ -2617,7 +2617,7 @@ view; 8 is `awardQuote`'s group filter plus `declineQuote`; 10 is
 tab (from budget − spent to budget − exposure); the previous figure stays
 visible as the secondary line.
 
-*Landed 2026-10-01 (projects Round G): rule 8's hand decline reaches the user. The bid table (`components/projects/cost/QuotesPanel.tsx`) shows the award's `warning`, offers Decline (`declineQuote`, with an optional reason) on an open ungrouped quote and Void (`voidCostDoc`) on a declined one, and the award confirm promises the group decline only for a grouped quote (`MON-10`, package J10b).*
+*Landed 2026-10-01 (projects Round G): rule 8's hand decline reaches the user. The bid table (`components/projects/cost/QuotesPanel.tsx`) shows the award's `warning`, offers Decline (`declineQuote`, with an optional reason) on an open ungrouped quote and Void (`voidCostDoc`) on a declined one — in an awarded RFQ group too, where a grouped award's own decline leaves it — and the award confirm promises the group decline only for a grouped quote (`MON-10`, package J10b).*
 
 <a id="dec-51"></a>
 ## DEC-51 · A schedule re-import is a reviewed merge, never a guess

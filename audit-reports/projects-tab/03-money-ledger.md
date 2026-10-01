@@ -613,14 +613,16 @@ group. Send the notification promised at `upload/route.ts:127`.
   - It then calls `declineQuote({ doc, actor, reason })`.
   - A cancelled prompt writes nothing. A refusal is said and nothing is re-read.
   - The button carries the decision floor (`A11Y-14`).
-- **Void on a declined bid.** It goes through `lib/costDocs.voidCostDoc`, which admits `declined`, not through the panel's open-only void.
+- **Void on a declined bid.** It goes through `lib/costDocs.voidCostDoc`, which admits `declined`, not through the panel's open-only void. It is offered on every declined row, including one in an RFQ group that has an award — the common case, since a grouped award declines its rivals. The bid table keeps its actions column (header, cells and the note row's `colSpan`) while the group holds a declined bid (`showActions` in `BidGroup`); Award, Decline and "correct total" stay gated on no award (`rowActions`). *Review fix:* the first pass rendered the actions column only in a group with no award, so the Void was reachable only on a hand-declined ungrouped quote alone in its group.
 - **The status chip.** The bid table's status chip reads through `costDocStatusLabel` (`REL-4`).
-- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "MON-10 —" (5, rendered):
+- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "MON-10 —" (7, rendered):
   - an ungrouped award's confirm, and its warning, which persists;
   - a grouped award's confirm, and no warning on a clean award;
   - Decline offered on an open ungrouped quote only, with its reason;
   - a cancelled Decline and a refused one;
-  - a declined bid's Void through `voidCostDoc`.
+  - a declined bid's Void through `voidCostDoc`;
+  - an awarded bid and a declined bid in one RFQ group: the declined row offers Void (through `voidCostDoc`), the awarded row offers nothing, and the header and every row have 8 cells;
+  - an awarded group with no declined bid has no actions column (7 cells).
 
 **Done-when.**
 1. ✓ Every losing bid on an awarded scope reaches a terminal status. A grouped rival gets there automatically (J3). An ungrouped one gets there through the hand decline: the award's warning names it and the bid table offers it, per DEC-50 rule 8.

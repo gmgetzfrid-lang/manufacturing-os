@@ -756,7 +756,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     onChanged();
   };
 
-  const colCount = 7 + (canManage && !awarded ? 1 : 0);
+  // MON-10: the actions column stays while the group holds a declined bid —
+  // an award declines its group's rivals (DEC-50 rule 8), and each declined
+  // row keeps its Void. Award, Decline and correct-total stay award-gated
+  // (rowActions).
+  const showActions = canManage && (!awarded || groupDocs.some((d) => d.status === "declined"));
+  const colCount = 7 + (showActions ? 1 : 0);
 
   return (
     <div>
@@ -809,7 +814,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     <th className="px-3 py-2 text-right" title={`${manpowerScored
                       ? `Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (between bids that state plausible hours, at most ${MANPOWER_MAX_COMPOSITE_SWING} points apart on manpower; a bid stating none scores 0 there).`
                       : currency.mixed ? "Not ranked — this field mixes currencies." : `Value score = price alone here — ${notCorroborated}.`} Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
-                    {canManage && !awarded && <th className="px-3 py-2" />}
+                    {showActions && <th className="px-3 py-2" />}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-border)]">
@@ -943,7 +948,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                               </span>
                             )}
                           </td>
-                          {canManage && !awarded && (
+                          {showActions && (
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {rowActions && registryGate === "ready" && (
                                 <PostControls accounts={accounts} busy={busy === doc.id}
