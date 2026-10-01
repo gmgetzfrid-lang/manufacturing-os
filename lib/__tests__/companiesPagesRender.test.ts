@@ -135,6 +135,32 @@ describe("UX-9 — a failed action on the company profile", () => {
   });
 });
 
+describe("UX-15 (fix pass) — the profile's mixed-awards note counts contractor records, never projects", () => {
+  it("one company as two contractors (one with posted commitments, one with a typed contract value) reads as contractor records", async () => {
+    const company: Company = {
+      id: "c1", orgId: "o1", name: "Apex Industrial", kind: "contractor", trade: "piping", status: "active",
+      contactName: null, contactEmail: null, contactPhone: null, qualityManualDocId: null, qualityManualScore: null,
+      qualityManualGaps: null, qualityManualReviewedAt: null, qualityManualPagesRead: null, qualityManualPagesTotal: null,
+      notes: null, createdAt: null,
+    };
+    role.value = { activeOrgId: "o1", uid: "u1", userEmail: "pm@example.com", hasAnyRole: () => true };
+    lib.getCompany.mockResolvedValue(company);
+    lib.gatherCompanyProfile.mockResolvedValue({
+      company, events: [], partiesLinked: 2, awardsSource: "mixed", projects: [], bids: [], changeOrders: [],
+      scorecard: computeCompanyScorecard({
+        recordables: 0, nearMisses: 0, warnings: 0, stopWorks: 0, commendations: 0, qualityManualScore: null,
+        turnoverAccepted: 0, turnoverRejected: 0, punchClosed: 0, punchTotal: 0, awardsTotal: 500_000, finalCostTotal: 520_000,
+        changeOrderCount: 0, changeOrderScopeGapCount: 0, milestonesOnTheirScopes: 0, milestonesHitOnTime: 0,
+        submissionCount: 0, avgSubmitToReviewDays: null, avgAssignToSubmitDays: null,
+      }),
+    });
+    await act(async () => { root.render(React.createElement(CompanyProfilePage)); });
+    await flush();
+    expect(host.textContent).toContain("Awards on some contractor records come from a typed contract value (no commitment has posted against that contractor), the rest from posted commitments.");
+    expect(host.textContent).not.toMatch(/Awards on some projects/);
+  });
+});
+
 describe("COST-3 dw4 — the 'record as' field", () => {
   it("a blank field records nothing (never 0%); numbers are clamped and rounded", () => {
     expect(recordedQualityScore("")).toBeNull();

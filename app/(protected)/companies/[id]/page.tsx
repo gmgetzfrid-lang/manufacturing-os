@@ -175,7 +175,7 @@ export default function CompanyProfilePage() {
                   <> Awards come from a typed contract value, not posted commitments.</>
                 )}
                 {profile && profile.awardsSource === "mixed" && (
-                  <> Awards on some projects come from a typed contract value (no commitment has posted there), the rest from posted commitments.</>
+                  <> Awards on some contractor records come from a typed contract value (no commitment has posted against that contractor), the rest from posted commitments.</>
                 )}
               </div>
             )}
