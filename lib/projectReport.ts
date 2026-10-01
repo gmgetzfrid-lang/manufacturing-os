@@ -48,6 +48,40 @@ function listJoin(xs: string[]): string {
 
 export interface ReportGateLine { text: string; ok: boolean | null }
 
+/** COST-6: one change order as the close-out record shows it — proposer and
+ *  decider side by side, the same person flagged. */
+export interface ReportChangeOrderLine {
+  coNumber: string;
+  title: string;
+  amount: number;
+  status: string;
+  proposedBy: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  /** Proposer and decider are the same person (lib/changeOrders selfDecided). */
+  samePerson: boolean;
+  decisionNote: string | null;
+}
+
+/** GAP-405 acceptance 2: a decision that greens (or closes) a closeout gate,
+ *  with the reason a person recorded and who recorded it — checklist items a
+ *  person decided (N/A, satisfied, reopened, with their note), turnover
+ *  items waived / rejected / accepted with a note, punch items voided or
+ *  closed with a note. */
+export interface ReportDecisionLine {
+  area: "Checklist" | "Turnover" | "Punch";
+  /** The item, with its checklist's title for a checklist item. */
+  item: string;
+  decision: string;
+  reason: string;
+  by: string | null;
+  at: string | null;
+}
+
+/** The decisions section prints at most this many rows (newest first) and
+ *  says how many more there are. */
+export const REPORT_DECISIONS_SHOWN = 200;
+
 /** What was open when the project was completed — the gate snapshot the
  *  override audit row carries (projects-tab SAF-14). Rendered as recorded;
  *  the live figures above it are today's rows. */
@@ -65,6 +99,10 @@ export interface ReportData {
    *  note the Costs tab prints beside the same sentence. */
   forecastScopeNote: string | null;
   cos: ReturnType<typeof summarizeChangeOrders>;
+  /** COST-6: every change order, proposer and decider side by side. */
+  coLines: ReportChangeOrderLine[];
+  /** GAP-405: the decisions on the closeout gates, each with its reason. */
+  decisions: ReportDecisionLine[];
   milestones: Array<{ name: string; planned_at: string | null; status: string; imported: boolean }>;
   /** How many milestone rows the project has. Larger than
    *  `milestones.length` only when the schedule exceeds
@@ -168,8 +206,10 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       { rows: [] as Array<Record<string, unknown>>, total: 0 }),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),
-    direct<Array<{ status: string }>>(R.punch,
-      supabase.from("punch_items").select("status").eq("project_id", projectId).limit(500), [], true),
+    // `select *`: the closure columns (20261091) print beside each decision
+    // when they exist, and their absence never fails the read.
+    direct<Array<Record<string, unknown>>>(R.punch,
+      supabase.from("punch_items").select("*").eq("project_id", projectId).limit(500), [], true),
     direct<Array<{ name: string; kind: string | null; trade: string | null }>>(R.parties,
       supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100), []),
     // The completion override's audit row — newest first; its details carry
@@ -209,6 +249,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
 
   const now = Date.now();
   const checklistLines: ReportData["checklistLines"] = [];
+  const decisions: ReportDecisionLine[] = [];
   for (const c of checklists.filter((c) => c.status !== "void").slice(0, 10)) {
     const items = await safe(listChecklistItems(c.id), []);
     const p = computeChecklistProgress(items);
@@ -217,7 +258,34 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       satisfied: p.satisfied, applicable: p.applicable, needsEvidence: p.needsEvidence,
       complete: c.status === "complete",
     });
+    // GAP-405: a person's decision on an item carries its reason (the note
+    // the 20261091 rail required); a machine's green carries a citation, not
+    // a reason, and is the evidence pack's to show.
+    for (const it of items) {
+      const note = (it.manualNote ?? "").trim();
+      if (!note || !it.updatedBy) continue;
+      decisions.push({
+        area: "Checklist", item: `${c.title} — ${it.text}`,
+        decision: it.status === "na" || it.applicability === "na" ? "not applicable" : it.status === "satisfied" ? "satisfied" : `${it.status.replace("_", " ")}, with a note`,
+        reason: note, by: it.updatedByName ?? null, at: it.updatedAt ?? null,
+      });
+    }
   }
+  for (const t of turnoverItems) {
+    const note = (t.reviewNote ?? "").trim();
+    if (!note || !(t.status === "waived" || t.status === "rejected" || t.status === "accepted")) continue;
+    decisions.push({ area: "Turnover", item: t.name, decision: t.status, reason: note, by: t.reviewedByName ?? null, at: t.reviewedAt ?? null });
+  }
+  for (const pi of punchRows) {
+    const note = String(pi.closure_note ?? "").trim();
+    const st = String(pi.status ?? "");
+    if (!note || !(st === "void" || st === "done")) continue;
+    decisions.push({
+      area: "Punch", item: String(pi.title ?? "Punch item"), decision: st === "void" ? "voided" : "closed",
+      reason: note, by: (pi.closed_by_name as string | null) ?? null, at: (pi.closed_at as string | null) ?? null,
+    });
+  }
+  decisions.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
 
   return {
     project,
@@ -225,6 +293,12 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     forecastSentence: forecast.sentence,
     forecastScopeNote: forecast.scopeNote,
     cos: summarizeChangeOrders(coList),
+    coLines: coList.map((c) => ({
+      coNumber: c.coNumber, title: c.title, amount: c.amount, status: c.status,
+      proposedBy: c.createdByName ?? null, decidedBy: c.decidedByName ?? null, decidedAt: c.decidedAt ?? null,
+      samePerson: c.selfDecided, decisionNote: c.decisionNote ?? null,
+    })),
+    decisions,
     milestones: live.map((m) => ({
       name: String(m.name ?? ""), planned_at: (m.planned_at as string | null) ?? null, status: String(m.status ?? "planned"),
       imported: isImportedMilestone(m),
@@ -314,6 +388,11 @@ ${p.success_criteria ? `<p><b>Success criteria:</b> ${esc(p.success_criteria)}</
 <table>
 ${moneyRows}
 </table>
+${!failed.has(R.changeOrders) && d.coLines.length > 0 ? `
+<p class="muted" style="margin-top:10px">Change orders — who proposed each and who decided it${d.coLines.some((c) => c.samePerson) ? "; <span class=\"flag\">same person</span> marks a change order its proposer decided (allowed only when nobody else could)" : ""}:</p>
+<table><tr><th>CO</th><th>Amount</th><th>Status</th><th>Proposed by</th><th>Decided by</th></tr>
+${d.coLines.map((c) => `<tr><td>${esc(c.coNumber)} <span class="muted">${esc(c.title)}</span></td><td class="num">${esc(money(c.amount))}</td><td>${esc(c.status)}</td><td>${esc(c.proposedBy ?? "—")}</td><td>${c.decidedBy ? esc(c.decidedBy) : "—"}${c.decidedAt ? ` <span class="muted">${esc(new Date(c.decidedAt).toLocaleDateString())}</span>` : ""}${c.samePerson ? ` <span class="flag">same person</span>` : ""}${c.decisionNote ? ` <span class="muted">— ${esc(c.decisionNote)}</span>` : ""}</td></tr>`).join("")}
+</table>` : ""}
 
 <h2>Schedule</h2>
 ${failed.has(R.milestones) ? `<p><span class="flag">Could not read the schedule</span> — it is left out, not shown as empty.</p>` : d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
@@ -335,6 +414,11 @@ ${row("Turnover package", d.turnover.required === 0 ? `<span class="muted">No re
   : `<span class="num">${d.turnover.accepted}/${d.turnover.required}</span> accepted${d.turnover.outstanding.length > 0 ? ` · outstanding: ${esc(d.turnover.outstanding.slice(0, 6).join(", "))}${d.turnover.outstanding.length > 6 ? "…" : ""}` : ""}`)}
 ${row("Punch list", failed.has(R.punch) ? couldNotRead : d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span class="flag">${d.punchOpen} open</span>`)}
 </table>
+${d.decisions.length > 0 ? `
+<p class="muted" style="margin-top:10px">Decisions on the record — each with the reason the person who made it recorded${d.decisions.length > REPORT_DECISIONS_SHOWN ? ` (the newest ${REPORT_DECISIONS_SHOWN} of ${d.decisions.length})` : ""}:</p>
+<table><tr><th>Item</th><th>Decision</th><th>Reason</th><th>By</th></tr>
+${d.decisions.slice(0, REPORT_DECISIONS_SHOWN).map((x) => `<tr><td><span class="muted">${esc(x.area)}</span> ${esc(x.item)}</td><td>${esc(x.decision)}</td><td>${esc(x.reason)}</td><td>${esc(x.by ?? "—")}${x.at ? ` <span class="muted">${esc(new Date(x.at).toLocaleDateString())}</span>` : ""}</td></tr>`).join("")}
+</table>` : ""}
 ${d.closeout ? `
 <h2>Closeout</h2>
 <p>Completed ${d.closeout.at ? esc(new Date(d.closeout.at).toLocaleDateString()) : "—"}${d.closeout.reason ? ` · <i>${esc(d.closeout.reason)}</i>` : ""}</p>

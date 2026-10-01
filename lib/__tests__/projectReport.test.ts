@@ -525,3 +525,87 @@ describe("a refused read is said, never printed as zero (REL-2 consumer)", () =>
     expect(renderReportHtml(d)).not.toMatch(/Could not read|Not read this time/);
   });
 });
+
+// ── projects Round G J12 ─────────────────────────────────────────────────
+// COST-6 (report half): the close-out record prints each change order's
+// proposer and decider, and flags the one person who did both.
+// GAP-405 acceptance 2: every decision that closes a gate prints with the
+// reason the person who made it recorded.
+describe("the report names who proposed and who decided each change order (COST-6)", () => {
+  const cos = () => {
+    state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 50_000, currency: "USD", wbs_milestone_id: null, status: "active" }];
+    state.tables.cost_entries = [];
+    state.tables.change_orders = [
+      { id: "co1", project_id: "p1", cost_account_id: "a1", co_number: "CO-001", title: "Extra spools", amount: 4_000, reason_code: "field_condition", status: "approved",
+        created_by: "u-a", created_by_name: "mreyes", decided_by: "u-b", decided_by_name: "jchen", decided_at: "2026-09-20T00:00:00Z", decision_note: "Agreed on site", posted_entry_id: null },
+      { id: "co2", project_id: "p1", cost_account_id: "a1", co_number: "CO-002", title: "Night shift", amount: 9_000, reason_code: "owner_request", status: "rejected",
+        created_by: "u-a", created_by_name: "mreyes", decided_by: "u-a", decided_by_name: "mreyes", decided_at: "2026-09-21T00:00:00Z", decision_note: null, posted_entry_id: null },
+      { id: "co3", project_id: "p1", cost_account_id: "a1", co_number: "CO-003", title: "<b>Scaffold</b>", amount: 1_000, reason_code: "owner_request", status: "proposed",
+        created_by: "u-c", created_by_name: "pat", decided_by: null, decided_by_name: null, decided_at: null, decision_note: null, posted_entry_id: null },
+    ];
+  };
+
+  it("each change order prints proposer and decider; the self-decided one is flagged 'same person' and the legend explains it", async () => {
+    cos();
+    const d = await gatherReportData("o1", "p1");
+    const lines = [...d.coLines].sort((a, b) => a.coNumber.localeCompare(b.coNumber));
+    expect(lines.map((c) => [c.coNumber, c.proposedBy, c.decidedBy, c.samePerson])).toEqual([
+      ["CO-001", "mreyes", "jchen", false], ["CO-002", "mreyes", "mreyes", true], ["CO-003", "pat", null, false],
+    ]);
+    const html = renderReportHtml(d);
+    expect(html).toContain("<th>Proposed by</th><th>Decided by</th>");
+    expect(html).toMatch(/CO-002[\s\S]*?<td>mreyes<\/td><td>mreyes[^<]*<span class="muted">[^<]*<\/span> <span class="flag">same person<\/span>/);
+    expect(html).toMatch(/CO-001[\s\S]*?<td>mreyes<\/td><td>jchen[\s\S]*?— Agreed on site/);
+    expect(html).toContain("same person</span> marks a change order its proposer decided");
+    expect(html).toContain("&lt;b&gt;Scaffold&lt;/b&gt;");
+    expect(html).not.toContain("<b>Scaffold</b>");
+  });
+
+  it("a refused change_orders read prints no table (the Money section already says it could not be read)", async () => {
+    cos();
+    state.errors.change_orders = "permission denied";
+    state.errorCodes.change_orders = "42501";
+    const html = renderReportHtml(await gatherReportData("o1", "p1"));
+    expect(html).not.toContain("<th>Proposed by</th>");
+  });
+});
+
+describe("the report prints each closeout decision with its reason (GAP-405)", () => {
+  const decided = () => {
+    state.tables.project_checklists = [{ id: "cl1", org_id: "o1", project_id: "p1", title: "PSSR", kind: "pssr", status: "open" }];
+    state.tables.checklist_items = [
+      { id: "i1", checklist_id: "cl1", seq: 1, text: "Relief valves tagged", applicability: "na", status: "na", evidence: [], manual_note: "No relief valves in this scope", updated_by: "u-b", updated_by_name: "jchen", updated_at: "2026-09-25T00:00:00Z" },
+      { id: "i2", checklist_id: "cl1", seq: 2, text: "Hydrotest", applicability: "applies", status: "satisfied", evidence: [{ label: "auto", source: "auto" }], manual_note: null, updated_by: null, updated_by_name: "evidence sweep", updated_at: "2026-09-26T00:00:00Z" },
+      { id: "i3", checklist_id: "cl1", seq: 3, text: "Walkdown", applicability: "applies", status: "satisfied", evidence: [], manual_note: "Walked with ops 9/24", updated_by: "u-a", updated_by_name: "mreyes", updated_at: "2026-09-24T00:00:00Z" },
+    ];
+    state.tables.turnover_items = [
+      { id: "t1", project_id: "p1", name: "Weld map", status: "waived", required: true, review_note: "Owner accepted the weld log in its place", reviewed_by_name: "pat", reviewed_at: "2026-09-27T00:00:00Z" },
+      { id: "t2", project_id: "p1", name: "NDE reports", status: "received", required: true, review_note: null },
+    ];
+    state.tables.punch_items = [
+      { id: "pu1", project_id: "p1", title: "Missing insulation", status: "void", closure_note: "Duplicate of PU-7", closed_by_name: "jchen", closed_at: "2026-09-28T00:00:00Z" },
+      { id: "pu2", project_id: "p1", title: "Paint touch-up", status: "open" },
+    ];
+  };
+
+  it("person-made decisions print newest first with the reason and who made it; a machine green and undecided rows do not", async () => {
+    decided();
+    const d = await gatherReportData("o1", "p1");
+    expect(d.decisions.map((x) => [x.area, x.item, x.decision, x.reason, x.by])).toEqual([
+      ["Punch", "Missing insulation", "voided", "Duplicate of PU-7", "jchen"],
+      ["Turnover", "Weld map", "waived", "Owner accepted the weld log in its place", "pat"],
+      ["Checklist", "PSSR — Relief valves tagged", "not applicable", "No relief valves in this scope", "jchen"],
+      ["Checklist", "PSSR — Walkdown", "satisfied", "Walked with ops 9/24", "mreyes"],
+    ]);
+    expect(d.punchOpen).toBe(1);
+    const html = renderReportHtml(d);
+    expect(html).toContain("Decisions on the record — each with the reason the person who made it recorded");
+    expect(html).toContain("<td>waived</td><td>Owner accepted the weld log in its place</td>");
+    expect(html).not.toContain("Hydrotest</td>");
+  });
+
+  it("no decisions → no section", async () => {
+    const html = renderReportHtml(await gatherReportData("o1", "p1"));
+    expect(html).not.toContain("Decisions on the record");
+  });
+});

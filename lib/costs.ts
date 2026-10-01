@@ -555,16 +555,23 @@ export function computeCostRollup(
   };
 }
 
-/** % complete per milestone id for EV: explicit percent, else status. */
+/** % complete per milestone id for EV: explicit percent, else status.
+ *  SAF-8: a MISSED task earns nothing, whatever percent is stored — the
+ *  rule lib/scheduleProgress.ts leafPercent applies to the schedule's
+ *  earned value, so the Costs tab's CPI, the health score and the printed
+ *  report never credit a task the Schedule tab counts as Missed. The
+ *  stored percent is left alone (un-missing a task gives it back). */
 export function milestonePctIndex(
   milestones: Array<{ id?: string; percentComplete?: number | null; status?: string }>,
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const m of milestones) {
     if (!m.id) continue;
-    const pct = m.percentComplete != null
-      ? Math.round(m.percentComplete)
-      : (m.status === "completed" ? 100 : 0);
+    const pct = m.status === "missed"
+      ? 0
+      : m.percentComplete != null
+        ? Math.round(m.percentComplete)
+        : (m.status === "completed" ? 100 : 0);
     out.set(m.id, pct);
   }
   return out;

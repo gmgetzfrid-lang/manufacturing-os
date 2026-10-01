@@ -7,6 +7,7 @@
 // one click" promise made concrete for auditors (ISO-9001 / PSM evidence).
 
 import { supabase } from "@/lib/supabase";
+import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
 
 interface EvidenceData {
   doc: Record<string, unknown> | null;
@@ -141,7 +142,108 @@ interface ProjectEvidence {
   milestones: Array<Record<string, unknown>>;
   audit: Array<Record<string, unknown>>;
   transmittals: Array<Record<string, unknown>>;
+  /** QUAL-10: the quality program's record (absent = not gathered). */
+  quality?: ProjectQualityEvidence;
 }
+
+// ─── QUAL-10: the quality program in the project pack ──────────────────────
+// Every checklist with every item (status, applicability, the evidence
+// citations, who decided it — a person, or the automated sweep / AI
+// assessment, marked as such), the turnover package (status, reviewer, date,
+// note) and the punch list (closure, who, when, why). A read that fails is
+// said to have failed — never printed as "none".
+
+export interface ProjectQualityEvidence {
+  checklists: Array<Record<string, unknown> & { items: Array<Record<string, unknown>> }>;
+  turnover: Array<Record<string, unknown>>;
+  punch: Array<Record<string, unknown>>;
+  /** Which of "checklists" / "checklist items" / "turnover items" / "punch
+   *  items" could not be read. */
+  unread: string[];
+}
+
+export async function gatherProjectQualityEvidence(projectId: string): Promise<ProjectQualityEvidence> {
+  const unread: string[] = [];
+  const [cl, to, pu] = await Promise.all([
+    supabase.from("project_checklists").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(200),
+    supabase.from("turnover_items").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(500),
+    supabase.from("punch_items").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(1000),
+  ]);
+  if (cl.error) unread.push("checklists");
+  if (to.error) unread.push("turnover items");
+  if (pu.error) unread.push("punch items");
+  const lists = ((cl.data as Array<Record<string, unknown>>) ?? []);
+  const items: Array<Record<string, unknown>> = [];
+  const ids = lists.map((c) => String(c.id));
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from("checklist_items").select("*")
+      .in("checklist_id", ids.slice(i, i + 100)).order("seq", { ascending: true }).limit(5000);
+    if (error) { unread.push("checklist items"); break; }
+    items.push(...((data as Array<Record<string, unknown>>) ?? []));
+  }
+  return {
+    checklists: lists.map((c) => ({ ...c, items: items.filter((it) => String(it.checklist_id) === String(c.id)) })),
+    turnover: (to.data as Array<Record<string, unknown>>) ?? [],
+    punch: (pu.data as Array<Record<string, unknown>>) ?? [],
+    unread,
+  };
+}
+
+/** Who decided a checklist item, as the pack prints it: the automated sweep
+ *  and the AI assessment are named as automated (updated_by NULL + their
+ *  sentinel name, DEC-35); anyone else is the person on the row. */
+export function checklistItemDecider(it: Record<string, unknown>): { who: string; automated: boolean } {
+  const name = (it.updated_by_name as string | null) ?? null;
+  if (!it.updated_by && isMachineActorName(name)) return { who: `${name} (automated)`, automated: true };
+  return { who: name || (it.updated_by ? String(it.updated_by) : "—"), automated: false };
+}
+
+function renderQualitySections(q: ProjectQualityEvidence): string {
+  const unread = new Set(q.unread);
+  const couldNot = (what: string) => `<div class="empty">Could not read the ${what} — this section is left out, not empty.</div>`;
+  const checklistBlocks = q.checklists.map((c) => {
+    const itemRows = c.items.map((it) => {
+      const chips = normalizeEvidence(it.evidence);
+      const decider = checklistItemDecider(it);
+      // A green the automated sweep gave rests on its citations; a person's
+      // rests on their reason. The pack marks the machine's in words, not
+      // colour alone.
+      const autoGreen = it.status === "satisfied" && decider.automated;
+      const cites = chips.map((ch) => `${esc(ch.label)}${ch.source === "auto" ? ' <span class="auto">[automated citation]</span>' : ""}${ch.documentId ? ` <span class="small">doc ${esc(String(ch.documentId).slice(0, 8))}</span>` : ""}`).join("<br>");
+      return `<tr class="${autoGreen ? "autorow" : ""}">
+        <td>${esc(it.seq)}</td>
+        <td>${it.section ? `<span class="small">${esc(it.section)}</span><br>` : ""}${esc(it.text)}</td>
+        <td><b>${esc(String(it.status ?? "—").replace("_", " "))}</b>${autoGreen ? ' <span class="auto">[automated]</span>' : ""}</td>
+        <td>${esc(it.applicability || "—")}</td>
+        <td class="small">${cites || "—"}</td>
+        <td>${esc(decider.who)}${it.updated_at ? `<br><span class="small">${date(it.updated_at)}</span>` : ""}${it.manual_note ? `<br><span class="small">Reason: ${esc(it.manual_note)}</span>` : ""}</td>
+      </tr>`;
+    }).join("");
+    const done = c.status === "complete"
+      ? ` · completed ${date(c.completed_at)}${c.completed_by_name ? ` by ${esc(c.completed_by_name)}` : ""}${c.completed_basis ? ` (basis: ${esc(c.completed_basis)})` : ""}`
+      : "";
+    return `<h3>${esc(c.title || "Checklist")} <span class="small">${esc(String(c.kind ?? "").toUpperCase())} · ${esc(c.status || "—")}${done}</span></h3>
+      ${c.items.length === 0 ? '<div class="empty">No items.</div>' : `<table><thead><tr><th>#</th><th>Item</th><th>Status</th><th>Applies</th><th>Evidence</th><th>Decided by</th></tr></thead><tbody>${itemRows}</tbody></table>`}`;
+  }).join("");
+  const turnoverRows = q.turnover.map((t) => `<tr><td>${esc(t.name)}${t.required === false ? ' <span class="small">(optional)</span>' : ""}</td><td><b>${esc(t.status || "—")}</b></td><td>${esc(t.reviewed_by_name || "—")}</td><td>${date(t.reviewed_at)}</td><td>${esc(t.review_note || "—")}</td></tr>`).join("");
+  const punchRows = q.punch.map((p) => `<tr><td>${esc(p.title)}${p.location ? ` <span class="small">${esc(p.location)}</span>` : ""}</td><td><b>${esc(p.status || "—")}</b></td><td>${date(p.closed_at)}</td><td>${esc(p.closed_by_name || "—")}</td><td>${esc(p.closure_note || "—")}</td></tr>`).join("");
+  return `
+  <h2>Checklists — PSSR / MI / QA-QC (${q.checklists.length})</h2>
+  ${unread.has("checklists") ? couldNot("checklists") : unread.has("checklist items") ? couldNot("checklist items") : q.checklists.length === 0 ? '<div class="empty">No checklists.</div>' : `<div class="small">Rows marked [automated] were set green by the evidence sweep from the citation shown; every other decision names the person who made it and their reason.</div>${checklistBlocks}`}
+
+  <h2>Turnover package (${q.turnover.length})</h2>
+  ${unread.has("turnover items") ? couldNot("turnover items") : q.turnover.length === 0 ? '<div class="empty">No turnover items.</div>' : `<table><thead><tr><th>Item</th><th>Status</th><th>Reviewer</th><th>Reviewed</th><th>Note</th></tr></thead><tbody>${turnoverRows}</tbody></table>`}
+
+  <h2>Punch list (${q.punch.length})</h2>
+  ${unread.has("punch items") ? couldNot("punch items") : q.punch.length === 0 ? '<div class="empty">No punch items.</div>' : `<table><thead><tr><th>Item</th><th>Status</th><th>Closed</th><th>Closed by</th><th>Closure note</th></tr></thead><tbody>${punchRows}</tbody></table>`}
+`;
+}
+
+/** QUAL-10: what the project pack covers and what it does not — printed in
+ *  its footer. */
+export const PROJECT_PACK_COVERAGE =
+  "Assembled from the project record, team, schedule, transmittals, the quality program (every checklist with its items, the turnover package and the punch list) and the project's audit trail (its first 1,000 rows). " +
+  "Not included: the documents themselves and their revision history (each document's own evidence pack), the cost ledger (the project report), and audit rows recorded against other records.";
 
 export async function gatherProjectEvidence(projectId: string): Promise<ProjectEvidence> {
   const [project, members, milestones, audit, transmittals] = await Promise.all([
@@ -158,6 +260,7 @@ export async function gatherProjectEvidence(projectId: string): Promise<ProjectE
     milestones: (milestones.data as Array<Record<string, unknown>>) ?? [],
     audit: (audit.data as Array<Record<string, unknown>>) ?? [],
     transmittals: (transmittals.data as Array<Record<string, unknown>>) ?? [],
+    quality: await gatherProjectQualityEvidence(projectId),
   };
 }
 
@@ -221,6 +324,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   .mono { font-family: ui-monospace, Menlo, monospace; } .small { font-size: 10px; color: #64748b; word-break: break-all; } .empty { color: #94a3b8; font-style: italic; padding: 8px 0; }
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+  h3 { font-size: 12px; margin: 14px 0 4px; } .auto { font-size: 10px; font-weight: 700; letter-spacing: .04em; color: #475569; } tr.autorow td { background: #f1f5f9; font-style: italic; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
@@ -241,11 +345,11 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
 
   <h2>Transmittals — formal document issues (${data.transmittals.length})</h2>
   ${data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}
-
+${data.quality ? renderQualitySections(data.quality) : ""}
   <h2>Audit trail (${data.audit.length})</h2>
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>${join(auditRows)}</tbody></table>`}
 
-  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · Assembled from the project record, team, schedule, and immutable audit trail.</div>
+  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · ${data.quality ? esc(PROJECT_PACK_COVERAGE) : "Assembled from the project record, team, schedule, and immutable audit trail."}</div>
 </body></html>`;
 }
 
