@@ -289,6 +289,71 @@ export async function addTurnoverItem(input: {
   return { ok: true };
 }
 
+/** MON-7 / COST-12: who delivers an item — the contractor its acceptance
+ *  (or, for a punch item, its close-out) counts for, through that
+ *  contractor's Known Company link. A seeded item, or one added before its
+ *  contractor was known, is assigned here. The rule is app-level, like the
+ *  contractor's company link (DEC-44 (J10) item 3): an UNASSIGNED item may be
+ *  assigned at any status — so a package the wizard seeded and QA/QC already
+ *  accepted reaches its company — but an assigned one is moved to another
+ *  contractor (or cleared) only while it is undecided, so a standing
+ *  decision (an acceptance, a rejection's nonconformance, a close-out) never
+ *  moves from one company's record to another's. The contractor must be one
+ *  of the item's own project. The write is guarded on the contractor and the
+ *  status the caller saw (a concurrent change is refused, never
+ *  overwritten), checked (GAP-402), and audited with what it replaced. */
+async function assignContractor(input: {
+  table: "turnover_items" | "punch_items";
+  noun: "turnover item" | "punch item";
+  item: { id: string; orgId: string; projectId: string; partyId: string | null; status: string };
+  name: string;
+  undecided: boolean;
+  partyId: string | null;
+  action: "TURNOVER_CONTRACTOR_SET" | "PUNCH_CONTRACTOR_SET";
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { item } = input;
+  const next = input.partyId || null;
+  if (next === item.partyId) return { ok: true };
+  if (item.partyId && !input.undecided) {
+    return { ok: false, error: `This ${input.noun} is ${item.status === "done" ? "closed" : item.status} — its contractor stays as recorded. Reopen it to change who it counts for.` };
+  }
+  if (next) {
+    const { data, error } = await supabase.from("project_parties").select("id")
+      .eq("id", next).eq("project_id", item.projectId).maybeSingle();
+    if (error) return { ok: false, error: `Couldn't check the contractor: ${userFacingReadError(error, "assignContractor")}` };
+    if (!data) return { ok: false, error: "That contractor isn't on this project — add them on the Costs tab first." };
+  }
+  const patch = { party_id: next };
+  // One checked statement (the GAP-402 census reads statements), guarded on
+  // the status and the contractor the caller saw.
+  const w = await checkedWrite((item.partyId
+    ? supabase.from(input.table).update(patch).eq("id", item.id).eq("org_id", item.orgId).eq("status", item.status).eq("party_id", item.partyId)
+    : supabase.from(input.table).update(patch).eq("id", item.id).eq("org_id", item.orgId).eq("status", item.status).is("party_id", null)
+  ).select("id"));
+  if (!w.ok) {
+    return { ok: false, error: w.code === "refused"
+      ? `The contractor was not changed — this ${input.noun} changed since you loaded it, or you can't edit it. Reload and try again.`
+      : w.error };
+  }
+  await audit(input.action, item.orgId, item.projectId, input.actor, {
+    itemId: item.id, name: input.name, status: item.status, from: item.partyId, to: next,
+  });
+  return { ok: true };
+}
+
+/** Assign (or, while undecided, change) the contractor who delivers a
+ *  turnover item — see assignContractor. Undecided: not received / received. */
+export async function assignTurnoverContractor(input: {
+  item: TurnoverItem; partyId: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  return assignContractor({
+    table: "turnover_items", noun: "turnover item", item: input.item, name: input.item.name,
+    undecided: input.item.status === "open" || input.item.status === "received",
+    partyId: input.partyId, action: "TURNOVER_CONTRACTOR_SET", actor: input.actor,
+  });
+}
+
 /**
  * Move one item through the review: mark received (optionally attaching the
  * submitted document), then accepted / rejected / waived — decisions stamp
@@ -465,6 +530,18 @@ export async function addPunchItem(input: {
   if (!w.ok) return { ok: false, error: w.error };
   await audit("PUNCH_ADDED", input.orgId, input.projectId, input.actor, { title: input.title.trim() });
   return { ok: true };
+}
+
+/** Assign (or, while it is open, change) the contractor responsible for a
+ *  punch item — see assignContractor. */
+export async function assignPunchContractor(input: {
+  item: PunchItem; partyId: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  return assignContractor({
+    table: "punch_items", noun: "punch item", item: input.item, name: input.item.title,
+    undecided: input.item.status === "open",
+    partyId: input.partyId, action: "PUNCH_CONTRACTOR_SET", actor: input.actor,
+  });
 }
 
 /** Close (done), void, or reopen a punch item. Done records who closed it

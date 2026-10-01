@@ -84,7 +84,7 @@ vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));
 
 import { saveParty, linkPartyToCompany, listParties, checkPartyCompanyLink } from "@/lib/costs";
-import { addTurnoverItem, addPunchItem } from "@/lib/turnover";
+import { addTurnoverItem, addPunchItem, seedTurnoverItems, listTurnoverItems, listPunchItems, assignTurnoverContractor, assignPunchContractor } from "@/lib/turnover";
 import { gatherCompanyProfile, type Company } from "@/lib/companies";
 
 const actor = { uid: "u1", email: "pm@plant.example" };
@@ -217,6 +217,103 @@ describe("MON-7 dw2 / COST-12 dw3 — turnover and punch carry the contractor, a
     expect(q).toMatch(/listParties\(orgId, projectId\)[\s\S]{0,200}\.catch\(/);
     expect(q).toContain('label="Contractor who delivers it"');
     expect(q).toContain('label="Contractor responsible"');
+  });
+});
+
+describe("MON-7 dw2 / COST-12 dw3 (fix pass) — a SEEDED or existing item is assigned its contractor, and its acceptance reaches the company", () => {
+  const quality = async () => (await gatherCompanyProfile(GULF)).scorecard.dimensions.find((d) => d.key === "quality")!;
+  const addGulf = async () => {
+    await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical", companyId: "c1" }, actor });
+    return db.rows.project_parties.find((p) => p.name === "Gulf Mechanical")!.id as string;
+  };
+
+  it("the normal workflow: the package is seeded with no contractor and accepted — Unrated; each item assigned to its contractor on the Quality tab — Quality moves off Unrated", async () => {
+    const gulf = await addGulf();
+    expect((await seedTurnoverItems({ orgId: "o1", projectId: "p1", jobKind: "small", actor })).ok).toBe(true);
+    expect(db.rows.turnover_items.map((t) => t.party_id)).toEqual([null, null, null]);
+    // QA/QC accepted the whole package before anyone named who delivered it
+    // (the signed review is reviewTurnoverItem's — pinned in qualitySignoff.test).
+    for (const t of db.rows.turnover_items) t.status = "accepted";
+    expect((await quality()).score).toBeNull();
+
+    for (const it of await listTurnoverItems("o1", "p1")) {
+      expect(it.partyId).toBeNull();
+      expect(await assignTurnoverContractor({ item: it, partyId: gulf, actor })).toEqual({ ok: true });
+    }
+    const q = await quality();
+    expect(q.score).toBe(100);
+    expect(q.detail).toBe("turnover 3/3 accepted");
+    // guarded on what the caller saw, and audited with what it replaced
+    const upd = db.writes.filter((w) => w.table === "turnover_items" && w.op === "update");
+    expect(upd).toHaveLength(3);
+    for (const w of upd) expect(w.filters).toEqual(expect.arrayContaining(["eq:id", "eq:org_id", "eq:status", "is:party_id"]));
+    expect(audits("TURNOVER_CONTRACTOR_SET").map((a) => a.details)).toEqual(
+      db.rows.turnover_items.map((t) => expect.objectContaining({ itemId: t.id, status: "accepted", from: null, to: gulf })));
+  });
+
+  it("the seed itself carries the contractor picked beside Seed required contents", async () => {
+    const gulf = await addGulf();
+    expect((await seedTurnoverItems({ orgId: "o1", projectId: "p1", jobKind: "small", partyId: gulf, actor })).ok).toBe(true);
+    expect(db.rows.turnover_items.map((t) => t.party_id)).toEqual([gulf, gulf, gulf]);
+    db.rows.turnover_items[0].status = "accepted";
+    expect((await quality()).detail).toBe("turnover 1/1 accepted");
+  });
+
+  it("a decided item keeps its contractor (never moved to another company's record); an undecided one can move; a contractor from another project is refused; a refusal writes nothing", async () => {
+    const gulf = await addGulf();
+    await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Holdings", companyId: "c8" }, actor });
+    const apex = db.rows.project_parties.find((p) => p.name === "Apex Holdings")!.id as string;
+    db.rows.project_parties.push({ id: "elsewhere", org_id: "o1", project_id: "p2", name: "Other job's crew" });
+    await addTurnoverItem({ orgId: "o1", projectId: "p1", name: "Torque records", partyId: gulf, actor });
+    await addTurnoverItem({ orgId: "o1", projectId: "p1", name: "Weld map", partyId: gulf, actor });
+    db.rows.turnover_items[0].status = "accepted";
+    db.rows.turnover_items[1].status = "received";
+    const [accepted, received] = await listTurnoverItems("o1", "p1");
+    db.writes = [];
+
+    const moved = await assignTurnoverContractor({ item: accepted, partyId: apex, actor });
+    expect(moved.ok).toBe(false);
+    expect(moved.error).toMatch(/^This turnover item is accepted — its contractor stays as recorded\. Reopen it/);
+    expect((await assignTurnoverContractor({ item: accepted, partyId: null, actor })).ok).toBe(false);
+    expect((await assignTurnoverContractor({ item: received, partyId: "elsewhere", actor })).error).toBe("That contractor isn't on this project — add them on the Costs tab first.");
+    expect(db.writes).toEqual([]);
+    expect(db.rows.turnover_items.map((t) => t.party_id)).toEqual([gulf, gulf]);
+
+    // undecided: moves, and its acceptance then counts for the new company
+    expect(await assignTurnoverContractor({ item: received, partyId: apex, actor })).toEqual({ ok: true });
+    expect(db.rows.turnover_items[1].party_id).toBe(apex);
+    expect(audits("TURNOVER_CONTRACTOR_SET")[0].details).toMatchObject({ from: gulf, to: apex, status: "received" });
+    // a stale view (someone decided it meanwhile) is refused by the guard, not overwritten
+    db.rows.turnover_items[1].status = "accepted";
+    const stale = await assignTurnoverContractor({ item: { ...received, partyId: apex }, partyId: gulf, actor });
+    expect(stale.ok).toBe(false);
+    expect(stale.error).toMatch(/changed since you loaded it/);
+    expect(db.rows.turnover_items[1].party_id).toBe(apex);
+  });
+
+  it("an existing punch item is assigned after the fact; its close-out then counts; a closed one keeps its contractor", async () => {
+    const gulf = await addGulf();
+    expect((await addPunchItem({ orgId: "o1", projectId: "p1", title: "Reinstall insulation at E-301", actor })).ok).toBe(true);
+    db.rows.punch_items[0].status = "done";
+    expect((await quality()).score).toBeNull();
+    const [done] = await listPunchItems("o1", "p1");
+    expect(await assignPunchContractor({ item: done, partyId: gulf, actor })).toEqual({ ok: true });
+    expect((await quality()).detail).toBe("punch 1/1 closed");
+    const [assigned] = await listPunchItems("o1", "p1");
+    expect((await assignPunchContractor({ item: assigned, partyId: null, actor })).error).toMatch(/^This punch item is closed — its contractor stays as recorded/);
+    expect(audits("PUNCH_CONTRACTOR_SET")).toHaveLength(1);
+  });
+
+  it("the Quality tab wires it: a contractor control on every turnover and punch row (unassigned, or undecided) and a picker beside Seed required contents", () => {
+    const q = readFileSync(join(process.cwd(), "components/projects/QualityTab.tsx"), "utf8");
+    expect(q).toContain("seedTurnoverItems({ orgId, projectId, jobKind, partyId: seedParty || null, actor })");
+    expect(q).toContain('label="Contractor who delivers the seeded items"');
+    expect(q).toContain("finish(await assignTurnoverContractor({ item, partyId: partyId || null, actor }));");
+    expect(q).toContain('(!it.partyId || it.status === "open" || it.status === "received") ? (');
+    expect(q).toContain("label={`Contractor who delivers ${it.name}`}");
+    expect(q).toContain("const r = await assignPunchContractor({ item: it, partyId: partyId || null, actor });");
+    expect(q).toContain('(!it.partyId || it.status === "open") ? (');
+    expect(q).toContain("label={`Contractor responsible for ${it.title}`}");
   });
 });
 

@@ -238,8 +238,31 @@ describe("A11Y-8 — decision targets, Accept's confirmation, the stepper", () =
       expect(at, fn).toBeGreaterThan(0);
       expect(q.slice(at, at + 400), fn).toContain("${DECISION_TARGET}");
     }
-    expect((q.match(/ml-auto flex flex-wrap items-center justify-end gap-2/g) ?? []).length).toBe(2);
+    // the turnover and punch decision clusters, and (MON-7 fix pass) the seed
+    // cluster with its contractor picker
+    expect((q.match(/ml-auto flex flex-wrap items-center justify-end gap-2/g) ?? []).length).toBe(3);
     expect(q).toContain("shrink-0 basis-full sm:basis-auto flex flex-wrap items-center justify-end gap-2");
+  });
+  it("fix pass: EVERY button in the turnover document pick (Accept without naming a document, Cancel, each result), the checklist's decision cluster (Which items apply, Check evidence, Mark complete) and the AI review panel (Tick every, Clear, Apply N ticked, Cancel) carries the floor, in clusters spaced 8 px", () => {
+    const slice = (from: string, to: string) => {
+      const a = q.indexOf(from);
+      const b = q.indexOf(to, a + from.length);
+      expect(a, from).toBeGreaterThan(0);
+      expect(b, to).toBeGreaterThan(a);
+      return q.slice(a, b);
+    };
+    const regions: Array<[string, string, number]> = [
+      [slice("function DocPicker(", "function TurnoverSection("), "the turnover document pick", 3],
+      [slice('{canManage && checklist.status === "open" && (', "{signing && ("), "the checklist's decision cluster", 3],
+      [slice("function AssessmentReview(", "function ChecklistItemRow("), "the AI review panel", 4],
+    ];
+    for (const [region, name, expected] of regions) {
+      const buttons = region.split("<button").slice(1).map((b) => b.slice(0, b.indexOf("</button>")));
+      expect(buttons.length, name).toBe(expected);
+      for (const b of buttons) expect(b, `${name}: ${b.slice(0, 120)}`).toContain("${DECISION_TARGET}");
+    }
+    expect(q).toContain('<div className="flex items-center gap-2 text-[10px] font-bold">\n        <button type="button" onClick={onSkip}');
+    expect(q).toContain('{canManage && checklist.status === "open" && (\n            <div className="flex items-center gap-2 flex-wrap">');
   });
   it("Accept carries the same weight as Reject: it opens the document pick and then the signature ceremony — nothing fires on the click", () => {
     expect(q).toContain("<button onClick={() => setAccepting(it)}");

@@ -62,6 +62,7 @@ import {
   type TurnoverItem, type PunchItem, type TurnoverReviewEvent, TURNOVER_STATUS_LABEL,
   listTurnoverItems, listTurnoverReviewEvents, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem, reopenTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
+  assignTurnoverContractor, assignPunchContractor,
 } from "@/lib/turnover";
 import { type SegmentedItem, isAutoOnlyGreen, isHumanGreen, isUnreasonedNa, isMachineActorName, reasonProblem, REASON_MIN_LENGTH } from "@/lib/checklistEngine";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
@@ -636,7 +637,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
           {canManage && checklist.status === "open" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => void assess()} disabled={busy != null || aiBlocked(ai)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}>
                 {busy === "assess" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Which items apply to this job?
               </button>
               <AiPreconditionNote readiness={ai} />
@@ -644,7 +645,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
                 AI judges which items apply to THIS job, grounded on the project&apos;s purpose, SOW, schedule, and documents. It only <b>proposes</b> — you review each proposal before it applies, and it never marks an item not applicable on its own.
               </HelpTooltip>
               <button onClick={() => void sweep()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}>
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
               <HelpTooltip label="What “Check evidence we already hold” does">
@@ -653,7 +654,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
               <button onClick={() => setSigning(true)} disabled={busy != null || completeBlocked}
                 aria-disabled={completeBlocked || undefined}
                 title={completeTitle}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}>
                 {busy === "complete" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} Mark complete
               </button>
               {completeBlocked && progress && (
@@ -762,9 +763,9 @@ function AssessmentReview({ review, busy, onToggle, onTickAll, onClear, onApply,
         </div>
       )}
       <div className="flex items-center gap-2 text-[10px] font-bold">
-        <button type="button" onClick={onTickAll} className="underline text-[var(--color-text-muted)]"
+        <button type="button" onClick={onTickAll} className={`${DECISION_TARGET} px-1.5 rounded underline text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}
           title="Ticks every proposal that keeps an item in scope — never an N/A">Tick every in-scope proposal</button>
-        <button type="button" onClick={onClear} className="underline text-[var(--color-text-muted)]">Clear</button>
+        <button type="button" onClick={onClear} className={`${DECISION_TARGET} px-1.5 rounded underline text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}>Clear</button>
         <span className="ml-auto tabular-nums text-[var(--color-text-muted)]">{review.ticked.size} ticked</span>
       </div>
       <ul className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
@@ -795,10 +796,10 @@ function AssessmentReview({ review, busy, onToggle, onTickAll, onClear, onApply,
       </ul>
       <div className="flex items-center gap-2">
         <button type="button" onClick={onApply} disabled={busy || review.ticked.size === 0}
-          className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          className={`${DECISION_TARGET} inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
           {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Apply {review.ticked.size} ticked
         </button>
-        <button type="button" onClick={onCancel} disabled={busy} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className={`${DECISION_TARGET} px-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`}>Cancel</button>
       </div>
     </div>
   );
@@ -968,7 +969,7 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
         <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
           {results.map((d) => (
             <li key={d.id}>
-              <button type="button" onClick={() => onPick(d)} className="w-full px-3 py-1.5 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+              <button type="button" onClick={() => onPick(d)} className={`${DECISION_TARGET} w-full px-3 py-1.5 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2`}>
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
                 {d.status && <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)]">{d.status}</span>}
               </button>
@@ -977,8 +978,8 @@ function DocPicker({ orgId, title, onPick, onSkip, onCancel }: {
         </ul>
       )}
       <div className="flex items-center gap-2 text-[10px] font-bold">
-        <button type="button" onClick={onSkip} className="underline text-[var(--color-text-muted)]">Accept without naming a document</button>
-        <button type="button" onClick={onCancel} className="ml-auto text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button type="button" onClick={onSkip} className={`${DECISION_TARGET} px-1.5 rounded underline text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}>Accept without naming a document</button>
+        <button type="button" onClick={onCancel} className={`${DECISION_TARGET} ml-auto px-1.5 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`}>Cancel</button>
       </div>
     </div>
   );
@@ -1000,6 +1001,8 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
   const [addParty, setAddParty] = useState("");
+  /** MON-7: the contractor the seeded package is assigned to (optional). */
+  const [seedParty, setSeedParty] = useState("");
   const contractorName = useMemo(() => new Map(contractors.map((c) => [c.id, c.name])), [contractors]);
   const addItem = async () => {
     if (!addName.trim()) return;
@@ -1049,7 +1052,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
 
   const seed = async () => {
     setBusy("seed"); setNotice(null);
-    const res = await seedTurnoverItems({ orgId, projectId, jobKind, actor });
+    const res = await seedTurnoverItems({ orgId, projectId, jobKind, partyId: seedParty || null, actor });
     setBusy(null);
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't seed.")); return; }
     setNotice(res.added > 0 ? success(`Added ${res.added} required item${res.added === 1 ? "" : "s"}.`) : info("Every required item for this job size is already listed."));
@@ -1097,6 +1100,14 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
     setSigningDecision({ item, status: "waived", note: note.trim() });
   };
 
+  /** MON-7: assign a seeded or existing item to its contractor (or, while it
+   *  is undecided, change it) — its acceptance then counts for that
+   *  contractor's Known Company. */
+  const assign = async (item: TurnoverItem, partyId: string) => {
+    setBusy(item.id); setNotice(null);
+    finish(await assignTurnoverContractor({ item, partyId: partyId || null, actor }));
+  };
+
   const reopen = async (item: TurnoverItem) => {
     const reason = await promptReason(`Reopen "${item.name}"`,
       `This item is ${item.status}. Reopening sends it back for review; the ${item.status === "accepted" ? "acceptance" : "waiver"} stays in the history with your reason.`,
@@ -1117,11 +1128,16 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
           </span>
         )}
         {canManage && !loadError && (
-          <button onClick={() => void seed()} disabled={busy != null}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-            title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
-            {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Seed required contents
-          </button>
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {contractors.length > 0 && (
+              <ContractorPicker contractors={contractors} value={seedParty} onChange={setSeedParty} label="Contractor who delivers the seeded items" />
+            )}
+            <button onClick={() => void seed()} disabled={busy != null}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+              title={`Adds the required contents for a ${jobKind ?? "standard"} job (existing items are kept).`}>
+              {busy === "seed" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Seed required contents
+            </button>
+          </span>
         )}
       </div>
 
@@ -1159,7 +1175,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
               <li key={it.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-bold text-[var(--color-text)]">{it.name}</span>
-                  {it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
+                  {canManage && busy !== it.id && contractors.length > 0 && (!it.partyId || it.status === "open" || it.status === "received") ? (
+                    <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
+                      label={`Contractor who delivers ${it.name}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
+                  ) : it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
                   {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
                   <TurnoverChip status={it.status} />
                   {canManage && busy !== it.id && (
@@ -1303,13 +1322,18 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
 /** The contractor an item is assigned to (optional). Its acceptance or
  *  close-out counts for the Known Company that contractor is linked to; an
  *  unassigned or unlinked one counts for nobody (never as a zero). */
-function ContractorPicker({ contractors, value, onChange, label }: {
+function ContractorPicker({ contractors, value, onChange, label, placeholder = "Contractor (optional)…", compact = false }: {
   contractors: CostParty[]; value: string; onChange: (v: string) => void; label: string;
+  placeholder?: string;
+  /** A row's own control (MON-7): smaller, with the decision-target floor. */
+  compact?: boolean;
 }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} title={`${label} — their company's scorecard counts it`}
-      className="h-8 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-      <option value="">Contractor (optional)…</option>
+      className={compact
+        ? `${DECISION_TARGET} max-w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[10px] text-[var(--color-text-muted)]`
+        : "h-8 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"}>
+      <option value="">{placeholder}</option>
       {contractors.map((c) => <option key={c.id} value={c.id}>{c.name}{c.companyId ? "" : " (unlinked)"}</option>)}
     </select>
   );
@@ -1357,6 +1381,16 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
     setBusy(null);
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't add.")); return; }
     setTitle(""); setDue(""); setLocation(""); setDescription(""); setParty(""); onChanged();
+  };
+
+  /** MON-7: assign an existing punch item to its contractor (or, while it is
+   *  open, change it) — its close-out then counts for that contractor's
+   *  Known Company. */
+  const assign = async (it: PunchItem, partyId: string) => {
+    setBusy(it.id); setNotice(null);
+    const r = await assignPunchContractor({ item: it, partyId: partyId || null, actor });
+    setBusy(null);
+    if (!r.ok) setNotice(failure(r.error ?? "Couldn't change the contractor.")); else onChanged();
   };
 
   const close = async (it: PunchItem, status: "done" | "void") => {
@@ -1429,7 +1463,10 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   <StatusMark spec={PUNCH_STATUS_MARKS[it.status === "done" ? "done" : it.status === "void" ? "void" : overdue ? "overdue" : "open"]} />
                   <span className={it.status !== "open" ? "text-[var(--color-text-muted)] line-through" : "text-[var(--color-text)]"}>{it.title}</span>
                   {it.location && <span className="text-[10px] font-bold text-[var(--color-text-muted)]">@ {it.location}</span>}
-                  {it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
+                  {canManage && busy !== it.id && contractors.length > 0 && (!it.partyId || it.status === "open") ? (
+                    <ContractorPicker contractors={contractors} value={it.partyId ?? ""} onChange={(v) => void assign(it, v)}
+                      label={`Contractor responsible for ${it.title}`} placeholder={it.partyId ? "No contractor" : "Assign contractor…"} compact />
+                  ) : it.partyId && contractorName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">· {contractorName.get(it.partyId)}</span>}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                       due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}
