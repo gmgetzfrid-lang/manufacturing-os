@@ -28,6 +28,11 @@ export interface PendingAction {
   expiresAt?: string;
   /** Set when the proposal could not be stored: it cannot be confirmed. */
   unavailable?: string;
+  /** ORCH-9: suggested in a run whose tool results carried a marker the
+   *  transcript neutralises (a label such as "SYSTEM:", a fence, a tool-call
+   *  key). Informational — the card says so; confirming works exactly as for
+   *  any other proposal. */
+  tainted?: boolean;
 }
 
 /** A document the answer names, resolved to something clickable. */

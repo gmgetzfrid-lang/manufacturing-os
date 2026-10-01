@@ -232,6 +232,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "ai_usage_events", column: "input_tokens", migration: "20260916_ai_governance.sql", feature: "AI spend ledger — prompt tokens" },
   { table: "ai_usage_events", column: "output_tokens", migration: "20260916_ai_governance.sql", feature: "AI spend ledger — reply tokens" },
   { table: "ai_usage_events", column: "model", migration: "20260916_ai_governance.sql", feature: "AI spend ledger — the model each call was priced at" },
+  // intelligence I-19 (ORCH-9 criterion 3): until it is pasted the assistant
+  // stores proposals without the flag and its cards carry no note.
+  { table: "orchestrator_proposals", column: "tainted", migration: "20261158_intel_roundG_orchestrator_taint.sql", feature: "Assistant proposals flagged when suggested after reading document text" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

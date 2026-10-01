@@ -21,6 +21,16 @@
 // (it was refused or failed). A proposal row is pruned once it is a week
 // past its expiry — by the daily maintenance cron and on every store, so at
 // the next of those after that week, not to the minute.
+//
+// ORCH-9 (criterion 3): a proposal made in a run whose tool results carried
+// a role / instruction marker (the loop marks it `tainted`) is stored with
+// `tainted = true` (20261158) and its card says it was suggested after
+// reading document text. The flag informs the person confirming; it never
+// blocks, changes or expires a proposal. A run that read no marker stores
+// its rows exactly as before (the column defaults to false). Before 20261158
+// the column is missing: the proposal is stored without the flag, stays
+// confirmable, and its card shows no flag. A handoff (`href`) is never
+// stored, so its card keeps the run's mark as it is.
 
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -32,6 +42,7 @@ export const PROPOSAL_TTL_MS = 15 * 60_000;
  *  (it goes at the next prune after that: the maintenance cron, or a store). */
 export const PROPOSAL_KEEP_AFTER_EXPIRY_MS = 7 * 24 * 60 * 60_000;
 export const PROPOSALS_MIGRATION = "20261147_intel_roundG_orchestrator_proposals.sql";
+export const TAINT_MIGRATION = "20261158_intel_roundG_orchestrator_taint.sql";
 
 /** A pending action as the client receives it: the tool's proposal plus the
  *  id of its stored row (or why it cannot be confirmed). */
@@ -43,7 +54,17 @@ export interface StoredPendingAction extends PendingAction {
   /** Set when an executable proposal could NOT be stored — it cannot be
    *  confirmed, and this says why. */
   unavailable?: string;
+  /** ORCH-9: the proposal was suggested in a run whose tool results carried
+   *  a marker the transcript neutralises (a label such as "SYSTEM:", a fence,
+   *  a tool-call key). On a stored proposal it is set only when the row was
+   *  stored with `tainted = true` (never on an unavailable card, or before
+   *  20261158). A handoff (`href`) is never stored: its card carries the
+   *  run's mark as it is. */
+  tainted?: true;
 }
+
+/** A proposal as the run hands it on: `tainted` when the run read a marker. */
+type RunPending = PendingAction & { tainted?: boolean };
 
 export interface StoredProposal {
   id: string;
@@ -64,6 +85,21 @@ type DbError = { code?: string; message?: string } | null | undefined;
 
 const isMissingTable = (e: DbError) =>
   !!e && (e.code === "42P01" || e.code === "PGRST205" || /relation .* does not exist|could not find the table/i.test(e.message ?? ""));
+
+/** The `tainted` column is not there yet (20261158 not pasted): Postgres
+ *  42703, or PostgREST's schema cache PGRST204. */
+const isMissingTaintColumn = (e: DbError) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /column "tainted"|'tainted' column/i.test(e.message ?? ""));
+
+/** The card's copy of a proposal: the run's taint mark is dropped — a stored
+ *  proposal's card carries `tainted` only when its row does. */
+const card = ({ tainted: _tainted, ...p }: RunPending): StoredPendingAction => ({ ...p });
+
+/** A handoff's card (`href`): never stored — the real flow is its
+ *  confirmation — so it keeps the run's mark as it is. It is still a write
+ *  the person confirms, and its summary carries the model's words. */
+const handoffCard = (p: RunPending): StoredPendingAction =>
+  (p.tainted === true ? { ...card(p), tainted: true as const } : card(p));
 
 /** A proposal id is its row's UUID. Anything else names no proposal: it is
  *  refused as unknown (409) before the database is asked, where a non-UUID
@@ -104,25 +140,43 @@ export type ProposalRefusal = {
  * actions (`href`) are returned unchanged: they never execute server-side.
  * When the store fails, the executable proposals come back marked
  * `unavailable` — never confirmable without a stored row (fail closed).
+ * ORCH-9: a proposal the run marked `tainted` is stored with the flag and
+ * its card carries it; before 20261158 it is stored without it (the card
+ * then shows none). A handoff's card carries the run's mark as it is (it is
+ * never stored); no other card gets it any other way.
  */
 export async function storeProposals(
-  orgId: string, userId: string, runId: string, pending: readonly PendingAction[], now: number = Date.now(),
+  orgId: string, userId: string, runId: string, pending: readonly RunPending[], now: number = Date.now(),
 ): Promise<StoredPendingAction[]> {
   const executable = pending.filter((p) => !p.href);
-  if (executable.length === 0) return pending.map((p) => ({ ...p }));
+  if (executable.length === 0) return pending.map(handoffCard);
   const expiresAt = new Date(now + PROPOSAL_TTL_MS).toISOString();
-  const { data, error } = await supabaseAdmin
+  // ORCH-9: only a run that read a marker names the column (on every row,
+  // explicitly); a clean run's rows are exactly what they were before it.
+  const flagged = executable.some((p) => p.tainted === true);
+  const rows = executable.map((p) => ({
+    // The id is minted here (the column's default is the same kind of
+    // value), so the card's id is a UUID whichever side assigns it.
+    id: randomUUID(),
+    run_id: runId, org_id: orgId, user_id: userId,
+    fingerprint: p.fingerprint, tool: p.tool,
+    parameters: p.parameters, summary: p.summary,
+    expires_at: expiresAt,
+    ...(flagged ? { tainted: p.tainted === true } : {}),
+  }));
+  const insert = (payload: typeof rows) => supabaseAdmin
     .from("orchestrator_proposals")
-    .insert(executable.map((p) => ({
-      // The id is minted here (the column's default is the same kind of
-      // value), so the card's id is a UUID whichever side assigns it.
-      id: randomUUID(),
-      run_id: runId, org_id: orgId, user_id: userId,
-      fingerprint: p.fingerprint, tool: p.tool,
-      parameters: p.parameters, summary: p.summary,
-      expires_at: expiresAt,
-    })))
+    .insert(payload)
     .select("id, fingerprint, expires_at");
+  let { data, error } = await insert(rows);
+  let flagStored = flagged && !error;
+  if (flagged && isMissingTaintColumn(error)) {
+    // Before 20261158: store the proposal without the flag — it stays
+    // confirmable exactly as before, and its card shows no flag.
+    ({ data, error } = await insert(rows.map(({ tainted: _tainted, ...r }) => r)));
+    flagStored = false;
+    if (!error) console.warn(`[orchestrator] proposals stored without the document-text flag: ${TAINT_MIGRATION} has not been applied.`);
+  }
   const stored = new Map<string, { id: string; expires_at: string }>();
   if (!error) {
     for (const r of (data ?? []) as Array<{ id: string; fingerprint: string; expires_at: string }>) {
@@ -135,9 +189,13 @@ export async function storeProposals(
   // Best effort, never in the way of the answer: rows a week past expiry go.
   await pruneOrchestratorProposals(now).catch(() => undefined);
   return pending.map((p) => {
-    if (p.href) return { ...p };
+    if (p.href) return handoffCard(p);
     const row = stored.get(p.fingerprint);
-    return row ? { ...p, proposalId: row.id, expiresAt: row.expires_at } : { ...p, unavailable: why };
+    if (!row) return { ...card(p), unavailable: why };
+    return {
+      ...card(p), proposalId: row.id, expiresAt: row.expires_at,
+      ...(flagStored && p.tainted === true ? { tainted: true as const } : {}),
+    };
   });
 }
 

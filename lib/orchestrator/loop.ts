@@ -18,7 +18,7 @@
 // already lives (the org's own BYO connection).
 
 import { randomBytes } from "node:crypto";
-import { parseTurn, validateParams, isRepeatCall, neutralizeUntrusted, type ToolCall } from "@/lib/orchestrator/protocol";
+import { parseTurn, validateParams, isRepeatCall, neutralizeUntrusted, neutralizeUntrustedReport, type ToolCall } from "@/lib/orchestrator/protocol";
 import { TOOL_NAMES, toolByName, toolCatalogue, type PendingAction, type ToolContext } from "@/lib/orchestrator/tools";
 
 /** One model turn. Injected so the loop is testable and provider-agnostic. */
@@ -36,12 +36,23 @@ export interface OrchestratorStep {
   error?: string;
 }
 
+/** A write the run hands on (ORCH-9 criterion 3). `tainted` is set on every
+ *  proposal of a run in which a tool result, in the part of it the model was
+ *  shown, carried a fence, role, transcript or tool-call marker that
+ *  neutralizeUntrusted rewrote (a label such as "SYSTEM:" counts, whatever
+ *  follows it). A proposal's own result is not counted: it repeats the
+ *  model's own arguments back, not text it read. It informs the person
+ *  confirming; it never blocks or changes the proposal (DEC-72 item 1 stays
+ *  the write path). A run that read no marker hands its proposals on
+ *  untouched. */
+export type RunPendingAction = PendingAction & { tainted?: true };
+
 export interface OrchestratorRun {
   answer: string;
   steps: OrchestratorStep[];
   /** Writes waiting on a human. Deduped — proposing the same thing twice is
    *  one decision, not two. */
-  pending: PendingAction[];
+  pending: RunPendingAction[];
   usage: { inputTokens: number; outputTokens: number };
   /** Set when the loop stopped early: budget, deadline, or a stuck model. */
   stoppedBecause?: string;
@@ -153,6 +164,17 @@ function clip(text: string): string {
     : `${text.slice(0, RESULT_CHARS)}\n…(result truncated — call again with a narrower query if you need more)`;
 }
 
+/** ORCH-9 criterion 3: did the part of this result the transcript shows the
+ *  model carry a marker the neutralisation rewrites? The transcript shows the
+ *  neutralised result serialised and clipped; the two serialisations agree on
+ *  every character before the first rewrite, so their clips differ exactly
+ *  when a rewrite falls inside what is shown. A marker in the clipped tail —
+ *  text the model never receives — does not count. */
+function showsRewrittenMarker(result: unknown): boolean {
+  const { value, rewrote } = neutralizeUntrustedReport(result);
+  return rewrote && clip(JSON.stringify(value)) !== clip(JSON.stringify(result));
+}
+
 /**
  * Run the cycle.
  *
@@ -177,6 +199,13 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
   let corrections = 0;
   let note: string | undefined;
   let stoppedBecause: string | undefined;
+  // ORCH-9 criterion 3: set once a tool result the model was shown carried a
+  // marker the transcript's neutralisation rewrites; every proposal is then
+  // marked.
+  let tainted = false;
+  const proposals = (): RunPendingAction[] => (tainted
+    ? [...pending.values()].map((p) => ({ ...p, tainted: true as const }))
+    : [...pending.values()]);
 
   const spend = (u?: { inputTokens: number; outputTokens: number }) => {
     if (!u) return;
@@ -196,7 +225,7 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
       // paper over with a confident-sounding answer.
       return {
         answer: e instanceof Error ? e.message : "The AI provider call failed.",
-        steps, pending: [...pending.values()], usage,
+        steps, pending: proposals(), usage,
         stoppedBecause: "provider error",
       };
     }
@@ -206,7 +235,7 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
     const parsed = parseTurn(turn.text, TOOL_NAMES);
 
     if (parsed.kind === "answer") {
-      return { answer: parsed.text, steps, pending: [...pending.values()], usage };
+      return { answer: parsed.text, steps, pending: proposals(), usage };
     }
 
     if (parsed.kind === "invalid") {
@@ -259,6 +288,10 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
       const out = await def.run(checked.values, ctx);
       if (out.pending) pending.set(out.pending.fingerprint, out.pending);
       steps.push({ tool: def.name, parameters: checked.values, result: out.data });
+      // A proposal's result repeats the model's own words (its summary is
+      // built from the arguments), so it is not text the model read: only
+      // other results can taint the run.
+      if (!out.pending && showsRewrittenMarker(out.data)) tainted = true;
     } catch (e) {
       // A tool throwing is a bug in OUR code, not a reason to abandon the run.
       // Report it into the transcript and let the model route around it.
@@ -289,7 +322,7 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
       // prevent — it just moved to the last line of the function.
       const parsed = parseTurn(closing.text, TOOL_NAMES);
       if (parsed.kind === "answer" && parsed.text.trim()) {
-        return { answer: parsed.text, steps, pending: [...pending.values()], usage, stoppedBecause };
+        return { answer: parsed.text, steps, pending: proposals(), usage, stoppedBecause };
       }
     } catch {
       // fall through to the honest fallback
@@ -300,6 +333,6 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
     answer: steps.length > 0
       ? "I couldn't finish this one. What I gathered is listed below — it may still answer part of it."
       : "I couldn't answer this. Nothing came back from the search.",
-    steps, pending: [...pending.values()], usage, stoppedBecause,
+    steps, pending: proposals(), usage, stoppedBecause,
   };
 }

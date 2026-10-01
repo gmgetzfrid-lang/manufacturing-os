@@ -34,8 +34,8 @@
       "LOW": 49
     },
     "by_status": {
-      "OPEN": 153,
-      "RESOLVED": 107,
+      "OPEN": 152,
+      "RESOLVED": 108,
       "REFUTED": 2,
       "WONTFIX": 2,
       "INVALID": 1
@@ -5213,7 +5213,7 @@
       "id": "ORCH-9",
       "title": "Tool output is spliced into the model's turn as raw JSON with no trust boundary — extracted PDF text is a prompt-injection channel into the write-proposing agent",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
