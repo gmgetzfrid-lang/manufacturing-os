@@ -263,7 +263,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                     <div key={`${i}-${g}`} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                       <Target className="w-3 h-3 text-[var(--color-accent)] shrink-0" />
                       <span className="flex-1 text-[var(--color-text)]">{g}</span>
-                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">
@@ -284,9 +284,9 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                 <span id="edit-project-sow" className={labelClass}>Summary of Work</span>
                 {sowDoc ? (
                   <div className="mt-1 flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2 text-sm">
-                    <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                    <button onClick={() => setSowDoc(null)} aria-label="Remove Summary of Work" className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setSowDoc(null)} aria-label="Remove Summary of Work" className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ) : (
                   <div className="mt-1">

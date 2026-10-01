@@ -322,7 +322,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
-                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">

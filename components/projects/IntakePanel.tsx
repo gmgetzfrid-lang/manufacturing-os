@@ -537,7 +537,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
           {pending.map((p) => (
             <li key={p.docId} className="rounded-xl border border-amber-500/30 bg-amber-500/[0.05] px-3 py-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-sm font-bold text-[var(--color-text)]">{p.label}</span>
                 <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "—"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
@@ -610,7 +610,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                         <span key={id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text)]">
                           {docLabels.get(id) ?? "Document"}
                           {canManage && (
-                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className={`${DECISION_TARGET} text-[var(--color-text-faint)] hover:text-rose-600`}>
+                            <button onClick={() => void updateAssigned(l, l.assignedDocIds.filter((x) => x !== id))} disabled={busy === l.id} title="Unassign" className={`${DECISION_TARGET} text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300`}>
                               <X className="w-3 h-3" />
                             </button>
                           )}

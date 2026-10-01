@@ -426,7 +426,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
             {doc ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
-                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
               </span>
             ) : (
               <span className="relative flex-1 min-w-64">
@@ -480,7 +480,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
                 {p.section && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
-                  className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                  className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
               </li>
             ))}
           </ul>

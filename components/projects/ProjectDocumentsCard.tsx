@@ -233,7 +233,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                     disabled={busy === r.linkId}
                     aria-label={`Remove ${r.label} from the project`}
                     title={r.source === "checkout" ? "Remove from the register (its history stays on the Activity tab; it re-links on the next checkout under this project)" : "Remove from the register (its history stays on the Activity tab)"}
-                    className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
+                    className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>

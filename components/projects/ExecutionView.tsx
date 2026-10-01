@@ -858,7 +858,7 @@ export default function ExecutionView({
           broken. */}
       {!canEdit && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-          <Eye className="w-4 h-4 shrink-0 text-amber-600" />
+          <Eye className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
             <b>View only.</b> You&apos;re not a member of this project, so status and dates are read-only.
             Ask the project owner to add you as a member to make changes.
@@ -1143,7 +1143,7 @@ const SummaryStrip = React.memo(function SummaryStrip({ items, leaves, today, do
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3 flex items-center gap-5 flex-wrap">
       <div className="flex items-center gap-3 min-w-[200px]">
-        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>{pct}<span className="text-base text-[var(--color-text-faint)] font-bold">%</span></div>
+        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>{pct}<span className="text-base text-[var(--color-text-faint)] font-bold">%</span></div>
         <div className="flex-1">
           <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden w-40">
             <div className={`h-full transition-all duration-500 ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
@@ -1159,7 +1159,7 @@ const SummaryStrip = React.memo(function SummaryStrip({ items, leaves, today, do
 });
 
 function Stat({ label, value, tone }: { label: string; value: number | string; tone: "blue" | "rose" | "slate" }) {
-  const c = tone === "blue" ? "text-blue-600" : tone === "rose" ? "text-rose-600" : "text-[var(--color-text)]";
+  const c = tone === "blue" ? "text-blue-600" : tone === "rose" ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text)]";
   return (
     <div className="flex flex-col">
       <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</span>

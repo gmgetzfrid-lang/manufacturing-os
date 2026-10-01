@@ -198,8 +198,8 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
         <span className="text-xs text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
-          <b className="text-emerald-600">{cleanCount} clean</b>
-          {flaggedCount > 0 && <> · <b className="text-amber-600">{flaggedCount} need review</b></>}
+          <b className="text-emerald-700 dark:text-emerald-300">{cleanCount} clean</b>
+          {flaggedCount > 0 && <> · <b className="text-amber-800 dark:text-amber-300">{flaggedCount} need review</b></>}
           {scanning && <> · scanning…</>}
         </span>
         <button onClick={() => void refresh()} disabled={loading} title="Re-scan" className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
@@ -260,7 +260,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && !impact.numberCollision && impact.unverifiable.length > 0 && (
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)]" title={impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}>unverifiable</span>
                   )}
-                  {impact?.clean && !candidateInReview(c) && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
+                  {impact?.clean && !candidateInReview(c) && <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">clean</span>}
                 </span>
               </button>
 

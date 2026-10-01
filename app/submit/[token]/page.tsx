@@ -292,7 +292,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
           <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
             {(data.quotes ?? []).map((q) => (
               <li key={q.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <span className="font-bold text-[var(--color-text)] truncate">{q.fileName}</span>
                 {q.submittedAt && <span className="text-xs text-[var(--color-text-muted)]">{new Date(q.submittedAt).toLocaleDateString()}</span>}
                 {q.status === "awarded"

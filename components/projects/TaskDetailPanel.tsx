@@ -439,7 +439,7 @@ export default function TaskDetailPanel({
         {/* Footer */}
         {canEdit && !editing && (
           <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2 flex-wrap">
-            <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
+            <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:text-rose-800 dark:hover:text-rose-200 hover:bg-rose-500/10 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
             {deleteError && <span role="alert" className="text-[11px] text-rose-700 dark:text-rose-300">{deleteError}</span>}
@@ -616,7 +616,7 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
 function Note({ err, warn }: { err?: string; warn?: string }) {
   if (!err && !warn) return null;
   return (
-    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-600" : "text-amber-600"}`}>
+    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-700 dark:text-rose-300" : "text-amber-800 dark:text-amber-300"}`}>
       <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {err ?? warn}
     </div>
   );

@@ -90,11 +90,11 @@ export default function ScheduleProgress({ milestones, metrics, nowMs: nowProp }
           </div>
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
-            <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-600" : metrics.spi >= 0.9 ? "text-amber-600" : "text-rose-600"}`}>
+            <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-700 dark:text-emerald-300" : metrics.spi >= 0.9 ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
               {metrics.spi.toFixed(2)}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
-              {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600" /> : <TrendingDown className="w-3 h-3 text-rose-600" />}
+              {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> : <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" />}
               {metrics.spi >= 1 ? "on / ahead" : "behind plan"}
             </div>
           </div>

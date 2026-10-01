@@ -250,7 +250,7 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
         {co.status === "approved" && canManage && (
           <button onClick={() => void unwind(co)} disabled={busy}
             title={co.postedEntryId ? "Reverse: voids exactly the cost entry this approval posted and marks the change order void (an entry already voided by hand is accepted)." : "No cost entry is linked to this approval — link it or reverse it under 'Ledger needs attention' above."}
-            className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px] font-black hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
+            className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px] font-black hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Reverse
           </button>
         )}

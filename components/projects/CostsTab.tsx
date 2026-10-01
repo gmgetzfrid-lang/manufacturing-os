@@ -191,7 +191,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     <div ref={errRef} tabIndex={-1} role="alert"
       className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40">
       <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
-      <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+      <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3.5 h-3.5" /></button>
     </div>
   );
 
@@ -358,7 +358,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
                         of {fmtMoney(r.revisedBudget, lineCur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, lineCur)})` : ""}
                       </div>
-                      <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-600" : "text-[var(--color-text-muted)]"}`}>
+                      <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}`}>
                         {fmtMoney(r.remaining, lineCur)} uncommitted
                       </div>
                     </div>
@@ -408,8 +408,8 @@ function StatCard({ icon, label, value, sub, tone }: {
     accent: "text-[var(--color-accent)] bg-[var(--color-accent-soft)]",
     sky: "text-sky-600 bg-sky-500/10",
     violet: "text-violet-600 bg-violet-500/10",
-    emerald: "text-emerald-600 bg-emerald-500/10",
-    rose: "text-rose-600 bg-rose-500/10",
+    emerald: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+    rose: "text-rose-600 dark:text-rose-400 bg-rose-500/10",
   };
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 shadow-sm">
@@ -629,7 +629,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className={`${DECISION_TARGET} ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors`}
+                  className={`${DECISION_TARGET} ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors`}
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void

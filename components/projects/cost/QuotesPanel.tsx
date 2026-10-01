@@ -1290,7 +1290,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         onChanged();
       }}
       disabled={busy}
-      className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors`}>
+      className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors`}>
       <Ban className="w-3 h-3" /> Void
     </button>
   );

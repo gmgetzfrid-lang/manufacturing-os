@@ -334,7 +334,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {failures.length > 0 && createdProjectId && (
             <div role="alert" className="rounded-xl border border-amber-500/50 bg-amber-500/[0.08] p-4 text-xs text-[var(--color-text)]">
               <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
                 <div className="min-w-0">
                   <div className="font-black">The project was created, but {summarizeWizardFailures(failures)} did not save.</div>
                   <ul className="mt-2 space-y-2">
@@ -427,7 +427,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                       <Target className="w-3 h-3 text-[var(--color-accent)] shrink-0" />
                       <span className="flex-1 text-[var(--color-text)]">{g}</span>
-                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                      <button onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label={`Remove goal: ${g}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">
@@ -453,9 +453,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <StepIntro text="Attach the Summary of Work — the scope document. It feeds RFQs, grounds the AI's checklist assessment, and anchors the project report. Pick one from document control (upload it there first if it isn't in yet)." />
               {sowDoc ? (
                 <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-sm">
-                  <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   <span className="font-bold text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                  <button onClick={() => setSowDoc(null)} aria-label="Remove Summary of Work" className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => setSowDoc(null)} aria-label="Remove Summary of Work" className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3.5 h-3.5" /></button>
                 </div>
               ) : (
                 <div>
@@ -497,7 +497,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       aria-label={`Budget line ${i + 1} amount (USD)`} placeholder="Budget (USD)" inputMode="decimal"
                       aria-invalid={!!r.name.trim() && budgetPrep.invalid.includes(r.name.trim()) ? true : undefined}
                       className={`flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border rounded-lg text-sm font-mono tabular-nums bg-[var(--color-surface)] ${!!r.name.trim() && budgetPrep.invalid.includes(r.name.trim()) ? "border-rose-500" : "border-[var(--color-border-strong)]"}`} />
-                    <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} aria-label={`Remove budget line ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setBudgetRows(budgetRows.filter((_, j) => j !== i))} aria-label={`Remove budget line ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <button onClick={() => setBudgetRows([...budgetRows, { name: "", budget: "", type: "subcontract" }])}
@@ -522,7 +522,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                       className="w-full sm:w-auto sm:flex-1 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <input type="date" value={r.date} onChange={(e) => setMilestoneRows(rows(milestoneRows, i, { date: e.target.value }))}
                       aria-label={`Task ${i + 1} planned date`} className="flex-1 sm:flex-none min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
-                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove task ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setMilestoneRows(milestoneRows.filter((_, j) => j !== i))} aria-label={`Remove task ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <button onClick={() => setMilestoneRows([...milestoneRows, { name: "", date: "" }])}
@@ -546,7 +546,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     </select>
                     <input value={r.trade} onChange={(e) => setPartyRows(rows(partyRows, i, { trade: e.target.value }))}
                       aria-label={`Contractor ${i + 1} trade`} placeholder="Trade" className="flex-1 sm:flex-none sm:w-32 min-w-0 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
-                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove contractor ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 p-1"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setPartyRows(partyRows.filter((_, j) => j !== i))} aria-label={`Remove contractor ${i + 1}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 p-1"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
                 <datalist id="wizard-companies">
