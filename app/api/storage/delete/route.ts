@@ -41,6 +41,14 @@ interface OwnerDoc {
 const OWNER_DOC_COLUMNS =
   "legal_hold, retention_until, disposition_state, retention_policy, collection_id, library_id, created_at, updated_at, effective_date";
 
+/** The only retention date shape the refusal compares or quotes: a four-digit
+ *  year. computeRetentionUntil ends in toISOString(), which past year 9999
+ *  gives an extended-year string ("+012025-01-01"). That string sorts before
+ *  every ISO date (so a plain `>` reads it as run) and the DATE column refuses
+ *  it (so the row stays unclocked); it must read as a date that cannot be
+ *  computed, which refuses. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** A container's retention policy, read CHECKED: a failed read throws (the
  *  caller refuses 503) rather than resolving to "no policy" and clearing a
  *  record that its folder or library still retains. */
@@ -144,9 +152,7 @@ export async function DELETE(req: NextRequest) {
       if ((holds ?? []).length > 0) {
         return NextResponse.json({ error: "This document has an active hold; release it before deleting files." }, { status: 423 });
       }
-      // Retention, judged TWO ways and refused if EITHER says it is in force
-      // (a disposed record is past both — its disposition was the explicit,
-      // logged controller action):
+      // Retention, judged TWO ways and refused if EITHER says it is in force:
       //   (1) the materialized retention_until / disposition_state, through
       //       the one shared verdict (the register's and the pill's) —
       //       "active" is a period that has not run, and an unparseable date
@@ -158,18 +164,34 @@ export async function DELETE(req: NextRequest) {
       //       can be refused or never reach a row — so a row that was never
       //       clocked, or carries a stale earlier date under an extended
       //       policy, must not read as clear. In force means the computed date
-      //       is after today (the re-clock's "active"); a policy in force whose
-      //       date cannot be computed (no readable basis date) refuses too.
+      //       is after today (the re-clock's "active"; a date that runs out
+      //       today is eligible there and clear here); a policy in force whose
+      //       date cannot be computed (no readable basis date, or a year past
+      //       9999) refuses too.
+      // A DISPOSED record is not exempt. disposeDocument checks no
+      // eligibility (only the Dispose button's client-side gate does), so a
+      // record can be disposed before its retention ran — and then bytes the
+      // route refuses directly would be one click away. disposeDocument
+      // leaves retention_until, created_at and effective_date as they were but
+      // rewrites updated_at, so a disposed record is judged on (1) its stored
+      // retention_until alone (its disposition_state no longer reads as
+      // clear), and on (2) only when its policy clocks from a basis disposal
+      // cannot move: "created", or "effective" with an effective_date. (The
+      // issued / superseded / effective-without-a-date bases clock from
+      // updated_at, which disposal resets to today.)
       // Either container read failing throws → 503.
-      if (row && row.disposition_state !== "disposed") {
-        const storedActive =
-          retentionStatusFor({ retentionUntil: row.retention_until ?? null, dispositionState: row.disposition_state ?? null }) === "active";
+      if (row) {
+        const disposed = row.disposition_state === "disposed";
+        const storedActive = retentionStatusFor({
+          retentionUntil: row.retention_until ?? null,
+          dispositionState: disposed ? null : row.disposition_state ?? null,
+        }) === "active";
         const [folderPolicy, libPolicy] = await Promise.all([
           containerRetentionPolicy("collections", row.collection_id),
           containerRetentionPolicy("libraries", row.library_id),
         ]);
         const policy = resolveEffectiveRetentionPolicy(row.retention_policy ?? null, folderPolicy, libPolicy);
-        const effectiveUntil = policy
+        const computed = policy
           ? computeRetentionUntil(
               retentionBasisISO(policy, {
                 created_at: row.created_at ?? null,
@@ -179,16 +201,19 @@ export async function DELETE(req: NextRequest) {
               policy,
             )
           : null;
+        const effectiveUntil = computed !== null && ISO_DATE.test(computed) ? computed : null;
+        const basis = policy?.basis ?? "created";
+        const basisFixed = basis === "created" || (basis === "effective" && !!row.effective_date);
         const today = new Date().toISOString().slice(0, 10);
         const unclockable = !!policy?.years && effectiveUntil === null;
-        const effectiveActive = unclockable || (effectiveUntil !== null && effectiveUntil > today);
+        const effectiveActive = (!disposed || basisFixed) && (unclockable || (effectiveUntil !== null && effectiveUntil > today));
         if (storedActive || effectiveActive) {
           // Name the later of the two dates in force (an unreadable stored
-          // date is refused but not quoted).
+          // date, or one past year 9999, is refused but not quoted).
           const dates = [
             storedActive && row.retention_until ? String(row.retention_until).slice(0, 10) : null,
             effectiveActive ? effectiveUntil : null,
-          ].filter((d): d is string => !!d && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+          ].filter((d): d is string => !!d && ISO_DATE.test(d)).sort();
           const until = dates.length ? ` until ${dates[dates.length - 1]}` : "";
           return NextResponse.json(
             { error: `This document is under retention${until}; its files cannot be deleted before the retention period ends.` },

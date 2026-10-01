@@ -17,7 +17,11 @@
 // library, P9's pure resolver) as well as its materialized retention_until /
 // disposition_state: those columns are written best-effort, so a row never
 // clocked under an in-force policy, or left with a stale earlier date after
-// the policy was extended, must still be refused.
+// the policy was extended, must still be refused. A computed date past year
+// 9999 (an extended-year string) reads as uncomputable and refuses. A disposed
+// record is not exempt: disposeDocument checks no eligibility, so it is judged
+// on its stored retention_until and, where disposal cannot move the basis
+// date, on its effective policy.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -518,14 +522,6 @@ describe("DACL-2 criterion 1 (b): the EFFECTIVE retention — a row never clocke
     expect((await del(SOURCE)).status).toBe(200);
   });
 
-  it("a DISPOSED record is not refused under an in-force policy — disposition was the explicit controller action", async () => {
-    member("Admin");
-    inLibrary({ retention_until: iso(3000), disposition_state: "disposed" }, TEN_YEARS);
-    const res = await del(RENDERED);
-    expect(res.status).toBe(200);
-    expect(state.r2sends).toBe(1);
-  });
-
   for (const table of ["libraries", "collections"] as const) {
     it(`a ${table} retention_policy read error refuses 503 — fail closed, nothing deleted, no custody row`, async () => {
       member("Admin");
@@ -544,5 +540,130 @@ describe("DACL-2 criterion 1 (b): the EFFECTIVE retention — a row never clocke
     await del(SOURCE);
     expect(state.eqs).toContain("collections|id=c1");
     expect(state.eqs).toContain("libraries|id=l1");
+  });
+
+  it("the in-force boundary is the re-clock's: a retention that runs out TODAY does not refuse, one that runs out tomorrow does", async () => {
+    // recomputeRetention / reclockRetentionForDocs call `until <= today`
+    // eligible, so the route's "in force" is `until > today`, not `>=`.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+    try {
+      member("Admin");
+      inLibrary({ created_at: "2016-10-01T12:00:00.000Z", retention_until: null, disposition_state: null }, TEN_YEARS);
+      const res = await del(SOURCE);
+      expect(res.status).toBe(200);
+      expect(state.r2sends).toBe(1);
+      inLibrary({ created_at: "2016-10-02T12:00:00.000Z", retention_until: null, disposition_state: null }, TEN_YEARS);
+      const tomorrow = await del(SOURCE);
+      expect(tomorrow.status).toBe(423);
+      expect(((await tomorrow.json()) as { error: string }).error).toContain("2026-10-02");
+      expect(state.r2sends).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a policy long enough to pass year 9999 (a 'permanent' sentinel) refuses 423 — its extended-year date is not read as run; nothing deleted, no custody row", async () => {
+    member("Admin");
+    // computeRetentionUntil answers "+012026-…" here, which sorts before every
+    // ISO date and which P9's re-clock cannot store, so the row stays unclocked.
+    inLibrary({ created_at: ts(-30), retention_until: null, disposition_state: null }, { enabled: true, years: 9999, basis: "created" });
+    for (const key of [RENDERED, SOURCE]) {
+      state.r2sends = 0;
+      state.audits = [];
+      const res = await del(key);
+      expect(res.status, key).toBe(423);
+      // only an ISO date is ever quoted
+      expect(((await res.json()) as { error: string }).error, key).not.toMatch(/\+0/);
+      expect(state.r2sends, key).toBe(0);
+      expect(state.audits, key).toHaveLength(0);
+    }
+    // a length so long the date arithmetic itself fails is refused too
+    inLibrary({ created_at: ts(-30), retention_until: null, disposition_state: null }, { enabled: true, years: 1_000_000 });
+    expect((await del(SOURCE)).status).not.toBe(200);
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+});
+
+describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeDocument checks no eligibility", () => {
+  const TEN_YEARS = { enabled: true, years: 10, basis: "created", action: "destroy" } as const;
+  function inLibrary(doc: Row, libPolicy: Row | null) {
+    revision({ library_id: "l1", collection_id: null, created_at: ts(-30), updated_at: ts(-30), disposition_state: "disposed", ...doc });
+    state.rows.libraries = [{ id: "l1", retention_policy: libPolicy }];
+    state.rows.collections = [];
+  }
+
+  it("a disposed record whose stored retention_until has not run is refused 423 (disposal leaves that column as it was); one whose date has run is deleted", async () => {
+    member("Admin");
+    const until = iso(365);
+    inLibrary({ retention_until: until }, null);
+    const res = await del(RENDERED);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(until);
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+    inLibrary({ retention_until: iso(-10) }, null);
+    expect((await del(RENDERED)).status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a disposed record under an in-force policy is refused 423 (was: deleted with a 200)", async () => {
+    member("Admin");
+    inLibrary({ retention_until: iso(3000) }, TEN_YEARS);
+    expect((await del(RENDERED)).status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("the two-step bypass: a stale 'eligible' row disposed before its extended policy ran is refused 423 like the undisposed row", async () => {
+    member("Admin");
+    const created = ts(-730);
+    // undisposed: refused on the effective policy (the case above)
+    inLibrary({ created_at: created, retention_until: iso(-10), disposition_state: "eligible" }, TEN_YEARS);
+    expect((await del(SOURCE)).status).toBe(423);
+    // one Dispose click later: disposition_state 'disposed', retention_until untouched
+    inLibrary({ created_at: created, retention_until: iso(-10) }, TEN_YEARS);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(plusYears(created, 10));
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+    // an unclocked row disposed under a 'permanent' policy too
+    inLibrary({ retention_until: null }, { enabled: true, years: 9999 });
+    expect((await del(SOURCE)).status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("an 'effective' basis with an effective_date is fixed under disposal and refuses while in force", async () => {
+    member("Admin");
+    inLibrary({ retention_until: iso(-10), effective_date: iso(-30), updated_at: ts(0) }, { enabled: true, years: 5, basis: "effective" });
+    expect((await del(SOURCE)).status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("a disposed record whose stored and effective retention have both run is deleted", async () => {
+    member("Admin");
+    inLibrary({ created_at: ts(-11 * 366), retention_until: iso(-10) }, TEN_YEARS);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a basis disposal resets (updated_at) is not re-clocked from the disposal: a run-out stored date clears it; the same row undisposed is refused", async () => {
+    member("Admin");
+    const issued = { enabled: true, years: 5, basis: "issued" } as const;
+    // disposeDocument wrote updated_at = now, so the issued-basis date computed
+    // now would be five years from the disposal — not the record's retention.
+    inLibrary({ retention_until: iso(-10), updated_at: ts(0) }, issued);
+    expect((await del(SOURCE)).status).toBe(200);
+    expect(state.r2sends).toBe(1);
+    // an 'effective' basis with no effective_date falls back to updated_at too
+    inLibrary({ retention_until: iso(-10), updated_at: ts(0), effective_date: null }, { enabled: true, years: 5, basis: "effective" });
+    expect((await del(SOURCE)).status).toBe(200);
+    expect(state.r2sends).toBe(2);
+    // control: the undisposed row with the same columns is refused on its effective date
+    inLibrary({ retention_until: iso(-10), updated_at: ts(0), disposition_state: "active" }, issued);
+    expect((await del(SOURCE)).status).toBe(423);
+    expect(state.r2sends).toBe(2);
   });
 });
