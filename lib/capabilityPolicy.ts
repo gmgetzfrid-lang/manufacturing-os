@@ -58,7 +58,8 @@ export type CapabilityId =
   | "checkout.force_release"
   | "admin.analytics_view"
   | "admin.archive_view"
-  | "admin.audit_view";
+  | "admin.audit_view"
+  | "transmittal.issue";        // TRX-1: issue / void / revoke / record receipt (drafting stays open)
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -135,6 +136,18 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "admin.audit_view", area: "Admin", label: "Audit log",
     description: "Open /admin/audit — the org-level authority trail. Enforced at the database, which reads this policy.",
     defaultRoles: [...MGMT, "DocCtrl", "Auditor"] },
+  // TRX-1 (document-control Round F wave 2): transmit authority. Every member
+  // may DRAFT a transmittal; issuing one is the org formally sending documents
+  // to an outside party, so the issue transition, voiding, revoking the portal
+  // link and recording a receipt on the recipient's behalf read this
+  // capability. The default is the list the database and the email route
+  // named until now (is_org_controller: Admin / DocCtrl). Enforced at the
+  // database (trg_transmittals_guard, 20261133), which evaluates it once per
+  // item's LIBRARY (DEC-13) — a library-scoped rule decides who may transmit
+  // from that library.
+  { id: "transmittal.issue", area: "Transmittals", label: "Issue transmittals",
+    description: "Issue a drafted transmittal to its recipient, void it, revoke its portal link and record a receipt on the recipient's behalf. Every member may draft. Enforced at the database, which reads this policy per item library.",
+    defaultRoles: ["Admin", "DocCtrl"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or

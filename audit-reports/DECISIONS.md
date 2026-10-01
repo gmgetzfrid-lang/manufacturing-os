@@ -94,6 +94,7 @@ about the system.
 | [DEC-58](#dec-58) | Knowledge ingestion has **one writer per document** (a five-minute claim; the loser waits), **one reset** of a document's derived index, pages AI vision failed to read **hold 'ready'** until retried or explicitly accepted, the table-aware chunker is **chosen per library, never automatic**, and a controlled document's AI mirror **dies with it** | medium | `ING-1`, `ING-2`, `ING-3`, `ING-4`, `ING-6`, `ING-7`, `ING-12`, `DWG-1`, `ILIFE-5`, `IRLS-7` |
 | [DEC-59](#dec-59) | The team's AI memory: stored answers are the asker's (and controllers'), everyone else is served per reader by what each answer cites (the retrieved set is the ask route's write — `ASK-1` / `KACL-1` / `IEDGE-5` stay open until it lands); turns seeded from the record are shown, never re-sent; a search never counts what it withheld; mirror rows, their chunks and mention sentences are as visible as the controlled document's row, every policy over a narrowed table tests it **positively**; one vector space per library; the ledger's own price; a background build is a consent with a date on every hold | medium | `ASK-1`, `KACL-1`, `KACL-7`, `IRLS-1`, `IRLS-9`, `IEDGE-5`, `IEDGE-6`, `SEM-1`, `SEM-3`, `SEM-4`, `SEM-8`, `SEM-9`, `SEM-11`, `SEM-13` |
 | [DEC-60](#dec-60) | The schedule engine's rules: a loop of links is refused and named; actuals and imported rows never move; finish-to-start without the phantom day, lag in working time; the critical path runs on the links and the plan's working days; one weighting basis per list; a phase delete is all or nothing | medium | `SCH-4`, `SCH-5`, `SCH-7`, `SCH-9`, `SCH-10`, `SCH-13`, `SCH-15`, `SCH-17`, `SCHED-5`, `SCHED-10`, `SCHED-12`, `SCHED-13`, `SCHED-14` |
+| [DEC-61](#dec-61) | A transmittal is a **formal issue**: members draft, the `transmittal.issue` capability (default Admin + DocCtrl, per item library) issues / voids / revokes / records receipt; the database writes the as-sent snapshot — of the document's **current** revision only — and freezes it; nothing issued is deleted; the portal link expires (90 days) and is revocable without voiding; the portal serves stamped, hash-verified, recorded bytes | medium | `TRX-1`–`TRX-14`, `EGR-8`, `XEDGE-5` |
 
 ---
 
@@ -558,6 +559,8 @@ model worse. See `GAP-1`.
 *Landed 2026-09-03 (roles-and-permissions Round D3): stages 1–2. Stage 1 was `WF-15` (`20261038`). Stage 2: `policyAllows(…, resource?)` with `{tokens, when}` rules in `lib/capabilityPolicy.ts`; `getActions`, holds, the simulator and the SQL evaluator (`20261052`: `org_capability_allows_for` + the 3-argument wrapper) moved together; the route refuses a scoped-out approval and an out-of-group reviewer pick; the permissions console edits request-type overrides. See `DRAFT-1`, `WF-13`, `GAP-1`. Stage 3 (the engineer gate as a capability) is open — next round.*
 
 *Landed 2026-09-17 (roles-and-permissions Round E): stage 3. `ticket.engineer_gate_exempt` ("Approve own request without an engineer", default `["Admin","Manager","Supervisor","Engineer","DocCtrl"]` — byte-identical to the hardcoded test, pinned over every role × collection; the id lists the EXEMPT roles in the `ticket.*` namespace the evaluators share, rather than the sketched `requests.requires_engineer_approval`) is consulted by `engineerApprovalRequired` / `requiresEngineerApproval` in `lib/workflow.ts` alongside the `DEC-16` disjunction — snapshot OR current still fails closed; the capability only decides which roles are exempt, and a personal grant or a request-type override of it is honoured. Migration `20261057` re-creates `org_capability_allows_for` from `20261052` with the one added CASE row (lineDiff-pinned); the WF-23 census in `rpPhase4Migration.test.ts` now reads the newest evaluator and pins `20261038` as historical. Tests: `sweepRoundE_policyServer.test.ts`.*
+
+*Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the resource dimension decides transmit authority. `transmittal.issue` (default `["Admin","DocCtrl"]`) is evaluated once per item's `libraryId` — by `trg_transmittals_guard` through `org_capability_allows_for` (20261133; the CASE row is 20261132, re-created from 20261063 and lineDiff-pinned), and by `mayTransmit` / `evaluateTransmitAuthority` in `lib/transmittals.ts` for the page and the routes — so an org can say "only DocCtrl may transmit from the IFC library". See `TRX-1`, `DEC-61`.*
 
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
@@ -1327,6 +1330,7 @@ facility with no configuration must keep working exactly as it does today.
 *Landed 2026-09-29 (projects Round G): the quality program's machine actor is a reserved sentinel, not a facility role — `MACHINE_ACTOR_SWEEP` (`"evidence sweep"`) / `MACHINE_ACTOR_ASSESSMENT` (`"AI assessment"`) in `lib/checklistEngine.ts`, written as `updated_by = NULL` + `updated_by_name = <sentinel>` by `runAutoEvidence` / `applyAssessment`; a human write always carries a uid. Checklist kinds stay seed data (`CHECKLIST_KIND_LABEL`), and the turnover subject match reads the seeded item names, never a role. See `QUAL-6`, `DEC-52`.*
 
 *Landed 2026-09-30 (intelligence Round G, I-10): the equipment registry adds no role list. Its delete tier is the controller tier (`isControllerRole` from `lib/permissions.ts` on the client, `is_org_controller` in `20261128`), and the master-list workbook route reads the registry writer tier from `ADMIN_SURFACES` "assets" `writes` through `memberHoldsAny`, which checks the whole role collection. See `AREA-1`, `IRLS-5`, `BR-4` and `DEC-53`.*
+*Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the transmittals register and both transmittal routes carry no role list — the email route's hardcoded `Admin` / `DocCtrl` test became the `transmittal.issue` capability's default, the page draws its controls from the capability policy (per item library) and the role collection (`isControllerPrincipal`), and the database decides. See `TRX-1`, `TRX-7`, `DEC-61`.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -1832,6 +1836,7 @@ constant — neither reopens member writes to the record.
 *Corrected 2026-09-23 (document-control Round F, second fix pass): "re-signed in place while on screen" is now literally true — the re-sign gives up only on the route's refusal (a 4xx), keeps the current URL and retries on a bounded backoff (and at once on reconnect) for any transient failure, so a wifi blip or a wake from sleep at the margin no longer blanks the image for the session; the margin is a quarter of the granted window capped at a minute; and an avatar's subscription is held by the mounted avatar and released on unmount, not kept per path for the tab's life. §3's "every sign-out site posts `SIGN_OUT`" means the four click sites; the expiry-driven and cross-tab `SIGNED_OUT` branch in `RoleContext.tsx` is handed to identity-and-session `IS-P1` / public-surfaces `OFF-8` (`XEDGE-6` dw2).*
 
 *Landed 2026-09-29 (document-control Round F wave 2, P1 SHARE): §1's share-link row is now written — `app/api/share/file/route.ts` inserts `user_id` NULL + `share_id` + `source` with the served `version_id`, BEFORE the bytes leave, and a refused write refuses the download (`503 unrecorded`, logged) rather than shipping an unrecorded copy — except that a refusal which IS the unapplied `20261068` is retried once in the table's pre-20261068 shape (sharer-attributed, as before) and logged as the deploy order, so the record degrades, not the access; `lib/staleCopies.ts` already keys such rows `share:<id>` and flags them external. The per-access IP / user-agent trail lives beside it in `document_share_accesses` (20261081), controller-readable, service-role written. See `DIST-7`, `EGR-3`, `SHR-5`, `SHR-10`.*
+*Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): §1's transmittal-portal row is now written — `app/api/transmittal/route.ts` inserts `user_id` NULL + `transmittal_id` + `source: "transmittal_portal"` (or `_unstamped`) with the served `version_id` and the recipient's address BEFORE the stamped bytes leave, and a refused write refuses the download (`503 unrecorded`), with the same one older-shape retry as the share route ahead of `20261068`. The portal no longer presigns at all (§2: it streams). See `TRX-9`, `EGR-8`, `DEC-61`.*
 
 <a id="dec-45"></a>
 ## DEC-45 · Bearer columns never leave the database and never come back from a backup
@@ -1878,6 +1883,7 @@ recipient, decided then.
 safe side for a credential.
 
 *Landed 2026-09-23 (document-control Round F, fix pass): "a restored transmittal has no portal token" is enforced against the insert rail — `trg_transmittals_guard` (20261027) mints a fresh token for every row inserted as `issued`, so `scrubRestoredRow` lands a formerly issued transmittal as `voided` (the register record survives, a note says why, and no link can ever be presented); a person issues a new transmittal to send again. `push_subscriptions` (per-device Web Push `endpoint` / `p256dh` / `auth`) is excluded from the export whole, and the coverage tripwire also treats `auth` / `p256dh` as bearer names, so the acceptance line holds for every exported table.*
+*Landed 2026-10-01 (document-control Round F wave 2, P7 TRANSMITTALS): the trigger now enforces this for a backup the scrub cannot recognise. `scrubRestoredRow` voids an issued transmittal only when the row carries the `portal_token` key, so a row from a backup taken before 20260910 arrived `issued` — and with 20261133's issue gate it would have been re-dated, given a fresh 90-day live link, or aborted the whole restore on a document the backup lists as withdrawn. `trg_transmittals_guard` (20261133) lands any service-role INSERT born `issued` VOIDED with the same `RESTORED_TRANSMITTAL_NOTE` sentence, keeping its recorded issue date, minting no token and skipping the gate (pinned to the constant in `dcRoundFTransmittalMigrations.test.ts`). See `TRX-4`, `DEC-61`.*
 
 <a id="dec-46"></a>
 ## DEC-46 · External share links: who mints, how long, what serves, what is recorded
@@ -3459,3 +3465,146 @@ may be scoped for speed. Nothing else changes.
 **Risk:** medium — the board's drag is refused on imported rows themselves (the plan belongs to the tool); a manual move beside or under an imported summary is written and the summary keeps the tool's dates (a manual task under an imported phase can sit outside its bar); a stored loop that used to "work" (with runaway dates) now refuses a move that pushes round it until a link is removed — a task linked to its own phase included, which refuses every move that reaches it unless the task is locked (done, an actual finish, imported or pinned) and holds no open work; and a stale view is refused whole rather than half-applied.
 
 *Corrected at merge (2026-10-01): item 1's locked-phase rule is narrower than written — a loop through a locked phase holding open work is refused when the phase is carried round the loop (its parent in it); a loop reaching it only through its own links is written, the phase held. Item 5: no path is drawn when a loop member's work is the latest only if no unfinished task outside the loop ends within a working day of it. See projects-tab `SCH-4` / `SCH-15` and projects-and-cost `SCHED-5` / `SCHED-10`.*
+<a id="dec-61"></a>
+## DEC-61 · A transmittal is a formal issue: who issues it, what it freezes, and its link's own lifecycle
+
+**Decision. Drafting a transmittal is every member's; ISSUING one is the
+org formally sending documents to an outside party, and the database holds
+that line:**
+
+1. **Who issues.** The draft → issued transition, voiding, revoking the
+   portal link and recording a receipt on the recipient's behalf need the
+   `transmittal.issue` capability ("Issue transmittals"), evaluated once per
+   item's LIBRARY (DEC-13 — a library rule decides who may transmit from that
+   library; an item whose document is gone, or a transmittal with no items, is
+   judged on the base list). The shipped default is `Admin` + `DocCtrl` — the
+   controller pair the UPDATE policy (`is_org_controller`) and the email route
+   named until now — so an org that configures nothing sees the tier it had
+   for everyone else's transmittals, now also on its own. Any active member
+   drafts, and edits / deletes their own drafts; a controller edits any
+   draft, and deletes one only when the RESTRICTIVE delete guard (20260818)
+   also admits them — an Admin / Manager, or someone who manages the
+   draft's project (`mayDeleteDraft`; corrected at merge, 2026-10-01). No
+   page or route carries the role list (DEC-35).
+2. **What the record freezes.** A transmittal is born a draft — never issued
+   in one INSERT. At issue the database completes the snapshot itself (the
+   pinned version — always the document's CURRENT revision: an unpinned item
+   is pinned only to a current revision that carries the item's label, and a
+   pin to a revision that has since been superseded is refused, naming the
+   revision that replaced it —, that version's file hash and size, the
+   document's status — so the status of the revision sent — and the
+   revision's effective date as sent), stamps the issue time with its own
+   clock and mints the link. A Rev mismatch names its cause (the document's
+   own Rev field drifted from its file — correct the document — or the item
+   is stale — re-add it). After issue the content (items,
+   recipient, purpose, subject, notes, issue time, token, expiry) never
+   changes; workspace, number and author never change; the lifecycle runs one
+   way (draft → issued → acknowledged; issued / acknowledged → voided); a
+   non-draft transmittal is never deleted — the service role included — except
+   by the FK cascade of deleting the workspace itself. The receipt is written
+   once, on issued → acknowledged, by a service-role path only: the recipient
+   portal, or the register's receipt route (transmit authority; the recorder
+   is named in `acknowledged_meta`). A service-role INSERT born issued is a
+   restore from a backup older than the portal token column (DEC-45): it
+   lands voided with the restore note and its recorded issue date — no link
+   is minted and the issue gate is not run.
+3. **What may go out.** Never a Superseded / Void / Archived (the shared
+   `NOT_CURRENT_STATUSES`) or archived document, a document under an active
+   document hold (the HLD-1 rule; the app's gate fails closed on an unreadable
+   hold set), or a revision that is a branch, unreviewed, rejected, of another
+   document, superseded, not the document's current revision, or without a
+   stored file. A **Draft** document may go out (issue
+   for review / approval is ordinary practice) — its status is printed as
+   sent. A **legal hold** does not block: it asks a deliberate confirmation —
+   a legal hold preserves records, and no other distribution door (share
+   links, field packs) refuses on it. *Stated default.*
+4. **The link has its own lifecycle.** The portal link expires 90 days after
+   issue (*stated default*, set by the database on the issue transition),
+   can be REVOKED without voiding the record (durable: set once, stamped with
+   the database clock and the revoker, never cleared or moved), and records
+   its use (last used, opens, downloads — written by the portal through a
+   service-role-only RPC). Links issued before 20261133 carry no expiry and
+   serve until revoked or voided — live contractual links are not expired
+   retroactively on apply (the migration counts them). The link is built on
+   the public origin; a server without NEXT_PUBLIC_SITE_URL never emails one.
+5. **What is served.** The portal streams the as-sent bytes through the
+   route — a streamed body in 1 MiB chunks, never one buffered response (the
+   platform caps those at ~4.5 MB), within a 300 s function budget —
+   verified against the hash recorded at issue (a mismatch releases
+   nothing), stamped UNCONTROLLED with the as-issued revision, the
+   transmittal number and a `/verify` QR bound to the version served; a file
+   that cannot be stamped goes out recorded as unstamped, with the reason.
+   *Stated bound:* a file over 64 MiB is not stamped and never held whole —
+   it is hashed chunk by chunk, re-read pinned to the verified object
+   (`If-Match` on its ETag) and piped through, recorded unstamped
+   (`oversize`); the recipient's page says so. Every pull is a
+   `download_audits` row (DEC-44 §1) written before the bytes leave — a
+   refused write refuses the download.
+6. **Deploy order.** Apply `20261132` → `20261133`, then deploy the app
+   (`20261133` refuses to apply before `20261132` — its first statement
+   raises and the file rolls back).
+   App first: drafting, the app-side issue gate and the receipt route work;
+   the old database still lets a creator issue (the page just will not offer
+   it), revoking answers "needs 20261133", the usage trail reads as unknown
+   and the snapshot (hash / status as sent) is not written, so the portal
+   verifies legacy items against the version row. Migrations first with the
+   old app: the old one-INSERT issue and the member-session receipt are
+   refused (by design) until the app deploys.
+
+> Made during document-control Round F wave 2 (2026-10-01, package P7
+> TRANSMITTALS) under the fail-safe rule in *How to use this file*. Closed:
+> `TRX-1`–`TRX-14` (`TRX-11` record-only → `EGR-1`), `EGR-8`. Partial, left
+> OPEN with the owners named: `XEDGE-5` (the other copy-link builders, and
+> `publicOrigin()`'s server fallback — PS-STAMP) and `TRX-14` (its browser
+> half — with NEXT_PUBLIC_SITE_URL unset a browser still builds the link on
+> its own origin, the warning being the control). *The brief said to number
+> a new decision DEC-44 on this branch, but DEC-44 already exists in this
+> base (the download record) — reusing it would put two `dec-44` anchors in
+> one file. The first cut took DEC-58, which the integration branch has
+> since given to knowledge ingestion (and DEC-59 to the team's AI memory);
+> numbered DEC-61 at merge (DEC-60 went to the schedule engine).*
+
+**Rationale.** A transmittal is the contractual record "we sent you these
+drawings, at these revisions, for this purpose, on this date". The audit
+found every half of that claim member-writable: anyone could issue, a creator
+could rewrite what was sent or forge the receipt, delete the record, and the
+only way to cut an outside party's access was to repudiate the issue. The
+publish tier is the tier that lets a controlled copy leave (DEC-46 made the
+same call for share links); the snapshot is only evidence if the database —
+not the browser — writes it and nothing rewrites it.
+
+**Implementation.** `lib/capabilityPolicy.ts` (`transmittal.issue`),
+migrations `20261132` (the evaluator's CASE row) and `20261133`
+(`trg_transmittals_guard` BEFORE INSERT OR UPDATE OR DELETE, the three write
+policies, the lifecycle columns, `bump_transmittal_portal_use`);
+`lib/transmittals.ts` (`mayTransmit`, `evaluateTransmitAuthority`,
+`assertItemsIssuable`, checked mutations, `IssueOutcome`,
+`revokeTransmittalLink`, `portalRowRefusal`, `portalKeyAllowed`,
+`transmittalPortalUrl`), `app/api/transmittal/route.ts` (stream, stamp,
+verify, record), `app/api/transmittal/receipt/route.ts`,
+`app/api/transmittal/send-email/route.ts`, `app/(protected)/transmittals/page.tsx`,
+`app/transmittal/[token]/page.tsx`; tests `dcRoundFTransmittals.test.ts`,
+`dcRoundFTransmittalMigrations.test.ts`, `transmittalPortalRoute.test.ts`.
+
+**Acceptance.** A Viewer's INSERT of an issued row and their UPDATE of their
+own draft to issued are refused; a DocCtrl issues it and the row carries the
+pinned version, its hash, the status and effective date as sent, a token and
+an expiry 90 days out; a creator's UPDATE of `items` or of `acknowledged_*`
+on an issued row raises; the service role's DELETE of an issued row raises;
+a revoked or expired link answers 410 `revoked` / `expired` on GET and POST;
+a portal download writes one `download_audits` row with `transmittal_id` and
+the served `version_id` before the stamped bytes leave, and a hash mismatch
+releases nothing; a draft pinned to Rev C, issued after Rev D was published,
+is refused naming Rev D; a portal download over 4.5 MB arrives whole.
+
+**Reversal.** A stated need for engineers (or anyone) to issue widens the
+capability in the permissions console — no code. A longer link lifetime is
+one interval in the trigger. A stated need to block legal-held documents is
+one condition in the issue gate. Retroactive expiry of pre-20261133 links is
+one UPDATE, decided then. Sending a superseded revision on purpose would be
+an explicit override recorded on the item, with "Superseded" as its status
+as sent. The stamping bound is one constant in the portal route.
+
+**Risk:** medium — members who issued their own transmittals lose that
+unless the org grants the capability; the migration's inventory counts the
+issued rows whose creator would not hold it today.

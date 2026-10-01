@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 148,
+    "findings": 149,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 18,
       "HIGH": 53,
       "MEDIUM": 65,
-      "LOW": 12
+      "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 100,
-      "OPEN": 48
+      "RESOLVED": 114,
+      "OPEN": 35
     }
   },
   "status_vocabulary": [
@@ -1715,7 +1715,7 @@
       "id": "TRX-1",
       "title": "Any active org member — including a Viewer or a Contractor-role member — can create and issue a transmittal in a single insert, defeating the hardening the migration claims to deliver",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1743,7 +1743,7 @@
       "id": "TRX-2",
       "title": "Issued and acknowledged transmittals are deletable at the database by their creator — the \"draft-only\" rule exists only in application code and was explicitly deferred, then never implemented",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1770,7 +1770,7 @@
       "id": "TRX-4",
       "title": "The portal token has no expiry, no revocation, no use tracking — the only way to cut off external access is to void the contractual record itself; and live tokens are exported in plaintext in the full workspace backup",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1800,7 +1800,7 @@
       "id": "TRX-5",
       "title": "The transmittal portal hands an external recipient the raw, unstamped master file via a presigned bucket URL — inverting the app's own uncontrolled-copy rule at the one point it matters most",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1828,7 +1828,7 @@
       "id": "TRX-6",
       "title": "The transmittals UPDATE and DELETE policies grant rights on `created_by = auth.uid()` with no active-membership test, so a removed member keeps write control over the transmittals they issued",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2544,7 +2544,7 @@
       "id": "EGR-8",
       "title": "The transmittal portal hands outsiders RAW unstamped bytes, breaking the invariant /api/share/file was specifically built to guarantee",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3255,7 +3255,7 @@
       "id": "TRX-3",
       "title": "Nothing checks a document's status, legal hold, active operational holds, or effective date before it can be put on a transmittal or served by the portal",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3284,7 +3284,7 @@
       "id": "TRX-7",
       "title": "issueTransmittal writes a TRANSMITTAL_ISSUED audit entry even when the UPDATE matched zero rows, and no other transmittal mutation checks its outcome — RLS-blocked and status-mismatched writes all read as success",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3313,7 +3313,7 @@
       "id": "TRX-8",
       "title": "A transmittal records no content hash — the \"point-in-time SNAPSHOT\" is a set of mutable references, unlike every other binding artifact in the app",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3342,7 +3342,7 @@
       "id": "TRX-9",
       "title": "External portal downloads are invisible to stale-copy recall — no download_audits row is written, and the per-document transmittal trail swallows every query error",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3370,7 +3370,7 @@
       "id": "TRX-10",
       "title": "Issuing an existing draft prints a cover sheet with no portal link or QR, and the success toast asserts the email was sent regardless of whether it was",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3397,7 +3397,7 @@
       "id": "TRX-11",
       "title": "The portal resolves an item's file with no tenancy check — items JSONB is member-writable and supabaseAdmin bypasses RLS on a single shared R2 bucket",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3424,7 +3424,7 @@
       "id": "TRX-12",
       "title": "When an item is not version-pinned the portal serves the newest row bearing the as-sent revision label — with no filter on superseded_at, is_branch, or review_state",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4010,7 +4010,7 @@
       "id": "TRX-13",
       "title": "acknowledged_meta is write-only — the IP and user agent captured \"for the receipt's weight\" are never mapped, read, or rendered in any artifact",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4031,6 +4031,34 @@
       ],
       "refuted": false,
       "summary": "A contractor disputes ever having received TR-0042. The org points at the acknowledgment, but the artifacts that leave the system — the printed cover sheet and the project evidence pack — show only a typed name and a timestamp, indistinguishable from the manual path where an org member typed the recipient's name themselves (the very weakness 20260910:9-10 says the portal was built to fix). The IP ",
+      "area": "document-control",
+      "report": "audit-reports/document-control/06-transmittals.md"
+    },
+    {
+      "id": "TRX-15",
+      "title": "A PDF over 64 MiB leaves the transmittal portal unstamped, and the portal page holds every download in memory",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)",
+      "blast_radius": "document-control integrity (an uncontrolled copy without its marking)",
+      "related": [
+        "TRX-5",
+        "EGR-8",
+        "DEC-61"
+      ],
+      "locations": [
+        "app/api/transmittal/route.ts",
+        "app/transmittal/[token]/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A 90 MiB drawing-set PDF is issued on TR-0107. The contractor downloads it from the portal: it carries no UNCONTROLLED marking and no as-issued footer, so a printed copy is indistinguishable from a controlled one. On a low-memory device the page's res.blob() may fail outright for very large files.",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
     }

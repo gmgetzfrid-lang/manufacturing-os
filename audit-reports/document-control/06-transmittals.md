@@ -1,6 +1,6 @@
 # 06 · Transmittals & the external portal
 
-**14 findings** — 7 HIGH · 7 MEDIUM.
+**15 findings** — 7 HIGH · 7 MEDIUM · 1 LOW (`TRX-15` opened at the P7 merge, 2026-10-01).
 
 What leaves the building, and what the recipient can reach.
 
@@ -32,7 +32,7 @@ What leaves the building, and what the recipient can reach.
 ## TRX-1 · Any active org member — including a Viewer or a Contractor-role member — can create and issue a transmittal in a single insert, defeating the hardening the migration claims to deliver
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260910_transmittal_portal.sql:15-17`, `supabase/migrations/20260910_transmittal_portal.sql:39-44`, `lib/transmittals.ts:428-448`, `lib/roleCapabilities.ts:39`, `lib/roleCapabilities.ts:48-67`, `app/(protected)/transmittals/page.tsx:54-70`
 - **Also surfaced independently as** [`DIST-6`](./05-distribution.md#dist-6) — two lenses found this separately. Fix once.
@@ -56,6 +56,20 @@ supabase/migrations/20260910_transmittal_portal.sql:15-17 — `--   3. RLS harde
 - [ ] the update policy gates the draft→issued transition on is_org_controller (or a named issuer role), not merely on created_by
 - [ ] the /transmittals page hides or disables New/Issue for roles lacking the doc_control (or a new transmit) capability, using lib/roleCapabilities.ts rather than a hardcoded role list
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced from code: `createTransmittal` inserted `status: issued` + a token in one INSERT and `transmittals_insert` (20260910) checked only authorship and membership; nothing anywhere asked who may issue. Fixed in three layers, decided by the database:
+- **Capability.** New `transmittal.issue` ("Issue transmittals", area Transmittals) in `lib/capabilityPolicy.ts` `CAPABILITY_DEFS`, default `["Admin","DocCtrl"]` — the controller pair the UPDATE policy (`is_org_controller`) and the email route hardcoded. Migration `20261132` re-creates `org_capability_allows_for` from its newest definition (`20261063`) with exactly that one CASE row (lineDiff-pinned). It gates issuing, voiding, revoking the portal link and recording a receipt on the recipient's behalf; drafting stays open to every active member.
+- **Database (20261133).** `transmittals_insert` now requires `status = 'draft' AND portal_token IS NULL` (plus the 20260910 authorship + active membership), so issuing is always an UPDATE; `trg_transmittals_guard` refuses a member INSERT born anything but a draft and clears every server-owned column; on the draft → issued transition (and on void / revoke) it calls `org_capability_allows_for(org, 'transmittal.issue', auth.uid(), {libraryId})` once per item's library (DEC-13 — a library rule decides who may transmit from that library; an item whose document is gone, or a transmittal with no items, is judged on the base list) and raises `insufficient_privilege` otherwise. `transmittals_update` admits a controller, a transmit authority, or the creator while an active member.
+- **App.** `createTransmittal` creates drafts only (`issueNow` is gone); the composer creates, then calls `issueTransmittal`. `/transmittals` reads the policy (`loadCapabilityPolicy` + `mayTransmit(policy, principal, itemLibraries)`) — no role list on the page (DEC-35) — and disables Issue with the reason for a member without transmit authority ("a Document Controller can issue your draft"); Receipt / Revoke / Void render only for a transmit authority. `/api/transmittal/send-email` and the new `/api/transmittal/receipt` decide with `evaluateTransmitAuthority` (active membership + the strict, fail-closed policy read + per-library evaluation).
+- Tests: `lib/__tests__/dcRoundFTransmittals.test.ts` ("TRX-1 — transmit authority is a capability…": default pair by role collection, library rule, personal grant, page has no role list, createTransmittal inserts a draft only; send-email refuses the creator without the capability); `lib/__tests__/dcRoundFTransmittalMigrations.test.ts` (20261132 line diff + CASE census; the guard's authority block; the INSERT / UPDATE policies); the CASE census updates in `rpPhase4Migration.test.ts`, `roundE_D_migration.test.ts`, `sweepRoundE_policyServer.test.ts`. Also run against a scratch PostgreSQL 16 cluster (stub schema + the real 20260717 / 20260910 / 20261027 / 20261132 / 20261133): a Viewer's INSERT of an issued row → 23514 "cannot be born issued"; a Viewer issuing their own draft → 42501; a DocCtrl issuing the Viewer's draft → ok; with a stored library rule (`{"tokens":["DocCtrl"],"when":{"libraryId":[L2]}}`) an Admin issuing a library-2 item → 42501 and a DocCtrl → ok.
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ The INSERT policy requires `status = 'draft'` and `portal_token IS NULL` (20261133); issuing is always an UPDATE.
+- ✓ The draft → issued transition is gated on transmit authority — a named capability whose default is the controller tier — not on `created_by`. It is enforced in `trg_transmittals_guard` rather than in the UPDATE policy's expression, because a policy sees only one side of the row and cannot tell the transition from a draft edit; the trigger sees both and also covers void / revoke.
+- ✓ `/transmittals` disables Issue (and hides Receipt / Revoke / Void) for a principal lacking the capability, from the capability policy — not `lib/roleCapabilities.ts`, which DEC-11 keeps picker-only ("do not wire an enforcement decision to these strings") — and with no hardcoded role list. New stays open: drafting is a member's act.
+
+**Scope / residual.** A member granted the capability only through a library-scoped rule (none exists until an org writes one) is admitted by the trigger for that library but not by the UPDATE policy's base-list arm when the draft is someone else's — they can issue their own drafts there; a controller or base-list holder issues the rest. The new decision is DEC-61.
+
 ---
 
 <a id="trx-2"></a>
@@ -63,7 +77,7 @@ supabase/migrations/20260910_transmittal_portal.sql:15-17 — `--   3. RLS harde
 ## TRX-2 · Issued and acknowledged transmittals are deletable at the database by their creator — the "draft-only" rule exists only in application code and was explicitly deferred, then never implemented
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260910_transmittal_portal.sql:53-56`, `supabase/migrations/20260818_followups_rls.sql:50-58`, `supabase/migrations/20260815_versions_collections_delete_controllers.sql:15`, `lib/transmittals.ts:633-637`, `supabase/migrations/20260826_legal_hold_delete_guard.sql:29-33`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The legal-hold trigger cannot cover the gap: 20260826_legal_hold_delete_guard.sql attaches `BEFORE DELETE` triggers only to `documents` (:53-57) and `document_versions` (:85-89) — there is no trigger on transmittals in any migration (grep for 'transmittals' across supabase/migrations returns only the policy statements). A creator's direct DELETE on an issued or acknowledged transmittal is permitted at the database.
@@ -86,6 +100,20 @@ supabase/migrations/20260815_versions_collections_delete_controllers.sql:15 — 
 - [ ] the transmittals_delete permissive policy is narrowed to drafts so the app-layer filter is a convenience, not the only guard
 - [ ] voidTransmittal is constrained to status = 'issued' or 'acknowledged'
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced from the policies: `transmittals_delete` (20260910) and the RESTRICTIVE `transmittals_delete_guard` (20260818) both admit `created_by = auth.uid()` with no status predicate, and no trigger existed on the table. Fixed in `20261133`:
+- `trg_transmittals_guard` now also fires BEFORE DELETE (one trigger, not two) and refuses deleting any transmittal whose status is not `draft` — for every caller, the service role included, as 20260826 does for held records. The one pass is the FK cascade of deleting the workspace itself (the org row is already gone in that snapshot, so the org's own delete decided).
+- The permissive `transmittals_delete` is narrowed to `status = 'draft'` (a controller, or the creator while an active member — TRX-6).
+- The lifecycle runs one way in the same trigger: draft → issued → acknowledged, issued / acknowledged → voided; a draft is deleted, never voided, and nothing leaves `voided`. `voidTransmittal` filters `.in("status", ["issued","acknowledged"])` and is a checked write (TRX-7).
+- Tests: `dcRoundFTransmittalMigrations.test.ts` ("TRX-2: an issued transmittal is never deleted…", the lifecycle and DELETE-policy pins); `dcRoundFTransmittals.test.ts` ("void is constrained to issued / acknowledged"). Scratch PostgreSQL 16 run: the creator's DELETE of an issued row → 0 rows (policy); the service role's DELETE of it → 23514 "stays on the register"; a draft voided → 23514 "cannot move from draft to voided"; un-voiding → refused; deleting the org cascades past the arm (0 rows left).
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ A BEFORE DELETE trigger arm (matching 20260826) blocks deleting any non-draft transmittal, service-role paths included.
+- ✓ `transmittals_delete` is narrowed to drafts, so the app-layer `.eq("status", "draft")` is a convenience.
+- ✓ Voiding is constrained to `issued` / `acknowledged` — in `voidTransmittal` and, for every path, in the trigger's lifecycle rule.
+
+**Scope / residual.** The 20260818 RESTRICTIVE delete guard is unchanged (it still decides who among the permissive arm's callers may delete a draft). A purge of an issued transmittal, if a retention rule ever needs one, would need its own audited path — none exists or is asked for.
+
 ---
 
 <a id="trx-3"></a>
@@ -93,7 +121,7 @@ supabase/migrations/20260815_versions_collections_delete_controllers.sql:15 — 
 ## TRX-3 · Nothing checks a document's status, legal hold, active operational holds, or effective date before it can be put on a transmittal or served by the portal
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/transmittals/page.tsx:386-392`, `app/(protected)/transmittals/page.tsx:112-127`, `app/api/transmittal/route.ts:39-82`, `types/schema.ts:613`, `supabase/migrations/20260612_phase5_holds.sql:5-7`, `supabase/migrations/20260820_retention.sql:31`, `lib/effectiveDate.ts:14-27`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The core is right and unguarded: a document under a legal hold (20260820_retention.sql:31) or an open operational hold (20260612_phase5_holds.sql) can be added to a transmittal and served by the portal with no check anywhere, and the Inspector's entry point (components/documents/InspectorPanel.tsx:582-583) is an unconditional NextLink. Corrected because 'nothing checks status' is not literally true (Archived is excluded) and the effective-date item is a design choice the app applies uniformly, not a transmittal-specific defect — which removes half the stated blast radius that HIGH rested on.
@@ -116,6 +144,22 @@ app/(protected)/transmittals/page.tsx:389-390 — `.eq("org_id", orgId)` / `.neq
 - [ ] isTransmittalIssuable (lib/transmittals.ts:87-91) refuses to issue when any item is on an active document_holds row or under legal_hold, or surfaces a blocking confirmation
 - [ ] the item snapshot records the document status and effective_date as sent, and both the cover sheet and the portal render them
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: the picker filtered `.neq("status","Archived")` only, the `?doc=` preload filtered nothing, and no transmittal path read holds or the effective date. Fixed at both ends:
+- **Picker and preload.** The composer's search excludes the shared not-current set (`NOT_CURRENT_FILTER`, built from `NOT_CURRENT_STATUSES` in `lib/aiBoundary.ts` — no inline list) and archived documents; the `?compose=1&doc=` preload refuses a withdrawn document with a toast instead of pre-adding it.
+- **The issue gate — app (HLD-1 call site).** `issueTransmittal` runs `assertItemsIssuable`: a withdrawn, unreadable or file-less item is refused with its name, then `assertNotOnHold` (lib/holdGate.ts, fail-closed) is asked for every document. The composer shows each item's status, a LEGAL HOLD chip and the blocker, disables Issue while any item is blocked (an unreadable hold set blocks), and asks a deliberate confirmation for a legal hold (`legalHoldNotice`).
+- **The issue gate — database (20261133).** On the draft → issued transition `trg_transmittals_guard` refuses an item whose document is Superseded / Void / Archived or archived, or has an active `document_holds` row, and then writes the as-sent snapshot onto the item: `statusAsSent` (the document's status) and `effectiveDate` (the pinned revision's), with `versionId` / `fileHash` / `fileSize` (TRX-8 / TRX-12). A Draft may go out (for review / approval) — its status is printed as sent.
+- **Status truth (fix pass).** The review found the gate admitted a pinned version that had since been superseded and wrote it out under the document's CURRENT status ("Rev C · Issued" for a revision Rev D replaced). Now only the document's current revision can go out: the trigger refuses an item whose pinned `versionId` is not `documents.current_version_id` — "P-200-001 Rev C has been superseded by Rev D — remove P-200-001 and add it again to send the current revision." — and a version row stamped `superseded_at`; the snapshot is always taken from the current version, so `statusAsSent` is the status of the revision actually sent. A Rev mismatch now names its cause: when the item's Rev is the document's own Rev field but not the current file's label, the message says the document's Rev field drifted from its file and must be corrected (re-adding cannot help); otherwise the item is stale and is re-added. The composer reads the current file's `revision_label` and `documents.rev` into its facts and `itemIssueBlocker` / `assertItemsIssuable` refuse the same three cases before the round-trip, so Issue is never offered for something the database will refuse. The migration's inventory counts the drafts pinned to a revision that is no longer current.
+- **Render.** The cover sheet gains "Status as sent" (status + effective date, "not yet in force" when pending) and SHA-256 columns; the portal shows "<status> as sent", "Effective <date> — not yet in force" and the file fingerprint per document.
+- Tests: `dcRoundFTransmittals.test.ts` ("TRX-3 — withdrawn, held or file-less items cannot be issued": blocker reasons incl. fail-closed holds; legal hold asks; `issueTransmittal` refuses a held and a withdrawn item before any write; picker / preload pins; fix pass: a superseded pin refused naming its replacement, the Rev-field drift and stale-item messages, `assertItemsIssuable` reading the current labels, the composer's facts), the sheet and portal render pins; `transmittalPortalRoute.test.ts` (snapshot payload); `dcRoundFTransmittalMigrations.test.ts` (the gate block; fix pass: the current-revision pin before the snapshot, `superseded_at`, the two mismatch messages, the inventory row). Scratch PostgreSQL 16 run: issuing a Superseded item → "withdrawn (Superseded)"; a held item → "under an active hold"; a legal-held item → issues; an issued row carries `statusAsSent` and `effectiveDate`. Fix pass, on a fresh scratch cluster: a draft pinned to Rev C, issued after Rev D was published → "P-200-001 Rev C has been superseded by Rev D …"; re-added at Rev D → issues with `statusAsSent` of the current revision; a document whose Rev field (B) drifted from its file (A) → the Rev-field message; a stale unpinned item → the listed-at message; the inventory counted the stale draft.
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ The picker and the `?doc=` preload exclude Superseded / Void / Archived (and archived) documents.
+- ✓ Issuing refuses an item on an active `document_holds` row (app: the shared hold gate, fail-closed; database: the trigger). A legal hold surfaces a blocking confirmation rather than a refusal — a legal hold preserves records, and no other distribution door (share links, packs) refuses on it.
+- ✓ The item snapshot records the document's status and the revision's effective date as sent, and the cover sheet and the portal render both. Corrected in the fix pass: the status recorded is now the status OF THE REVISION SENT — the database admits only the document's current revision (a pin to a superseded one is refused, naming its replacement), so a superseded revision can no longer go out labelled with the document's current status.
+
+**Scope / residual.** `isTransmittalIssuable` keeps its two-field rule when called without facts (its callers outside the composer are unchanged); the composer and the issue path always pass or apply the facts. Sending a superseded revision on purpose (an explicit override recorded on the item) was not built — no requirement for it is stated; such a draft is refused until its item is re-added at the current revision.
+
 ---
 
 <a id="trx-4"></a>
@@ -123,7 +167,7 @@ app/(protected)/transmittals/page.tsx:389-390 — `.eq("org_id", orgId)` / `.neq
 ## TRX-4 · The portal token has no expiry, no revocation, no use tracking — the only way to cut off external access is to void the contractual record itself; and live tokens are exported in plaintext in the full workspace backup
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260910_transmittal_portal.sql:5-10`, `supabase/migrations/20260910_transmittal_portal.sql:21-27`, `supabase/migrations/20260902_project_intake.sql:28-33`, `app/api/intake/resolve/route.ts:37-41`, `app/api/transmittal/route.ts:57-61`, `lib/exportTables.ts:54`, `lib/dataExport.ts:300`, `app/(protected)/transmittals/page.tsx:258-269`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The export half is confirmed too: lib/exportTables.ts:54 lists `"transmittals"` (and :51 `"project_intake_links"`) among exported tables, and lib/dataExport.ts:300 pulls them with `sb.from(table).select("*")` — grep for 'redact' in lib/dataExport.ts returns nothing, so live portal_token values leave in plaintext. A repo-wide grep confirms portal_token exists in exactly one migration and is never expired, rotated, or counted.
@@ -150,6 +194,24 @@ supabase/migrations/20260910_transmittal_portal.sql:6-7 — `--      an unguessa
 - [ ] portal opens and downloads bump a last_used_at / open counter so the register can show whether the recipient ever collected the documents
 - [ ] any expiry sweep rides /api/cron/maintenance — a third vercel.json cron entry fails deployment (app/api/cron/maintenance/route.ts:286-291)
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: `transmittals` had no expiry, revocation or use columns and the route refused only `voided`. Fixed:
+- **Lifecycle columns (20261133).** `portal_expires_at`, `portal_revoked_at`, `portal_revoked_by`, `portal_last_used_at`, `portal_open_count`, `portal_download_count`. `trg_transmittals_guard` sets `portal_expires_at = issue + 90 days` on the issue transition (stated default, DEC-61), keeps it immutable after, and makes revocation durable: set once, on a live link of an issued transmittal, stamped with the database clock and `portal_revoked_by = auth.uid()`; it never clears or moves; only a transmit authority may set it (TRX-1).
+- **The door.** `GET` and `POST /api/transmittal` answer distinct 410s — `voided`, `revoked`, `expired` (`portalRowRefusal` in `lib/transmittals.ts`, as `/api/intake/resolve` does), and never serve a non-issued row. The portal page renders each state ("The issuer has revoked this link. The transmittal itself still stands…").
+- **Revoke ≠ void.** The register's new Revoke-link action (`revokeTransmittalLink`, checked, audited `TRANSMITTAL_LINK_REVOKED`) cuts access while the record stays issued; the void dialog now points at it.
+- **Use tracking.** Every portal open and download calls `bump_transmittal_portal_use` (SECURITY DEFINER, pinned, service-role only; the trigger refuses a member writing the counters); the register shows "Portal opened N× · M downloads" / "Portal not opened yet" (only where the columns exist) and "Link until <date>" / "portal link revoked" / "expired" chips.
+- **Export redaction.** Verified, not redone: `lib/exportTables.ts` `REDACT_COLUMNS.transmittals = ["portal_token"]` (P10 / EGR-7, DEC-45) and `scrubRestoredRow` lands a restored issued row voided; the new trigger keeps that path. Fix pass: `scrubRestoredRow` voids only a row that carries the `portal_token` key, so a row from a backup taken before 20260910 arrived `issued` and ran the full issue gate (re-dated, a fresh 90-day live link, or the whole restore aborted on a document the backup lists as withdrawn). The trigger now lands a service-role INSERT born `issued` VOIDED with the same `RESTORED_TRANSMITTAL_NOTE` sentence, keeping its recorded issue date, minting no token and skipping the gate (`dcRoundFTransmittalMigrations.test.ts` pins the note to `lib/dataRestore.ts`'s constant; scratch run: such an INSERT listing a Superseded document lands voided with the note and its 2025 issue date, no token).
+- Tests: `transmittalPortalRoute.test.ts` ("TRX-4 — the link has its own lifecycle": distinct 410s on GET and POST, open bump + expiry in the snapshot); `dcRoundFTransmittals.test.ts` (`portalLinkState`, `portalRowRefusal`, revoke checked + audited, usage unknown on a pre-20261133 row); `dcRoundFTransmittalMigrations.test.ts` (columns, revocation rule, RPC grants). Scratch PostgreSQL 16 run: a member bumping the counter → refused; `authenticated` calling the RPC → 42501 permission denied; the service role's bumps → counters 1 / 1; a Viewer revoking → 42501; a Manager+DocCtrl (role collection) revoking → stamped with the db clock and the revoker; clearing it → refused.
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ `portal_expires_at` and `portal_revoked_at` exist and both GET and POST return a distinct 410 for each.
+- ✓ The register exposes "revoke link" separately from "void transmittal".
+- ✓ `portal_token` is redacted in the export (verified: P10 / EGR-7, DEC-45 — not redone here).
+- ✓ Portal opens and downloads bump `portal_last_used_at` and the open / download counters, shown on the register.
+- ✓ No sweep was added — expiry is checked at the door on every request, so nothing periodic is needed (and no vercel.json entry).
+
+**Scope / residual.** Links issued before 20261133 carry no expiry (counted by the migration's inventory) and keep serving until revoked or voided — retroactively expiring live contractual links on apply was not chosen (DEC-61). The SELECT policy still lets every active member read `portal_token`; the register now offers the copy button only to the creator and transmit authorities.
+
 ---
 
 <a id="trx-5"></a>
@@ -157,7 +219,7 @@ supabase/migrations/20260910_transmittal_portal.sql:6-7 — `--      an unguessa
 ## TRX-5 · The transmittal portal hands an external recipient the raw, unstamped master file via a presigned bucket URL — inverting the app's own uncontrolled-copy rule at the one point it matters most
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:66-82`, `lib/downloads.ts:4-8`, `lib/downloads.ts:230-280`, `app/api/share/file/route.ts:105-141`, `lib/stamping.ts:211`, `app/transmittal/[token]/page.tsx:54`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. An external recipient definitionally holds no checkout, so lib/downloads.ts:230-240 would give them the stamped copy through any in-app path; the portal is the one egress that inverts it. It also skips the distribution record — app/api/share/file/route.ts:129-141 writes a `download_audits` row, while the portal writes only an audit_logs entry (route.ts:77-82) and no download_audits row at all.
@@ -182,6 +244,21 @@ lib/downloads.ts:4-8 — `//   - User holds an active checkout on the document  
 - [ ] every PDF served to a portal recipient carries the UNCONTROLLED watermark, the as-issued rev + transmittal number in the footer, and a publicOrigin()-based /verify QR bound to the exact version served
 - [ ] non-stampable files (encrypted/corrupt/non-PDF) still go out through the route and the fallback is recorded, matching app/api/share/file/route.ts:121-124
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: the file branch returned a 300-second presigned R2 URL that the page opened directly — no stamp, no verify QR. `/api/transmittal?file=` now does what `/api/share/file` does for the same audience:
+- The bytes are pulled bucket → server (`r2.send(GetObjectCommand)`) and streamed back as an attachment with `Cache-Control: no-store`; `getSignedUrl` is gone from the route (the presigned census tests now pin that the portal never signs).
+- A PDF (magic bytes `%PDF`) is stamped with `applyStampToPdfDoc`: watermark `UNCONTROLLED — TRANSMITTAL COPY`, the userLabel `transmittal TR-nnnn`, a footer `<number> Rev <rev> as issued on transmittal TR-nnnn (<issue date>). Scan the QR to confirm it is still current.` and a verify QR `${publicOrigin()}/verify/<docId>?v=<the exact version served>` (when no public origin is configured the footer says to confirm the revision with the issuer, as the share route does).
+- A non-PDF or unstampable file still goes out through the route with its own content type, and the distribution row records `source: "transmittal_portal_unstamped"`.
+- **Size (fix pass).** The review found the first cut returned the whole (stamped) file as ONE buffered body from a 60-second function — the platform caps a buffered function response at ~4.5 MB (recorded in `app/api/admin/restore/begin/route.ts:5`), so a large drawing set the presigned link used to serve would fail, after its distribution row was written. Now the response is a STREAMED body handed out in 1 MiB chunks (`chunkedStream`), never one buffered body, and `maxDuration` is 300 s (the repo's budget for long transfers) so the function lives while the recipient drains it. A file up to 64 MiB (`PORTAL_STAMP_MAX_BYTES`) is held once in memory, verified, stamped (a PDF) and streamed. A larger one is never held whole: a first read hashes it chunk by chunk (TRX-8), and only when the digest matches is a second read — pinned to the verified object with `If-Match` on its ETag, so a replaced object is refused (412 → 502) rather than sent under the verified digest — piped straight through; it goes out unstamped (stamping needs the whole document in memory twice) and its distribution row says `transmittal_portal_unstamped`, with `unstampedReason: "oversize"` on the audit row (`not_pdf` / `stamp_failed` for the other two causes). The second read is opened BEFORE the record is written and released if the record is refused, so a failure records nothing. The response carries `X-Transmittal-Stamped`, and the portal page tells the recipient when a file arrived without the marking.
+- The portal page saves the streamed blob (named from Content-Disposition) and maps the refusal codes (revoked / expired / unrecorded) to plain sentences; its copy now says each PDF is marked UNCONTROLLED with a verify QR.
+- Tests: `transmittalPortalRoute.test.ts` ("TRX-5 / EGR-8 — streamed through the route and stamped, never a presigned URL": stamp options, headers, `%PDF` body; the non-PDF path; the source pins no `getSignedUrl`; fix pass, "size — a streamed body, never one buffered response …": a 5 MB file comes back whole as a stream read in ≥ 5 chunks with one read of the object; a PDF over the bound is hashed, re-read with `If-Match` on the ETag, piped unstamped and recorded with `unstampedReason: "oversize"`; a large mismatch is never re-read (409); an If-Match refusal or a missing ETag records nothing (502); a refused record releases the second read (503); source pins: no `new NextResponse(Buffer.from(`, `maxDuration = 300`). `presignedLifetime.test.ts` / `presignedDisposition.test.ts` updated: the portal is no longer a signing site.
+
+**Done-when.**
+- ✓ `/api/transmittal?file=` streams the bytes through the route.
+- ◐ *(integration, 2026-10-01: the criterion says every PDF; beyond the 64 MiB bound the remainder is `TRX-15`)* Every PDF up to 64 MiB served to a portal recipient carries the UNCONTROLLED watermark, the as-issued rev + transmittal number in the footer and a `publicOrigin()`-based `/verify` QR bound to the exact version served. Stated bound (fix pass, DEC-61 §5): a PDF larger than that is delivered through the route verified but unstamped — the third done-when's recorded fallback, with its reason — rather than not delivered at all.
+- ✓ Non-stampable files go out through the route and the fallback is recorded on the download row (and, since the fix pass, its reason on the audit row).
+
+**Scope / residual.** Stamping uses the conventional placements (no `sourceBytes` ink analysis — no DOM on the server), exactly as `/api/share/file`. An explicit per-transmittal "send the unstamped original" flag was not added — no requirement for one is stated (EGR-8 dw3 is conditional). A file is delivered within the function's 300 s budget, so a very large file to a slow connection can still be cut off mid-transfer (its distribution row stands; the recipient retries); the presigned link had no such limit. That the platform does not apply its buffered-body cap to a streamed response is the platform's stated behaviour, confirmed here only by the test's chunked read — check one portal download over 4.5 MB on the deployment. `/api/share/file` still returns one buffered body (P1 SHARE's route, not edited here).
+
 ---
 
 <a id="trx-6"></a>
@@ -189,7 +266,7 @@ lib/downloads.ts:4-8 — `//   - User holds an active checkout on the document  
 ## TRX-6 · The transmittals UPDATE and DELETE policies grant rights on `created_by = auth.uid()` with no active-membership test, so a removed member keeps write control over the transmittals they issued
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260910_transmittal_portal.sql:46-56`, `supabase/migrations/20260910_transmittal_portal.sql:39-44`, `supabase/migrations/20260910_transmittal_portal.sql:33-37`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-40`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence: grep across supabase/migrations shows no other UPDATE policy or BEFORE UPDATE trigger on transmittals, so nothing re-adds the check. Note the deactivated member loses SELECT (the read policy does test status) but PostgREST UPDATE/DELETE by id needs only the UPDATE/DELETE USING clause, so blind writes on a known id still land — and no session-revocation-on-deactivation path exists in the repo.
@@ -214,6 +291,20 @@ supabase/migrations/20260910_transmittal_portal.sql:41-43 (INSERT) — `  create
 - [ ] the UPDATE policy (or a trigger) prevents mutation of items/seq/number/issued_at/portal_token once status leaves 'draft'
 - [ ] acknowledged_at / acknowledged_by_name / acknowledged_via are writable only by the service-role portal route, not by any member session
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced from 20260910: the UPDATE / DELETE `created_by` arms tested nothing, and the UPDATE WITH CHECK repeated USING, so a creator in good standing could rewrite `items` or forge `acknowledged_*` on an acknowledged row. Fixed in `20261133`:
+- **Active membership.** `transmittals_update` and `transmittals_delete` now require an active `org_members` row of the transmittal's org on the `created_by` arm (matching INSERT).
+- **The issued record is frozen** (`trg_transmittals_guard`, every caller): workspace, seq, number and author never change; once the status leaves `draft`, `items`, the recipient fields, purpose, subject, notes, issue time, portal token and expiry cannot change; unlinking from a project is allowed only as the FK's own ON DELETE SET NULL (one trigger level down) or by the service role.
+- **The receipt is written once, server-side.** `acknowledged_at` / `_by_name` / `_via` / `_meta` change only on issued → acknowledged and never from a member session; afterwards they are immutable for everyone. The two legitimate writers are service-role routes: the recipient portal (`POST /api/transmittal`, unchanged contract, now a checked write) and the new `POST /api/transmittal/receipt` — a transmit authority (TRX-1) records a receipt on the recipient's behalf and the route writes `acknowledged_via: "manual"` with `acknowledged_meta.recordedBy` / `recordedByEmail` (so a typed-in receipt never reads like the recipient's own). `acknowledgeTransmittal` now calls that route.
+- Tests: `dcRoundFTransmittals.test.ts` ("TRX-6 — a register receipt goes through the server…": the lib never writes the row; a Viewer 403s; a DocCtrl's receipt carries the recorder and is a checked write; an unreadable policy fails closed 503); `transmittalPortalRoute.test.ts` (portal receipt evidence + checked write); `dcRoundFTransmittalMigrations.test.ts` (identity, lifecycle, frozen columns, receipt rule, UPDATE policy). Scratch PostgreSQL 16 run: a removed member's UPDATE / DELETE of their old draft → 0 rows; the creator rewriting `items` on the issued row → 23514; a DocCtrl rewriting the recipient → 23514; the creator and a DocCtrl forging a receipt from a session → 23514; the service role's portal receipt → ok; rewriting it after → 23514; a DocCtrl re-linking the issued row to another project → 23514; deleting the project (FK SET NULL as a member) → passes.
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ Both the UPDATE and DELETE `created_by` arms require an active `org_members` row for the transmittal's org.
+- ✓ The trigger prevents mutation of items / seq / number / issued_at / portal_token (and the rest of the record) once status leaves `draft`.
+- ✓ `acknowledged_at` / `acknowledged_by_name` / `acknowledged_via` are writable only by service-role routes — the portal route and the receipt route (which checks transmit authority and names the recorder) — never by a member session.
+
+**Scope / residual.** None. The migration's inventory counts the issued and draft rows whose creator is no longer active (they lose update rights; nothing is rewritten).
+
 ---
 
 <a id="trx-7"></a>
@@ -221,7 +312,7 @@ supabase/migrations/20260910_transmittal_portal.sql:41-43 (INSERT) — `  create
 ## TRX-7 · issueTransmittal writes a TRANSMITTAL_ISSUED audit entry even when the UPDATE matched zero rows, and no other transmittal mutation checks its outcome — RLS-blocked and status-mismatched writes all read as success
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:550-583`, `lib/transmittals.ts:528-540`, `lib/transmittals.ts:586-611`, `lib/transmittals.ts:614-631`, `lib/transmittals.ts:634-637`, `app/(protected)/transmittals/page.tsx:136-179`, `app/(protected)/transmittals/page.tsx:280-289`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly as described — RLS rejections return zero rows with no error under PostgREST, so every one of these reads as success. Downgraded to MEDIUM because the register self-corrects: both handlers call `await refresh()` after the toast (app/(protected)/transmittals/page.tsx:143-145 and :164-166), which re-reads from the database, so the false state is a transient toast rather than a persistent wrong register. The durable damage is a fabricated ISSUED/ACKNOWLEDGED entry in the compliance audit log with no corresponding state change.
@@ -244,6 +335,19 @@ lib/transmittals.ts:570-582 — `  if (data) {` / `    await sendTransmittalEmai
 - [ ] the audit write in issueTransmittal moves inside the `if (data)` guard, and the acknowledge/void/delete audits are likewise conditional on a confirmed row change
 - [ ] the register's Receipt / Void / Edit / Delete controls are shown only when the current user could actually perform them (creator or controller)
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: `issueTransmittal` logged `TRANSMITTAL_ISSUED` outside its `if (data)` guard and the siblings destructured only `{ error }`. Every mutation in `lib/transmittals.ts` is now checked:
+- `updateTransmittalDraft`, `voidTransmittal`, `revokeTransmittalLink` and `deleteTransmittal` add `.select("id")` and throw a sentence when zero rows changed; `issueTransmittal` throws when the UPDATE returned no row ("was not issued — it is no longer a draft, or you do not hold transmit authority…").
+- The audit rows (`TRANSMITTAL_ISSUED` / `_VOIDED` / `_LINK_REVOKED`) are written only after a confirmed change, and a refused audit row is surfaced (`auditError`) and toasted rather than swallowed; the manual receipt's audit row is written by the receipt route after its checked write (409 on zero rows).
+- The register shows Edit to the draft's author, a controller or a transmit authority (the UPDATE policy's arms), and Receipt / Revoke / Void only to a transmit authority (`mayTransmit` over the items' libraries). Delete — corrected in the fix pass: the first cut drew it from the permissive policy alone (author or controller), but the RESTRICTIVE `transmittals_delete_guard` (20260818, unchanged) also requires an Admin / Manager, the author, or someone who manages the draft's project, so a DocCtrl who is neither was shown Delete and refused. `mayDeleteDraft` in `lib/transmittals.ts` now draws it from both policies together — the author; otherwise a controller who is also an Admin / Manager (`DRAFT_DELETE_GUARD_ROLES`, the mirror of `is_org_admin_or_manager`) or who manages the draft's project (the page reads the projects the controller owns or is an owner / collaborator on — `can_manage_project`'s other arms) — and `deleteTransmittal`'s refusal names that rule instead of "only its author or a Document Controller can delete it".
+- Tests: `dcRoundFTransmittals.test.ts` ("TRX-7 / TRX-10 — every mutation is checked…": a zero-row issue throws with NO audit row; the four sibling mutations throw on zero rows and audit only on change; the refused audit surfaces; page pins for the gated controls; fix pass: the `mayDeleteDraft` truth table — author yes, DocCtrl alone no, DocCtrl managing the project yes, Admin yes, Manager+DocCtrl yes, Manager alone no, never an issued row — the page draws Delete from it, and the refusal text). Mutation-checked: re-allowing the zero-row issue to proceed fails the suite. Fix pass scratch run: a DocCtrl (not Admin / Manager) deleting an engineer's draft → `DELETE 0`; a DocCtrl collaborator on the draft's project → `DELETE 1`; an Admin → `DELETE 1`; the author → `DELETE 1`.
+
+**Done-when.**
+- ✓ Every transmittal mutation uses `.select(...)` and throws when zero rows changed.
+- ✓ The issue audit is inside the confirmed-change path, and the acknowledge / void / delete / revoke audits are likewise conditional on a confirmed row change (delete writes none, as before).
+- ✓ Receipt / Void / Edit / Delete are shown only to who can perform them: Edit to the author, a controller or a transmit authority; Delete to who BOTH delete policies admit (the author, or a controller who is also Admin / Manager or manages the draft's project — corrected in the fix pass; the first cut showed it to every controller); Receipt / Revoke / Void to a transmit authority.
+
+**Scope / residual.** `createTransmittal` keeps its single `TRANSMITTAL_CREATED` row after a confirmed insert (it always read the inserted row back). *Integration (2026-10-01, at the P7 merge):* done-when 3 holds for everyone except one case — Revoke and Void are drawn from `mayTransmit` over the items' libraries, while the UPDATE policy's capability arm reads `org_capability_allows(org, 'transmittal.issue', uid)` on the base list only; a member admitted to transmit authority only by a library-scoped rule, who is neither the creator nor a controller, is shown both buttons and gets the checked zero-row refusal ("nothing was changed"), never a silent success. The same base-list limit is `TRX-1`'s residual for issuing. Also: the fix pass rewrote `components/documents/InspectorPanel.tsx`'s distribution-pill effect and summary beside its `TransmittalTrail` (outside the brief's limb; no other package owns that block).
+
 ---
 
 <a id="trx-8"></a>
@@ -251,7 +355,7 @@ lib/transmittals.ts:570-582 — `  if (data) {` / `    await sendTransmittalEmai
 ## TRX-8 · A transmittal records no content hash — the "point-in-time SNAPSHOT" is a set of mutable references, unlike every other binding artifact in the app
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:34-40`, `lib/transmittals.ts:8-10`, `supabase/migrations/20260717_transmittals.sql:10-14`, `supabase/migrations/20260526_document_version_control.sql:41`, `supabase/migrations/20260720_e_signatures.sql:8`, `supabase/migrations/20260720_e_signatures.sql:23`, `supabase/migrations/20260817_read_understood.sql:39`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The 'point-in-time SNAPSHOT' framing in the header comment (lib/transmittals.ts:8-10, echoed at 20260717_transmittals.sql:10-14) denormalizes number/title/rev but not bytes. Partially mitigated — `versionId` is usually pinned and document_versions.file_hash may recover the hash — but it is optional in the type, the portal falls back to matching on `revision_label` alone when it is absent (app/api/transmittal/route.ts:47-54), and versions created through the intake route are inserted with no file_hash at all (app/api/intake/upload/route.ts:304-316). MEDIUM is the right level.
@@ -276,6 +380,20 @@ lib/transmittals.ts:8-10 — `// A transmittal is a point-in-time SNAPSHOT: each
 - [ ] the portal verifies the resolved object's digest against the stored hash before signing a URL, and refuses with a clear message on mismatch
 - [ ] the cover sheet and evidence pack print a short hash prefix per document so the paper record is self-verifying
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: `TransmittalItem` had no hash and the portal compared nothing. Fixed:
+- **Capture.** On the issue transition `trg_transmittals_guard` (20261133) pins every item to a version of its own document and writes that version's `file_hash` onto the item as `fileHash` — by the database, not the browser — and (fix pass) its `size` as `fileSize`. `TransmittalItem` gains `fileHash` / `fileSize` / `statusAsSent` / `effectiveDate`; `rowToTransmittal` maps them.
+- **Verify.** The portal file branch computes the SHA-256 of the bytes it fetched and compares it (case-insensitively) with the item's `fileHash` — or, for an item issued before 20261133, the resolved version row's `file_hash`; a mismatch releases nothing (409 "no longer matches the one recorded when the transmittal was issued"), writes no download row, and records `TRANSMITTAL_PORTAL_INTEGRITY_REFUSED`. Every served download's audit row carries `servedSha256` and `hashVerified`, so the delivery records what left.
+- **Paper.** The cover sheet prints a 12-character SHA-256 prefix per document and, beneath it, the file's size (`fileSizeLabel`, e.g. "2.4 MB"; footer: "Each SHA-256 prefix (and size) identifies the exact file issued."); the project evidence pack prints `#<prefix> <size>` per document; the portal shows the fingerprint and the size.
+- Tests: `transmittalPortalRoute.test.ts` ("TRX-8 — the bytes served are the bytes issued": match serves with digest, mismatch 409 with no record, legacy item verified against the version row; fix pass: the snapshot payload carries `fileSize`, and a large file is verified chunk by chunk before anything is sent); `dcRoundFTransmittals.test.ts` (`hashPrefix`, `fileSizeLabel`, `fileSize` mapped, sheet and evidence-pack renders with the size); `dcRoundFTransmittalMigrations.test.ts` (the snapshot write, `'fileSize', v_size`). Scratch PostgreSQL 16 run: an issued row's items carry the version's `fileHash` and (fix pass) its `fileSize` (12345 → 12345).
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ Each item captures the version's `file_hash` and file size at issue. Corrected in the fix pass: the first write-up said `document_versions` holds no size column — false (`supabase/schema.sql:366` `size BIGINT`, written on every version insert by `lib/revisions.ts:376` and `lib/documentLifecycle/common.ts:230`); the trigger now copies it as `fileSize`.
+- ✓ The portal verifies the resolved object's digest against the stored hash before releasing it, and refuses with a clear message on mismatch.
+- ✓ The cover sheet and the evidence pack print a short hash prefix per document.
+
+**Scope / residual.** A version with no `file_hash` (rows written before hashing existed) is served unverified, and its audit row says `hashVerified: false`.
+
 ---
 
 <a id="trx-9"></a>
@@ -283,7 +401,7 @@ lib/transmittals.ts:8-10 — `// A transmittal is a point-in-time SNAPSHOT: each
 ## TRX-9 · External portal downloads are invisible to stale-copy recall — no download_audits row is written, and the per-document transmittal trail swallows every query error
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:75-80`, `app/api/share/file/route.ts:129-141`, `lib/staleCopies.ts:1-14`, `lib/staleCopies.ts:38-46`, `lib/transmittals.ts:388-398`, `components/documents/InspectorPanel.tsx:1036-1078`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on all three legs: the portal download is audited only to audit_logs, the recall panel (components/documents/DistributionRecall.tsx:39 → getDocumentRecall) is download_audits-only, and the compensating TransmittalTrail returns [] on any query error and then renders nothing. The trail (InspectorPanel.tsx:1076-1080 'HOLDS SUPERSEDED REV') is a real partial mitigation for external holders, which is why MEDIUM rather than higher is right.
@@ -308,6 +426,19 @@ lib/staleCopies.ts:4-8 — `// Every download is already recorded with the exact
 - [ ] getDocumentRecall / listMyStaleCopies surface external transmittal holders alongside internal ones
 - [ ] listTransmittalsForDocument distinguishes "none" from "query failed" and the Inspector renders the failure instead of an empty trail
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: the portal wrote only `audit_logs`, and `listTransmittalsForDocument` returned `[]` on every error. Fixed:
+- **The record.** The portal file branch writes one `download_audits` row per pull BEFORE the bytes leave — `org_id`, `document_id`, the resolved `version_id`, `user_id: NULL`, `transmittal_id`, `user_email` = the recipient's address, `source: "transmittal_portal"` (or `_unstamped`) — the DEC-44 §1 shape 20261068 added. A refused write refuses the download (503 `unrecorded`); a refusal that IS the unapplied 20261068 is retried once in the older shape attributed to the issuer, logged as the deploy order (the `/api/share/file` degrade).
+- **Recall.** `getDocumentRecall` (P2, `lib/staleCopies.ts`) already keys such rows `transmittal:<id>` and flags them external — verified, not edited; external holders now appear alongside internal ones because the rows exist.
+- **The trail.** `listTransmittalsForDocument` throws on a real error (only a missing table answers "none"); the Inspector's `TransmittalTrail` renders "Transmitted on — couldn't check … it is not 'never transmitted'" instead of nothing. Fix pass: the Inspector's distribution pill read the transmittals and the two `distribution_acks` counts in one `try`, so the now-throwing read also hid the read-and-understood counts; the transmittal read is caught on its own, the issued count becomes unknown (`? issued`, with a tooltip) and the acks counts still show (`dcRoundFTransmittals.test.ts` pins it).
+- Tests: `transmittalPortalRoute.test.ts` ("TRX-9 — the distribution record is written before the bytes leave": the row's shape and ordering after the stamp, 503 on a refused write, the pre-20261068 retry); `dcRoundFTransmittals.test.ts` ("TRX-9 — the transmittal trail says when it could not be read"). The recall reader's handling of `transmittal_id` rows is pinned by `downloadAudits.test.ts`. Mutation-checked: letting a refused record write through fails the suite.
+
+**Done-when.**
+- ✓ The portal file branch writes a `download_audits` row with org, document, the resolved version, `source: "transmittal_portal"` and the transmittal, mirroring `/api/share/file`.
+- ✓ `getDocumentRecall` surfaces external transmittal holders alongside internal ones (P2's reader, now fed). `listMyStaleCopies` is a member's own list — an outside recipient has no account to list it on — so nothing applies there.
+- ✓ `listTransmittalsForDocument` distinguishes "none" from "query failed" and the Inspector renders the failure.
+
+**Scope / residual.** None in this package; download_audits retention is the RET-* owner's.
+
 ---
 
 <a id="trx-10"></a>
@@ -315,7 +446,7 @@ lib/staleCopies.ts:4-8 — `// Every download is already recorded with the exact
 ## TRX-10 · Issuing an existing draft prints a cover sheet with no portal link or QR, and the success toast asserts the email was sent regardless of whether it was
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/transmittals/page.tsx:417-429`, `app/(protected)/transmittals/page.tsx:304-315`, `lib/transmittals.ts:301-315`, `lib/transmittals.ts:188-196`, `lib/transmittals.ts:275-307`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves check out. The freshly-issued row does get its token in the DB (issueTransmittal line 562), so the list's own 'Cover sheet' button prints correctly afterwards — but the sheet auto-opened at issue time, the one that goes in the project file, has no QR and no URL.
@@ -338,6 +469,18 @@ app/(protected)/transmittals/page.tsx:425 — `await onSaved(issue, issue ? { ..
 - [ ] the toast reports the actual result of sendTransmittalEmail rather than inferring it from the presence of a recipient email
 - [ ] when the portal token is absent (pre-migration) the issue flow says so explicitly instead of silently issuing without a portal
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: the edit-then-issue path printed the sheet from `{ ...editing, status: "issued" }` (no token) and the toast inferred delivery from the address. Fixed:
+- `issueTransmittal` returns an `IssueOutcome` — `transmittal` (the row the database wrote: token, snapshot, expiry), `email` (`{ sent, reason }` from `sendTransmittalEmail`, which now returns why it did not send), `portal: "ready" | "missing"`, `auditError`. Both composer paths (new and edited drafts) go create/update → `issueTransmittal`, and `onSaved` prints `openTransmittalSheet(result.outcome.transmittal)`.
+- The toast (`issueToast`) reports the actual email result ("the email was NOT sent (<reason>) — copy the portal link instead"), says explicitly when the transmittal was issued WITHOUT a portal (a pre-20260910 database), warns when NEXT_PUBLIC_SITE_URL is unset (TRX-14), and names a refused audit row; it is a warning, not a success, whenever any of those holds. An issue that fails after the draft was saved says "Saved as a draft — not issued: <reason>".
+- Tests: `dcRoundFTransmittals.test.ts` (a confirmed issue returns the DB row and the email's real outcome; a token-less row reports `portal: missing` and attempts no email; the page prints from the outcome and the old synthesized object / inferred toast are gone; `sendTransmittalEmail` reasons).
+
+**Done-when.**
+- ✓ `issueTransmittal` returns the updated Transmittal and the composer passes it to `onSaved` / `openTransmittalSheet`.
+- ✓ The toast reports the actual result of `sendTransmittalEmail`.
+- ✓ When the portal token is absent the issue flow says so explicitly.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="trx-11"></a>
@@ -345,7 +488,7 @@ app/(protected)/transmittals/page.tsx:425 — `await onSaved(issue, issue ? { ..
 ## TRX-11 · The portal resolves an item's file with no tenancy check — items JSONB is member-writable and supabaseAdmin bypasses RLS on a single shared R2 bucket
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:39-55`, `app/api/transmittal/route.ts:13`, `lib/r2.ts:20`, `supabase/migrations/20260910_transmittal_portal.sql:40-44`, `app/api/transmittal/route.ts:5-6`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. No tenancy check exists anywhere on the resolution path — the only gate is `items.find(i => i.documentId === fileDoc)` (line 67), whose contents the attacker authored. Practical exploitation needs a version UUID from the other org, which is the only thing keeping this at MEDIUM rather than higher.
@@ -370,6 +513,16 @@ app/api/transmittal/route.ts:5-6 — `// transmittal, can download ONLY the file
 - [ ] the resolved key is verified to start with the org's R2 prefix before being signed
 - [ ] items are validated at insert/update time — either by a trigger or by moving transmittal writes behind a server route that re-resolves each item against the caller's org
 
+**Resolution (2026-10-01, document-control Round F wave 2) — record-only close, resolved by `EGR-1`.** Verified against the current code: `fileKeyForItem` filters both version lookups `.eq("org_id", t.org_id)` (EGR-1, `app/api/transmittal/route.ts`), and `trg_transmittals_guard` refuses any persisted item naming a document or version outside the row's org (EGR-1, 20261027 — carried verbatim into 20261133). The one criterion EGR-1 did not deliver — the key-prefix assertion — landed here while TRX-5 rewrote the same branch: `portalKeyAllowed` (`lib/transmittals.ts`) refuses a key under another workspace's `orgs/<id>/` prefix or an unsafe key before any byte is read (legacy keys without the `orgs/` prefix stay readable — their row is already org-scoped). This package also requires a pinned version to be a version OF the item's document (route + the 20261133 issue gate).
+- Tests: `transmittalPortalRoute.test.ts` (EGR-1 cross-org 404; "TRX-11 — a key under another workspace's prefix is never read"; a pinned version of another document → 404); `dcRoundFTransmittals.test.ts` (`portalKeyAllowed`).
+
+**Done-when.**
+- ✓ Both branches of `fileKeyForItem` filter on the transmittal's org (EGR-1), and the record_id branch is org-scoped the same way.
+- ✓ The resolved key is checked against the org's R2 prefix before it is read (`portalKeyAllowed`).
+- ✓ Items are validated at insert/update time by the trigger (EGR-1), and at issue the trigger re-resolves each item against the org (20261133).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="trx-12"></a>
@@ -377,7 +530,7 @@ app/api/transmittal/route.ts:5-6 — `// transmittal, can download ONLY the file
 ## TRX-12 · When an item is not version-pinned the portal serves the newest row bearing the as-sent revision label — with no filter on superseded_at, is_branch, or review_state
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:36-55`, `supabase/migrations/20260823_publish_contract.sql:60-67`, `supabase/migrations/20260823_publish_contract.sql:50-51`, `app/api/intake/upload/route.ts:303-317`, `supabase/migrations/20260906_projects_hardening.sql:42-43`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: when item.versionId is null the fallback hands out whatever row most recently carried that label, including an is_branch row or an in_review intake submission. The pinned path (line 41) is the only correct one.
@@ -402,6 +555,20 @@ app/api/transmittal/route.ts:37-38 — `/** Resolve an item's file: the exact ve
 - [ ] when more than one candidate row matches the label the portal refuses and reports it rather than picking by created_at
 - [ ] items are always version-pinned at issue time so the fallback is a genuine legacy path, not the normal one
 
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: the label fallback took the newest row with the label, branch and unreviewed rows included. Fixed at both ends:
+- **The fallback (legacy rows only).** `fileKeyForItem` admits only rows that are not a branch (`.eq("is_branch", false)`), not `in_review` / `rejected`, created at or before the transmittal's `issued_at`, in its org; exactly one → served; none → 404; more than one → 409 "this transmittal does not record which one was sent" — it never picks by `created_at`.
+- **Pinned at issue.** `trg_transmittals_guard` (20261133) pins every item at the issue transition: an unpinned item is pinned to the document's current revision only when that revision's label IS the item's rev (otherwise the issue is refused: "no published file at Rev X to pin"); a pinned version must be of the item's document, carry the item's label, be published (not a branch, not in review / rejected) and have a stored, un-shed file. So the fallback is a genuine legacy path. Fix pass: a pinned version must also still BE the document's current revision (not superseded — see TRX-3's status-truth block), and the "no published file at Rev X to pin" refusal is now one of two messages naming the cause (the document's Rev field drifted from its file, or the item is stale).
+- **DEC-30 inventory.** 20261133's pre-apply result set counts the issued transmittals with unpinned items and splits those items by what the new rule does with each (one candidate keeps serving / none answers not-available / several now refuse).
+- Tests: `transmittalPortalRoute.test.ts` ("TRX-12 — the unpinned label fallback never guesses": the filters applied, in-review / rejected never served, two candidates 409); `dcRoundFTransmittalMigrations.test.ts` (the gate's pin + the inventory's candidate rule). Scratch PostgreSQL 16 run: an unpinned item whose rev is not the current label → refused; a branch pin → "not a published revision"; a version of another document → refused; an unpinned item on a published current revision → pinned to it at issue; the inventory on the seeded legacy rows reported 2 transmittals / 2 items / 1 serves / 1 none / 0 ambiguous.
+- Pending migration: `20261132_dc_roundF_transmit_capability.sql` then `20261133_dc_roundF_transmittal_rails.sql` — hand-applied, in that order (DEC-30; 20261133 refuses to apply before 20261132 — its first statement raises and rolls the file back). Until they are applied only the app half of this resolution is in force.
+
+**Done-when.**
+- ✓ The fallback excludes `is_branch` and `review_state IN ('in_review','rejected')`, and confines itself to rows created at or before `issued_at` — the "nearest-before" preference, made strict.
+- ✓ When more than one candidate matches, the portal refuses and says so.
+- ✓ Items are always version-pinned at issue (the database pins them).
+
+**Scope / residual.** None.
+
 ---
 
 <a id="trx-13"></a>
@@ -409,7 +576,7 @@ app/api/transmittal/route.ts:37-38 — `/** Resolve an item's file: the exact ve
 ## TRX-13 · acknowledged_meta is write-only — the IP and user agent captured "for the receipt's weight" are never mapped, read, or rendered in any artifact
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260910_transmittal_portal.sql:11-13`, `supabase/migrations/20260910_transmittal_portal.sql:24`, `app/api/transmittal/route.ts:120-134`, `lib/transmittals.ts:327-361`, `lib/transmittals.ts:116-121`, `lib/evidencePack.ts:184-190`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The column itself is genuinely write-only and neither artifact shows it — evidencePack.ts:184-190 prints only `${acknowledged_by_name} · ${acknowledged_at}` and the cover sheet's ackLine (lib/transmittals.ts:116-121) the same, and both evidence packs filter audit_logs by resource_type 'document'/'project' so the 'transmittal' row never reaches them. But 'never mapped, read, or rendered' overstates it: the IP and user agent survive in audit_logs.details and are visible and CSV-exportable on /admin/audit, so the dispute evidence is recoverable. Cosmetic/plumbing gap, not lost data — LOW.
@@ -433,6 +600,20 @@ supabase/migrations/20260910_transmittal_portal.sql:12-13 — `--      from an i
 - [ ] Transmittal carries acknowledgedMeta and rowToTransmittal maps it
 - [ ] the printed cover sheet's acknowledgment block and the evidence pack's Receipt column show the portal-side evidence (timestamp, source IP, and the recipient's note) for acknowledged_via = 'portal'
 - [ ] the recipient's optional note collected at app/transmittal/[token]/page.tsx:189-193 is visible somewhere in the app, not only in audit_logs.details
+
+**Resolution (2026-10-01, document-control Round F wave 2).** Reproduced: `rowToTransmittal` had no `acknowledgedMeta`; the sheet and the pack printed a name and a time only. Fixed:
+- `Transmittal.acknowledgedMeta` (`TransmittalAckMeta`: `ip`, `userAgent`, `note`, `recordedBy`, `recordedByEmail`) is mapped by `rowToTransmittal`.
+- The cover sheet's receipt block renders `receiptEvidence(t)`: for a portal receipt "…through the recipient portal from <IP>. Their note: "<note>""; for a register receipt "— recorded on the register by <recorder>" (the receipt route now stores who recorded it, TRX-6). The project evidence pack's Receipt column carries the same evidence (`portal · from <IP> · note: "…"` / `recorded internally by …`), escaped.
+- The recipient's note is visible in the app: the register row shows it beside the acknowledgment (and the portal-side IP / the internal recorder in the ack line).
+- The portal page now discloses what it records ("Your name, your note, the time and the network address you confirm from are recorded on the transmittal").
+- Tests: `dcRoundFTransmittals.test.ts` ("the sheet's receipt block shows the portal-side evidence", "a register receipt names who recorded it", `rowToTransmittal` mapping, the evidence-pack render incl. escaping, the portal disclosure pin).
+
+**Done-when.**
+- ✓ `Transmittal` carries `acknowledgedMeta` and `rowToTransmittal` maps it.
+- ✓ The printed cover sheet and the evidence pack show the portal-side evidence (timestamp, source IP, the recipient's note) for `acknowledged_via = 'portal'`.
+- ✓ The recipient's note is visible in the app (the register), not only in `audit_logs.details`.
+
+**Scope / residual.** The user agent is mapped but not printed (it adds bulk, not weight). `acknowledged_meta` is readable by every active member, as the whole row always was (`transmittals_select`).
 
 ---
 
@@ -465,6 +646,43 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - [ ] transmittalPortalUrl calls publicOrigin() and returns null/undefined when no origin is configured, so callers can refuse to email or print a hostless link
 - [ ] sendTransmittalEmail and openTransmittalSheet handle the no-origin case explicitly rather than emitting `/transmittal/<token>`
 - [ ] NEXT_PUBLIC_SITE_URL is asserted at issue time (or the issue flow warns) so a preview deploy cannot mint a dead portal link
+
+**Partial (2026-10-01, document-control Round F wave 2).** Reproduced, and worse than recorded: since SURF-17 moved the send server-side, `/api/transmittal/send-email` called `transmittalPortalUrl` with no `window`, so every emailed link was the hostless `/transmittal/<token>`. Fixed with a narrow local guard (lib/publicOrigin.ts's server fallback is public-surfaces PS-STAMP's change and is not edited here):
+- `transmittalPortalUrl(token)` now returns `string | null`, built on `publicOrigin()` (NEXT_PUBLIC_SITE_URL, or the page's origin in a browser) and `null` when there is no origin at all — a server with NEXT_PUBLIC_SITE_URL unset. `portalOriginConfigured()` says whether the deployment names its public origin.
+- The email route refuses to email a hostless link (`sent: false` with the reason; logged) and the issue toast relays it; `openTransmittalSheet` prints the portal block only for a live link with a URL; the copy-link action refuses a null URL.
+- When NEXT_PUBLIC_SITE_URL is unset the issue toast and the copy-link toast warn that the link uses this browser's address and a preview deploy's link cannot be opened by the recipient.
+- Tests: `dcRoundFTransmittals.test.ts` ("TRX-14 / XEDGE-5 — the portal URL is built on the public origin, never hostless": absolute NEXT_PUBLIC_SITE_URL-rooted URL with `window` undefined; `null` when unset; no `window.location.origin` left in the lib; the email route refuses unset and emails the absolute link when set). `sweepRoundB.test.ts`'s SURF-17 pin follows the route.
+
+**Done-when.**
+- ◐ `transmittalPortalUrl` calls `publicOrigin()` ✓ and returns null when there is no origin at all — on the server with NEXT_PUBLIC_SITE_URL unset ✓. NOT done in a browser: with NEXT_PUBLIC_SITE_URL unset, `publicOrigin()` falls back to `window.location.origin`, so the cover-sheet QR and the copy-link action still use the page's own host (a preview deploy's host behind Vercel's login). The first write-up marked this done-when met — corrected in the fix pass. Returning null in the browser too was not chosen here: NEXT_PUBLIC_SITE_URL is optional in `.env.example`, so a correctly hosted production without it would lose the sheet's QR and the copy link outright; the issue and copy toasts warning that the link uses this browser's address are the stated mitigation until the origin rule itself changes (`lib/publicOrigin.ts` is public-surfaces PS-STAMP's).
+- ✓ `sendTransmittalEmail` (via its route) and `openTransmittalSheet` handle the no-origin case explicitly instead of emitting `/transmittal/<token>`.
+- ✓ The issue flow warns when NEXT_PUBLIC_SITE_URL is unset.
+
+**Scope / residual.** Left OPEN for the browser half of done-when 1. Making `publicOrigin()` itself refuse when NEXT_PUBLIC_SITE_URL is unset is PS-STAMP's (XEDGE-5 dw2); when it lands, `transmittalPortalUrl` follows it with no change here. The other builders XEDGE-5 names belong to their owners (XEDGE-5 stays OPEN for them).
+
+---
+
+## TRX-15 · A PDF over 64 MiB leaves the transmittal portal unstamped, and the portal page holds every download in memory
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)
+- **Blast radius:** document-control integrity (an uncontrolled copy without its marking)
+- **Locations:**
+  - `app/api/transmittal/route.ts` — `PORTAL_STAMP_MAX_BYTES` (64 MiB): a larger PDF is piped through unstamped and recorded `transmittal_portal_unstamped`
+  - `app/transmittal/[token]/page.tsx` — the download is read with `res.blob()` and the object URL revoked on the same tick as `a.click()`
+- **Related:** `TRX-5`, `EGR-8`, `DEC-61`
+- **Independently verified:** — (`author`: opened by the integrator at the P7 TRANSMITTALS merge, 2026-10-01, per `DEC-31`, from the package's final review; not yet challenged)
+
+**Mechanism.** P7 stamps every portal PDF in memory up to a stated bound of 64 MiB and pipes anything larger through the route without the UNCONTROLLED watermark, the as-issued footer or the `/verify` QR (the delivery is recorded, the bytes are hash-verified). The portal page then reads the whole response into a Blob before saving it, so the streamed path does not spare the recipient's browser either.
+
+**Failure scenario.** A 90 MiB drawing-set PDF is issued on TR-0107. The contractor downloads it from the portal: it carries no UNCONTROLLED marking and no as-issued footer, so a printed copy is indistinguishable from a controlled one. On a low-memory device the page's `res.blob()` may fail outright for very large files.
+
+**Remediation.** Stamp large PDFs without holding them whole (an incremental-update stamp, or a size-aware worker), or refuse to serve an unstampable PDF over the bound and tell the issuer at issue time; on the page, stream to disk (a download link to the route with `Content-Disposition`) instead of `res.blob()`, and revoke the object URL after the click has been handled.
+
+**Done when.**
+- Every PDF served by the portal carries the stamp, whatever its size — or a PDF that cannot be stamped is refused at issue with the reason.
+- The portal page does not hold a download in memory.
 
 ---
 

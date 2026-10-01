@@ -386,7 +386,7 @@ lib/exportTables.ts:50-51,54 list the three token-bearing tables; :173-174 shows
 ## EGR-8 · The transmittal portal hands outsiders RAW unstamped bytes, breaking the invariant /api/share/file was specifically built to guarantee
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:71-74`, `app/api/share/file/route.ts:1-16`, `app/api/share/file/route.ts:107-125`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the transmittal portal is a second, parallel outsider egress path that hands back exactly the artifact the share/file route's header comment (lines 5-12) says was the bug it was built to fix ('the page's fallback opened the RAW UNSTAMPED file in a new tab'). The portal is more correct than share/file in one respect — it serves the pinned as-sent revision (fileKeyForItem, lines 39-54) rather than the current one — but the bytes carry no watermark, rev footer, or verify QR.
@@ -417,5 +417,16 @@ app/api/transmittal/route.ts:71-74 issues a bare GetObjectCommand presign — no
 - [ ] The transmittal portal streams bytes through the same server-side stamping path as /api/share/file (applyStampToPdfDoc with the as-sent rev in the footer and a /verify QR), rather than presigning the object
 - [ ] A download_audits row is written for every portal pull so external copies appear in the distribution record and in lib/staleCopies.ts
 - [ ] If an unstamped as-sent original is genuinely required for some transmittal purposes, it is an explicit per-transmittal flag with its own audit reason — not the default for every external download
+
+**Resolution (2026-10-01, document-control Round F wave 2).** The same defect as `TRX-5`, closed by the same change (see TRX-5 / TRX-9 in `06-transmittals.md`): `/api/transmittal?file=` pulls the as-sent bytes server-side and streams them; a PDF is stamped with `applyStampToPdfDoc` — `UNCONTROLLED — TRANSMITTAL COPY`, the as-issued rev and transmittal number in the footer, a `/verify` QR bound to the exact version served — and a non-stampable file goes out through the route recorded as unstamped. Every pull writes a `download_audits` row (user_id NULL, `transmittal_id`, `version_id`, `source: "transmittal_portal"`) BEFORE the bytes leave, so external copies appear in the distribution record and in `lib/staleCopies.ts` recall; a refused write refuses the download.
+- Fix pass (see TRX-5's "Size" block): the response is now a streamed body in 1 MiB chunks (the first cut returned one buffered body, which the platform caps at ~4.5 MB — a large drawing set would not arrive), `maxDuration` is 300 s, and a file over 64 MiB is hashed chunk by chunk, re-read pinned to the verified ETag (`If-Match`) and piped through unstamped, recorded `transmittal_portal_unstamped` with `unstampedReason: "oversize"`.
+- Tests: `lib/__tests__/transmittalPortalRoute.test.ts` (TRX-5 / EGR-8 and TRX-9 blocks; fix pass: the "size — a streamed body …" block); `presignedLifetime.test.ts` / `presignedDisposition.test.ts` (the portal no longer presigns).
+
+**Done-when.**
+- ◐ *(integration, 2026-10-01: beyond the 64 MiB bound the remainder is document-control `TRX-15`)* The portal streams bytes through the same server-side stamping path as `/api/share/file` (`applyStampToPdfDoc`, the as-sent rev in the footer, a `/verify` QR), rather than presigning the object — every PDF up to 64 MiB is stamped (stated bound, DEC-61 §5).
+- ✓ A `download_audits` row is written for every portal pull.
+- ✓ No per-transmittal unstamped-original mode exists, so none is the default. The only unstamped deliveries are files that cannot be stamped — not a PDF, a stamp that fails, or (fix pass) a PDF over the 64 MiB bound — each recorded `transmittal_portal_unstamped` with its reason, never chosen per transmittal.
+
+**Scope / residual.** A delivery lives within the function's 300 s budget (the presigned link had no limit); a very large file to a slow connection can be cut off mid-transfer — recorded, retryable. Confirm one portal download over 4.5 MB on the deployment (the platform's streamed-response behaviour).
 
 ---

@@ -7,12 +7,21 @@
 // HTML. Migration 20261047 closes that door at the database (a client INSERT
 // must address a same-org member and may not be external); this route is
 // the legitimate external path: the caller proves a session, must be an
-// active member of the transmittal's org and either its issuer or a
-// controller, and the message is rebuilt from the row — never from the body.
+// active member of the transmittal's org holding transmit authority for it
+// (TRX-1: the `transmittal.issue` capability per item library — the role
+// list this route hardcoded is now the capability's default, DEC-35), and
+// the message is rebuilt from the row — never from the body.
+//
+// TRX-14 / XEDGE-5: the link is built on the PUBLIC origin. On the server
+// with NEXT_PUBLIC_SITE_URL unset there is none, and a hostless
+// `/transmittal/<token>` is never emailed — the route answers sent: false
+// with the reason, and the issue flow says so.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { renderTransmittalEmail, rowToTransmittal, transmittalPortalUrl } from "@/lib/transmittals";
+import {
+  evaluateTransmitAuthority, portalLinkState, renderTransmittalEmail, rowToTransmittal, transmittalPortalUrl,
+} from "@/lib/transmittals";
 
 export const runtime = "nodejs";
 
@@ -37,26 +46,36 @@ export async function POST(req: NextRequest) {
   if (!row) return bad("Transmittal not found.", 404);
   const t = rowToTransmittal(row as Record<string, unknown>);
 
-  // Authority: an active member of the transmittal's org who issued it, or a
-  // controller by the role collection.
-  const { data: member } = await supabaseAdmin
-    .from("org_members").select("role, roles, email")
-    .eq("org_id", t.orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
+  // Authority (TRX-1): an active member of the transmittal's org holding
+  // transmit authority for every document on it. Fails closed when the
+  // policy cannot be read.
+  const authority = await evaluateTransmitAuthority(supabaseAdmin, { orgId: t.orgId, uid: user.id, items: t.items });
+  if (authority.error) return bad(authority.error, 503);
+  const member = authority.member;
   if (!member) return bad("Not an active member of this workspace.", 403);
-  const held = new Set<string>([(member.role as string) || "", ...(((member.roles as string[] | null) ?? []))]);
-  const isController = held.has("Admin") || held.has("DocCtrl");
-  if (t.createdBy !== user.id && !isController) {
-    return bad("Only the transmittal's issuer or a Document Controller can email it.", 403);
+  if (!authority.allowed) {
+    return bad("Only a transmit authority (the \"Issue transmittals\" capability) can email this transmittal.", 403);
   }
 
   const to = t.recipientEmail?.trim();
-  if (!to || !t.portalToken || t.status === "voided") {
-    return NextResponse.json({ ok: false, sent: false, reason: !to ? "no recipient email" : !t.portalToken ? "no portal token" : "voided" });
+  const link = portalLinkState(t);
+  if (!to || !t.portalToken || link !== "live") {
+    return NextResponse.json({
+      ok: false, sent: false,
+      reason: !to ? "no recipient email" : !t.portalToken ? "no portal token" : `the portal link is ${link}`,
+    });
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return bad(`"${to}" doesn't look like an email address.`);
 
+  // TRX-14: never email a hostless link.
+  const portalUrl = transmittalPortalUrl(t.portalToken);
+  if (!portalUrl) {
+    console.error("[transmittal/send-email] NEXT_PUBLIC_SITE_URL is not set — refusing to email a hostless portal link", { transmittal: t.id });
+    return NextResponse.json({ ok: false, sent: false, reason: "this deployment has no public site URL (NEXT_PUBLIC_SITE_URL), so no portal link can be emailed" });
+  }
+
   // Rendered from the ROW — the body of this request carries nothing but an id.
-  const { subject, text, html } = renderTransmittalEmail(t, transmittalPortalUrl(t.portalToken));
+  const { subject, text, html } = renderTransmittalEmail(t, portalUrl);
   const { error: qErr } = await supabaseAdmin.from("email_notifications").insert({
     org_id: t.orgId,
     to_user_id: user.id,

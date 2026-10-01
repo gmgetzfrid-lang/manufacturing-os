@@ -40,12 +40,16 @@ describe("20261063 — org_capability_allows_for learns admin.audit_view; audit_
     // the added line sits inside the CASE, right after admin.archive_view
     expect(fn63).toMatch(/WHEN 'admin\.archive_view'\s+THEN '\["Admin","DocCtrl"\]'::jsonb\n      WHEN 'admin\.audit_view'/);
   });
-  it("the default CASE now mirrors CAPABILITY_DEFS exactly (every id, same defaults, same count)", () => {
+  it("the default CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults) — the later 20261132 row (transmittal.issue) is the only id it lacks", () => {
     const caseNew = between(fn63, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseNew.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const def of CAPABILITY_DEFS) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
-    expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length);
+    // 20261063 is now HISTORICAL (20261132 re-creates the evaluator from it);
+    // the live census is rpPhase4Migration.test.ts.
+    const later = new Set(["transmittal.issue"]);
+    for (const def of CAPABILITY_DEFS) if (!later.has(def.id)) expect(sqlDefaults.get(def.id), def.id).toEqual(def.defaultRoles);
+    expect(sqlDefaults.size).toBe(CAPABILITY_DEFS.length - later.size);
+    for (const id of later) expect(sqlDefaults.has(id), id).toBe(false);
   });
   it("the 3-argument wrapper is NOT re-created (it is unchanged and every policy keeps calling it)", () => {
     expect(m63).not.toMatch(/CREATE OR REPLACE FUNCTION org_capability_allows\(/);

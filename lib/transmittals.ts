@@ -8,14 +8,39 @@
 // A transmittal is a point-in-time SNAPSHOT: each item denormalizes the
 // document number/title/rev as-sent, so the record stays truthful even after
 // the documents rev forward (or get deleted). Items live in a JSONB column.
+// At the ISSUE transition the database (trg_transmittals_guard, 20261133)
+// completes the snapshot itself — the pinned version (always the document's
+// CURRENT revision), its file hash and size, the document's status and the
+// revision's effective date as sent (TRX-3 / TRX-8 / TRX-12) — so the browser
+// cannot author them.
+//
+// Who may do what (TRX-1 / TRX-2 / TRX-6, enforced at the database):
+//   * every active member may DRAFT, and edit / delete their own drafts;
+//   * issuing, voiding, revoking the portal link and recording a receipt on
+//     the recipient's behalf are the transmit authority's — the
+//     `transmittal.issue` capability, evaluated per item library (DEC-13);
+//   * an issued transmittal is never deleted and its content never changes;
+//   * the receipt is written once, by the recipient portal or the receipt
+//     route (both server-side), never by a member session.
 //
 // The data layer is resilient: if the `transmittals` table hasn't been
 // migrated yet, calls throw a friendly "run the migration" message instead of
-// a raw Postgres error (same pattern as the resilient library fetch).
+// a raw Postgres error (same pattern as the resilient library fetch). Every
+// mutation is CHECKED (TRX-7): a write that changed no row throws, and the
+// audit row is written only for a confirmed change.
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { openPrintWindow } from "@/lib/evidencePack";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
+import { assertNotOnHold, type HoldGateClient } from "@/lib/holdGate";
+import { isSafeStorageKey } from "@/lib/storageKey";
+import { orgKeyPrefix } from "@/lib/shedKeyGuard";
+import { loadCapabilityPolicyStrict, policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { memberHoldsAny } from "@/lib/roleHeld";
+import type { Role } from "@/types/schema";
 
 export type TransmittalStatus = "draft" | "issued" | "acknowledged" | "voided";
 
@@ -30,12 +55,37 @@ export const TRANSMITTAL_PURPOSES = [
 ] as const;
 export type TransmittalPurpose = (typeof TRANSMITTAL_PURPOSES)[number];
 
+/** TRX-1: the capability that decides who may issue, void, revoke the portal
+ *  link of, and record a receipt on, a transmittal. */
+export const TRANSMIT_CAPABILITY = "transmittal.issue" as const;
+
+/** TRX-4: how long a portal link lives after issue. The database sets it on
+ *  the issue transition (20261133); this constant is the UI's copy of it. */
+export const PORTAL_LINK_DAYS = 90;
+
 export interface TransmittalItem {
   documentId: string;
   number: string;
   title?: string | null;
   rev?: string | null;
   versionId?: string | null;
+  /** As-sent snapshot, written by the database at issue (20261133). */
+  fileHash?: string | null;
+  /** Bytes of the file issued (document_versions.size at issue). */
+  fileSize?: number | null;
+  statusAsSent?: string | null;
+  effectiveDate?: string | null;
+}
+
+/** TRX-13: what the server saw when the receipt was recorded. A portal
+ *  receipt carries the recipient's request (IP / user agent / note); a
+ *  receipt recorded on the register carries who recorded it. */
+export interface TransmittalAckMeta {
+  ip?: string | null;
+  userAgent?: string | null;
+  note?: string | null;
+  recordedBy?: string | null;
+  recordedByEmail?: string | null;
 }
 
 export interface Transmittal {
@@ -58,8 +108,17 @@ export interface Transmittal {
   acknowledgedAt?: string | null;
   acknowledgedByName?: string | null;
   acknowledgedVia?: "portal" | "manual" | null;
-  /** Unguessable external-portal token (set on issue, 20260910). */
+  acknowledgedMeta?: TransmittalAckMeta | null;
+  /** Unguessable external-portal token (minted by the database on issue). */
   portalToken?: string | null;
+  /** TRX-4: the portal link's own lifecycle — separate from the record's. */
+  portalExpiresAt?: string | null;
+  portalRevokedAt?: string | null;
+  portalRevokedBy?: string | null;
+  portalLastUsedAt?: string | null;
+  /** null when the database predates 20261133 (no usage trail to read). */
+  portalOpenCount?: number | null;
+  portalDownloadCount?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 }
@@ -82,11 +141,190 @@ export function transmittalStatusMeta(s: TransmittalStatus): { label: string; to
   }
 }
 
-/** True when the transmittal carries no documents — can't be issued. */
-export function isTransmittalIssuable(t: Pick<Transmittal, "items" | "recipientName" | "recipientCompany">): boolean {
+/** What the composer knows about one item's document before issue. */
+export interface IssueFacts {
+  status?: string | null;
+  archivedAt?: string | null;
+  currentVersionId?: string | null;
+  /** The document's Rev field (documents.rev). */
+  rev?: string | null;
+  /** The revision label of the document's CURRENT file (the current
+   *  version's revision_label). `undefined` = not read; the database still
+   *  decides at issue. */
+  currentRevisionLabel?: string | null;
+  legalHold?: boolean | null;
+  /** Active operational holds (reasons). `null` = the hold read FAILED. */
+  holds?: string[] | null;
+  /** False when the document row could not be read at all. */
+  found?: boolean;
+}
+
+/** TRX-3 / HLD-1: why an item cannot go out on a transmittal, or null. The
+ *  database applies the same rule at the issue transition (20261133); this
+ *  is the composer's copy, so the button says why before a round-trip. An
+ *  unreadable hold set BLOCKS (fail closed, the lib/holdGate.ts stance). A
+ *  legal hold does not block — it asks for confirmation (legalHoldNotice).
+ *
+ *  Status truth: what goes out is the document's CURRENT revision. An item
+ *  pinned to an older version (it was added before the document revved up)
+ *  is refused with the revision that superseded it, and an item whose Rev
+ *  does not match the current file's label is refused with the cause — the
+ *  document's own Rev field drifted from its file (correct the document), or
+ *  the item is stale (remove it and add it again). */
+export function itemIssueBlocker(item: Pick<TransmittalItem, "number"> & Partial<Pick<TransmittalItem, "documentId" | "versionId" | "rev">>, facts: IssueFacts | undefined): string | null {
+  const label = item.number || "This document";
+  if (!facts || facts.found === false) return `${label} could not be read — it may have been deleted or you can't see it.`;
+  if (facts.archivedAt || NOT_CURRENT_STATUSES.has(facts.status ?? "")) {
+    const state = facts.archivedAt ? "archived" : String(facts.status).toLowerCase();
+    return `${label} is withdrawn (${state}) and cannot be issued on a transmittal.`;
+  }
+  if (facts.holds === null) return `Couldn't confirm ${label} is free of holds — it is treated as held.`;
+  if ((facts.holds?.length ?? 0) > 0) return `${label} is under an active hold (${facts.holds!.join(", ")}) — release it before issuing.`;
+  if (!facts.currentVersionId) return `${label} has no published file to send.`;
+  const current = typeof facts.currentRevisionLabel === "string" ? facts.currentRevisionLabel.trim() : null;
+  if (item.versionId && item.versionId !== facts.currentVersionId) {
+    return `${label} Rev ${item.rev?.trim() || "?"} has been superseded by Rev ${current || "a newer revision"} — remove ${label} and add it again to send the current revision.`;
+  }
+  const itemRev = item.rev?.trim() || null;
+  if (current && itemRev && current !== itemRev) {
+    const docRev = facts.rev?.trim() || null;
+    if (docRev === itemRev) {
+      return `${label}: the document's Rev field (${docRev}) does not match its current file (Rev ${current}) — correct the document's revision before issuing it.`;
+    }
+    return `${label} is listed at Rev ${itemRev}, but its current file is Rev ${current} — remove ${label} and add it again.`;
+  }
+  return null;
+}
+
+/** True when the transmittal can be issued: at least one document, a
+ *  recipient, and — when the caller passes what it knows about each item —
+ *  no item that is withdrawn, held, unreadable or without a file (TRX-3). */
+export function isTransmittalIssuable(
+  t: Pick<Transmittal, "items" | "recipientName" | "recipientCompany">,
+  facts?: ReadonlyMap<string, IssueFacts>,
+): boolean {
   const hasItems = (t.items?.length ?? 0) > 0;
   const hasRecipient = !!(t.recipientName?.trim() || t.recipientCompany?.trim());
-  return hasItems && hasRecipient;
+  if (!hasItems || !hasRecipient) return false;
+  if (!facts) return true;
+  return t.items.every((it) => itemIssueBlocker(it, facts.get(it.documentId)) === null);
+}
+
+/** TRX-3 dw2: the confirmation a legal hold asks for (null when none). */
+export function legalHoldNotice(items: TransmittalItem[], facts: ReadonlyMap<string, IssueFacts>): string | null {
+  const held = items.filter((it) => facts.get(it.documentId)?.legalHold).map((it) => it.number);
+  if (held.length === 0) return null;
+  return `${held.join(", ")} ${held.length === 1 ? "is" : "are"} under a legal hold. Issuing sends a copy of preserved records to an outside party — confirm this distribution is cleared.`;
+}
+
+/** TRX-1 / DEC-13: may this principal transmit a set of items? Every item's
+ *  LIBRARY is a resource the capability is evaluated against (a library rule
+ *  replaces the base list for that library); an item whose library is unknown
+ *  — and a transmittal with no items — is judged on the base list. The
+ *  database runs the same rule (org_capability_allows_for per item). */
+export function mayTransmit(
+  policy: CapabilityPolicy | null | undefined,
+  principal: { role?: string | null; roles?: string[] | null; uid?: string | null },
+  libraryIds: ReadonlyArray<string | null | undefined>,
+): boolean {
+  const check = (libraryId?: string | null) =>
+    policyAllows(policy, TRANSMIT_CAPABILITY, principal.role ?? null, principal.roles ?? null, principal.uid ?? null,
+      libraryId ? { libraryId } : null);
+  if (libraryIds.length === 0) return check(null);
+  return libraryIds.every((lib) => check(lib ?? null));
+}
+
+/** TRX-7: the roles the RESTRICTIVE `transmittals_delete_guard` (20260818,
+ *  unchanged) admits through `is_org_admin_or_manager` — its mirror here,
+ *  the way `isControllerPrincipal` mirrors `is_org_controller`. */
+export const DRAFT_DELETE_GUARD_ROLES: readonly string[] = ["Admin", "Manager"];
+
+/** TRX-7: may this principal delete this draft? The database ANDs two
+ *  policies: the permissive `transmittals_delete` (20261133 — a draft, by a
+ *  controller or its active author) and the RESTRICTIVE
+ *  `transmittals_delete_guard` (20260818 — an Admin / Manager, the author,
+ *  or someone who can manage the draft's project). Together: the author;
+ *  otherwise a controller who is ALSO an Admin / Manager or manages the
+ *  draft's project (`managedProjectIds`: projects the principal owns or is
+ *  an owner / collaborator on — can_manage_project's other arms). */
+export function mayDeleteDraft(
+  t: Pick<Transmittal, "status" | "createdBy" | "projectId">,
+  principal: { role?: string | null; roles?: string[] | null; uid?: string | null },
+  managedProjectIds: ReadonlySet<string> = new Set(),
+): boolean {
+  if (t.status !== "draft") return false;
+  if (principal.uid && t.createdBy === principal.uid) return true;
+  const member = { role: principal.role ?? null, roles: principal.roles ?? [] };
+  if (!isControllerPrincipal({ role: (member.role ?? "Viewer") as Role, roles: member.roles as Role[] })) return false;
+  return memberHoldsAny(member, DRAFT_DELETE_GUARD_ROLES) || (!!t.projectId && managedProjectIds.has(t.projectId));
+}
+
+/** TRX-4: the state of the portal LINK, independent of the record's status. */
+export type PortalLinkState = "none" | "live" | "revoked" | "expired" | "voided";
+export function portalLinkState(
+  t: Pick<Transmittal, "status" | "portalToken" | "portalRevokedAt" | "portalExpiresAt">,
+  now: number = Date.now(),
+): PortalLinkState {
+  if (!t.portalToken) return "none";
+  if (t.status === "voided") return "voided";
+  if (t.portalRevokedAt) return "revoked";
+  if (t.portalExpiresAt && Date.parse(t.portalExpiresAt) <= now) return "expired";
+  return "live";
+}
+
+/** TRX-4: the portal's refusal for a transmittals ROW (the route reads raw
+ *  rows with the service role), checked before anything is served. Voided
+ *  first (the record itself is withdrawn), then a revoked or an expired link
+ *  — each a distinct 410, as /api/intake/resolve answers. A draft never
+ *  carries a token; anything not issued / acknowledged is not served. */
+export function portalRowRefusal(t: Record<string, unknown>, now: number = Date.now()): { status: number; error: "voided" | "notfound" | "revoked" | "expired" } | null {
+  if (t.status === "voided") return { status: 410, error: "voided" };
+  if (t.status !== "issued" && t.status !== "acknowledged") return { status: 404, error: "notfound" };
+  if (t.portal_revoked_at) return { status: 410, error: "revoked" };
+  const exp = t.portal_expires_at ? Date.parse(String(t.portal_expires_at)) : NaN;
+  if (Number.isFinite(exp) && exp <= now) return { status: 410, error: "expired" };
+  return null;
+}
+
+/** TRX-11 (the key half): a storage key that names ANOTHER workspace's
+ *  prefix, or climbs out of its own, is never read by the portal — whatever
+ *  row it came from. Keys with no `orgs/` prefix predate the convention and
+ *  stay readable (their row is already org-scoped, EGR-1). */
+export function portalKeyAllowed(key: string, orgId: string): boolean {
+  if (!isSafeStorageKey(key)) return false;
+  if (key.startsWith("orgs/") && !key.startsWith(orgKeyPrefix(orgId))) return false;
+  return true;
+}
+
+/** TRX-8: the short hash prefix a paper record prints per document. */
+export function hashPrefix(hash: string | null | undefined, n = 12): string | null {
+  const h = (hash ?? "").trim();
+  return h ? h.slice(0, n) : null;
+}
+
+/** TRX-8: the issued file's size as a paper record prints it ("2.4 MB"), or
+ *  null when the snapshot carries none. */
+export function fileSizeLabel(bytes: number | null | undefined): string | null {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[u]}`;
+}
+
+/** TRX-3: the as-sent state line for one item ("Issued · effective 2026-11-01
+ *  (pending)"), or null when the snapshot carries neither. */
+export function itemAsSentLabel(it: Pick<TransmittalItem, "statusAsSent" | "effectiveDate">, today: Date = new Date()): string | null {
+  const parts: string[] = [];
+  if (it.statusAsSent) parts.push(it.statusAsSent);
+  if (it.effectiveDate) {
+    const eff = it.effectiveDate.slice(0, 10);
+    const pending = eff > today.toISOString().slice(0, 10);
+    parts.push(`effective ${eff}${pending ? " (not yet in force)" : ""}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 const esc = (v: unknown): string =>
@@ -96,24 +334,48 @@ const fmtDate = (v: unknown): string => {
   try { return new Date(String(v)).toLocaleString(); } catch { return esc(v); }
 };
 
+/** TRX-13: the receipt line, with the evidence behind it. A portal receipt
+ *  names what the server saw (time, source address, the recipient's note); a
+ *  receipt recorded on the register names who recorded it. */
+export function receiptEvidence(t: Pick<Transmittal, "acknowledgedByName" | "acknowledgedAt" | "acknowledgedVia" | "acknowledgedMeta">): string {
+  const by = t.acknowledgedByName ? `by ${t.acknowledgedByName} ` : "";
+  const head = `Receipt acknowledged ${by}on ${t.acknowledgedAt ? new Date(t.acknowledgedAt).toLocaleString() : "—"}`;
+  const m = t.acknowledgedMeta ?? null;
+  if (t.acknowledgedVia === "portal") {
+    const bits = ["through the recipient portal"];
+    if (m?.ip) bits.push(`from ${m.ip}`);
+    const note = m?.note ? ` Their note: "${m.note}"` : "";
+    return `${head} ${bits.join(" ")}.${note}`;
+  }
+  if (t.acknowledgedVia === "manual") {
+    const who = m?.recordedByEmail || m?.recordedBy;
+    const note = m?.note ? ` Note: "${m.note}"` : "";
+    return `${head} — recorded on the register${who ? ` by ${who}` : ""}.${note}`;
+  }
+  return `${head}.`;
+}
+
 /**
  * Render the printable transmittal cover sheet (print-to-PDF). Pure — takes a
  * fully-formed Transmittal and returns a self-contained HTML document.
  */
 export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: string | null; qrDataUrl?: string | null }): string {
+  const showAsSent = (t.items ?? []).some((it) => it.statusAsSent || it.effectiveDate || it.fileHash || it.fileSize != null);
   const itemRows = (t.items ?? []).map((it, i) => `
     <tr>
       <td class="muted">${i + 1}</td>
       <td class="mono"><b>${esc(it.number)}</b></td>
       <td>${esc(it.title || "—")}</td>
-      <td class="mono">${esc(it.rev || "—")}</td>
+      <td class="mono">${esc(it.rev || "—")}</td>${showAsSent ? `
+      <td>${esc(itemAsSentLabel(it) || "—")}</td>
+      <td class="mono">${esc(hashPrefix(it.fileHash) || "—")}${fileSizeLabel(it.fileSize) ? `<div class="muted">${esc(fileSizeLabel(it.fileSize))}</div>` : ""}</td>` : ""}
     </tr>`).join("");
 
   const meta = (label: string, value: string) =>
     `<tr><td class="lbl">${esc(label)}</td><td>${value}</td></tr>`;
 
   const ackLine = t.status === "acknowledged"
-    ? `<div class="ack">Receipt acknowledged ${t.acknowledgedByName ? `by ${esc(t.acknowledgedByName)} ` : ""}on ${fmtDate(t.acknowledgedAt)}.</div>`
+    ? `<div class="ack">${esc(receiptEvidence(t))}</div>`
     : `<div class="sign">
         <div class="sigbox"><div class="sigline"></div><div class="siglbl">Received by (print &amp; sign)</div></div>
         <div class="sigbox"><div class="sigline"></div><div class="siglbl">Date</div></div>
@@ -176,7 +438,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   ${(t.items?.length ?? 0) === 0
     ? '<div class="muted" style="font-style:italic;padding:8px 0">No documents on this transmittal.</div>'
     : `<table>
-        <thead><tr><th style="width:32px">#</th><th>Number</th><th>Title</th><th style="width:80px">Rev</th></tr></thead>
+        <thead><tr><th style="width:32px">#</th><th>Number</th><th>Title</th><th style="width:80px">Rev</th>${showAsSent ? '<th>Status as sent</th><th style="width:110px">SHA-256 · size</th>' : ""}</tr></thead>
         <tbody>${itemRows}</tbody>
       </table>`}
 
@@ -190,11 +452,11 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
     <div>
       <div style="font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569">Recipient portal — download &amp; acknowledge online</div>
       <div class="mono" style="font-size:10px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
-      <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.</div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.${t.portalExpiresAt ? ` It stops working on ${esc(new Date(t.portalExpiresAt).toLocaleDateString())}.` : ""}</div>
     </div>
   </div>` : ""}
 
-  <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.</div>
+  <div class="footer">Transmittal ${esc(t.number)} · Generated ${new Date().toLocaleString()} · ManufacturingOS · This is the controlled record of the documents and revisions issued above.${showAsSent ? " Each SHA-256 prefix (and size) identifies the exact file issued." : ""}</div>
 </body></html>`;
 }
 
@@ -265,51 +527,63 @@ export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { sub
   return { subject, text, html };
 }
 
+/** TRX-10: what actually happened to the issue email — never inferred from
+ *  the presence of a recipient address. */
+export interface TransmittalEmailOutcome {
+  sent: boolean;
+  /** Why it was not sent (null when it was). */
+  reason: string | null;
+}
+
 /**
- * Email the recipient their issued transmittal (portal link included) and
- * audit that it went out. No-ops quietly when there's no recipient email or
- * no portal token (pre-20260910 database). Failure to queue never fails the
- * issue itself — the transmittal IS issued; the email is delivery on top.
+ * Email the recipient their issued transmittal (portal link included). The
+ * route queues it server-side and audits it. Failure to queue never fails the
+ * issue itself — the transmittal IS issued; the email is delivery on top —
+ * but the outcome says exactly what happened (TRX-10).
  */
-export async function sendTransmittalEmail(t: Transmittal, _actor: TransmittalActor): Promise<boolean> {
+export async function sendTransmittalEmail(t: Transmittal, _actor: TransmittalActor): Promise<TransmittalEmailOutcome> {
   // SURF-17: the email is queued SERVER-SIDE from the transmittal row
   // (/api/transmittal/send-email) — a browser can no longer address or author
   // external mail. The route decides who may send and audits it.
   const to = t.recipientEmail?.trim();
-  if (!to || !t.portalToken || t.status === "voided") return false;
+  if (!to) return { sent: false, reason: "no recipient email on the transmittal" };
+  if (t.status === "voided") return { sent: false, reason: "the transmittal is voided" };
+  if (!t.portalToken) return { sent: false, reason: "the transmittal has no portal link (the database predates 20260910)" };
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) return false;
+    if (!session?.access_token) return { sent: false, reason: "not signed in" };
     const res = await fetch("/api/transmittal/send-email", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ transmittalId: t.id }),
     });
+    const j = await res.json().catch(() => ({})) as { error?: string; sent?: boolean; reason?: string };
     if (!res.ok) {
-      const j = await res.json().catch(() => ({})) as { error?: string };
       console.warn("[transmittals] email send refused:", j.error ?? res.status);
-      return false;
+      return { sent: false, reason: j.error ?? `the email route answered ${res.status}` };
     }
-    const j = await res.json().catch(() => ({})) as { sent?: boolean };
-    return j.sent === true;
+    return j.sent === true ? { sent: true, reason: null } : { sent: false, reason: j.reason ?? "the email route did not queue it" };
   } catch (e) {
     console.warn("[transmittals] email send failed (the transmittal is still issued):", e);
-    return false;
+    return { sent: false, reason: (e as Error)?.message || "the email could not be queued" };
   }
 }
 
 /** Render + open the cover sheet in a new window for print / save-as-PDF.
- *  Issued transmittals get their portal link + QR embedded — the sheet and
- *  the electronic acknowledgment path are one artifact. */
+ *  Issued transmittals with a LIVE portal link get the link + QR embedded —
+ *  the sheet and the electronic acknowledgment path are one artifact. A
+ *  revoked, expired or voided link is never printed. */
 export async function openTransmittalSheet(t: Transmittal): Promise<void> {
   let portalUrl: string | null = null;
   let qrDataUrl: string | null = null;
-  if (t.portalToken && t.status !== "voided") {
+  if (t.portalToken && portalLinkState(t) === "live") {
     portalUrl = transmittalPortalUrl(t.portalToken);
-    try {
-      const { toDataURL } = await import("qrcode");
-      qrDataUrl = await toDataURL(portalUrl, { margin: 1, width: 184 });
-    } catch { /* sheet still opens without the QR */ }
+    if (portalUrl) {
+      try {
+        const { toDataURL } = await import("qrcode");
+        qrDataUrl = await toDataURL(portalUrl, { margin: 1, width: 184 });
+      } catch { /* sheet still opens without the QR */ }
+    }
   }
   openPrintWindow(renderTransmittalSheet(t, { portalUrl, qrDataUrl }));
 }
@@ -324,16 +598,38 @@ function isMissingTable(error: { code?: string; message?: string } | null | unde
   return error.code === "42P01" || /relation .*transmittals.* does not exist/i.test(error.message ?? "");
 }
 
+function isMissingColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "42703" || error.code === "PGRST204";
+}
+
+function toItem(it: Record<string, unknown>): TransmittalItem {
+  const out: TransmittalItem = {
+    documentId: String(it.documentId ?? it.document_id ?? ""),
+    number: String(it.number ?? ""),
+    title: (it.title as string) ?? null,
+    rev: (it.rev as string) ?? null,
+    versionId: (it.versionId as string) ?? (it.version_id as string) ?? null,
+  };
+  // The as-sent snapshot keys exist only on items issued after 20261133.
+  if (typeof it.fileHash === "string" && it.fileHash) out.fileHash = it.fileHash;
+  if (typeof it.fileSize === "number" && Number.isFinite(it.fileSize)) out.fileSize = it.fileSize;
+  if (typeof it.statusAsSent === "string" && it.statusAsSent) out.statusAsSent = it.statusAsSent;
+  if (typeof it.effectiveDate === "string" && it.effectiveDate) out.effectiveDate = it.effectiveDate;
+  return out;
+}
+
+function toAckMeta(v: unknown): TransmittalAckMeta | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const m = v as Record<string, unknown>;
+  const s = (k: string) => (typeof m[k] === "string" && m[k] ? (m[k] as string) : null);
+  return { ip: s("ip"), userAgent: s("userAgent"), note: s("note"), recordedBy: s("recordedBy"), recordedByEmail: s("recordedByEmail") };
+}
+
 export function rowToTransmittal(r: Record<string, unknown>): Transmittal {
   const rawItems = r.items;
   const items: TransmittalItem[] = Array.isArray(rawItems)
-    ? (rawItems as Array<Record<string, unknown>>).map((it) => ({
-        documentId: String(it.documentId ?? it.document_id ?? ""),
-        number: String(it.number ?? ""),
-        title: (it.title as string) ?? null,
-        rev: (it.rev as string) ?? null,
-        versionId: (it.versionId as string) ?? (it.version_id as string) ?? null,
-      }))
+    ? (rawItems as Array<Record<string, unknown>>).map(toItem)
     : [];
   return {
     id: String(r.id),
@@ -355,7 +651,14 @@ export function rowToTransmittal(r: Record<string, unknown>): Transmittal {
     acknowledgedAt: (r.acknowledged_at as string) ?? null,
     acknowledgedByName: (r.acknowledged_by_name as string) ?? null,
     acknowledgedVia: (r.acknowledged_via as "portal" | "manual" | null) ?? null,
+    acknowledgedMeta: toAckMeta(r.acknowledged_meta),
     portalToken: (r.portal_token as string) ?? null,
+    portalExpiresAt: (r.portal_expires_at as string) ?? null,
+    portalRevokedAt: (r.portal_revoked_at as string) ?? null,
+    portalRevokedBy: (r.portal_revoked_by as string) ?? null,
+    portalLastUsedAt: (r.portal_last_used_at as string) ?? null,
+    portalOpenCount: r.portal_open_count === undefined || r.portal_open_count === null ? null : Number(r.portal_open_count) || 0,
+    portalDownloadCount: r.portal_download_count === undefined || r.portal_download_count === null ? null : Number(r.portal_download_count) || 0,
     createdAt: (r.created_at as string) ?? null,
     updatedAt: (r.updated_at as string) ?? null,
   };
@@ -374,17 +677,28 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
   return top + 1;
 }
 
-export function makePortalToken(): string {
-  return (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, "").slice(0, 40);
+/** TRX-14 / XEDGE-5: the external portal link, built on the PUBLIC origin
+ *  (lib/publicOrigin.ts — NEXT_PUBLIC_SITE_URL, or the page's own origin in a
+ *  browser). Returns null when there is no origin at all — on the SERVER with
+ *  NEXT_PUBLIC_SITE_URL unset — so a caller refuses to email or print a
+ *  hostless `/transmittal/<token>` instead of sending one. */
+export function transmittalPortalUrl(token: string): string | null {
+  let origin = "";
+  try { origin = publicOrigin(); } catch { origin = ""; }
+  return origin ? `${origin}/transmittal/${token}` : null;
 }
 
-export function transmittalPortalUrl(token: string): string {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  return `${origin}/transmittal/${token}`;
+/** TRX-14 dw3: true when the deployment names its public origin. Without it a
+ *  browser builds the link on whatever host it is on — a preview deploy mints
+ *  a link the recipient cannot open — so the issue flow warns. */
+export function portalOriginConfigured(): boolean {
+  return !!(process.env.NEXT_PUBLIC_SITE_URL || "").trim();
 }
 
 /** Every transmittal that carries a given document — the "who did we send
- *  this to?" answer from the document's side. JSONB containment on items. */
+ *  this to?" answer from the document's side. JSONB containment on items.
+ *  TRX-9: a FAILED read throws (only a missing table answers "none"), so the
+ *  Inspector can say the trail could not be read instead of showing nothing. */
 export async function listTransmittalsForDocument(orgId: string, documentId: string): Promise<Transmittal[]> {
   const { data, error } = await supabase
     .from("transmittals")
@@ -393,7 +707,10 @@ export async function listTransmittalsForDocument(orgId: string, documentId: str
     .contains("items", JSON.stringify([{ documentId }]))
     .order("seq", { ascending: false })
     .limit(50);
-  if (error) { if (isMissingTable(error)) return []; return []; }
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw new Error(`Couldn't read the transmittal trail: ${error.message}`);
+  }
   return (data ?? []).map((r) => rowToTransmittal(r as Record<string, unknown>));
 }
 
@@ -410,21 +727,18 @@ export interface CreateTransmittalInput {
   actorUserId: string;
   actorName?: string;
   actorRole?: string;
-  /** Create and immediately mark issued (skip the draft step). */
-  issueNow?: boolean;
 }
 
+/** Create a DRAFT. A transmittal is never born issued (TRX-1 — the INSERT
+ *  policy admits drafts only); issue it with issueTransmittal. */
 export async function createTransmittal(input: CreateTransmittalInput): Promise<Transmittal> {
-  const issueNow = !!input.issueNow;
-  const now = new Date().toISOString();
-
   // Race-tolerant insert: compute the next seq, insert; on a unique-number
   // collision (someone drafted at the same moment), bump and retry a few times.
   let lastErr: { code?: string; message?: string } | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {
     const seq = await nextTransmittalSeq(input.orgId) + attempt;
     const number = formatTransmittalNumber(seq);
-    let { data, error } = await supabase
+    const { data, error } = await supabase
       .from("transmittals")
       .insert({
         org_id: input.orgId,
@@ -436,45 +750,19 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
         recipient_company: input.recipientCompany?.trim() || null,
         recipient_email: input.recipientEmail?.trim() || null,
         purpose: input.purpose || null,
-        status: issueNow ? "issued" : "draft",
+        status: "draft",
         notes: input.notes?.trim() || null,
         items: input.items ?? [],
         created_by: input.actorUserId,
         created_by_name: input.actorName || null,
-        issued_at: issueNow ? now : null,
-        ...(issueNow ? { portal_token: makePortalToken() } : {}),
       })
       .select("*")
       .single();
-    if (error?.code === "42703" && issueNow) {
-      // Pre-20260910 database — create issued without a portal token.
-      ({ data, error } = await supabase
-        .from("transmittals")
-        .insert({
-          org_id: input.orgId,
-          project_id: input.projectId || null,
-          seq,
-          number,
-          subject: input.subject?.trim() || null,
-          recipient_name: input.recipientName?.trim() || null,
-          recipient_company: input.recipientCompany?.trim() || null,
-          recipient_email: input.recipientEmail?.trim() || null,
-          purpose: input.purpose || null,
-          status: "issued",
-          notes: input.notes?.trim() || null,
-          items: input.items ?? [],
-          created_by: input.actorUserId,
-          created_by_name: input.actorName || null,
-          issued_at: now,
-        })
-        .select("*")
-        .single());
-    }
 
     if (!error && data) {
       const t = rowToTransmittal(data as Record<string, unknown>);
       await logAuditAction({
-        action: issueNow ? "TRANSMITTAL_ISSUED" : "TRANSMITTAL_CREATED",
+        action: "TRANSMITTAL_CREATED",
         resourceId: t.id,
         resourceType: "transmittal",
         orgId: input.orgId,
@@ -483,9 +771,6 @@ export async function createTransmittal(input: CreateTransmittalInput): Promise<
         userRole: input.actorRole,
         details: { number: t.number, purpose: t.purpose, recipient: t.recipientName || t.recipientCompany, documentCount: t.items.length },
       });
-      if (issueNow) {
-        await sendTransmittalEmail(t, { orgId: input.orgId, actorUserId: input.actorUserId, actorName: input.actorName, actorRole: input.actorRole });
-      }
       return t;
     }
     lastErr = error;
@@ -524,7 +809,8 @@ export interface UpdateTransmittalDraftInput {
   projectId?: string | null;
 }
 
-/** Edit a draft's fields. Only meaningful while status === 'draft'. */
+/** Edit a draft's fields. Throws when no draft row changed — it was issued
+ *  meanwhile, or RLS refused the caller (TRX-7). */
 export async function updateTransmittalDraft(id: string, patch: UpdateTransmittalDraftInput): Promise<void> {
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.subject !== undefined) row.subject = patch.subject?.trim() || null;
@@ -535,8 +821,11 @@ export async function updateTransmittalDraft(id: string, patch: UpdateTransmitta
   if (patch.notes !== undefined) row.notes = patch.notes?.trim() || null;
   if (patch.items !== undefined) row.items = patch.items;
   if (patch.projectId !== undefined) row.project_id = patch.projectId || null;
-  const { error } = await supabase.from("transmittals").update(row).eq("id", id).eq("status", "draft");
+  const { data, error } = await supabase.from("transmittals").update(row).eq("id", id).eq("status", "draft").select("id");
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
+  if (!data || data.length === 0) {
+    throw new Error("The draft was not saved — it is no longer a draft, or you can't edit it (its author, a Document Controller or a transmit authority can).");
+  }
 }
 
 export interface TransmittalActor {
@@ -546,80 +835,135 @@ export interface TransmittalActor {
   actorRole?: string;
 }
 
-/** Move a draft → issued and stamp the issue time. */
-export async function issueTransmittal(id: string, actor: TransmittalActor): Promise<void> {
+/** TRX-3 / HLD-1: the app-side issue gate. Reads each item's document (and
+ *  the revision label of its current file) and refuses a withdrawn,
+ *  unreadable, file-less, superseded-pin or Rev-mismatched one, then asks
+ *  the shared hold gate (lib/holdGate.ts — fail-closed) for every document.
+ *  The database re-applies the rule at the issue transition (20261133);
+ *  this copy names the document and the cause before the round-trip. */
+export async function assertItemsIssuable(
+  orgId: string,
+  items: TransmittalItem[],
+  client: HoldGateClient = supabase,
+): Promise<void> {
+  if (items.length === 0) throw new Error("Add at least one document before issuing.");
+  const ids = [...new Set(items.map((i) => i.documentId).filter(Boolean))];
+  const { data, error } = await client
+    .from("documents")
+    .select("id, status, archived_at, current_version_id, rev")
+    .eq("org_id", orgId)
+    .in("id", ids);
+  if (error) throw new Error(`Couldn't check the documents before issuing: ${error.message}`);
+  const docs = (data as Array<Record<string, unknown>> | null) ?? [];
+  const byId = new Map(docs.map((d) => [String(d.id), d]));
+  // The current files' labels: an unreadable label leaves the label checks to
+  // the database (it refuses with the same cause at issue).
+  const currentIds = [...new Set(docs.map((d) => d.current_version_id as string | null).filter((v): v is string => !!v))];
+  const labelOf = new Map<string, string | null>();
+  if (currentIds.length > 0) {
+    const { data: vers, error: vErr } = await client
+      .from("document_versions")
+      .select("id, revision_label")
+      .eq("org_id", orgId)
+      .in("id", currentIds);
+    if (!vErr) for (const v of (vers as Array<Record<string, unknown>> | null) ?? []) labelOf.set(String(v.id), (v.revision_label as string | null) ?? null);
+  }
+  for (const it of items) {
+    const d = byId.get(it.documentId);
+    const cur = d ? ((d.current_version_id as string) ?? null) : null;
+    const blocker = itemIssueBlocker(it, d
+      ? {
+          found: true, status: (d.status as string) ?? null, archivedAt: (d.archived_at as string) ?? null,
+          currentVersionId: cur, rev: (d.rev as string) ?? null,
+          currentRevisionLabel: cur && labelOf.has(cur) ? labelOf.get(cur) : undefined,
+          holds: [],
+        }
+      : { found: false });
+    if (blocker) throw new Error(blocker);
+  }
+  for (const id of ids) await assertNotOnHold(id, { client, action: "issuing it on a transmittal" });
+}
+
+/** TRX-10: everything the issue flow needs to tell the person truthfully. */
+export interface IssueOutcome {
+  /** The row as the database left it — portal token, snapshot and all. */
+  transmittal: Transmittal;
+  email: TransmittalEmailOutcome;
+  /** "missing" = issued without a recipient portal (pre-20260910 database). */
+  portal: "ready" | "missing";
+  /** A refused audit row leaves the issue standing; the caller says so. */
+  auditError: string | null;
+}
+
+/** Move a draft → issued. The database authorizes it (transmit authority per
+ *  item library), completes the item snapshot, stamps the issue time and
+ *  mints the portal link; this returns the row it wrote (TRX-10) or throws
+ *  when nothing was issued (TRX-7). */
+export async function issueTransmittal(id: string, actor: TransmittalActor): Promise<IssueOutcome> {
+  const draft = await getTransmittal(id);
+  if (!draft) throw new Error("That transmittal no longer exists.");
+  if (draft.status !== "draft") throw new Error(`${draft.number} is already ${draft.status}.`);
+  await assertItemsIssuable(draft.orgId, draft.items);
+
   const now = new Date().toISOString();
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from("transmittals")
-    .update({ status: "issued", issued_at: now, updated_at: now, portal_token: makePortalToken() })
+    .update({ status: "issued", issued_at: now, updated_at: now })
     .eq("id", id)
     .eq("status", "draft")
     .select("*")
     .maybeSingle();
-  if (error?.code === "42703") {
-    // Pre-20260910 database — issue without a portal link.
-    ({ data, error } = await supabase
-      .from("transmittals")
-      .update({ status: "issued", issued_at: now, updated_at: now })
-      .eq("id", id)
-      .eq("status", "draft")
-      .select("*")
-      .maybeSingle());
-  }
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
-  if (data) {
-    await sendTransmittalEmail(rowToTransmittal(data as Record<string, unknown>), actor);
+  if (!data) {
+    throw new Error(`${draft.number} was not issued — it is no longer a draft, or you do not hold transmit authority ("Issue transmittals") for every document on it.`);
   }
-  await logAuditAction({
+  const t = rowToTransmittal(data as Record<string, unknown>);
+  const { error: auditError } = await logAuditAction({
     action: "TRANSMITTAL_ISSUED",
-    resourceId: id,
+    resourceId: t.id,
     resourceType: "transmittal",
     orgId: actor.orgId,
     userId: actor.actorUserId,
     userEmail: actor.actorName,
     userRole: actor.actorRole,
-    details: data ? { number: data.number, purpose: data.purpose, recipient: data.recipient_name || data.recipient_company, documentCount: Array.isArray(data.items) ? data.items.length : 0 } : undefined,
+    details: { number: t.number, purpose: t.purpose, recipient: t.recipientName || t.recipientCompany, documentCount: t.items.length },
   });
+  const email = await sendTransmittalEmail(t, actor);
+  return { transmittal: t, email, portal: t.portalToken ? "ready" : "missing", auditError };
 }
 
-/** Record recipient receipt (issued → acknowledged). */
-export async function acknowledgeTransmittal(id: string, acknowledgedByName: string, actor: TransmittalActor): Promise<void> {
-  const now = new Date().toISOString();
-  let { error } = await supabase
-    .from("transmittals")
-    .update({ status: "acknowledged", acknowledged_at: now, acknowledged_by_name: acknowledgedByName.trim() || null, acknowledged_via: "manual", updated_at: now })
-    .eq("id", id)
-    .eq("status", "issued");
-  if (error?.code === "42703") {
-    ({ error } = await supabase
-      .from("transmittals")
-      .update({ status: "acknowledged", acknowledged_at: now, acknowledged_by_name: acknowledgedByName.trim() || null, updated_at: now })
-      .eq("id", id)
-      .eq("status", "issued"));
-  }
-  if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
-  await logAuditAction({
-    action: "TRANSMITTAL_ACKNOWLEDGED",
-    resourceId: id,
-    resourceType: "transmittal",
-    orgId: actor.orgId,
-    userId: actor.actorUserId,
-    userEmail: actor.actorName,
-    userRole: actor.actorRole,
-    details: { acknowledgedBy: acknowledgedByName },
+/** Record recipient receipt on their behalf (issued → acknowledged) — e.g. a
+ *  signed cover sheet came back. TRX-6: a member session never writes the
+ *  receipt; the receipt route checks transmit authority and writes it with
+ *  the service role, naming who recorded it. */
+export async function acknowledgeTransmittal(id: string, acknowledgedByName: string, _actor: TransmittalActor, note?: string): Promise<{ acknowledgedAt: string | null }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not signed in");
+  const res = await fetch("/api/transmittal/receipt", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify({ transmittalId: id, name: acknowledgedByName, note: note ?? null }),
   });
+  const j = await res.json().catch(() => ({})) as { error?: string; acknowledgedAt?: string };
+  if (!res.ok) throw new Error(j.error || `The receipt could not be recorded (${res.status}).`);
+  return { acknowledgedAt: j.acknowledgedAt ?? null };
 }
 
-/** Void an issued transmittal (it was sent in error). Drafts are deleted, not voided. */
-export async function voidTransmittal(id: string, actor: TransmittalActor): Promise<void> {
+/** Void an issued transmittal (it was sent in error). Drafts are deleted, not
+ *  voided (TRX-2). Throws when nothing was voided (TRX-7). */
+export async function voidTransmittal(id: string, actor: TransmittalActor): Promise<{ auditError: string | null }> {
   const now = new Date().toISOString();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("transmittals")
     .update({ status: "voided", updated_at: now })
     .eq("id", id)
-    .neq("status", "voided");
+    .in("status", ["issued", "acknowledged"])
+    .select("id");
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
-  await logAuditAction({
+  if (!data || data.length === 0) {
+    throw new Error("The transmittal was not voided — only an issued transmittal can be voided, by a transmit authority.");
+  }
+  const { error: auditError } = await logAuditAction({
     action: "TRANSMITTAL_VOIDED",
     resourceId: id,
     resourceType: "transmittal",
@@ -628,10 +972,87 @@ export async function voidTransmittal(id: string, actor: TransmittalActor): Prom
     userEmail: actor.actorName,
     userRole: actor.actorRole,
   });
+  return { auditError };
 }
 
-/** Delete a draft (never an issued record — those are voided for audit). */
+/** TRX-4: cut off the portal link WITHOUT repudiating the record. The
+ *  transmittal stays issued (or acknowledged); the link answers 410 revoked
+ *  from now on. A revocation is durable — the database never clears it. */
+export async function revokeTransmittalLink(id: string, actor: TransmittalActor): Promise<{ auditError: string | null }> {
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("transmittals")
+    .update({ portal_revoked_at: now, updated_at: now })
+    .eq("id", id)
+    .in("status", ["issued", "acknowledged"])
+    .is("portal_revoked_at", null)
+    .select("id");
+  if (error) {
+    if (isMissingTable(error)) throw new Error(MIGRATION_HINT);
+    if (isMissingColumn(error)) throw new Error("Revoking a portal link needs supabase/migrations/20261133_dc_roundF_transmittal_rails.sql applied.");
+    throw new Error(error.message);
+  }
+  if (!data || data.length === 0) {
+    throw new Error("The link was not revoked — it is already revoked, the transmittal is not issued, or you do not hold transmit authority.");
+  }
+  const { error: auditError } = await logAuditAction({
+    action: "TRANSMITTAL_LINK_REVOKED",
+    resourceId: id,
+    resourceType: "transmittal",
+    orgId: actor.orgId,
+    userId: actor.actorUserId,
+    userEmail: actor.actorName,
+    userRole: actor.actorRole,
+  });
+  return { auditError };
+}
+
+/** Delete a draft (never an issued record — those are voided for audit).
+ *  Throws when nothing was deleted (TRX-7). */
 export async function deleteTransmittal(id: string): Promise<void> {
-  const { error } = await supabase.from("transmittals").delete().eq("id", id).eq("status", "draft");
+  const { data, error } = await supabase.from("transmittals").delete().eq("id", id).eq("status", "draft").select("id");
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
+  if (!data || data.length === 0) {
+    throw new Error("The draft was not deleted — it is no longer a draft, or you can't delete it (its author can; otherwise a Document Controller who is also an Admin or Manager, or who manages the draft's project).");
+  }
+}
+
+// ─── Server-side authority (route handlers) ─────────────────────────────────
+
+export interface TransmitAuthority {
+  allowed: boolean;
+  member: { role: string | null; roles: string[]; email: string | null } | null;
+  /** Why the decision could not be made (fail closed), when it couldn't. */
+  error?: string;
+}
+
+/** TRX-1: the transmit-authority decision for a route handler, made with the
+ *  route's (service-role) client: an ACTIVE member of the org, holding
+ *  `transmittal.issue` for every item's library. The policy read is the
+ *  strict one — a policy that cannot be read DENIES. */
+export async function evaluateTransmitAuthority(
+  client: Pick<typeof supabase, "from">,
+  input: { orgId: string; uid: string; items: TransmittalItem[] },
+): Promise<TransmitAuthority> {
+  const { data: m, error: mErr } = await client
+    .from("org_members").select("role, roles, email")
+    .eq("org_id", input.orgId).eq("uid", input.uid).eq("status", "active").maybeSingle();
+  if (mErr) return { allowed: false, member: null, error: `Couldn't read your membership: ${mErr.message}` };
+  if (!m) return { allowed: false, member: null };
+  const member = {
+    role: ((m as Record<string, unknown>).role as string | null) ?? null,
+    roles: (((m as Record<string, unknown>).roles as string[] | null) ?? []),
+    email: ((m as Record<string, unknown>).email as string | null) ?? null,
+  };
+  const loaded = await loadCapabilityPolicyStrict(input.orgId, client);
+  if (!loaded.ok) return { allowed: false, member, error: `Couldn't read the capability policy: ${loaded.error}` };
+  const ids = [...new Set(input.items.map((i) => i.documentId).filter(Boolean))];
+  let libs: Array<string | null> = [];
+  if (ids.length > 0) {
+    const { data: docs, error: dErr } = await client.from("documents").select("id, library_id").eq("org_id", input.orgId).in("id", ids);
+    if (dErr) return { allowed: false, member, error: `Couldn't read the documents' libraries: ${dErr.message}` };
+    const libOf = new Map(((docs as Array<Record<string, unknown>> | null) ?? []).map((d) => [String(d.id), (d.library_id as string | null) ?? null]));
+    libs = ids.map((id) => libOf.get(id) ?? null);
+  }
+  return { allowed: mayTransmit(loaded.policy, { role: member.role, roles: member.roles, uid: input.uid }, libs), member };
 }
