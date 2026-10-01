@@ -604,17 +604,25 @@ export async function updateChecklistItem(input: {
  *  refusal comes back here as the error, with nothing audited. A void's
  *  audit row is CHECKED (REL-9): it is the only record of who voided the
  *  checklist, so a failed insert comes back as `auditError` on a void that
- *  landed. The Quality tab voids (controller tier, REL-9); no product
- *  surface reopens one. */
+ *  landed. A void's REASON is required here, not only by the Quality tab's
+ *  dialog (REL-9 review): one that misses the record's bar (reasonProblem,
+ *  REASON_MIN_LENGTH) is refused before the write, so no caller of this
+ *  lib voids a checklist with nothing on record about why. The Quality tab
+ *  voids (controller tier, REL-9); no product surface reopens one. */
 export async function setChecklistStatus(input: {
   orgId: string; projectId: string; checklist: Checklist;
   status: "open" | "complete" | "void"; actor: Actor;
   /** QUAL-4: the signing ceremony's output — required to complete. */
   signoff?: SignoffInput | null;
-  /** REL-9: why a checklist is voided — recorded on the void's audit row
-   *  (the table has no reason column). */
+  /** REL-9: why a checklist is voided — REQUIRED for a void (the record's
+   *  bar, reasonProblem) and recorded on its audit row (the table has no
+   *  reason column). */
   reason?: string | null;
 }): Promise<{ ok: boolean; error?: string; basis?: "human" | "auto"; auditError?: string }> {
+  if (input.status === "void") {
+    const problem = reasonProblem(input.reason);
+    if (problem) return { ok: false, error: `${problem} The checklist was not voided.` };
+  }
   let basis: "human" | "auto" | undefined;
   let signatureId: string | undefined;
   let singleSigner = false;
@@ -674,9 +682,8 @@ export async function setChecklistStatus(input: {
     // project_checklists keeps no voided_by (20261136 stamps only the time)
     // — this audit row is the only record of who voided it and why (closeout
     // names the voider from it). Its failure is returned, never dropped.
-    const reason = input.reason?.trim();
     const auditError = await auditChecked("CHECKLIST_STATUS", input.orgId, input.projectId, input.actor, {
-      ...details, ...(reason ? { reason } : {}),
+      ...details, reason: (input.reason ?? "").trim(),
     });
     return { ok: true, ...(auditError ? { auditError } : {}) };
   }

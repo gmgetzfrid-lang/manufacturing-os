@@ -328,7 +328,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
 
   it("reopen / void need no signature (only a completion is a sign-off)", async () => {
     for (const status of ["open", "void"] as const) {
-      expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor: actorOf(OW) })).ok).toBe(true);
+      expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor: actorOf(OW), reason: status === "void" ? "Created against the wrong unit" : undefined })).ok).toBe(true);
     }
     expect(ceremony.calls).toHaveLength(0);
   });
@@ -354,9 +354,20 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "open", actor: actorOf(ADMIN) })).toEqual({ ok: true });
   });
 
-  it("REL-9: a void with no reason records none (the key is absent, never an empty string)", async () => {
-    await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "   " });
-    expect(audits().at(-1)!.details).not.toHaveProperty("reason");
+  // REL-9 review (fix pass): the reason was the dialog's alone — any other
+  // caller of the lib could void with none, and the audit row (the only
+  // record of why) carried nothing. The lib now refuses it BEFORE the write.
+  it("REL-9: a void with no reason — missing, blank, short or canned — is refused before the write; nothing changes, nothing is audited", async () => {
+    for (const reason of [undefined, null, "   ", "duplicate", "not applicable"]) {
+      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason });
+      expect(res.ok, String(reason)).toBe(false);
+      expect(res.error, String(reason)).toMatch(/The checklist was not voided\.$/);
+    }
+    expect(state.tables.project_checklists[0].status).toBe("open");
+    expect(state.writes.filter((w) => w.table === "project_checklists")).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+    // a reopen needs no reason (it removes nothing from a count)
+    expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "open", actor: actorOf(ADMIN) })).ok).toBe(true);
   });
 
   // QUAL-15's void half (J2b integration): voiding takes a checklist out of
@@ -364,7 +375,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
   // could void it away — 20261136 keeps every void to controllers.
   it("voiding ANY checklist is a controller's: the database's refusal of the owner comes back as the error, nothing audited", async () => {
     state.writeError = { message: "Voiding a checklist takes it out of the project's closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136", code: "23514" };
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(OW) });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(OW), reason: "Created against the wrong unit" });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/only Admin \/ Document Control voids one/);
     expect(audits()).toHaveLength(0);
@@ -379,7 +390,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     state.tables.project_checklists[0].status = "complete";
     state.writeError = { message: "A completed checklist is a signed sign-off — only Admin / Document Control reopens or voids it. Nothing was changed. QUAL-4, 20261136", code: "23514" };
     for (const status of ["open", "void"] as const) {
-      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ status: "complete" }), status, actor: actorOf(OW) });
+      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ status: "complete" }), status, actor: actorOf(OW), reason: status === "void" ? "Signed off against the wrong unit" : undefined });
       expect(res.ok, status).toBe(false);
       expect(res.error, status).toMatch(/only Admin \/ Document Control reopens or voids it/);
     }
