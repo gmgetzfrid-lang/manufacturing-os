@@ -42,7 +42,7 @@ vi.mock("@/lib/supabase", async () => {
 });
 
 import {
-  planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill,
+  planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill, listCodebookMappings,
   UNIT_IDENTITY_WRITE_BUDGET, type UnitIdentityReport,
 } from "@/lib/operationalGraph";
 import { EMPTY_CODEBOOK, type Codebook, type CodebookEntry } from "@/lib/codebook";
@@ -169,6 +169,7 @@ function seed(over: Partial<Record<string, Row[]>> = {}) {
   } as Record<string, Row[]>;
   db.missingTables = new Set(); db.missingColumns = {}; db.readError = {}; db.hidden = {};
   db.refuseWrites = new Set(); db.writeError = {}; db.rpc = {}; db.calls = []; db.seq = 0; db.triggers = {};
+  db.maxRows = 1000; db.beforeWrite = null;
 }
 
 const call = (body: unknown, token: string | null = "good") => POST(new NextRequest("http://x/api/admin/unit-identity", {
@@ -314,11 +315,16 @@ describe("POST /api/admin/unit-identity", () => {
     expect(db.calls.some((c) => c.method === "update")).toBe(false);
   });
 
-  it("a refused write is counted and said — never a silent partial success", async () => {
+  it("a refused write is counted and said; a row that no longer matches is counted `changed` — never a silent partial success", async () => {
     db.refuseWrites = new Set(["documents"]);
     const body = await (await call({ orgId: ORG, dryRun: false })).json();
-    expect(body.documents).toMatchObject({ written: 0, refused: 2 });
-    expect(body.notes.join("\n")).toMatch(/2 document write\(s\) matched no row/);
+    expect(body.documents).toMatchObject({ written: 0, changed: 2, refused: 0 });
+    expect(body.notes.join("\n")).toMatch(/2 document\(s\) changed since they were read .* left as they are/);
+    seed();
+    db.writeError = { documents: { code: "42501", message: "documents_unit_code_guard: refused" } };
+    const b1 = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(b1.documents).toMatchObject({ written: 0, changed: 0, refused: 2 });
+    expect(b1.notes.join("\n")).toMatch(/2 document write\(s\) were refused: documents_unit_code_guard: refused/);
     seed();
     db.writeError = { assets: { message: "assets_guard_registry: refused" } };
     const b2 = await (await call({ orgId: ORG, dryRun: false })).json();
@@ -327,15 +333,101 @@ describe("POST /api/admin/unit-identity", () => {
   });
 });
 
+describe("the writes re-check what they were planned on (a concurrent writer between the read and the write)", () => {
+  it("an equipment unit set by hand after the read is NEVER overwritten, and a renumbered document is never stamped with its old number's decode", async () => {
+    seed({
+      documents: [
+        o({ id: "d1", document_number: "2002-D-10001", unit_code: null, unit_id: null }),
+        o({ id: "d4", document_number: "2002-D-10002", unit_code: null, unit_id: null }),
+        o({ id: "d5", document_number: '2002-D-7"A', unit_code: null, unit_id: null }),
+      ],
+      assets: [o({ id: "a1", unit_code: "20", unit_id: null }), o({ id: "a3", unit_code: "20", unit_id: null })],
+    });
+    let once = false;
+    db.beforeWrite = (table) => {
+      if (once) return;
+      once = true;
+      // between the decode's read and its first write: a Supervisor sets a1's
+      // unit by hand, and d1 is renumbered (20261138's trigger drops a decode
+      // on a person's renumber — here there was none yet)
+      expect(table).toBe("documents");
+      row("assets", "a1").unit_id = "u30";
+      row("documents", "d1").document_number = "3002-D-10001";
+    };
+    const body = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(row("assets", "a1").unit_id).toBe("u30");                  // kept — DEC-44 §3
+    expect(row("assets", "a3").unit_id).toBe("u20");                  // still empty: filled
+    expect(row("documents", "d1").unit_code).toBeNull();              // 30 is not 20 — left as it is
+    expect(row("documents", "d4").unit_code).toBe("20");
+    expect(row("documents", "d5").unit_code).toBe("20");              // a quoted number is matched one by one
+    expect(body.documents).toMatchObject({ written: 2, changed: 1, refused: 0 });
+    expect(body.assets).toMatchObject({ written: 1, changed: 1, refused: 0 });
+    const n = body.notes.join("\n");
+    expect(n).toMatch(/1 document\(s\) changed since they were read/);
+    expect(n).toMatch(/1 equipment item\(s\) changed since they were read .* a unit already set is never overwritten/);
+    // every asset UPDATE requires an empty unit_id and the planned filing
+    const assetIs = db.calls.filter((c) => c.table === "assets" && c.method === "is").map((c) => c.args);
+    expect(assetIs.length).toBeGreaterThan(0);
+    expect(assetIs.every(([col, v]) => col === "unit_id" && v === null)).toBe(true);
+    // the closing audit says what changed, as counts
+    expect(db.tables.audit_logs[1]).toMatchObject({ details: { phase: "finished", documents: { written: 2, changed: 1 }, assets: { written: 1, changed: 1 } } });
+    // the next run plans afresh: d1 is now unit 30 — and a1 is a disagreement, kept
+    const again = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(row("documents", "d1").unit_code).toBe("30");
+    expect(again.assets).toMatchObject({ toSet: 0, disagreeWithFiling: 1 });
+  });
+});
+
+describe("the codebook is read whole — a unit past PostgREST's max-rows never clears a decode", () => {
+  /** 1,100 entries: units 20 and 30 first, 1,097 equipment types, then unit 70 — past row 1,000 of loadCodebookAdmin's one request. */
+  const bigBook = () => [
+    o({ id: "e20", kind: "unit", code: "20", label: "Crude Unit", meta: {}, sort: 0, origin: "manual" }),
+    o({ id: "e30", kind: "unit", code: "30", label: "Coker", meta: {}, sort: 1, origin: "manual" }),
+    ...Array.from({ length: 1097 }, (_, i) => o({ id: `t${i}`, kind: "equipment_type", code: `T${String(i).padStart(4, "0")}`, label: `Type ${i}`, meta: {}, sort: 2, origin: "import" })),
+    o({ id: "e70", kind: "unit", code: "70", label: "Sulfur", meta: {}, sort: 3, origin: "import" }),
+  ];
+
+  it("documents decoded to unit 70 keep their decode; nothing reads as 'unknown unit'", async () => {
+    seed({
+      codebook_entries: bigBook(),
+      documents: [
+        o({ id: "d7", document_number: "7002-D-1", unit_code: "70", unit_id: null }),
+        o({ id: "d8", document_number: "7002-D-2", unit_code: null, unit_id: null }),
+      ],
+    });
+    const preview = await (await call({ orgId: ORG })).json();
+    expect(preview.documents).toMatchObject({ decoded: 2, toWrite: 1, toClear: 0 });
+    expect(preview.documents.unknownUnit.count).toBe(0);
+    expect(preview.mapping.codebookUnitsUnmapped).toContain("70");
+    const body = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(body.documents).toMatchObject({ written: 1, toClear: 0 });
+    expect(row("documents", "d7").unit_code).toBe("70");
+    expect(row("documents", "d8").unit_code).toBe("70");
+    // the unit entries were read in keyset pages, none above max-rows
+    const cbLimits = db.calls.filter((c) => c.table === "codebook_entries" && c.method === "limit").map((c) => Number(c.args[0]));
+    expect(cbLimits.length).toBeGreaterThan(0);
+    expect(Math.max(...cbLimits)).toBeLessThanOrEqual(1000);
+  });
+
+  it("if the unit entries cannot be read, nothing is planned or written", async () => {
+    db.readError = { codebook_entries: { message: "statement timeout" } };
+    const r = await call({ orgId: ORG, dryRun: false });
+    expect(r.status).toBe(500);
+    expect((await r.json()).error).toMatch(/Site Codebook's units could not be read: statement timeout — nothing was planned/);
+    expect(db.calls.some((c) => c.method === "update")).toBe(false);
+    expect(row("documents", "d2").unit_code).toBe("20");
+  });
+});
+
 describe("runUnitIdentityBackfill — the panel works through the bounded calls", () => {
   const report = (over: Partial<UnitIdentityReport> & { dw?: number; aw?: number; dr?: number }): UnitIdentityReport => ({
     dryRun: false,
     documents: {
-      scanned: 10, decoded: 10, toWrite: 10, toClear: 0, written: over.dw ?? 0, refused: over.dr ?? 0, noNumber: 0,
+      scanned: 10, decoded: 10, toWrite: 10, toClear: 0, written: over.dw ?? 0, changed: 0, refused: over.dr ?? 0, noNumber: 0,
       notDecoding: { count: 0, samples: [], unlisted: 0 }, noUnitSegment: 0, unknownUnit: { count: 0, codes: [], unlisted: 0 },
       disagreeWithUnitId: 0, unitIdUnmapped: 0,
     },
-    assets: { scanned: 1, toSet: 1, disagreeWithFiling: 0, keptWithoutFiling: 0, written: over.aw ?? 0, refused: 0 },
+    assets: { scanned: 1, toSet: 1, disagreeWithFiling: 0, keptWithoutFiling: 0, written: over.aw ?? 0, changed: 0, refused: 0 },
     mapping: { operationalUnits: 1, mapped: 1, codebookUnitsUnmapped: [] },
     remaining: over.remaining ?? 0,
     notes: over.notes ?? [],
@@ -392,6 +484,34 @@ describe("the mapping on /admin/scope — data, and every write checked", () => 
   it("getScopeTree carries each unit's codebook mapping", async () => {
     const tree = await getScopeTree(ORG);
     expect(tree[0].units.map((u) => [u.unit.id, u.codebookCode])).toEqual([["u30", null], ["u20", "20"]]);
+  });
+
+  it("listCodebookMappings names every code held — a unit under an ARCHIVED plant included (the default tree does not show it)", async () => {
+    db.tables.plants.push(o({ id: "p2", name: "Old Refinery", code: null, archived: true }));
+    db.tables.units.push(
+      o({ id: "u70", plant_id: "p2", name: "Sulfur (old)", code: null, codebook_code: "70", archived: false }),
+      o({ id: "u80", plant_id: "p1", name: "Retired", code: null, codebook_code: null, archived: true }),
+    );
+    const tree = await getScopeTree(ORG);
+    expect(tree.flatMap((t) => t.units).some((u) => u.unit.id === "u70")).toBe(false);
+    const holders = await listCodebookMappings(ORG);
+    expect(holders.map((h) => [h.code, h.unitId, h.plantName, h.plantArchived]).sort()).toEqual([
+      ["20", "u20", "Refinery", false],
+      ["70", "u70", "Old Refinery", true],
+    ]);
+    db.missingColumns = { units: ["codebook_code"] };
+    expect(await listCodebookMappings(ORG)).toEqual([]);
+    db.missingColumns = {};
+    db.readError = { units: { message: "boom" } };
+    await expect(listCodebookMappings(ORG)).rejects.toThrow(/boom/);
+  });
+
+  it("the scope page offers no code a unit under an archived plant holds, and names the holder", () => {
+    const src = readFileSync("app/(protected)/admin/scope/page.tsx", "utf8");
+    expect(src).toContain("listCodebookMappings(activeOrgId)");
+    expect(src).toContain("takenBy: Map<string, CodebookMappingHolder>");
+    expect(src).toMatch(/mapped to \$\{holder\.unitName\}/);
+    expect(src).not.toMatch(/so the units on screen are every unit that can hold one/);
   });
 
   it("setUnitCodebookCode writes the mapping and reads it back; a refusal and a taken code are errors", async () => {

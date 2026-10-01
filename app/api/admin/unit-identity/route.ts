@@ -26,6 +26,24 @@
 // listed"). The Operational scope writer tier also holds roles that see a
 // private document only through a grant.
 //
+// EVERY WRITE RE-CHECKS WHAT IT WAS PLANNED ON. The plan comes from a read
+// taken before the writes, so each UPDATE carries the plan's own condition:
+// an equipment item's unit_id is filled only while it is still EMPTY and the
+// item is still filed to the codebook unit the plan mapped (`.is("unit_id",
+// null)`, `.eq("unit_code", …)`); a document's decode lands only while its
+// number is still one the plan decoded to that value (`.in("document_number",
+// …)` — every number in one write decodes to the same value, so a renumber
+// to another of them is still right). A row that no longer matches is left
+// as it is and counted `changed` (changed since it was read) — never refused,
+// never overwritten. 20261138's trigger drops the decode on a person's
+// renumber; this keeps the service role from writing it back.
+//
+// THE CODEBOOK IS READ WHOLE. loadCodebookAdmin is one request, which
+// PostgREST cuts at max-rows (1,000 entries of every kind); a unit past the
+// cut would read as "unknown" and its decodes would be CLEARED. The unit
+// entries are therefore read again here in keyset pages and replace the
+// book's unit list; if they cannot be read, nothing is planned.
+//
 // BOUNDED PER CALL. An apply writes at most WRITE_BUDGET rows (documents
 // first), in parallel waves, and reports `remaining`; the panel calls again
 // until it is 0 (lib/operationalGraph.ts runUnitIdentityBackfill), so a
@@ -48,7 +66,8 @@ import { isControllerRole } from "@/lib/permissions";
 import type { Role } from "@/types/schema";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
-import { isMissingColumn } from "@/lib/orgGraph";
+import { isMissingColumn, isMissingRelation } from "@/lib/orgGraph";
+import type { CodebookEntry } from "@/lib/codebook";
 import {
   planUnitIdentity, UNIT_IDENTITY_WRITE_BUDGET as WRITE_BUDGET,
   type UnitIdentityAsset, type UnitIdentityDoc, type UnitMappingRow,
@@ -59,6 +78,9 @@ export const maxDuration = 60;
 
 const PAGE = 1000;
 const WRITE_CHUNK = 200;
+/** Document writes carry their numbers too, so fewer ids per request keep
+ *  the request line bounded. */
+const DOC_WRITE_CHUNK = 100;
 /** Write chunks in flight at once. */
 const WRITE_WAVE = 4;
 const NOT_APPLIED = "The unit-identity migration (20261138) is not applied yet — apply it, then run the decode.";
@@ -68,12 +90,27 @@ const bad = (error: string, status = 400) =>
 
 type PgErr = { code?: string; message: string };
 
-/** Every row of an org's table, in keyset order (id ascending). */
-async function readAll<T extends { id: string }>(table: string, select: string, orgId: string): Promise<{ rows: T[]; error: PgErr | null }> {
+/** The builder calls the reads and the guarded writes use. */
+interface Narrowable {
+  eq(col: string, v: unknown): Narrowable;
+  in(col: string, v: readonly unknown[]): Narrowable;
+  is(col: string, v: null): Narrowable;
+  gt(col: string, v: unknown): Narrowable;
+  order(col: string, o?: { ascending?: boolean }): Narrowable;
+  limit(n: number): PromiseLike<{ data: unknown; error: PgErr | null }>;
+  select(cols: string): PromiseLike<{ data: unknown[] | null; error: PgErr | null }>;
+}
+
+/** Every row of an org's table, in keyset order (id ascending), in windows
+ *  of PAGE (PostgREST's max-rows). */
+async function readAll<T extends { id: string }>(
+  table: string, select: string, orgId: string, narrow?: (q: Narrowable) => Narrowable,
+): Promise<{ rows: T[]; error: PgErr | null }> {
   const rows: T[] = [];
   let last: string | null = null;
   for (;;) {
-    let q = supabaseAdmin.from(table).select(select).eq("org_id", orgId);
+    let q = (supabaseAdmin.from(table).select(select) as unknown as Narrowable).eq("org_id", orgId);
+    if (narrow) q = narrow(q);
     if (last !== null) q = q.gt("id", last);
     const { data, error } = await q.order("id", { ascending: true }).limit(PAGE);
     if (error) return { rows, error: error as PgErr };
@@ -84,42 +121,107 @@ async function readAll<T extends { id: string }>(table: string, select: string, 
   }
 }
 
-type Chunk = { value: string | null; ids: string[] };
+/** One UPDATE: the value, the rows, and the condition the plan was made on. */
+type Chunk = { value: string | null; ids: string[]; guard: (q: Narrowable) => Narrowable };
 
-/** Cut one column's planned values into chunks, taking at most `budget` rows
- *  (in plan order); return the chunks and how many rows were left out. */
-function takeChunks(writes: Map<string | null, string[]>, budget: number): { chunks: Chunk[]; taken: number; left: number } {
-  const chunks: Chunk[] = [];
+/** Take at most `budget` planned rows, in plan order; say how many were left. */
+function takeBudget<V>(writes: Map<V, string[]>, budget: number): { groups: Array<[V, string[]]>; taken: number; left: number } {
+  const groups: Array<[V, string[]]> = [];
   let taken = 0, left = 0;
   for (const [value, ids] of writes) {
-    const room = Math.max(0, budget - taken);
-    const mine = ids.slice(0, room);
+    const mine = ids.slice(0, Math.max(0, budget - taken));
     left += ids.length - mine.length;
-    for (let i = 0; i < mine.length; i += WRITE_CHUNK) chunks.push({ value, ids: mine.slice(i, i + WRITE_CHUNK) });
     taken += mine.length;
+    if (mine.length > 0) groups.push([value, mine]);
   }
-  return { chunks, taken, left };
+  return { groups, taken, left };
 }
 
-/** Apply one column's chunks in bounded parallel waves; count what landed. */
+const slices = (ids: string[], n: number): string[][] => {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += n) out.push(ids.slice(i, i + n));
+  return out;
+};
+
+/** A number PostgREST's in-list carries verbatim (postgrest-js quotes `,()`
+ *  but not `"` or `\`; padding is not trusted). Any other number is matched
+ *  one document at a time with eq. */
+const inListable = (n: string) => n !== "" && n.trim() === n && !/["\\]/.test(n);
+
+/** documents.unit_code writes. Every document planned for one value has a
+ *  number that decodes to that value (or, for a clear, to nothing), so the
+ *  write lands only while the document's number is still one of those. */
+function documentChunks(groups: Array<[string | null, string[]]>, numberOf: Map<string, string | null>): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const [value, ids] of groups) {
+    const unnumbered: string[] = [], listed: string[] = [];
+    for (const id of ids) {
+      const n = numberOf.get(id) ?? null;
+      if (n === null) unnumbered.push(id);
+      else if (inListable(n)) listed.push(id);
+      else chunks.push({ value, ids: [id], guard: (q) => q.eq("document_number", n) });
+    }
+    for (const part of slices(unnumbered, DOC_WRITE_CHUNK)) chunks.push({ value, ids: part, guard: (q) => q.is("document_number", null) });
+    for (const part of slices(listed, DOC_WRITE_CHUNK)) {
+      const numbers = [...new Set(part.map((id) => numberOf.get(id) as string))];
+      chunks.push({ value, ids: part, guard: (q) => q.in("document_number", numbers) });
+    }
+  }
+  return chunks;
+}
+
+/** assets.unit_id fills: only while unit_id is still EMPTY and the item is
+ *  still filed to the codebook unit mapped to the value (DEC-44 §3). */
+function assetChunks(groups: Array<[string, string[]]>, codeOfUnit: Map<string, string>): Chunk[] {
+  const chunks: Chunk[] = [];
+  for (const [unitId, ids] of groups) {
+    const filing = codeOfUnit.get(unitId) ?? null;
+    for (const part of slices(ids, WRITE_CHUNK)) {
+      chunks.push({
+        value: unitId, ids: part,
+        guard: (q) => (filing === null ? q.is("unit_id", null) : q.is("unit_id", null).eq("unit_code", filing)),
+      });
+    }
+  }
+  return chunks;
+}
+
+/** Apply one column's chunks in bounded parallel waves. `written` landed;
+ *  `changed` no longer matched the plan's condition (changed or deleted since
+ *  the read) and were left as they are; `refused` met an error. */
 async function applyWrites(
   table: "documents" | "assets", column: "unit_code" | "unit_id", orgId: string, chunks: Chunk[],
-): Promise<{ written: number; refused: number; firstError: string | null }> {
-  let written = 0, refused = 0;
+): Promise<{ written: number; changed: number; refused: number; firstError: string | null }> {
+  let written = 0, changed = 0, refused = 0;
   let firstError: string | null = null;
   for (let w = 0; w < chunks.length; w += WRITE_WAVE) {
     const wave = chunks.slice(w, w + WRITE_WAVE);
-    const results = await Promise.all(wave.map(({ value, ids }) => supabaseAdmin.from(table)
-      .update({ [column]: value }).eq("org_id", orgId).in("id", ids).select("id") as unknown as PromiseLike<{ data: unknown[] | null; error: PgErr | null }>));
+    const results = await Promise.all(wave.map(({ value, ids, guard }) => guard(
+      (supabaseAdmin.from(table).update({ [column]: value }) as unknown as Narrowable).eq("org_id", orgId).in("id", ids),
+    ).select("id")));
     results.forEach(({ data, error }, i) => {
       const n = wave[i].ids.length;
       if (error) { refused += n; firstError ??= error.message; return; }
       const landed = (data ?? []).length;
       written += landed;
-      refused += n - landed;
+      changed += n - landed;
     });
   }
-  return { written, refused, firstError };
+  return { written, changed, refused, firstError };
+}
+
+/** The Site Codebook's unit entries, every one (keyset pages). null: the
+ *  codebook tables are not there (pre-migration — no opinion). */
+async function readCodebookUnits(orgId: string): Promise<{ units: CodebookEntry[] | null; error: PgErr | null }> {
+  const r = await readAll<{ id: string; code: string; label: string; meta: CodebookEntry["meta"] | null; sort: number | null; origin: string | null }>(
+    "codebook_entries", "id, kind, code, label, meta, sort, origin", orgId, (q) => q.eq("kind", "unit"));
+  if (r.error) return isMissingRelation(r.error) ? { units: null, error: null } : { units: null, error: r.error };
+  const units = r.rows.map((e): CodebookEntry => ({
+    id: String(e.id), kind: "unit", code: String(e.code), label: String(e.label),
+    meta: e.meta ?? {}, sort: Number(e.sort ?? 0), origin: e.origin === "import" ? "import" : "manual",
+  }));
+  units.sort((a, b) => (a.sort - b.sort) || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  return { units, error: null };
 }
 
 export async function POST(req: NextRequest) {
@@ -146,8 +248,12 @@ export async function POST(req: NextRequest) {
   // shown only the numbers of documents every member may read.
   const seesRestricted = heldRoles(member).some((r) => isControllerRole(r as Role));
 
-  const book = await loadCodebookAdmin(supabaseAdmin, orgId);
-  const units = await supabaseAdmin.from("units").select("id, codebook_code").eq("org_id", orgId).eq("archived", false);
+  const loaded = await loadCodebookAdmin(supabaseAdmin, orgId);
+  // The book's unit list from a whole read, never from the one cut request.
+  const cbUnits = await readCodebookUnits(orgId);
+  if (cbUnits.error) return bad(`The Site Codebook's units could not be read: ${cbUnits.error.message} — nothing was planned.`, 500);
+  const book = cbUnits.units === null ? loaded : { ...loaded, units: cbUnits.units };
+  const units = await readAll<UnitMappingRow>("units", "id, codebook_code", orgId, (q) => q.eq("archived", false));
   if (units.error) return isMissingColumn(units.error) ? bad(NOT_APPLIED, 409) : bad(`Operational units could not be read: ${units.error.message}`, 500);
   const docs = await readAll<UnitIdentityDoc>("documents", "id, document_number, unit_code, unit_id, visibility", orgId);
   if (docs.error) return isMissingColumn(docs.error) ? bad(NOT_APPLIED, 409) : bad(`Documents could not be read: ${docs.error.message}`, 500);
@@ -155,14 +261,20 @@ export async function POST(req: NextRequest) {
   if (assets.error) return bad(`Equipment could not be read: ${assets.error.message}`, 500);
 
   const plan = planUnitIdentity({
-    docs: docs.rows, assets: assets.rows, units: (units.data ?? []) as UnitMappingRow[], book, dryRun, seesRestricted,
+    docs: docs.rows, assets: assets.rows, units: units.rows, book, dryRun, seesRestricted,
   });
   const report = plan.report;
 
   if (!dryRun) {
-    const dc = takeChunks(plan.docWrites, WRITE_BUDGET);
-    const ac = takeChunks(plan.assetWrites, WRITE_BUDGET - dc.taken);
+    const dc = takeBudget(plan.docWrites, WRITE_BUDGET);
+    const ac = takeBudget(plan.assetWrites, WRITE_BUDGET - dc.taken);
     report.remaining = dc.left + ac.left;
+    const numberOf = new Map(docs.rows.map((d) => [d.id, d.document_number ?? null] as const));
+    const codeOfUnit = new Map<string, string>();
+    for (const u of units.rows) {
+      const c = (u.codebook_code ?? "").trim();
+      if (c) codeOfUnit.set(u.id, c);
+    }
     const auditRow = (phase: "started" | "finished", details: Record<string, unknown>) => ({
       action: "UNIT_IDENTITY_BACKFILL",
       resource_type: "org", resource_id: orgId,
@@ -179,21 +291,24 @@ export async function POST(req: NextRequest) {
     }));
     if (startErr) return bad(`The decode did not run: its audit record could not be written (${startErr.message}).`, 500);
 
-    const d = await applyWrites("documents", "unit_code", orgId, dc.chunks);
-    const a = await applyWrites("assets", "unit_id", orgId, ac.chunks);
+    const d = await applyWrites("documents", "unit_code", orgId, documentChunks(dc.groups, numberOf));
+    const a = await applyWrites("assets", "unit_id", orgId, assetChunks(ac.groups, codeOfUnit));
     report.documents.written = d.written;
+    report.documents.changed = d.changed;
     report.documents.refused = d.refused;
     report.assets.written = a.written;
+    report.assets.changed = a.changed;
     report.assets.refused = a.refused;
-    // A refusal is said with its reason — never a silent partial success.
+    // A refusal is said with its reason — never a silent partial success; a
+    // row that changed since the read is said too, and left as it is.
     if (d.firstError) report.notes.push(`${d.refused} document write(s) were refused: ${d.firstError}`);
-    else if (d.refused > 0) report.notes.push(`${d.refused} document write(s) matched no row (deleted while the decode ran).`);
+    if (d.changed > 0) report.notes.push(`${d.changed} document(s) changed since they were read (renumbered or deleted while the decode ran) — left as they are; run the decode again to place them.`);
     if (a.firstError) report.notes.push(`${a.refused} equipment write(s) were refused: ${a.firstError}`);
-    else if (a.refused > 0) report.notes.push(`${a.refused} equipment write(s) matched no row (deleted while the decode ran).`);
+    if (a.changed > 0) report.notes.push(`${a.changed} equipment item(s) changed since they were read (a unit set, refiled or deleted while the decode ran) — left as they are; a unit already set is never overwritten.`);
 
     const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("finished", {
-      documents: { written: d.written, refused: d.refused },
-      assets: { written: a.written, refused: a.refused },
+      documents: { written: d.written, changed: d.changed, refused: d.refused },
+      assets: { written: a.written, changed: a.changed, refused: a.refused },
       remaining: report.remaining,
     }));
     if (auditErr) report.notes.push(`The decode ran, but its closing audit record could not be written: ${auditErr.message}`);

@@ -3,16 +3,22 @@
 //
 // It honours what lib/orgGraph.ts, lib/scope.ts and /api/admin/unit-identity
 // depend on: select (columns parsed only to raise a missing-column error;
-// `{ count: "exact", head: true }` answers a count), eq / neq / in / gt /
-// not(col, "is", null) / contains (array column), order (several keys,
-// ascending, nullsFirst) + limit + range — filter, then sort, then window, as
-// PostgREST does — maybeSingle / single, update(...).select() returning the
-// rows that landed, insert, and rpc. A database that has not applied a
+// `{ count: "exact", head: true }` answers a count), eq / neq / in / gt / gte /
+// is(col, null) / not(col, "is", null) / contains (array column), order
+// (several keys, ascending, nullsFirst) + limit + range — filter, then sort,
+// then window, as PostgREST does — maybeSingle / single, update(...).select()
+// returning the rows that landed, insert, and rpc.
+// MAX-ROWS, AS PRODUCTION: PostgREST cuts every read response at db-max-rows
+// (1,000 by default) and says nothing (AREA-9); `maxRows` (default 1,000)
+// does the same here, after limit / range, so a single request asking for
+// more than 1,000 rows gets 1,000 — a test can never pass on a read that
+// would be silently cut in production. A database that has not applied a
 // migration is `missingTables` (42P01) / `missingColumns` (42703); a failing
 // read is `readError`; RLS is `hidden` (rows a reader cannot see are absent
 // from reads AND counts); `refuseWrites` makes an UPDATE match zero rows;
 // `triggers` stands in for a BEFORE UPDATE trigger (row, patch) → the patch
-// that lands.
+// that lands; `beforeWrite` runs before each UPDATE matches its rows (a
+// concurrent writer between a read and a write).
 // Every call is recorded in `calls`. Not a database — it exists to prove what
 // the app code does with the answers.
 
@@ -31,12 +37,19 @@ export interface GraphFakeDb {
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   seq: number;
   triggers?: Record<string, (row: Row, patch: Row) => Row>;
+  /** PostgREST db-max-rows (undefined → 1,000, the default). */
+  maxRows?: number;
+  beforeWrite?: ((table: string) => void) | null;
 }
+
+/** PostgREST's default db-max-rows. */
+export const FAKE_MAX_ROWS = 1000;
 
 export function newGraphFakeDb(): GraphFakeDb {
   return {
     tables: {}, missingTables: new Set(), missingColumns: {}, readError: {}, hidden: {},
     refuseWrites: new Set(), writeError: {}, rpc: {}, calls: [], seq: 0, triggers: {},
+    maxRows: FAKE_MAX_ROWS, beforeWrite: null,
   };
 }
 
@@ -52,6 +65,8 @@ export function resetGraphFakeDb(db: GraphFakeDb, tables: Record<string, Row[]> 
   db.calls = [];
   db.seq = 0;
   db.triggers = {};
+  db.maxRows = FAKE_MAX_ROWS;
+  db.beforeWrite = null;
 }
 
 type Filter = (r: Row) => boolean;
@@ -98,6 +113,7 @@ export function makeGraphFake(db: GraphFakeDb) {
           if ((db.missingColumns[table] ?? []).includes(k)) return { data: null, error: { code: "42703", message: `column ${table}.${k} does not exist` } };
         }
         if (db.writeError[table]) return { data: null, error: db.writeError[table] };
+        db.beforeWrite?.(table);
         const hit = db.refuseWrites.has(table) ? [] : matches();
         const trig = db.triggers?.[table];
         for (const r of hit) Object.assign(r, trig ? trig({ ...r }, patch) : patch);
@@ -131,6 +147,7 @@ export function makeGraphFake(db: GraphFakeDb) {
       }
       if (rng) rows = rows.slice(rng[0], rng[1] + 1);
       if (lim !== null) rows = rows.slice(0, lim);
+      rows = rows.slice(0, db.maxRows ?? FAKE_MAX_ROWS);
       // Project the selected columns, as PostgREST does (a legacy select
       // must not see a column it did not name).
       const names = cols === "*" ? null : cols.split(",").map((c) => c.trim()).filter(Boolean);
@@ -152,7 +169,7 @@ export function makeGraphFake(db: GraphFakeDb) {
         }
         return (...args: unknown[]) => {
           db.calls.push({ table, method: prop, args });
-          if (["eq", "neq", "in", "gt", "not", "contains", "order"].includes(prop)) filterCols.push(String(args[0]));
+          if (["eq", "neq", "in", "gt", "gte", "is", "not", "contains", "order"].includes(prop)) filterCols.push(String(args[0]));
           switch (prop) {
             case "select": {
               if (op !== "select") { returning = true; return self; }
@@ -168,6 +185,12 @@ export function makeGraphFake(db: GraphFakeDb) {
             case "neq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== v); return self; }
             case "in": { const [k, v] = args as [string, unknown[]]; const s = new Set(v); filters.push((r) => s.has(r[k])); return self; }
             case "gt": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== null && r[k] !== undefined && cmp(r[k], v) > 0); return self; }
+            case "gte": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== null && r[k] !== undefined && cmp(r[k], v) >= 0); return self; }
+            case "is": {
+              const [k, v] = args as [string, unknown];
+              filters.push((r) => (v === null ? r[k] === null || r[k] === undefined : r[k] === v));
+              return self;
+            }
             case "not": {
               const [k, o, v] = args as [string, string, unknown];
               if (o === "is" && v === null) filters.push((r) => r[k] !== null && r[k] !== undefined);

@@ -4,7 +4,8 @@
 //
 // buildOrgGraph is driven end to end over an in-memory, filter-aware
 // PostgREST stand-in (helpers/graphFakeDb.ts: keyset paging, ordering, RLS-
-// hidden rows, missing tables/columns, failing reads, RPCs); the pure
+// hidden rows, missing tables/columns, failing reads, RPCs, and PostgREST's
+// max-rows cut — no response carries more than 1,000 rows); the pure
 // assembler (assembleOrgGraph) is driven directly for the rules that do not
 // need I/O. Findings: GM-2, GM-3, GM-4, GM-6, GM-8, GM-10, GM-13, GPV-2,
 // GPV-3, GPV-6, GPV-14, FLOW-8, WIRE-3, AREA-10, GAP-305 (graph half), and
@@ -298,10 +299,98 @@ describe("GM-3 / GPV-6 — ordered reads, true caps, counted losses", () => {
     expect(t).toMatch(/5 links lead to equipment, documents or units not on this map .* 5 equipment-tag\./);
     expect(g.severed).toBe(5);
     expect(t).not.toMatch(/densest web/);
-    // the assets read is ordered, and capped with one extra row to know
+    // the assets read is ordered (tag, id) in every window, and no window
+    // asks for more than PostgREST's max-rows — ASSET_CAP + 1 rows arrive
+    // across keyset windows, never from one request the server would cut
     const order = db.calls.filter((c) => c.table === "assets" && c.method === "order").map((c) => c.args[0]);
-    expect(order).toEqual(["tag", "id"]);
-    expect(db.calls.find((c) => c.table === "assets" && c.method === "limit")!.args[0]).toBe(GRAPH_CAPS.ASSET_CAP + 1);
+    expect(order.length).toBeGreaterThanOrEqual(6);
+    expect(order.every((col, i) => col === (i % 2 === 0 ? "tag" : "id"))).toBe(true);
+    const limits = db.calls.filter((c) => c.table === "assets" && c.method === "limit").map((c) => Number(c.args[0]));
+    expect(Math.max(...limits)).toBeLessThanOrEqual(1000);
+    expect(db.calls.filter((c) => c.table === "assets" && c.method === "gte").every((c) => c.args[0] === "tag")).toBe(true);
+  });
+
+  /** No request of the build asks PostgREST for more than max-rows. */
+  const windowsWithinMaxRows = () => {
+    for (const c of db.calls) {
+      if (c.method === "limit") expect(Number(c.args[0])).toBeLessThanOrEqual(1000);
+      if (c.method === "range") expect(Number(c.args[1]) - Number(c.args[0]) + 1).toBeLessThanOrEqual(1000);
+    }
+  };
+
+  it("max-rows (1,000 per response, as PostgREST cuts it): 1,200 documents are all drawn and 2,005 equipment items say their cap", async () => {
+    const documents = Array.from({ length: 1200 }, (_, i) => o({
+      id: `d${String(i).padStart(5, "0")}`, document_number: `N-${i}`, title: null, library_id: "L1", unit_id: null, unit_code: null,
+      sheet_number: null, sheet_total: null, updated_at: `2026-0${1 + (i % 9)}-${String(1 + (i % 28)).padStart(2, "0")}T${String(i % 24).padStart(2, "0")}:00:00`,
+    }));
+    const N = GRAPH_CAPS.ASSET_CAP + 5;
+    const assets = Array.from({ length: N }, (_, i) => o({ id: `a${String(i).padStart(5, "0")}`, tag: `E-${String(i).padStart(5, "0")}`, description: null, unit_code: null, unit_id: null, archived: false }));
+    reset(plant({
+      documents, assets,
+      document_assets: [o({ id: "da1", document_id: "d01150", asset_id: "a02004" }), o({ id: "da2", document_id: "d01150", asset_id: "a01999" })],
+    }));
+    const g = await buildOrgGraph(ORG);
+    const t = g.truncations.join("\n");
+    // every document is on the map (1,200 < DOC_CAP) — none was cut at row 1,000
+    expect(g.nodes.filter((n) => n.type === "document")).toHaveLength(1200);
+    expect(t).not.toMatch(/most recently updated documents/);
+    // the equipment cap is reached and SAID; the first 2,000 by tag are drawn
+    expect(g.nodes.filter((n) => n.type === "asset")).toHaveLength(GRAPH_CAPS.ASSET_CAP);
+    expect(ids(g)).toContain("asset:a01999");
+    expect(ids(g)).not.toContain("asset:a02004");
+    expect(t).toContain(`Showing the first ${GRAPH_CAPS.ASSET_CAP.toLocaleString("en-US")} equipment items by tag.`);
+    expect(g.severed).toBe(1);
+    windowsWithinMaxRows();
+  });
+
+  it("past DOC_CAP the 1,500 most recently updated documents are drawn (read across windows) and the cap is said", async () => {
+    const N = GRAPH_CAPS.DOC_CAP + 300;
+    // d00000 is the newest; d01799 the oldest; three have no updated_at (last)
+    const stamp = (i: number) => new Date(Date.UTC(2026, 8, 30) - i * 60_000).toISOString();
+    const documents = Array.from({ length: N }, (_, i) => o({
+      id: `d${String(i).padStart(5, "0")}`, document_number: `N-${i}`, title: null, library_id: "L1", unit_id: null, unit_code: null,
+      sheet_number: null, sheet_total: null, updated_at: i < 3 ? null : stamp(i),
+    }));
+    reset(plant({ documents }));
+    const g = await buildOrgGraph(ORG);
+    const drawn = g.nodes.filter((n) => n.type === "document").map((n) => n.id);
+    expect(drawn).toHaveLength(GRAPH_CAPS.DOC_CAP);
+    expect(drawn).toContain("doc:d00003");                                  // the newest dated one
+    expect(drawn).toContain(`doc:d${String(GRAPH_CAPS.DOC_CAP + 2).padStart(5, "0")}`);
+    expect(drawn).not.toContain(`doc:d${String(GRAPH_CAPS.DOC_CAP + 3).padStart(5, "0")}`);
+    expect(drawn).not.toContain("doc:d00000");                              // undated: nulls last
+    expect(g.truncations.join("\n")).toContain(`Showing the ${GRAPH_CAPS.DOC_CAP.toLocaleString("en-US")} most recently updated documents.`);
+    const docOrders = db.calls.filter((c) => c.table === "documents" && c.method === "order").map((c) => c.args);
+    expect(docOrders[0]).toEqual(["updated_at", { ascending: false, nullsFirst: false }]);
+    expect(db.calls.filter((c) => c.table === "documents" && c.method === "range").length).toBeGreaterThanOrEqual(2);
+    windowsWithinMaxRows();
+  });
+
+  it("a tag shared by rows on both sides of a window edge loses none of them and draws none twice", async () => {
+    const assets = Array.from({ length: 1003 }, (_, i) => o({
+      id: `a${String(i).padStart(5, "0")}`, tag: i >= 997 && i <= 1001 ? "E-SAME" : `E-${String(i).padStart(5, "0")}`,
+      description: null, unit_code: null, unit_id: null, archived: false,
+    }));
+    reset(plant({ assets }));
+    const g = await buildOrgGraph(ORG);
+    const drawn = g.nodes.filter((n) => n.type === "asset").map((n) => n.id);
+    expect(drawn).toHaveLength(1003);
+    expect(new Set(drawn).size).toBe(1003);
+    expect(g.truncations.join("\n")).not.toMatch(/equipment items/);
+  });
+
+  it("the site structure is paged past max-rows: 1,005 systems are all drawn, and past STRUCT_CAP the cap is said with its count", async () => {
+    const systems = (n: number) => Array.from({ length: n }, (_, i) => o({ id: `s${String(i).padStart(5, "0")}`, name: `Sys ${i}`, code: null, unit_id: "u1", plant_id: "p1", archived: false }));
+    reset(plant({ systems: systems(1005) }));
+    let g = await buildOrgGraph(ORG);
+    expect(g.nodes.filter((n) => n.id.startsWith("system:"))).toHaveLength(1005);
+    expect(g.edges.filter((e) => e.a.startsWith("system:") && e.b === "cbunit:20")).toHaveLength(1005);
+    windowsWithinMaxRows();
+
+    reset(plant({ systems: systems(GRAPH_CAPS.STRUCT_CAP + 3) }));
+    g = await buildOrgGraph(ORG);
+    expect(g.nodes.filter((n) => n.id.startsWith("system:"))).toHaveLength(GRAPH_CAPS.STRUCT_CAP);
+    expect(g.truncations.join("\n")).toContain(`Systems capped — ${GRAPH_CAPS.STRUCT_CAP.toLocaleString("en-US")} of ${(GRAPH_CAPS.STRUCT_CAP + 3).toLocaleString("en-US")} read; the rest are not drawn.`);
   });
 
   it("exactly ASSET_CAP assets is not a cap (no false notice)", async () => {

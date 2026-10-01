@@ -22,7 +22,10 @@
 // a controller (the rest are counted). Unit names in the mapping come from
 // the codebook (DEC-35). The mapping itself is guarded in the database
 // (20261138: only the scope writer tier sets units.codebook_code, and
-// archiving a unit releases its code).
+// archiving a unit releases its code). Which codes are taken is read
+// directly (listCodebookMappings), not from the tree on screen: archiving a
+// PLANT does not archive its units, so a unit under an archived plant keeps
+// its code while the default tree does not show it.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -34,8 +37,8 @@ import {
   getScopeTree, createPlant, createUnit, createSystem,
   updatePlant, updateUnit, updateSystem,
   archivePlant, archiveUnit, archiveSystem,
-  setUnitCodebookCode, runUnitIdentityBackfill,
-  type ScopeNode, type UnitIdentityReport,
+  setUnitCodebookCode, runUnitIdentityBackfill, listCodebookMappings,
+  type ScopeNode, type UnitIdentityReport, type CodebookMappingHolder,
 } from "@/lib/operationalGraph";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
@@ -70,6 +73,10 @@ export default function ScopePage() {
   const [addingChildOf, setAddingChildOf] = useState<{ kind: "root" | "plant" | "unit"; parentId?: string } | null>(null);
   const [editing, setEditing] = useState<EditTarget>(null);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
+  /** Every codebook code held by an operational unit, under any plant (null:
+   *  the read failed — the tree on screen is the fallback, and says so). */
+  const [holders, setHolders] = useState<CodebookMappingHolder[] | null>(null);
+  const [holdersError, setHoldersError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -78,22 +85,44 @@ export default function ScopePage() {
     return () => { alive = false; };
   }, [activeOrgId]);
 
-  // Codebook code → the operational unit it is mapped to (one each, 20261138).
-  // An archived unit holds no code (20261138's guard releases it on archive),
-  // so the units on screen are every unit that can hold one.
+  // Codebook code → the operational unit that holds it (one each, 20261138).
+  // Read directly from units, under ANY plant: an archived unit holds no code
+  // (20261138's guard releases it), but archiving a PLANT does not archive
+  // its units — a unit under an archived plant keeps its code and is not on
+  // the default tree. The tree is only the fallback when that read fails.
   const mappedTo = React.useMemo(() => {
-    const m = new Map<string, string>();
-    for (const { units } of tree) for (const u of units) if (u.codebookCode) m.set(u.codebookCode, u.unit.id!);
+    const m = new Map<string, CodebookMappingHolder>();
+    if (holders) {
+      for (const h of holders) m.set(h.code, h);
+      return m;
+    }
+    for (const { plant, units } of tree) {
+      for (const u of units) {
+        if (!u.codebookCode) continue;
+        m.set(u.codebookCode, {
+          code: u.codebookCode, unitId: u.unit.id!, unitName: u.unit.name, plantId: plant.id ?? null,
+          plantName: plant.name, plantArchived: !!plant.archived,
+        });
+      }
+    }
     return m;
-  }, [tree]);
+  }, [holders, tree]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
     setLoading(true);
     setError(null);
     try {
-      const t = await getScopeTree(activeOrgId, { includeArchived: showArchived });
+      const [t, h] = await Promise.all([
+        getScopeTree(activeOrgId, { includeArchived: showArchived }),
+        listCodebookMappings(activeOrgId).then(
+          (rows) => ({ rows, error: null as string | null }),
+          (e: unknown) => ({ rows: null, error: (e as Error).message }),
+        ),
+      ]);
       setTree(t);
+      setHolders(h.rows);
+      setHoldersError(h.error);
     } catch (e) {
       const f = translatePostgresError(e, { entity: "scope row" });
       setError(`${f.heading} — ${f.message}`);
@@ -199,7 +228,13 @@ export default function ScopePage() {
         </div>
       )}
 
-      <UnitIdentityPanel orgId={activeOrgId} canEdit={canEdit} book={book} tree={tree} />
+      {holdersError && (
+        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5" /> The Site Codebook mapping could not be read in full ({holdersError}) — a code held by a unit under an archived plant may still be offered.
+        </div>
+      )}
+
+      <UnitIdentityPanel orgId={activeOrgId} canEdit={canEdit} book={book} mappedTo={mappedTo} />
 
       {/* New-plant inline form */}
       {addingChildOf?.kind === "root" && (
@@ -418,11 +453,12 @@ function ScopeRow({
 // ─── Unit identity (GAP-305) ────────────────────────────────────
 
 /** Which Site Codebook unit this operational unit IS. A codebook unit maps to
- *  at most one operational unit, so codes taken elsewhere are disabled. */
+ *  at most one operational unit, so codes taken elsewhere are disabled and
+ *  name the unit (and plant) that holds them. */
 function UnitMapping({
   current, book, takenBy, unitId, canEdit, onChange,
 }: {
-  current: string | null; book: Codebook; takenBy: Map<string, string>;
+  current: string | null; book: Codebook; takenBy: Map<string, CodebookMappingHolder>;
   unitId: string; canEdit: boolean; onChange: (code: string | null) => void;
 }) {
   const entry = current ? book.units.find((u) => u.code === current) : null;
@@ -446,10 +482,11 @@ function UnitMapping({
         <option value="">Not mapped</option>
         {current && !entry && <option value={current}>{current} (not in the codebook)</option>}
         {book.units.map((u) => {
-          const other = takenBy.get(u.code);
+          const holder = takenBy.get(u.code);
+          const elsewhere = !!holder && holder.unitId !== unitId;
           return (
-            <option key={u.code} value={u.code} disabled={!!other && other !== unitId}>
-              {u.code} · {u.label}{other && other !== unitId ? " (mapped elsewhere)" : ""}
+            <option key={u.code} value={u.code} disabled={elsewhere}>
+              {u.code} · {u.label}{elsewhere ? ` (mapped to ${holder.unitName}${holder.plantName ? ` · ${holder.plantName}` : ""}${holder.plantArchived ? ", an archived plant" : ""})` : ""}
             </option>
           );
         })}
@@ -460,14 +497,15 @@ function UnitMapping({
 
 /** The decode: drawing numbers → documents.unit_code, the mapping →
  *  assets.unit_id. Preview first (writes nothing), then apply. */
-function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
-  orgId: string; canEdit: boolean; book: Codebook; tree: ScopeNode[];
+function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
+  orgId: string; canEdit: boolean; book: Codebook; mappedTo: Map<string, CodebookMappingHolder>;
 }) {
   const [busy, setBusy] = useState<null | "preview" | "apply">(null);
   const [report, setReport] = useState<UnitIdentityReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const units = tree.flatMap((t) => t.units).filter((u) => !u.unit.archived);
-  const mapped = units.filter((u) => u.codebookCode).length;
+  // Counted over every holder, under any plant — not the tree on screen.
+  const mapped = book.units.filter((u) => mappedTo.has(u.code)).length;
+  const underArchivedPlant = [...mappedTo.values()].filter((h) => h.plantArchived).length;
 
   const run = async (dryRun: boolean) => {
     setBusy(dryRun ? "preview" : "apply");
@@ -489,7 +527,7 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
         <Link2 className="w-4 h-4 text-purple-600" />
         <span className="text-sm font-bold text-[var(--color-text)]">Unit identity</span>
         <span className="text-xs text-[var(--color-text-muted)]">
-          {mapped} of {units.length} operational unit{units.length === 1 ? "" : "s"} mapped to the Site Codebook ({book.units.length} codebook unit{book.units.length === 1 ? "" : "s"}).
+          {mapped} of {book.units.length} Site Codebook unit{book.units.length === 1 ? "" : "s"} mapped to an operational unit{underArchivedPlant > 0 ? ` (${underArchivedPlant} to a unit under an archived plant — shown with "Show archived")` : ""}.
         </span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
@@ -515,7 +553,8 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
           <div className="font-bold">{report.dryRun ? "Preview — nothing written" : "Written"}</div>
           <div>
             Documents: {d.scanned} read · {d.decoded} decode to a codebook unit · {report.dryRun ? `${d.toWrite} to write` : `${d.written} written`}
-            {d.toClear > 0 ? ` (${d.toClear} cleared — no longer decode)` : ""}
+            {d.toClear > 0 ? ` (${d.toClear} ${report.dryRun ? "to clear" : "planned to clear"} — no longer decode)` : ""}
+            {(d.changed ?? 0) > 0 ? ` · ${d.changed} changed since they were read (left as they are)` : ""}
             {d.refused > 0 ? ` · ${d.refused} refused` : ""}
           </div>
           {d.notDecoding.count > 0 && (
@@ -551,6 +590,7 @@ function UnitIdentityPanel({ orgId, canEdit, book, tree }: {
           )}
           <div>
             Equipment: {a.scanned} read · {report.dryRun ? `${a.toSet} to fill` : `${a.written} filled`}
+            {(a.changed ?? 0) > 0 ? ` · ${a.changed} changed since they were read (left as they are)` : ""}
             {a.refused > 0 ? ` · ${a.refused} refused` : ""}
           </div>
           {(a.disagreeWithFiling > 0 || a.keptWithoutFiling > 0) && (

@@ -246,4 +246,15 @@ describe("GAP-306 acceptance 4 — scoped assembly is complete for a unit that e
     expect(member("lib:L20")).toBe(true);
     expect(member("proj:x")).toBe(false);
   });
+
+  it("the scoped map reads the site structure past PostgREST's max-rows: a unit with 1,005 systems draws every one", async () => {
+    const t = fixFolderIds(bigPlant());
+    t.systems = Array.from({ length: 1005 }, (_, i) => o({ id: `s${pad(i)}`, name: `Sys ${i}`, code: null, unit_id: "u20", plant_id: "p1", archived: false }));
+    reset(t);
+    const g = await buildOrgGraph(ORG, { scope: { kind: "unit", code: "20" } });
+    expect(g.nodes.filter((n) => n.id.startsWith("system:"))).toHaveLength(1005);
+    expect(g.edges.filter((e) => e.a.startsWith("system:") && e.b === "cbunit:20")).toHaveLength(1005);
+    // no request asked for more rows than one response carries
+    for (const c of db.calls) if (c.method === "limit") expect(Number(c.args[0])).toBeLessThanOrEqual(1000);
+  });
 });

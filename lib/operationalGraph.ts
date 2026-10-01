@@ -28,7 +28,7 @@
 import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import { parseDrawingNumber, explainDrawingNumberMiss, type Codebook } from "@/lib/codebook";
-import { isMissingColumn } from "@/lib/orgGraph";
+import { isMissingColumn, pageRows, pageIn } from "@/lib/orgGraph";
 
 // ─── Row shapes (snake_case from Postgres) ──────────────────────
 
@@ -189,6 +189,48 @@ export async function setUnitCodebookCode(unitId: string, codebookCode: string |
   if (saved !== code) throw new Error("Not saved — an archived unit holds no Site Codebook unit (restore it first).");
 }
 
+/** A Site Codebook unit and the operational unit that holds it. */
+export interface CodebookMappingHolder {
+  code: string;
+  unitId: string;
+  unitName: string;
+  plantId: string | null;
+  plantName: string | null;
+  /** The unit hangs from an ARCHIVED plant: archiving a plant does not
+   *  archive its units, so the unit keeps its code but is not on the scope
+   *  tree unless archived rows are shown. */
+  plantArchived: boolean;
+}
+
+/** GAP-305 — every Site Codebook unit held by an operational unit, read
+ *  directly from units (codebook_code set, the unit not archived — an
+ *  archived unit holds none), under ANY plant. The scope tree alone misses a
+ *  unit under an archived plant, and the picker would offer its code as free
+ *  (the save then fails on the UNIQUE mapping). [] before 20261138. */
+export async function listCodebookMappings(orgId: string): Promise<CodebookMappingHolder[]> {
+  const r = await pageRows<{ id: string; name: string; plant_id: string | null; codebook_code: string | null }>(
+    "units", "id, name, plant_id, codebook_code", orgId, 100_000,
+    (q) => q.eq("archived", false).not("codebook_code", "is", null));
+  if (r.error) {
+    if (isMissingColumn(r.error)) return [];
+    throw new Error(r.error.message);
+  }
+  const plantIds = [...new Set(r.rows.map((u) => u.plant_id).filter((p): p is string => !!p))];
+  const plants = await pageIn<{ id: string; name: string; archived: boolean | null }>(
+    "plants", "id, name, archived", orgId, "id", plantIds, plantIds.length + 1);
+  if (plants.error) throw new Error(plants.error.message);
+  const plantOf = new Map(plants.rows.map((p) => [String(p.id), p]));
+  return r.rows
+    .filter((u) => (u.codebook_code ?? "").trim() !== "")
+    .map((u) => {
+      const p = u.plant_id ? plantOf.get(u.plant_id) : undefined;
+      return {
+        code: (u.codebook_code ?? "").trim(), unitId: u.id, unitName: u.name,
+        plantId: u.plant_id ?? null, plantName: p?.name ?? null, plantArchived: !!p?.archived,
+      };
+    });
+}
+
 export async function createUnit(input: {
   orgId: string; plantId: string; name: string; code?: string;
   description?: string; createdBy: string;
@@ -321,6 +363,9 @@ export interface UnitIdentityReport {
     /** of those, decodes that no longer hold (cleared). */
     toClear: number;
     written: number;
+    /** planned, but the document's number changed (or it was deleted) after
+     *  the read — the write re-checks the number and left it as it is. */
+    changed: number;
     refused: number;
     noNumber: number;
     /** `unlisted`: restricted documents among `count` whose numbers are not
@@ -346,7 +391,13 @@ export interface UnitIdentityReport {
    *  than the filing maps to (both kept — counted, as for documents);
    *  `keptWithoutFiling` hold a unit while the filing maps to none (no
    *  unit_code, or its codebook unit is not mapped) — kept. */
-  assets: { scanned: number; toSet: number; disagreeWithFiling: number; keptWithoutFiling: number; written: number; refused: number };
+  assets: {
+    scanned: number; toSet: number; disagreeWithFiling: number; keptWithoutFiling: number; written: number;
+    /** planned, but after the read the item's unit_id was set (or its filing
+     *  changed, or it was deleted) — the fill re-checks and left it as it is. */
+    changed: number;
+    refused: number;
+  };
   mapping: { operationalUnits: number; mapped: number; codebookUnitsUnmapped: string[] };
   /** Writes still to do after this call (an apply works through at most a
    *  budget per call — POST /api/admin/unit-identity; the panel calls again
@@ -410,7 +461,7 @@ export function planUnitIdentity(input: {
   const docWrites = new Map<string | null, string[]>();
   const push = <K,>(m: Map<K, string[]>, k: K, id: string) => { const a = m.get(k) ?? []; a.push(id); m.set(k, a); };
   const d = {
-    scanned: docs.length, decoded: 0, toWrite: 0, toClear: 0, written: 0, refused: 0, noNumber: 0,
+    scanned: docs.length, decoded: 0, toWrite: 0, toClear: 0, written: 0, changed: 0, refused: 0, noNumber: 0,
     notDecoding: { count: 0, samples: [] as Array<{ number: string; reason: string }>, unlisted: 0 },
     noUnitSegment: 0,
     unknownUnit: { count: 0, codes: [] as Array<{ code: string; count: number }>, unlisted: 0 },
@@ -465,7 +516,7 @@ export function planUnitIdentity(input: {
   d.unknownUnit.codes = [...unknown.entries()].sort((x, y) => y[1] - x[1]).map(([code, count]) => ({ code, count }));
 
   const assetWrites = new Map<string, string[]>();
-  const a = { scanned: assets.length, toSet: 0, disagreeWithFiling: 0, keptWithoutFiling: 0, written: 0, refused: 0 };
+  const a = { scanned: assets.length, toSet: 0, disagreeWithFiling: 0, keptWithoutFiling: 0, written: 0, changed: 0, refused: 0 };
   for (const asset of assets) {
     const target = asset.unit_code ? rowOfCode.get(asset.unit_code) ?? null : null;
     const current = asset.unit_id ?? null;
@@ -515,9 +566,11 @@ export const UNIT_IDENTITY_MAX_ROUNDS = 100;
  *  a round writes only what is still missing) until nothing remains, a
  *  round lands nothing (the rest is refused), or UNIT_IDENTITY_MAX_ROUNDS.
  *  The result keeps the first round's plan (what the whole pass found),
- *  sums what was written, and takes the last round's refusals and remainder
- *  (a refused row is planned again by the next round, so summing would count
- *  it twice). A round that fails after earlier rounds says how much landed. */
+ *  sums what was written and what changed under it (a changed row is planned
+ *  afresh from the next read, never again as it was), and takes the last
+ *  round's refusals and remainder (a refused row is planned again by the next
+ *  round, so summing would count it twice). A round that fails after earlier
+ *  rounds says how much landed. */
 export async function runUnitIdentityBackfill(orgId: string, opts: { dryRun: boolean }): Promise<UnitIdentityReport> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -543,6 +596,7 @@ export async function runUnitIdentityBackfill(orgId: string, opts: { dryRun: boo
   const first = await once();
   let last = first;
   let docsWritten = first.documents.written, assetsWritten = first.assets.written;
+  let docsChanged = first.documents.changed ?? 0, assetsChanged = first.assets.changed ?? 0;
   const notes = [...first.notes];
   const progressed = (r: UnitIdentityReport) => r.documents.written + r.assets.written > 0;
   let rounds = 1;
@@ -555,6 +609,8 @@ export async function runUnitIdentityBackfill(orgId: string, opts: { dryRun: boo
     rounds += 1;
     docsWritten += last.documents.written;
     assetsWritten += last.assets.written;
+    docsChanged += last.documents.changed ?? 0;
+    assetsChanged += last.assets.changed ?? 0;
     for (const n of last.notes) if (!notes.includes(n)) notes.push(n);
   }
   if (last.remaining > 0 && progressed(last)) {
@@ -562,8 +618,8 @@ export async function runUnitIdentityBackfill(orgId: string, opts: { dryRun: boo
   }
   return {
     ...first,
-    documents: { ...first.documents, written: docsWritten, refused: last.documents.refused },
-    assets: { ...first.assets, written: assetsWritten, refused: last.assets.refused },
+    documents: { ...first.documents, written: docsWritten, changed: docsChanged, refused: last.documents.refused },
+    assets: { ...first.assets, written: assetsWritten, changed: assetsChanged, refused: last.assets.refused },
     remaining: last.remaining,
     notes,
   };

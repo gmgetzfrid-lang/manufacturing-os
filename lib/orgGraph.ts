@@ -39,6 +39,13 @@
 // says so; and a link whose other end is not on the map (beyond a cap,
 // archived, or outside the reader's access) is COUNTED — addEdge still never
 // draws a dangling edge, but the loss is no longer silent.
+// No request asks for more than EDGE_PAGE (1,000) rows: PostgREST cuts every
+// response at db-max-rows (1,000 by default) WITHOUT an error (AREA-9), so a
+// single `.limit(1501)` could never see past row 1,000 and its cap could
+// never be reported. Documents and equipment are read in windows over their
+// own order until cap + 1 rows are in hand; the site structure (codebook
+// units, operational units, plants, systems) and the link tables page in
+// keyset windows to completion or their cap, which is then said with a count.
 //
 // SCOPE (GAP-306). buildOrgGraph(orgId, { scope }) assembles ONE unit's world
 // from the id set lib/scope.ts resolves, so the caps apply to the unit, not to
@@ -165,8 +172,11 @@ const EDGE_PAGE = 1000;
 const EDGE_CAP = 8000;
 const IN_CHUNK = 150;
 const IN_WAVE = 6;
+/** Codebook units, operational units, plants and systems: each paged to
+ *  completion up to this many rows (a site holds tens to hundreds). */
+const STRUCT_CAP = 5000;
 
-export const GRAPH_CAPS = { DOC_CAP, ASSET_CAP, LIST_CAP, EDGE_PAGE, EDGE_CAP } as const;
+export const GRAPH_CAPS = { DOC_CAP, ASSET_CAP, LIST_CAP, EDGE_PAGE, EDGE_CAP, STRUCT_CAP } as const;
 
 /** documents.unit_code is added by 20261138 (GAP-305). It is typed here, not
  *  in types/schema.ts (owned by the document-control packages). */
@@ -235,9 +245,12 @@ export interface Filterable extends PromiseLike<{ data: unknown; error: PgErr | 
   eq(col: string, v: unknown): Filterable;
   in(col: string, v: readonly unknown[]): Filterable;
   gt(col: string, v: unknown): Filterable;
+  gte(col: string, v: unknown): Filterable;
+  not(col: string, op: string, v: unknown): Filterable;
   contains(col: string, v: readonly unknown[]): Filterable;
   order(col: string, o?: { ascending?: boolean; nullsFirst?: boolean }): Filterable;
   limit(n: number): Filterable;
+  range(from: number, to: number): Filterable;
 }
 
 export interface PagedRows<T> {
@@ -346,13 +359,6 @@ const UNIT_COLS_LEGACY = "id, name, code, plant_id";
 
 type Res = { data: unknown; error: PgErr | null; count?: number | null };
 
-/** Run `primary`; on a missing column (an unapplied migration) run `legacy`. */
-async function withLegacyColumns(primary: () => PromiseLike<Res>, legacy: () => PromiseLike<Res>): Promise<{ res: Res; degraded: boolean }> {
-  const res = await primary();
-  if (res.error && isMissingColumn(res.error)) return { res: await legacy(), degraded: true };
-  return { res, degraded: false };
-}
-
 /** GM-4: an optional feature table that FAILED (not a pre-migration missing
  *  table) is a visible note, never a silently smaller graph. */
 function optionalRows<T>(res: Res, what: string, notes: string[]): T[] {
@@ -362,12 +368,120 @@ function optionalRows<T>(res: Res, what: string, notes: string[]): T[] {
   return [];
 }
 
-/** Ordered `limit(cap + 1)` read: the extra row says honestly whether the
- *  cap was reached (GPV-6 — no "the first N" without an ORDER BY). */
+/** Ordered read of up to `cap + 1` rows: the extra row says honestly whether
+ *  the cap was reached (GPV-6 — no "the first N" without an ORDER BY). A list
+ *  capped above EDGE_PAGE must be read in windows (readByRecency /
+ *  readByTag) — one request never returns more than max-rows. */
 function capList<T>(rows: T[], cap: number, note: string, notes: string[]): T[] {
   if (rows.length <= cap) return rows;
   notes.push(note);
   return rows.slice(0, cap);
+}
+
+type Windowed<T> = { rows: T[]; error: PgErr | null };
+
+/** Up to `want` rows of one fixed ORDER BY, in `.range()` windows of at most
+ *  EDGE_PAGE rows, until `want` are in hand or a short window ends the list.
+ *  Rows are kept once by id: a row whose sort key changes between two
+ *  windows shifts the order by one, and the repeat is dropped. */
+async function readByRange<T extends { id: string }>(
+  page: (from: number, to: number) => PromiseLike<Res>, want: number,
+): Promise<Windowed<T>> {
+  const seen = new Map<string, T>();
+  let from = 0;
+  while (seen.size < want) {
+    const size = Math.min(EDGE_PAGE, want - seen.size);
+    const { data, error } = await page(from, from + size - 1);
+    if (error) return { rows: [...seen.values()], error };
+    const batch = (data as T[] | null) ?? [];
+    for (const r of batch) if (!seen.has(String(r.id))) seen.set(String(r.id), r);
+    if (batch.length < size) break;
+    from += batch.length;
+  }
+  return { rows: [...seen.values()], error: null };
+}
+
+/** The org's documents, most recently updated first (`updated_at` desc nulls
+ *  last, then `id`), up to `want` — windowed, so DOC_CAP + 1 can be reached. */
+async function readDocumentsByRecency(orgId: string, want: number): Promise<Windowed<DocumentRow> & { degraded: boolean }> {
+  const page = (cols: string) => (from: number, to: number) =>
+    supabase.from("documents").select(cols).eq("org_id", orgId)
+      .order("updated_at", { ascending: false, nullsFirst: false }).order("id").range(from, to) as unknown as PromiseLike<Res>;
+  const r = await readByRange<DocumentRow>(page(DOC_COLS), want);
+  if (r.error && isMissingColumn(r.error)) return { ...(await readByRange<DocumentRow>(page(DOC_COLS_LEGACY), want)), degraded: true };
+  return { ...r, degraded: false };
+}
+
+/** The org's non-archived equipment in (`tag`, `id`) order, up to `want`, in
+ *  KEYSET windows of at most EDGE_PAGE rows: each window starts at the last
+ *  tag read (`tag >= last`) and drops the rows already in hand, so a tag
+ *  shared by several rows (the org-unique key is tag_normalized) is never
+ *  skipped at a window's edge. */
+async function readAssetsByTag(orgId: string, want: number): Promise<Windowed<AssetRowLite>> {
+  const seen = new Map<string, AssetRowLite>();
+  let lastTag: string | null = null;
+  while (seen.size < want) {
+    // The rows of the last tag come back again; ask for room beyond them.
+    const again = lastTag === null ? 0 : [...seen.values()].filter((a) => a.tag === lastTag).length;
+    const size = Math.min(EDGE_PAGE, want - seen.size + again);
+    let q = (supabase.from("assets").select(ASSET_COLS) as unknown as Filterable).eq("org_id", orgId).eq("archived", false);
+    if (lastTag !== null) q = q.gte("tag", lastTag);
+    const { data, error } = await q.order("tag").order("id").limit(size);
+    if (error) return { rows: [...seen.values()], error };
+    const batch = (data as AssetRowLite[] | null) ?? [];
+    let fresh = 0;
+    for (const a of batch) if (!seen.has(String(a.id))) { seen.set(String(a.id), a); fresh += 1; }
+    if (batch.length < size) break;
+    if (fresh === 0) {
+      return { rows: [...seen.values()], error: { message: `more than ${fmt(EDGE_PAGE)} equipment items share the tag "${lastTag}"` } };
+    }
+    lastTag = batch[batch.length - 1].tag;
+  }
+  return { rows: [...seen.values()].slice(0, want), error: null };
+}
+
+/** The site structure both assemblies draw from: Site Codebook units,
+ *  operational units, plants, systems (non-archived). Each is paged in keyset
+ *  windows (pageRows) to completion or STRUCT_CAP — a site with more than
+ *  1,000 systems is no longer cut silently at max-rows — then put back in its
+ *  display order; a failed read or a cap is a note (GM-4 / GM-13). */
+async function readStructure(orgId: string, notes: string[]): Promise<{
+  codebookUnits: CodebookUnitLite[]; units: UnitRowLite[];
+  plants: GraphRows["plants"]; systems: SystemRowLite[]; degraded: boolean;
+}> {
+  const live = (q: Filterable) => q.eq("archived", false);
+  type CbRow = CodebookUnitLite & { id: string; sort: number | null };
+  const [cbR, unitsFirst, plantsR, systemsR] = await Promise.all([
+    pageRows<CbRow>("codebook_entries", "id, code, label, meta, sort", orgId, STRUCT_CAP, (q) => q.eq("kind", "unit")),
+    pageRows<UnitRowLite>("units", UNIT_COLS, orgId, STRUCT_CAP, live),
+    pageRows<GraphRows["plants"][number]>("plants", "id, name, code", orgId, STRUCT_CAP, live),
+    pageRows<SystemRowLite>("systems", "id, name, code, unit_id, plant_id", orgId, STRUCT_CAP, live),
+  ]);
+  let unitsR = unitsFirst;
+  const degraded = !!unitsR.error && isMissingColumn(unitsR.error);
+  if (degraded) unitsR = await pageRows<UnitRowLite>("units", UNIT_COLS_LEGACY, orgId, STRUCT_CAP, live);
+  const take = <T,>(r: PagedRows<T>, what: string, order: (a: T, b: T) => number): T[] => {
+    if (r.error) {
+      notes.push(`${what} could not be loaded (${r.error.message}) — the map is incomplete.`);
+      return [];
+    }
+    const n = cappedNote(what, r);
+    if (n) notes.push(n);
+    return [...r.rows].sort(order);
+  };
+  const text = (x: string | null | undefined, y: string | null | undefined) => {
+    const a = x ?? "", b = y ?? "";
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
+  const byName = <T extends { name: string; id: string }>(a: T, b: T) => text(a.name, b.name) || text(a.id, b.id);
+  return {
+    codebookUnits: take(cbR, "Site Codebook units", (a, b) => ((a.sort ?? 0) - (b.sort ?? 0)) || text(a.code, b.code))
+      .map(({ code, label, meta }) => ({ code, label, meta })),
+    units: take(unitsR, "Operational units", byName),
+    plants: take(plantsR, "Plants", byName),
+    systems: take(systemsR, "Systems", byName),
+    degraded,
+  };
 }
 
 /** Resolve the knowledge documents a set of mentions points through. */
@@ -407,27 +521,16 @@ function accessNote(access: GraphAccess): string | null {
 
 async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean } }> {
   const [
-    cbRes, unitsQ, plantsRes, systemsRes, libsRes, projectsRes, docsQ, assetsRes, plotRes,
+    structure, libsRes, projectsRes, docsR, assetsR, plotRes,
     docAssets, projectDocs, related, supersessions, mentions, flows,
   ] = await Promise.all([
-    supabase.from("codebook_entries").select("code, label, meta").eq("org_id", orgId).eq("kind", "unit")
-      .order("sort").order("code") as unknown as PromiseLike<Res>,
-    withLegacyColumns(
-      () => supabase.from("units").select(UNIT_COLS).eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-      () => supabase.from("units").select(UNIT_COLS_LEGACY).eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-    ),
-    supabase.from("plants").select("id, name, code").eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-    supabase.from("systems").select("id, name, code, unit_id, plant_id").eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
+    readStructure(orgId, notes),
     supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
     supabase.from("projects").select("id, name, status").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
-    withLegacyColumns(
-      () => supabase.from("documents").select(DOC_COLS).eq("org_id", orgId)
-        .order("updated_at", { ascending: false, nullsFirst: false }).order("id").limit(DOC_CAP + 1) as unknown as PromiseLike<Res>,
-      () => supabase.from("documents").select(DOC_COLS_LEGACY).eq("org_id", orgId)
-        .order("updated_at", { ascending: false, nullsFirst: false }).order("id").limit(DOC_CAP + 1) as unknown as PromiseLike<Res>,
-    ),
-    supabase.from("assets").select(ASSET_COLS).eq("org_id", orgId).eq("archived", false)
-      .order("tag").order("id").limit(ASSET_CAP + 1) as unknown as PromiseLike<Res>,
+    // Windowed (max-rows): DOC_CAP + 1 and ASSET_CAP + 1 rows can arrive,
+    // so the cap notes below fire exactly when a cap is exceeded.
+    readDocumentsByRecency(orgId, DOC_CAP + 1),
+    readAssetsByTag(orgId, ASSET_CAP + 1),
     // Plot plans: spatial maps whose markers pin assets to a place. Each
     // plan is a node; each marker is an edge to the asset it pins.
     supabase.from("plot_plans").select("id, name, markers").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
@@ -451,25 +554,21 @@ async function readOrgRows(orgId: string, notes: string[]): Promise<{ rows: Grap
   ]);
 
   // Documents and libraries are the core — a real error there is fatal.
-  const docsRes = docsQ.res;
-  if (docsRes.error) throw new Error(docsRes.error.message);
+  if (docsR.error) throw new Error(docsR.error.message);
   if (libsRes.error) throw new Error(libsRes.error.message);
-  if (docsQ.degraded || unitsQ.degraded) notes.push(UNIT_IDENTITY_NOTE);
+  if (docsR.degraded || structure.degraded) notes.push(UNIT_IDENTITY_NOTE);
+  const { codebookUnits, units, plants, systems } = structure;
 
-  const documents = capList((docsRes.data as DocumentRow[] | null) ?? [], DOC_CAP,
+  const documents = capList(docsR.rows, DOC_CAP,
     `Showing the ${fmt(DOC_CAP)} most recently updated documents.`, notes);
   const libraries = capList((libsRes.data as GraphRows["libraries"] | null) ?? [], LIST_CAP,
     `Showing the first ${fmt(LIST_CAP)} libraries by name.`, notes);
-  const assets = capList(optionalRows<AssetRowLite>(assetsRes, "Equipment", notes), ASSET_CAP,
+  const assets = capList(optionalRows<AssetRowLite>({ data: assetsR.rows, error: assetsR.error }, "Equipment", notes), ASSET_CAP,
     `Showing the first ${fmt(ASSET_CAP)} equipment items by tag.`, notes);
   const projects = capList(optionalRows<GraphRows["projects"][number]>(projectsRes, "Projects", notes), LIST_CAP,
     `Showing the first ${fmt(LIST_CAP)} projects by name.`, notes);
   const plotPlans = capList(optionalRows<GraphRows["plotPlans"][number]>(plotRes, "Plot plans", notes), LIST_CAP,
     `Showing the first ${fmt(LIST_CAP)} plot plans by name.`, notes);
-  const units = optionalRows<UnitRowLite>(unitsQ.res, "Operational units", notes);
-  const plants = optionalRows<GraphRows["plants"][number]>(plantsRes, "Plants", notes);
-  const systems = optionalRows<SystemRowLite>(systemsRes, "Systems", notes);
-  const codebookUnits = optionalRows<CodebookUnitLite>(cbRes, "Site Codebook units", notes);
 
   for (const [what, r] of [
     ["Equipment-tag links", mustRead("document_assets", docAssets)],
@@ -525,26 +624,19 @@ async function readScopeRows(
   const assetIds = scope.assets;
   const BIG = Math.max(EDGE_CAP, docIds.length + assetIds.length + 1);
 
-  const [cbRes, unitsQ, plantsRes, systemsRes, plotRes, flows] = await Promise.all([
-    supabase.from("codebook_entries").select("code, label, meta").eq("org_id", orgId).eq("kind", "unit")
-      .order("sort").order("code") as unknown as PromiseLike<Res>,
-    withLegacyColumns(
-      () => supabase.from("units").select(UNIT_COLS).eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-      () => supabase.from("units").select(UNIT_COLS_LEGACY).eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-    ),
-    supabase.from("plants").select("id, name, code").eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
-    supabase.from("systems").select("id, name, code, unit_id, plant_id").eq("org_id", orgId).eq("archived", false).order("name").order("id") as unknown as PromiseLike<Res>,
+  const [structure, plotRes, flows] = await Promise.all([
+    readStructure(orgId, notes),
     supabase.from("plot_plans").select("id, name, markers").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
     pageRows<{ id: string; from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>(
       "process_flows", "id, from_kind, from_ref, to_kind, to_ref, status", orgId, EDGE_CAP),
   ]);
-  if (unitsQ.degraded) notes.push(UNIT_IDENTITY_NOTE);
+  if (structure.degraded) notes.push(UNIT_IDENTITY_NOTE);
 
   // The unit's documents, complete up to the resolution cap, then capped
   // like the org-wide map — but over THIS unit's population.
   let docsR = await pageIn<DocumentRow>("documents", DOC_COLS, orgId, "id", docIds, docIds.length + 1);
   if (docsR.error && isMissingColumn(docsR.error)) {
-    if (!unitsQ.degraded) notes.push(UNIT_IDENTITY_NOTE);
+    if (!structure.degraded) notes.push(UNIT_IDENTITY_NOTE);
     docsR = await pageIn<DocumentRow>("documents", DOC_COLS_LEGACY, orgId, "id", docIds, docIds.length + 1);
   }
   if (docsR.error) throw new Error(docsR.error.message);
@@ -626,13 +718,12 @@ async function readScopeRows(
     .map((m) => String(m.knowledge_document_id)))];
   for (const [k, v] of await resolveMirrors(orgId, unresolved, notes)) mirrorOf.set(k, v);
 
-  const codebookUnits = optionalRows<CodebookUnitLite>(cbRes, "Site Codebook units", notes);
   return {
     rows: {
-      codebookUnits,
-      units: optionalRows<UnitRowLite>(unitsQ.res, "Operational units", notes),
-      plants: optionalRows<GraphRows["plants"][number]>(plantsRes, "Plants", notes),
-      systems: optionalRows<SystemRowLite>(systemsRes, "Systems", notes),
+      codebookUnits: structure.codebookUnits,
+      units: structure.units,
+      plants: structure.plants,
+      systems: structure.systems,
       libraries: libsR.rows,
       knowledgeLibraries: klR.rows,
       projects: [],
