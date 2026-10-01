@@ -84,7 +84,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
     try {
       await saveLibraryAiInstructions(library.id, instructions);
       await saveLibraryAiFeatures(library.id, {
-        clarifyFacets, visionPages, visionAllPages,
+        clarifyFacets, visionPages, visionAllPages, drawingIntel,
         decoder: decoder.trim() || undefined,
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
       });
