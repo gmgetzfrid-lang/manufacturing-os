@@ -861,11 +861,26 @@ export async function getAiUsage(orgId: string): Promise<AiUsageSummary> {
   return data as AiUsageSummary;
 }
 
-/** Controllers: set the org-default monthly cap, or one person's cap when
- *  userId is given. capUsd null (with userId) clears the person's override
- *  so they fall back to the org default. */
-export async function setAiCap(orgId: string, capUsd: number | null, userId?: string): Promise<void> {
-  await apiPost("/api/ai/usage", { orgId, capUsd, ...(userId ? { userId } : {}) });
+/** What POST /api/ai/usage answered (GOV-10). `selfHeldAtUsd`: raising the
+ *  default the setter follows held their own cap at that figure.
+ *  `soleHolder`: the setter's own cap moved with no second signature,
+ *  because nobody else holds ai.manage_caps (recorded in the audit log). */
+export interface AiCapSetResult {
+  ok: boolean;
+  capUsd?: number;
+  locked?: boolean;
+  cleared?: boolean;
+  selfHeldAtUsd?: number;
+  soleHolder?: boolean;
+}
+
+/** Holders of ai.manage_caps: set the org-default monthly cap, or one
+ *  person's cap when userId is given. capUsd null (with userId) clears the
+ *  person's override so they fall back to the org default. Returns the
+ *  server's answer — what happened to the setter's own cap is read from it,
+ *  never inferred. */
+export async function setAiCap(orgId: string, capUsd: number | null, userId?: string): Promise<AiCapSetResult> {
+  return apiPost<AiCapSetResult>("/api/ai/usage", { orgId, capUsd, ...(userId ? { userId } : {}) });
 }
 
 // ── Knowledge sources: doc-control containers feeding a library ────────────

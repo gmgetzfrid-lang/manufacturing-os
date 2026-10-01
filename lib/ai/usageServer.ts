@@ -71,7 +71,9 @@ export class AiUsageUnavailableError extends GovernedCallError {
  *  batch or one assistant run costs at the app's own limits. The month is
  *  over-counted, never under — and the member keeps working: a hard refusal
  *  would lock every gated feature until the 1st over a row nobody in the app
- *  can clear (the table is service-role only). */
+ *  can clear from the current month (the table is service-role only, and the
+ *  storage purge, app/api/admin/purge, never reaches a row of the current
+ *  UTC month — the month's rows are the spend every cap counts). */
 export const UNPRICED_CALL_USD = estimateCostUsd("", { inputTokens: 120_000, outputTokens: 16_000 });
 
 /** First instant of the current UTC month — the ledger boundary. */
@@ -380,6 +382,7 @@ export async function reserveWithinCap(input: {
     await releaseUsage(id);
     throw new GovernedCallError(verdict.message, verdict.status, {
       spentUsd: verdict.spentBeforeUsd, capUsd: displayCapUsd(input.capUsd), reservedUsd,
+      locked: capIsLocked(input.capUsd),
     });
   }
   return { id, reservedUsd };

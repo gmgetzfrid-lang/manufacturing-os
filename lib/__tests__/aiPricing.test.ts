@@ -111,22 +111,31 @@ describe("GOV-6 — Voyage at its published rates; the agreement names every ven
 });
 
 describe("worstCaseCostUsd (GOV-13) — what a pending call could cost", () => {
+  // The arithmetic, not the price table: a neutral model name is unlisted,
+  // so it prices at the frontier fallback ($5 in / $25 out per million).
+  const NEUTRAL = "chat-model";
+  it("the neutral fixture prices at the frontier fallback", () => {
+    expect(modelPricePerMTok(NEUTRAL)).toEqual([5, 25]);
+  });
   it("text at 3 chars a token, every image at 1,600 tokens, output at the full maxTokens", () => {
     expect(UPPER_CHARS_PER_TOKEN).toBe(3);
     expect(UPPER_TOKENS_PER_IMAGE).toBe(1600);
-    // 30,000 chars → 10,000 tokens @ $3/M = $0.03; 4,000 out @ $15/M = $0.06
-    expect(worstCaseCostUsd("claude-sonnet-5", { inputChars: 30_000, maxTokens: 4000 })).toBeCloseTo(0.09, 6);
-    // + 5 images = 8,000 tokens more = $0.024
-    expect(worstCaseCostUsd("claude-sonnet-5", { inputChars: 30_000, images: 5, maxTokens: 4000 })).toBeCloseTo(0.114, 6);
+    // 30,000 chars → 10,000 tokens @ $5/M = $0.05; 4,000 out @ $25/M = $0.10
+    expect(worstCaseCostUsd(NEUTRAL, { inputChars: 30_000, maxTokens: 4000 })).toBeCloseTo(0.15, 6);
+    // + 5 images = 8,000 tokens more @ $5/M = $0.04
+    expect(worstCaseCostUsd(NEUTRAL, { inputChars: 30_000, images: 5, maxTokens: 4000 })).toBeCloseTo(0.19, 6);
   });
   it("is never below what the same call is estimated at once its counts come back (text is over-estimated)", () => {
     const chars = 40_000;
     const realisticInput = Math.round(chars / 4);
-    expect(worstCaseCostUsd("gpt-4o", { inputChars: chars, maxTokens: 2000 }))
-      .toBeGreaterThanOrEqual(estimateCostUsd("gpt-4o", { inputTokens: realisticInput, outputTokens: 2000 }));
+    expect(worstCaseCostUsd(NEUTRAL, { inputChars: chars, maxTokens: 2000 }))
+      .toBeGreaterThanOrEqual(estimateCostUsd(NEUTRAL, { inputTokens: realisticInput, outputTokens: 2000 }));
   });
   it("an embeddings call has no output side", () => {
-    expect(worstCaseCostUsd("voyage-3.5-lite", { inputChars: 3_000_000, maxTokens: 0 })).toBeCloseTo(0.02, 6);
+    // 3,000,000 chars → 1,000,000 tokens @ $5/M = $5.00; maxTokens 0 adds nothing
+    expect(worstCaseCostUsd("embed-model", { inputChars: 3_000_000, maxTokens: 0 })).toBeCloseTo(5, 6);
+    expect(worstCaseCostUsd("embed-model", { inputChars: 3_000_000, maxTokens: 0 }))
+      .toBe(estimateCostUsd("embed-model", { inputTokens: 1_000_000, outputTokens: 0 }));
   });
 });
 

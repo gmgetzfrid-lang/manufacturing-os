@@ -7,6 +7,12 @@
 // a hard-coded file — so when another package's re-creation lands before
 // this file and its row is folded into this body, the comparison follows it
 // and still admits only this file's row.
+//
+// capability_policy_write_guard is re-created the same way (newest earlier
+// definer: 20261056) with exactly ONE changed line — 'ai.manage_caps' joins
+// its critical list, because the capability is `critical: true`: without it
+// a Doc Controller could set the row to [DocCtrl], become its sole holder
+// and raise their own cap with no Admin involved.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -85,9 +91,10 @@ describe("20261137 — org_capability_allows_for learns ai.manage_caps (GOV-10)"
     expect(sql.size).toBe(CAPABILITY_DEFS.length);
     const def = CAPABILITY_DEFS.find((d) => d.id === "ai.manage_caps");
     expect(def?.defaultRoles).toEqual(["Admin"]);
-    // not on the write guard's critical list (20261056): an org may widen or
-    // narrow it from the policy console like any other capability
-    expect(def?.critical).toBeFalsy();
+    // CRITICAL: a change to who holds it is Admin's, and Admin stays on it —
+    // in the policy route, in validateCapabilityPolicy and in the write guard
+    // this file re-creates (below)
+    expect(def?.critical).toBe(true);
   });
 
   it("DRLS-16: EXECUTE is taken from PUBLIC and anon and granted to authenticated + service_role, inside the transaction", () => {
@@ -103,6 +110,8 @@ describe("20261137 — org_capability_allows_for learns ai.manage_caps (GOV-10)"
   });
 
   it("does not touch the 3-argument wrapper", () => {
+    // (nor any trigger: the write guard is re-created in place, below)
+    expect(m137).not.toMatch(/CREATE TRIGGER|DROP TRIGGER/);
     expect(m137).not.toMatch(/CREATE OR REPLACE FUNCTION org_capability_allows\(/);
     expect(m137).not.toMatch(/DROP FUNCTION/);
   });
@@ -125,9 +134,72 @@ describe("20261137 — org_capability_allows_for learns ai.manage_caps (GOV-10)"
     expect(tail).not.toMatch(/SELECT \*|SELECT data\b|SELECT uid|SELECT email/);
   });
 
+  it("the probes check the write guard after apply: the critical row, every earlier rail, the trigger still bound, anon revoked", () => {
+    const tail = tailOf(m137);
+    expect(tail).toContain(`prosrc LIKE '%ARRAY[''ticket.manage'', ''ticket.force_close'', ''ticket.reassign_engineer'', ''checkout.force_release'', ''ai.manage_caps''] LOOP%'`);
+    expect(tail).toContain("prosrc LIKE '%cannot be granted to yourself%'");
+    expect(tail).toContain("JOIN pg_trigger t ON t.tgfoid = p.oid");
+    expect(tail).toContain("t.tgname = 'trg_capability_policy_write_guard'");
+    expect(tail).toContain("NOT has_function_privilege('anon', 'capability_policy_write_guard()', 'EXECUTE')");
+    expect(m137).toMatch(/expect ok = true × 10/);
+    // ten probes: each carries ok and a NULL n — the first names the column, the other nine repeat its cast
+    expect((tail.match(/^\s+NULL::text( AS n)?$/gm) ?? []).length).toBe(10);
+  });
+
   it("the pre-apply inventory counts what the app half changes: Doc Control losing cap-setting, and $0 caps that now lock", () => {
     expect(m137).toContain("they stop setting AI caps unless the policy console grants ai.manage_caps");
     expect(m137).toContain("WHERE user_id IS NOT NULL AND monthly_cap_usd = 0");
     expect(m137).toContain("WHERE user_id IS NULL AND monthly_cap_usd = 0");
+  });
+});
+
+// ── the write guard ──────────────────────────────────────────────────────────
+const G = "CREATE OR REPLACE FUNCTION capability_policy_write_guard(";
+function guardBody(text: string): string {
+  const a = text.indexOf(G);
+  expect(a, "write guard not found").toBeGreaterThanOrEqual(0);
+  return text.slice(a, text.indexOf("$$;", text.indexOf("AS $$", a) + 5) + 3);
+}
+const guardDefiners = numbered.filter((f) => f < FILE && read(f).includes(G));
+const newestGuard = guardDefiners[guardDefiners.length - 1];
+const guardPrev = guardBody(read(newestGuard));
+const guard137 = guardBody(m137);
+const criticalArray = (ids: string[]) => `    FOREACH v_cap IN ARRAY ARRAY[${ids.map((id) => `'${id}'`).join(", ")}] LOOP`;
+
+describe("20261137 — capability_policy_write_guard learns that ai.manage_caps is critical (GOV-10)", () => {
+  it("starts from the NEWEST earlier definition of the guard (found by scanning the sequence) — 20261056 at this package's base", () => {
+    expect(newestGuard).toBeDefined();
+    expect(guardDefiners).toContain("20261056_rp_roundE_capability_policy_write_guard.sql");
+    // no later numbered file re-creates it after this one
+    expect(numbered.filter((f) => f > FILE && read(f).includes(G))).toEqual([]);
+  });
+
+  it("is that body with exactly ONE line changed — the critical list gains 'ai.manage_caps' — nothing else added or removed", () => {
+    const { onlyInA, onlyInB } = lineDiff(guardPrev, guard137);
+    expect(onlyInA).toHaveLength(1);
+    expect(onlyInB).toHaveLength(1);
+    expect(onlyInA[0]).toMatch(/^    FOREACH v_cap IN ARRAY ARRAY\[.*\] LOOP$/);
+    expect(onlyInB[0]).toBe(onlyInA[0].replace("] LOOP", ", 'ai.manage_caps'] LOOP"));
+    expect(guard137.split("\n").length).toBe(guardPrev.split("\n").length);
+    expect(guard137).toMatch(/RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public/);
+  });
+
+  it("its critical list is CAPABILITY_DEFS critical: true, in order — the policy route, validateCapabilityPolicy and the guard read the same set", () => {
+    const critical = CAPABILITY_DEFS.filter((d) => d.critical).map((d) => d.id);
+    expect(critical).toContain("ai.manage_caps");
+    expect(guard137).toContain(criticalArray(critical));
+    // the rails it applies to every critical id: a change is Admin's; Admin (or '*') stays on every list
+    expect(guard137).toMatch(/IF v_entry IS DISTINCT FROM v_old_entry AND NOT v_admin THEN\s*\n\s*RAISE EXCEPTION 'Only an Admin may change a critical capability/);
+    expect(guard137).toContain("ELSIF NOT (v_entry ? 'Admin' OR v_entry ? '*') THEN");
+  });
+
+  it("DRLS-16: EXECUTE taken from PUBLIC and anon, restated for authenticated + service_role, inside the transaction after the guard", () => {
+    const tx = between(m137, "\nBEGIN;", "\nCOMMIT;");
+    const sig = "capability_policy_write_guard()";
+    expect(tx).toContain(`REVOKE EXECUTE ON FUNCTION ${sig} FROM PUBLIC;`);
+    expect(tx).toContain(`REVOKE EXECUTE ON FUNCTION ${sig} FROM anon;`);
+    expect(tx).toContain(`GRANT EXECUTE ON FUNCTION ${sig} TO authenticated, service_role;`);
+    expect(tx.indexOf(`REVOKE EXECUTE ON FUNCTION ${sig}`)).toBeGreaterThan(tx.indexOf(G));
+    expect(tx.indexOf(G)).toBeGreaterThan(tx.indexOf(H));
   });
 });

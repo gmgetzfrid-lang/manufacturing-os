@@ -32,7 +32,12 @@ export const ALLOWED_PROVIDERS: readonly AiProviderId[] = ["anthropic", "openai"
  *  Claude key, and like OpenAI it does not train on API traffic. Voyage
  *  receives the text of every page it embeds, so the signed agreement names
  *  it (buildAgreementText). Nothing outside this list is accepted for the
- *  embeddings key, at save, at test, or at spend (lib/ai/aiGates). */
+ *  embeddings key at save or at test (/api/ai/connection), and
+ *  assertAiGates({ key: "embedding" }) (lib/ai/aiGates) refuses it at spend
+ *  for every caller that runs it. The index-time spends — the embed route,
+ *  the embed drain, the ask route's query embedding — read the key through
+ *  embeddingConnectionFrom and do not run it yet (I-02 / I-02b adopt it); the
+ *  embeddings client itself only ever calls Voyage's or OpenAI's endpoint. */
 export const ALLOWED_EMBEDDING_PROVIDERS: readonly EmbeddingProviderId[] = ["voyage", "openai"];
 
 export const PROVIDER_BLOCK_MESSAGE =

@@ -5,7 +5,9 @@
 //           a $0 cap reads LOCKED, never "Cap reached" over an uncapped key
 //   GOV-10  the cap editor appears only for a holder of ai.manage_caps; the
 //           copy names who can raise a cap (and tells a sole holder their own
-//           raise goes through, recorded)
+//           raise goes through, recorded); what happened to the setter's own
+//           cap is read from the server's answer to the save, never inferred
+//           from what the panel read when it opened
 //   GOV-4   an unreadable meter is an alert with a retry, not a vanished panel;
 //           calls recorded without a cost are said, with the figure the
 //           server counts each at
@@ -16,7 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const kn = vi.hoisted(() => ({ getAiUsage: vi.fn(), setAiCap: vi.fn(async () => undefined) }));
+const kn = vi.hoisted(() => ({ getAiUsage: vi.fn(), setAiCap: vi.fn(async (): Promise<Record<string, unknown>> => ({ ok: true })) }));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock("@/lib/knowledge", () => ({
   getAiConnections: vi.fn(), saveAiConnection: vi.fn(), testAiConnection: vi.fn(), removeAiConnection: vi.fn(),
@@ -45,8 +47,21 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   kn.getAiUsage.mockReset();
+  kn.setAiCap.mockReset();
+  kn.setAiCap.mockResolvedValue({ ok: true });
   toast.showToast.mockReset();
 });
+
+/** Type `value` into the default-cap input and press Set. */
+async function setDefaultCap(value: string) {
+  const input = host.querySelector("input") as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set")!;
+  await act(async () => { set.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  await act(async () => { await Promise.resolve(); });
+}
+const lastToast = () => String(toast.showToast.mock.calls.at(-1)?.[0]?.title);
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 async function render(el: React.ReactElement) {
@@ -100,15 +115,11 @@ describe("UsagePanel", () => {
   it("GOV-10: a holder who follows the default and raises it is told their own cap stays where it was", async () => {
     const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
     kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 500, locked: false, selfHeldAtUsd: 10 });
     await render(React.createElement(UsagePanel, { orgId: "o1" }));
-    const input = host.querySelector("input") as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(input, "500"); input.dispatchEvent(new Event("input", { bubbles: true })); });
-    const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set")!;
-    await act(async () => { set.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await act(async () => { await Promise.resolve(); });
+    await setDefaultCap("500");
     expect(kn.setAiCap).toHaveBeenCalledWith("o1", 500);
-    expect(String(toast.showToast.mock.calls.at(-1)?.[0]?.title)).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 — nobody raises their own cap/);
+    expect(lastToast()).toMatch(/Default monthly cap set to \$500\.00 per person\. Your own cap stays at \$10\.00 — nobody raises their own cap/);
     kn.getAiUsage.mockReset();
   });
 
@@ -118,15 +129,52 @@ describe("UsagePanel", () => {
     await render(React.createElement(UsagePanel, { orgId: "o1" }));
     expect(host.textContent).toMatch(/You're the only person who manages AI caps here, so you can raise your own/);
     expect(host.textContent).not.toMatch(/Nobody can raise their own cap/);
-    const input = host.querySelector("input") as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    await act(async () => { setter.call(input, "50"); input.dispatchEvent(new Event("input", { bubbles: true })); });
-    const set = [...host.querySelectorAll("button")].find((b) => b.textContent === "Set")!;
-    await act(async () => { set.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    await act(async () => { await Promise.resolve(); });
-    const title = String(toast.showToast.mock.calls.at(-1)?.[0]?.title);
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 50, locked: false, soleHolder: true });
+    await setDefaultCap("50");
+    const title = lastToast();
     expect(title).toMatch(/Default monthly cap set to \$50\.00 per person, yours included — you're the only person who manages AI caps here/);
     expect(title).not.toMatch(/another person who manages AI caps has to/);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10: the toast follows the SERVER's answer, not the roster the panel read — a holder granted since the panel opened means the setter was held", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    // the panel opened when Ada was the sole holder; a second Admin was granted the capability since
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true, soleCapsHolder: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 20, locked: false, selfHeldAtUsd: 10 });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    await setDefaultCap("20");
+    expect(lastToast()).toMatch(/Default monthly cap set to \$20\.00 per person\. Your own cap stays at \$10\.00/);
+    expect(lastToast()).not.toMatch(/yours included/);
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10: …and the other way — the roster read failed (soleCapsHolder unknown), the server raised a sole holder's own cap with the default: the toast says so", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 20, locked: false, soleHolder: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    await setDefaultCap("20");
+    expect(lastToast()).toMatch(/per person, yours included — you're the only person who manages AI caps here/);
+    expect(lastToast()).not.toMatch(/Your own cap stays/);
+    // a setter with an override of their own: neither held nor raised — the plain sentence
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 30, locked: false });
+    await setDefaultCap("30");
+    expect(lastToast()).toBe("Default monthly cap set to $30.00 per person.");
+    kn.getAiUsage.mockReset();
+  });
+
+  it("GOV-10: a sole holder who raises their OWN per-person cap is told it went through and is recorded", async () => {
+    const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, orgCapUsd: 10, team, canManageCaps: true, soleCapsHolder: true });
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 50, locked: false, soleHolder: true });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    const select = host.querySelector("select") as HTMLSelectElement;
+    const option = [...select.options].find((o) => o.value === "50")!;
+    await act(async () => { select.value = option.value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(kn.setAiCap).toHaveBeenCalledWith("o1", 50, "u1");
+    expect(lastToast()).toMatch(/Ada's monthly cap set to \$50\. You're the only person who manages AI caps here, so your own raise went through — it is recorded in the audit log\./);
     kn.getAiUsage.mockReset();
   });
 

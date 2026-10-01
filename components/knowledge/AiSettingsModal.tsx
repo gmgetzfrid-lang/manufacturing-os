@@ -579,17 +579,17 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     }
     setSavingCap(true);
     try {
-      await setAiCap(orgId, cap);
-      // GOV-10: raising the default you follow does not raise your own cap —
-      // the server holds you at your current figure — unless nobody else
-      // manages AI caps, when yours follows it (recorded as such).
-      const raisesOwn = usage.selfFollowsDefault === true && cap > (usage.orgCapUsd ?? usage.capUsd);
-      const sole = usage.soleCapsHolder === true;
+      const res = await setAiCap(orgId, cap);
+      // GOV-10: what happened to YOUR cap is the server's answer, never a
+      // guess from what this panel read when it opened (the roster may have
+      // changed since): raising the default you follow holds you at your
+      // current figure (`selfHeldAtUsd`) — unless nobody else manages AI
+      // caps, when yours follows it, recorded as such (`soleHolder`).
       showToast({ type: "success", title: cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
-        : raisesOwn && !sole
-          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(usage.orgCapUsd ?? usage.capUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
-          : raisesOwn
+        : typeof res.selfHeldAtUsd === "number"
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(res.selfHeldAtUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
+          : res.soleHolder === true
             ? `Default monthly cap set to ${fmtUsd(cap)} per person, yours included — you're the only person who manages AI caps here, so there is nobody else to raise it. The change is recorded in the audit log.`
             : `Default monthly cap set to ${fmtUsd(cap)} per person.` });
       setTick((t) => t + 1);
@@ -603,14 +603,17 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   const setMemberCap = async (userId: string, name: string, value: string) => {
     setSavingUser(userId);
     try {
+      // A raise of your OWN cap goes through only when nobody else manages
+      // AI caps; the server says so (`soleHolder`), and so does the toast.
+      const sole = " You're the only person who manages AI caps here, so your own raise went through — it is recorded in the audit log.";
       if (value === "default") {
-        await setAiCap(orgId, null, userId);
-        showToast({ type: "success", title: `${name} follows the workspace default again.` });
+        const res = await setAiCap(orgId, null, userId);
+        showToast({ type: "success", title: `${name} follows the workspace default again.${res.soleHolder === true ? sole : ""}` });
       } else {
-        await setAiCap(orgId, Number(value), userId);
-        showToast({ type: "success", title: Number(value) === 0
+        const res = await setAiCap(orgId, Number(value), userId);
+        showToast({ type: "success", title: (Number(value) === 0
           ? `${name}'s monthly cap set to $0 — AI is locked for them.`
-          : `${name}'s monthly cap set to $${Number(value)}.` });
+          : `${name}'s monthly cap set to $${Number(value)}.`) + (res.soleHolder === true ? sole : "") });
       }
       setTick((t) => t + 1);
     } catch (e) {

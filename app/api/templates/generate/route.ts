@@ -258,6 +258,15 @@ export async function POST(req: NextRequest) {
           412,
         );
       }
+      // GOV-3: a $0 cap is a LOCK — it does not reset on the 1st, so the
+      // locked refusal never says it does.
+      if (e.status === 402 && e.details?.locked === true) {
+        return bad(
+          `${e.message} Who manages AI caps: an Admin, unless your workspace granted it to others — ` +
+          "it is raised in AI settings.",
+          402,
+        );
+      }
       if (e.status === 402) {
         return bad(
           `${e.message} It resets on the 1st; someone who manages AI caps (an Admin, unless your ` +

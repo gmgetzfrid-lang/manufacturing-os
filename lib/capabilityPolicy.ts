@@ -153,10 +153,15 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   // provider keys under a monthly cap; who may set the workspace default and
   // each person's cap is this capability, read by /api/ai/usage — never a
   // role list. Default Admin only: Doc Control no longer raises caps unless
-  // the policy console grants it. Nobody raises their OWN cap with it (the
-  // route refuses), and every change notifies the other holders.
-  { id: "ai.manage_caps", area: "AI", label: "Manage AI spend caps",
-    description: "Set the workspace's default monthly AI cap and any person's own cap ($0 locks AI for them). Raising your own cap always takes another holder. Every change is audited and notifies the other holders.",
+  // an Admin grants it. CRITICAL: a change to this row is Admin's (the
+  // policy route, and the 20261137 write guard against a direct write) and
+  // Admin is never removed from it — otherwise a Doc Controller could set
+  // the row to [DocCtrl] from the console, become its sole holder and raise
+  // their own cap with no Admin involved. Nobody raises their OWN cap while
+  // another active member holds it (the route refuses), and every change
+  // notifies the other holders.
+  { id: "ai.manage_caps", area: "AI", label: "Manage AI spend caps", critical: true,
+    description: "Set the workspace's default monthly AI cap and any person's own cap ($0 locks AI for them). Raising your own cap takes another holder while one exists. Admin always keeps it, and only an Admin changes who holds it. Every change is audited and notifies the other holders.",
     defaultRoles: ["Admin"] },
 ];
 

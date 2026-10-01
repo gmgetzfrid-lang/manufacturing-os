@@ -146,7 +146,19 @@ describe("GOV-11 / PR-12 — drafting is gated like every other AI call", () => 
     const r = await draft();
     expect(r.status).toBe(402);
     expect(String(r.json.error)).toMatch(/someone who manages AI caps/);
+    expect(String(r.json.error)).toMatch(/It resets on the 1st/);
     expect(ai.calls).toBe(0);
+  });
+
+  it("a $0 cap is a LOCK: the 402 says AI is locked and who raises it — never that it resets on the 1st (GOV-3)", async () => {
+    db.tables.ai_usage_limits = [{ org_id: "orgA", user_id: "u1", monthly_cap_usd: 0 }];
+    const r = await draft();
+    expect(r.status).toBe(402);
+    expect(String(r.json.error)).toMatch(/Your monthly AI cap is set to \$0, so AI is locked for you/);
+    expect(String(r.json.error)).toMatch(/Who manages AI caps: an Admin, unless your workspace granted it to others/);
+    expect(String(r.json.error)).not.toMatch(/resets on the 1st/);
+    expect(ai.calls).toBe(0);
+    expect(ledger()).toHaveLength(0);
   });
 });
 
