@@ -13,6 +13,12 @@
 //     project's existence and status, the declared Content-Length, the
 //     link's lifetime budget — BEFORE the body is read (INTK-8 / SEC-8 /
 //     SEC-6 / PM-2). The multipart body is parsed only for a live link.
+//     The one exception is the direct door's small JSON step body (INTK-15,
+//     below): at most 16 KB, read through a capped reader whatever its
+//     Content-Length says (or does not say), right after the link lookup —
+//     because a finalize must CLAIM its staged object before it can answer
+//     a revoked or expired link, a closed project or a spent budget (and
+//     delete the object on that answer).
 //   * The bytes decide the type (lib/fileSniff.ts): an allowlist per branch,
 //     the stored ContentType is the sniffed one, never the uploader's claim
 //     (SEC-1 / SEC-6 / INTK-11).
@@ -20,8 +26,11 @@
 //     checked from the link, before the body.
 //   * Authorship is a fact fixed at creation — documents.authored_by_link_id
 //     (20261104) — never the version chain this route appends to (INTK-1 /
-//     SEC-3 / SEC-12). A document the link was ASSIGNED always goes through
-//     review; so does one that has never had an approved revision.
+//     SEC-3 / SEC-12); from 20261141 the database holds it fixed (a
+//     signed-in session can neither stamp nor clear it — INTK-16's
+//     trg_documents_authorship_fixed). A document the link was ASSIGNED
+//     always goes through review; so does one that has never had an
+//     approved revision.
 //   * Every document read is scoped to the link's org (INTK-9 / SEC-11).
 //   * The trusted promote goes THROUGH publish_revision (the hold gate, the
 //     checkout lock, the expected-base check and the drawing-class MOC gate
@@ -501,13 +510,44 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/** INTK-15: a JSON step's body — small, and refused unread when it is not. */
+/** INTK-15: a JSON step's body is small — refused unread when its declared
+ *  length is over DIRECT_BODY_MAX, and read through a reader capped at it
+ *  whatever the request declares: a chunked body (no Content-Length) or one
+ *  longer than it declared is refused at the cap, never buffered whole. It is
+ *  read before the revocation / expiry / project / budget checks (the route
+ *  header says why), so the cap is what bounds a refused link's request. */
 async function readStepBody(req: NextRequest, declaredLength: number, fail: ReturnType<typeof refuser>): Promise<Record<string, unknown> | NextResponse> {
   if (Number.isFinite(declaredLength) && declaredLength > DIRECT_BODY_MAX) return fail("Expected a small JSON request.", 413);
+  const text = await readCapped(req, DIRECT_BODY_MAX);
+  if (text === null) return fail("Expected a small JSON request.", 413);
   let body: unknown;
-  try { body = await req.json(); } catch { return fail("Expected a JSON request.", 400); }
+  try { body = JSON.parse(text); } catch { return fail("Expected a JSON request.", 400); }
   if (!body || typeof body !== "object") return fail("Expected a JSON request.", 400);
   return body as Record<string, unknown>;
+}
+
+/** The request body as text, or null once it passes `max` bytes (the read
+ *  stops there and the stream is cancelled). */
+async function readCapped(req: NextRequest, max: number): Promise<string | null> {
+  const reader = req.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try { chunk = await reader.read(); } catch { return ""; }
+    if (chunk.done) break;
+    total += chunk.value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(chunk.value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(all);
 }
 
 async function door(req: NextRequest, ref: string, staged: { key: string | null }): Promise<NextResponse> {

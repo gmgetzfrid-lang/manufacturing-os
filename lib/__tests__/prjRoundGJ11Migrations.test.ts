@@ -116,11 +116,36 @@ describe("20261141 — INTK-16: adoption's number rule in the database", () => {
   const c = code(M141);
   const guard = between(c, "CREATE OR REPLACE FUNCTION documents_intake_adoption_guard()", "\n$$;");
   const adopt = between(c, "CREATE OR REPLACE FUNCTION adopt_intake_document(", "\n$$;");
-  it("the guard: SECURITY DEFINER, search_path pinned, the service pass exempt, intake-born documents only, on a library / folder / number change", () => {
+  const authorship = between(c, "CREATE OR REPLACE FUNCTION documents_authorship_fixed()", "\n$$;");
+  it("the guard: SECURITY DEFINER, search_path pinned, the service pass exempt, intake-born documents only, on a library / folder / number / status change", () => {
     expect(guard).toMatch(/LANGUAGE plpgsql SECURITY DEFINER SET search_path = public/);
     expect(guard).toContain("IF v_uid IS NULL THEN RETURN NEW; END IF;");
-    expect(guard).toContain("IF NEW.authored_by_link_id IS NULL THEN RETURN NEW; END IF;");
-    expect(c).toMatch(/CREATE TRIGGER trg_documents_intake_adoption_guard\s*\n\s*BEFORE UPDATE OF library_id, collection_id, document_number ON documents/);
+    expect(c).toMatch(/CREATE TRIGGER trg_documents_intake_adoption_guard\s*\n\s*BEFORE UPDATE OF library_id, collection_id, document_number, status ON documents/);
+  });
+  it("review fix: intake-born is the STORED fact — a PATCH that also clears authored_by_link_id is judged as the sheet it was (never NEW's value alone)", () => {
+    expect(guard).toContain("IF COALESCE(OLD.authored_by_link_id, NEW.authored_by_link_id) IS NULL THEN RETURN NEW; END IF;");
+    expect(guard).not.toContain("IF NEW.authored_by_link_id IS NULL THEN RETURN NEW;");
+    // the probe pins the same line, verbatim
+    expect(c).toContain("prosrc LIKE '%IF COALESCE(OLD.authored_by_link_id, NEW.authored_by_link_id) IS NULL THEN RETURN NEW; END IF;%'");
+  });
+  it("review fix: authorship is fixed — a signed-in session never writes authored_by_link_id (INSERT naming a link, UPDATE changing it); the door and the restore (service role) stay its writers", () => {
+    expect(authorship).toMatch(/RETURNS trigger LANGUAGE plpgsql SET search_path = public AS \$\$/);
+    expect(authorship).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
+    expect(authorship).toMatch(/IF TG_OP = 'INSERT' THEN\s*\n\s*IF NEW\.authored_by_link_id IS NOT NULL THEN\s*\n\s*RAISE EXCEPTION/);
+    expect(authorship).toMatch(/ELSIF NEW\.authored_by_link_id IS DISTINCT FROM OLD\.authored_by_link_id THEN\s*\n\s*RAISE EXCEPTION/);
+    expect(authorship.match(/USING ERRCODE = 'check_violation'/g)).toHaveLength(2);
+    expect(c).toMatch(/CREATE TRIGGER trg_documents_authorship_fixed\s*\n\s*BEFORE INSERT OR UPDATE OF authored_by_link_id ON documents\s*\n\s*FOR EACH ROW EXECUTE FUNCTION documents_authorship_fixed\(\);/);
+    // installed in the same transaction as the guard that relies on it, and probed
+    expect(c.indexOf("CREATE TRIGGER trg_documents_authorship_fixed")).toBeGreaterThan(c.indexOf("\nBEGIN;"));
+    expect(c.indexOf("CREATE TRIGGER trg_documents_authorship_fixed")).toBeLessThan(c.indexOf("\nCOMMIT;"));
+    expect(c).toContain("pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF authored_by_link_id ON %'");
+  });
+  it("review fix: a sheet coming back to life (Archived / Superseded → live) outside a project's intake folder is judged like a move — archive-and-move, then revive, does not skip the rule", () => {
+    expect(guard).toMatch(/IF NEW\.status IS NULL OR NEW\.status IN \('Archived', 'Superseded'\) THEN RETURN NEW; END IF;\s*\n\s*IF NEW\.library_id IS NOT DISTINCT FROM OLD\.library_id/);
+    expect(guard).toContain("IF OLD.status IS NOT NULL AND OLD.status NOT IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;");
+    expect(guard).toMatch(/IF EXISTS \(SELECT 1 FROM projects p\s*\n\s*WHERE p\.org_id = NEW\.org_id AND p\.intake_collection_id = NEW\.collection_id\) THEN\s*\n\s*RETURN NEW;/);
+    // the not-a-move exits come before the clash query, the clash query is unchanged
+    expect(guard.indexOf("IF OLD.status IS NOT NULL")).toBeLessThan(guard.indexOf("SELECT d.document_number, d.rev INTO v_hit"));
   });
   it("the SAF-12 rule (DEC-56 item 6): a live same number outside the sheet's folder blocks — anywhere when the number is the destination's key, in ANOTHER library when it is a multi-part library", () => {
     expect(guard).toMatch(/l\.uniqueness_keys IS NULL OR cardinality\(l\.uniqueness_keys\) = 0\s*\n\s*OR l\.uniqueness_keys = ARRAY\['documentNumber'\]::text\[\]/);
@@ -171,7 +196,7 @@ describe("20261141 — INTK-16: adoption's number rule in the database", () => {
     expect(c).toContain("REVOKE ALL ON FUNCTION adopt_intake_document(uuid, uuid, uuid, text, jsonb) FROM PUBLIC;");
     expect(c).toContain("REVOKE ALL ON FUNCTION adopt_intake_document(uuid, uuid, uuid, text, jsonb) FROM anon;");
     expect(c).toContain("GRANT EXECUTE ON FUNCTION adopt_intake_document(uuid, uuid, uuid, text, jsonb) TO authenticated;");
-    for (const fn of ["documents_intake_adoption_guard()", "project_intake_links_hash_token()"]) {
+    for (const fn of ["documents_intake_adoption_guard()", "documents_authorship_fixed()", "project_intake_links_hash_token()"]) {
       expect(c).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC;`);
       expect(c).toContain(`REVOKE ALL ON FUNCTION ${fn} FROM anon;`);
     }
@@ -252,6 +277,7 @@ function fakeClient(answers: (q: { table: string; filters: Array<[string, unknow
           if (prop === "then") return (resolve: (v: unknown) => void) => { calls.push(q); resolve(answers(q)); };
           return (...args: unknown[]) => {
             if (prop === "eq" || prop === "is") q.filters.push([String(args[0]), args[1]]);
+            if (prop === "or") q.filters.push(["or", args[0]]);
             if (prop === "update" || prop === "insert") { q.op = prop; q.payload = args[0]; }
             if (prop === "maybeSingle") { calls.push(q); return Promise.resolve(answers(q)); }
             return self;
@@ -324,7 +350,10 @@ describe("lib/intakeLinks — SEC-19", () => {
     const r = await reissueIntakeLink({ linkId: "l1", orgId: "o1", projectId: "p1", company: "Acme", actorId: "u1", actorEmail: "u1@x", client: ok.client });
     expect(r.ok).toBe(true);
     const upd = ok.calls.find((c) => c.op === "update")!;
-    expect(upd.filters).toEqual([["id", "l1"], ["revoked_at", null]]);
+    // review fix: live = not revoked AND not expired (a re-issued address on an expired link answers "expired")
+    expect(upd.filters).toEqual([["id", "l1"], ["revoked_at", null], ["or", expect.stringMatching(/^expires_at\.is\.null,expires_at\.gt\.\d{4}-\d{2}-\d{2}T/)]]);
+    const cutoff = Date.parse(String(upd.filters[2][1]).replace("expires_at.is.null,expires_at.gt.", ""));
+    expect(Math.abs(cutoff - Date.now())).toBeLessThan(60_000);
     const newToken = (upd.payload as { token: string }).token;
     expect(newToken).toMatch(INTAKE_TOKEN_RE);
     expect(r.ok && r.token).toBe(newToken);
@@ -334,7 +363,7 @@ describe("lib/intakeLinks — SEC-19", () => {
     expect(JSON.stringify(audit.payload)).not.toMatch(/token/i);
     const none = fakeClient((q) => (q.op === "update" ? { data: [], error: null } : { data: null, error: null }));
     const refused = await reissueIntakeLink({ linkId: "l1", orgId: "o1", projectId: "p1", company: "Acme", actorId: "u1", client: none.client });
-    expect(refused).toEqual({ ok: false, error: expect.stringMatching(/was not re-issued/) });
+    expect(refused).toEqual({ ok: false, error: expect.stringMatching(/was not re-issued — it may have been revoked or have expired \(an expired link is not revived: create a new one\)/) });
     expect(none.calls.some((c) => c.op === "insert")).toBe(false);
   });
   it("a fresh token is 40 url-safe characters the door accepts; the portal path is /submit/<token>", () => {

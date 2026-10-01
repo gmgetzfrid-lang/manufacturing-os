@@ -1303,6 +1303,10 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   /** The address a row can copy or put in an RFQ: minted / re-issued this
    *  session, or a token the database still stores (before 20261141). */
   const knownUrl = (l: QuoteLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);
+  /** An expired link answers "This link has expired." — so it offers no
+   *  RFQ, Copy link or Re-issue (the Intake tab's gate): a new link is made
+   *  instead. */
+  const linkLive = (l: QuoteLink): boolean => !l.expiresAt || Date.parse(l.expiresAt) > Date.now();
 
   /** SEC-19: a lost address is re-issued (a new token on the same link),
    *  never read back. The old address stops working. */
@@ -1399,7 +1403,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
                 : <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="Created before expiry was required — revoke it when the bidding closes">no expiry</span>}
               {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
               <span className="ml-auto flex items-center gap-1">
-                {knownUrl(l) ? (
+                {linkLive(l) && (knownUrl(l) ? (
                   <>
                     <button onClick={() => void makeRfq(l)}
                       title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
@@ -1417,7 +1421,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">
                     {reissuing === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Re-issue
                   </button>
-                )}
+                ))}
                 <button onClick={() => void revoke(l)} disabled={revoking === l.id}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
                   {revoking === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Revoke

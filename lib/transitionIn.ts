@@ -531,8 +531,11 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   // the destination's uniqueness key and writes the move and its
   // TRANSITION_IN audit row, and trg_documents_intake_adoption_guard applies
   // the cross-library number rule (SAF-12) to it and to any direct update of
-  // an intake sheet's library, folder or number. The checks above stay for
-  // the operator's sentences; the database is the authority. A document in
+  // an intake sheet's library, folder or number (or its revival outside an
+  // intake folder) — "intake-born" is the stored authored_by_link_id, which
+  // no signed-in session can clear or stamp (trg_documents_authorship_fixed).
+  // The checks above stay for the operator's sentences; the database is the
+  // authority. A document in
   // the intake folder that the door did NOT create (a sheet filed there by
   // hand, an intake sheet older than 20261104's authorship backfill) is not
   // the function's — and not the guard's: it takes the direct update, as

@@ -36,10 +36,23 @@
 --      placeholder token, which this trigger hashes. 20261104's grants, its
 --      TTL CHECK and its budget columns are untouched.
 --   2. INTK-16 — adoption's cross-library number rule runs in the database.
+--        * trg_documents_authorship_fixed (BEFORE INSERT OR UPDATE OF
+--          authored_by_link_id ON documents, search_path pinned): authorship
+--          is a fact the DOOR fixes at creation. A signed-in session never
+--          writes it — an INSERT naming a link and any UPDATE that changes it
+--          (clearing it, or stamping a link's id onto an org document) are
+--          refused. The door (service role) and the org restore (service
+--          role) are the column's only writers and stay exempt. Without this
+--          the rule below could be skipped by clearing the column in the same
+--          PATCH or a prior one, and the door's own-document and trusted
+--          auto-publish decision (app/api/intake/upload/route.ts) would rest
+--          on a writable fact.
 --        * trg_documents_intake_adoption_guard (BEFORE UPDATE OF library_id,
---          collection_id, document_number ON documents, SECURITY DEFINER,
---          search_path pinned): for an INTAKE-BORN document
---          (authored_by_link_id set) that stays live, a signed-in change of
+--          collection_id, document_number, status ON documents, SECURITY
+--          DEFINER, search_path pinned): for an INTAKE-BORN document
+--          (authored_by_link_id set — the STORED value, OLD's, so a
+--          statement that also clears it is still judged as the sheet it
+--          was) that stays live, a signed-in change of
 --          its library, folder or number is refused when a LIVE document
 --          (not Archived / Superseded) in the same org, outside the sheet's
 --          ORIGINAL folder, carries the same number (trimmed,
@@ -48,6 +61,9 @@
 --          or none) OR that document lives in ANOTHER library. In a
 --          multi-part library (["documentNumber","sheet"]) the full key
 --          decides between the sheets INSIDE it (the partial unique index).
+--          The same rule binds a sheet coming back to life (Archived or
+--          Superseded → live) outside a project's intake folder — otherwise a
+--          move made while archived, revived after, would skip it.
 --          The service pass (auth.uid() NULL — the org restore, server
 --          routes, the SQL editor) is exempt, as every rail since 20260831.
 --        * adopt_intake_document(p_doc, p_library, p_collection,
@@ -194,6 +210,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS project_intake_links_token_hash_key
   ON project_intake_links (token_hash) WHERE token_hash IS NOT NULL;
 
 -- ── 2. INTK-16: adoption's number rule, at the database ──────────────────
+-- Authorship is fixed at creation, by the door: the rule below (and the
+-- door's own-document decision) reads it, so a signed-in session never
+-- writes it.
+CREATE OR REPLACE FUNCTION documents_authorship_fixed()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;   -- the door and the org restore (service role), the SQL editor
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.authored_by_link_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Only the contractor door records that a link authored a document — a document filed here is the organization''s. Nothing was changed. INTK-16, 20261141'
+        USING ERRCODE = 'check_violation';
+    END IF;
+  ELSIF NEW.authored_by_link_id IS DISTINCT FROM OLD.authored_by_link_id THEN
+    RAISE EXCEPTION 'Which contractor link authored a document is fixed when the door files it — it is not changed afterwards. Nothing was changed. INTK-16, 20261141'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION documents_authorship_fixed() IS
+  'INTK-16: documents.authored_by_link_id is written only by the door (service role) at creation and by the org restore — a signed-in INSERT naming a link, or a signed-in UPDATE changing it, is refused. The adoption guard and the door''s own-document decision read it.';
+
+DROP TRIGGER IF EXISTS trg_documents_authorship_fixed ON documents;
+CREATE TRIGGER trg_documents_authorship_fixed
+  BEFORE INSERT OR UPDATE OF authored_by_link_id ON documents
+  FOR EACH ROW EXECUTE FUNCTION documents_authorship_fixed();
+
+REVOKE ALL ON FUNCTION documents_authorship_fixed() FROM PUBLIC;
+REVOKE ALL ON FUNCTION documents_authorship_fixed() FROM anon;
+GRANT EXECUTE ON FUNCTION documents_authorship_fixed() TO authenticated, service_role;
+
 CREATE OR REPLACE FUNCTION documents_intake_adoption_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -202,13 +250,23 @@ DECLARE
   v_hit     record;
 BEGIN
   IF v_uid IS NULL THEN RETURN NEW; END IF;   -- service pass: the org restore, server routes, the SQL editor
-  IF NEW.authored_by_link_id IS NULL THEN RETURN NEW; END IF;   -- an org document: not this rule's
+  -- Intake-born is the STORED fact: a statement that also clears the column
+  -- (refused anyway by trg_documents_authorship_fixed) is judged as the sheet it was.
+  IF COALESCE(OLD.authored_by_link_id, NEW.authored_by_link_id) IS NULL THEN RETURN NEW; END IF;   -- an org document: not this rule's
+  IF NEW.status IS NULL OR NEW.status IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;
   IF NEW.library_id IS NOT DISTINCT FROM OLD.library_id
      AND NEW.collection_id IS NOT DISTINCT FROM OLD.collection_id
      AND NEW.document_number IS NOT DISTINCT FROM OLD.document_number THEN
-    RETURN NEW;
+    -- Not a move. Only a sheet coming back to life (Archived / Superseded →
+    -- live) is this rule's — a move made while archived, revived after,
+    -- would otherwise skip it — and not one still in a project's intake
+    -- folder (not in the register yet).
+    IF OLD.status IS NOT NULL AND OLD.status NOT IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;
+    IF EXISTS (SELECT 1 FROM projects p
+                WHERE p.org_id = NEW.org_id AND p.intake_collection_id = NEW.collection_id) THEN
+      RETURN NEW;
+    END IF;
   END IF;
-  IF NEW.status IS NULL OR NEW.status IN ('Archived', 'Superseded') THEN RETURN NEW; END IF;
   IF NULLIF(btrim(NEW.document_number), '') IS NULL THEN RETURN NEW; END IF;
   -- Does the number alone identify a document in the destination library?
   -- (lib/intakeLinks.ts numberIsTheKey: the default tuple, or none set.)
@@ -240,11 +298,11 @@ END;
 $$;
 
 COMMENT ON FUNCTION documents_intake_adoption_guard() IS
-  'INTK-16: a signed-in change of an intake-born live document''s library, folder or number is refused while a live same-numbered document outside its original folder stands — anywhere when the destination library''s key is the number alone, in another library when it is a multi-part library (SAF-12, DEC-56 item 6). The service pass is exempt.';
+  'INTK-16: a signed-in change of an intake-born live document''s library, folder or number — or its return to life (Archived / Superseded → live) outside a project''s intake folder — is refused while a live same-numbered document outside its original folder stands — anywhere when the destination library''s key is the number alone, in another library when it is a multi-part library (SAF-12, DEC-56 item 6). Intake-born is the stored authored_by_link_id (fixed by trg_documents_authorship_fixed). The service pass is exempt.';
 
 DROP TRIGGER IF EXISTS trg_documents_intake_adoption_guard ON documents;
 CREATE TRIGGER trg_documents_intake_adoption_guard
-  BEFORE UPDATE OF library_id, collection_id, document_number ON documents
+  BEFORE UPDATE OF library_id, collection_id, document_number, status ON documents
   FOR EACH ROW EXECUTE FUNCTION documents_intake_adoption_guard();
 
 REVOKE ALL ON FUNCTION documents_intake_adoption_guard() FROM PUBLIC;
@@ -378,15 +436,29 @@ SELECT 'the database''s sha256 hex equals the routes'' (node:crypto sha256 hex o
        encode(sha256(convert_to('abc', 'UTF8')), 'hex') = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
        NULL::text
 UNION ALL
-SELECT 'the adoption guard fires BEFORE UPDATE OF library_id, collection_id, document_number — SECURITY DEFINER, search_path pinned, the SAF-12 rule in its body',
+SELECT 'the adoption guard fires BEFORE UPDATE OF library_id, collection_id, document_number, status — SECURITY DEFINER, search_path pinned, the stored authorship and the SAF-12 rule in its body',
        EXISTS (SELECT 1 FROM pg_trigger t
                 WHERE t.tgname = 'trg_documents_intake_adoption_guard' AND NOT t.tgisinternal
-                  AND t.tgrelid = 'public.documents'::regclass AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16)
+                  AND t.tgrelid = 'public.documents'::regclass AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16
+                  AND pg_get_triggerdef(t.oid) LIKE '%BEFORE UPDATE OF library_id, collection_id, document_number, status ON %')
        AND (SELECT prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
-                   AND prosrc LIKE '%IF NEW.authored_by_link_id IS NULL THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%IF COALESCE(OLD.authored_by_link_id, NEW.authored_by_link_id) IS NULL THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%IF OLD.status IS NOT NULL AND OLD.status NOT IN (''Archived'', ''Superseded'') THEN RETURN NEW; END IF;%'
                    AND prosrc LIKE '%AND (v_decides OR d.library_id IS DISTINCT FROM NEW.library_id)%'
                    AND prosrc LIKE '%AND d.collection_id IS DISTINCT FROM OLD.collection_id%'
               FROM pg_proc WHERE proname = 'documents_intake_adoption_guard'),
+       NULL::text
+UNION ALL
+SELECT 'authorship is fixed: trg_documents_authorship_fixed fires BEFORE INSERT OR UPDATE OF authored_by_link_id and refuses a signed-in session''s write (the door and the restore exempt)',
+       EXISTS (SELECT 1 FROM pg_trigger t
+                WHERE t.tgname = 'trg_documents_authorship_fixed' AND NOT t.tgisinternal
+                  AND t.tgrelid = 'public.documents'::regclass
+                  AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF authored_by_link_id ON %')
+       AND (SELECT array_to_string(proconfig, ',') LIKE '%search_path=public%'
+                   AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%IF NEW.authored_by_link_id IS NOT NULL THEN%'
+                   AND prosrc LIKE '%ELSIF NEW.authored_by_link_id IS DISTINCT FROM OLD.authored_by_link_id THEN%'
+              FROM pg_proc WHERE proname = 'documents_authorship_fixed'),
        NULL::text
 UNION ALL
 SELECT 'adopt_intake_document: SECURITY DEFINER, search_path pinned, refuses a NULL uid, controller-only, writes its audit row',
@@ -397,10 +469,11 @@ SELECT 'adopt_intake_document: SECURITY DEFINER, search_path pinned, refuses a N
           FROM pg_proc WHERE proname = 'adopt_intake_document' AND pronargs = 5),
        NULL::text
 UNION ALL
-SELECT 'adopt_intake_document is executable by authenticated, never by anon (DRLS-16); the guard and hash trigger functions are not anon''s either',
+SELECT 'adopt_intake_document is executable by authenticated, never by anon (DRLS-16); the guard, authorship and hash trigger functions are not anon''s either',
        (has_function_privilege('authenticated', 'adopt_intake_document(uuid,uuid,uuid,text,jsonb)', 'EXECUTE')
         AND NOT has_function_privilege('anon', 'adopt_intake_document(uuid,uuid,uuid,text,jsonb)', 'EXECUTE')
         AND NOT has_function_privilege('anon', 'documents_intake_adoption_guard()', 'EXECUTE')
+        AND NOT has_function_privilege('anon', 'documents_authorship_fixed()', 'EXECUTE')
         AND NOT has_function_privilege('anon', 'project_intake_links_hash_token()', 'EXECUTE')),
        NULL::text
 UNION ALL

@@ -68,9 +68,13 @@ async function postToDoor(token: string, form: FormData, begunKey?: string | nul
   return { res, body };
 }
 
-/** The largest file the multipart door is sure to take: the platform caps a
- *  function's request body at about 4.5 MB (multipart framing included). */
-const MULTIPART_SAFE_BYTES = 4 * 1024 * 1024;
+/** The most the multipart door could ever take: the platform caps a
+ *  function's request body at 4.5 MB, multipart framing included. Read here
+ *  as 4.5 MiB — the upper reading — so no file the multipart door took
+ *  before the direct door existed is refused without trying it. */
+const MULTIPART_DOOR_MAX_BYTES = 4.5 * 1024 * 1024;
+/** Storage refused the PUT and the multipart door cannot take the file. */
+const STORAGE_REFUSED = "The file didn't reach storage — try again. If it keeps failing, contact your project contact.";
 
 type BeginBody = { ok?: boolean; uploadKey?: string; uploadUrl?: string; contentType?: string; error?: string; ref?: string; code?: string } | null;
 
@@ -83,7 +87,9 @@ type BeginBody = { ok?: boolean; uploadKey?: string; uploadUrl?: string; content
  *  door cannot presign; when the browser cannot reach storage (a network
  *  error — no PUT CORS) at any size, a large file then getting the size
  *  sentence; and when storage refuses the PUT (a 403, a 400, a 5xx, a
- *  stall) for a file the multipart door can take. */
+ *  stall) for any file the multipart door could take — one the platform's
+ *  body cap then refuses (a 413 with no door answer) gets the storage
+ *  sentence, not the 100 MB one. */
 async function sendToDoor(token: string, file: File, fields: Record<string, string>): Promise<{ res: Response; body: DoorBody }> {
   const multipart = (begunKey?: string | null) => {
     const form = new FormData();
@@ -107,8 +113,11 @@ async function sendToDoor(token: string, file: File, fields: Record<string, stri
     await putWithXhr(b.uploadUrl, file, b.contentType ?? "application/octet-stream");
   } catch (e) {
     if (e instanceof UploadCancelledError) throw e;
-    if (/network error/i.test((e as Error).message) || file.size <= MULTIPART_SAFE_BYTES) return multipart(b.uploadKey);
-    throw new Error("The file didn't reach storage — try again. If it keeps failing, contact your project contact.");
+    if (/network error/i.test((e as Error).message)) return multipart(b.uploadKey);
+    if (file.size > MULTIPART_DOOR_MAX_BYTES) throw new Error(STORAGE_REFUSED);
+    const viaMultipart = await multipart(b.uploadKey);
+    if (viaMultipart.res.status === 413 && !viaMultipart.body) throw new Error(STORAGE_REFUSED);
+    return viaMultipart;
   }
   const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });
   return { res: fin, body: (await fin.json().catch(() => null)) as DoorBody };

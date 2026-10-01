@@ -3342,7 +3342,7 @@ allowlist); the authorship rule and the contract-only promote are structural.
 **Risk:** medium — a trusted vendor's first revisions now wait for a person,
 and an unverifiable sheet needs a deliberate single adopt.
 
-*Landed 2026-10-01 (projects Round G, J11): two of "Deferred, on the record" are built, and item 6's re-check moved into the database. Hashing at rest (`SEC-19`): the link is stored as `sha256(token)` and looked up by it; the tabs show the address once and re-issue a lost one (`20261141`). Presigned direct uploads (`INTK-15`): the portal PUTs to a staging key the door presigned for the live link (Content-Length signed) and a finalize step sniffs the STORED bytes, then runs item 4's door unchanged — taken on the brief's decision, not `GAP-401`'s constrained identity. Item 6 (`INTK-16`): adoption runs through `adopt_intake_document` and a guard on `documents` refuses any signed-in move or renumber of an intake-born sheet that would leave a live same number in another library (the SAF-12 rule) — the re-check is the server's now. See `DEC-44` (J11).*
+*Landed 2026-10-01 (projects Round G, J11): two of "Deferred, on the record" are built, and item 6's re-check moved into the database. Hashing at rest (`SEC-19`): the link is stored as `sha256(token)` and looked up by it; the tabs show the address once and re-issue a lost one (`20261141`). Presigned direct uploads (`INTK-15`): the portal PUTs to a staging key the door presigned for the live link (Content-Length signed) and a finalize step sniffs the STORED bytes, then runs item 4's door unchanged — taken on the brief's decision, not `GAP-401`'s constrained identity. Item 6 (`INTK-16`): adoption runs through `adopt_intake_document` and a guard on `documents` refuses any signed-in move or renumber of an intake-born sheet that would leave a live same number in another library (the SAF-12 rule) — the re-check is the server's now. "Intake-born" is the stored `authored_by_link_id`, which no signed-in session may write (`trg_documents_authorship_fixed` — authorship is the door's, fixed at creation), and a sheet revived outside an intake folder is judged like a move (review fix pass 2: as first landed, clearing the column in the same PATCH, or archiving in the move and reviving after, skipped the rule). See `DEC-44` (J11).*
 
 <a id="dec-57"></a>
 ## DEC-57 · The orphan sweep's reference collector stays bucket-wide
@@ -4178,7 +4178,10 @@ separates). A project-scoped grant is role-wide and API-authored only
    statement refuses to run until the operator confirms it.
 2. **The contractor's bytes go straight to storage, and the door checks the
    stored bytes (`INTK-15`).** `?step=begin` (every pre-body check of
-   `DEC-56` item 4, the rate window counted) reserves the declared size
+   `DEC-56` item 4, the rate window counted — the one body read first is
+   the step's own JSON, at most 16 KB through a capped reader, right after
+   the link lookup, because a finalize must claim its staged object before
+   it can answer a refused link) reserves the declared size
    against the link's budget (staged-but-unclaimed bytes count with filed
    ones) and presigns a PUT for a fresh key under the link's own prefix of
    ONE staging root (`intake-staging/`), its Content-Length signed;
@@ -4192,9 +4195,9 @@ separates). A project-scoped grant is role-wide and API-authored only
    (objects past `STAGING_TTL_MS`, then their reservations). One PUT, not S3
    multipart: the 100 MB cap is far under storage's single-PUT ceiling. The
    multipart POST stays as the fallback — a door that cannot presign, a
-   browser that cannot reach storage, a storage refusal of a file the
-   multipart door can take — and names its begin, so the attempt is counted
-   once.
+   browser that cannot reach storage, a storage refusal of any file the
+   multipart door could take (up to the platform's ~4.5 MB body cap) — and
+   names its begin, so the attempt is counted once.
 3. **An audit row about a project is the project's (`SEC-20`).** A
    `project` / `cost` row in `audit_logs`, and the quality sign-off's
    `project_checklist` / `turnover_item` e-signature rows, are readable by
@@ -4204,7 +4207,12 @@ separates). A project-scoped grant is role-wide and API-authored only
    `audit_logs_admin_trail`, re-created from its newest definition
    (`20261063`), its type test inline so no other row pays for the check. A
    deleted project's rows are the audit roles' alone. admin-and-org P7
-   (audit-log integrity) builds on this definition.
+   (audit-log integrity) builds on this definition. Rows about a project
+   written under ANOTHER type follow that type and stay org-readable: the
+   `MILESTONE_*` rows of a milestone anchored to a document (`document`,
+   or `milestone` with no anchor), intake-link rows (`project_intake_link`)
+   and a door document row — projects-tab `SEC-21` (opened, LOW) owns
+   them.
 
 **Rationale.** Each closes a door the earlier rounds left ajar on purpose
 (`DEC-56` deferred 1 and 2; `SEC-2` moved the tables, not their audit rows),

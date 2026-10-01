@@ -519,3 +519,32 @@ describe("COST-15 — a read beside a typed total never re-denominates the typed
     expect(host.textContent).toMatch(/This field mixes currencies/);
   });
 });
+
+// projects Round G (J11) — projects-tab SEC-19 (fix pass 2): an EXPIRED quote
+// link answers "This link has expired." — a re-issued address or an RFQ
+// built on it would send the vendor to a dead door. The row offers no RFQ,
+// Copy link or Re-issue (the Intake tab's gate); a live link still does.
+describe("SEC-19 — an expired quote link offers no Re-issue, RFQ or Copy link", () => {
+  const linkRow = (id: string, company: string, expiresAt: string) => ({
+    id, token_prefix: id.slice(0, 6), company_name: company, rfq_group: "Unit 300 Repipe", revoked_at: null,
+    expires_at: expiresAt, submission_count: 0, purpose: "quote",
+  });
+  it("the expired row shows 'expired' and Revoke only; the live row with no known address offers Re-issue", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    db.results.project_intake_links = { data: [
+      linkRow("live01", "Live Bidder", new Date(Date.now() + 30 * 86_400_000).toISOString()),
+      linkRow("dead01", "Lapsed Bidder", new Date(Date.now() - 86_400_000).toISOString()),
+    ], error: null };
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => /Quote links for contractors/.test(b.textContent ?? ""))!;
+    await act(async () => { toggle.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const item = (name: RegExp) => [...host.querySelectorAll("li")].find((li) => name.test(li.textContent ?? ""))!;
+    const labels = (li: Element) => [...li.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+    const dead = item(/Lapsed Bidder/);
+    expect(dead.textContent).toMatch(/expired/);
+    expect(labels(dead)).toEqual(["Revoke"]);
+    const live = item(/Live Bidder/);
+    expect(labels(live)).toEqual(["Re-issue", "Revoke"]);
+  });
+});

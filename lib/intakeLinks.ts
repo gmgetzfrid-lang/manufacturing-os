@@ -261,8 +261,10 @@ export async function readIntakeLinkByToken(client: LinkClient, input: {
  * authorship of the documents it created, its history, expiry and budget stay;
  * the address the contractor holds stops working. The database hashes the
  * token (20261141); the caller shows the returned token ONCE. Only a live
- * (unrevoked) link is re-issued; zero rows is a refusal, never a success.
- * The audit row names the link — never token material.
+ * link — not revoked, not expired — is re-issued: a new address on an
+ * expired link would answer "This link has expired." to whoever it is sent
+ * to. Zero rows is a refusal, never a success. The audit row names the link
+ * — never token material.
  */
 export async function reissueIntakeLink(input: {
   linkId: string; orgId: string; projectId: string; company: string;
@@ -271,10 +273,12 @@ export async function reissueIntakeLink(input: {
   const client = input.client ?? supabase;
   const token = newIntakeToken();
   const { data, error } = await client.from("project_intake_links")
-    .update({ token }).eq("id", input.linkId).is("revoked_at", null).select("id");
+    .update({ token }).eq("id", input.linkId).is("revoked_at", null)
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+    .select("id");
   if (error) return { ok: false, error: `Couldn't re-issue the link: ${error.message}` };
   if (((data ?? []) as unknown[]).length === 0) {
-    return { ok: false, error: `${input.company}'s link was not re-issued — it may have been revoked, or you may not have permission. Refresh to see its state.` };
+    return { ok: false, error: `${input.company}'s link was not re-issued — it may have been revoked or have expired (an expired link is not revived: create a new one), or you may not have permission. Refresh to see its state.` };
   }
   const { error: auditErr } = await client.from("audit_logs").insert({
     action: "INTAKE_LINK_REISSUED",

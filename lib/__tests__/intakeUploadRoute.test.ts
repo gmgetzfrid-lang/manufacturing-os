@@ -1630,6 +1630,59 @@ describe("INTK-15 — the direct door: begin presigns, finalize checks the store
     expect(rows("staged")).toEqual([]);
   });
 
+  it("review fix: a step's JSON body is read through a 16 KB cap whatever its Content-Length says — a revoked link's chunked multi-MB body is refused at the cap, never buffered; a small chunked body still works", async () => {
+    /** A body streamed in 4 KB chunks with NO Content-Length (chunked), counting what the door pulled. */
+    const streamed = (text: string, padTo = 0) => {
+      const enc = new TextEncoder();
+      const total = Math.max(padTo, text.length);
+      let sent = 0;
+      const pulled = { bytes: 0 };
+      const body = new ReadableStream<Uint8Array>({
+        pull(ctrl) {
+          if (sent >= total) { ctrl.close(); return; }
+          const piece = sent === 0 ? text.padEnd(Math.min(total, 4096), " ") : " ".repeat(Math.min(4096, total - sent));
+          sent += piece.length;
+          pulled.bytes += piece.length;
+          ctrl.enqueue(enc.encode(piece));
+        },
+      });
+      return { body, pulled };
+    };
+    const send = (step: "begin" | "finalize", body: ReadableStream<Uint8Array>) => POST(new NextRequest(
+      `http://x/api/intake/upload?step=${step}`,
+      { method: "POST", body, headers: { "x-intake-token": TOKEN, "content-type": "application/json" }, duplex: "half" } as ConstructorParameters<typeof NextRequest>[1],
+    ));
+    // the reviewer's case: a revoked link, a 4 MB chunked body to ?step=begin
+    seed({ doc: null, link: { revoked_at: "2026-09-01T00:00:00Z" } });
+    const big = streamed(JSON.stringify({ size: 10 }), 4 * 1024 * 1024);
+    const res = await send("begin", big.body);
+    expect(res.status).toBe(413);
+    expect((await res.json()).error).toBe("Expected a small JSON request.");
+    expect(big.pulled.bytes).toBeLessThan(64 * 1024);   // stopped at the cap (plus the stream's read-ahead), never the 4 MB
+    // the same on finalize
+    const bigF = streamed(JSON.stringify({ uploadKey: `${STAGING}x` }), 4 * 1024 * 1024);
+    expect((await send("finalize", bigF.body)).status).toBe(413);
+    expect(bigF.pulled.bytes).toBeLessThan(64 * 1024);
+    // a declared length over the cap is refused unread
+    const declared = await json("begin", { size: 10 }, { "content-length": String(16 * 1024 + 1) });
+    expect(declared.status).toBe(413);
+    // a small chunked body (no Content-Length) is read as before
+    seed({ doc: null });
+    const small = streamed(JSON.stringify({ fileName: "a.pdf", size: 100, contentType: "application/pdf" }));
+    const ok = await send("begin", small.body);
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).uploadKey.startsWith(STAGING)).toBe(true);
+  });
+
+  it("the route header names the one body read before the revocation check, and why; readStepBody reads through readCapped, never req.json()", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
+    expect(route).toMatch(/The one exception is the direct door's small JSON step body \(INTK-15,\s*\n\/\/\s+below\): at most 16 KB, read through a capped reader/);
+    expect(route).toMatch(/because a finalize must CLAIM its staged object before it can answer\s*\n\/\/\s+a revoked or expired link/);
+    const reader = route.slice(route.indexOf("async function readStepBody("), route.indexOf("async function door("));
+    expect(reader).toContain("const text = await readCapped(req, DIRECT_BODY_MAX);");
+    expect(reader).not.toContain("req.json()");
+  });
+
   it("INTK-8 on the direct path: staged-but-unclaimed bytes count against the link's budget — a link cannot stage past it by never finalizing; a claim releases its reservation", async () => {
     seed({ doc: null, link: { bytes_received: 5 * 1024 ** 3 - 150 } });
     const first = await json("begin", { size: 100 });
@@ -1894,7 +1947,7 @@ describe("INTK-15 — the direct door: begin presigns, finalize checks the store
     expect(rows("attempt")).toHaveLength(1);
   });
 
-  it("the portal uses the direct door (begin → PUT → finalize) and falls back to the multipart POST — naming the begin — when the door cannot presign, the browser cannot reach storage, or storage refuses a file the multipart door can take", () => {
+  it("the portal uses the direct door (begin → PUT → finalize) and falls back to the multipart POST — naming the begin — when the door cannot presign, the browser cannot reach storage, or storage refuses ANY file the multipart door could take (review fix: up to the platform cap's upper reading, not 4 MiB)", () => {
     const read = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
     const p = read("app/submit/[token]/page.tsx");
     expect(p).toContain('fetch(`/api/intake/upload?step=${step}`');
@@ -1902,9 +1955,17 @@ describe("INTK-15 — the direct door: begin presigns, finalize checks the store
     expect(p).toContain('const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });');
     expect(p).toContain('if (b?.code === "direct_unavailable" || !b) return multipart(b?.uploadKey);');
     expect(p).toContain("if (e instanceof UploadCancelledError) throw e;");
-    expect(p).toContain("if (/network error/i.test((e as Error).message) || file.size <= MULTIPART_SAFE_BYTES) return multipart(b.uploadKey);");
+    expect(p).toContain("if (/network error/i.test((e as Error).message)) return multipart(b.uploadKey);");
+    expect(p).toContain("if (file.size > MULTIPART_DOOR_MAX_BYTES) throw new Error(STORAGE_REFUSED);");
+    // the platform's own body cap answering the fallback (a 413 with no door body) is the storage sentence
+    expect(p).toContain("if (viaMultipart.res.status === 413 && !viaMultipart.body) throw new Error(STORAGE_REFUSED);");
     expect(p).toContain("if (begunKey) headers[INTAKE_BEGUN_HEADER] = begunKey;");
-    expect(p).toMatch(/const MULTIPART_SAFE_BYTES = 4 \* 1024 \* 1024;/);
+    // the threshold is the platform's ~4.5 MB body cap at its upper reading: a 4.0-4.4 MB file storage refused still goes through multipart
+    const cap = /const MULTIPART_DOOR_MAX_BYTES = ([\d.\s*]+);/.exec(p)?.[1] ?? "0";
+    const capBytes = cap.split("*").map((n) => Number(n.trim())).reduce((a, b) => a * b, 1);
+    expect(capBytes).toBe(4.5 * 1024 * 1024);
+    expect(capBytes).toBeGreaterThanOrEqual(4.5 * 1000 * 1000);
+    expect(p).not.toContain("MULTIPART_SAFE_BYTES");
     expect((p.match(/await sendToDoor\(token, /g) ?? []).length).toBe(3);
     expect(read("lib/storage.ts")).toMatch(/export function putWithXhr\(/);
   });
