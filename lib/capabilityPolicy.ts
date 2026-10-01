@@ -35,6 +35,9 @@
 //     so every unconfigured org is byte-identical to today. The four
 //     evaluators — getActions, holds, the simulator and the SQL
 //     org_capability_allows_for — read the SAME shape with the SAME rule.
+//     projects Round G (QUAL-4, 20261136) adds ONE resource key, projectId,
+//     so a rule can name a single project: that is how "this project's
+//     Safety lead signs its quality records" is said (quality.sign_off).
 
 import { supabase } from "@/lib/supabase";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
@@ -59,7 +62,8 @@ export type CapabilityId =
   | "admin.analytics_view"
   | "admin.archive_view"
   | "admin.audit_view"
-  | "transmittal.issue";        // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "transmittal.issue"         // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "quality.sign_off";         // QUAL-4: write + sign off a project's checklists / turnover / punch, per project
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -148,6 +152,18 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "transmittal.issue", area: "Transmittals", label: "Issue transmittals",
     description: "Issue a drafted transmittal to its recipient, void it, revoke its portal link and record a receipt on the recipient's behalf. Every member may draft. Enforced at the database, which reads this policy per item library.",
     defaultRoles: ["Admin", "DocCtrl"] },
+  // QUAL-4 (projects Round G, J2b): who may record and sign off a project's
+  // quality decisions — checklists, turnover, punch. The default is today's
+  // writers: the controller pair the four quality write policies name (the
+  // project OWNER keeps the owner disjunct — identity, not a token). A
+  // discipline reviewer is GRANTED it — org-wide, or for one project by a
+  // rule scoped on projectId (DEC-13) — never named in code (DEC-35), and
+  // never by widening project_members.role. Enforced at the database
+  // (20261136: the write policies, the separation-of-duties rail and the
+  // signed sign-off), which evaluates it per project.
+  { id: "quality.sign_off", area: "Quality", label: "Sign off quality records",
+    description: "Record decisions on a project's checklists, turnover package and punch list, complete a checklist and accept turnover with an e-signature. Controllers and the project owner always can; a rule scoped to a project grants one project only. The author of a checklist (or the creator of a turnover item) cannot sign it off while another eligible signer exists. Enforced at the database, which reads this policy per project.",
+    defaultRoles: ["Admin", "DocCtrl"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or
@@ -174,11 +190,14 @@ export interface CapabilityResource {
   unit?: string | null;
   libraryId?: string | null;
   discipline?: string | null;
+  /** QUAL-4 (20261136): the project a quality.sign_off decision is about. */
+  projectId?: string | null;
 }
 
 /** The resource keys a `when` clause may condition on — the ONLY keys either
- *  evaluator reads. Extend here and in org_capability_allows_for together. */
-export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline"] as const;
+ *  evaluator reads. Extend here and in org_capability_allows_for together
+ *  (projectId: 20261136, which re-created the evaluator with it). */
+export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline", "projectId"] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 
 /** `when`: every listed key must match (AND across keys, OR within a list).

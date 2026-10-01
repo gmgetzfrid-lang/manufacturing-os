@@ -25,11 +25,22 @@
 // which also keeps a standing decision's note and reviewer (and a void's
 // reason) until the next decision, and stamps the reviewer / closer with the
 // caller's uid and profile name whatever the client sends (20261091).
+//
+// An acceptance is a SIGNED sign-off (QUAL-4, 20261136): the acceptor's
+// e-signature on the item, minted through the ceremony (20261050) before the
+// write, which the database binds to the item; and whoever added the item
+// does not accept it while another eligible signer exists on the project
+// (DEC-12 / DEC-37 — allowed and marked single-signer when nobody else can).
+// Who may write these rows at all is the database's decision: a controller,
+// the project owner, or a quality.sign_off holder for the project.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
 import { checkedWrite, describeWriteError, isMissingSchemaError } from "@/lib/checkedWrite";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
+import {
+  captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
+} from "@/lib/checklists";
 
 export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "waived";
 
@@ -55,6 +66,12 @@ export interface TurnoverItem {
   reviewedByName: string | null;
   reviewNote: string | null;
   createdAt: string | null;
+  /** QUAL-4: who added the item (the database stamps the caller, 20261136). */
+  createdBy?: string | null;
+  /** QUAL-4: the e-signature a standing acceptance rests on (20261136). */
+  reviewedSignatureId?: string | null;
+  /** DEC-12: accepted by its creator because nobody else could. */
+  reviewedSingleSigner?: boolean | null;
 }
 
 export type TurnoverEventKind = "review" | "reopen" | "nonconformance";
@@ -138,6 +155,9 @@ function mapItem(r: Record<string, unknown>): TurnoverItem {
     reviewedByName: (r.reviewed_by_name as string | null) ?? null,
     reviewNote: (r.review_note as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
+    createdBy: (r.created_by as string | null) ?? null,
+    reviewedSignatureId: (r.reviewed_signature_id as string | null) ?? null,
+    reviewedSingleSigner: typeof r.reviewed_single_signer === "boolean" ? r.reviewed_single_signer : null,
   };
 }
 
@@ -274,6 +294,10 @@ export async function addTurnoverItem(input: {
  * `nonconformance` event (QUAL-11) — so there is no second request that
  * could fail after the decision landed. Acceptance rates feed the
  * contractor's scorecard, so the decision is the record.
+ * An acceptance is a signed sign-off (QUAL-4): the item's creator is
+ * refused while another eligible signer exists (DEC-12), and the acceptor's
+ * e-signature on the item is minted through the ceremony (`signoff`) before
+ * the write — the database (20261136) binds it and refuses an unsigned one.
  */
 export async function reviewTurnoverItem(input: {
   item: TurnoverItem;
@@ -281,6 +305,8 @@ export async function reviewTurnoverItem(input: {
   note?: string | null;
   documentId?: string | null;
   actor: Actor;
+  /** QUAL-4: the signing ceremony's output — required to accept. */
+  signoff?: SignoffInput | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const { item } = input;
   const note = input.note?.trim() || null;
@@ -288,6 +314,25 @@ export async function reviewTurnoverItem(input: {
     const problem = reasonProblem(note);
     if (problem) return { ok: false, error: problem };
     if (reasonKey(note) === reasonKey(item.reviewNote)) return { ok: false, error: OWN_REASON };
+  }
+  let signatureId: string | undefined;
+  let singleSigner = false;
+  if (input.status === "accepted") {
+    // DEC-12 / DEC-37: whoever added the item does not accept it while
+    // anyone else on the project could (fail closed — DEC-16).
+    if (item.createdBy && item.createdBy === input.actor.uid) {
+      const authority = await loadSignoffAuthority(item.orgId, item.projectId, input.actor);
+      if (authority.error) return { ok: false, error: `Couldn't check who else can accept this item (${authority.error}) — nothing was changed.` };
+      const sod = signoffSeparation(item.createdBy, input.actor.uid, authority.otherSigners, "turnover");
+      if (sod.blocked) return { ok: false, error: sod.reason ?? "A second person accepts this item." };
+      singleSigner = sod.singleSigner;
+    }
+    const sig = await captureQualitySignoff({
+      orgId: item.orgId, resourceType: QUALITY_SIGNOFF_RESOURCE.turnoverItem, resourceId: item.id,
+      signoff: input.signoff, actor: input.actor,
+    });
+    if (!sig.ok) return { ok: false, error: sig.error };
+    signatureId = sig.signatureId;
   }
   const row: Record<string, unknown> = { status: input.status };
   if (input.documentId !== undefined) row.document_id = input.documentId;
@@ -302,6 +347,7 @@ export async function reviewTurnoverItem(input: {
   await audit("TURNOVER_REVIEWED", item.orgId, item.projectId, input.actor, {
     itemId: item.id, name: item.name, from: item.status, status: input.status, note,
     documentId: input.documentId ?? item.documentId ?? null,
+    ...(signatureId ? { signatureId, singleSigner } : {}),
   });
   return { ok: true };
 }
@@ -313,8 +359,8 @@ export async function reviewTurnoverItem(input: {
  *  10 characters; the one on the row is the decision being reopened). The acceptance itself is never lost: its history row was written
  *  when it was decided (or backfilled by 20261091 for a decision made before
  *  the history existed), and the reopen appends a `reopen` row in the same
- *  statement. Authority is the write policy's (a controller or the project
- *  owner). */
+ *  statement. Authority is the write policy's (a controller, the project
+ *  owner, or a quality.sign_off holder for the project — 20261136). */
 export async function reopenTurnoverItem(input: {
   item: TurnoverItem; reason: string; actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {

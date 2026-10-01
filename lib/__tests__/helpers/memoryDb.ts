@@ -8,6 +8,8 @@
 // { data: [], error: null }), `state.writeError` makes it error, and
 // `state.readError[table]` makes a read error — the three shapes GAP-402 /
 // QUAL-8 / UX-10 turn on. Every call is recorded in `state.calls`.
+// `.rpc(fn, args)` answers from `state.rpc[fn]`; a function with no entry is
+// MISSING (PostgREST's PGRST202), the shape a pending migration presents.
 
 export const IS_NULL = Symbol("is-null");
 export const NOT_NULL = Symbol("not-null");
@@ -31,6 +33,9 @@ export interface MemoryState {
    *  trigger (e.g. 20261091's completion-basis rail) in a test that needs
    *  to show what the lib does with the value the database recorded. */
   afterWrite?: (table: string, method: string, rows: Array<Record<string, unknown>>) => void;
+  /** Database functions by name (QUAL-4's quality_signoff_status, …); an
+   *  absent one answers as not deployed yet (PGRST202). */
+  rpc?: Record<string, (args: Record<string, unknown>) => { data: unknown; error: { message: string; code?: string } | null }>;
   nextId: number;
 }
 
@@ -39,7 +44,7 @@ export const freshState = (): MemoryState => ({
 });
 
 export function resetState(s: MemoryState) {
-  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.afterWrite = undefined; s.nextId = 1;
+  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.afterWrite = undefined; s.rpc = undefined; s.nextId = 1;
 }
 
 type Filter = [string, unknown];
@@ -129,6 +134,13 @@ export function makeSupabase(state: MemoryState) {
   }
   return {
     from: (t: string) => chain(t),
+    rpc: (fn: string, args: Record<string, unknown> = {}) => {
+      state.calls.push({ table: `rpc:${fn}`, method: "rpc", args: [args] });
+      const handler = state.rpc?.[fn];
+      return Promise.resolve(handler
+        ? handler(args)
+        : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } });
+    },
     auth: { getSession: async () => ({ data: { session: null } }) },
   };
 }

@@ -36,6 +36,15 @@ vi.mock("@/lib/supabase", async () => {
   const { makeSupabase } = await import("./helpers/memoryDb");
   return { supabase: makeSupabase(state) };
 });
+// QUAL-4 (20261136): a completion is a signed sign-off — the ceremony's row is
+// minted by /api/signatures/sign; here it is a stand-in that records the call.
+const signed = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
+vi.mock("@/lib/eSignatures", () => ({
+  recordSignature: async (input: Record<string, unknown>) => {
+    signed.calls.push(input);
+    return { id: `sig-${signed.calls.length}`, ...input };
+  },
+}));
 
 import {
   applyAssessment, createChecklist, gatherProjectEvidenceState, listChecklistItems, listChecklists,
@@ -45,6 +54,7 @@ import {
 import { MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP } from "@/lib/checklistEngine";
 
 const actor = { uid: "u1", email: "mreyes@plant.io" };
+const signoff = { statement: "I verified this checklist complete", signerName: "M Reyes", reauth: { method: "password" as const, password: "pw" } };
 const audits = () => state.writes.filter((w) => w.table === "audit_logs").map((w) => w.payload as Record<string, unknown>);
 const itemWrites = () => state.writes.filter((w) => w.table === "checklist_items" && w.method === "update");
 
@@ -298,7 +308,7 @@ describe("setChecklistStatus('complete')", () => {
   it("item read error ⇒ ok:false, nothing written", async () => {
     state.tables.checklist_items = [];
     state.readError.checklist_items = { message: "network" };
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/Couldn't verify the items/);
     expect(state.tables.project_checklists[0].status).toBe("open");
@@ -307,7 +317,7 @@ describe("setChecklistStatus('complete')", () => {
 
   it("zero items ⇒ ok:false (no vacuous completion)", async () => {
     state.tables.checklist_items = [];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/no items/);
     expect(state.tables.project_checklists[0].status).toBe("open");
@@ -315,7 +325,7 @@ describe("setChecklistStatus('complete')", () => {
 
   it("the gate itself is unchanged: an unsatisfied applicable item still blocks", async () => {
     state.tables.checklist_items = [row({ status: "needs_evidence" })];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/not satisfied yet/);
   });
@@ -327,7 +337,7 @@ describe("setChecklistStatus('complete')", () => {
     const before = audits().length;
 
     state.tables.documents[0].status = "Void";   // nobody re-runs the sweep
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/^1 green item rests on a document that is no longer current .* run "Check evidence we already hold" first/);
     expect(state.tables.project_checklists[0].status).toBe("open");
@@ -341,7 +351,7 @@ describe("setChecklistStatus('complete')", () => {
       doc({ id: "d2", title: "E-301 Hydrotest Report", current_version_id: "v1" }),
     ];
     state.tables.checklist_items = [row({ id: "a", status: "satisfied", evidence: [HYDRO_CHIP] })];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/no longer current/);
   });
@@ -352,7 +362,7 @@ describe("setChecklistStatus('complete')", () => {
       row({ id: "a", status: "satisfied", evidence: [HYDRO_CHIP] }),
       row({ id: "b", status: "na", applicability: "na", manual_note: "not in scope for this repipe" }),
     ];
-    const r1 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const r1 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(r1).toEqual({ ok: true, basis: "auto" });
     const w = state.writes.filter((x) => x.table === "project_checklists" && x.method === "update");
     expect(w.map((x) => x.payload)).toEqual([{ status: "complete" }]);   // no completed_basis from the client
@@ -361,7 +371,7 @@ describe("setChecklistStatus('complete')", () => {
 
     state.tables.project_checklists[0].status = "open";
     state.tables.checklist_items[0].manual_note = "Reviewed the hydro chart myself — 150 psig, 30 min";
-    const r2 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const r2 = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(r2).toEqual({ ok: true, basis: "human" });
     expect(state.tables.project_checklists[0].completed_basis).toBe("human");
 
@@ -377,14 +387,14 @@ describe("setChecklistStatus('complete')", () => {
   it("QUAL-2: the stored basis wins over the lib's reading (the database is the record)", async () => {
     state.afterWrite = (table, method, rows) => { if (table === "project_checklists" && method === "update") for (const r of rows) r.completed_basis = "auto"; };
     state.tables.checklist_items = [row({ id: "a", status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res).toEqual({ ok: true, basis: "auto" });
     expect((audits().at(-1)!.details as { completedBasis: string }).completedBasis).toBe("auto");
   });
 
   it("before 20261091 'Mark complete' names no new column, so it lands; the basis is the lib's reading and nothing can cite it (the gather fails closed)", async () => {
     state.tables.checklist_items = [row({ status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res).toEqual({ ok: true, basis: "human" });
     expect(state.tables.project_checklists[0]).toMatchObject({ status: "complete" });
     expect(state.tables.project_checklists[0].completed_basis).toBeUndefined();
@@ -404,7 +414,7 @@ describe("setChecklistStatus('complete')", () => {
     expect(state.tables.checklist_items[0]).toMatchObject({ status: "satisfied", updated_by_name: MACHINE_ACTOR_SWEEP, manual_note: null });
 
     // Completing now: the green rests on the sweep alone → auto.
-    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "auto" });
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff })).toEqual({ ok: true, basis: "auto" });
     state.tables.project_checklists[0].status = "open";
 
     // ✓ Verify: the same control the button calls.
@@ -415,13 +425,13 @@ describe("setChecklistStatus('complete')", () => {
     expect(a.evidence).toEqual([HYDRO_CHIP]); // the citation stays
 
     // The assessment's N/A still carries no person's reason → still auto.
-    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "auto" });
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff })).toEqual({ ok: true, basis: "auto" });
     state.tables.project_checklists[0].status = "open";
 
     // ✓ Confirm N/A: the person gives the N/A their reason.
     const na = (await readChecklistItems("cl1")).rows.find((i) => i.id === "b")!;
     expect((await updateChecklistItem({ orgId: "o1", projectId: "p1", item: na, patch: { applicability: "na", status: "na", manualNote: "No operator interface changes on this repipe" }, actor })).ok).toBe(true);
-    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor })).toEqual({ ok: true, basis: "human" });
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff })).toEqual({ ok: true, basis: "human" });
     expect(state.tables.project_checklists[0].completed_basis).toBe("human");
 
     // …and the sweep keeps its hands off a verified green, even when the document goes Void.
@@ -437,7 +447,7 @@ describe("setChecklistStatus('complete')", () => {
       row({ id: "a", status: "na", applicability: "na", updated_by: null, updated_by_name: MACHINE_ACTOR_ASSESSMENT }),
       row({ id: "b", status: "na", applicability: "na", updated_by: null, updated_by_name: MACHINE_ACTOR_ASSESSMENT }),
     ];
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ kind: "mi" }), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ kind: "mi" }), status: "complete", actor, signoff });
     expect(res).toEqual({ ok: true, basis: "auto" });
     state.tables.project_checklists[0].kind = "mi";
     expect((await gatherProjectEvidenceState("o1", "p1")).miChecklistComplete).toBe(false);
@@ -446,7 +456,7 @@ describe("setChecklistStatus('complete')", () => {
   it("a refused status write reports the refusal and audits nothing (SAF-3)", async () => {
     state.tables.checklist_items = [row({ status: "satisfied", manual_note: "verified on the walkdown 9/14" })];
     state.refuse = true;
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "complete", actor, signoff });
     expect(res.ok).toBe(false);
     expect(audits()).toHaveLength(0);
   });

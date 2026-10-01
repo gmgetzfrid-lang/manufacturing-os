@@ -235,13 +235,14 @@ describe("20261091 — QUAL-12: org_id tied to the parent checklist", () => {
     ]);
     expect(next).toContain("WITH CHECK ((is_org_controller(org_id) OR EXISTS (\n    SELECT 1 FROM project_checklists c WHERE c.id = checklist_items.checklist_id AND user_owns_project(c.project_id)))\n    AND org_id = (SELECT c.org_id FROM project_checklists c WHERE c.id = checklist_items.checklist_id));");
   });
-  it("no other migration defines checklist_items_write / project_checklists_write (20261013 is the newest source)", () => {
+  it("no other migration defines checklist_items_write / project_checklists_write (20261013 is the newest source) — until QUAL-4's 20261136, which re-creates both from 20261091's bodies (pinned in qualitySignoff.test.ts)", () => {
     // The census in migrationSourceOfTruth.test.ts keeps definitions inside the
     // numbered sequence; here we pin which file we copied from.
     expect(m13).toContain("CREATE POLICY checklist_items_write ON checklist_items FOR ALL");
     expect(m13).toContain("CREATE POLICY project_checklists_write ON project_checklists FOR ALL");
     for (const f of readdirSync(join(process.cwd(), "supabase", "migrations")).filter((x) => x.endsWith(".sql"))) {
-      if (f === "20261013_project_controls_program.sql" || f === "20261091_prj_roundG_quality_rails.sql") continue;
+      if (f === "20261013_project_controls_program.sql" || f === "20261091_prj_roundG_quality_rails.sql"
+        || f === "20261136_prj_roundG_quality_signoff.sql") continue;
       const body = read(f);
       expect(body, f).not.toMatch(/CREATE POLICY (checklist_items_write|project_checklists_write)\b/);
     }
