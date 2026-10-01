@@ -9,7 +9,8 @@
 //   * projects-and-cost INTK-12 done-whens 1, 3 and 4, the Costs-tab half:
 //     the quote-link form refuses a blank or past expiry and writes
 //     expires_at; the insert reads back its id and the audit row names the
-//     LINK (never token material); a failed audit insert is surfaced; Revoke
+//     LINK (never token material: no INTAKE_TOKEN_PREFIX_LEN-character window
+//     of the token anywhere in the row); a failed audit insert is surfaced; Revoke
 //     writes only revoked_at, scoped to the project and to a still-unrevoked
 //     row, reads its rows back, audits by link id, and audits nothing when
 //     no row changed.
@@ -61,6 +62,7 @@ vi.mock("next/link", () => ({
 vi.mock("@/lib/companies", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/companies")>()), ...reg }));
 
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
+import { INTAKE_TOKEN_PREFIX_LEN } from "@/lib/intakeLinks";
 import type { CostDocument } from "@/lib/costDocs";
 import type { Company } from "@/lib/companies";
 
@@ -104,6 +106,14 @@ const render = async () => {
   await settle();
 };
 const lastError = () => errors.filter(Boolean).at(-1);
+/** Every INTAKE_TOKEN_PREFIX_LEN-character window of the token found in the
+ *  serialised row — the app's own prefix (6) is the shortest fragment the
+ *  lists show, so no window of that length may reach audit_logs. */
+const tokenWindowsIn = (row: unknown, token: string) => {
+  const json = JSON.stringify(row);
+  return Array.from({ length: token.length - INTAKE_TOKEN_PREFIX_LEN + 1 }, (_, i) => token.slice(i, i + INTAKE_TOKEN_PREFIX_LEN))
+    .filter((w) => json.includes(w));
+};
 const awardBtn = () => [...host.querySelectorAll("tbody tr button")].find((b) => /Award/.test(b.textContent ?? "")) as HTMLButtonElement;
 const pickAccount = async () => {
   const sel = [...host.querySelectorAll("tbody tr select")][0] as HTMLSelectElement;
@@ -197,8 +207,9 @@ describe("INTK-12 — the Costs tab's quote links", () => {
     expect(audit[0].row.action).toBe("INTAKE_QUOTE_LINK_CREATED");
     expect(audit[0].row.resource_id).toBe("link-123");
     const token = String(ins.row.token);
-    expect(token.length).toBeGreaterThan(8);
-    expect(JSON.stringify(audit[0].row)).not.toContain(token.slice(0, 8));
+    expect(token.length).toBeGreaterThan(INTAKE_TOKEN_PREFIX_LEN);
+    expect(JSON.stringify(audit[0].row)).not.toContain(token.slice(0, INTAKE_TOKEN_PREFIX_LEN));
+    expect(tokenWindowsIn(audit[0].row, token)).toEqual([]);
     expect(lastError()).toMatch(/audit record failed: audit denied/);
   });
 

@@ -5,7 +5,8 @@
 // rendered panel rather than read from its source:
 //   * done-when 3: the document-link insert reads back its id
 //     (insert → select → single) and INTAKE_LINK_CREATED's resource_id is
-//     that id — never the project, never token material;
+//     that id — never the project, never token material (no
+//     INTAKE_TOKEN_PREFIX_LEN-character window of the token anywhere in it);
 //   * done-when 4: both audit inserts (create and revoke) check { error } and
 //     the failure reaches the user; a clean audit says nothing of failure.
 // The revoke's missing zero-row read-back is projects-and-cost INTK-17 and
@@ -57,6 +58,7 @@ vi.mock("@/lib/transitionIn", () => ({ flagCollisionToDrafting: vi.fn() }));
 vi.mock("@/components/projects/TransitionInPanel", () => ({ default: () => null }));
 
 import IntakePanel from "@/components/projects/IntakePanel";
+import { INTAKE_TOKEN_PREFIX_LEN } from "@/lib/intakeLinks";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -84,6 +86,14 @@ const setInput = async (el: HTMLInputElement, v: string) => {
   await act(async () => { proto.set!.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const auditRows = () => db.inserts.filter((i) => i.table === "audit_logs");
+/** Every INTAKE_TOKEN_PREFIX_LEN-character window of the token found in the
+ *  serialised row — the app's own prefix (6) is the shortest fragment the
+ *  lists show, so no window of that length may reach audit_logs. */
+const tokenWindowsIn = (row: unknown, token: string) => {
+  const json = JSON.stringify(row);
+  return Array.from({ length: token.length - INTAKE_TOKEN_PREFIX_LEN + 1 }, (_, i) => token.slice(i, i + INTAKE_TOKEN_PREFIX_LEN))
+    .filter((w) => json.includes(w));
+};
 const createLink = async () => {
   await setInput(host.querySelector('input[placeholder^="Company name"]') as HTMLInputElement, "Gulf Mechanical");
   const create = [...host.querySelectorAll("button")].find((b) => /Create link/.test(b.textContent ?? ""))!;
@@ -106,8 +116,9 @@ describe("INTK-12 dw3 / dw4 — IntakePanel's link creation", () => {
     expect(audit[0].row).toMatchObject({ action: "INTAKE_LINK_CREATED", resource_type: "project_intake_link", resource_id: "link-9" });
     expect(audit[0].row.resource_id).not.toBe("p1");
     const token = String(ins[0].row.token);
-    expect(token.length).toBeGreaterThan(8);
-    expect(JSON.stringify(audit[0].row)).not.toContain(token.slice(0, 8));
+    expect(token.length).toBeGreaterThan(INTAKE_TOKEN_PREFIX_LEN);
+    expect(JSON.stringify(audit[0].row)).not.toContain(token.slice(0, INTAKE_TOKEN_PREFIX_LEN));
+    expect(tokenWindowsIn(audit[0].row, token)).toEqual([]);
     expect(host.textContent).toContain("Link created, but its audit record failed: audit denied");
   });
 
