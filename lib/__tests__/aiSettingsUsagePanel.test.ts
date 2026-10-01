@@ -225,6 +225,39 @@ describe("UsagePanel", () => {
     kn.getAiUsage.mockReset();
   });
 
+  it("GOV-10 (fix pass 11): a save that changed nothing is said as that — never 'set to', never 'follows the default again'", async () => {
+    const team = [{ userId: "u2", name: "Eve", spentUsd: 1, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 25, locked: false, hasOverride: true, byOp: {} }];
+    kn.getAiUsage.mockResolvedValue({ ...base, orgCapUsd: 10, team, canManageCaps: true, soleCapsHolder: false, selfUserId: "u1" });
+    await render(React.createElement(UsagePanel, { orgId: "o1" }));
+    // the default already at $10
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 10, locked: false, unchanged: true });
+    await setDefaultCap("10");
+    expect(lastToast()).toBe("The default monthly cap is already $10.00 per person, so nothing changed.");
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 0, locked: true, unchanged: true });
+    await setDefaultCap("0");
+    expect(lastToast()).toBe("The default monthly cap is already $0 — AI is locked for everyone on the default, so nothing changed.");
+    const pick = async (value: string) => {
+      const select = host.querySelector("select") as HTMLSelectElement;
+      await act(async () => { select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      await act(async () => { await Promise.resolve(); });
+    };
+    // Eve's override already $50 (the panel opened before it was set there)
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, capUsd: 50, locked: false, unchanged: true });
+    await pick("50");
+    expect(kn.setAiCap).toHaveBeenLastCalledWith("o1", 50, "u2");
+    expect(lastToast()).toBe("Eve's monthly cap is already $50, so nothing changed.");
+    // Eve's override already cleared by someone else
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, cleared: false, unchanged: true });
+    await pick("default");
+    expect(kn.setAiCap).toHaveBeenLastCalledWith("o1", null, "u2");
+    expect(lastToast()).toBe("Eve already follows the workspace default, so nothing changed.");
+    // a real change still reads as one
+    kn.setAiCap.mockResolvedValueOnce({ ok: true, cleared: true });
+    await pick("default");
+    expect(lastToast()).toBe("Eve follows the workspace default again.");
+    kn.getAiUsage.mockReset();
+  });
+
   it("GOV-10: a refused save is said in the server's words and the panel re-reads what is stored (a 409 can follow a change that landed)", async () => {
     const team = [{ userId: "u1", name: "Ada", spentUsd: 10, asks: 1, calls: 2, inputTokens: 1, outputTokens: 1, capUsd: 10, locked: false, hasOverride: false, byOp: {} }];
     kn.getAiUsage.mockResolvedValue({ ...base, spentUsd: 10, percent: 100, orgCapUsd: 10, team, canManageCaps: true, selfFollowsDefault: true });

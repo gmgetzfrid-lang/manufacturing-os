@@ -28,10 +28,14 @@
 // is not made. The target is a uuid in any spelling Postgres accepts; the
 // route uses the uid the database returns, never the request's spelling,
 // so `{ userId: <your own uid in upper case> }` is still your own cap.
-// The ban holds at WRITE time, not only when the request is read: clearing
-// your own override is refused outright while another holder exists (a
-// lower figure is set directly — it is never needed, and racing it against
-// a default raise used to delete the hold after it was written); an update
+// That is the ban for requests made one after another. Two or more cap
+// changes IN FLIGHT at once are GOV-15's (a cap change is one database
+// transaction): the app-side guards that follow narrow those windows, each
+// a write followed by a read, not a lock, and GOV-15's locking function is
+// to replace them. At write time: clearing your own override is refused
+// outright while another holder exists (a lower figure is set directly —
+// it is never needed, and racing it against a default raise used to delete
+// the hold after it was written); an update
 // the caller's own cap was decided from — the workspace default, their own
 // override — is guarded by the figure it was decided from (a figure that
 // changed underneath answers 409 and changes nothing). Setting your own
@@ -56,11 +60,12 @@
 // caller's own LOWERING of a figure another holder signed (it is never put
 // back below it); one that cannot be read back is audited `unverified` and
 // answered 503, never a plain success. A raise of the workspace default is
-// recorded in the audit log BEFORE it is made, as a sole holder's own raise
-// is, because the re-reads read it back. An update that matches no row is
-// never a success: another person's override taken out since it was read
-// is written again as an insert (a lock lands as the answer says, "from"
-// the cap they were on), and the rest answer 409. A
+// recorded in the audit log BEFORE it is made, because the re-reads read it
+// back; unlike a sole holder's own raise, one the log refuses still goes
+// ahead (its row is tried again once it has landed). An update that
+// matches no row is never a success: another person's override taken out
+// since it was read is written again as an insert (a lock lands as the
+// answer says, "from" the cap they were on), and the rest answer 409. A
 // default lowering cannot raise anyone and is not re-read. A hold is
 // written at the lower of the default and the setter's own cap as read,
 // and comes back out only as written and only while the default is no
@@ -70,8 +75,14 @@
 // it is no higher than it started, `selfCapUsd` + `selfCapSetByAnother`
 // when another holder's figure now applies (`selfCapOwnLowering` when it is
 // the setter's own lowering of one).
-// Every change is audited and notifies the other holders and the person
-// whose cap moved. A cap table that cannot be read refuses (503) — the team
+// Every change is audited and notifies the other holders; a change to one
+// person's cap notifies that person too (the members who follow the default
+// are not told one by one when it moves). A request that changes nothing —
+// clearing an override that is not there, a figure the cap already has —
+// answers `unchanged: true`, and is neither audited nor told. A person who
+// follows the default given its figure as their own is a change (the
+// default no longer moves them), said as that (`pinnedAtDefault`).
+// A cap table that cannot be read refuses (503) — the team
 // view and the "previous figure" never fall back to $10.
 //
 // Reads are service-role only: ai_usage_events and ai_usage_limits have RLS
@@ -180,7 +191,6 @@ async function auditCapChange(orgId: string, auth: Auth, details: Record<string,
   }
 }
 const SOLE_AUDIT_FAILED = "Couldn't write the audit record that raising your own cap without a second signature needs, so nothing was changed";
-const DEFAULT_RAISE_AUDIT_FAILED = "Couldn't write the audit record a raise of the workspace default needs before it is made, so nothing was changed";
 
 /** The stored workspace default (display figure: 0 = locked), $10 when no
  *  row exists; an error when the table cannot be read. `stored` is the
@@ -541,10 +551,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(payload);
 }
 
-/** Bell notice to every OTHER holder of ai.manage_caps, and to the person
- *  whose own cap moved (GOV-10 done-when 4). Best-effort: the change and its
- *  audit row are already written. Three notices are about the actor's OWN
- *  cap after a change of theirs (so they go to the other holders only):
+/** Bell notice to every OTHER holder of ai.manage_caps, and — for a change
+ *  to one person's cap — to that person (GOV-10 done-when 4). A change to
+ *  the workspace default goes to the other holders only: the members who
+ *  follow it are not told one by one. A request that changes nothing sends
+ *  none. Best-effort: the change and its audit row are already written.
+ *  `pinnedAtDefault`: a person who followed the default was given its figure
+ *  as their own — the figure is the same, but the default no longer moves
+ *  it, and the notice says that rather than "from $10 to $10". Three
+ *  notices are about the actor's OWN cap after a change of theirs (so they
+ *  go to the other holders only):
  *  `putBack` — the route put it back down at `capUsd` from `previousCapUsd`
  *  (the figure it replaced) because it rose (with `error` when it could not
  *  be put back; `overrideRemoved` when it was their own new override the
@@ -555,6 +571,7 @@ export async function GET(req: NextRequest) {
 async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPolicy, change: {
   targetUserId: string | null; capUsd: number | null; previousCapUsd: number | null;
   putBack?: { error: string | null; overrideRemoved?: boolean }; unverified?: boolean; holdKept?: string;
+  pinnedAtDefault?: boolean;
 }) {
   const others = await otherCapsHolders(orgId, auth, policy);
   const recipients = new Set(others.ok ? others.uids : []);
@@ -575,7 +592,9 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
         ? `${own} could not be read back after a cap change of theirs, so nobody has checked that it stayed at ${fmt(change.previousCapUsd)}. Nobody raises their own cap — check it in AI settings.`
         : change.holdKept
           ? `${own} stays held at ${fmt(change.capUsd)}: a raise of the workspace default by them did not land, and the hold it wrote stays — ${change.holdKept}. They no longer follow the default; if they should, clear their cap in AI settings.`
-          : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}.`;
+          : change.pinnedAtDefault
+            ? `${auth.name} set ${what} to ${fmt(change.capUsd)} — the figure of the workspace default it followed until now — so a change to the default no longer moves it.`
+            : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}.`;
   const title = (uid: string) => change.putBack?.error ? "A monthly AI cap could not be put back"
     : change.putBack ? "A monthly AI cap was put back"
       : change.unverified ? "A monthly AI cap needs checking"
@@ -601,6 +620,7 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
       } : {}),
       ...(change.unverified ? { unverified: true } : {}),
       ...(change.holdKept ? { holdKept: change.holdKept } : {}),
+      ...(change.pinnedAtDefault ? { pinnedAtDefault: true } : {}),
     },
   }))).then(() => undefined, () => undefined);
 }
@@ -779,13 +799,20 @@ export async function POST(req: NextRequest) {
       const auditError = await auditCapChange(orgId, auth, details);
       if (auditError) return bad(`${SOLE_AUDIT_FAILED}: ${auditError}`, 503);
     }
-    const { error } = await supabaseAdmin
+    const { data: removed, error } = await supabaseAdmin
       .from("ai_usage_limits").delete()
-      .eq("org_id", orgId).eq("user_id", targetUserId);
+      .eq("org_id", orgId).eq("user_id", targetUserId).select("id");
     if (error) {
       // The audit row already says it happened: say it did not.
       if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: error.message });
       return bad(`Couldn't clear the cap override: ${error.message}`, 500);
+    }
+    // There was no override to clear — the person already follows the
+    // default (a panel opened before someone else cleared it): nothing
+    // changed, so nothing is audited or told, and the answer says so.
+    if (((removed as unknown[] | null) ?? []).length === 0) {
+      if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: "there was no override to clear" });
+      return NextResponse.json({ ok: true, cleared: false, unchanged: true });
     }
     if (!soleHolder) await auditCapChange(orgId, auth, details);
     await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd: null, previousCapUsd });
@@ -804,6 +831,11 @@ export async function POST(req: NextRequest) {
   }
   if (orgDefault?.tableMissing) {
     return bad("The ai_usage_limits table doesn't exist yet — run migration 20260916 in Supabase first.", 424);
+  }
+  // The workspace default already at this figure: nothing changes for
+  // anyone, so nothing is written, audited or told, and the answer says so.
+  if (!targetUserId && capUsd === previousCapUsd) {
+    return NextResponse.json({ ok: true, capUsd, locked: capUsd === 0, unchanged: true });
   }
 
   // GOV-10: the caller's own cap before this change — what it is read
@@ -827,7 +859,7 @@ export async function POST(req: NextRequest) {
   // write that fails (or finds the default changed) takes the hold back
   // out. Raising it later takes another holder, like any other self-raise.
   // A sole holder is not held: they follow the default like everyone else.
-  // The hold is decided here and written once the raise is recorded (below).
+  // The hold is decided here and written after the raise's record (below).
   const defaultRaise = !targetUserId && previousCapUsd !== null && capUsd > previousCapUsd;
   let pinAt: number | null = null;
   if (defaultRaise) {
@@ -846,7 +878,7 @@ export async function POST(req: NextRequest) {
   let rowExists: boolean;
   if (targetUserId) {
     const { data: existing, error: readError } = await supabaseAdmin.from("ai_usage_limits")
-      .select("id").eq("org_id", orgId).eq("user_id", targetUserId).maybeSingle();
+      .select("id, monthly_cap_usd").eq("org_id", orgId).eq("user_id", targetUserId).maybeSingle();
     if (readError) {
       const missing = limitsTableMissing(readError);
       return bad(
@@ -857,27 +889,43 @@ export async function POST(req: NextRequest) {
       );
     }
     rowExists = !!existing;
+    // The person's own override already holds this figure: nothing changes,
+    // so nothing is written, audited or told, and the answer says so. (A
+    // person who follows the default and is given its figure as their own
+    // is a change — the default no longer moves them — and is said as one.)
+    const stored = (existing as { monthly_cap_usd?: number | string | null } | null)?.monthly_cap_usd;
+    if (rowExists && stored !== null && stored !== undefined && Number(stored) === capUsd && previousCapUsd === capUsd) {
+      return NextResponse.json({ ok: true, capUsd, locked: capUsd === 0, unchanged: true });
+    }
   } else {
     rowExists = orgDefault!.exists;
   }
-  // GOV-10: two changes are recorded BEFORE they are made, and a record that
-  // cannot be written changes nothing (503). A sole holder's own raise has
-  // no second signature — its audit row is the record. A raise of the
-  // workspace default is read back from the log by every later re-read of
-  // the caller's cap (`signedFigure`: another holder's trim of the caller's
-  // own raise is not their raise), so one the log never held would let that
-  // trim pass as theirs. Each carries a `writeId`; a change that then does
-  // not land writes its `notApplied` companion with the same id, and the
-  // log reader leaves both out.
+  // A person who followed the default, given its figure as their own.
+  const pinnedAtDefault = !!targetUserId && !rowExists && capUsd === previousCapUsd;
+  // GOV-10: two changes are recorded BEFORE they are made. A sole holder's
+  // own raise has no second signature — its audit row is the record, so
+  // one that cannot be written changes nothing (503). A raise of the
+  // workspace default is recorded first too, because the re-reads of a
+  // concurrent request read it back (`signedFigure`; races between
+  // requests in flight are GOV-15's): but that row is not a control, so
+  // one the log refuses does not stop the raise — it goes ahead as it did
+  // before this package, and its audit row is tried again once it has
+  // landed, best-effort like every other change's. Each record carries a
+  // `writeId`; a change that then does not land writes its `notApplied`
+  // companion with the same id, and the log reader leaves both out.
   const auditFirst = soleHolder || defaultRaise;
   let details: Record<string, unknown> = {
     ...(targetUserId ? { targetUserId } : {}), capUsd, previousCapUsd,
     ...(soleHolder ? { soleHolder: true } : {}),
+    ...(pinnedAtDefault ? { pinnedAtDefault: true } : {}),
     ...(auditFirst ? { writeId: randomUUID() } : {}),
   };
+  // Whether the change's row is in the log already (written before it).
+  let recorded = false;
   if (auditFirst) {
     const auditError = await auditCapChange(orgId, auth, details);
-    if (auditError) return bad(`${soleHolder ? SOLE_AUDIT_FAILED : DEFAULT_RAISE_AUDIT_FAILED}: ${auditError}`, 503);
+    if (auditError && soleHolder) return bad(`${SOLE_AUDIT_FAILED}: ${auditError}`, 503);
+    recorded = !auditError;
   }
   let pinnedSelfAtUsd: number | null = null;
   if (pinAt !== null) {
@@ -887,7 +935,7 @@ export async function POST(req: NextRequest) {
     });
     if (pinError) {
       // The raise's record already says it happened: say it did not.
-      await auditCapChange(orgId, auth, { ...details, notApplied: true, error: pinError.message });
+      if (recorded) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: pinError.message });
       return bad(
         `Couldn't hold your own cap at its current figure, so the default was not raised: ${pinError.message}`,
         isUniqueViolation(pinError) ? 409 : 500,
@@ -969,7 +1017,7 @@ export async function POST(req: NextRequest) {
     conflict = conflict || isUniqueViolation(saveError);
     const why = saveError?.message || "the cap changed while this was being saved";
     // The audit row already says it happened: say it did not.
-    if (auditFirst) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: why });
+    if (recorded) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: why });
     let status = conflict ? 409 : 500;
     let ownSaid = "";
     const ownExtra: Record<string, unknown> = {};
@@ -1054,10 +1102,10 @@ export async function POST(req: NextRequest) {
     return bad(`Couldn't save the cap: ${why}${ownSaid ? `.${ownSaid}` : ""}`, status, ownExtra);
   }
 
-  if (!auditFirst) await auditCapChange(orgId, auth, details);
+  if (!recorded) await auditCapChange(orgId, auth, details);
   // The change has landed: the other holders and the person whose cap moved
   // are told, whatever the check below finds about the setter's own cap.
-  await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
+  await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd, ...(pinnedAtDefault ? { pinnedAtDefault: true } : {}) });
 
   // GOV-10: your own override, INSERTED while you followed the default, is
   // checked against the default read again now. One that fell below it

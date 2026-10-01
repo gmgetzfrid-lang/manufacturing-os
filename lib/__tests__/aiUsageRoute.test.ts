@@ -344,6 +344,115 @@ describe("GOV-10 — cap changes are the ai.manage_caps capability, never the co
   });
 });
 
+describe("GOV-10 — a request that changes nothing is answered, audited and told as nothing (fix pass 11, sequential)", () => {
+  const capDetails = () => db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED").map((a) => plainDetails(a.details));
+  const limitsOf = (uid: string | null) => db.tables.ai_usage_limits.filter((l) => (l.user_id ?? null) === uid).map((l) => l.monthly_cap_usd);
+
+  it("clearing an override that is not there (a panel opened before another holder cleared it) is 200 unchanged — no audit row, no notice", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ENG, monthly_cap_usd: 25, updated_by: ADMIN }];
+    // ADMIN2 clears it first: a real change, audited and told
+    const first = await post(ADMIN2, { capUsd: null, userId: ENG });
+    expect(first.json).toMatchObject({ ok: true, cleared: true });
+    // ADMIN's panel still shows the override, and clears it again
+    const r = await post(ADMIN, { capUsd: null, userId: ENG });
+    expect(r.status).toBe(200);
+    // was: { ok: true, cleared: true }, an AI_CAP_CHANGED `cleared` row "from $10", and
+    // "Your monthly AI cap changed … from $10 to the workspace default" to ENG and ADMIN2
+    expect(r.json).toEqual({ ok: true, cleared: false, unchanged: true });
+    expect(db.tables.ai_usage_limits).toEqual([]);
+    expect(capDetails()).toEqual([{ targetUserId: ENG, cleared: true, previousCapUsd: 25 }]);
+    expect(notices().filter((n) => n.user_id === ENG).map((n) => n.body)).toEqual([
+      "Bea changed a person's monthly AI cap from $25 to the workspace default.",
+    ]);
+    expect(notices().some((n) => n.actor_user_id === ADMIN)).toBe(false);
+  });
+
+  it("a person's cap set to the figure their override already holds is 200 unchanged — nothing written, audited or told (a lock re-applied included)", async () => {
+    for (const figure of [25, 0]) {
+      db.tables.ai_usage_limits = [{ id: "row-eng", org_id: ORG, user_id: ENG, monthly_cap_usd: figure, updated_by: ADMIN2, updated_at: "2026-09-01T00:00:00.000Z" }];
+      db.tables.audit_logs = [];
+      db.tables.notifications = [];
+      const r = await post(ADMIN, { capUsd: figure, userId: ENG });
+      expect(r.status, String(figure)).toBe(200);
+      // was: 200 { ok: true, capUsd } and "changed a person's monthly AI cap from $25 to $25"
+      expect(r.json).toEqual({ ok: true, capUsd: figure, locked: figure === 0, unchanged: true });
+      expect(db.tables.ai_usage_limits).toEqual([{ id: "row-eng", org_id: ORG, user_id: ENG, monthly_cap_usd: figure, updated_by: ADMIN2, updated_at: "2026-09-01T00:00:00.000Z" }]);
+      expect(capDetails()).toEqual([]);
+      expect(notices()).toEqual([]);
+    }
+    // a different figure is still a change
+    const r = await post(ADMIN, { capUsd: 30, userId: ENG });
+    expect(r.json.unchanged).toBeUndefined();
+    expect(capDetails()).toEqual([{ targetUserId: ENG, capUsd: 30, previousCapUsd: 0 }]);
+  });
+
+  it("the default set to the figure it already has is 200 unchanged — with a stored row and with none (the $10 it reads as); no hold, no audit row, no notice", async () => {
+    for (const stored of [10, null] as const) {
+      db.tables.ai_usage_limits = stored === null ? [] : [{ org_id: ORG, user_id: null, monthly_cap_usd: stored, updated_by: ADMIN2 }];
+      db.tables.audit_logs = [];
+      db.tables.notifications = [];
+      const r = await post(ADMIN, { capUsd: 10 });
+      expect(r.status, String(stored)).toBe(200);
+      // was: "Ada changed the workspace's default monthly AI cap from $10 to $10" to every other holder
+      expect(r.json).toEqual({ ok: true, capUsd: 10, locked: false, unchanged: true });
+      expect(db.tables.ai_usage_limits).toEqual(stored === null ? [] : [{ org_id: ORG, user_id: null, monthly_cap_usd: 10, updated_by: ADMIN2 }]);
+      expect(capDetails()).toEqual([]);
+      expect(notices()).toEqual([]);
+    }
+    // a workspace already locked, locked again
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 0, updated_by: ADMIN2 }];
+    expect((await post(ADMIN, { capUsd: 0 })).json).toEqual({ ok: true, capUsd: 0, locked: true, unchanged: true });
+    expect(capDetails()).toEqual([]);
+  });
+
+  it("a person who follows the default, given its figure as their own, IS a change — written, audited pinnedAtDefault and told as that, never 'from $10 to $10'", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10, updated_by: ADMIN2 }];
+    const r = await post(ADMIN, { capUsd: 10, userId: ENG });
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: true, capUsd: 10, locked: false });
+    expect(limitsOf(ENG)).toEqual([10]);
+    expect(capDetails()).toEqual([{ targetUserId: ENG, capUsd: 10, previousCapUsd: 10, pinnedAtDefault: true }]);
+    const toEng = notices().find((n) => n.user_id === ENG)!;
+    expect(toEng.title).toBe("Your monthly AI cap changed");
+    expect(toEng.body).toBe("Ada set a person's monthly AI cap to $10 — the figure of the workspace default it followed until now — so a change to the default no longer moves it.");
+    expect(toEng.metadata).toMatchObject({ targetUserId: ENG, capUsd: 10, previousCapUsd: 10, pinnedAtDefault: true });
+    expect(notices().map((n) => n.user_id).sort()).toEqual([ADMIN2, ENG].sort());
+    // and it is what it says: the default moves, ENG stays
+    await post(ADMIN2, { capUsd: 20 });
+    expect((await get(ENG)).json).toMatchObject({ capUsd: 10 });
+  });
+
+  it("a SOLE holder's clear, recorded first, that finds no override to remove writes its record's not-applied companion and answers unchanged", async () => {
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 },
+      { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 5, updated_by: ADMIN }];
+    // the override is gone by the time the delete runs
+    db.hook = ({ table, action }) => {
+      if (table === "ai_usage_limits" && action === "delete") {
+        db.hook = null;
+        db.tables.ai_usage_limits = db.tables.ai_usage_limits.filter((l) => l.user_id !== ADMIN);
+      }
+    };
+    const r = await post(ADMIN, { capUsd: null, userId: ADMIN });
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ ok: true, cleared: false, unchanged: true });
+    expect(capDetails()).toEqual([
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true },
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true, notApplied: true, error: "there was no override to clear" },
+    ]);
+    expect(notices()).toEqual([]);
+  });
+
+  it("a change to the default tells the other holders only — the members who follow it are not told one by one (GOV-10 done-when 4, restated)", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10, updated_by: ADMIN2 },
+      { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10, updated_by: ADMIN2 }];
+    expect((await post(ADMIN, { capUsd: 5 })).status).toBe(200);
+    expect(notices().map((n) => n.user_id)).toEqual([ADMIN2]);
+    expect(notices()[0].body).toBe("Ada changed the workspace's default monthly AI cap from $10 to $5.");
+    expect((await get(ENG)).json).toMatchObject({ capUsd: 5 });
+  });
+});
+
 describe("GOV-3 — the meter says what the server enforces", () => {
   it("a $0 cap reads locked, 0, 100% — and 0 is accepted as the lock, not as 'no cap'", async () => {
     expect((await post(ADMIN, { capUsd: 0, userId: ENG })).status).toBe(200);
@@ -1086,7 +1195,8 @@ describe("GOV-10 — the ban holds at WRITE time: two requests at once never rai
     expect((await get(ENG)).json).toMatchObject({ capUsd: 0, locked: true });
     expect(capDetails()).toEqual([
       { capUsd: 0, previousCapUsd: 10 },
-      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10 },
+      // the default's own figure, as ADMIN's own: a pin, said as one (fix pass 11)
+      { targetUserId: ADMIN, capUsd: 10, previousCapUsd: 10, pinnedAtDefault: true },
       { targetUserId: ADMIN, capUsd: 0, previousCapUsd: 10, compensated: true, overrideRemoved: true },
     ]);
     const told = notices().find((n) => n.user_id === ADMIN2 && n.title === "A monthly AI cap was put back")!;
@@ -1667,26 +1777,47 @@ describe("GOV-10 — the ban holds at WRITE time: two requests at once never rai
     expect(limitsOf(ADMIN)).toEqual([40]);
   });
 
-  it("the tenth review's S3: a raise of the default is recorded BEFORE it is made — one the log refuses is not made (503, nothing changed, no hold left), so another holder's trim of it can never pass as theirs", async () => {
+  it("the tenth review's S3, restated in fix pass 11: a raise of the default is recorded BEFORE it is made when the log takes it — but that row is no control, so one the log refuses still goes ahead (as at 052271b), never a 503; only a sole holder's own raise is refused unrecorded", async () => {
     // A holder with an override of their own, and one who follows the default (held).
     for (const own of [45, null] as const) {
-      db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 40, updated_by: ADMIN2 },
-        ...(own === null ? [] : [{ org_id: ORG, user_id: ADMIN, monthly_cap_usd: own, updated_by: ADMIN }])];
+      db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 40, updated_by: ADMIN2 }];
+      if (own !== null) db.tables.ai_usage_limits.push({ org_id: ORG, user_id: ADMIN, monthly_cap_usd: own, updated_by: ADMIN });
       db.tables.audit_logs = [];
       db.tables.notifications = [];
       db.errors["audit_logs:insert"] = { message: "audit write timed out" };
       const r = await post(ADMIN, { capUsd: 100 });
       delete db.errors["audit_logs:insert"];
-      expect(r.status, String(own)).toBe(503);
-      expect(String(r.json.error)).toMatch(/Couldn't write the audit record a raise of the workspace default needs before it is made, so nothing was changed: audit write timed out/);
-      expect(limitsOf(null)).toEqual([40]);
-      expect(limitsOf(ADMIN)).toEqual(own === null ? [] : [own]);
+      // was (fix pass 10): 503 "Couldn't write the audit record a raise of the workspace default needs…", nothing changed
+      expect(r.status, String(own)).toBe(200);
+      expect(r.json).toMatchObject({ ok: true, capUsd: 100 });
+      expect(limitsOf(null)).toEqual([100]);
+      // the follower is still held where they were; the one with an override keeps it
+      expect(limitsOf(ADMIN)).toEqual(own === null ? [40] : [own]);
+      if (own === null) expect(r.json).toMatchObject({ selfHeldAtUsd: 40 });
+      // the log refused every row, as at 052271b; the other holder is told all the same
       expect(db.tables.audit_logs).toHaveLength(0);
-      expect(notices()).toHaveLength(0);
+      expect(notices().filter((n) => n.user_id === ADMIN2).map((n) => n.title)).toContain("A monthly AI cap changed");
     }
 
-    // The reviewer's interleaving: ADMIN's own raise to $100 (its record
-    // refused) and ADMIN2's figure, both before ADMIN's override comes out.
+    // A refused record whose retry after the change lands: the raise is in the log once.
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 40, updated_by: ADMIN2 },
+      { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 45, updated_by: ADMIN }];
+    db.tables.audit_logs = [];
+    let refused = 0;
+    db.hook = ({ table, action }) => {
+      if (table === "audit_logs" && action === "insert" && refused === 0) { refused = 1; db.errors["audit_logs:insert"] = { message: "audit write timed out" }; }
+    };
+    db.after = ({ table, action }) => { if (table === "audit_logs" && action === "insert") delete db.errors["audit_logs:insert"]; };
+    const r = await post(ADMIN, { capUsd: 100 });
+    db.hook = null;
+    db.after = null;
+    expect(r.status).toBe(200);
+    expect(capDetails()).toEqual([{ capUsd: 100, previousCapUsd: 40 }]);
+
+    // GOV-15 (two requests in flight; out of this package's scope since the
+    // integrator's decision): an own raise the log refused is invisible to
+    // the re-read, so another holder's trim of it reads as their figure.
+    // Pinned so the transaction that closes it flips this expectation.
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 50, updated_by: ADMIN2 }];
     db.tables.audit_logs = [];
     const log: Array<{ status: number; json: Row }> = [];
@@ -1696,15 +1827,12 @@ describe("GOV-10 — the ban holds at WRITE time: two requests at once never rai
       delete db.errors["audit_logs:insert"];
       log.push(await post(ADMIN2, { capUsd: 90 }));
     });
-    const r = await post(ADMIN, { capUsd: 45, userId: ADMIN });
+    const raced = await post(ADMIN, { capUsd: 45, userId: ADMIN });
     db.hook = null;
     expect(phase()).toBe(4);
-    // was: 200 for ADMIN's raise (its record discarded), then ADMIN left at $90 "set by another"
-    expect(log.map((l) => l.status)).toEqual([503, 200]);
+    expect(log.map((l) => l.status)).toEqual([200, 200]);
     expect(limitsOf(null)).toEqual([90]);
-    // ADMIN never raised it: ADMIN2's $90 is their own raise from $40, and it stands
-    expect(r.json).toMatchObject({ selfCapUsd: 90, selfCapSetByAnother: true });
-    expect(r.json.selfCapOwnLowering).toBeUndefined();
+    expect(raced.json).toMatchObject({ selfCapUsd: 90, selfCapSetByAnother: true });
   });
 
   it("…and a raise of yours that did NOT land is not an own raise: its record and its not-applied companion share a writeId, and another holder's raise below it stands", async () => {

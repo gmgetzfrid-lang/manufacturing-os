@@ -86,8 +86,10 @@ type UsageView = AiUsageSummary & {
  *  (GOV-10): after a default raise, the setter's own cap when it is no
  *  longer where it started — `selfCapSetByAnother` when the figure that
  *  applies now is one another holder set (their raise, never a hold), and
- *  `selfCapOwnLowering` when it is the setter's own lowering of one. */
-type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean };
+ *  `selfCapOwnLowering` when it is the setter's own lowering of one;
+ *  `unchanged` when the cap already stood as asked, so nothing was written,
+ *  audited or told. */
+type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean; selfCapOwnLowering?: boolean; unchanged?: boolean };
 
 /** The meter line each feature writes, named for a person (GOV-1: every
  *  line counts against the one cap). An unknown op shows as itself. */
@@ -622,8 +624,11 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       // current figure (`selfHeldAtUsd`) — unless nobody else manages AI
       // caps, when yours follows it, recorded as such (`soleHolder`). A
       // figure another holder set while it was saved (`selfCapUsd` with
-      // `selfCapSetByAnother`) is theirs: never said as a hold.
-      showToast({ type: "success", title: cap === 0
+      // `selfCapSetByAnother`) is theirs: never said as a hold. A default
+      // already at that figure changed nothing, and is said so (`unchanged`).
+      showToast({ type: "success", title: res.unchanged === true
+        ? `The default monthly cap is already ${cap === 0 ? "$0 — AI is locked for everyone on the default" : `${fmtUsd(cap)} per person`}, so nothing changed.`
+        : cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
         : typeof res.selfCapUsd === "number"
           ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap is now ${fmtUsd(res.selfCapUsd)}${res.selfCapSetByAnother !== true ? ""
@@ -651,14 +656,20 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       // A raise of your OWN cap goes through only when nobody else manages
       // AI caps; the server says so (`soleHolder`), and so does the toast.
       const sole = " You're the only person who manages AI caps here, so your own raise went through — it is recorded in the audit log.";
+      // A cap that already stood as asked changed nothing (`unchanged`):
+      // nothing was written, audited or told, and the toast says so.
       if (value === "default") {
-        const res = await setAiCap(orgId, null, userId);
-        showToast({ type: "success", title: `${name} follows the workspace default again.${res.soleHolder === true ? sole : ""}` });
+        const res: CapSetView = await setAiCap(orgId, null, userId);
+        showToast({ type: "success", title: res.unchanged === true
+          ? `${name} already follows the workspace default, so nothing changed.`
+          : `${name} follows the workspace default again.${res.soleHolder === true ? sole : ""}` });
       } else {
-        const res = await setAiCap(orgId, Number(value), userId);
-        showToast({ type: "success", title: (Number(value) === 0
-          ? `${name}'s monthly cap set to $0 — AI is locked for them.`
-          : `${name}'s monthly cap set to $${Number(value)}.`) + (res.soleHolder === true ? sole : "") });
+        const res: CapSetView = await setAiCap(orgId, Number(value), userId);
+        showToast({ type: "success", title: res.unchanged === true
+          ? `${name}'s monthly cap is already ${Number(value) === 0 ? "$0 — AI is locked for them" : `$${Number(value)}`}, so nothing changed.`
+          : (Number(value) === 0
+            ? `${name}'s monthly cap set to $0 — AI is locked for them.`
+            : `${name}'s monthly cap set to $${Number(value)}.`) + (res.soleHolder === true ? sole : "") });
       }
       setTick((t) => t + 1);
     } catch (e) {
