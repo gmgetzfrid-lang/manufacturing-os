@@ -12,7 +12,9 @@ import { useRole } from "@/components/providers/RoleContext";
 import { getAiConnections } from "@/lib/knowledge";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
-import { KeyEditor, EmbeddingKeyEditor, UsagePanel } from "@/components/knowledge/AiSettingsModal";
+import {
+  KeyEditor, EmbeddingKeyEditor, UsagePanel, KeyStorageNotice, type KeyStorageInfo,
+} from "@/components/knowledge/AiSettingsModal";
 
 export default function IntelligenceSetupPage() {
   const { activeOrgId, hasAnyRole } = useRole();
@@ -57,6 +59,7 @@ export default function IntelligenceSetupPage() {
               onChanged={() => setReloadTick((t) => t + 1)} />
             <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
+            <KeyStorageNotice storage={(data as { keyStorage?: KeyStorageInfo }).keyStorage} />
           </>
         )}
 

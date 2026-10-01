@@ -50,12 +50,12 @@ import type { Role } from "@/types/schema";
 const EMBEDDING_PROVIDER_IDS: readonly string[] = ALLOWED_EMBEDDING_PROVIDERS;
 
 /** The meter line every live call from this route is written under. */
-export const CONNECTION_TEST_OP = "connectionTest";
+const CONNECTION_TEST_OP = "connectionTest";
 /** The fixed probe: no org content ever rides a connection test. */
 const PROBE = { system: "You are a connection test. Reply with exactly: OK", user: "Connection test." } as const;
 const PROBE_MAX_TOKENS = 500;
 /** Verify-on-save calls allowed per hour while the member is at their cap. */
-export const DE_MINIMIS_VERIFIES_PER_HOUR = 5;
+const DE_MINIMIS_VERIFIES_PER_HOUR = 5;
 
 export const runtime = "nodejs";
 

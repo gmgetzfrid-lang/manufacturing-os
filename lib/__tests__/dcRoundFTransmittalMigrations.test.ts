@@ -69,9 +69,11 @@ describe("20261132 — org_capability_allows_for learns transmittal.issue", () =
   const fn63 = fnBody(m63, H);
   const ADDED = `      WHEN 'transmittal.issue'        THEN '["Admin","DocCtrl"]'::jsonb`;
 
-  it("starts from the NEWEST definition: 20261063 was the last file to re-create the evaluator before this one, and this is the newest now", () => {
+  it("started from the NEWEST definition: 20261063 was the last file to re-create the evaluator before this one (later re-creations — 20261137 — build on this one)", () => {
     const definers = numbered.filter((f) => read(f).includes(`${H}(`));
-    expect(definers.slice(-2)).toEqual(["20261063_rp_roundE_audit_view_capability.sql", "20261132_dc_roundF_transmit_capability.sql"]);
+    const at = definers.indexOf("20261132_dc_roundF_transmit_capability.sql");
+    expect(at).toBeGreaterThan(0);
+    expect(definers[at - 1]).toBe("20261063_rp_roundE_audit_view_capability.sql");
   });
   it("is the 20261063 body plus exactly ONE line, placed after admin.audit_view — nothing removed, nothing else added", () => {
     const { onlyInA, onlyInB } = lineDiff(fn63, fn132);
@@ -81,12 +83,14 @@ describe("20261132 — org_capability_allows_for learns transmittal.issue", () =
     expect(fn132).toContain(`      WHEN 'admin.audit_view'         THEN '["Admin","Manager","Supervisor","DocCtrl","Auditor"]'::jsonb\n${ADDED}\n      ELSE '[]'::jsonb`);
     expect(fn132).toMatch(/org_capability_allows_for\(p_org UUID, p_cap TEXT, p_uid UUID, p_resource JSONB\)\s*\nRETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public/);
   });
-  it("the CASE mirrors CAPABILITY_DEFS exactly (every id, same defaults, same count)", () => {
+  it("the CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults) — ai.manage_caps (20261137) is the only later id it lacks", () => {
     const caseBlock = between(fn132, "v_tokens := CASE p_cap", "END;");
     const sql = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sql.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const d of CAPABILITY_DEFS) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
-    expect(sql.size).toBe(CAPABILITY_DEFS.length);
+    const later = new Set(["ai.manage_caps"]);
+    for (const d of CAPABILITY_DEFS) if (!later.has(d.id)) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
+    expect(sql.size).toBe(CAPABILITY_DEFS.length - later.size);
+    for (const id of later) expect(sql.has(id), id).toBe(false);
   });
   it("does not touch the 3-argument wrapper", () => {
     expect(m132).not.toMatch(/CREATE OR REPLACE FUNCTION org_capability_allows\(/);

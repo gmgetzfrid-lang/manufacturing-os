@@ -59,7 +59,8 @@ export type CapabilityId =
   | "admin.analytics_view"
   | "admin.archive_view"
   | "admin.audit_view"
-  | "transmittal.issue";        // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "transmittal.issue"         // TRX-1: issue / void / revoke / record receipt (drafting stays open)
+  | "ai.manage_caps";           // GOV-10: set the org-default and per-person monthly AI caps
 
 export interface CapabilityDef {
   id: CapabilityId;
@@ -148,6 +149,15 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "transmittal.issue", area: "Transmittals", label: "Issue transmittals",
     description: "Issue a drafted transmittal to its recipient, void it, revoke its portal link and record a receipt on the recipient's behalf. Every member may draft. Enforced at the database, which reads this policy per item library.",
     defaultRoles: ["Admin", "DocCtrl"] },
+  // GOV-10 (intelligence Round G): spend authority. Members spend their OWN
+  // provider keys under a monthly cap; who may set the workspace default and
+  // each person's cap is this capability, read by /api/ai/usage — never a
+  // role list. Default Admin only: Doc Control no longer raises caps unless
+  // the policy console grants it. Nobody raises their OWN cap with it (the
+  // route refuses), and every change notifies the other holders.
+  { id: "ai.manage_caps", area: "AI", label: "Manage AI spend caps",
+    description: "Set the workspace's default monthly AI cap and any person's own cap ($0 locks AI for them). Raising your own cap always takes another holder. Every change is audited and notifies the other holders.",
+    defaultRoles: ["Admin"] },
 ];
 
 /** A per-PERSON delegation of one capability — temporary (expiresAt) or

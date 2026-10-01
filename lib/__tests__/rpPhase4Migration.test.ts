@@ -16,7 +16,8 @@ const sql = readFileSync(join(migrationsDir, "20261038_rp_phase4_ticket_workflow
 // The WF-23 census must read the LIVE evaluator: every later migration that
 // re-creates it (20261052 added the resource dimension as
 // org_capability_allows_for; Round E's 20261063 added admin.audit_view;
-// document-control P7's 20261132 added transmittal.issue)
+// document-control P7's 20261132 added transmittal.issue; intelligence
+// Round G's 20261137 added ai.manage_caps)
 // carries the whole CASE forward, so the newest re-creation is the one the
 // database runs. 20261038's own body is still pinned below for its rails.
 const liveEvaluatorFile = readdirSync(migrationsDir)
@@ -86,14 +87,14 @@ describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS (the 
     expect(capFn).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
 
-  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — nothing changed; Round E added ticket.engineer_gate_exempt (20261057) and admin.audit_view (20261063), document-control P7 transmittal.issue (20261132)", () => {
+  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — nothing changed; Round E added ticket.engineer_gate_exempt (20261057) and admin.audit_view (20261063), document-control P7 transmittal.issue (20261132), intelligence Round G ai.manage_caps (20261137)", () => {
     const historical = caseDefaults(historicalCapFn);
     expect(historical.size).toBe(17);
     expect(historical.has("ticket.engineer_gate_exempt")).toBe(false);
     expect(historical.has("admin.audit_view")).toBe(false);
     expect(historical.has("transmittal.issue")).toBe(false);
     for (const [cap, tokens] of historical) expect(sqlDefaults.get(cap), cap).toEqual(tokens);
-    expect([...sqlDefaults.keys()].filter((c) => !historical.has(c)).sort()).toEqual(["admin.audit_view", "ticket.engineer_gate_exempt", "transmittal.issue"]);
+    expect([...sqlDefaults.keys()].filter((c) => !historical.has(c)).sort()).toEqual(["admin.audit_view", "ai.manage_caps", "ticket.engineer_gate_exempt", "transmittal.issue"]);
   });
 });
 

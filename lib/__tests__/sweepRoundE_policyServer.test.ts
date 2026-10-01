@@ -220,16 +220,17 @@ describe("20261057 — the SQL default CASE gains the engineer-gate row, byte-fa
     expect(m57).not.toMatch(/DROP FUNCTION/);
     expect(fn57).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
-  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows as of this migration; 20261063 carries the row forward and adds admin.audit_view, 20261132 transmittal.issue) and still denies unknowns", () => {
+  it("the CASE mirrors CAPABILITY_DEFS capability-for-capability (18 rows as of this migration; 20261063 carries the row forward and adds admin.audit_view, 20261132 transmittal.issue, 20261137 ai.manage_caps) and still denies unknowns", () => {
     const caseBlock = between(fn57, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
     for (const [id, roles] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
     expect(sqlDefaults.size).toBe(18);
     // the only capabilities this (superseded) CASE lacks are package D's and
-    // document-control P7's (20261132) — the live census is rpPhase4Migration.test.ts
-    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["admin.audit_view", "transmittal.issue"]);
-    expect(CAPABILITY_DEFS.length).toBe(20);
+    // document-control P7's (20261132) and intelligence Round G's (20261137)
+    // — the live census is rpPhase4Migration.test.ts
+    expect(CAPABILITY_DEFS.map((d) => d.id).filter((id) => !sqlDefaults.has(id))).toEqual(["admin.audit_view", "transmittal.issue", "ai.manage_caps"]);
+    expect(CAPABILITY_DEFS.length).toBe(21);
     expect(caseBlock).toMatch(/ELSE '\[\]'::jsonb/);
   });
   it("one paste: BEGIN/COMMIT around the DDL, then ONE final SELECT of probes (ok boolean) and aggregate counts (n text)", () => {
