@@ -941,7 +941,7 @@ Tests — new `lib/__tests__/sec18ResolveExportDisposition.test.ts`, signing wit
 ## SEC-19 · Contractor intake tokens are stored in plaintext — any read of the table is a working door credential
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading)
 - **Blast radius:** security
@@ -961,6 +961,20 @@ Tests — new `lib/__tests__/sec18ResolveExportDisposition.test.ts`, signing wit
 - Both public routes resolve a link by the token's hash.
 - A lost link is re-issued, never read back.
 
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS, the plan's default (SHA-256 hex of the token, compared by hash; links minted before the migration hashed in place). Reproduced first: at `55e281d` `project_intake_links.token` held the plain credential (`20260902:22`), both public routes looked a link up with `.eq("token", token)`, and the Intake and Costs tabs selected `token` to build Copy link / the RFQ.
+- **Migration `20261141_prj_roundG_intake_token_hash_and_adoption.sql`** (section 1): `token_hash` (sha256 hex) and `token_prefix` (six characters, so a person can tell links apart) are added; `token` loses NOT NULL and every existing link is **hashed in place** (its token nulled) — the contractors' URLs keep working, because the routes hash what is presented. `trg_project_intake_links_hash_token` (BEFORE INSERT OR UPDATE, search_path pinned, not SECURITY DEFINER, EXECUTE revoked from PUBLIC and anon) hashes any `token` a writer sends — the tabs' mint, a re-issue, an older client, the org restore's revoked placeholder — and nulls it; writing `token_hash` / `token_prefix` directly on an existing link is refused (the credential changes only by re-issue). `CHECK project_intake_links_no_plain_token (token IS NULL)` keeps the table itself free of a usable token whatever writes it; `token_hash` carries a unique partial index (the lookup key). 20261104's TTL CHECK, budget columns and `bump_intake_use` grants are untouched. DEC-30 inventory (counts only): links, links stored in plain before apply, live links, shared tokens (expect 0).
+- **Both public routes resolve a link by the hash**: `lib/intakeLinks.ts` `readIntakeLinkByToken` (`.eq("token_hash", sha256)`; on a database without the column — before 20261141 — the plain column, so the door works on either side of the paste); `app/api/intake/upload/route.ts` passes the `tokenHash` the rate window already keys on, `app/api/intake/resolve/route.ts` `sha256Hex(token)`.
+- **Mint once, re-issue never read back**: `components/projects/IntakePanel.tsx` and `components/projects/cost/QuotesPanel.tsx` mint with `newIntakeToken()` and keep the address for the session only (`freshUrls`) — "shown only this once"; the lists select `token_prefix` (the plain column only before 20261141, `firstReadWithColumns`), show `prefix…`, and offer **Re-issue** (`reissueIntakeLink`: a new token on the same live link — its id, authorship, assignments, history and budget stay; the old address stops working; zero rows refused; audited `INTAKE_LINK_REISSUED` naming the link, never token material) where Copy link / RFQ used to read the token back.
+- **DEC-45 unchanged in kind**: `lib/exportTables.ts` redacts `token_hash` and `token_prefix` with `token` (the hash is what a presented token is matched by — reinstating it from a backup would revive the link; the coverage tripwire names both as credential columns), and a restored link still arrives REVOKED with an unguessable placeholder the trigger hashes.
+Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: the one-paste shape; "adds token_hash / token_prefix … hashes every existing link IN PLACE before the trigger exists"; "the trigger hashes any written token and nulls it; a direct hash write on an existing link is refused"; "the database holds no usable token (CHECK)…"; "the database's hash is the routes' hash" (the probe's vector is node:crypto's); "20261104's TTL CHECK … not touched"; the lib — "readIntakeLinkByToken looks a link up by the token's hash — never by the token", "before 20261141 … it reads the plain column; any other error is returned", "both public routes find the link through it", "the lists show a prefix, never read the token back…", "re-issue writes a NEW token on the live link only, refuses zero rows, and audits the link — never token material", "DEC-45: the export redacts the hash and its prefix". The intake route suites (`intakeUploadRoute`, `intakeAutoPublishAcks`, `dcRoundFReviewGate`) now seed links as the migrated table holds them (`token: null`, `token_hash`) and pass unchanged otherwise. **Scratch PostgreSQL 16 cluster** (a Supabase-shaped stub: `auth.uid()` from the JWT claim, anon / authenticated / service_role, default grants): 20261141 applied in one paste, every probe `t`; two plain links hashed in place (`sha256('abc')` = node's); an owner's insert stored `token NULL`, the hash and `newtok`; a re-issue re-hashed; a direct `token_hash` write refused; a revoke passed; a service-role placeholder hashed; with the trigger disabled the CHECK still refused a plain token; a lookup by hash found the link, by the old token nothing.
+
+**Done-when.**
+- No column of `project_intake_links` holds a usable token — ✓ (pending `20261141`: hash + CHECK).
+- Both public routes resolve a link by the token's hash — ✓.
+- A lost link is re-issued, never read back — ✓ (both tabs).
+
+**Scope / residual.** Pending migration: `20261141`. Until it is applied the plain column is still read (the fallback) — the paste closes it. `token_prefix` is six of forty characters (not a credential). This also makes projects-tab `SEC-16` done-when 1 ("the raw token is not retrievable from the client after the creation response") true once 20261141 is live — `SEC-16` is not this package's record; its owner should cross-reference.
+
 ---
 
 ## SEC-20 · Audit rows about a private project are readable by every org member
@@ -968,7 +982,7 @@ Tests — new `lib/__tests__/sec18ResolveExportDisposition.test.ts`, signing wit
 *Numbered SEC-20 on this branch: package J1, in parallel, opened `SEC-19` (intake tokens stored in plaintext) in this report. If the numbers collide at merge the integrator renumbers.*
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects J11 PROJECTS RESIDUALS — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (policy read; not exercised against a live database)
 - **Blast radius:** data-confidentiality
@@ -1015,6 +1029,17 @@ snapshot. Keep the insert policy as it is.
 - The audit roles still read every row (the `/admin/audit` page is unchanged for them), including `PROJECT_DELETED` and `PURGE_PROJECT_SNAPSHOT`.
 - A policy census pins it (extend `lib/__tests__/projectsRls.test.ts`).
 
+**Resolution (2026-10-01, projects Round G).** Package J11 PROJECTS RESIDUALS. Reproduced first: the NEWEST definition of the overlay is `20261063` (`grep -n "CREATE POLICY audit_logs_admin_trail"` finds 20261045 and 20261063 only) — it narrows only the org-level authority trail, so with the base `audit_logs_org_access` (`schema.sql:1122`) every `project` / `cost` row was any member's; `projectsRls.test.ts` "before 20261142 the overlay narrowed only the org-level trail…" pins that state, and on the scratch cluster below a member who is not on the private project read its `COST_DOC_AWARDED`, `COST_ENTRY_POSTED` and `CHANGE_ORDER_APPROVED` rows before the migration.
+- **Migration `20261142_prj_roundG_project_audit_rows.sql`**: `audit_row_project_visible(p_type, p_resource)` — SECURITY INVOKER (it reads only what the caller may read; no privilege of its own), search_path pinned, EXECUTE to anon / authenticated / service_role (it is evaluated inside a policy that applies to every role): a `project` row → `project_visible_to_me(resource_id)`; a `cost` row → the cost row's project, through each table a `cost` writer names (`cost_documents`, `cost_entries`, `cost_accounts`, `project_parties` — `lib/timeline.ts`'s vocabulary); a non-UUID id or a gone project / cost row → not visible (the audit roles still read it — the intent for `PROJECT_DELETED` and `PURGE_PROJECT_SNAPSHOT`); any other resource type → true. `audit_logs_admin_trail` is re-created from 20261063's body **byte for byte with ONE added clause** — `AND audit_row_project_visible(resource_type, resource_id)` — so it reads *audit viewer OR (not the org-level trail AND project-visible)*: the audit roles (`admin.audit_view` through the policy evaluator, unchanged) read every row; everyone else reads a project / cost row only when they can see the project. RESTRICTIVE, no TO clause (as 20261063); the INSERT policy and the base member policy are untouched. DEC-30 inventory (counts only): project / cost rows, rows about a private project, rows whose project or cost record is gone, the audit-view population.
+Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re-creates the overlay after 20261063", "lineDiff: nothing of 20261063's body is lost; only the comment and the project clause are added", "still RESTRICTIVE SELECT, still no TO clause, and the INSERT policy and the base member policy are untouched", "audit_row_project_visible: SECURITY INVOKER … project rows by project_visible_to_me, cost rows through every 'cost' writer's table", "every 'cost' audit writer names a row of those four tables"; the census the record asked for — `lib/__tests__/projectsRls.test.ts` now replays `audit_logs`: "the final audit_logs set: one permissive member read, one insert, and ONE restrictive overlay that gates project / cost rows on audit_row_project_visible", and the reproduction above. **Scratch PostgreSQL 16 cluster** (Supabase-shaped stub, 20261063's overlay verbatim, 20260913's `project_visible_to_me` verbatim): every probe `t`; a member not on the private project then read the open project's and the document rows only (no private `project` / `cost` row, no deleted project's); the private project's owner read its rows; the Admin (audit viewer) read all 14 rows, `PROJECT_DELETED` / `PURGE_PROJECT_SNAPSHOT` included; anon read 0 rows without an error.
+
+**Done-when.**
+- A member who cannot see a private project receives zero `project` / `cost` audit rows for it — ✓ (pending `20261142`).
+- The audit roles still read every row (the `/admin/audit` page is unchanged for them), including `PROJECT_DELETED` and `PURGE_PROJECT_SNAPSHOT` — ✓.
+- A policy census pins it (extend `lib/__tests__/projectsRls.test.ts`) — ✓.
+
+**Scope / residual.** Pending migration: `20261142`. **Handoff:** admin-and-org P7 owns audit-log integrity (append-only, the trail's own rails) — it builds on this definition of `audit_logs_admin_trail`, and the lineDiff test pins it against 20261063. Audit rows under other resource types that carry a `projectId` only in `details` (`project_intake_link`, a document row written by the door) are not project rows by this rule — they follow their own resource type, as before.
+
 ---
 
 ## Report progress
@@ -1039,5 +1064,5 @@ snapshot. Keep the insert policy as it is.
 | SEC-16 | MEDIUM | OPEN |
 | SEC-17 | MEDIUM | RESOLVED |
 | SEC-18 | MEDIUM | RESOLVED |
-| SEC-19 | LOW | OPEN |
-| SEC-20 | MEDIUM | OPEN |
+| SEC-19 | LOW | RESOLVED |
+| SEC-20 | MEDIUM | RESOLVED |
