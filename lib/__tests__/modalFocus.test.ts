@@ -201,6 +201,89 @@ describe("Modal — dismissal is unchanged for one modal", () => {
   });
 });
 
+describe("Modal — keys another handler owns (fix pass)", () => {
+  /** A modal whose LAST control is a textarea that handles Tab itself (as
+   *  MentionableTextarea does to insert a mention). */
+  function Comment({ onClose }: { onClose: () => void }) {
+    return modal({ onClose },
+      h(ModalHeader, { title: "Comment" }),
+      h(ModalBody, null,
+        h("input", { id: "subject" }),
+        h("textarea", { id: "mention", onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Tab") e.preventDefault(); } })),
+    );
+  }
+
+  it("a Tab a control inside the panel already handled is left alone — focus stays on the control, never yanked to the first field", async () => {
+    await act(async () => { root.render(h(Comment, { onClose: vi.fn() })); });
+    const ta = document.getElementById("mention") as HTMLTextAreaElement;
+    ta.focus();
+    const e = key("Tab");
+    expect(e.defaultPrevented).toBe(true);           // the textarea's own handling
+    expect(document.activeElement).toBe(ta);         // the trap did not move it
+    // a Tab nobody handled on the same last control would wrap (the trap still works)
+    (document.getElementById("subject") as HTMLInputElement).focus();
+    expect(key("Tab", { shiftKey: true }).defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(ta);
+  });
+
+  it("focus in an overlay the modal does not own (a portaled listbox, another aria-modal dialog opened above it) keeps its own Tab", async () => {
+    await openHarness();
+    for (const attrs of [{ role: "listbox" }, { role: "dialog", "aria-modal": "true" }]) {
+      const overlay = document.createElement("div");
+      for (const [k, v] of Object.entries(attrs)) overlay.setAttribute(k, v);
+      const opt = document.createElement("button");
+      opt.textContent = "Option";
+      overlay.appendChild(opt);
+      document.body.appendChild(overlay);
+      opt.focus();
+      const e = key("Tab");
+      expect(e.defaultPrevented, attrs.role).toBe(false);
+      expect(document.activeElement, attrs.role).toBe(opt);
+      overlay.remove();
+    }
+    // focus that escaped to the page behind is still brought back in
+    (document.getElementById("behind") as HTMLButtonElement).focus();
+    expect(key("Tab").defaultPrevented).toBe(true);
+    expect(dialogs()[0].contains(document.activeElement)).toBe(true);
+  });
+
+  it("Escape handled by a page-level handler OUTSIDE the panel (an overlay under the dialog) cannot stop the topmost modal cancelling; one handled INSIDE the panel can", async () => {
+    const pageHandler = (e: KeyboardEvent) => { if (e.key === "Escape") e.preventDefault(); };
+    window.addEventListener("keydown", pageHandler);
+    try {
+      const onClose = vi.fn();
+      await openHarness({ onClose });
+      (document.getElementById("first-field") as HTMLInputElement).focus();
+      await act(async () => { key("Escape"); });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(dialogs()).toHaveLength(0);
+    } finally {
+      window.removeEventListener("keydown", pageHandler);
+    }
+    // a control INSIDE the panel that takes Escape keeps the dialog open
+    act(() => root.unmount());
+    root = createRoot(host);
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(modal({ onClose },
+        h(ModalHeader, { title: "Search" }),
+        h(ModalBody, null, h("input", { id: "combo", onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Escape") e.preventDefault(); } }))));
+    });
+    (document.getElementById("combo") as HTMLInputElement).focus();
+    await act(async () => { key("Escape"); });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(dialogs()).toHaveLength(1);
+  });
+
+  it("the keys are read on document (after a control's handler, before a page-level window handler)", () => {
+    const m = src("components/ui/Modal.tsx");
+    expect(m).toContain('document.addEventListener("keydown", onKey);');
+    expect(m).not.toContain('window.addEventListener("keydown", onKey)');
+    expect(m).toContain('if (e.key !== "Tab" || e.defaultPrevented) return;');
+    expect(m).toContain("const handledInside = e.defaultPrevented && !!panel && e.target instanceof Node && panel.contains(e.target);");
+  });
+});
+
 describe("Modal — focus restore", () => {
   it("closing returns focus to the element that opened it", async () => {
     const opener = await openHarness();
@@ -442,7 +525,7 @@ describe("A11Y-4 — the five modals compose the shared Modal", () => {
     expect(page).not.toMatch(/fixed inset-0 z-\[200\]/);
     expect(page).toContain('<ModalHeader title="Lessons learned" onClose={lessonsBusy ? undefined : () => void discardLessons()}');
     expect(page).toMatch(/<Modal size="md" dismissable=\{!transitionBusy\}/);
-    expect(page).toContain("onClose={transitionBusy ? undefined : () => { setPendingStatus(null); setStatusReason(\"\"); setActionError(null); }} />");
+    expect(page).toContain("onClose={transitionBusy ? undefined : () => void discardTransition()} />");
     expect(page).toContain('{actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}');
     for (const f of ["components/projects/ProjectWizard.tsx", "app/(protected)/companies/page.tsx", "app/(protected)/companies/[id]/page.tsx"]) {
       expect(src(f), f).not.toMatch(/fixed inset-0 z-\[200\]/);
@@ -491,6 +574,19 @@ describe("A11Y-4 — the five modals compose the shared Modal", () => {
     expect(page).toContain('<Modal size="lg" dismissable={!lessonsBusy} className="overflow-hidden" onClose={() => void discardLessons()}>');
     expect(page).toContain("<button onClick={() => void discardLessons()} disabled={lessonsBusy}");
     expect(page).not.toContain("<button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}");
+    // the status-transition confirm (fix pass): Escape / the backdrop (the
+    // Modal's onClose), the header X and Cancel all go through
+    // discardTransition, which asks when a reason was typed — a
+    // cancellation's reason is mandatory, so a misclick never loses it.
+    const transition = page.slice(page.indexOf("{/* TRANSITION CONFIRM */}"));
+    expect(transition).toContain('<Modal size="md" dismissable={!transitionBusy} className="overflow-hidden"\n          onClose={() => void discardTransition()}>');
+    expect(transition).toContain("onClose={transitionBusy ? undefined : () => void discardTransition()} />");
+    expect(transition).toContain("<button onClick={() => void discardTransition()} disabled={transitionBusy}");
+    expect(transition).not.toContain('setPendingStatus(null); setStatusReason(""); setActionError(null); }}');
+    const discard = page.slice(page.indexOf("const discardTransition = async () => {"), page.indexOf("const handleTransition = async () => {"));
+    expect(discard).toContain("if (transitionBusy) return;");
+    expect(discard).toMatch(/if \(statusReason\.trim\(\)\s+&& !\(await appConfirm\(\{ title: "Discard your reason\?"/);
+    expect(discard).toContain('setPendingStatus(null); setStatusReason(""); setActionError(null);');
     // the wizard's header X
     const confirm = vi.fn(() => false);
     vi.stubGlobal("confirm", confirm);

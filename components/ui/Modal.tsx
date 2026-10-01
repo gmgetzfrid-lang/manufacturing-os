@@ -21,10 +21,17 @@
 // focus). Closing returns focus to the element that opened it — only when
 // that element is still in the document, and only when focus has nowhere
 // better to be (it was inside the dialog that just went away). Escape
-// closes the topmost dismissable modal only, and never when something
-// inside handled it first (an open HelpTooltip marks its Escape handled).
-// A closed modal is unmounted, so nothing ever traps for a modal that is
-// not on screen. ModalHeader's title names the dialog (aria-labelledby).
+// closes the topmost dismissable modal only (DEC-44 (J10) item 5), and never
+// when something INSIDE its panel handled it first (an open HelpTooltip, an
+// editor) — a key handled by a page-level handler outside the panel (an
+// overlay under a confirm) cannot stop the confirm cancelling. The keys are
+// read on `document`, after a control's own handler and before any
+// page-level `window` handler. A Tab a control already handled (a textarea
+// that inserts a mention) is left alone, and so is a Tab while focus sits in
+// an overlay the modal does not own (another dialog, a portaled listbox or
+// menu above it). A closed modal is unmounted, so nothing ever traps for a
+// modal that is not on screen. ModalHeader's title names the dialog
+// (aria-labelledby).
 
 import React, { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -55,6 +62,10 @@ function focusables(panel: HTMLElement): HTMLElement[] {
   return [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)]
     .filter((el) => el.tabIndex >= 0 && !el.closest("[inert], [hidden]"));
 }
+
+/** An overlay root a Modal does not own: focus inside one belongs to that
+ *  overlay (another dialog, a portaled listbox or menu opened above). */
+const FOREIGN_OVERLAY = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="listbox"], [role="menu"], [data-overlay]';
 
 /** Focus the first element of `list` that actually takes focus (one that is
  *  not rendered — display:none — refuses it in a browser). */
@@ -126,17 +137,26 @@ export function Modal({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isTopmost(modalId)) return;
+      const panel = panelRef.current;
       if (e.key === "Escape") {
-        if (dismissable && !e.defaultPrevented) onClose();
+        // Handled already by something inside this panel (a tooltip, an
+        // editor): theirs. Handled only outside it: still ours to cancel.
+        const handledInside = e.defaultPrevented && !!panel && e.target instanceof Node && panel.contains(e.target);
+        if (dismissable && !handledInside) onClose();
         return;
       }
-      if (e.key !== "Tab") return;
-      const panel = panelRef.current;
+      if (e.key !== "Tab" || e.defaultPrevented) return;
       if (!panel) return;
-      const list = focusables(panel);
       const active = document.activeElement as HTMLElement | null;
-      if (list.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return; }
       const inside = !!active && active !== panel && panel.contains(active);
+      // Focus in an overlay this modal does not own (one opened above it):
+      // that overlay's Tab, not ours.
+      if (!inside && active) {
+        const foreign = active.closest(FOREIGN_OVERLAY);
+        if (foreign && !dialogRef.current?.contains(foreign)) return;
+      }
+      const list = focusables(panel);
+      if (list.length === 0) { e.preventDefault(); panel.focus({ preventScroll: true }); return; }
       if (!inside) {
         e.preventDefault();
         focusFirstOf(e.shiftKey ? [...list].reverse() : list);
@@ -148,8 +168,10 @@ export function Modal({
       if (!e.shiftKey && after.length === 0) { e.preventDefault(); focusFirstOf(list); }
       else if (e.shiftKey && before.length === 0) { e.preventDefault(); focusFirstOf([...list].reverse()); }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // On `document`: after a control's own (React) handler inside the panel,
+    // before any page-level `window` handler.
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [modalId, dismissable, onClose]);
 
   // Modals are interaction-driven, so the document always exists by the

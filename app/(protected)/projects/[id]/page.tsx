@@ -341,6 +341,16 @@ export default function ProjectDetailPage() {
     } finally { setPosting(false); }
   };
 
+  /** A11Y-4: every way out of the status-transition confirm (Escape, the
+   *  backdrop, the header X, Cancel) asks before discarding a typed reason —
+   *  a cancellation's is mandatory — and closes at once when none was typed. */
+  const discardTransition = async () => {
+    if (transitionBusy) return;
+    if (statusReason.trim()
+      && !(await appConfirm({ title: "Discard your reason?", message: "The reason you typed has not been recorded, and the project's status is unchanged.", confirmLabel: "Discard", tone: "danger" }))) return;
+    setPendingStatus(null); setStatusReason(""); setActionError(null);
+  };
+
   const handleTransition = async () => {
     if (!project || !uid || !pendingStatus) return;
     if (pendingStatus === "cancelled" && !statusReason.trim()) {
@@ -756,7 +766,7 @@ export default function ProjectDetailPage() {
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
         <Modal size="md" dismissable={!transitionBusy} className="overflow-hidden"
-          onClose={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }}>
+          onClose={() => void discardTransition()}>
             <ModalHeader
               title={pendingStatus === "cancelled" ? "Cancel project" :
                 pendingStatus === "completed" ? "Mark project complete" :
@@ -766,7 +776,7 @@ export default function ProjectDetailPage() {
               subtitle={pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
                 ? "Active checkouts on this project will be released. A checkout you are not allowed to release stays with its holder, and you will be told who still holds what. The project's contractor intake links are revoked, and its cost, quality and schedule records become read-only until an Admin / Document Control reopens it."
                 : "No checkouts will be affected."}
-              onClose={transitionBusy ? undefined : () => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} />
+              onClose={transitionBusy ? undefined : () => void discardTransition()} />
             <div className="overflow-y-auto min-h-0">
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
@@ -811,7 +821,7 @@ export default function ProjectDetailPage() {
             </div>
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
-              <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
+              <button onClick={() => void discardTransition()} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
