@@ -169,4 +169,13 @@ describe("DRLS-14 — the doors that delete a document, and the ones that never 
     expect(page).toContain('const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);');
     expect(page).toContain("if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: \"danger\" }); return; }");
   });
+
+  it("P14 final review — a library delete on /admin/libraries shows the database's sentence too, and a delete that matched no row is a refusal (driven rendered in dcRoundFLibraryDeleteRefusal.test.ts)", () => {
+    const page = src("app/(protected)/admin/libraries/page.tsx");
+    expect(page).toContain('const { data: deleted, error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!).select("id");');
+    expect(page).toContain("if (error) throw new Error(error.message);");
+    expect(page).toContain("if (!deleted || deleted.length === 0) {");
+    expect(page).toContain("await appAlert({ message: `Delete failed: ${typeof why === \"string\" && why ? why : \"the library was not deleted.\"}`, tone: \"danger\" });");
+    expect(page).not.toContain("Failed to delete library.");
+  });
 });
