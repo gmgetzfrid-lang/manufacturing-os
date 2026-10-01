@@ -233,6 +233,32 @@ answer refuses the re-index before anything is reset. Every other reader of
 `capUsd` 0) is a refusal, never "no cap". Today the only other reader is AI
 settings, which already does.
 
+**The Voyage "placeholder rate" label — I-02 / I-02b's limb** (`GOV-6`,
+`SEM-13`; I-05 fix pass 5). `embeddingRateIsPlaceholder(model)`
+(`lib/ai/embeddings.ts`, line 387 at I-05's head) returns true for EVERY
+Voyage model, and `/api/knowledge/embed` sends it as `placeholderRate`
+(line 144), so the meaning-index panel (`SemanticIndexPanel`) labels every
+Voyage estimate "this provider's rate in the app is a conservative
+placeholder". Since I-05, `lib/ai/pricing.ts` prices the three Voyage models
+the app offers from Voyage's published list (the three named Voyage rows
+above the family row), and the ledger charges exactly that. Limb:
+`embeddingRateIsPlaceholder` returns false for a model one of those three
+rows prices and true only for a Voyage model that falls through to the bare
+`voyage-` family row. The tests flip with it: `lib/__tests__/embeddings.test.ts`
+(line 297 asserts the lite model is a placeholder) expects false for the
+three and true for an unlisted Voyage model, and `embedStatusShape.test.ts`'s
+`placeholderRate: true` follows its model.
+
+**GOV-11's interactive-ingest agreement limb — landed in I-05 (fix pass 5);
+nothing to re-assign.** `app/api/knowledge/ingest/route.ts` (I-06's, merged)
+now reads `ai_key_agreements` for the requester at `AGREEMENT_VERSION`
+before it builds the `VisionContext`. Unsigned, or signed an older version,
+skips vision only and says so; an unreadable record is never taken as
+signed. The census lists the route INLINE, no longer PENDING. Whoever next
+edits the route keeps the read (tests: `aiUsageOutageIngest.test.ts`
+"GOV-11 — …", `aiGateCensus.test.ts`; `ingestRoute.test.ts`'s seed signs the
+agreement). GOV-11 stays OPEN only for flows/read (I-09) and locate (I-07).
+
 **`20261137` re-creates TWO functions** (I-05 fix pass 3): besides
 `org_capability_allows_for` (one CASE row), `capability_policy_write_guard`
 from `20261056` with `'ai.manage_caps'` added to its critical list
