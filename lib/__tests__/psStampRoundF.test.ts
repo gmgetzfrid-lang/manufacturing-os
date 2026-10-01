@@ -66,3 +66,20 @@ describe("PKG-13 — the viewer's markup export bakes through the shared rotatio
     expect(m).toMatch(/export async function bakeMarkupIntoPdf\([\s\S]*?await bakeMarkupIntoDoc\(pdfDoc, pageStates\);/);
   });
 });
+
+// ─── SHR-8: the server path's placement is stated, not implied ─────────────
+describe("SHR-8 — the share route no longer claims a placement parity it cannot have", () => {
+  it("the route header says the server stamp is placed blind, by the title-block-aware fallback", () => {
+    const r = src("app/api/share/file/route.ts");
+    expect(r).toContain("stamped with the same applyStampToPdfDoc as internal downloads — the same");
+    expect(r).toContain("marks, but placed BLIND: a server has no DOM for the ink analysis the");
+    expect(r).toContain("fallback (top-left, clear of the right-hand title block — SHR-8).");
+  });
+  it("lib/stamping falls back to fallbackInk + titleBlockReserve — never a constant that assumes a blank bottom-right", () => {
+    const s = src("lib/stamping.ts");
+    expect(s).toContain("const pageInk: PageInk = measured ?? fallbackInk(width, height);");
+    expect(s).toContain("reserveRight: measured ? 0 : titleBlockReserve(width),");
+    expect(s).not.toMatch(/FALLBACK_INK/);
+    expect(src("lib/stampLayout.ts")).not.toMatch(/corners: \{ br: 0,/);
+  });
+});

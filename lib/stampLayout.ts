@@ -145,13 +145,37 @@ export function pickFooterEdge(topBand: number, bottomBand: number, margin = 0.0
   return bottomBand > topBand + margin ? "top" : "bottom";
 }
 
-/** Neutral fallback when raster analysis isn't available (no DOM, render
- *  failure): the historical placements. */
-export const FALLBACK_INK: PageInk = {
-  corners: { br: 0, bl: 1, tr: 1, tl: 1 },
-  topBand: 1,
-  bottomBand: 0,
-};
+/**
+ * Blind placement (SHR-8) — when raster analysis isn't available: no DOM,
+ * which is EVERY server route (the share download, the transmittal portal),
+ * or a render failure. The old fallback asserted that the bottom-right corner
+ * and the bottom band were blank — on an engineering drawing that is the
+ * title block (ISO 7200 and ASME Y14.1 both put it at the bottom-right), and
+ * the top-right usually carries the revision block. Blind, nothing is drawn
+ * on the right-hand side of either band:
+ *   * the QR goes top-left — the one corner neither standard gives a block;
+ *   * the footer runs from the left edge: along the TOP of a landscape sheet
+ *     (a small sheet's title block can span most of its bottom), along the
+ *     BOTTOM of a portrait page (a text page's footer margin), and
+ *     titleBlockReserve() keeps it clear of the right-hand blocks.
+ * The values are pseudo-densities that steer pickQrCorner / pickFooterEdge.
+ */
+export function fallbackInk(pageW: number, pageH: number): PageInk {
+  const landscape = pageW > pageH;
+  return {
+    corners: { br: 1, bl: 1, tr: 1, tl: 0 },
+    topBand: landscape ? 0 : 1,
+    bottomBand: landscape ? 1 : 0,
+  };
+}
+
+/** Blind placement: how much of a band's right-hand side the footer leaves to
+ *  the title block (bottom) or revision block (top). ASME Y14.1's title block
+ *  is ≈ 6¼ in (450 pt) wide and ISO 7200's at most 180 mm (≈ 510 pt); capped
+ *  at half the sheet so a small page keeps room for the footer. */
+export function titleBlockReserve(pageW: number): number {
+  return Math.min(pageW * 0.5, 520);
+}
 
 // ─── Page rotation: measure and draw in ONE space (PHYS-12 / PKG-13) ─────
 //

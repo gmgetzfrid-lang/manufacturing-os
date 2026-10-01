@@ -18,9 +18,12 @@
 //     rasterizing the page at thumbnail size (pdf.js) and comparing ink
 //     density in the four corners. White backing plate, clamped on-page.
 //
-// The raster analysis is best-effort: no DOM, worker failure, or a page
-// that won't render simply falls back to the historical bottom-right/bottom
-// placements. The pure math lives in lib/stampLayout.ts (unit-tested).
+// The raster analysis is best-effort: no DOM (every server route), worker
+// failure, or a page that won't render falls back to the BLIND placement —
+// title-block-aware (SHR-8): QR top-left, footer from the left edge, nothing
+// on the right-hand side of either band, where a drawing's title block and
+// revision block live (lib/stampLayout.ts fallbackInk / titleBlockReserve).
+// The pure math lives in lib/stampLayout.ts (unit-tested).
 //
 // Rotated sheets (PHYS-12 / PKG-13): pdf.js measures a page AS DISPLAYED
 // (its /Rotate applied); pdf-lib draws in the unrotated MediaBox. Every mark
@@ -33,7 +36,7 @@ import {
   fitRotatedTextSize, centerRotatedText, wrapToWidth,
   pickQrCorner, pickFooterEdge, placeQr,
   normalizeRotation, displaySize, displayToUser,
-  FALLBACK_INK, type PageInk, type Corner,
+  fallbackInk, titleBlockReserve, type PageInk, type Corner,
 } from "@/lib/stampLayout";
 
 export type StampOptions = {
@@ -51,7 +54,8 @@ export type StampOptions = {
   verifyUrl?: string;
   /** The original PDF bytes. When provided (and a DOM exists), each page is
    *  rasterized at thumbnail size to find its empty regions so the QR and
-   *  footer land where the drawing ISN'T. Omit → conventional placements. */
+   *  footer land where the drawing ISN'T. Omit (or no DOM) → the blind,
+   *  title-block-aware placement (SHR-8). */
   sourceBytes?: ArrayBuffer | Uint8Array;
 };
 
@@ -151,7 +155,7 @@ async function analyzePageInk(source: ArrayBuffer | Uint8Array): Promise<PageInk
       void doc.destroy();
     }
   } catch (e) {
-    console.warn("[stamping] page analysis unavailable — using conventional placements", e);
+    console.warn("[stamping] page analysis unavailable — using the blind, title-block-aware placement", e);
     return null;
   }
 }
@@ -217,8 +221,11 @@ function drawFooter(input: {
   opts: StampOptions;
   edge: "top" | "bottom";
   qrCorner: Corner | null;
+  /** Blind placement only: the band's right-hand share left to the title /
+   *  revision block (SHR-8). 0 when the page was measured. */
+  reserveRight: number;
 }): void {
-  const { frame, font, opts, edge, qrCorner } = input;
+  const { frame, font, opts, edge, qrCorner, reserveRight } = input;
   const { page, width, height } = frame;
 
   const mainSize = Math.min(10, Math.max(6.5, width / 62));
@@ -235,7 +242,7 @@ function drawFooter(input: {
   const qrReserve = qrOnThisEdge ? Math.max(46, Math.min(70, width / 12)) + width * 0.045 : 0;
   const qrOnLeft = qrCorner === "bl" || qrCorner === "tl";
 
-  const maxLineW = width - marginX * 2 - qrReserve;
+  const maxLineW = Math.max(width * 0.25, width - marginX * 2 - qrReserve - reserveRight);
   const xStart = marginX + (qrOnThisEdge && qrOnLeft ? qrReserve : 0);
 
   const mainText = `UNCONTROLLED COPY • Downloaded: ${formatDate(opts.timestamp)} • Do Not Distribute`;
@@ -301,14 +308,19 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
     const frame = displayFrame(page);
     const { width, height } = frame;
     // Pages beyond the analyzed cap reuse the last analyzed page (sheets in
-    // a set share their template); no analysis at all → convention.
-    const pageInk: PageInk = ink?.[Math.min(i, ink.length - 1)] ?? FALLBACK_INK;
+    // a set share their template); no analysis at all → the blind,
+    // title-block-aware placement (SHR-8).
+    const measured: PageInk | undefined = ink?.[Math.min(i, ink.length - 1)];
+    const pageInk: PageInk = measured ?? fallbackInk(width, height);
 
     drawWatermark(frame, font, watermark);
 
     const qrCorner = qrImage ? pickQrCorner(pageInk.corners) : null;
     const footerEdge = pickFooterEdge(pageInk.topBand, pageInk.bottomBand);
-    drawFooter({ frame, font, opts, edge: footerEdge, qrCorner });
+    drawFooter({
+      frame, font, opts, edge: footerEdge, qrCorner,
+      reserveRight: measured ? 0 : titleBlockReserve(width),
+    });
 
     if (qrImage && qrCorner) {
       const q = placeQr({ pageW: width, pageH: height, corner: qrCorner });

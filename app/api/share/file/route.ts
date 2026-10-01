@@ -9,7 +9,10 @@
 // page's fallback opened the RAW UNSTAMPED file in a new tab. The copy-leak
 // protection silently never applied to the one audience it matters most for:
 // outsiders. Here the bytes are pulled bucket→server (no CORS in play) and
-// stamped with the same applyStampToPdfDoc as internal downloads.
+// stamped with the same applyStampToPdfDoc as internal downloads — the same
+// marks, but placed BLIND: a server has no DOM for the ink analysis the
+// browser paths run, so the QR and footer take the title-block-aware
+// fallback (top-left, clear of the right-hand title block — SHR-8).
 //
 // Auth: possession of the unguessable token, exactly like /api/share/resolve
 // — and the SAME decision (lib/shareServe.ts): org-joined document, the

@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   fitRotatedTextSize, centerRotatedText, wrapToWidth,
-  pickQrCorner, pickFooterEdge, placeQr, FALLBACK_INK,
+  pickQrCorner, pickFooterEdge, placeQr, fallbackInk, titleBlockReserve,
   normalizeRotation, displaySize, displayToUser,
 } from "@/lib/stampLayout";
 
@@ -112,10 +112,28 @@ describe("placeQr — the plate can never leave the page", () => {
   });
 });
 
-describe("FALLBACK_INK", () => {
-  it("reproduces the historical bottom-right / bottom-footer placement", () => {
-    expect(pickQrCorner(FALLBACK_INK.corners)).toBe("br");
-    expect(pickFooterEdge(FALLBACK_INK.topBand, FALLBACK_INK.bottomBand)).toBe("bottom");
+// SHR-8: blind (no raster analysis — every server route) placement never
+// assumes the bottom-right corner is blank: that is a drawing's title block.
+describe("fallbackInk — the blind placement is title-block-aware", () => {
+  it("never puts the QR bottom-right (or anywhere on the right) — it goes top-left, any orientation", () => {
+    for (const [w, h] of [[1224, 792], [2448, 1584], [842, 595], [612, 792], [595, 842]]) {
+      expect(pickQrCorner(fallbackInk(w, h).corners)).toBe("tl");
+    }
+  });
+  it("a landscape sheet's footer runs along the top (a small sheet's title block can span the bottom)", () => {
+    const ink = fallbackInk(1224, 792);
+    expect(pickFooterEdge(ink.topBand, ink.bottomBand)).toBe("top");
+  });
+  it("a portrait page's footer stays in the bottom margin", () => {
+    const ink = fallbackInk(612, 792);
+    expect(pickFooterEdge(ink.topBand, ink.bottomBand)).toBe("bottom");
+  });
+  it("the footer leaves the right-hand title / revision block share: ASME ≈ 450 pt, ISO ≤ 510 pt, never more than half the sheet", () => {
+    expect(titleBlockReserve(2448)).toBe(520);
+    expect(titleBlockReserve(1224)).toBe(520);
+    expect(titleBlockReserve(842)).toBe(421);
+    expect(titleBlockReserve(612)).toBe(306);
+    expect(titleBlockReserve(1224)).toBeGreaterThanOrEqual(510);
   });
 });
 

@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { PDFDocument, PDFPage, PDFFont, degrees } from "pdf-lib";
 import { applyStampToPdfDoc } from "@/lib/stamping";
-import { pickQrCorner, FALLBACK_INK, type Corner } from "@/lib/stampLayout";
+import { pickQrCorner, fallbackInk, type Corner } from "@/lib/stampLayout";
 
 type Pg = { w: number; h: number; empty: Corner };
 const fake = vi.hoisted(() => ({
@@ -266,7 +266,7 @@ describe("PHYS-12 / PKG-13 — the analysis and the drawing share one space on a
       const b = markBox(img.o.x as number, img.o.y as number, img.o.width as number, img.o.height as number, angleOf(img.o), MEDIA.w, MEDIA.h, rot);
       expect(displayAngle(angleOf(img.o), rot)).toBe(0);
       expect(onPage(b, DW, DH)).toBe(true);
-      expect(inQuadrant(b, pickQrCorner(FALLBACK_INK.corners), DW, DH)).toBe(true);
+      expect(inQuadrant(b, pickQrCorner(fallbackInk(DW, DH).corners), DW, DH)).toBe(true);
     }
   });
 });
@@ -318,3 +318,91 @@ describe("PKG-13 dw3 — an encrypted source is refused by the stamper, never me
 });
 
 function readFileSyncSafe(p: string) { return readFileSync(p, "utf8"); }
+
+// ─── SHR-8: a server-stamped (blind) copy of a title-blocked drawing ───────
+// The share download and the transmittal portal stamp on the server, where
+// no ink analysis is possible. Representative sheets carry a title block at
+// the bottom-right (ISO 7200 / ASME Y14.1) and, on ASME sheets, a revision
+// block at the top-right — both inside a 0.5 in (36 pt) border, or ISO's
+// 10 mm (28 pt). Nothing the stamp draws (except the translucent diagonal
+// watermark, which covers the whole sheet by design) may land on either.
+describe("SHR-8 — the blind stamp keeps the QR and the footer off the title block", () => {
+  type Rect = { x0: number; y0: number; x1: number; y1: number };
+  const sheets: Array<{ name: string; w: number; h: number; rotate: number; blocks: (DW: number, DH: number) => Rect[] }> = [
+    {
+      name: "ASME B landscape (11×17), title block bottom-right + revision block top-right",
+      w: 1224, h: 792, rotate: 0,
+      blocks: (DW, DH) => [
+        { x0: DW - 36 - 450, y0: 36, x1: DW - 36, y1: 36 + 180 },
+        { x0: DW - 36 - 504, y0: DH - 36 - 100, x1: DW - 36, y1: DH - 36 },
+      ],
+    },
+    {
+      name: "ANSI D stored portrait with /Rotate 90 (displayed 34×22)",
+      w: 1584, h: 2448, rotate: 90,
+      blocks: (DW, DH) => [
+        { x0: DW - 36 - 504, y0: 36, x1: DW - 36, y1: 36 + 180 },
+        { x0: DW - 36 - 504, y0: DH - 36 - 100, x1: DW - 36, y1: DH - 36 },
+      ],
+    },
+    {
+      name: "ISO A4 landscape, a 180 mm title block spanning most of the bottom",
+      w: 842, h: 595, rotate: 0,
+      blocks: (DW) => [{ x0: DW - 28 - 510, y0: 28, x1: DW - 28, y1: 28 + 156 }],
+    },
+    {
+      name: "ISO A3 stored portrait with /Rotate 270",
+      w: 842, h: 1191, rotate: 270,
+      blocks: (DW) => [{ x0: DW - 28 - 510, y0: 28, x1: DW - 28, y1: 28 + 156 }],
+    },
+  ];
+  const hits = (b: Box, r: Rect) => b.minX < r.x1 && b.maxX > r.x0 && b.minY < r.y1 && b.maxY > r.y0;
+
+  for (const sh of sheets) {
+    it(sh.name, async () => {
+      // no stubCanvas(): `document` is undefined, exactly as in a route handler
+      const { DW, DH } = displayDims(sh.w, sh.h, sh.rotate);
+      const blocks = sh.blocks(DW, DH);
+      const bytes = await makePdf([{ w: sh.w, h: sh.h, rotate: sh.rotate }]);
+      const pdfDoc = await PDFDocument.load(bytes);
+      await applyStampToPdfDoc(pdfDoc, {
+        userLabel: "shared-link",
+        timestamp: new Date("2026-10-01T10:00:00Z"),
+        watermarkText: "UNCONTROLLED — SHARED COPY",
+        footerNotice: "2002-D-10001 Rev 4 (Issued) at time of download — a share always serves the current revision. Scan the QR to confirm it is still current.",
+        verifyUrl: "https://app.example.com/verify/doc?v=ver",
+      });
+      const marks: Array<{ what: string; box: Box }> = [];
+      for (const c of calls) {
+        if (c.kind === "text" && c.o.opacity === 0.15) continue; // the diagonal watermark
+        const theta = angleOf(c.o);
+        if (c.kind === "text") {
+          const w = (c.o.font as PDFFont).widthOfTextAtSize(c.text!, c.o.size as number);
+          marks.push({ what: `text "${c.text}"`, box: markBox(c.o.x as number, c.o.y as number, w, c.o.size as number, theta, sh.w, sh.h, sh.rotate) });
+        } else {
+          marks.push({ what: c.kind, box: markBox(c.o.x as number, c.o.y as number, c.o.width as number, c.o.height as number, theta, sh.w, sh.h, sh.rotate) });
+        }
+      }
+      expect(marks.some((m) => m.what === "image")).toBe(true); // the QR is there
+      expect(marks.filter((m) => m.what.startsWith("text")).length).toBeGreaterThan(1); // footer lines + caption
+      for (const m of marks) {
+        expect(onPage(m.box, DW, DH), m.what).toBe(true);
+        for (const r of blocks) expect(hits(m.box, r), `${m.what} over a title/revision block`).toBe(false);
+      }
+      // and specifically: the QR is top-left, never on the bottom-right title block
+      const qr = marks.find((m) => m.what === "image")!;
+      expect(inQuadrant(qr.box, "tl", DW, DH)).toBe(true);
+    });
+  }
+
+  it("a measured page (the browser paths) is unaffected — the analysis still decides, with no title-block reserve", async () => {
+    stubCanvas();
+    fake.pages = [{ w: 1224, h: 792, empty: "br" }];
+    const bytes = await makePdf([{ w: 1224, h: 792, rotate: 0 }]);
+    const pdfDoc = await PDFDocument.load(bytes);
+    await applyStampToPdfDoc(pdfDoc, { sourceBytes: bytes, verifyUrl: "https://app.example.com/verify/d?v=v", timestamp: new Date() });
+    const img = calls.find((c) => c.kind === "image")!;
+    const b = markBox(img.o.x as number, img.o.y as number, img.o.width as number, img.o.height as number, 0, 1224, 792, 0);
+    expect(inQuadrant(b, "br", 1224, 792)).toBe(true);
+  });
+});
