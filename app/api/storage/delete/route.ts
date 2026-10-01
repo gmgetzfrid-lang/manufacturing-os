@@ -175,10 +175,15 @@ export async function DELETE(req: NextRequest) {
       // leaves retention_until, created_at and effective_date as they were but
       // rewrites updated_at, so a disposed record is judged on (1) its stored
       // retention_until alone (its disposition_state no longer reads as
-      // clear), and on (2) only when its policy clocks from a basis disposal
-      // cannot move: "created", or "effective" with an effective_date. (The
-      // issued / superseded / effective-without-a-date bases clock from
-      // updated_at, which disposal resets to today.)
+      // clear), and on (2) from its own basis only when the policy clocks
+      // from one disposal cannot move: "created", or "effective" with an
+      // effective_date. The issued / superseded / effective-without-a-date
+      // bases clock from updated_at || created_at, and disposal resets
+      // updated_at to today; every write path stamps updated_at with the time
+      // of the write, so before disposal that basis was never earlier than
+      // created_at. For those, (2) clocks from created_at: a LOWER BOUND on
+      // the true date, so a record whose bound is still ahead (or cannot be
+      // computed) is certainly in force and refuses.
       // Either container read failing throws → 503.
       if (row) {
         const disposed = row.disposition_state === "disposed";
@@ -191,30 +196,44 @@ export async function DELETE(req: NextRequest) {
           containerRetentionPolicy("libraries", row.library_id),
         ]);
         const policy = resolveEffectiveRetentionPolicy(row.retention_policy ?? null, folderPolicy, libPolicy);
+        const basis = policy?.basis ?? "created";
+        const basisFixed = basis === "created" || (basis === "effective" && !!row.effective_date);
+        // true: (2) is a lower bound clocked from created_at (see above).
+        const lowerBound = disposed && !basisFixed;
         const computed = policy
           ? computeRetentionUntil(
-              retentionBasisISO(policy, {
-                created_at: row.created_at ?? null,
-                updated_at: row.updated_at ?? null,
-                effective_date: row.effective_date ?? null,
-              }),
+              lowerBound
+                ? row.created_at ?? null
+                : retentionBasisISO(policy, {
+                    created_at: row.created_at ?? null,
+                    updated_at: row.updated_at ?? null,
+                    effective_date: row.effective_date ?? null,
+                  }),
               policy,
             )
           : null;
         const effectiveUntil = computed !== null && ISO_DATE.test(computed) ? computed : null;
-        const basis = policy?.basis ?? "created";
-        const basisFixed = basis === "created" || (basis === "effective" && !!row.effective_date);
         const today = new Date().toISOString().slice(0, 10);
         const unclockable = !!policy?.years && effectiveUntil === null;
-        const effectiveActive = (!disposed || basisFixed) && (unclockable || (effectiveUntil !== null && effectiveUntil > today));
+        const effectiveActive = unclockable || (effectiveUntil !== null && effectiveUntil > today);
         if (storedActive || effectiveActive) {
-          // Name the later of the two dates in force (an unreadable stored
-          // date, or one past year 9999, is refused but not quoted).
-          const dates = [
-            storedActive && row.retention_until ? String(row.retention_until).slice(0, 10) : null,
-            effectiveActive ? effectiveUntil : null,
-          ].filter((d): d is string => !!d && ISO_DATE.test(d)).sort();
-          const until = dates.length ? ` until ${dates[dates.length - 1]}` : "";
+          // A policy in force with no computable end quotes no date: an
+          // earlier stored date would read as the day the record becomes
+          // deletable, which it never does. Otherwise name the later of the
+          // two dates in force (an unreadable stored date is refused but not
+          // quoted), and a lower bound as one.
+          if (unclockable) {
+            return NextResponse.json(
+              { error: "This document is under a retention policy with no computable end date; its files cannot be deleted." },
+              { status: 423 },
+            );
+          }
+          const storedDate = storedActive && row.retention_until ? String(row.retention_until).slice(0, 10) : null;
+          const stored = storedDate && ISO_DATE.test(storedDate) ? storedDate : null;
+          const effective = effectiveActive ? effectiveUntil : null;
+          const until = effective && (!stored || effective > stored)
+            ? ` until ${lowerBound ? "at least " : ""}${effective}`
+            : stored ? ` until ${stored}` : "";
           return NextResponse.json(
             { error: `This document is under retention${until}; its files cannot be deleted before the retention period ends.` },
             { status: 423 },

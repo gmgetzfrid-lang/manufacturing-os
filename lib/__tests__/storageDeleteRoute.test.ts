@@ -11,17 +11,22 @@
 // first version answered every document_versions read with the row whatever
 // the filter, which is why it could not see that the route resolved a key by
 // `file_url` alone — a revision's native source (`source_file_key`) matched
-// nothing, skipped the hold checks and was destroyed with a 200 (DACL-2).
+// nothing, skipped the hold checks and was destroyed with a 200 (DACL-2). It
+// also PROJECTS each row to the columns `.select(...)` names, so a column the
+// route reads but does not select arrives undefined, as it would in
+// production.
 //
 // Retention is judged on the document's EFFECTIVE policy (document → folder →
 // library, P9's pure resolver) as well as its materialized retention_until /
 // disposition_state: those columns are written best-effort, so a row never
 // clocked under an in-force policy, or left with a stale earlier date after
 // the policy was extended, must still be refused. A computed date past year
-// 9999 (an extended-year string) reads as uncomputable and refuses. A disposed
-// record is not exempt: disposeDocument checks no eligibility, so it is judged
-// on its stored retention_until and, where disposal cannot move the basis
-// date, on its effective policy.
+// 9999 (an extended-year string) reads as uncomputable and refuses, quoting no
+// date. A disposed record is not exempt: disposeDocument checks no
+// eligibility, so it is judged on its stored retention_until and on its
+// effective policy — from its own basis where disposal cannot move it, and
+// from created_at (a lower bound) where the basis is the updated_at that
+// disposal rewrites.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -50,6 +55,7 @@ function chain(table: string) {
   const preds: Array<(r: Row) => boolean> = [];
   const eqCols: string[] = [];
   let cap: number | null = null;
+  let cols: string[] | null = null;
   let inserted: Row | null = null;
   const failed = () =>
     state.errors[table] ?? (eqCols.some((col) => state.failEq.has(`${table}|${col}`)) ? { message: "statement timeout" } : null);
@@ -59,6 +65,12 @@ function chain(table: string) {
     if (inserted) return { data: [{ id: "audit-1" }], error: null };
     let out = (state.rows[table] ?? []).filter((r) => preds.every((p) => p(r)));
     if (cap !== null) out = out.slice(0, cap);
+    // Filters see the whole row (PostgREST filters on unselected columns);
+    // the caller gets only the columns it selected.
+    if (cols) {
+      const keep = cols;
+      out = out.map((r) => Object.fromEntries(keep.filter((col) => col in r).map((col) => [col, r[col]])));
+    }
     return { data: out, error: null };
   };
   const c: Row = {};
@@ -85,6 +97,11 @@ function chain(table: string) {
             break;
           }
           case "limit": cap = args[0] as number; break;
+          case "select": {
+            const list = typeof args[0] === "string" ? args[0].trim() : "*";
+            if (list !== "*") cols = list.split(",").map((col) => col.trim()).filter(Boolean);
+            break;
+          }
           case "or": state.ors.push(`${table}|${String(args[0])}`); break;
           case "insert":
             if (table === "audit_logs") state.audits.push(args[0] as Row);
@@ -563,6 +580,49 @@ describe("DACL-2 criterion 1 (b): the EFFECTIVE retention — a row never clocke
     }
   });
 
+  it("an 'issued' basis clocks from the document's updated_at (control: the same row on a 'created' basis has run)", async () => {
+    member("Admin");
+    const updated = ts(-30);
+    inLibrary({ created_at: ts(-11 * 366), updated_at: updated, retention_until: null, disposition_state: null }, { enabled: true, years: 10, basis: "issued" });
+    const res = await del(SOURCE);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(`until ${plusYears(updated, 10)}`);
+    inLibrary({ created_at: ts(-11 * 366), updated_at: updated, retention_until: null, disposition_state: null }, TEN_YEARS);
+    expect((await del(SOURCE)).status).toBe(200);
+  });
+
+  it("an 'effective' basis clocks from the document's effective_date ahead of updated_at, both ways", async () => {
+    member("Admin");
+    const effectiveTen = { enabled: true, years: 10, basis: "effective" } as const;
+    // a recent effective date on an old record: in force from the effective date
+    const effective = iso(-30);
+    inLibrary({ created_at: ts(-11 * 366), updated_at: ts(-11 * 366), effective_date: effective, retention_until: null, disposition_state: null }, effectiveTen);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(`until ${plusYears(effective, 10)}`);
+    // an old effective date on a recently touched record: run, though updated_at + 10 years is not
+    inLibrary({ created_at: ts(-11 * 366), updated_at: ts(-30), effective_date: iso(-11 * 366), retention_until: null, disposition_state: null }, effectiveTen);
+    expect((await del(SOURCE)).status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a policy in force with no computable end quotes no date — not an earlier stored date, which would read as the day it becomes deletable", async () => {
+    member("Admin");
+    const stale = iso(200); // left over from an earlier, shorter policy
+    for (const [label, doc, policy] of [
+      ["9999 years", { created_at: ts(-30) }, { enabled: true, years: 9999, basis: "created" }],
+      ["no basis date", { created_at: null, updated_at: null }, TEN_YEARS],
+    ] as const) {
+      inLibrary({ ...doc, retention_until: stale, disposition_state: "active" }, policy);
+      const res = await del(SOURCE);
+      expect(res.status, label).toBe(423);
+      const error = ((await res.json()) as { error: string }).error;
+      expect(error, label).toMatch(/no computable end date/);
+      expect(error, label).not.toContain(stale);
+    }
+    expect(state.r2sends).toBe(0);
+  });
+
   it("a policy long enough to pass year 9999 (a 'permanent' sentinel) refuses 423 — its extended-year date is not read as run; nothing deleted, no custody row", async () => {
     member("Admin");
     // computeRetentionUntil answers "+012026-…" here, which sorts before every
@@ -608,10 +668,16 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     expect(state.r2sends).toBe(1);
   });
 
-  it("a disposed record under an in-force policy is refused 423 (was: deleted with a 200)", async () => {
+  it("a disposed record under an in-force policy is refused 423 on the effective reading, with a run-out stored date (was: deleted with a 200)", async () => {
     member("Admin");
-    inLibrary({ retention_until: iso(3000) }, TEN_YEARS);
-    expect((await del(RENDERED)).status).toBe(423);
+    const created = ts(-30);
+    inLibrary({ created_at: created, retention_until: iso(-10) }, TEN_YEARS);
+    const res = await del(RENDERED);
+    expect(res.status).toBe(423);
+    // a 'created' basis is exact under disposal — not quoted as a lower bound
+    const error = ((await res.json()) as { error: string }).error;
+    expect(error).toContain(`until ${plusYears(created, 10)}`);
+    expect(error).not.toContain("at least");
     expect(state.r2sends).toBe(0);
   });
 
@@ -649,21 +715,77 @@ describe("DACL-2 criterion 1 (b): a DISPOSED record is still judged — disposeD
     expect(state.r2sends).toBe(1);
   });
 
-  it("a basis disposal resets (updated_at) is not re-clocked from the disposal: a run-out stored date clears it; the same row undisposed is refused", async () => {
+  it("a basis disposal resets (updated_at) is judged from created_at, a LOWER BOUND: refused while created_at + years is ahead, not re-clocked from the disposal", async () => {
     member("Admin");
-    const issued = { enabled: true, years: 5, basis: "issued" } as const;
-    // disposeDocument wrote updated_at = now, so the issued-basis date computed
-    // now would be five years from the disposal — not the record's retention.
-    inLibrary({ retention_until: iso(-10), updated_at: ts(0) }, issued);
-    expect((await del(SOURCE)).status).toBe(200);
-    expect(state.r2sends).toBe(1);
-    // an 'effective' basis with no effective_date falls back to updated_at too
-    inLibrary({ retention_until: iso(-10), updated_at: ts(0), effective_date: null }, { enabled: true, years: 5, basis: "effective" });
-    expect((await del(SOURCE)).status).toBe(200);
-    expect(state.r2sends).toBe(2);
-    // control: the undisposed row with the same columns is refused on its effective date
-    inLibrary({ retention_until: iso(-10), updated_at: ts(0), disposition_state: "active" }, issued);
+    const created = ts(-30);
+    const disposedAt = ts(0);
+    for (const policy of [
+      { enabled: true, years: 5, basis: "issued" },
+      { enabled: true, years: 5, basis: "superseded" },
+      // an 'effective' basis with no effective_date falls back to updated_at too
+      { enabled: true, years: 5, basis: "effective" },
+    ] as const) {
+      inLibrary({ created_at: created, updated_at: disposedAt, effective_date: null, retention_until: iso(-10) }, policy);
+      const res = await del(SOURCE);
+      expect(res.status, policy.basis).toBe(423);
+      const error = ((await res.json()) as { error: string }).error;
+      // quoted as a bound, from created_at — not five years from the disposal
+      expect(error, policy.basis).toContain(`until at least ${plusYears(created, 5)}`);
+      expect(error, policy.basis).not.toContain(plusYears(disposedAt, 5));
+    }
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("control: once created_at + years has run, a disposed record under an updated_at basis with a run-out stored date is deleted", async () => {
+    member("Admin");
+    for (const basis of ["issued", "superseded", "effective"] as const) {
+      state.r2sends = 0;
+      inLibrary(
+        { created_at: ts(-6 * 366), updated_at: ts(0), effective_date: null, retention_until: iso(-10) },
+        { enabled: true, years: 5, basis },
+      );
+      expect((await del(SOURCE)).status, basis).toBe(200);
+      expect(state.r2sends, basis).toBe(1);
+    }
+  });
+
+  it("the reviewer's two-step bypass on an 'issued' basis: a stale 'eligible' row under an extended ten-year policy is refused before AND after one Dispose click", async () => {
+    member("Admin");
+    const created = ts(-730);
+    const issuedTen = { enabled: true, years: 10, basis: "issued" } as const;
+    // before: the scan flagged it eligible on a stale run-out date; the effective date refuses
+    inLibrary({ created_at: created, updated_at: created, retention_until: iso(-10), disposition_state: "eligible" }, issuedTen);
     expect((await del(SOURCE)).status).toBe(423);
-    expect(state.r2sends).toBe(2);
+    // after disposeDocument: disposed, updated_at rewritten to now, retention_until untouched
+    inLibrary({ created_at: created, updated_at: ts(0), retention_until: iso(-10) }, issuedTen);
+    const res = await del(SOURCE);
+    expect(res.status).toBe(423);
+    expect(((await res.json()) as { error: string }).error).toContain(`until at least ${plusYears(created, 10)}`);
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("an unclocked disposed record under a 'permanent' (9999-year) updated_at-basis policy is refused 423, quoting no date", async () => {
+    member("Admin");
+    for (const basis of ["issued", "superseded", "effective"] as const) {
+      inLibrary({ updated_at: ts(0), effective_date: null, retention_until: null }, { enabled: true, years: 9999, basis });
+      const res = await del(SOURCE);
+      expect(res.status, basis).toBe(423);
+      const error = ((await res.json()) as { error: string }).error;
+      expect(error, basis).toMatch(/no computable end date/);
+      expect(error, basis).not.toMatch(/until|\+0/);
+    }
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toHaveLength(0);
+  });
+
+  it("a disposed record under an updated_at basis with no readable created_at refuses — fail closed, as an undisposed record with no basis date does", async () => {
+    member("Admin");
+    for (const created of [null, "not-a-date"]) {
+      inLibrary({ created_at: created, updated_at: ts(0), retention_until: iso(-10) }, { enabled: true, years: 5, basis: "issued" });
+      expect((await del(SOURCE)).status, String(created)).toBe(423);
+    }
+    expect(state.r2sends).toBe(0);
   });
 });
