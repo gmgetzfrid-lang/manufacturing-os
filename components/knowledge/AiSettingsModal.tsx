@@ -63,14 +63,11 @@ const fmtUsd = (n: number) => `$${n.toFixed(2)}`;
  *  number is restated here; aiSettingsUsagePanel.test.ts holds them equal). */
 export const UNPRICED_CALL_DISPLAY_USD = 1;
 
-// What /api/ai/usage sends beyond lib/knowledge's AiUsageSummary (GOV-1 /
-// GOV-3 / GOV-10): every op's spend, the locked flag, who may set caps.
+// What /api/ai/usage sends beyond lib/knowledge's AiUsageSummary (which
+// carries every op's spend, the locked flag and who may set caps — GOV-1 /
+// GOV-3 / GOV-10): the cost-less calls and the viewer's own cap standing.
 type OpLine = { spentUsd: number; calls: number };
-type UsageView = Omit<AiUsageSummary, "team"> & {
-  calls?: number;
-  locked?: boolean;
-  byOp?: Record<string, OpLine>;
-  canManageCaps?: boolean;
+type UsageView = AiUsageSummary & {
   /** GOV-4: calls recorded without a cost — each counted at a fixed
    *  conservative figure inside spentUsd. */
   unpricedCalls?: number;
@@ -79,7 +76,6 @@ type UsageView = Omit<AiUsageSummary, "team"> & {
   /** GOV-10: nobody else active holds ai.manage_caps — the viewer's own
    *  raise has no second signature to wait for, so it goes through. */
   soleCapsHolder?: boolean;
-  team?: Array<NonNullable<AiUsageSummary["team"]>[number] & { calls?: number; locked?: boolean; byOp?: Record<string, OpLine> }>;
 };
 
 /** The meter line each feature writes, named for a person (GOV-1: every

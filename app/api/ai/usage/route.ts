@@ -22,7 +22,11 @@
 // where it was, as a personal override, in the same request). A SOLE holder
 // — nobody else active holds ai.manage_caps, as in a one-person workspace —
 // has no second signature to ask for, so their own raise goes through,
-// audited `soleHolder: true` and said in the response (DEC-44 item 5).
+// audited `soleHolder: true` and said in the response (DEC-44 item 5) —
+// that audit row is written FIRST and checked, so a raise it cannot record
+// is not made. The target is a uuid in any spelling Postgres accepts; the
+// route uses the uid the database returns, never the request's spelling,
+// so `{ userId: <your own uid in upper case> }` is still your own cap.
 // Every change is audited and notifies the other holders and the person
 // whose cap moved. A cap table that cannot be read refuses (503) — the team
 // view and the "previous figure" never fall back to $10.
@@ -101,6 +105,37 @@ function holdersAmong(rows: unknown, policy: CapabilityPolicy): string[] {
 
 const limitsTableMissing = (e: { code?: string; message: string }) =>
   e.code === "42P01" || /does not exist/i.test(e.message);
+
+/** GOV-10: a uuid in any spelling Postgres's uuid input accepts — upper or
+ *  lower case, wrapped in braces, a hyphen after any group of four digits
+ *  or none — as the canonical lowercase 8-4-4-4-12 form; null for anything
+ *  else. The uuid columns match every one of those spellings, so a
+ *  comparison against the caller's own id must never use the request's. */
+function canonicalUuid(raw: string): string | null {
+  const braced = /^\{(.*)\}$/.exec(raw);
+  const body = braced ? braced[1] : raw;
+  if (!/^[0-9a-f]{4}(?:-?[0-9a-f]{4}){7}$/i.test(body)) return null;
+  const hex = body.replace(/-/g, "").toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+/** The same member, whatever the spelling (ids that are not uuids compare as written). */
+const sameUid = (a: string, b: string) => (canonicalUuid(a) ?? a) === (canonicalUuid(b) ?? b);
+
+/** Write one AI_CAP_CHANGED row; the reason when it was not written. */
+async function auditCapChange(orgId: string, auth: Auth, details: Record<string, unknown>): Promise<string | null> {
+  try {
+    const { error } = await supabaseAdmin.from("audit_logs").insert({
+      action: "AI_CAP_CHANGED",
+      resource_type: "ai_usage_limit", resource_id: orgId,
+      org_id: orgId, user_id: auth.userId,
+      details,
+    });
+    return error ? (error.message || "the audit log refused the row") : null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+const SOLE_AUDIT_FAILED = "Couldn't write the audit record that raising your own cap without a second signature needs, so nothing was changed";
 
 /** The stored workspace default (display figure: 0 = locked), $10 when no
  *  row exists; an error when the table cannot be read. */
@@ -221,7 +256,7 @@ async function notifyCapChange(orgId: string, auth: Auth, policy: CapabilityPoli
   const others = await otherCapsHolders(orgId, auth, policy);
   const recipients = new Set(others.ok ? others.uids : []);
   if (change.targetUserId) recipients.add(change.targetUserId);
-  recipients.delete(auth.userId);
+  for (const uid of [...recipients]) if (sameUid(uid, auth.userId)) recipients.delete(uid);
   if (recipients.size === 0) return;
   const what = change.targetUserId ? "a person's monthly AI cap" : "the workspace's default monthly AI cap";
   const fmt = (v: number | null) => (v === null ? "the workspace default" : v === 0 ? "$0 (locked)" : `$${v}`);
@@ -256,13 +291,23 @@ export async function POST(req: NextRequest) {
     return bad("Setting monthly AI caps takes the “Manage AI spend caps” permission (Admin by default — it can be granted in Permissions).", 403);
   }
 
-  const targetUserId = String(body.userId ?? "").trim() || null;
-  if (targetUserId) {
+  // GOV-10: the target as the DATABASE spells it. org_members.uid is a uuid
+  // column, so `.eq("uid", …)` matches the caller's own id written in upper
+  // case, in braces or without hyphens — a request spelling compared with
+  // auth.userId would miss it and let the caller raise their own cap. Every
+  // read, write, comparison, audit row and notice below uses the uid the
+  // lookup returns.
+  const rawTarget = String(body.userId ?? "").trim();
+  let targetUserId: string | null = null;
+  if (rawTarget) {
+    const asUuid = canonicalUuid(rawTarget);
+    if (!asUuid) return bad("userId must be a workspace member's id.");
     const { data: target } = await supabaseAdmin
       .from("org_members").select("uid")
-      .eq("org_id", orgId).eq("uid", targetUserId).eq("status", "active")
+      .eq("org_id", orgId).eq("uid", asUuid).eq("status", "active")
       .maybeSingle();
     if (!target) return bad("That person isn't an active member of this workspace.", 404);
+    targetUserId = String((target as { uid: string }).uid);
   }
 
   // The cap that applies to the target before this change (display figure:
@@ -283,13 +328,15 @@ export async function POST(req: NextRequest) {
   // clearing one onto a higher default. Lowering it is always allowed.
   // (Display figures compare directly: 0 = locked is the lowest.)
   const selfRaise = (next: number) =>
-    targetUserId === auth.userId && previousCapUsd !== null && next > previousCapUsd;
+    targetUserId !== null && sameUid(targetUserId, auth.userId) && previousCapUsd !== null && next > previousCapUsd;
   const SELF_RAISE = "You can't raise your own monthly AI cap — another person with the “Manage AI spend caps” permission has to.";
   /** GOV-10: the second signature a self-raise needs exists only when
    *  someone else holds ai.manage_caps. A SOLE holder (a one-person
    *  workspace; the only Admin, with nobody else granted it) has nobody to
-   *  ask, so the raise goes through — audited `soleHolder: true`. A roster
-   *  that cannot be read refuses: never "nobody else". */
+   *  ask, so the raise goes through — audited `soleHolder: true`, that row
+   *  written BEFORE the change and checked: it is the only control on the
+   *  raise, so one that cannot be written refuses (503, nothing changed).
+   *  A roster that cannot be read refuses: never "nobody else". */
   const soleHolderVerdict = async (): Promise<{ ok: true; sole: boolean } | { ok: false; res: NextResponse }> => {
     const others = await otherCapsHolders(orgId, auth, caps.policy);
     if (!others.ok) {
@@ -311,16 +358,20 @@ export async function POST(req: NextRequest) {
       if (!v.sole) return bad(SELF_RAISE, 403);
       soleHolder = true;
     }
+    const details = { targetUserId, cleared: true, previousCapUsd, ...(soleHolder ? { soleHolder: true } : {}) };
+    if (soleHolder) {
+      const auditError = await auditCapChange(orgId, auth, details);
+      if (auditError) return bad(`${SOLE_AUDIT_FAILED}: ${auditError}`, 503);
+    }
     const { error } = await supabaseAdmin
       .from("ai_usage_limits").delete()
       .eq("org_id", orgId).eq("user_id", targetUserId);
-    if (error) return bad(`Couldn't clear the cap override: ${error.message}`, 500);
-    await supabaseAdmin.from("audit_logs").insert({
-      action: "AI_CAP_CHANGED",
-      resource_type: "ai_usage_limit", resource_id: orgId,
-      org_id: orgId, user_id: auth.userId,
-      details: { targetUserId, cleared: true, previousCapUsd, ...(soleHolder ? { soleHolder: true } : {}) },
-    }).then(() => undefined, () => undefined);
+    if (error) {
+      // The audit row already says it happened: say it did not.
+      if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: error.message });
+      return bad(`Couldn't clear the cap override: ${error.message}`, 500);
+    }
+    if (!soleHolder) await auditCapChange(orgId, auth, details);
     await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd: null, previousCapUsd });
     return NextResponse.json({ ok: true, cleared: true, ...(soleHolder ? { soleHolder: true } : {}) });
   }
@@ -361,12 +412,7 @@ export async function POST(req: NextRequest) {
         return bad(`Couldn't hold your own cap at its current figure, so the default was not raised: ${pinError.message}`, 500);
       }
       pinnedSelfAtUsd = previousCapUsd;
-      await supabaseAdmin.from("audit_logs").insert({
-        action: "AI_CAP_CHANGED",
-        resource_type: "ai_usage_limit", resource_id: orgId,
-        org_id: orgId, user_id: auth.userId,
-        details: { targetUserId: auth.userId, capUsd: previousCapUsd, previousCapUsd, heldOnDefaultRaise: true },
-      }).then(() => undefined, () => undefined);
+      await auditCapChange(orgId, auth, { targetUserId: auth.userId, capUsd: previousCapUsd, previousCapUsd, heldOnDefaultRaise: true });
     }
   }
 
@@ -383,21 +429,27 @@ export async function POST(req: NextRequest) {
       missing ? 424 : 500,
     );
   }
+  const details = {
+    ...(targetUserId ? { targetUserId } : {}), capUsd, previousCapUsd,
+    ...(soleHolder ? { soleHolder: true } : {}),
+  };
+  // GOV-10: a sole holder's own raise has no second signature — its audit
+  // row is the record, so it is written first and a refusal changes nothing.
+  if (soleHolder) {
+    const auditError = await auditCapChange(orgId, auth, details);
+    if (auditError) return bad(`${SOLE_AUDIT_FAILED}: ${auditError}`, 503);
+  }
   const fields = { monthly_cap_usd: capUsd, updated_by: auth.userId, updated_at: new Date().toISOString() };
   const { error } = existing
     ? await supabaseAdmin.from("ai_usage_limits").update(fields).eq("id", existing.id as string)
     : await supabaseAdmin.from("ai_usage_limits").insert({ org_id: orgId, user_id: targetUserId, ...fields });
-  if (error) return bad(`Couldn't save the cap: ${error.message}`, 500);
+  if (error) {
+    // The audit row already says it happened: say it did not.
+    if (soleHolder) await auditCapChange(orgId, auth, { ...details, notApplied: true, error: error.message });
+    return bad(`Couldn't save the cap: ${error.message}`, 500);
+  }
 
-  await supabaseAdmin.from("audit_logs").insert({
-    action: "AI_CAP_CHANGED",
-    resource_type: "ai_usage_limit", resource_id: orgId,
-    org_id: orgId, user_id: auth.userId,
-    details: {
-      ...(targetUserId ? { targetUserId } : {}), capUsd, previousCapUsd,
-      ...(soleHolder ? { soleHolder: true } : {}),
-    },
-  }).then(() => undefined, () => undefined);
+  if (!soleHolder) await auditCapChange(orgId, auth, details);
   await notifyCapChange(orgId, auth, caps.policy, { targetUserId, capUsd, previousCapUsd });
 
   return NextResponse.json({

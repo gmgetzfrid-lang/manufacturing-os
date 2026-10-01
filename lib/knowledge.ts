@@ -828,25 +828,56 @@ export async function removeAiConnection(orgId: string, scope: "org" | "personal
 
 // ── AI usage meter + monthly caps ──────────────────────────────────────────
 
+/** What GET /api/ai/usage answers. `capUsd: 0` is a LOCK (GOV-3, DEC-44
+ *  item 2): no AI spend at all until someone who manages AI caps raises it
+ *  — never "no cap"; there is no unlimited setting. A reader deciding
+ *  whether AI work can run on the person's key asks `aiUsageLockedReason`
+ *  before any `spent >= cap` test, which reads a $0 cap as no limit. */
 export interface AiUsageSummary {
   spentUsd: number;
+  /** The cap that applies to you, in dollars; 0 = locked (see `locked`). */
   capUsd: number;
+  /** GOV-3: your cap is $0 and AI is locked for you — a refusal, the same
+   *  as `capUsd === 0`. */
+  locked?: boolean;
   percent: number;
   inputTokens: number;
   outputTokens: number;
   asks: number;
+  /** GOV-1: every successful AI call this month, every op. */
+  calls?: number;
+  /** GOV-1: the month's spend per feature (the op that wrote it). */
+  byOp?: Record<string, { spentUsd: number; calls: number }>;
   avgPromptTokens: number;
   monthLabel: string;
+  /** GOV-10: you hold `ai.manage_caps` (the cap editor is yours). */
+  canManageCaps?: boolean;
   /** Controllers only — the org-default cap and everyone's month spend. */
   orgCapUsd?: number;
   team?: Array<{
     userId: string; name: string; spentUsd: number; asks: number;
     inputTokens: number; outputTokens: number;
+    calls?: number;
+    byOp?: Record<string, { spentUsd: number; calls: number }>;
     /** The cap that actually applies to this person (override or default). */
     capUsd: number;
+    /** GOV-3: this person's cap is $0 — locked. */
+    locked?: boolean;
     /** True when this person has their own cap instead of the org default. */
     hasOverride: boolean;
   }>;
+}
+
+/** GOV-3: the clause for a member whose AI is LOCKED — `/api/ai/usage`'s
+ *  `locked`, or equivalently `capUsd` 0 — or null. Lower-case, to sit
+ *  inside a caller's sentence. A lock is a refusal, never "no cap": the
+ *  server refuses every AI call on a locked member's key, so a client check
+ *  that would warn before AI work runs must say this rather than pass. */
+export function aiUsageLockedReason(usage: Pick<AiUsageSummary, "capUsd" | "locked">): string | null {
+  if (usage.locked === true || usage.capUsd === 0) {
+    return "your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it";
+  }
+  return null;
 }
 
 export async function getAiUsage(orgId: string): Promise<AiUsageSummary> {

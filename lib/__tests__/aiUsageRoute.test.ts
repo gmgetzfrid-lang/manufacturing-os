@@ -7,14 +7,20 @@
 //           the workspace default they follow (they are held where they
 //           were); a SOLE holder has nobody to ask, so their raise goes
 //           through, audited soleHolder; every change notifies the other
-//           holders and the person whose cap moved
+//           holders and the person whose cap moved; the target is the
+//           uid the DATABASE returns, so the caller's own uid in another
+//           spelling (upper case, braces, no hyphens) is still their own;
+//           a sole holder's own raise is refused unless its audit row is
+//           written first
 //   GOV-4   an unreadable cap table refuses (503) — the team view and the
 //           audit's "previous figure" never fall back to $10
 //   GOV-3   a $0 cap reads `locked`, 100% — what the server enforces
 //   GOV-4   an unreadable ledger answers 503, never $0.00
 //   GOV-1   the meter carries every op, broken out per feature
+//   GOV-3   a client reading the meter (getAiUsage) sees a lock as a
+//           refusal, never "no cap" (aiUsageLockedReason)
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 type Row = Record<string, unknown>;
@@ -22,9 +28,28 @@ const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   errors: {} as Record<string, { code?: string; message: string } | undefined>,
   seq: 0,
+  /** The browser session's bearer for lib/knowledge's client calls. */
+  sessionToken: "",
 }));
 
+vi.mock("@/lib/supabase", () => ({
+  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: db.sessionToken } } }) } },
+}));
+vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn() }));
+
 vi.mock("@/lib/supabaseAdmin", () => {
+  // uuid columns compare as Postgres does: any spelling uuid_in accepts
+  // (upper case, braces, no hyphens) matches the stored lowercase value.
+  const uuidKey = (v: unknown): string | null => {
+    if (typeof v !== "string") return null;
+    const braced = /^\{(.*)\}$/.exec(v);
+    const body = braced ? braced[1] : v;
+    return /^[0-9a-f]{4}(?:-?[0-9a-f]{4}){7}$/i.test(body) ? body.replace(/-/g, "").toLowerCase() : null;
+  };
+  const same = (a: unknown, b: unknown) => {
+    const ka = uuidKey(a), kb = uuidKey(b);
+    return ka !== null && kb !== null ? ka === kb : a === b;
+  };
   function builder(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
     let action: "select" | "insert" | "update" | "delete" = "select";
@@ -58,7 +83,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
       insert: (p: Row | Row[]) => { action = "insert"; payload = p; return b; },
       update: (p: Row) => { action = "update"; payload = p; return b; },
       delete: () => { action = "delete"; return b; },
-      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
+      eq: (c: string, v: unknown) => { filters.push((r) => same(r[c], v)); return b; },
       is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
       order: () => b,
@@ -79,9 +104,12 @@ vi.mock("@/lib/supabaseAdmin", () => {
 });
 
 import { GET, POST } from "@/app/api/ai/usage/route";
+import { getAiUsage, aiUsageLockedReason } from "@/lib/knowledge";
 
 const ORG = "o1";
-const ADMIN = "u-admin", ADMIN2 = "u-admin2", DOC = "u-doc", ENG = "u-eng";
+// Real uuids: the route refuses a userId that is not one (GOV-10).
+const ADMIN = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", ADMIN2 = "b1ffcd88-8d1a-4ef8-bb6d-6bb9bd380a22";
+const DOC = "c2aade77-7e2b-4ef8-bb6d-6bb9bd380a33", ENG = "d3bbef66-6f3c-4ef8-bb6d-6bb9bd380a44";
 const get = async (who: string) => { const r = await GET(new NextRequest(`https://app/api/ai/usage?orgId=${ORG}`, { headers: { authorization: `Bearer ${who}` } })); return { status: r.status, json: await r.json() as Row }; };
 const post = async (who: string, body: Row) => {
   const r = await POST(new NextRequest("https://app/api/ai/usage", { method: "POST", headers: { authorization: `Bearer ${who}`, "content-type": "application/json" }, body: JSON.stringify({ orgId: ORG, ...body }) }));
@@ -338,5 +366,141 @@ describe("GOV-4 / GOV-1 — the meter is every op, and an unreadable ledger is s
     const row = (doc.team as Row[]).find((t) => t.userId === ENG)!;
     expect(row).toMatchObject({ spentUsd: 6, calls: 3 });
     expect((await get(ADMIN)).json.canManageCaps).toBe(true);
+  });
+});
+
+describe("GOV-10 — the target is the uid the DATABASE returns: your own uid in any spelling is still your own", () => {
+  // Every spelling Postgres's uuid input accepts for the same id.
+  const spellings = (uid: string) => [
+    uid.toUpperCase(),
+    `{${uid}}`,
+    uid.replace(/-/g, ""),
+    `{${uid.toUpperCase().replace(/-/g, "")}}`,
+  ];
+
+  it("raising or clearing your own cap under another spelling is refused 403 while another holder exists — nothing written, nobody told (the review's scenario)", async () => {
+    const before = [{ org_id: ORG, user_id: null, monthly_cap_usd: 50 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
+    db.tables.ai_usage_limits = before.map((r) => ({ ...r }));
+    for (const spelled of spellings(ADMIN)) {
+      const up = await post(ADMIN, { capUsd: 10000, userId: spelled });
+      expect(up.status, spelled).toBe(403);
+      expect(String(up.json.error)).toMatch(/can't raise your own/);
+      // clearing the $10 override onto the $50 default is a raise too
+      expect((await post(ADMIN, { capUsd: null, userId: spelled })).status, spelled).toBe(403);
+    }
+    expect(db.tables.ai_usage_limits).toEqual(before);
+    expect(db.tables.audit_logs).toHaveLength(0);
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("the uuid columns match any spelling (as Postgres's do), and every write, audit row and notice carries the canonical uid", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
+    // another holder may raise ADMIN's cap, whatever the spelling: it lands on ADMIN's own row
+    const r = await post(ADMIN2, { capUsd: 40, userId: ADMIN.toUpperCase() });
+    expect(r.status).toBe(200);
+    expect(db.tables.ai_usage_limits).toEqual([expect.objectContaining({ user_id: ADMIN, monthly_cap_usd: 40 })]);
+    expect(db.tables.audit_logs.at(-1)!.details).toEqual({ targetUserId: ADMIN, capUsd: 40, previousCapUsd: 10 });
+    expect(notices().map((n) => [n.user_id, n.title])).toEqual([[ADMIN, "Your monthly AI cap changed"]]);
+    // lowering your own cap under a braced spelling is allowed — it updates
+    // the canonical row (never a second one) and you are not told about it
+    const down = await post(ADMIN, { capUsd: 5, userId: `{${ADMIN.toUpperCase()}}` });
+    expect(down.status).toBe(200);
+    expect(db.tables.ai_usage_limits).toEqual([expect.objectContaining({ user_id: ADMIN, monthly_cap_usd: 5 })]);
+    expect(db.tables.audit_logs.at(-1)!.details).toEqual({ targetUserId: ADMIN, capUsd: 5, previousCapUsd: 40 });
+    expect(notices().map((n) => n.user_id)).toEqual([ADMIN, ADMIN2]);
+  });
+
+  it("a SOLE holder raising their own cap under another spelling is audited soleHolder with the canonical uid and sent no notice about it", async () => {
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    const r = await post(ADMIN, { capUsd: 75, userId: ADMIN.replace(/-/g, "").toUpperCase() });
+    expect(r.status).toBe(200);
+    expect(r.json.soleHolder).toBe(true);
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === ADMIN)?.monthly_cap_usd).toBe(75);
+    expect(db.tables.audit_logs.map((a) => a.details)).toEqual([{ targetUserId: ADMIN, capUsd: 75, previousCapUsd: 10, soleHolder: true }]);
+    expect(notices()).toHaveLength(0);
+  });
+
+  it("a userId that is not a uuid is refused (400) before any lookup", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }];
+    for (const bad of ["not-a-uuid", ADMIN.slice(0, -1), `${ADMIN}0`, `{${ADMIN}`, `${ADMIN}}`, `${ADMIN.slice(0, 5)}-${ADMIN.slice(5).replace(/-/g, "")}`, `${ADMIN.slice(0, -1)}g`]) {
+      const r = await post(ADMIN2, { capUsd: 40, userId: bad });
+      expect(r.status, bad).toBe(400);
+      expect(String(r.json.error)).toMatch(/workspace member's id/);
+    }
+    expect(db.tables.ai_usage_limits).toEqual([{ org_id: ORG, user_id: ADMIN, monthly_cap_usd: 10 }]);
+    expect(db.tables.audit_logs).toHaveLength(0);
+  });
+});
+
+describe("GOV-10 — a SOLE holder's own raise is recorded before it is made", () => {
+  beforeEach(() => {
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== ADMIN2);
+  });
+
+  it("an audit row that cannot be written refuses the raise (503) on all three paths — the stored caps are unchanged", async () => {
+    db.errors["audit_logs:insert"] = { message: "new row violates check constraint" };
+    // an override of their own
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 5 }];
+    const own = await post(ADMIN, { capUsd: 75, userId: ADMIN });
+    expect(own.status).toBe(503);
+    expect(String(own.json.error)).toMatch(/audit record .* so nothing was changed: new row violates check constraint/);
+    // clearing it onto the higher default
+    expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(503);
+    expect(db.tables.ai_usage_limits).toEqual([{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 5 }]);
+    // raising the default they follow
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+    expect((await post(ADMIN, { capUsd: 50 })).status).toBe(503);
+    expect(db.tables.ai_usage_limits).toEqual([{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }]);
+    expect(notices()).toHaveLength(0);
+    // a change that is not their own raise is not held to it (its audit row stays best-effort, as before)
+    expect((await post(ADMIN, { capUsd: 3, userId: ENG })).status).toBe(200);
+    expect((await post(ADMIN, { capUsd: 5 })).status).toBe(200);
+  });
+
+  it("the record is written first; a save that then fails is recorded as not applied", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }, { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 5 }];
+    db.errors["ai_usage_limits:update"] = { message: "permission denied" };
+    const up = await post(ADMIN, { capUsd: 75, userId: ADMIN });
+    expect(up.status).toBe(500);
+    db.errors["ai_usage_limits:delete"] = { message: "permission denied" };
+    expect((await post(ADMIN, { capUsd: null, userId: ADMIN })).status).toBe(500);
+    expect(db.tables.ai_usage_limits.find((l) => l.user_id === ADMIN)?.monthly_cap_usd).toBe(5);
+    expect(db.tables.audit_logs.map((a) => a.details)).toEqual([
+      { targetUserId: ADMIN, capUsd: 75, previousCapUsd: 5, soleHolder: true },
+      { targetUserId: ADMIN, capUsd: 75, previousCapUsd: 5, soleHolder: true, notApplied: true, error: "permission denied" },
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true },
+      { targetUserId: ADMIN, cleared: true, previousCapUsd: 5, soleHolder: true, notApplied: true, error: "permission denied" },
+    ]);
+    expect(notices()).toHaveLength(0);
+  });
+});
+
+describe("GOV-3 — a client reading the meter sees a lock as a refusal, never 'no cap'", () => {
+  beforeEach(() => {
+    // lib/knowledge's getAiUsage, answered by the real GET above
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { headers?: Record<string, string> }) => {
+      const r = await GET(new NextRequest(`https://app${url}`, { headers: init?.headers ?? {} }));
+      return { ok: r.ok, status: r.status, json: async () => r.json() } as unknown as Response;
+    }));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("a locked member's summary carries locked and capUsd 0, and aiUsageLockedReason says the lock — where a `cap > 0 && spent >= cap` check passes it", async () => {
+    expect((await post(ADMIN, { capUsd: 0, userId: ENG })).status).toBe(200);
+    db.sessionToken = ENG;
+    const usage = await getAiUsage(ORG);
+    expect(usage).toMatchObject({ capUsd: 0, locked: true });
+    expect(usage.spentUsd.toFixed(2)).toBe("0.00");
+    // the shape a re-index guard used to read a $0 cap as no limit
+    const cap = Number(usage.capUsd) || 0;
+    expect(cap > 0 && usage.spentUsd >= cap).toBe(false);
+    expect(aiUsageLockedReason(usage)).toBe("your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it");
+    // capUsd 0 alone is the lock too; an ordinary cap is not
+    expect(aiUsageLockedReason({ capUsd: 0 })).not.toBeNull();
+    db.sessionToken = DOC;
+    const open = await getAiUsage(ORG);
+    expect(open).toMatchObject({ capUsd: 10, locked: false });
+    expect(aiUsageLockedReason(open)).toBeNull();
   });
 });
