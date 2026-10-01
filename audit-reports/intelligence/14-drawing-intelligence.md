@@ -387,7 +387,7 @@ Now:
 - **References get the same rule** (see DWG-13): a reference back, or a sheet of that drawing, not found on such a sheet is unchecked, never one-way and never a gap.
 - **Re-judged when the page is read.** The target stays in the source's verdict basis (`targetsByDoc`), so the source is re-audited once the retry reads the page. A `flagged` filed for an unchecked pairing is true when filed. Like any unpaired box, it is never lowered at that revision.
 
-Broken is now exactly: a connector that shows neither a drawing number nor a sheet (and no drawing number anywhere on its line), or a box missing from the sheet its destination field names, where that sheet was read whole (ready, no page left unread) and its box numbers were read.
+Broken is now exactly: a connector that shows neither a drawing number nor a sheet (and no drawing number anywhere on its line), or a box missing from the sheet its destination field names, where that sheet was read whole (ready, no page left unread) and its box numbers were read. (Corrected in review fix pass 5: this did not hold either. Box numbers were pooled per DOCUMENT, so "its box numbers were read" was true of a combined PDF as soon as any one of its pages had a box row, including a page that is not the sheet named; see below.)
 
 Tests:
 - `lib/__tests__/drawingText.test.ts` "a box not on what was read of a sheet not read whole is unpaired with the reason — never unreturned".
@@ -397,6 +397,37 @@ Tests:
   - the accepted-partial variant.
 
 Each fails against fix pass 3 (`f41a1a8`).
+
+**Review fix pass 5 (2026-10-01, intelligence Round G).** Fix pass 4's sentence above held only for a document of one sheet. `auditOpcBoxes` kept box numbers in one set per DOCUMENT and filed `unreturned` whenever that set existed and lacked the box. Box numbers come only from pages AI vision read (DEC-59 item 5: a text layer prints a pennant, not a box token), and ingest decides vision page by page (`pageNeedsVision`). So in a combined PDF only some pages' boxes are ever read, and the document still counted as read whole. At the base `unreturned` could not fire (no `opc` rows existed, DWG-4), so this package made it live: a regression. The reviewer reproduced it through the route:
+- Doc a (025-PID-0104) carries `OPC 14: DWG 025-PID-0105 SH 1 — TO V-1402`.
+- Doc b is a ready two-page combined PDF. Page 1 declares 025-PID-0105 / 025-PID-0105-SH1 from a TrueType text layer, so it was not vision-read and has no `opc` rows. Page 2 (025-PID-0106) is SHX, vision-read, with `OPC 3`.
+- The lens listed box 14 as unreturned, and the record filed 025-PID-0104 `broken_connectors` ("Connector 14 continues to combined.pdf, which has no matching box"), never lowered at that revision. The same happened when a keyless or over-cap driver indexed the thin pages text-only (DWG-7, below).
+
+Now:
+- **Paired per sheet.** `auditOpcBoxes` (`lib/drawingText.ts`) takes a new `selfPages` argument: by document, by declared number, the pages its title block declares it on. The route builds it from the roll-up's `pages` for kind `self` (`indexMaps` in `app/api/knowledge/drawing/route.ts`). Box numbers are kept by document AND page. A destination resolves to the page(s) whose self rows declare the matched number, and the box pairs only there.
+- **`unreturned` only when the sheet named was read.** That needs the document read whole, box numbers read on every page that is the sheet named, and none of them this box. Otherwise the connector is `unpaired`, and its new `why` says which page:
+  - "page 1 of it is the sheet named, and no box numbers were read there";
+  - "box 14 stands on page 3 of it, whose drawing number was not read, and that page may be the sheet named". A box found on a page that declares no number is never filed `unreturned` against the page that does;
+  - "which of its pages is the sheet named is not known", when a caller passes no pages. Without them nothing is ever `unreturned`.
+
+  A box found on a page that declares ANOTHER sheet is not on the sheet named. When the sheet named was read with its boxes, that connector is still `unreturned`.
+- **The verdict says so.** `verdictsForSheets` (`lib/drawingAuditLog.ts`) files it as "Connector 14 continues to combined.pdf: page 1 of it is the sheet named, and no box numbers were read there — the pairing was not checked; check the box on that sheet". The sheet is `flagged`, and the flag is settled, not provisional: the document IS read whole. The lens returns `why` with the box, and the panel shows it.
+- **The basis follows the page.** `indexFingerprint` now digests a self row's pages too. If a declared number moves to another page, the sheet a box pairs on has changed, so the verdict is re-judged.
+
+Broken is now exactly: a connector that shows neither a drawing number nor a sheet (and no drawing number anywhere on its line), or a box missing from the sheet its destination field names, where the document holding that sheet was read whole and box numbers were read on that sheet's own page(s).
+
+Tests:
+- `lib/__tests__/drawingText.test.ts` "a box pairs on the SHEET its connector names: a combined PDF's text-layer page is never box-complete because another page was vision-read". It runs the reviewer's probe, then: paired on page 1; `unreturned` when page 1 has its boxes and 14 stands on 0106's page; `unpaired` when 14 stands on an undeclared page; a bare number declared on two pages; and no pages given. The existing pairing tests now pass the pages.
+- `lib/__tests__/drawingAuditLog.test.ts`: "files the page-level reason, flagged — never broken"; "indexFingerprint changes when a declared number moves to another page".
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "DWG-4 — a box pairs on the SHEET its connector names, never on another page's boxes":
+  - the reviewer's combined-PDF probe through the lens and the record (`flagged`, never `broken_connectors`, no `provisional`);
+  - page 1 vision-read without box 14 is `broken_connectors`; with 14 it is `passed`.
+  - The two parked-neighbour tests now put 0105's page-2 title block beside its box 14, and their connector names the drawing.
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): "an unpaired box on a page whose box numbers were never read says which page".
+
+Each new case fails against fix pass 4 (`b41bdca`), except the route's positive control ("page 1 vision-read … `broken_connectors`; with 14 … `passed`"), which passes there too.
+
+Residual. A connector into another page of its OWN combined PDF is still not paired (`target === source`), as before.
 ---
 
 <a id="dwg-5"></a>
@@ -572,6 +603,8 @@ Tests:
 - `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): "the lens names the series whose gaps it does not judge", and the record's copy.
 
 Each fails against fix pass 2 (`4e549d0`).
+
+**Review fix pass 5 (2026-10-01, intelligence Round G).** A missing sheet was filed only against the first six referencing sheets in alphabetical order. `auditDrawingRefs` cut `referencedBy` to six for display, and the record used that list to decide who gets the finding. With eight sheets citing a missing 025-PID-0199, the seventh and eighth were recorded `passed` and stamped covered. The cut was there at the base; fix pass 4's `missingUnread` copied it. Now `auditDrawingRefs` (`lib/drawingText.ts`) also returns `referencedByAll` for `missingInSeries` and `missingUnread`. The record files the finding against every one of them. Only the lens keeps the cut list, and it never ships the whole one. Tests: `lib/__tests__/drawingText.test.ts` "a missing sheet names every referencing sheet for the record — six for display"; `lib/__tests__/drawingAuditLog.test.ts` "eight referencers, eight flagged"; `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "eight sheets reference 025-PID-0199: all eight are flagged — the lens lists six, the record files eight". The route test fails against fix pass 4 (`b41bdca`).
 ---
 
 <a id="dwg-7"></a>
@@ -626,7 +659,7 @@ Measured on the repo fixture: `p1 rotate=0 view=[0,0,1224,792] chars=176 items=1
   - **a title block:** its own title block declares a drawing number (BR-12).
 
   Sentence enders are deliberately not a signal, because a drawing's numbered notes end in full stops. Ingest calls `isDrawingLikePage` for extraction, for the title block and for the chunker's carry, so the fix reaches all three without a change to `lib/knowledgeIngest.ts`.
-- **Vision stays opt-in.** Nothing routes a page to AI vision automatically (decision default, `DEC-59` item 1). (Corrected in review fix pass 4: no DENSE text-layer page is routed to AI vision. As at the base, `pageNeedsVision` routes a thin page with no tags, and a near-empty one, page by page when the uploader has a key saved; see below.)
+- **Vision stays opt-in.** Nothing routes a page to AI vision automatically (decision default, `DEC-59` item 1). (Corrected in review fix pass 4: no DENSE text-layer page is routed to AI vision. As at the base, `pageNeedsVision` routes a thin page with no tags, and a near-empty one, page by page when the uploader has a key saved; see below. Corrected again in review fix pass 5: not the uploader's key. Interactive indexing uses the key of the controller driving it (`app/api/knowledge/ingest/route.ts` reads `ai_connections` for the caller); only the nightly drain uses the uploader's sponsored key.)
 - **The lens says which.** For a `text-no-tags` sheet, `app/api/knowledge/drawing/route.ts` answers `looksLike: "drawing"` or `"prose"`. It says drawing when the sheet has a title block, a drawing reference, or capital lettering, measured in the database by `knowledge_doc_text_stats()` (`20261124`) or over the chunks read whole. The advice now differs. "These documents have text but no drawing tags were extracted — normal for prose documents" is gone. A drawing gets "look like DRAWINGS … most likely SHX line-work … turn on 'Text doesn't extract from these files — index every page as an image'"; prose gets "read as prose — no drawing tags are expected". The panel shows "Drawing, no tags" or "Prose".
 
 Tests:
@@ -677,6 +710,14 @@ Tests (`lib/__tests__/intelRoundGDrawingRoutes.test.ts`):
 - "text with no tags says drawing … or prose — and the advice differs" now asserts "usually" and the conditional switch.
 
 Both fail against fix pass 3 (`f41a1a8`).
+
+**Review fix pass 5 (2026-10-01, intelligence Round G).** Records only. Fix pass 4 said `pageNeedsVision` routes a page to vision "when the document's uploader has a key saved", in the correction above and in DEC-59 item 1. That key is the one in use only for the nightly drain (`loadSponsorVision`, the uploader's sponsored key). Interactive indexing uses the key of the controller driving it: `app/api/knowledge/ingest/route.ts` reads `ai_connections` for the caller. Both records now say so.
+
+Residual, handed to I-06 (`lib/knowledgeIngest.ts`). A page that `pageNeedsVision` routes to vision but that has no vision context is indexed text-only, and nothing records it as unread. That happens with no key (a keyless co-controller's open tab claiming a batch), or when the monthly cap is reached. The branch at `lib/knowledgeIngest.ts:1295-1340` writes nothing to `vision_failed_pages` when `vision` is undefined, so the document becomes `ready` and the lens and the record treat it as read whole.
+- For connector BOXES this no longer matters. They are paired per sheet (DWG-4, review fix pass 5), so a page with no box numbers is `unpaired` whatever the reason.
+- For REFERENCES it still matters. A reference back that stood only in that page's line-work is not found, and the reference is filed one-way (settled `flagged`).
+
+The fix is ingest's: track such a page as unread, for example in `vision_failed_pages` with its reason, so `notReadWhole` sees it.
 ---
 
 <a id="dwg-8"></a>
@@ -1076,7 +1117,7 @@ Tests:
 - `lib/__tests__/drawingLocate.test.ts` "buildRelocateUser — the relocate round says what was actually observed".
 
 **Done-when.**
-- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established: a known revision, and a stored row that covered this sheet from the index it holds now (review fix pass 2). Since review fix pass 3 the row must also have been computed from the indexes the sheets it points at hold now, against the same set. A sheet under an unknown revision is audited every time. Since review fix pass 4 nothing is recorded while a sheet of the library is being indexed (409).
+- ✓ `recordAudit` loads prior verdicts for the library's sheets and runs them through `sheetsNeedingAudit` before recomputing. An unrevised sheet is never re-audited where "unrevised" can be established: a known revision, and a stored row that covered this sheet from the index it holds now (review fix pass 2). Since review fix pass 3 the row must also have been computed from the indexes the sheets it points at hold now, against the same set. A sheet under an unknown revision is audited every time. Review fix pass 4 refused to record anything while a sheet of the library was being indexed (409). Since review fix pass 5 nothing is refused: a verdict that waits on a sheet not read whole yet is provisional, and it never overwrites a settled one.
 - ✓ The response distinguishes "recorded" from "already recorded at this revision".
 - ✓ The refine loop calls `buildRelocateUser` when the close-up returns no sighting, instead of silently keeping a point it just failed to confirm.
 - ✓ No function stays unwired: `sheetsNeedingAudit` and `buildRelocateUser` both have production callers now.
@@ -1146,7 +1187,7 @@ Residual:
 4. 0105 finishes with identical rows, and the `flagged` stays.
 
 Comparing neighbours cannot fix this either: a sheet being indexed has lost its self rows, so references to it no longer resolve. Now:
-- **Nothing is recorded while any sheet of the library is being indexed** (queued or mid-read: not ready, not failed, not parked). `recordAudit` answers 409 with `indexingNow` and the message "N sheet(s) are being indexed right now (…) — nothing was recorded: a verdict judged against a half-built index would be filed for good. Record the audit once indexing finishes." `apiPost` throws it, and the panel shows it as the error toast.
+- **Nothing is recorded while any sheet of the library is being indexed** (queued or mid-read: not ready, not failed, not parked). `recordAudit` answers 409 with `indexingNow` and the message "N sheet(s) are being indexed right now (…) — nothing was recorded: a verdict judged against a half-built index would be filed for good. Record the audit once indexing finishes." `apiPost` throws it, and the panel shows it as the error toast. (Replaced in review fix pass 5. That blocked the whole library behind any one document in flight, and it did nothing for a parked or failed neighbour, which is just as transient; see below.)
 - **Removed:** the `indexOnly` option, `basisIndexPart`, the response's `indexingNow` on success, and the panel's "no verdict was re-decided" line.
 
 **"A sheet parked waiting on AI vision counts as settled."** It is not read whole: its unread pages may hold the box, or the reference back, that a sheet pointing at it needs. `notReadWhole` (route) collects, with why, every document with `vision_failed_pages` (parked, accepted partial, failed run), every failed one, and every one not finished. It is passed to `auditDrawingRefs` as a new `incomplete` argument (`lib/drawingText.ts`):
@@ -1173,7 +1214,47 @@ Tests:
 All but the panel test fail against fix pass 3 (`f41a1a8`). The panel test pins the toast, which the old panel also showed for a refused call.
 
 Residual:
-- Suppose a `flagged` was filed for a check that needed a sheet not read whole. Once that sheet is read and the check passes, the `flagged` stays at that revision, with the reason it was filed: it is never lowered, like any unpaired box. It is reported under `keptStored`.
-- While any sheet of a library is being indexed, nothing in that library can be recorded.
+- Suppose a `flagged` was filed for a check that needed a sheet not read whole. Once that sheet is read and the check passes, the `flagged` stays at that revision, with the reason it was filed: it is never lowered, like any unpaired box. It is reported under `keptStored`. (Corrected in review fix pass 5. This understated the defect, and "reported under `keptStored`" reached no user: the panel never showed `keptStored`. The same rule also let a parked neighbour overwrite a VERIFIED `passed` with `flagged` for good. A `flagged` of that kind is now provisional and heals; see below.)
+- While any sheet of a library is being indexed, nothing in that library can be recorded. (No longer true since review fix pass 5.)
 - An accepted partial index never changes, so a check that needed its unread pages stays unchecked.
+
+**Review fix pass 5 (2026-10-01, intelligence Round G).** Fix pass 4's root-cause paragraph above names the defect: a verdict at a known revision is never lowered, so any verdict computed from incomplete neighbour data becomes permanent. Fix pass 4 then applied that reasoning only to documents in flight (the 409), and none of it to parked or failed ones, which are just as transient. The reviewer reproduced it through the route:
+1. 0104 and 0105 carry box 14 both ways, and 0104 is recorded `passed` at C.
+2. A rebuild re-reads 0105, and its page 2 (box 14, and the reference back) parks on a vision error. The record wrote 0104 `flagged` at C ("…not read whole (page(s) 2 never read) — the pairing was not checked").
+3. The retry read page 2 and the index was identical to before. The record computed `passed`, but `keptStored` kept `flagged`.
+
+From then on every record re-judged 0104 and kept it `flagged` at C until the drawing was revised. `check_audit_history` would report a clean sheet as "already audited" `flagged`. Now:
+- **A provisional verdict.** A finding whose check needed a document that is not read whole only FOR NOW (parked on AI vision, failed, or still being indexed, as opposed to an accepted partial index, which never changes) waits on that document. The route computes these with `forNowIncomplete` (`app/api/knowledge/drawing/route.ts`) and passes `waitsOn` with each unchecked finding: an unpaired box with `unread`, `oneWayUnread`, and `missingUnread`. `verdictsForSheets` (`lib/drawingAuditLog.ts`) then marks the verdict `provisional`, with `waitingOn` (the documents, with why) and `settledStatus`. `settledStatus` is the verdict without those findings: what the sheet is known to be whatever they turn out to hold. `verdictRows` writes it to `audit_details.provisional`.
+- **What a row settled is what is never lowered.** `replaceDecision(stored, next)` replaces `mayReplaceStored` in the route (which `mayReplaceStored` now wraps). It returns one of three outcomes:
+  - `write`;
+  - `keep` (it would lower what the row settled);
+  - `wait`: the row and its coverage are left untouched, and the sheet is reported under `waitingOn`.
+
+  How it decides:
+  - A provisional verdict changes a settled row only when what IT settled is more severe, which is a real finding. Otherwise it waits. A parked neighbour never turns a verified `passed` into `flagged`.
+  - A provisional verdict replaces a provisional row whenever it settles no less.
+  - A settled verdict replaces a provisional row down to that row's settled status. So what was filed while a neighbour was unread heals once it is read.
+  - Unknown revisions, and another library's row on the org-wide key, follow the old rules.
+- **Merged per key** by `mergeVerdictsByKey` (moved from the route into `lib/drawingAuditLog.ts`): the severer verdict and every document it covers, provisional when any member is, settled at the severest settled status.
+- **Nothing is refused while a sheet is being indexed.** The 409, `indexingNowOf` and `indexingNow` are gone (the reviewer's minor 4). A document in flight is not read whole (`notReadWhole`), so what is not found on it is unchecked and provisional. One gap remained. A sheet that a combined PDF, still being indexed, has not read yet was filed as a GAP, which is settled and never lowered once read: `mayHold` counted only the document's own drawing. Now a document not read whole may hold any sheet of a series it declares a number of (`auditDrawingRefs`, `lib/drawingText.ts`). The same applies to a parked combined PDF.
+- **Every referencer.** A missing sheet is filed against every sheet that references it, not the lens's first six (see DWG-6).
+- **The panel says what was left as stored.** `components/knowledge/DrawingIntelPanel.tsx` renders `keptStored` ("025-PID-0104 rev C: kept flagged — computed passed now") and `waitingOn` ("… waiting on 025-PID-0105.pdf (page(s) 2 never read) — judged again once it is") in the "Audit recorded" block, and the toast counts both. Before this, the records said a kept verdict was "reported in keptStored", but only the JSON carried it.
+
+Tests:
+- `lib/__tests__/intelRoundGDrawingRoutes.test.ts`:
+  - "a verified passed is never raised by a neighbour that is only parked: it waits, and is passed again once the page is read". This is the reviewer's probe: `passed`@C, neighbour parked, record (the row and its `audited_at` untouched, `waitingOn` names 0104), retry, record (`passed`), and then done.
+  - "a box on a parked neighbour's unread page …": the first record is now `provisional` (`settledStatus: "passed"`), and after the retry the row is `passed`. Fix pass 4 kept `flagged`.
+  - "while a sheet is being indexed the record goes on …". It replaces fix pass 4's 409 test: 200, nothing settled overwritten, `waitingOn` 0104 and 0106, and 0105 is never filed under its filename.
+  - "a combined PDF mid-index: a drawing of its series it has not read yet is no gap — provisional — and is settled once it is read".
+- `lib/__tests__/drawingAuditLog.test.ts`, block "a finding that waits on a sheet not read whole FOR NOW is provisional — never settled": `verdictsForSheets`, the `replaceDecision` table, `storedProvisional`, `mergeVerdictsByKey`, `verdictRows`.
+- `lib/__tests__/drawingText.test.ts` "a reference back, or a sheet, not found on a sheet not read whole …" now expects 025-PID-0199 to be unchecked (it may be on 0105's unread page), and a series 0105 declares nothing of to stay a gap.
+- `lib/__tests__/drawingIntelPanelRebuild.test.ts` (rendered): "a stored verdict kept, or left waiting, is shown with what was computed now — and the toast counts both". "A refused record (a partial index) is the toast" replaces the 409 toast test.
+
+Each fails against fix pass 4 (`b41bdca`), except "a refused record … is the toast": the old panel toasted a refused call too.
+
+Residual:
+- A `flagged` that waits on nothing transient is settled and still never lowered. That covers an unpaired box into a text-layer sheet that is later vision-read, and an unchecked check against an accepted partial index. The panel now shows it under "kept".
+- A verdict computed while a connector's destination was still being indexed, with its self rows cleared, may be a premature `passed`: the connector resolves to no sheet. It can only be raised later, never stuck. The set digest names the document in flight, so every sheet is judged again once it is read.
+- `log_audit_completion` (I-04) writes no `provisional` marker and compares by status. A provisional row it meets is just a row at that status, which is never lower than what the row settled, so nothing is lost.
+- A page skipped for lack of a key or for the cap is not tracked as unread (DWG-7, handed to I-06).
 ---
