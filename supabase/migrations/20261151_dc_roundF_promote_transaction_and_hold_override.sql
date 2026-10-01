@@ -51,7 +51,7 @@
 --               put-back from a bare un-supersede, and binding it would
 --               strand the reversal (a stamped put-back, v_restoring, passes
 --               a controller over a hold the same way). Counted by the
---               inventory; the bare un-supersede it leaves open is REV-21;
+--               inventory; the bare un-supersede it leaves open is REV-22;
 --           (b) ONE write that moves the pointer AND makes the status an
 --               issue (a direct PATCH; the review promote of a Draft / In
 --               Review document) — an advancing write a controller passed.
@@ -147,14 +147,14 @@ SELECT 'inventory (before apply): of those, under an active hold (REV-20: their 
    AND d.retired_issue_status IS NULL
    AND EXISTS (SELECT 1 FROM document_holds h WHERE h.document_id = d.id AND h.released_at IS NULL)
 UNION ALL
-SELECT 'inventory (before apply): documents in Superseded with no retirement stamp and a current revision (SPARED by REV-20: a split / merge / supersede recorded before 20261144, whose reversal puts the source back over the hold HLD-2 carries onto it; their exit keeps OWN-15''s rule for Document Control — REV-21)',
+SELECT 'inventory (before apply): documents in Superseded with no retirement stamp and a current revision (SPARED by REV-20: a split / merge / supersede recorded before 20261144, whose reversal puts the source back over the hold HLD-2 carries onto it; their exit keeps OWN-15''s rule for Document Control — REV-22)',
        COUNT(*)::text
   FROM documents d
  WHERE d.current_version_id IS NOT NULL
    AND d.status = 'Superseded'
    AND d.retired_issue_status IS NULL
 UNION ALL
-SELECT 'inventory (before apply): of those, under an active hold now (Document Control may put them back to an issue over it, unrecorded — REV-21; a hold carried at reversal time is not counted here)',
+SELECT 'inventory (before apply): of those, under an active hold now (Document Control may put them back to an issue over it, unrecorded — REV-22; a hold carried at reversal time is not counted here)',
        COUNT(*)::text
   FROM documents d
  WHERE d.current_version_id IS NOT NULL
@@ -321,7 +321,7 @@ BEGIN
   -- the legacy reversal's put-back of a source superseded before 20261144,
   -- over the hold HLD-2 carries onto it first — as a stamped put-back
   -- (v_restoring) passes a controller; the bare un-supersede left open is
-  -- REV-21. (b) ONE write that moves the
+  -- REV-22. (b) ONE write that moves the
   -- pointer AND makes the status an issue: a controller passes a hold only
   -- through publish_revision's recorded force, which sets the
   -- transaction-local flag app.publish_hold_override to this document's id

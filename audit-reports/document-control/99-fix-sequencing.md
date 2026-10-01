@@ -357,7 +357,7 @@ one-paste migrations, independent of one another (any order among them):
   carried hold — the legacy reversal of a split / merge recorded before
   `20261144` (P14 review fix; its inventory counts them); that bare
   un-supersede, and a controller's bare pointer move on a held document
-  already issued, are `REV-21` (open).
+  already issued, are `REV-22` (open).
 `GAP-4` (owner-must-approve) and `GAP-9` (field-verification currency) need
 no migration: the owner's roster row, once the app writes it, is counted by
 the guard's existing per-slot-group count, and the verification cadence

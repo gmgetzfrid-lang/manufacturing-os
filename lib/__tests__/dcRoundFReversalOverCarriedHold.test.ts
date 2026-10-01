@@ -16,7 +16,7 @@
 //   limb (a) binds an unstamped ARCHIVED / VOID exit only; an unstamped
 //   Superseded put-back keeps OWN-15's rule for a controller, as a stamped
 //   put-back (v_restoring) does. The inventory counts the spared population;
-//   the bare un-supersede it leaves open is REV-21.
+//   the bare un-supersede it leaves open is REV-22.
 //
 // There is no database here: enforce_document_publish_guard (20261151) is
 // TRANSCRIBED below — each branch pinned to the SQL text it mirrors, in
@@ -390,7 +390,7 @@ describe("REV-20 — what the re-created guard binds and what it spares (the cas
     }
   });
 
-  it("(a) spared: an unstamped SUPERSEDED document under a hold — Document Control's bare un-supersede to Issued passes, unrecorded (REV-21); anyone below a controller is still refused", () => {
+  it("(a) spared: an unstamped SUPERSEDED document under a hold — Document Control's bare un-supersede to Issued passes, unrecorded (REV-22); anyone below a controller is still refused", () => {
     expect(publishGuard({ ...unstamped("Superseded"), status: "Issued" }, unstamped("Superseded"), ctl).status).toBe("Issued");
     expect(refused(() => publishGuard({ ...unstamped("Superseded"), status: "Issued" }, unstamped("Superseded"), owner))).toBe(S_PUBLISHER_HOLD);
   });
@@ -401,7 +401,7 @@ describe("REV-20 — what the re-created guard binds and what it spares (the cas
     expect(refused(() => publishGuard(write, draft, ctl))).toBe(S_UNFORCED_HOLD);
     expect(publishGuard(write, draft, { ...ctl, flag: "d1" }).current_version_id).toBe("v4");
     expect(refused(() => publishGuard(write, draft, { ...ctl, flag: "d2" }))).toBe(S_UNFORCED_HOLD);
-    // REV-21's other half: a bare pointer move on an ALREADY-ISSUED held document makes no status an issue — it passes for a controller (the trade-off REV-21 names)
+    // REV-22's other half: a bare pointer move on an ALREADY-ISSUED held document makes no status an issue — it passes for a controller (the trade-off REV-22 names)
     const issued: Row = { ...draft, status: "Issued" };
     expect(publishGuard({ ...issued, current_version_id: "v4" }, issued, ctl).current_version_id).toBe("v4");
     expect(refused(() => publishGuard({ ...issued, current_version_id: "v4" }, issued, owner))).toBe(S_PUBLISHER_HOLD);
