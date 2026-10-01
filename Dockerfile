@@ -6,6 +6,8 @@
 #   docker build \
 #     --build-arg NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co \
 #     --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ... \
+#     --build-arg NEXT_PUBLIC_SITE_URL=https://mfg.yourplant.com \
+#     --build-arg NEXT_PUBLIC_FACILITY_TIME_ZONE=America/Chicago \
 #     -t manufacturing-os .
 #
 # Run (server-only secrets are provided at runtime):
@@ -28,9 +30,17 @@ COPY . .
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_APP_URL
+# The public address every QR, share link and transmittal portal link is
+# built on (lib/publicOrigin.ts) — required for the physical bridge.
+ARG NEXT_PUBLIC_SITE_URL
+# The facility's IANA time zone for effective dates (lib/effectiveDate.ts,
+# document-control REV-9); the browser's badge reads it from the bundle.
+ARG NEXT_PUBLIC_FACILITY_TIME_ZONE
 ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
     NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
+    NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL} \
+    NEXT_PUBLIC_FACILITY_TIME_ZONE=${NEXT_PUBLIC_FACILITY_TIME_ZONE} \
     # Placeholder only so module-load Supabase clients don't throw during the
     # build's page-data collection; the real key is supplied at runtime.
     SUPABASE_SERVICE_ROLE_KEY=build-time-placeholder \

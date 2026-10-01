@@ -97,6 +97,7 @@ about the system.
 | [DEC-61](#dec-61) | A transmittal is a **formal issue**: members draft, the `transmittal.issue` capability (default Admin + DocCtrl, per item library) issues / voids / revokes / records receipt; the database writes the as-sent snapshot — of the document's **current** revision only — and freezes it; nothing issued is deleted; the portal link expires (90 days) and is revocable without voiding; the portal serves stamped, hash-verified, recorded bytes | medium | `TRX-1`–`TRX-14`, `EGR-8`, `XEDGE-5` |
 | [DEC-62](#dec-62) | **Only a controller publishes a skill org-wide**; members author private skills and ask for one to be shared, and an approval binds to the version shown; built-ins have no author and are never deleted; custom link patterns stay inside a safe subset with a hard deadline; the link engine remembers decisions (a stale proposal re-enters, a dismissal blocks only the pair and proposer that produced it); a link is read only by whoever can read both documents | medium | `IEDGE-3`, `GOV-2`, `IRLS-3`, `ORCH-2`, `PR-3`, `HUB-2`, `HUB-8`, `LNK-1`–`LNK-13`, `IRLS-2`, `IRLS-4`, `IRLS-15`, `WIRE-2` |
 | [DEC-63](#dec-63) | The documents-table rails: the version pointers are **trigger-enforced references**, not declared FKs (the restore replays documents first); a creation may **issue** only with publish authority and a review policy that does not require sign-off; a reversal restores only the **recorded** prior status; one effective-date calendar decides "in effect" | medium | `REV-9`, `REV-11`, `REV-12`, `REV-16`, `REV-17`, `DRLS-3`, `DRLS-13`, `DRLS-14` |
+| [DEC-64](#dec-64) | What a printed copy asserts and where its links point: links are built on `NEXT_PUBLIC_SITE_URL`, else Vercel's **production** domain, never a preview host; no origin means no QR and no instruction to scan one; a page that cannot be measured is stamped **title-block-aware** (QR top-left, footer clear of the right-hand blocks); marks are placed in the page's displayed (rotated) space; a stamped copy is always **uncontrolled** (markup exports included) | low | `PHYS-5`, `PHYS-9`, `PHYS-11`, `PHYS-12`, `PHYS-13`, `SHR-8`, `SHR-11`, `PKG-13`, `TRX-14`, `XEDGE-5` |
 
 ---
 
@@ -3797,3 +3798,195 @@ the order is in `document-control/99-fix-sequencing.md`).
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, third review fix): §2's "recorded" now holds for every creation path — `createDocumentWithFile` writes `DOCUMENT_CREATED` with the initial status, the policy decision and the actor, and returns a refused write (`REV-11`). The reversal (§3) is two-phase: every restored document is proved restorable before any write, the parks / restores / lineage delete roll back whole, and the review voids and link revocations run only after (`REV-6`, `REV-12`). A merge into a held existing target with no rev-up is no longer refused (authority and the lock only — `HLD-2`), so no section removes a write path the database allows. §4's unset zone is logged and its worst case stated as 26 hours (`REV-9`). `REV-13` is back to OPEN: its every-door half is `20261131`'s rail, not yet pasteable.*
 
 *Landed 2026-09-30 (document-control Round F wave 2, P3 LIFECYCLE, fourth review fix): the controller's force over a hold reaches the UI — the Split and Merge wizards read the sources' active holds and, for a controller (the role collection), require "Proceed over the active hold … carried to every new sheet / the merge target", lock the carry on and pass `force`; anyone else is refused before submit and never told to release the hold (fix pass 3 left the force API-only, so the UI route was to release the hold, which carries nothing — the HLD-2 failure by another route, wrongly called fail-safe). `DOC_SPLIT` / `DOC_MERGED` name the holds proceeded over. A reversal that would park a held document takes the same explicit decision and carries the hold back onto every restored document (§3; `REV-12`), and a park or restore whose answer was lost is re-read before the rollback decides (`REV-6`). §2's require-mode refusal of a non-controller is app-side only; the database rule is `REV-17` (open). DEC-46's Landed line gains its RLS caveat (`REV-10`). See `HLD-2`, `REV-6`, `REV-10`, `REV-11`, `REV-12`, `REV-17`.*
+*Landed 2026-10-01 (public-surfaces Round F, PS-STAMP): §4's "built on the public origin" now holds in both runtimes. `transmittalPortalUrl` builds on `recipientOrigin()` (`lib/publicOrigin.ts`): `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`), never a preview's `VERCEL_URL`; else, in a browser only, the page's own address unless it is a Vercel deployment host (`*.vercel.app`) or loopback. A server with nothing configured builds no link and the email route refuses. A browser on a preview host or `localhost` with nothing configured builds none either: the cover sheet prints no portal block, and the issue flow says to set the variable and rebuild instead of offering a copy that cannot work. A self-hosted browser with nothing configured links on its own address, as before, and the toasts say so. The self-host Docker build now passes `NEXT_PUBLIC_SITE_URL` as a build argument, so the remedy can be applied there. The browser and the server build the same link when `NEXT_PUBLIC_SITE_URL` is set or Vercel exposes the production domain to the browser. Closes `TRX-14`'s browser half. See DEC-64 (public-surfaces PS-STAMP). Corrected in the second review fix pass: this note first said that off Vercel with the variable unset the copy link and the cover-sheet QR are lost outright, an accepted trade whose remedy the Docker build could not apply.*
+
+<a id="dec-64"></a>
+## DEC-64 · What a printed copy asserts and where its links point
+
+> **Awaiting the user's ratification (integrator, 2026-10-01):** §1's self-hosted trade — with nothing configured, a browser on a self-hosted address builds the transmittal portal link on that address instead of building none. `document-control/TRX-14` stays OPEN on it (DEC-29) until ratified or reversed.
+
+**Decision. A printed or exported copy is the one artifact that outlives the
+screen, so what it says and where its QR points are decided in one place
+(`lib/publicOrigin.ts`, `lib/stamping.ts`, `lib/stampLayout.ts`):**
+
+1. **The public origin.** Every URL that leaves the app is built on
+   `publicOrigin()`. That covers QR codes on stamped copies, labels, hold
+   cards, travelers and pack covers, and share, transmittal and emailed
+   links. The order is:
+   - `NEXT_PUBLIC_SITE_URL`;
+   - else Vercel's **production** domain (`VERCEL_PROJECT_PRODUCTION_URL` on
+     the server, a system variable Vercel sets on previews too while the
+     project exposes its system variables, and its `NEXT_PUBLIC_` twin in a
+     browser), and never `VERCEL_URL`, which on a preview is the
+     deployment's own login-gated host;
+   - else, in a browser only, the page's own origin;
+   - else `""`, meaning no link. Only a server with nothing configured gets
+     it, and the server routes that build outbound links refuse on it.
+
+   A browser always gets an absolute origin. Several browser callers build
+   `${publicOrigin()}/…` without checking for `""`: labels, hold cards,
+   travelers and pack covers (`lib/physicalBridge.ts`), share links
+   (`ShareLinkModal`) and `/d/` copies (`RelatedPanel`). Refusing the page
+   host would turn their links relative, which never work. With Vercel's
+   system-variable exposure off and nothing configured, a preview host can
+   therefore still reach paper (`PHYS-11` residual).
+
+   A link handed to an outside party that the server also sends (the
+   transmittal portal) is built on `recipientOrigin()`: the first two steps;
+   then, in a browser only, the page's own address when it is a host the
+   recipient can open, which excludes a Vercel deployment host
+   (`*.vercel.app`) and loopback; else `""`, which its callers report. A
+   server uses the first two steps only. The trades, accepted because a
+   missing link is reported and a preview-host link is not:
+   - A Vercel production served only from its `*.vercel.app` alias, with
+     exposure off and nothing configured, builds no link in the browser.
+   - Off Vercel with nothing configured, the browser links on its own address
+     (warned) while the server builds none, so the email is refused.
+   - With exposure off, a server that still receives the production domain
+     emails a link a browser on a preview host cannot build. (Whether Vercel
+     gives the server that variable with exposure off is not verified.)
+
+   `NEXT_PUBLIC_SITE_URL` is **required** for the physical bridge
+   (`.env.example`). The self-host Docker build passes it as a build
+   argument (`Dockerfile`, `docker-compose.yml`, `docs/SELF_HOST_DOCKER.md`).
+   *Stated default (production-URL fallback, stated 2026-09-17).*
+2. **No origin, no QR, no instruction to scan one.** A stamp with no verify
+   URL logs a warning. A page that carries no QR, because there is no URL or
+   the QR failed, never instructs anyone to scan one: the stamper removes the
+   instruction and prints "Confirm the current revision before use." in its
+   place, whichever caller wrote the footer.
+3. **A page that cannot be measured is stamped title-block-aware.** This
+   applies wherever ink analysis is impossible (no DOM: every server route)
+   or fails. The QR goes top-left, the one corner neither ISO 7200 nor ASME
+   Y14.1 gives a block. The footer runs along the top, beside the QR, in
+   every orientation: the bottom is the title block's on portrait sheets as
+   on landscape ones. The right-hand share of the top band is left to the
+   revision block (half the sheet at most, 520 pt cap). A measured page
+   still places by its ink. *Stated default.*
+4. **Marks are placed in the page's displayed space.** That is the space
+   after `/Rotate`, which is the space the analysis measures, and every mark
+   is drawn through it. Baked markups are placed the same way.
+5. **A stamped copy is always uncontrolled.** The controlled copy is the
+   unstamped pass-through of the current master to its checkout holder
+   (`lib/downloads.ts`). The `FullScreenViewer` markup export is stamped and
+   recorded uncontrolled, the holder's included.
+   - This is not yet true tree-wide. The book viewer's markup download
+     (`MultiDocViewer` `runDocAction` → `downloadDocumentPdf`) still gives
+     the checkout holder the controlled pass-through. That open limb is
+     document-control `PKG-10` done-when 3 (P8).
+   - `StampOptions.controlState` has no "controlled" member. It drives the
+     footer's main line, and the watermark when the caller gives none.
+   - A caller's `watermarkText` that claims CONTROLLED COPY is replaced by
+     the state's watermark, with a logged warning (`stampWatermark`).
+   - A caller's free-text footer notice is printed as given.
+   - An encrypted PDF cannot be stamped and is never issued as a copy: a
+     pack skips it with the reason.
+
+   *Stated default ("UNCONTROLLED COPY everywhere").*
+
+> Made during public-surfaces Round F (2026-10-01, package PS-STAMP) under the
+> fail-safe rule in *How to use this file*. Closed: `PHYS-5`, `PHYS-11`,
+> `PHYS-12`, `SHR-8`, `SHR-11`, document-control `PKG-13`, `TRX-14`. Partial,
+> left OPEN with the owners named: `PHYS-9` (the drafting caller, DF-P10),
+> `PHYS-13` and `XEDGE-5` (the remaining copy-link builders). *Numbered
+> DEC-64 as the fleet brief instructs. That is a placeholder: this base
+> already has a DEC-64 (the download record), so the integrator renumbers
+> this entry at merge. Every "DEC-64 (public-surfaces PS-STAMP)" this package
+> added refers to this entry.*
+
+**Rationale.** In a plant a QR badge or a printed stamp is what a person
+trusts when they cannot check the database. A QR that dead-ends on a Vercel
+login wall, a footer that says "scan the QR" over a blank corner, a plate
+printed over the title block's revision letter, a QR printed sideways on a
+rotated sheet, and redlines leaving the app with no UNCONTROLLED mark are all
+ways the paper lies. Each is fixed at the one shared helper so every caller
+inherits it. The login wall is fixed only where the production domain is
+known (§1). The markup limb is fixed only in `FullScreenViewer` (§5).
+
+**Implementation.**
+- `lib/publicOrigin.ts`: `publicOrigin`, `configuredPublicOrigin`,
+  `recipientOrigin`, `isUnreachableRecipientHost`.
+- `lib/stamping.ts`: `DisplayFrame`, `stampMainLine`, `stampWatermark`,
+  `claimsControlledCopy`, `withoutScanInstruction`, `StampControlState`, the
+  encrypted refusal, the no-URL and claimed-controlled warnings.
+- `lib/stampLayout.ts`: `normalizeRotation`, `displaySize`, `displayToUser`,
+  `fallbackInk`, `titleBlockReserve`.
+- `lib/markupExport.ts`: `bakeMarkupIntoDoc`.
+- `components/viewers/FullScreenViewer.tsx`: the markup export and the phone
+  QR.
+- `lib/transmittals.ts`: `transmittalPortalUrl`, `portalOriginConfigured`,
+  `portalLinkAvailable`; `app/(protected)/transmittals/page.tsx`: the issue
+  toast and the Portal link button.
+- `app/(protected)/requests/[id]/page.tsx`: the drafting audit row records
+  the printed watermark (`stampWatermark`).
+- `.env.example`, `Dockerfile`, `docker-compose.yml`,
+  `docs/SELF_HOST_DOCKER.md`.
+- Tests: `stampingRotation.test.ts`, `psStampRoundF.test.ts`,
+  `stampLayout.test.ts`.
+
+**Acceptance.**
+- A `/Rotate 90` sheet whose ink analysis finds the top-left empty gets its
+  QR in the displayed top-left, upright and on-page.
+- Server-stamped ASME B, ASME A portrait and ISO A4 portrait sheets put
+  nothing on their title or revision blocks.
+- With nothing configured, a server returns `""` and a browser returns its
+  page's own origin. A server builds no transmittal link, nor does a browser
+  on `*.vercel.app` or `localhost`; a browser on a self-hosted address
+  builds one on that address, with a warning.
+- With `VERCEL_PROJECT_PRODUCTION_URL` set (and its `NEXT_PUBLIC_` twin
+  exposed to the browser), both build the production link.
+- A caller's "CONTROLLED COPY" watermark prints as "UNCONTROLLED COPY".
+- A stamp with no verify URL logs a warning and prints no scan instruction.
+- A checkout holder's markup export is stamped, named `_markup_UNCONTROLLED`
+  and recorded uncontrolled.
+
+**Reversal.** (1) A facility hosting off Vercel sets `NEXT_PUBLIC_SITE_URL`
+(a build argument for the Docker image); nothing to change. Refusing a `*.vercel.app` page host in the browser would
+first need every browser caller to refuse on `""` (see §1). (3) Server-side
+ink analysis (a Node canvas) would replace the blind placement for the
+server paths, with no caller change. A facility whose sheets carry the title block elsewhere would
+change `fallbackInk`'s corner. (5) A registered, numbered, recallable
+controlled-copy record would add a `controlState` member, and only then could
+a stamp say CONTROLLED COPY.
+
+**Risk:** low.
+- Server stamps move the QR from bottom-right to top-left and the footer to
+  the top on every copy. On a portrait sheet the footer is narrower and
+  wraps taller (7 lines with the share notice on Letter), in the drawing
+  field's top-left. A revision block wider than half a portrait sheet can
+  meet its longest line.
+- A Vercel deployment with system-variable exposure off and nothing
+  configured has two gaps. Its browser falls back to the page's own host, so
+  QRs and copy links made on a preview can still dead-end, as before this
+  round. A browser on a preview host also builds no transmittal link, while
+  a server that still receives the production domain emails one.
+- Off Vercel with nothing configured, the transmittal copy link and the
+  cover-sheet QR use the browser's own address, which may be a LAN-only
+  name; the toasts tell the issuer to check it.
+- Where the browser reads Vercel's production domain, it prefers that
+  domain (Vercel's choice among the project's production domains) to the
+  page's own host. A project with several production domains could see
+  labels, share links and QRs point at a different one than its users are
+  on. Setting `NEXT_PUBLIC_SITE_URL` picks it explicitly.
+- The drafting download's watermark changes from "CONTROLLED COPY" to
+  "UNCONTROLLED COPY".
+
+*Corrected in the review fix pass.* The first entry made three claims that
+were wrong:
+- that a browser never uses a `*.vercel.app` host (that refusal is
+  withdrawn, because it emitted relative links);
+- that browser and server always build the same transmittal link;
+- that every modified copy is already uncontrolled.
+
+*Corrected in the second review fix pass:*
+- §1 accepted losing the transmittal copy link and cover-sheet QR off
+  Vercel, with "set `NEXT_PUBLIC_SITE_URL`" as the remedy. The shipped Docker
+  build could not receive that variable. The build now passes it, and a
+  self-hosted browser links on its own address again; only a Vercel
+  deployment host or loopback is refused.
+- §3 ran a portrait page's footer along the bottom. On ASME A and ISO A4
+  portrait sheets that footer printed over the title block, more than the
+  base did. It now runs along the top in every orientation.
+- §5's watermark backstop left the drafting download's audit row recording
+  "CONTROLLED COPY" for a copy printed "UNCONTROLLED COPY". The row now
+  records the printed watermark.

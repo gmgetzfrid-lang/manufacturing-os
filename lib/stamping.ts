@@ -18,18 +18,52 @@
 //     rasterizing the page at thumbnail size (pdf.js) and comparing ink
 //     density in the four corners. White backing plate, clamped on-page.
 //
-// The raster analysis is best-effort: no DOM, worker failure, or a page
-// that won't render simply falls back to the historical bottom-right/bottom
-// placements. The pure math lives in lib/stampLayout.ts (unit-tested).
+// The raster analysis is best-effort: no DOM (every server route), worker
+// failure, or a page that won't render falls back to the BLIND placement —
+// title-block-aware (SHR-8): QR top-left, footer along the top beside it in
+// every orientation, nothing on the bottom band (the title block's) or on the
+// right-hand side of the top band (the revision block's)
+// (lib/stampLayout.ts fallbackInk / titleBlockReserve).
+// The pure math lives in lib/stampLayout.ts (unit-tested).
+//
+// Rotated sheets (PHYS-12 / PKG-13): pdf.js measures a page AS DISPLAYED
+// (its /Rotate applied); pdf-lib draws in the unrotated MediaBox. Every mark
+// is therefore laid out in display space and mapped into user space through
+// one DisplayFrame per page, so the analysis and the drawing never disagree
+// about which corner is which.
 
-import { PDFDocument, rgb, StandardFonts, degrees, PDFFont, PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees, PDFFont, PDFPage, type Rotation } from "pdf-lib";
 import {
   fitRotatedTextSize, centerRotatedText, wrapToWidth,
   pickQrCorner, pickFooterEdge, placeQr,
-  FALLBACK_INK, type PageInk, type Corner,
+  normalizeRotation, displaySize, displayToUser,
+  fallbackInk, titleBlockReserve, type PageInk, type Corner,
 } from "@/lib/stampLayout";
 
+/** PHYS-9: what a stamped copy IS. A stamped copy is never a controlled copy
+ *  — a controlled copy is the unstamped pass-through to the checkout holder
+ *  (lib/downloads.ts determineControlState) — so there is no "controlled"
+ *  member. Neither mark the stamper derives can call the copy a CONTROLLED
+ *  COPY: the footer's main line comes from this state (stampMainLine), and a
+ *  caller's watermarkText that claims one is replaced by the state's
+ *  watermark (stampWatermark). A caller's free-text footerNotice is printed
+ *  as given. "review" marks a draft handed out for review. */
+export type StampControlState = "uncontrolled" | "review";
+
+const CONTROL_STATE_LABEL: Record<StampControlState, string> = {
+  uncontrolled: "UNCONTROLLED COPY",
+  review: "UNCONTROLLED COPY — REVIEW ONLY",
+};
+const CONTROL_STATE_WATERMARK: Record<StampControlState, string> = {
+  uncontrolled: "UNCONTROLLED COPY",
+  review: "REVIEW ONLY — DO NOT DISTRIBUTE",
+};
+
 export type StampOptions = {
+  /** PHYS-9: the copy's control state (default "uncontrolled"). It drives
+   *  the footer's main line and, when no watermarkText is given, the
+   *  watermark — one value for both marks, so they cannot contradict. */
+  controlState?: StampControlState;
   userLabel?: string;
   email?: string;
   timestamp?: Date;
@@ -44,7 +78,8 @@ export type StampOptions = {
   verifyUrl?: string;
   /** The original PDF bytes. When provided (and a DOM exists), each page is
    *  rasterized at thumbnail size to find its empty regions so the QR and
-   *  footer land where the drawing ISN'T. Omit → conventional placements. */
+   *  footer land where the drawing ISN'T. Omit (or no DOM) → the blind,
+   *  title-block-aware placement (SHR-8). */
   sourceBytes?: ArrayBuffer | Uint8Array;
 };
 
@@ -53,9 +88,58 @@ function formatDate(d?: Date | null) {
   return d.toLocaleString();
 }
 
+/** PHYS-9: the footer's main line, DERIVED from the control state (it used to
+ *  be a hardcoded literal that ignored every caller): "UNCONTROLLED COPY •
+ *  Downloaded: <when> • Do Not Distribute". With no timestamp the
+ *  "Downloaded:" segment is left out rather than printed empty. */
+export function stampMainLine(state: StampControlState | undefined, timestamp?: Date | null): string {
+  const label = CONTROL_STATE_LABEL[state ?? "uncontrolled"] ?? CONTROL_STATE_LABEL.uncontrolled;
+  const parts = [label];
+  if (timestamp) parts.push(`Downloaded: ${formatDate(timestamp)}`);
+  parts.push("Do Not Distribute");
+  return parts.join(" • ");
+}
+
+/** PHYS-11 / SHR-11: a page never tells its reader to scan a QR it does not
+ *  carry. The share and transmittal routes already word their footer on
+ *  whether a verify URL exists; this is the backstop for every caller — and
+ *  for a QR whose generation failed. With no QR on the page an instruction
+ *  to scan is removed (its sentence, or the clause after an em dash) and one
+ *  plain instruction to confirm the revision takes its place. */
+const SCAN_INSTRUCTION = /\bscan\s+(?:the\s+|this\s+)?(?:qr\b|code\b|to\s+verify\b)/i;
+export function withoutScanInstruction(notice: string): string {
+  if (!SCAN_INSTRUCTION.test(notice)) return notice;
+  const kept: string[] = [];
+  for (const sentence of notice.split(/(?<=[.!?])\s+/)) {
+    if (!SCAN_INSTRUCTION.test(sentence)) { kept.push(sentence); continue; }
+    // "<facts> — scan the QR to …": keep the facts.
+    const clauses = sentence.split(/\s+[—–]\s+/);
+    const at = clauses.findIndex((c) => SCAN_INSTRUCTION.test(c));
+    const head = at > 0 ? clauses.slice(0, at).join(" — ").trim() : "";
+    if (head) kept.push(/[.!?]$/.test(head) ? head : `${head}.`);
+  }
+  kept.push("Confirm the current revision before use.");
+  return kept.join(" ");
+}
+
+/** PHYS-9: the watermark's leading text. A caller's watermarkText is printed
+ *  as given, unless it claims a CONTROLLED COPY (the words without "UN"),
+ *  which a stamped copy never is: then the control state's own watermark is
+ *  printed instead. With no watermarkText the state supplies it. */
+const CONTROLLED_COPY_CLAIM = /(?<!un)controlled\s+copy/i;
+export function claimsControlledCopy(text: string): boolean {
+  return CONTROLLED_COPY_CLAIM.test(text);
+}
+export function stampWatermark(watermarkText: string | undefined, state: StampControlState | undefined): string {
+  const forState = CONTROL_STATE_WATERMARK[state ?? "uncontrolled"] ?? CONTROL_STATE_WATERMARK.uncontrolled;
+  if (watermarkText === undefined) return forState;
+  return claimsControlledCopy(watermarkText) ? forState : watermarkText;
+}
+
 function buildStampText(opts: StampOptions) {
   const parts = [];
-  if (opts.watermarkText) parts.push(opts.watermarkText);
+  const watermarkText = stampWatermark(opts.watermarkText, opts.controlState);
+  if (watermarkText) parts.push(watermarkText);
   if (opts.userLabel) parts.push(opts.userLabel);
   if (opts.email) parts.push(opts.email);
   if (opts.timestamp) parts.push(`Downloaded: ${formatDate(opts.timestamp)}`);
@@ -144,16 +228,40 @@ async function analyzePageInk(source: ArrayBuffer | Uint8Array): Promise<PageInk
       void doc.destroy();
     }
   } catch (e) {
-    console.warn("[stamping] page analysis unavailable — using conventional placements", e);
+    console.warn("[stamping] page analysis unavailable — using the blind, title-block-aware placement", e);
     return null;
   }
 }
 
 // ─── The stamp itself ────────────────────────────────────────────────────
 
-function drawWatermark(page: PDFPage, font: PDFFont, text: string): void {
+/** A page as DISPLAYED (after its /Rotate) — the space the ink analysis
+ *  measured. `width`/`height` are the displayed sides; `at()` maps a display
+ *  point into the user space pdf-lib draws in and turns the mark with the
+ *  page, so it reads upright on the printed sheet (PHYS-12 / PKG-13). */
+interface DisplayFrame {
+  page: PDFPage;
+  width: number;
+  height: number;
+  at(x: number, y: number, angleDeg?: number): { x: number; y: number; rotate: Rotation };
+}
+
+function displayFrame(page: PDFPage): DisplayFrame {
+  const media = page.getSize();
+  const rotation = normalizeRotation(page.getRotation().angle);
+  const { width, height } = displaySize(media.width, media.height, rotation);
+  return {
+    page, width, height,
+    at: (x, y, angleDeg = 0) => ({
+      ...displayToUser(x, y, media.width, media.height, rotation),
+      rotate: degrees(angleDeg + rotation),
+    }),
+  };
+}
+
+function drawWatermark(frame: DisplayFrame, font: PDFFont, text: string): void {
   if (!text) return;
-  const { width, height } = page.getSize();
+  const { page, width, height } = frame;
   const ANGLE = -30;
   let run = text;
   let widthAt1pt = font.widthOfTextAtSize(run, 1);
@@ -173,23 +281,25 @@ function drawWatermark(page: PDFPage, font: PDFFont, text: string): void {
     pageW: width, pageH: height, textW, textH: fit.size, angleDeg: ANGLE,
   });
   page.drawText(run, {
-    x, y,
+    ...frame.at(x, y, ANGLE),
     size: fit.size, font,
     color: rgb(0.2, 0.2, 0.2),
     opacity: 0.15,
-    rotate: degrees(ANGLE),
   });
 }
 
 function drawFooter(input: {
-  page: PDFPage;
+  frame: DisplayFrame;
   font: PDFFont;
   opts: StampOptions;
   edge: "top" | "bottom";
   qrCorner: Corner | null;
+  /** Blind placement only: the top band's right-hand share, left to the
+   *  revision block (SHR-8). 0 when the page was measured. */
+  reserveRight: number;
 }): void {
-  const { page, font, opts, edge, qrCorner } = input;
-  const { width, height } = page.getSize();
+  const { frame, font, opts, edge, qrCorner, reserveRight } = input;
+  const { page, width, height } = frame;
 
   const mainSize = Math.min(10, Math.max(6.5, width / 62));
   const noticeSize = Math.max(6, mainSize - 1.5);
@@ -205,10 +315,10 @@ function drawFooter(input: {
   const qrReserve = qrOnThisEdge ? Math.max(46, Math.min(70, width / 12)) + width * 0.045 : 0;
   const qrOnLeft = qrCorner === "bl" || qrCorner === "tl";
 
-  const maxLineW = width - marginX * 2 - qrReserve;
+  const maxLineW = Math.max(width * 0.25, width - marginX * 2 - qrReserve - reserveRight);
   const xStart = marginX + (qrOnThisEdge && qrOnLeft ? qrReserve : 0);
 
-  const mainText = `UNCONTROLLED COPY • Downloaded: ${formatDate(opts.timestamp)} • Do Not Distribute`;
+  const mainText = stampMainLine(opts.controlState, opts.timestamp);
   const mainLines = wrapToWidth(mainText, maxLineW, (s) => font.widthOfTextAtSize(s, mainSize));
   const noticeLines = opts.footerNotice
     ? wrapToWidth(opts.footerNotice, maxLineW, (s) => font.widthOfTextAtSize(s, noticeSize))
@@ -226,7 +336,7 @@ function drawFooter(input: {
   for (const e of entries) {
     yCursor -= e.size;
     page.drawText(e.text, {
-      x: xStart, y: yCursor,
+      ...frame.at(xStart, yCursor),
       size: e.size, font,
       color: e.color,
       opacity: 0.85,
@@ -236,7 +346,21 @@ function drawFooter(input: {
 }
 
 export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions): Promise<void> {
+  // PKG-13: pdf-lib can LOAD an encrypted PDF (ignoreEncryption) but cannot
+  // decrypt it — stamped or merged, its pages are unreadable. Refuse with the
+  // reason (a pack records the sheet as skipped, exactly as stampPdf's load
+  // already fails an individual download) rather than issue garbage.
+  if (pdfDoc.isEncrypted) {
+    throw new Error("the PDF is encrypted, so it cannot be stamped — it was not issued as a copy");
+  }
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  if (opts.watermarkText !== undefined && claimsControlledCopy(opts.watermarkText)) {
+    // PHYS-9: say so rather than quietly reword a caller.
+    console.warn(
+      `[stamping] watermarkText "${opts.watermarkText}" claims a controlled copy; a stamped copy is uncontrolled, ` +
+      `so the watermark reads "${stampWatermark(opts.watermarkText, opts.controlState)}" instead.`,
+    );
+  }
   const watermark = buildStampText(opts);
 
   // Verification QR — generated once, embedded on every page. Failure to
@@ -251,7 +375,18 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
     } catch (e) {
       console.warn("[stamping] QR generation failed (stamp continues without it)", e);
     }
+  } else {
+    // PHYS-11 / SHR-11: never a silent QR-less copy. The usual cause is no
+    // public origin (lib/publicOrigin.ts returned "").
+    console.warn(
+      "[stamping] no verifyUrl — this copy carries no verify QR and no instruction to scan one. " +
+      "If the cause is no public origin, set NEXT_PUBLIC_SITE_URL (lib/publicOrigin.ts).",
+    );
   }
+  // With no QR on the page, the footer may not tell anyone to scan one.
+  const footerOpts: StampOptions = qrImage || !opts.footerNotice
+    ? opts
+    : { ...opts, footerNotice: withoutScanInstruction(opts.footerNotice) };
 
   // Per-page emptiness analysis — where does this sheet have room?
   const ink = opts.sourceBytes ? await analyzePageInk(opts.sourceBytes) : null;
@@ -259,29 +394,37 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
   const pages = pdfDoc.getPages();
   for (let i = 0; i < pages.length; i += 1) {
     const page = pages[i];
-    const { width, height } = page.getSize();
+    // Layout runs in DISPLAY space — the space the analysis measured — and
+    // every anchor goes through frame.at() into user space (PHYS-12).
+    const frame = displayFrame(page);
+    const { width, height } = frame;
     // Pages beyond the analyzed cap reuse the last analyzed page (sheets in
-    // a set share their template); no analysis at all → convention.
-    const pageInk: PageInk = ink?.[Math.min(i, ink.length - 1)] ?? FALLBACK_INK;
+    // a set share their template); no analysis at all → the blind,
+    // title-block-aware placement (SHR-8).
+    const measured: PageInk | undefined = ink?.[Math.min(i, ink.length - 1)];
+    const pageInk: PageInk = measured ?? fallbackInk(width, height);
 
-    drawWatermark(page, font, watermark);
+    drawWatermark(frame, font, watermark);
 
     const qrCorner = qrImage ? pickQrCorner(pageInk.corners) : null;
     const footerEdge = pickFooterEdge(pageInk.topBand, pageInk.bottomBand);
-    drawFooter({ page, font, opts, edge: footerEdge, qrCorner });
+    drawFooter({
+      frame, font, opts: footerOpts, edge: footerEdge, qrCorner,
+      reserveRight: measured ? 0 : titleBlockReserve(width),
+    });
 
     if (qrImage && qrCorner) {
       const q = placeQr({ pageW: width, pageH: height, corner: qrCorner });
       // White backing plate: even the emptiest corner of a drawing can have
       // stray linework — the code must stay scannable regardless.
       page.drawRectangle({
-        x: q.plate.x, y: q.plate.y, width: q.plate.w, height: q.plate.h,
+        ...frame.at(q.plate.x, q.plate.y), width: q.plate.w, height: q.plate.h,
         color: rgb(1, 1, 1),
         opacity: 0.92,
       });
-      page.drawImage(qrImage, { x: q.qrX, y: q.qrY, width: q.qrSize, height: q.qrSize });
+      page.drawImage(qrImage, { ...frame.at(q.qrX, q.qrY), width: q.qrSize, height: q.qrSize });
       page.drawText("SCAN TO VERIFY", {
-        x: q.labelX, y: q.labelY,
+        ...frame.at(q.labelX, q.labelY),
         size: q.labelSize,
         font,
         color: rgb(0.25, 0.25, 0.25),

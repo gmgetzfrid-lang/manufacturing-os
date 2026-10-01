@@ -24,8 +24,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 122,
-      "OPEN": 33
+      "RESOLVED": 123,
+      "OPEN": 32
     }
   },
   "status_vocabulary": [
@@ -2866,7 +2866,7 @@
       "id": "PKG-13",
       "title": "Stamping ignores page /Rotate: the ink analysis measures the ROTATED page while the watermark, footer and QR are drawn in UNROTATED coordinates",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

@@ -145,13 +145,90 @@ export function pickFooterEdge(topBand: number, bottomBand: number, margin = 0.0
   return bottomBand > topBand + margin ? "top" : "bottom";
 }
 
-/** Neutral fallback when raster analysis isn't available (no DOM, render
- *  failure): the historical placements. */
-export const FALLBACK_INK: PageInk = {
-  corners: { br: 0, bl: 1, tr: 1, tl: 1 },
-  topBand: 1,
-  bottomBand: 0,
-};
+/**
+ * Blind placement (SHR-8) — when raster analysis isn't available: no DOM,
+ * which is EVERY server route (the share download, the transmittal portal),
+ * or a render failure. The old fallback asserted that the bottom-right corner
+ * and the bottom band were blank — on an engineering drawing that is the
+ * title block (ISO 7200 and ASME Y14.1 both put it at the bottom-right), and
+ * the top-right usually carries the revision block. Blind, nothing is drawn
+ * on the bottom band or on the right-hand side of the top band:
+ *   * the QR goes top-left — the one corner neither standard gives a block;
+ *   * the footer runs along the TOP from just right of the QR, in EVERY
+ *     orientation, and titleBlockReserve() keeps it clear of the right-hand
+ *     (revision) block. The bottom is never used blind: a title block sits
+ *     there on landscape and portrait sheets alike, and on a portrait sheet
+ *     it takes most of the width (ASME A: 450 of 540 pt inside the border;
+ *     ISO A4: 510 of 547), so no bottom footer clears it.
+ * The values are pseudo-densities that steer pickQrCorner / pickFooterEdge.
+ * The page size is accepted for the callers' symmetry with the measured
+ * path; blind, every orientation places the same way.
+ */
+export function fallbackInk(_pageW: number, _pageH: number): PageInk {
+  return {
+    corners: { br: 1, bl: 1, tr: 1, tl: 0 },
+    topBand: 0,
+    bottomBand: 1,
+  };
+}
+
+/** Blind placement: how much of the top band's right-hand side the footer
+ *  leaves to the revision block (ASME Y14.35 puts it top-right; ≈ 7 in /
+ *  504 pt on a large sheet). Sized like the widest title block — ASME Y14.1
+ *  ≈ 6¼ in (450 pt), ISO 7200 at most 180 mm (≈ 510 pt) — capped at 520 pt
+ *  and at half the sheet so a small page keeps room for the footer. On a
+ *  portrait sheet the half is the bound (306 pt on Letter): a revision block
+ *  wider than that can still meet the footer's longest line. */
+export function titleBlockReserve(pageW: number): number {
+  return Math.min(pageW * 0.5, 520);
+}
+
+// ─── Page rotation: measure and draw in ONE space (PHYS-12 / PKG-13) ─────
+//
+// A page's /Rotate turns it CLOCKWISE for display and print. pdf.js applies
+// it — the ink analysis measures the page AS DISPLAYED — while pdf-lib draws
+// in the page's unrotated user space (MediaBox). So every mark is laid out in
+// DISPLAY space (the functions above take display width/height) and each
+// anchor point is mapped into user space here, its angle advanced by the
+// rotation, so the QR lands in the corner the analysis chose and every mark
+// reads upright on the printed sheet.
+
+/** A page's /Rotate, normalized to the four values PDF allows. */
+export type PageRotation = 0 | 90 | 180 | 270;
+
+/** Normalized exactly as pdf.js does (Page.rotate): a value that is not a
+ *  multiple of 90 — or not a number — is treated as 0, never rounded to the
+ *  nearest quarter turn; anything else is reduced mod 360 (a negative value
+ *  read counter-clockwise). pdf.js is both the ink analysis and the viewers'
+ *  renderer, so the stamp must agree with it on every page. */
+export function normalizeRotation(angleDeg: number): PageRotation {
+  if (!Number.isFinite(angleDeg) || angleDeg % 90 !== 0) return 0;
+  return ((((angleDeg % 360) + 360) % 360)) as PageRotation;
+}
+
+/** The page as displayed and printed: a quarter turn swaps the MediaBox's sides. */
+export function displaySize(
+  mediaW: number, mediaH: number, rotation: PageRotation,
+): { width: number; height: number } {
+  return rotation === 90 || rotation === 270
+    ? { width: mediaH, height: mediaW }
+    : { width: mediaW, height: mediaH };
+}
+
+/** A point in DISPLAY space (origin at the bottom-left of the page as the
+ *  reader sees it, y up) → the page's unrotated user space, where pdf-lib
+ *  draws. A mark drawn at that point must also be rotated by `rotation`
+ *  degrees (counter-clockwise in user space) to read upright. */
+export function displayToUser(
+  x: number, y: number, mediaW: number, mediaH: number, rotation: PageRotation,
+): { x: number; y: number } {
+  switch (rotation) {
+    case 90: return { x: mediaW - y, y: x };
+    case 180: return { x: mediaW - x, y: mediaH - y };
+    case 270: return { x: y, y: mediaH - x };
+    default: return { x, y };
+  }
+}
 
 // ─── QR geometry: a plate that can never leave the page ──────────────────
 

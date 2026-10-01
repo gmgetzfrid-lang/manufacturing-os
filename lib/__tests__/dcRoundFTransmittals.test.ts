@@ -480,6 +480,8 @@ describe("TRX-14 / XEDGE-5 — the portal URL is built on the public origin, nev
   });
   it("with it unset on the server, there is no link at all (null) — never `/transmittal/<token>`", () => {
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "");
     expect(transmittalPortalUrl("tok")).toBeNull();
     expect(portalOriginConfigured()).toBe(false);
   });

@@ -49,7 +49,7 @@ import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
-import { bakeMarkupIntoPdf } from "@/lib/markupExport";
+import { bakeMarkupIntoPdf, bakeMarkupIntoDoc } from "@/lib/markupExport";
 import { stashDraft } from "@/lib/draftHandoff";
 import {
   downloadDocumentPdf,
@@ -971,22 +971,18 @@ export default function FullScreenViewer({
   };
 
   // ─── Download with markup baked in ────────────────────────────────────
-  // Applies the same UNCONTROLLED-COPY watermark + footer + audit row as a
-  // plain Download when the user does not hold a checkout, so the markup
-  // export never bypasses the document-control gate.
+  // ALWAYS applies the UNCONTROLLED-COPY watermark + footer + verify QR and
+  // records an uncontrolled copy — the checkout holder included (PHYS-5).
+  // The controlled-copy exemption (lib/downloads.ts determineControlState)
+  // is for the UNMODIFIED master; a sheet with redlines burned in is by
+  // definition not the controlled revision, so it never leaves unmarked
+  // (the precedent: VersionHistoryPanel forces the stamp on every
+  // non-authoritative copy).
   const downloadWithMarkup = async () => {
     if (!resolvedUrl) return;
     setMarkupBusy(true); setMarkupError(null);
-    // Recompute control state from props at the moment of execution rather
-    // than relying on a captured closure — defends against any stale React
-    // batching and makes the decision tree easier to debug.
-    const liveState: "controlled" | "uncontrolled" =
-      docRecord && currentUserId
-        ? determineControlState(docRecord, currentUserId, viewingIsCurrent)
-        : "uncontrolled";
-    const stampNow = liveState !== "controlled";
     console.warn("[FullScreenViewer] downloadWithMarkup", {
-      liveState, stampNow, hasDocRecord: !!docRecord, currentUserId,
+      hasDocRecord: !!docRecord, currentUserId,
       checkedOutBy: docRecord?.checkedOutBy,
     });
 
@@ -998,47 +994,33 @@ export default function FullScreenViewer({
       const srcBytes = await ensureBytes();
       if (!srcBytes) { setMarkupError("Couldn't load the PDF to export."); setMarkupBusy(false); return; }
       const pdfDoc = await PDFDocument.load(srcBytes);
-      const pages = pdfDoc.getPages();
 
       const states: Record<number, object> = { ...pageStates };
       if (currentNorm) states[currentPage] = currentNorm;
 
-      // 1. Bake Fabric annotations into each page
-      for (const [k, st] of Object.entries(states)) {
-        const pn = parseInt(k, 10);
-        if (pn < 1 || pn > pages.length) continue;
-        const page = pages[pn - 1];
-        const { width, height } = page.getSize();
-        const tempEl = window.document.createElement("canvas");
-        const sc = new fabric.StaticCanvas(tempEl, { width: 1000, height: 1000 });
-        await sc.loadFromJSON(st as CanvasJson);
-        sc.setDimensions({ width, height });
-        sc.renderAll();
-        const png = sc.toDataURL({ format: "png", multiplier: 2 });
-        const pngBytes = await fetch(png).then((r) => r.arrayBuffer());
-        const img = await pdfDoc.embedPng(pngBytes);
-        page.drawImage(img, { x: 0, y: 0, width, height });
-      }
+      // 1. Bake Fabric annotations into each page — the shared, rotation-
+      //    aware bake (lib/markupExport.ts): the redlines were drawn over the
+      //    page as displayed, so a /Rotate sheet's land where they were drawn
+      //    (PKG-13 / PHYS-12).
+      await bakeMarkupIntoDoc(pdfDoc, states);
 
-      // 2. Apply UNCONTROLLED stamp on top if the user doesn't hold checkout
+      // 2. Apply the UNCONTROLLED stamp on top — unconditionally (PHYS-5):
+      //    markups are never part of the controlled revision.
       const now = new Date();
       const expiresAt = new Date(now.getTime() + 24 * 3600 * 1000);
-      let suffix = "_markup";
-      if (stampNow) {
-        await applyStampToPdfDoc(pdfDoc, {
-          sourceBytes: pdfBytes ?? undefined,
-          userLabel: currentUserEmail ?? undefined,
-          email: currentUserEmail ?? undefined,
-          timestamp: now,
-          expiresAt,
-          watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
-          verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
-            ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
-            : undefined,
-        });
-        suffix = "_markup_UNCONTROLLED";
-      }
+      await applyStampToPdfDoc(pdfDoc, {
+        sourceBytes: pdfBytes ?? undefined,
+        userLabel: currentUserEmail ?? undefined,
+        email: currentUserEmail ?? undefined,
+        timestamp: now,
+        expiresAt,
+        watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+        footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
+        verifyUrl: docRecord?.id && servedVersionId && publicOrigin()
+          ? `${publicOrigin()}/verify/${docRecord.id}?v=${servedVersionId}`
+          : undefined,
+      });
+      const suffix = "_markup_UNCONTROLLED";
 
       // 3. Save + trigger local download
       const bytes = await pdfDoc.save();
@@ -1050,15 +1032,17 @@ export default function FullScreenViewer({
       window.document.body.appendChild(a); a.click(); window.document.body.removeChild(a);
       URL.revokeObjectURL(u);
 
-      // 4. Audit log — same row shape as a plain Download
+      // 4. Audit log — same row shape as a plain uncontrolled Download: a
+      //    markup export is ALWAYS an uncontrolled copy (PHYS-5), so the
+      //    ledger never records an unmarked redline as a controlled copy.
       if (docRecord && currentUserId) {
         await logDownloadAudit({
           doc: docRecord,
           versionId: servedVersionId,
           userId: currentUserId,
           userEmail: currentUserEmail ?? null,
-          state: liveState,
-          expiresAt: stampNow ? expiresAt : null,
+          state: "uncontrolled",
+          expiresAt,
         });
         // Marking up is the most edit-like act in the viewer — record it so
         // overlap advisories and provenance see the work. But marking up an
@@ -1100,7 +1084,9 @@ export default function FullScreenViewer({
     const live = determineControlState(docRecord, currentUserId, viewingIsCurrent);
     console.warn("[FullScreenViewer] live control state:", live);
     if (live === "controlled") {
-      // User holds checkout → raw bake, no stamp, no modal
+      // The checkout holder skips the "you don't have this checked out"
+      // modal — but the export is STILL stamped and recorded uncontrolled
+      // (PHYS-5: markups are never the controlled master).
       void downloadWithMarkup();
       return;
     }
@@ -1288,11 +1274,18 @@ export default function FullScreenViewer({
             </button>
             {phoneQrOpen && (
               <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
-                <QrBadge
-                  value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
-                  size={150}
-                  caption="Scan to open this drawing on your phone"
-                />
+                {/* Built on publicOrigin() like every other QR (PHYS-13): a
+                    preview deploy's host would dead-end the phone on Vercel's
+                    login. Rendered only after the click, so client-side. */}
+                {publicOrigin() ? (
+                  <QrBadge
+                    value={`${publicOrigin()}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
+                    size={150}
+                    caption="Scan to open this drawing on your phone"
+                  />
+                ) : (
+                  <p className="w-[150px] text-[11px] text-slate-600">No public site URL is configured (NEXT_PUBLIC_SITE_URL), so there is no link a phone could open.</p>
+                )}
               </div>
             )}
           </div>

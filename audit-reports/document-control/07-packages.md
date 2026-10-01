@@ -481,7 +481,7 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
 ## PKG-13 · Stamping ignores page /Rotate: the ink analysis measures the ROTATED page while the watermark, footer and QR are drawn in UNROTATED coordinates
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/stamping.ts:100-141`, `lib/stamping.ts:259-291`, `lib/stampLayout.ts:120-190`, `lib/markupExport.ts:32-44`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: on a /Rotate 90 sheet the corner chosen from the displayed page maps to a different physical corner once the viewer applies the rotation, and pageW/pageH are swapped relative to what the reader sees, so the plate geometry is computed against the wrong axis. lib/markupExport.ts:32-44 has the same defect (`const { width, height } = page.getSize(); ... page.drawImage(img, { x: 0, y: 0, width, height })`), so baked markup on a rotated page is drawn to the unrotated box too.
@@ -505,6 +505,20 @@ lib/stamping.ts:118-119 — `const base = page.getViewport({ scale: 1 }); const 
 - [ ] placement reads page.getRotation() and either normalizes the page or transforms the analyzer's corner/band results and the draw coordinates into the same space
 - [ ] a fixture PDF with /Rotate 90 and /Rotate 270 is stamped in a test and the QR plate and footer are asserted to land inside the visible page and clear of the title block
 - [ ] docPack and stampPdf agree on encryption handling, and an encrypted source is skipped with a reason rather than merged
+
+**Resolution (2026-10-01, public-surfaces Round F).** This is the same defect as public-surfaces `PHYS-12`, closed in package PS-STAMP, which owns `lib/stamping.ts`, `lib/stampLayout.ts` and `lib/markupExport.ts`. See the resolution on `PHYS-12` (03-physical-bridge.md) for the reproduction and the fixture.
+- Placement: `applyStampToPdfDoc` reads `page.getRotation()` and lays every mark out in the page's display space (`DisplayFrame`, `normalizeRotation` / `displaySize` / `displayToUser`), the space the ink analysis measured. Each anchor maps into user space with the page's rotation.
+- The markup limb: `lib/markupExport.ts` `bakeMarkupIntoDoc` sizes the raster to the displayed page and lays it back rotated. `bakeMarkupIntoPdf` and the single viewer's "Download w/ Markup" both use it.
+- The encryption chain reaction: `applyStampToPdfDoc` refuses a document pdf-lib loaded with `ignoreEncryption` (`pdfDoc.isEncrypted` → "the PDF is encrypted, so it cannot be stamped — it was not issued as a copy"). `lib/docPack.ts`'s per-sheet `try/catch` (P8's file, unedited) therefore records the sheet under `skipped` with that reason instead of merging unreadable pages into the pack. `stampPdf` (no `ignoreEncryption`) already failed an individual download loudly, so the two now agree.
+- Tests: `lib/__tests__/stampingRotation.test.ts` covers `/Rotate` 0/90/180/270 placement and the markup bake. Its SHR-8 block covers `/Rotate 90` and `/Rotate 270` title-blocked sheets with no mark over the title block. "PKG-13 dw3" covers a crafted encrypted PDF: its plain load throws, its `ignoreEncryption` load is refused by the stamper with nothing drawn, and docPack's catch turns the refusal into a skipped sheet.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ Placement reads `page.getRotation()` and maps the analyzer's corner/band results and the draw coordinates into the same space.
+2. ✓ Fixture PDFs with `/Rotate 90` and `/Rotate 270` (and 180) are stamped in a test. The QR plate and footer land inside the visible page and clear of the title block.
+3. ✓ docPack and stampPdf agree that an encrypted source is never issued: stampPdf fails loudly, and docPack skips the sheet with a reason rather than merging it.
+
+**Scope / residual.** The MediaBox origin and CropBox offsets are not compensated. The stamp draws from the MediaBox's (0, 0) as before; that is a separate, pre-existing gap.
 
 ---
 

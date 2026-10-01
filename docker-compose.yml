@@ -17,6 +17,10 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
+        # Required for QR / share / transmittal links (lib/publicOrigin.ts).
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+        # The facility's IANA time zone for effective dates (lib/effectiveDate.ts).
+        NEXT_PUBLIC_FACILITY_TIME_ZONE: ${NEXT_PUBLIC_FACILITY_TIME_ZONE:-}
     image: manufacturing-os/app:latest
     container_name: manufacturing-os
     restart: unless-stopped
@@ -26,6 +30,7 @@ services:
       # Runtime config (server-side).
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
       - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}

@@ -660,6 +660,57 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 
 **Scope / residual.** Left OPEN for the browser half of done-when 1. Making `publicOrigin()` itself refuse when NEXT_PUBLIC_SITE_URL is unset is PS-STAMP's (XEDGE-5 dw2); when it lands, `transmittalPortalUrl` follows it with no change here. The other builders XEDGE-5 names belong to their owners (XEDGE-5 stays OPEN for them).
 
+**Partial (2026-10-01, public-surfaces Round F; first recorded as resolved — corrected at integration from the final review).** The browser half is closed by the origin rule changing in `lib/publicOrigin.ts`, as P7 anticipated ("until the origin rule itself changes").
+- `lib/publicOrigin.ts` (PS-STAMP) gains:
+  - `configuredPublicOrigin()`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser; never `VERCEL_URL`). It never answers with the page's own host.
+  - `recipientOrigin()`, for a link handed to an outside party: the configured origin; else, in a browser, the page's own origin, but only when that host is one the recipient can open; else `""`. On a server it is the configured origin alone.
+  - `isUnreachableRecipientHost()`: a Vercel deployment host (`*.vercel.app`, where a preview sits behind Vercel's login and a production alias cannot be told apart by its name), a loopback address (`localhost`, `127.*`, `::1`, `0.0.0.0`), or no host.
+  - `publicOrigin()` itself still ends on the page's own origin in a browser; the transmittal link does not use it.
+- `lib/transmittals.ts` (P7's merged file):
+  - `transmittalPortalUrl` builds on `recipientOrigin()`. It returns `null` on a server with nothing configured, and in a browser on a Vercel deployment host or loopback with nothing configured. The cover sheet then prints no portal block, the copy action refuses, and the email route refuses (unchanged).
+  - `portalOriginConfigured()` is `!!configuredPublicOrigin()`: the deployment names its origin.
+  - New `portalLinkAvailable()`: this runtime can build a link at all.
+- Off Vercel (a self-hosted deployment) with nothing configured, a browser builds the link on its own address, as on the base, and the toasts warn. The server builds none there, so the email route refuses and the toast says to copy the link instead.
+- `app/(protected)/transmittals/page.tsx` (P7's file):
+  - When this browser can build no link, the issue toast no longer advises copying one. It says "set NEXT_PUBLIC_SITE_URL to the public site address and rebuild, then copy the portal link from this register", and adds "this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none".
+  - The "Portal link" button is then disabled, with the title "No portal link: this browser cannot build one (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild". The copy action's refusal stays as a backstop.
+  - When the link is built on this browser's address (nothing configured, a reachable host), the issue toast says "NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address — check it opens from outside before sending". The copy toast's warning suffix is restored to P7's text.
+- The self-host Docker path can now receive the variable. `.dockerignore` excludes `.env`, and `NEXT_PUBLIC_*` values are inlined at build time, but the build passed only the Supabase variables and `NEXT_PUBLIC_APP_URL`.
+  - `Dockerfile` declares `ARG NEXT_PUBLIC_SITE_URL` and sets it in the build's `ENV`.
+  - `docker-compose.yml` passes it as a build argument (and at runtime).
+  - `docs/SELF_HOST_DOCKER.md` lists it as required.
+  - `.env.example` says so.
+  These files are outside PS-STAMP's plan.
+- `lib/__tests__/dcRoundFTransmittals.test.ts`: the "unset on the server" test also clears the two Vercel variables, so it holds on a Vercel builder.
+- Tests: `lib/__tests__/psStampRoundF.test.ts` "TRX-14 / XEDGE-5 — the portal link is built on an origin the recipient can open":
+  - the host rule (Vercel deployment hosts and loopback refused; a plant host, a bare LAN name and a private IP accepted);
+  - with nothing configured, no link (`null`) in a browser on a preview host, a `*.vercel.app` production alias, `localhost`, `127.0.0.1` or `[::1]`, though `publicOrigin()` there is the page;
+  - with nothing configured off Vercel, the browser builds the link on its own address while the server builds none;
+  - with exposure off, the server can build the production link while a browser on a preview host builds none;
+  - on a preview deploy with exposure on, the browser's link equals the server's: the production link;
+  - with `NEXT_PUBLIC_SITE_URL` set, every runtime and host builds the configured link;
+  - the lib and page pins (the advice switches on `portalLinkAvailable()`, the disabled button names the variable, no "copy the portal link" advice is left unconditional);
+  - the Docker pins (`ARG` before `npm run build`, the compose build argument, `.env` still ignored, the self-host doc row).
+  P7's three TRX-14 tests stay green.
+- *Corrected in the second review fix pass.* The first fix pass built the link on `configuredPublicOrigin()` alone. A browser with nothing configured then built no link on ANY host, so a self-hosted deployment lost the copy link and the cover-sheet QR, which worked on the base. The record called that an accepted trade with "set `NEXT_PUBLIC_SITE_URL`" as the remedy, but the shipped Docker build could not receive the variable. The record also said the two runtimes always agree when the production domain is known; whether a server still receives `VERCEL_PROJECT_PRODUCTION_URL` with Vercel's exposure off is not verified here.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail). Re-run after the review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4639 tests: 4632 passed, 7 expected-fail). Re-run after the second review fix pass: `tsc` 0, `eslint` 0, full `vitest` green (258 files / 4653 tests: 4646 passed, 7 expected-fail).
+
+**Done-when.**
+1. ◐ `transmittalPortalUrl` builds on the public-origin helper (`recipientOrigin()`) and returns `null` whenever the link would be hostless or on a host the recipient cannot open: a server with nothing configured, or a browser on a Vercel deployment (preview) host or loopback with nothing configured. Callers therefore refuse to email or print a hostless, preview-host or localhost link.
+   - One deliberate departure from the literal "returns null when no origin is configured": a browser on a self-hosted address with nothing configured builds the link on that address, as on the base. The address is the deployment's own, the preview-host case this finding names cannot arise there, and the issue and copy toasts warn that the link uses this browser's address.
+2. ✓ (P7) `sendTransmittalEmail` (its route) and `openTransmittalSheet` handle the no-origin case explicitly.
+3. ✓ The issue flow warns when `NEXT_PUBLIC_SITE_URL` is unset. It says when this browser builds no link, and what to set instead; when the link uses this browser's address, it says so. A preview deploy cannot mint a portal link: a `*.vercel.app` host with nothing configured gets none.
+
+**Scope / residual (integration, 2026-10-01).** Done-when 1 is met except for the deliberate departure above (DEC-64 §1): with nothing configured, a browser on a self-hosted address builds the link on that address rather than returning null. That is not the hostless or preview-host link the finding is about, but it is not the done-when as written, so the finding stays OPEN under DEC-29. It closes when the user ratifies DEC-64 §1's self-hosted trade (the done-when then reads "never a hostless, preview-host or loopback link"), which the integrator has put to them, or when the browser returns null there too.
+
+**Scope / residual.**
+- Recorded in DEC-64 (public-surfaces PS-STAMP) §1:
+  - A Vercel production served only from its `*.vercel.app` alias, with exposure off and nothing configured, builds no link in the browser. A missing link is reported; setting `NEXT_PUBLIC_SITE_URL` restores it.
+  - Off Vercel with nothing configured, the browser links on its own address and the email route refuses. That address can still be one an outside party cannot reach (a LAN-only name), which the toast tells the issuer to check.
+  - With Vercel's exposure off, a server that still receives `VERCEL_PROJECT_PRODUCTION_URL` emails a production link that a browser on a preview host cannot build.
+- A preview served on a custom domain (not `*.vercel.app`) with nothing configured is not recognised as a preview.
+- See also the DEC-61 landed note.
+
 ---
 
 ## TRX-15 · A PDF over 64 MiB leaves the transmittal portal unstamped, and the portal page holds every download in memory

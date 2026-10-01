@@ -510,7 +510,7 @@
     "Defaults applied per the PS plan (stated 2026-09-17): PHYS-2 write rev at issue; existing rev-less attachments print with no ?r= ('CANNOT CONFIRM'); PHYS-9 UNCONTROLLED COPY everywhere (the register WONTFIX)",
     "DF-P9 owns the rest of requests/[id]/page.tsx — disjoint region; DF-P1 owns the transitions' other cases — disjoint hunks; land after both"
    ],
-   "sequencingNotes": "Its own package (per the fold-in instruction). Waits for DC wave 2 (PS-STAMP, PS-VERIFY) and P2 from wave 1. Small; runs concurrently with DF-P5/P6/P7/P8. identity-and-session SESS-6 edits this page after everything merges.",
+   "sequencingNotes": "Its own package (per the fold-in instruction). Waits for DC wave 2 (PS-STAMP, PS-VERIFY) and P2 from wave 1. Small; runs concurrently with DF-P5/P6/P7/P8. identity-and-session SESS-6 edits this page after everything merges. PS-STAMP merged 2026-10-01 (DEC-64): it already edited app/(protected)/requests/[id]/page.tsx (~:23, ~:694) for the stamper's controlState backstop. When DF-P10 passes controlState, keep the download audit row on the stamper's rule — record stampWatermark(undefined, state), the watermark actually printed, never a literal — and close PHYS-9's drafting limb.",
    "decisionsNeeded": [
     "AUTHZ-12 — should a scanned QR keep answering forever? Proposed default: yes for revision-status facts only (the field must be able to scan an old print); ticketStatus and unit leave the public payload; scans are logged and rate-limited (PS-VERIFY's substrate)."
    ],

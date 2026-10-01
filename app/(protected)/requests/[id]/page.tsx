@@ -20,7 +20,7 @@ import CommentBody from '@/components/requests/CommentBody';
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
 import SignaturePanel from '@/components/signatures/SignaturePanel';
 import { extractMentionUids, isPastDue, isNearingDue } from '@/lib/notifications';
-import { downloadStampedPdf } from '@/lib/stamping';
+import { downloadStampedPdf, stampWatermark } from '@/lib/stamping';
 import { parseSourceDocument, revDrift } from '@/lib/sourceDocRef';
 import { heldRoles } from '@/lib/roleHeld';
 // GAP-6 / DEC-22: the ticket → document hand-back. Publish authority on the
@@ -691,7 +691,7 @@ const FileViewerModal = ({
           attachment_type: file.type, filename: file.name, user_id: userId,
           user_email: userEmail ?? null, expires_at: expiresAt,
           watermark_text: stamped
-            ? (file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY")
+            ? stampWatermark(file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY", undefined)
             : "UNSTAMPED (stamping failed)",
           source: "drafting",
         }).then(() => {}, () => {});

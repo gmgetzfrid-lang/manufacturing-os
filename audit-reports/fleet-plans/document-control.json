@@ -430,7 +430,8 @@
     "REV-17 (enforce_document_publish_guard refuses a non-controller's first issue under require mode, re-created from its NEWEST body with a lineDiff proof; intake-linked versions exempt)",
     "DRLS-9 (revision_branches close-out: UPDATE gains a WITH CHECK that only a publisher of the document resolves a branch, with a non-empty resolution note)",
     "DIST-15 (an org-wide share-link inventory with per-row and bulk revoke through revokeShareLink, controller tier)",
-    "public-surfaces SHR-14 (the share INSERT rail refuses a creator denied download on the document \u2014 20261080's rail re-created from its newest body)"
+    "public-surfaces SHR-14 (the share INSERT rail refuses a creator denied download on the document \u2014 20261080's rail re-created from its newest body)",
+    "public-surfaces SHR-11 done-when 2 off Vercel (added at the PS-STAMP merge 2026-10-01): with no configured origin the share download falls back to the request's own origin, refusing a *.vercel.app or loopback host as recipientOrigin() does, or refuses loudly \u2014 app/api/share/file/route.ts"
    ],
    "files": [
     "app/(protected)/documents/[libraryId]/page.tsx \u2014 saveMetadata, confirmDeleteDoc, uploadOne ONLY (P6 CHECKOUT's file, merged; identity IS-P1 and intelligence I-12 edit it after this package)",
@@ -439,7 +440,8 @@
     "lib/revisions.ts \u2014 read-only reference for createDocumentWithFile / resolveCreationReviewGate unless a shared helper is extracted",
     "lib/__tests__/intakeUploadRoute.test.ts \u2014 the pointer census's pinned exemptions (REV-15 done-when 2)",
     "new app/(protected)/admin/shares/page.tsx (or a section of an existing admin page) + an org-wide list route; lib/documentShares.ts revokeShareLink reused",
-    "new migration(s): enforce_document_publish_guard re-created from 20261105's body (REV-17) with a DEC-30 inventory of non-controller first issues under require mode; revision_branches_org_update replaced (DRLS-9); the share INSERT rail from 20261080 re-created with the download-deny check (SHR-14)"
+    "new migration(s): enforce_document_publish_guard re-created from 20261105's body (REV-17) with a DEC-30 inventory of non-controller first issues under require mode; revision_branches_org_update replaced (DRLS-9); the share INSERT rail from 20261080 re-created with the download-deny check (SHR-14)",
+    "app/api/share/file/route.ts \u2014 SHR-11's off-Vercel origin fallback only (P1 SHARE's merged file; PS-STAMP's stamping rules unchanged)"
    ],
    "migrationsLikely": 2,
    "dependsOn": [

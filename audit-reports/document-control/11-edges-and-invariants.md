@@ -245,6 +245,22 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 
 **Hand-off.** PS-STAMP (publicOrigin server fallback); the owners of IntakePanel / QuotesPanel / the library page for their copy links.
 
+**Partial (2026-10-01, public-surfaces Round F).** Done-when 2 is now met. Done-when 1 still names copy-link builders outside this package, so the finding stays OPEN.
+- `lib/publicOrigin.ts`: on a server with `NEXT_PUBLIC_SITE_URL` unset, it falls back to Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`, never `VERCEL_URL`) and otherwise returns `""`.
+  - Only a server reaches `""`. The server routes that build outbound links treat it as "no link": the share and transmittal stamps drop the QR and the instruction to scan it, and log. The transmittal email refuses.
+  - In a browser, after the configured and production domains, it ends on the page's own origin. A browser caller therefore always gets an absolute URL. That matters because some browser callers build `${publicOrigin()}/…` without checking for `""`: `lib/physicalBridge.ts`, `ShareLinkModal` and `RelatedPanel`.
+  - The preview-host gap that remains when Vercel's system-variable exposure is off is `PHYS-11`'s residual.
+  - The transmittal portal link is built on `recipientOrigin()`: the configured origin, else (in a browser) the page's own address unless it is a Vercel deployment host or loopback. With nothing configured a server builds no link, and neither does a browser on a preview host (`TRX-14`, now RESOLVED). *Second review fix pass:* the first fix pass built it on `configuredPublicOrigin()` alone, which also removed the link from a self-hosted browser.
+  - *Corrected in the review fix pass:* the first write-up said every caller treats `""` as "no link" and that a browser never returns a `*.vercel.app` host. The browser refusal produced `""` for exactly those three callers, so it was withdrawn.
+- Tests: `lib/__tests__/psStampRoundF.test.ts` ("PHYS-11 — publicOrigin() …", "TRX-14 / XEDGE-5 — the portal link is built on an origin the recipient can open").
+
+**Done-when (this pass).**
+1. ◐ Unchanged: `transmittalPortalUrl` ✓ and `ShareLinkModal` ✓. The `/submit` link builders (`components/projects/IntakePanel.tsx:424`, `components/projects/cost/QuotesPanel.tsx:1255,1285`) and the `/d/` copy actions (`app/(protected)/documents/[libraryId]/page.tsx:755,3091`) still read `window.location.origin`. Those files belong to the projects-and-cost intake / quotes owners and the document library page's owner.
+2. ✓ With `NEXT_PUBLIC_SITE_URL` unset on the server, `publicOrigin()` returns Vercel's production domain or `""`, never a hostless or preview link. The server callers (the share and transmittal stamps, the transmittal email) refuse to print or email a link on `""`.
+3. ✓ (P7) The test asserting an absolute `NEXT_PUBLIC_SITE_URL`-rooted URL with `window` undefined.
+
+**Hand-off.** The owners of IntakePanel, QuotesPanel and the library page, for their copy links: build them on `publicOrigin()`.
+
 ---
 
 <a id="xedge-6"></a>

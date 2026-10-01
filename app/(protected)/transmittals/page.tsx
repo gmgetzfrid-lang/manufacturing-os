@@ -43,7 +43,7 @@ import {
   listTransmittals, createTransmittal, updateTransmittalDraft, issueTransmittal,
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
-  transmittalPortalUrl, portalOriginConfigured, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
+  transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
   legalHoldNotice, PORTAL_LINK_DAYS,
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome,
 } from "@/lib/transmittals";
@@ -66,17 +66,24 @@ interface DocHit {
   versionId: string | null;
 }
 
+/** TRX-14: what the issuer does when THIS browser cannot build the portal
+ *  link (a Vercel deployment host or loopback with nothing configured). */
+const NO_PORTAL_LINK_ADVICE = "set NEXT_PUBLIC_SITE_URL to the public site address and rebuild, then copy the portal link from this register";
+
 /** TRX-10: the issue toast says what actually happened — the email's real
  *  outcome, a missing portal, an unconfigured public origin, an audit gap. */
 function issueToast(outcome: IssueOutcome): { type: "success" | "warning"; title: string; message: string } {
   const t = outcome.transmittal;
   const notes: string[] = [];
+  const linkHere = portalLinkAvailable();
   if (outcome.portal === "missing") notes.push("issued WITHOUT a recipient portal — this database predates 20260910, so no link exists");
   else if (outcome.email.sent) notes.push(`portal link emailed to ${t.recipientEmail?.trim()}`);
-  else if (t.recipientEmail?.trim()) notes.push(`the email was NOT sent (${outcome.email.reason ?? "unknown reason"}) — copy the portal link instead`);
-  else notes.push("no recipient email — copy the portal link to send it");
-  if (outcome.portal === "ready" && !portalOriginConfigured()) {
-    notes.push("NEXT_PUBLIC_SITE_URL is not set, so the link uses this browser's address — if this is a preview deploy the recipient cannot open it");
+  else if (t.recipientEmail?.trim()) notes.push(`the email was NOT sent (${outcome.email.reason ?? "unknown reason"}) — ${linkHere ? "copy the portal link instead" : NO_PORTAL_LINK_ADVICE}`);
+  else notes.push(`no recipient email — ${linkHere ? "copy the portal link to send it" : NO_PORTAL_LINK_ADVICE}`);
+  if (outcome.portal === "ready" && !linkHere) {
+    notes.push("this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none");
+  } else if (outcome.portal === "ready" && !portalOriginConfigured()) {
+    notes.push("NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address — check it opens from outside before sending");
   }
   if (outcome.auditError) notes.push(`the audit record could not be written (${outcome.auditError})`);
   const clean = outcome.portal === "ready" && (outcome.email.sent || !t.recipientEmail?.trim()) && portalOriginConfigured() && !outcome.auditError;
@@ -388,9 +395,10 @@ export default function TransmittalsPage() {
                     </button>
                     {link === "live" && (transmitter || (!!uid && t.createdBy === uid)) && (
                       <button
+                        disabled={!portalLinkAvailable()}
                         onClick={() => {
                           const url = transmittalPortalUrl(t.portalToken!);
-                          if (!url) { showToast({ type: "error", title: "No portal link", message: "This deployment has no public site URL configured." }); return; }
+                          if (!url) { showToast({ type: "error", title: "No portal link", message: "This browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset)." }); return; }
                           void navigator.clipboard.writeText(url);
                           showToast({
                             type: portalOriginConfigured() ? "success" : "warning",
@@ -398,8 +406,10 @@ export default function TransmittalsPage() {
                             message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.${portalOriginConfigured() ? "" : " NEXT_PUBLIC_SITE_URL is not set, so the link uses this browser's address — check it opens from outside before sending."}`,
                           });
                         }}
-                        title="Copy the recipient's secure portal link — no account needed on their side"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter]"
+                        title={portalLinkAvailable()
+                          ? "Copy the recipient's secure portal link — no account needed on their side"
+                          : "No portal link: this browser cannot build one (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild"}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Portal link
                       </button>

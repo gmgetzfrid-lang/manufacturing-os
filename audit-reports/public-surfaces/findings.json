@@ -17,8 +17,8 @@
       "LOW": 18
     },
     "by_status": {
-      "OPEN": 47,
-      "RESOLVED": 8
+      "OPEN": 43,
+      "RESOLVED": 12
     }
   },
   "status_vocabulary": [
@@ -262,7 +262,7 @@
       "id": "PHYS-5",
       "title": "A marked-up PDF exported by the checkout holder ships with no watermark, no footer, and no verify QR — redlines that are explicitly \"not part of the controlled revision\" leave the app looking like a controlled drawing",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -667,7 +667,7 @@
       "id": "PHYS-11",
       "title": "NEXT_PUBLIC_SITE_URL — the single variable every printed QR depends on — is documented as optional with a VERCEL_URL fallback that publicOrigin() does not have; unset, server-side stamps ship a footer telling the reader to scan a QR that was never drawn",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -695,7 +695,7 @@
       "id": "PHYS-12",
       "title": "The stamper computes QR and footer placement from pdf.js's rotation-aware viewport but draws using pdf-lib's unrotated MediaBox — on a /Rotate 90 sheet the verify QR lands in the wrong corner (often on the title block) and the watermark is fitted to swapped dimensions",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -775,7 +775,7 @@
       "id": "SHR-8",
       "title": "On shared copies the stamp is placed by a hardcoded fallback that assumes the bottom-right corner is empty — on an engineering drawing that is the title block",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

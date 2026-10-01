@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
   fitRotatedTextSize, centerRotatedText, wrapToWidth,
-  pickQrCorner, pickFooterEdge, placeQr, FALLBACK_INK,
+  pickQrCorner, pickFooterEdge, placeQr, fallbackInk, titleBlockReserve,
+  normalizeRotation, displaySize, displayToUser,
 } from "@/lib/stampLayout";
 
 describe("fitRotatedTextSize", () => {
@@ -111,9 +112,78 @@ describe("placeQr — the plate can never leave the page", () => {
   });
 });
 
-describe("FALLBACK_INK", () => {
-  it("reproduces the historical bottom-right / bottom-footer placement", () => {
-    expect(pickQrCorner(FALLBACK_INK.corners)).toBe("br");
-    expect(pickFooterEdge(FALLBACK_INK.topBand, FALLBACK_INK.bottomBand)).toBe("bottom");
+// SHR-8: blind (no raster analysis — every server route) placement never
+// assumes the bottom-right corner is blank: that is a drawing's title block.
+describe("fallbackInk — the blind placement is title-block-aware", () => {
+  it("never puts the QR bottom-right (or anywhere on the right) — it goes top-left, any orientation", () => {
+    for (const [w, h] of [[1224, 792], [2448, 1584], [842, 595], [612, 792], [595, 842]]) {
+      expect(pickQrCorner(fallbackInk(w, h).corners)).toBe("tl");
+    }
+  });
+  it("the footer runs along the top in EVERY orientation — the bottom is the title block's, landscape and portrait alike", () => {
+    // A portrait sheet's title block takes most of the bottom width (ASME A:
+    // 450 of 540 pt inside the border; ISO A4: 510 of 547), so a bottom
+    // footer narrowed to clear it would only wrap taller over it.
+    for (const [w, h] of [[1224, 792], [842, 595], [612, 792], [595, 842], [1584, 2448]]) {
+      const ink = fallbackInk(w, h);
+      expect(pickFooterEdge(ink.topBand, ink.bottomBand), `${w}×${h}`).toBe("top");
+    }
+  });
+  it("the footer leaves the right-hand (revision block) share: as wide as the widest title block (ASME ≈ 450 pt, ISO ≤ 510 pt), never more than half the sheet", () => {
+    expect(titleBlockReserve(2448)).toBe(520);
+    expect(titleBlockReserve(1224)).toBe(520);
+    expect(titleBlockReserve(842)).toBe(421);
+    expect(titleBlockReserve(612)).toBe(306);
+    expect(titleBlockReserve(1224)).toBeGreaterThanOrEqual(510);
+  });
+});
+
+// PHYS-12 / PKG-13: the page as displayed vs the page pdf-lib draws on.
+describe("page rotation — display space ↔ user space", () => {
+  it("normalizes any multiple of 90 (negative, > 360, float noise) to 0/90/180/270", () => {
+    expect(normalizeRotation(0)).toBe(0);
+    expect(normalizeRotation(90)).toBe(90);
+    expect(normalizeRotation(-90)).toBe(270);
+    expect(normalizeRotation(450)).toBe(90);
+    expect(normalizeRotation(-180)).toBe(180);
+    // pdf.js treats a /Rotate that is not a multiple of 90 as 0 — never rounded
+    expect(normalizeRotation(269.9999)).toBe(0);
+    expect(normalizeRotation(45)).toBe(0);
+    expect(normalizeRotation(135)).toBe(0);
+    expect(normalizeRotation(-270)).toBe(90);
+    expect(normalizeRotation(720)).toBe(0);
+    expect(normalizeRotation(Number.NaN)).toBe(0);
+  });
+  it("a quarter turn swaps the displayed sides; a half turn does not", () => {
+    expect(displaySize(612, 792, 0)).toEqual({ width: 612, height: 792 });
+    expect(displaySize(612, 792, 90)).toEqual({ width: 792, height: 612 });
+    expect(displaySize(612, 792, 180)).toEqual({ width: 612, height: 792 });
+    expect(displaySize(612, 792, 270)).toEqual({ width: 792, height: 612 });
+  });
+  it("maps each displayed corner to the user-space corner a clockwise /Rotate puts there", () => {
+    const W = 612, H = 792;
+    // /Rotate 90 (clockwise): the user bottom-right shows at the display bottom-left,
+    // the user bottom-left at the display top-left.
+    expect(displayToUser(0, 0, W, H, 90)).toEqual({ x: W, y: 0 });
+    expect(displayToUser(0, W, W, H, 90)).toEqual({ x: 0, y: 0 });
+    expect(displayToUser(H, W, W, H, 90)).toEqual({ x: 0, y: H });
+    // /Rotate 180: everything mirrors through the centre.
+    expect(displayToUser(0, 0, W, H, 180)).toEqual({ x: W, y: H });
+    // /Rotate 270: the user top-left shows at the display bottom-left.
+    expect(displayToUser(0, 0, W, H, 270)).toEqual({ x: 0, y: H });
+    expect(displayToUser(H, 0, W, H, 270)).toEqual({ x: 0, y: 0 });
+    // unrotated: identity
+    expect(displayToUser(10, 20, W, H, 0)).toEqual({ x: 10, y: 20 });
+  });
+  it("every point of the displayed page maps inside the MediaBox", () => {
+    const W = 612, H = 792;
+    for (const r of [0, 90, 180, 270] as const) {
+      const d = displaySize(W, H, r);
+      for (const [x, y] of [[0, 0], [d.width, 0], [0, d.height], [d.width, d.height], [d.width / 3, d.height / 5]]) {
+        const u = displayToUser(x, y, W, H, r);
+        expect(u.x).toBeGreaterThanOrEqual(0); expect(u.x).toBeLessThanOrEqual(W);
+        expect(u.y).toBeGreaterThanOrEqual(0); expect(u.y).toBeLessThanOrEqual(H);
+      }
+    }
   });
 });

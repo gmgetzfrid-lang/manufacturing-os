@@ -29,6 +29,8 @@ build time**, so those must be your real values when the image is built:
 | `NEXT_PUBLIC_SUPABASE_URL` | **build** (and runtime) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | **build** (and runtime) |
 | `NEXT_PUBLIC_APP_URL` | build (optional) |
+| `NEXT_PUBLIC_SITE_URL` | **build** (and runtime) — **required** for QR codes, share links and transmittal portal links: your public address, e.g. `https://mfg.yourplant.com` |
+| `NEXT_PUBLIC_FACILITY_TIME_ZONE` | **build** (and runtime) — the facility's IANA time zone, e.g. `America/Chicago`; decides the day a revision's effective date comes into force (unset, effective dates are decided a day late, never early) |
 | `SUPABASE_SERVICE_ROLE_KEY` | runtime |
 | `R2_*` (storage) | runtime |
 
@@ -40,6 +42,8 @@ explicitly:
 docker build \
   --build-arg NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co \
   --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ... \
+  --build-arg NEXT_PUBLIC_SITE_URL=https://mfg.yourplant.com \
+  --build-arg NEXT_PUBLIC_FACILITY_TIME_ZONE=America/Chicago \
   -t manufacturing-os .
 
 docker run -p 3000:3000 \
