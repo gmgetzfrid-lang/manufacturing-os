@@ -3395,3 +3395,47 @@ may be scoped for speed. Nothing else changes.
 **Reversal.** (1) The TTL is `INGEST_LEASE_TTL_MS`, one constant. (3) If a facility prefers "ready, with the unread pages listed" to "held until accepted", the `done` condition in `ingestKnowledgeDocBatch` drops its failed-pages term; the pages stay recorded either way. The failed-batch bound and back-off are `INGEST_FAILURE_MAX_ATTEMPTS` and `ingestFailureBackoffMs`. To keep an at-bound document in Ask, `markIngestFailed`'s at-bound branch would keep the queued status, and `failureBackoffUntil` would hold a row at the bound until a person's `retryNow`. That is safe to do once I-02's page shows the failure on an `indexing` row and its Resume passes `retryNow`. (4) Making chunker 2 the default for NEW libraries is a column default change (`knowledge_libraries.chunk_version DEFAULT 2`); existing libraries still move only by the action. (5) `ON DELETE SET NULL` in place of CASCADE, with the sync's REMOVE pass sweeping unsourced mirrors, is the alternative the finding offered.
 
 **Risk:** medium. The migration deletes derived rows only: mirrors naming no document, and entities and chunks past a document's last page. It never touches a controlled document. Until it is applied, the engine runs its legacy, unclaimed path, which still never errors on contention. On that path, the re-queue after a failed withdrawal can still land under an unclaimed batch that is writing but has not committed, since its commit compares the file and version only. That batch then records pages over no chunks. The race needs two failed deletes in a row and a concurrent batch, and the claim closes it. **Restore.** A backup taken before the paste, or between a controlled document's delete and the next sync, can hold a mirror naming no document. Once the key exists, restoring that backup fails on it (23503). The single-shot restore (`app/api/admin/restore/apply/route.ts`) stops at `knowledge_documents` and skips every table after it: `knowledge_chunks`, `knowledge_page_entities`, `knowledge_questions`, `output_templates` and `output_generations`. The chunked restore (`app/api/admin/restore/apply-table/route.ts`) answers 500 for the whole slice, because it allows a per-row refusal only for `document_holds`. The fix is handed to I-01, which owns restore. The restore should drop mirrors whose `source_document_id` is absent from the restored documents, or put `knowledge_documents` in the per-row refusal set and teach the single-shot path the same refusal.
+
+*Landed 2026-10-01 (intelligence Round G, I-07): the drawing rebuild (`app/api/knowledge/drawing/route.ts`, POST `action: "rebuild"`) now goes through `resetKnowledgeIndex`, one document at a time under each document's own claim, with a time budget and an id cursor, so no document is reset twice. Item 1's "the drawing rebuild is to take the claim" and item 2's "the drawing rebuild is to call it" therefore hold: a document a batch holds is reported `busy` and left alone, and every counter is zeroed (`vision_pages`, `ingest_failures`, `vision_retry_after`). The drawing lens shows a parked document as indexing, with the pages it waits on and why (ING-6's limb). ING-12 is resolved; ING-1 and ING-8's residuals are closed. Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`.*
+
+
+<a id="dec-59"></a>
+## DEC-59 · Drawing intelligence: what counts as a drawing, whose set a verdict judges, and what a model's point is worth
+
+**Decision. Four calls about the drawing layer, taking the defaults the fleet plan named (`audit-reports/fleet-plans/intelligence.json`, package I-07).**
+
+1. **A dense page is a drawing when its text says so; vision is never automatic (DWG-7 / BR-12).** A page at or under 2,000 characters is a drawing, as before. A denser page is a drawing when it is lettered in capitals (at most 35 % of its letters lower case) AND is either a tag list (at least 4 tags and drawing references per 1,000 characters) or declares its own drawing number in a title block. Such a page gets tag extraction from its text layer, which costs nothing. AI vision stays a per-library opt-in, and no page is routed to it automatically.
+2. **A verdict is keyed by the set it was computed over (DWG-6).** `drawing_audit_logs` is unique on `(org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT` (`20261124`).
+   - Existing rows take the library of their recorded knowledge document where it resolves, and stay org-wide (`library_id` NULL) otherwise. The orchestrator's `log_audit_completion` writes org-wide rows on the same key.
+   - There is no foreign key: a verdict outlives its library.
+   - A stored verdict is never replaced by a less severe one (`RANK` / `wouldLowerSeverity` in `lib/drawingAuditLog.ts`, exported for every writer).
+   - A sheet whose drawing series no other sheet in the library shares is not recorded: a library holding one mirrored sheet of a series cannot judge that series.
+   - Nothing is recorded from an index that could not be read whole.
+   - The revision filed is the one indexed. A mirror on an older version, or with a disagreeing label, is skipped with the reason.
+3. **A model's point is an estimate (PR-10).** A vision position is cached as `pos_source 'vision'` and returned as `approximate`, with the revision it was read on. It expires when the sheet is revised or rebuilt (`resetKnowledgeIndex` clears every page entity), and a viewer can reject it. A coarse point that a close-up does NOT confirm is never cached: one relocate round asks again (`buildRelocateUser`), and if that finds nothing the tag is reported not visible.
+4. **A pipe line number is never equipment, and is to be kept as kind `'line'` (DWG-2).** `extractEquipmentTags` refuses a tag preceded by a line size or the `LINE` label. `extractLineNumbers` holds the line grammar. Writing `'line'` rows is a call in `lib/knowledgeIngest.ts`, owed by that file's owner. `ENTITY_KINDS` gains `'line'` with it: the guard holds the inventory to the writer both ways, so it fails until then.
+
+> Made during intelligence Round G (2026-10-01) under the protocol's fail-safe rule, taking the four defaults the fleet plan named. Closes `DWG-4`, `DWG-5`, `DWG-6`, `DWG-7`, `DWG-9`, `DWG-10`, `DWG-11`, `DWG-12`, `DWG-13`, `BR-12`, `ING-5`, `PR-10` and `PR-11`, and `DWG-1`'s and `ING-12`'s handed-over halves. Records partial calls on `DWG-2` (the `'line'` rows), `DWG-3` (the ingest half), `DWG-8` (the full-line reference column) and `GOV-8` (usage carried on a thrown provider call). Migration: `20261124_intel_roundG_drawing_audit_scope.sql`.
+>
+> **Numbering.** *The computed task named this DEC-44 on the branch, but DEC-44 to DEC-58 already exist in this base, so it is the next free number, DEC-59. The integrator renumbers if that collides.*
+
+**Rationale.** In a PSM drawing set the expensive failures are quiet ones: a phantom pump in the register, a "passed" filed under a set that was never complete, a census that lost eleven sheets to a row cap. Each call above trades a number that looks complete for one that is complete, or says it is not. A TrueType P&ID is the best input there is, and it must not need a paid model to be read. A verdict is only true of the set it judged. A model's point helps the reader find the spot, but it is not a measurement.
+
+**Acceptance.**
+- A 2,683-character TrueType P&ID page yields equipment tags and a title-block identity through the real ingest, and no line-number phantoms.
+- Two libraries holding one sheet keep two verdicts; a lone mirror of a series is not recorded; a second record writes nothing; a `skipped` sheet is re-recorded once it can be read.
+- Five model calls in one locate request are metered in one row after the last.
+- A close-up that refutes the coarse point triggers the relocate round, and an unconfirmed point is never cached.
+- Text-layer marks land on pdf.js's own point for every `/Rotate`.
+
+See `lib/__tests__/intelRoundGDrawing.test.ts`, `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, `lib/__tests__/intelRoundGDrawingMigration.test.ts`, `lib/__tests__/drawingText.test.ts`, `lib/__tests__/drawingAuditLog.test.ts`, `lib/__tests__/drawingLocate.test.ts` and `lib/__tests__/entityKindGuard.test.ts`.
+
+**Reversal.**
+- (1) The thresholds are `DENSE_DRAWING_MIN_TAGS_PER_KCHAR`, `DRAWING_MAX_LOWERCASE_RATIO` and `SPARSE_PAGE_MAX_CHARS` in `lib/drawingText.ts`.
+- (2) Keying org-wide again means dropping the scoped index and restoring `(org_id, sheet_number, revision_code)`, which can only succeed after rows that share a key across libraries are merged. The series rule is `sheetsAloneInTheirSeries`, in one place.
+- (3) Caching unconfirmed points again is the `unconfirmed` branch in the locate route.
+- (4) None while `'line'` is unwritten.
+
+**Risk:** low to medium.
+- **The writers.** Until I-04 moves `log_audit_completion` onto the new key, applying `20261124` makes that one tool's upsert fail (42P10, reported), so apply it after that merge.
+- **Letter case.** The letter-case signal misses a mixed-case drawing over 2,000 characters with no title block, and such a sheet keeps the old behaviour.
