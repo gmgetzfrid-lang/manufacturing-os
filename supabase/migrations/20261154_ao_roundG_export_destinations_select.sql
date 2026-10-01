@@ -22,13 +22,21 @@
 --   2. The table-level SELECT privilege is revoked from PUBLIC, anon and
 --      authenticated, and SELECT is granted back to authenticated on the
 --      destination's CARD columns only: what it is called, its kind, whether
---      it is on, its schedule and its last run. NOT granted:
+--      it is on, its schedule and its last run's time, status and size. NOT
+--      granted:
 --        - the credentials: access_key_id_encrypted,
 --          secret_access_key_encrypted, webhook_secret_encrypted;
 --        - the destination's coordinates: endpoint, region, bucket, prefix,
 --          webhook_url (a webhook URL can carry its own secret in the path or
 --          query; an Admin / Manager / DocCtrl reads them through the
---          role-gated API, which is where they belong).
+--          role-gated API, which is where they belong);
+--        - last_run_error: the runner's raw error message, which can carry
+--          the coordinates — a DNS failure names the endpoint's host
+--          ("getaddrinfo ENOTFOUND <host>", lib/exportRunner.ts
+--          assertSafeExternalUrl), a webhook failure carries the remote's
+--          response body ("Webhook <status>: <body>"), stored as
+--          msg.slice(0, 500) by app/api/data-export/run-scheduled. The
+--          role-gated API returns it to the roles that may see it.
 --      A member's `select('*')` on the table is now refused (42501); a
 --      select of the card columns still answers, for their own org only (the
 --      policy). The service role is untouched.
@@ -76,12 +84,12 @@ GRANT SELECT (
   id, org_id, name, destination_type, enabled,
   schedule_kind, schedule_hour_utc, schedule_day_of_week, schedule_day_of_month, next_run_at,
   include_files, retention_days,
-  last_run_at, last_run_status, last_run_error, last_run_bytes,
+  last_run_at, last_run_status, last_run_bytes,
   created_at, created_by, updated_at, updated_by
 ) ON TABLE export_destinations TO authenticated;
 
 COMMENT ON TABLE export_destinations IS
-  'Scheduled-export destinations. Service role only by design; members may SELECT the card columns of their own org (export_dest_member_select + a column grant, 20261154). Credentials and the destination''s coordinates are never readable by a member (BKP-11).';
+  'Scheduled-export destinations. Service role only by design; members may SELECT the card columns of their own org (export_dest_member_select + a column grant, 20261154). Credentials, the destination''s coordinates and the last run''s raw error are never readable by a member (BKP-11).';
 
 COMMIT;
 
@@ -109,6 +117,8 @@ UNION ALL SELECT 'authenticated can SELECT none of the coordinates (endpoint, re
        AND NOT has_column_privilege('authenticated', 'public.export_destinations', 'bucket', 'SELECT')
        AND NOT has_column_privilege('authenticated', 'public.export_destinations', 'prefix', 'SELECT')
        AND NOT has_column_privilege('authenticated', 'public.export_destinations', 'webhook_url', 'SELECT'), NULL
+UNION ALL SELECT 'authenticated cannot SELECT last_run_error (the raw runner error can name the endpoint host or carry the remote''s response)',
+       NOT has_column_privilege('authenticated', 'public.export_destinations', 'last_run_error', 'SELECT'), NULL
 UNION ALL SELECT 'authenticated can SELECT the card columns (id, org_id, name, type, enabled, schedule, last run)',
        has_column_privilege('authenticated', 'public.export_destinations', 'id', 'SELECT')
        AND has_column_privilege('authenticated', 'public.export_destinations', 'org_id', 'SELECT')

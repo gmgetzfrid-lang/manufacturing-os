@@ -256,10 +256,28 @@ Tests: `lib/__tests__/storageKeyRegistry.test.ts`, "ILIFE-5 — keysReferencedOu
 ```
 Both sit inside the existing `try` that answers 503 (produce: the GET / POST catch; commit: "… Nothing was freed.") on a read error. With them, a revision whose key a mirror names is never claimed and never freed, and is counted in `sharedSkipped`. Test shape: `lib/__tests__/dcRoundFShed.test.ts`'s RET-8 cases, with a `knowledge_documents` row naming the key.
 
+*Added at the review fix pass:* **the second call site, the direct storage delete.** The brief named document-control P14's `lib/retention.ts` and `app/api/storage/delete/route.ts`. `lib/retention.ts` frees no bytes: no `DeleteObject`, `deleteFile` or storage-delete call; it marks records. The route does free bytes. It refuses a key a held or retained revision names (`file_url` / `source_file_key`), but it never asks whether a knowledge mirror still names it. So a Controller's delete of a superseded revision's file kills a 'ready' mirror's source in the same way. The hunk, for the route's owner (document-control), goes after the hold / retention `try` and before the custody row:
+```diff
+--- app/api/storage/delete/route.ts   (after the hold / retention refusal, before the STORAGE_OBJECT_DELETE custody row)
++import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
+ …
++  // ILIFE-5: never delete a revision's bytes that a knowledge mirror (or any other
++  // registered column outside document_versions) still names. Fail closed.
++  try {
++    const elsewhere = await keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"]);
++    if (elsewhere.size > 0) {
++      return NextResponse.json({ error: "Another record still uses this file (a knowledge-library copy or similar); it cannot be deleted." }, { status: 409 });
++    }
++  } catch {
++    return NextResponse.json({ error: "Could not verify what still uses this file; deletion refused." }, { status: 503 });
++  }
+```
+The route's one caller in the app, `lib/costDocs.ts` (`deleteFile(key)` after the `cost_documents` row is gone), is unaffected: its row no longer names the key. Test shape: the route's existing hold / retention cases, with a `knowledge_documents` row naming the key.
+
 **Done-when.**
 1. ✓ (intelligence Round G, above).
 2. ✓ (above).
-3. ◐ — the predicate exists and is tested, but the shed's candidate query does not call it yet. OPEN on the handoff.
+3. ◐ — the predicate exists and is tested, but neither the shed's candidate query nor the direct storage delete calls it yet. OPEN on the two handoffs above.
 
 ---
 
@@ -300,6 +318,33 @@ lib/dataExport.ts:299-311 `while (true) { let q = sb.from(table).select("*").ran
 Owner of both halves: admin-and-org **P2** — `BKP-2` owns the reference collector, and the export contract is `lib/dataExport.ts`; cross-note on `BKP-2`. A&O P2's plan does not carry criterion 3 today (it lists "BKP-2 pagination half ← DC XEDGE-13" as already resolved), so the integrator adds the keyset fix to it together with the two test edits the fix forces: flip `intelRoundGRecords.test.ts` "ILIFE-6 criterion 3 …" from `it.fails` to `it` (it fails the suite until flipped — the tripwire is deliberate), and update `destructiveDeletes.test.ts`'s fake, which answers only `.range`. The `BKP-2` cross-note names both edits, so the package that lands the fix reads them in the record it is assigned.
 
 *Cross-note (2026-10-01, admin-and-org Round G, P2): criterion 3's collector half landed. `lib/storageOrphans.ts collectReferencedKeys` pages by keyset (`.order("id").gt("id", last).limit(1000)`), and the tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it` (see `BKP-2`). The balanced case still needs a re-check of each candidate before `DeleteObjects` in `deleteOrphans`: a row already read is deleted while one is inserted behind the cursor. That is the purge side, outside A&O P2's brief. The export half is untouched: `dumpTable`'s stable order and the per-table count reconciliation (criteria 1-2 for the export). A&O P2's plan lists it as resolved elsewhere (`XEDGE-13`), which covers the sweeper only; the integrator assigns an owner.*
+
+**Partial (2026-10-01, admin-and-org Round G, P2 review fix pass).** The export half has landed, and it supersedes the cross-note's "the export half is untouched". This record names A&O P2 as owner of both halves, and the review held P2 to that.
+
+Reproduced at `e2d4ddd`: `lib/dataExport.ts dumpTable` paged `select("*").range(from, from + 999)` with no ORDER BY, and it stopped at the first page shorter than 1,000 rows. `manifest.complete` came only from read errors. A parent-keyed child read added in the same package (`project_members` through 150 project ids at a time) used the same loop. The skip is reproduced in `lib/__tests__/exportContractRoundTrip.test.ts`: on that loop, a row deleted behind the cursor makes the next window skip `d-1000`.
+
+Fix in `lib/dataExport.ts` (`dumpTable` / `readScoped`):
+1. **Stable, unique order.** Every page is ordered by the table's key. That is `id`, or, for the ten exported tables with no `id` column, the PRIMARY KEY / UNIQUE key declared in `lib/exportTables.ts EXPORT_ORDER_KEYS` (`exportOrderKey`).
+2. **Keyset paging.** A one-column key pages `key > last` with `limit(1000)`, so a delete behind the cursor never moves a page. A composite key (six small link and counter tables) pages by offset in key order, deduplicated by key.
+3. **No early stop.** An exact count (`count: "exact", head: true`) is taken first in the same scope. A short page ends the read only once that many rows are in hand, so a PostgREST max-rows setting below 1,000 no longer cuts every table at its first page.
+4. **Reconciliation (criterion 2).** If a read ends with fewer rows than the table held both before AND after it, the table is read once more. A delete alone or an insert alone can never cause that under keyset. If the second read is still short, the table is recorded as an error, and the backup is INCOMPLETE with the counts in the message. So a short read can no longer report `complete: true`.
+
+Tests:
+- `lib/__tests__/exportContractRoundTrip.test.ts`, "ILIFE-6 (export half) …":
+  - a row cap of 7 no longer cuts a table, including a composite-keyed one;
+  - a row deleted behind the cursor moves no window;
+  - one transient race (unread rows deleted while rows land behind the cursor) heals on the re-read;
+  - the same race on both reads makes the table an error and the backup INCOMPLETE.
+- `lib/__tests__/exportCoverage.test.ts`, "export paging order tripwire (ILIFE-6)": every exported table has an `id` or an `EXPORT_ORDER_KEYS` entry, and each entry is one of that table's keys in the census.
+- The in-memory stand-in (`lib/__tests__/helpers/restoreMemoryDb.ts`) now honours `order`, `limit` and `gt`.
+- Checked by mutation: offset paging fails the delete case, and the old short-page stop fails the row-cap case.
+
+**Done-when.**
+1. ✓ — the sweeper (`XEDGE-13`, then keyset in A&O P2) and now the export: every paginated dump has a stable, unique sort key and pages by keyset where the key is one column.
+2. ✓ — `dataExport` takes an exact count per table (per parent chunk) in the same scope, and a short read becomes a table error, never `complete: true`. The count is taken around the read, not in the same statement. Rows that change while the export runs cannot be told apart from a skip without a snapshot. So a read is flagged only when it is short of both counts, and only after a second read.
+3. ◐ — the collector pages by keyset (A&O P2). The balanced case (a read row deleted while a row lands behind the cursor) still needs a re-check of each candidate before `DeleteObjects` in `deleteOrphans`, the purge side. That belongs to document-control (P9 RET-7 owns the purge), and no running package lists it.
+
+**Scope / residual.** OPEN on criterion 3's purge-side re-check. The six composite-keyed tables still page by offset: `curated_collection_items`, `document_equipment_suggestions`, `document_favorites`, `recently_viewed_docs`, `team_members` and `ticket_number_counters`. On those, a balanced write (one read row deleted while a row lands behind the cursor) can hide a skip from the counts. The other 103 exported tables page by keyset.
 
 ---
 

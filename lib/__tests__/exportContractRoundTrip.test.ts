@@ -19,10 +19,14 @@
 //          half landed as document-control EGR-7; this pins it by value).
 //   BKP-2 / BKP-9  every registered binary — native CAD source, knowledge
 //          PDF, output template and example, vendor quote, photo, attachment,
-//          markup, plot plan, covers, logo — is in the file manifest, packed
-//          into both ZIPs and put back; a key in a column the registry does
-//          not know is carried and counted (`files.unregistered`); a key an
-//          audit row merely mentions is not.
+//          markup, plot plan, covers, page backgrounds, logo — is in the file
+//          manifest, packed into both ZIPs and put back; a key in a column the
+//          registry does not know is carried and counted
+//          (`files.unregistered`); a key an audit row merely mentions is not.
+//   Fix pass: the storage checks run FILE_CHECK_CONCURRENCY at a time under a
+//          time budget (never one by one), and every table is read in a
+//          stable, unique order by keyset, past a server row cap, and
+//          reconciled against its count (intelligence ILIFE-6, export half).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -37,6 +41,8 @@ import { censusSchema } from "./helpers/schemaKeys";
 // so a read filtered by a missing column errors as the database does — the
 // shape of the base-2290b94 failure this package fixes (BKP-4).
 const census = censusSchema();
+/** Called before every read statement the export's client sends (a hook for concurrent-write cases). */
+const hooks = vi.hoisted(() => ({ onRead: null as null | ((table: string) => void) }));
 vi.mock("@/lib/serverAuth", async () => {
   const mem = await import("./helpers/restoreMemoryDb");
   return {
@@ -53,13 +59,18 @@ vi.mock("@supabase/supabase-js", async () => {
     const b = mem.from(table) as Record<string, unknown>;
     const eq = b.eq as (c: string, v: unknown) => unknown;
     const inn = b.in as (c: string, v: unknown[]) => unknown;
+    const gt = b.gt as (c: string, v: unknown) => unknown;
+    const order = b.order as (c: string, o?: unknown) => unknown;
     let bad: string | null = null;
     const check = (c: string) => { if (shapes.get(table) && !shapes.get(table)!.columns.has(c)) bad = c; };
     b.eq = (c: string, v: unknown) => { check(c); eq(c, v); return b; };
     b.in = (c: string, v: unknown[]) => { check(c); inn(c, v); return b; };
+    b.gt = (c: string, v: unknown) => { check(c); gt(c, v); return b; };
+    b.order = (c: string, o?: unknown) => { check(c); order(c, o); return b; };
     const then = b.then as (res: (v: unknown) => void, rej: (e: unknown) => void) => void;
     b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => {
       if (bad) return res({ data: null, error: { code: "42703", message: `column ${table}.${bad} does not exist` } });
+      hooks.onRead?.(table);
       return then(res, rej);
     };
     return b;
@@ -74,7 +85,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
 }));
 
-import { runOrgExport, type DataExportEnvelope } from "@/lib/dataExport";
+import { runOrgExport, collectFilePaths, FILE_CHECK_CONCURRENCY, type DataExportEnvelope } from "@/lib/dataExport";
 import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup } from "@/lib/clientBackup";
 import { REDACT_COLUMNS } from "@/lib/exportTables";
@@ -102,6 +113,8 @@ const K = {
   plot: key("plot-plans/pp-1.png"),
   libCover: key("branding/covers/lib-1.png"),
   colCover: key("branding/covers/col-1.png"),
+  libBackground: key("branding/backgrounds/lib-1.jpg"),
+  colBackground: key("branding/backgrounds/col-1.png"),
   logo: key("branding/logo-1.svg"),
   unregistered: key("notes/n-1/field-photo.jpg"),
 };
@@ -121,8 +134,10 @@ function seedSource() {
   db.rows = {
     orgs: [{ id: SRC, name: "Acme" }, { id: OTHER, name: "Other tenant" }],
     org_members: [{ org_id: SRC, uid: "u-alice", email: "alice@acme.com", role: "Admin", roles: ["Admin"], status: "active" }],
-    libraries: [{ id: "lib-1", org_id: SRC, name: "P&IDs", cover_image_url: K.libCover }],
-    collections: [{ id: "col-1", org_id: SRC, library_id: "lib-1", parent_id: null, name: "Area 1", cover_image_url: K.colCover }],
+    libraries: [{ id: "lib-1", org_id: SRC, name: "P&IDs", cover_image_url: K.libCover,
+      page_config: { header: { height: "md" }, background: { type: "image", imagePath: K.libBackground, opacity: 0.18, tint: "neutral" } } }],
+    collections: [{ id: "col-1", org_id: SRC, library_id: "lib-1", parent_id: null, name: "Area 1", cover_image_url: K.colCover,
+      page_config: { background: { type: "image", imagePath: K.colBackground } } }],
     documents: [{ id: "doc-1", org_id: SRC, library_id: "lib-1", collection_id: "col-1", title: "P-101", created_by: "u-alice" }],
     document_versions: [{ id: "v-1", org_id: SRC, record_id: "doc-1", revision_label: "A", file_url: K.pdf, source_file_key: K.dwg, size: 4, created_by: "u-alice" }],
     projects: [{ id: "proj-1", org_id: SRC, name: "Turnaround" }, { id: "proj-x", org_id: OTHER, name: "Not ours" }],
@@ -217,6 +232,7 @@ async function zipText(zip: JSZip): Promise<string> {
 }
 
 beforeEach(() => {
+  hooks.onRead = null;
   db.keys = {}; db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false;
   db.fks = {}; db.maxRows = 1000; db.generated = {}; db.authUsers = null;
   db.keys.curated_collection_items = [["collection_id", "document_id"]];
@@ -300,8 +316,17 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
     const paths = env.files.map((f) => f.path).sort();
     expect(paths).toEqual(Object.values(K).sort());
     expect(paths).not.toContain(MENTIONED_ONLY);
-    expect(env.manifest.files).toMatchObject({ count: Object.keys(K).length, missing: 0, unregistered: 1, archivedOffline: 0 });
-    expect(env.manifest.notes.join(" ")).toMatch(/1 file\(s\) under this workspace's storage prefix are referenced from column\(s\) the storage-key registry \(lib\/storageKeyRegistry\.ts\) does not list: notes\.task_meta/);
+    expect(env.manifest.files).toMatchObject({ count: Object.keys(K).length, missing: 0, unregistered: 1, unchecked: 0, archivedOffline: 0 });
+    const note = env.manifest.notes.find((n) => n.includes("does not yet track"));
+    expect(note).toMatch(/1 file\(s\) in this workspace's storage are named by record field\(s\) the app does not yet track as file references: notes\.task_meta\. A scan of every exported value found them; 1 is included in this backup\. /);
+    // written for the customer: no repository path
+    expect(env.manifest.notes.join(" ")).not.toMatch(/lib\/|\.ts\b/);
+  });
+
+  it("the page backgrounds (libraries / collections.page_config) are carried; nothing is reported unregistered for them", async () => {
+    const env = await exportEnvelope();
+    expect(env.files.map((f) => f.path)).toEqual(expect.arrayContaining([K.libBackground, K.colBackground]));
+    expect(env.manifest.notes.join(" ")).not.toMatch(/page_config/);
   });
 
   it("a key whose object is gone is counted missing, whichever collector found it", async () => {
@@ -314,6 +339,10 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
       const env = await exportEnvelope();
       expect(env.manifest.files.missing).toBe(2);
       expect(env.files.find((f) => f.path === K.unregistered)?.presignedUrl).toBe("");
+      // the note no longer says a file it could not find IS in the backup
+      const note = env.manifest.notes.find((n) => n.includes("does not yet track"));
+      expect(note).toMatch(/0 are included in this backup and 1 was not found in storage \(counted with the missing files\)/);
+      expect(note).not.toMatch(/ARE included/);
     } finally {
       vi.mocked(r2.send).mockImplementation((async () => ({ ContentLength: 4, ContentType: "application/octet-stream" })) as never);
     }
@@ -362,6 +391,133 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
     const read = await readBackupArchive(parts);
     expect(read.files.map((f) => f.key).sort()).toEqual(Object.values(K).sort());
     expect((read.envelope.tables.curated_collection_items as Row[]).length).toBe(1);
+  });
+});
+
+describe("the storage checks run side by side, in manifest order, under a time budget (fix pass: export runtime)", () => {
+  // Every ticket attachment records its size as TEXT ("0.01 MB"), so each one
+  // (and every native source, quote, template, background) is checked against
+  // storage. One at a time, thousands of them outran the routes' 300 s.
+  const N = 60;
+  function seedAttachments() {
+    db.rows.tickets = Array.from({ length: N }, (_, i) => ({
+      id: `tk-${String(i).padStart(3, "0")}`, org_id: SRC, title: `T${i}`,
+      attachments: [{ url: key(`tickets/tk-${i}/r.pdf`), size: "0.01 MB", name: "r.pdf" }],
+    }));
+  }
+
+  it("N text-sized attachments: N storage checks, several in flight at once (never more than the cap), results in manifest order", async () => {
+    seedAttachments();
+    const { r2 } = await import("@/lib/r2");
+    let inFlight = 0; let peak = 0; const checked: string[] = [];
+    vi.mocked(r2.send).mockImplementation((async (cmd: { input: { Key: string } }) => {
+      inFlight++; peak = Math.max(peak, inFlight); checked.push(cmd.input.Key);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      return { ContentLength: 4, ContentType: "application/pdf" };
+    }) as never);
+    try {
+      const env = await exportEnvelope();
+      const sizeless = collectFilePaths(env.tables).filter((r) => r.size == null).map((r) => r.path);
+      expect(sizeless.filter((p) => p.includes("/tickets/tk-"))).toHaveLength(N);
+      expect(checked.sort()).toEqual([...sizeless, K.unregistered].sort()); // every size-less key, once
+      expect(peak).toBeGreaterThan(1);                                     // not serialised
+      expect(peak).toBeLessThanOrEqual(FILE_CHECK_CONCURRENCY);            // bounded
+      // the manifest keeps collectFilePaths' order (the capped ZIP's embed order), whatever order the checks finished in
+      expect(env.files.map((f) => f.path)).toEqual([...collectFilePaths(env.tables).map((r) => r.path), K.unregistered]);
+      expect(env.files.filter((f) => f.path.includes("/tickets/tk-")).every((f) => f.size === 4)).toBe(true);
+      expect(env.manifest.files).toMatchObject({ missing: 0, unchecked: 0 });
+    } finally {
+      vi.mocked(r2.send).mockImplementation((async () => ({ ContentLength: 4, ContentType: "application/octet-stream" })) as never);
+    }
+  });
+
+  it("past the time budget a file is listed with its URL and no size, counted unchecked (not missing), and named in a note", async () => {
+    seedAttachments();
+    const { r2 } = await import("@/lib/r2");
+    vi.mocked(r2.send).mockClear();
+    const env = await runOrgExport({
+      supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+      fileCheckBudgetMs: 0,
+    });
+    expect(vi.mocked(r2.send)).not.toHaveBeenCalled();
+    const sizeless = env.files.filter((f) => f.size == null);
+    expect(sizeless.length).toBeGreaterThan(N);
+    expect(sizeless.every((f) => f.presignedUrl.startsWith("https://r2.test/"))).toBe(true);
+    expect(env.manifest.files).toMatchObject({ missing: 0, unchecked: sizeless.length });
+    expect(env.manifest.notes.join(" ")).toMatch(new RegExp(`${sizeless.length} file\\(s\\) could not be checked against storage within this export's time limit`));
+  });
+});
+
+describe("ILIFE-6 (export half) — every table is read once per row, in a stable order, past a row cap, and reconciled", () => {
+  const docs = (n: number, prefix = "d") => Array.from({ length: n }, (_, i) => ({
+    id: `${prefix}-${String(i).padStart(4, "0")}`, org_id: SRC, library_id: "lib-1", title: `D${i}`,
+  }));
+
+  it("a server row cap below the page size no longer cuts a table short (base stopped at the first short page)", async () => {
+    db.maxRows = 7;
+    db.rows.documents = docs(25);
+    const env = await exportEnvelope();
+    expect((env.tables.documents as Row[]).map((r) => r.id)).toEqual(db.rows.documents.map((r) => r.id));
+    expect(env.manifest.complete).toBe(true);
+    // a composite-keyed table pages past the cap too
+    db.rows.curated_collection_items = Array.from({ length: 12 }, (_, i) => ({ collection_id: "cc-1", document_id: `doc-${String(i).padStart(2, "0")}`, sort_order: i }));
+    const env2 = await exportEnvelope();
+    expect((env2.tables.curated_collection_items as Row[]).length).toBe(12);
+  });
+
+  it("a row deleted behind the cursor between pages moves no window — every other row arrives exactly once", async () => {
+    db.rows.documents = docs(2500);
+    let reads = 0;
+    hooks.onRead = (t) => {
+      if (t !== "documents") return;
+      reads++;
+      // read 1 = the count, read 2 = page 1 (d-0000..d-0999); before page 2, delete a row already read
+      if (reads === 3) db.rows.documents = db.rows.documents.filter((r) => r.id !== "d-0005");
+    };
+    const env = await exportEnvelope();
+    const ids = (env.tables.documents as Row[]).map((r) => String(r.id));
+    expect(new Set(ids).size).toBe(ids.length);   // no row twice
+    expect(ids).toContain("d-1000");               // the row an OFFSET window would have skipped
+    expect(ids).toHaveLength(2500);                // d-0005 was read before it went
+    expect(env.manifest.complete).toBe(true);
+  });
+
+  it("a read that ends short of the table's count before AND after is read again; one transient race heals", async () => {
+    db.rows.documents = docs(2500);
+    let reads = 0;
+    hooks.onRead = (t) => {
+      if (t !== "documents") return;
+      reads++;
+      if (reads === 3) {
+        // between pages: ten unread rows go, ten land behind the cursor ("c-" sorts before "d-")
+        db.rows.documents = [...db.rows.documents.filter((r) => !/^d-20(0\d)$/.test(String(r.id))), ...docs(10, "c")];
+      }
+    };
+    const env = await exportEnvelope();
+    expect(env.manifest.tables.find((t) => t.name === "documents")).toEqual({ name: "documents", rowCount: 2500 });
+    expect((env.tables.documents as Row[]).map((r) => String(r.id))).toEqual(expect.arrayContaining(["c-0000", "d-2499"]));
+    expect(env.manifest.complete).toBe(true);
+  });
+
+  it("still short on the second read: the table is an error and the backup INCOMPLETE — never quietly short", async () => {
+    db.rows.documents = docs(2500);
+    let reads = 0; let wave = 0;
+    hooks.onRead = (t) => {
+      if (t !== "documents") return;
+      reads++;
+      // after page 1 of EACH read. First read: 1 count, 2 page 1, 3 page 2, 4 page 3, 5 the empty page,
+      // 6 the count after. The re-read: 7 count, 8 page 1, 9 page 2.
+      if (reads === 3 || reads === 9) {
+        wave++;
+        db.rows.documents = [...db.rows.documents.filter((r) => !new RegExp(`^d-2${wave}0\\d$`).test(String(r.id))), ...docs(10, `c${wave}`)];
+      }
+    };
+    const env = await exportEnvelope();
+    expect(wave).toBe(2);
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.tables.find((t) => t.name === "documents")?.error).toMatch(/read 2490 row\(s\), but the table held 2500 before the read and 2500 after it/);
+    expect(env.manifest.notes[0]).toMatch(/INCOMPLETE BACKUP/);
   });
 });
 

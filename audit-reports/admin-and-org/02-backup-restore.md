@@ -114,12 +114,24 @@ lib/storageOrphans.ts:11-13 promises the opposite — "the reference collector q
 
 **Done-when.**
 - [x] cost_documents.file_url is registered in BOTH lib/storageOrphans.ts sources and lib/dataExport.ts collectFilePaths ✓ — one registry, read by both.
-- [x] a test enumerates every storage-key column in the schema and fails when either collector is missing one ✓ — the census in `storageKeyRegistry.test.ts` (by column name across supabase/, the JSON-embedded logo declared), plus "the two lists are identical".
+- [x] a test enumerates every storage-key column in the schema and fails when either collector is missing one ✓ — since the review fix pass (below). *Corrected at the review fix pass:* the first claim (the name census plus the JSON-embedded logo) was not met. `libraries.page_config` and `collections.page_config` hold a live key (a page background), and neither the registry nor the name census saw them.
 - [x] orphan deletion refuses to run when the reference collector's source list is smaller than the schema's storage-key column set ✓ — `registryGaps` in `collectReferencedKeys`.
 
-**Scope / residual.** The census reads column NAMES (`(^|_)(url|key|path|attachments|files)$`), so a key inside a JSON column under another name is invisible to it. The export's value scan (`BKP-9` Done-when 3) reports such a key at run time. On the cross-notes above:
+**Review fix pass (2026-10-01, admin-and-org Round G, P2).** The registry missed a live key column, so the purge still deleted live files. Reproduced at `e2d4ddd`: an Admin who sets a library or folder page background (Customize, `components/documents/CustomizeNodeModal.tsx` `handleBgUpload`) uploads it to `orgs/<org>/branding/backgrounds/<uuid>.<ext>`, and the key is saved as `page_config.background.imagePath` (`app/(protected)/documents/page.tsx` `saveLibraryAppearance`; `lib/libraryCollections.ts updateCollectionAppearance` for a folder). Neither `STORAGE_KEY_SOURCES` nor `STORAGE_KEY_COLUMNS` named `page_config`. The name census could not see it, and its "exactly the key-named columns plus the logo" test would have failed had the column been registered. So `deleteOrphans` deleted every background older than 7 days, and every export of an org with backgrounds printed the value scan's warning about `libraries.page_config`. Fix, all in `lib/storageKeyRegistry.ts`:
+- two sources, "libraries(page background)" and "collections(page background)", with `keyColumns: ["page_config"]`, extracting `page_config.background.imagePath`;
+- `libraries.page_config` and `collections.page_config` in `STORAGE_KEY_COLUMNS`;
+- `JSON_KEY_COLUMNS`, a declared map of every registered column whose key sits inside JSON under another name, each with where it sits: `tickets.attachments`, `org_configurations.data`, `output_templates.example_files` and the two `page_config` columns. The census reads it in place of the hard-coded logo, and `plainKeyColumns` reads it in place of its private list;
+- every extractor now names the key column each key came from (`StorageKeyRef.column`), which the census checks and the manifest order uses (`BKP-9` fix pass).
+
+Tests, all in `lib/__tests__/storageKeyRegistry.test.ts`:
+- **The column census:** "STORAGE_KEY_COLUMNS is exactly the key-named columns plus the declared JSON key columns", and "every JSON key column is registered, says where the key sits, and a registered column the name census cannot see is one".
+- **The writer census**, new, which works from the other end: `STORAGE_WRITERS` lists every file in `app/`, `lib/`, `components/` and `hooks/` that writes an object to storage, with its exact number of write sites. It matches `uploadToPath(`, its wrappers, `putWithXhr(`, `putObject(`, `new PutObjectCommand(` / `CreateMultipartUploadCommand(`, and the `/api/storage/upload-url` / `multipart` doors. Each entry names the column its key is persisted into, or the reason none is (the doors themselves; `lib/exportRunner.ts`, which writes to the customer's own bucket; the template generator's transient source spreadsheet). The suite fails when a write site is added, removed or moved, and when a writer persists into an unregistered column. The modal's background upload is pinned to `page_config.background.imagePath`.
+- **Fixtures:** "a library's and a folder's page background are in BOTH collectors". The registry as it stood before this pass leaves exactly those two columns to the value scan and to `registryGaps`.
+- Checked by mutation in this file and the round trip: dropping the folder background's source fails 10 tests, because the sweep refuses to scan. Unregistering the column entirely (source, declaration and JSON entry) fails 7 tests, among them the writer census.
+
+**Scope / residual.** The column census reads column NAMES, so a key put inside a JSON column under another name is invisible to it. The writer census closes that from the writing side, for every write site that exists today. A key that reaches a row by any route other than a storage write in the app is still caught only at run time, by the export's value scan (`BKP-9` Done-when 3), for example a key copied from another row, or a hand edit. On the cross-notes above:
 - Intelligence `ILIFE-1`'s third criterion (the purge's audit row records the deleted KEYS) belongs to `app/api/admin/orphans/route.ts`, which is outside this package's files; `ILIFE-1` stays OPEN on it.
-- `ILIFE-6` criterion 3 landed here. `collectReferencedKeys` pages `.order("id").gt("id", last).limit(1000)` (keyset), so a row deleted behind the cursor can no longer move a window. The tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it`. `lib/__tests__/destructiveDeletes.test.ts`'s stand-in answers the keyset chain and throws on `.range`. One case keyset paging alone cannot rule out: a row already read is deleted while a row is inserted behind the cursor, and the count balances. Closing it needs a re-check of each candidate just before `DeleteObjects`, in `deleteOrphans` (the purge side), which this package's brief does not cover; recorded on `ILIFE-6`.
+- `ILIFE-6` criterion 3 landed here. `collectReferencedKeys` pages `.order("id").gt("id", last).limit(1000)` (keyset), so a row deleted behind the cursor can no longer move a window. The tripwire in `lib/__tests__/intelRoundGRecords.test.ts` is flipped to `it`. `lib/__tests__/destructiveDeletes.test.ts`'s stand-in answers the keyset chain and throws on `.range`. One case keyset paging alone cannot rule out: a row already read is deleted while a row is inserted behind the cursor, and the count balances. Closing it needs a re-check of each candidate just before `DeleteObjects`, in `deleteOrphans` (the purge side), which this package's brief does not cover; recorded on `ILIFE-6`. *Review fix pass:* `ILIFE-6`'s export half (criteria 1 and 2 for `dumpTable`) landed too; see the `ILIFE-6` record.
 - `ILIFE-8`'s `referencedKeys` residual is not in this package's plan and is untouched.
 
 ---
@@ -550,7 +562,20 @@ Done-when 3: after the registry has collected, `findUnregisteredOrgKeys` scans e
 - [x] a test asserts the two lists are identical ✓ — less `users`, which the export never carries, by name and reason.
 - [x] the manifest's `files.missing` counter reflects keys that exist in the DB but were not collected ✓. Such a key is now found, head-checked and counted in `missing` when its object is gone. It is named under `files.unregistered`, and no key under the workspace's prefix escapes the count.
 
-**Scope / residual.** `lib/exportRunner.ts`'s README line "every binary file, path-preserved" (admin-and-org P3's file) is now true for every file the records reference, and was not edited. Avatars are personal and are not in an org backup, by design.
+**Review fix pass (2026-10-01, admin-and-org Round G, P2).** Four corrections.
+
+1. **Export runtime.** The first pass made the export slower, and nothing pinned how long it takes. `byteSize` rightly stopped reading a text size ("2.00 MB") as a byte count. But every ticket attachment records its size as text (`formatBytes(file.size)` on the request page, `CheckInPanel`'s "x.xx MB"), so every attachment, plus every native source, quote, template and unregistered key, was HEAD-checked one at a time. Those routes are capped at `maxDuration = 300` (`/api/data-export/structured`, the browser Full ZIP's first step; `run`; `run-scheduled`). On base the text size skipped the check, and summed as NaN into `totalBytes`.
+   Fix in `lib/dataExport.ts runOrgExport`: the checks run `FILE_CHECK_CONCURRENCY` (24) at a time (`forEachBounded`). Each result lands at its index, so the manifest keeps its order. The checks stop at a wall-clock budget, `FILE_CHECK_BUDGET_MS` (90 s). A file not reached by then keeps its download URL, carries no size, and is counted in the new `manifest.files.unchecked`, with a note. It is not counted missing.
+   Tests in `lib/__tests__/exportContractRoundTrip.test.ts`, "the storage checks run side by side, in manifest order, under a time budget":
+   - with 60 text-sized attachments, every size-less key is checked exactly once;
+   - more than one check is in flight at once, and never more than the cap;
+   - the manifest order is `collectFilePaths`' whatever order the checks finish in;
+   - with a budget of 0, nothing is checked and every file keeps its URL and counts as unchecked.
+2. **Embed order.** With the registry's first order, knowledge PDFs came second, ahead of photos and attachments, so near the server ZIP's 1.5 GB embed cap (`lib/exportRunner.ts`) a scheduled ZIP could leave out files it embedded on base. `collectFilePaths` now orders by `STORAGE_KEY_COLUMNS`, and a key that two columns name takes the earlier column's place. That list puts the eight columns base carried first, in base's order. Then come the registry's additions: native source, vendor quote, template and examples, knowledge PDF, page backgrounds. Test: "the manifest order is STORAGE_KEY_COLUMNS'" (`storageKeyRegistry.test.ts`).
+3. **The unregistered-key note** said such files "ARE included" even when the object was gone, and pointed the customer at a source file. It now says how many are included and how many were not found in storage, names the `table.column`, gives no repository path, and tells the Admin not to run the orphaned-file clean-up until the field is tracked. Tests: the existing manifest and missing-object cases now check the wording.
+4. **Page backgrounds.** Every backup now carries `libraries.page_config` and `collections.page_config` backgrounds (`BKP-2` fix pass). The round trip seeds both and restores them.
+
+**Scope / residual.** `lib/exportRunner.ts`'s README line "every binary file, path-preserved" (admin-and-org P3's file) is now true for every file the records reference, and was not edited. Avatars are personal and are not in an org backup, by design. A workspace with more size-less files than 24 checks can clear in 90 s (on the order of 50,000 at 40 ms each) lists the rest unchecked rather than timing the route out. The README that `buildReadme` writes (P3's file) does not yet print `files.unchecked`. The manifest and its notes do.
 
 ---
 
@@ -642,12 +667,13 @@ In every case the drain's candidate filter matches 0 rows. Each test fails with 
 The plan's fail-safe default was taken, the reversible option:
 - The policy is KEPT.
 - The table-level SELECT is revoked from PUBLIC, anon and authenticated.
-- SELECT is granted back to authenticated on the card columns only: id, org, name, type, enabled, schedule, last run, created and updated.
+- SELECT is granted back to authenticated on the card columns only: id, org, name, type, enabled, schedule, the last run's time, status and size, created and updated.
 - Not granted: the credentials, and the destination's coordinates (`endpoint`, `region`, `bucket`, `prefix`, `webhook_url`). A webhook URL can carry its own secret; Admins, Managers and DocCtrls read the coordinates through the role-gated API.
+- *Corrected at the review fix pass:* `last_run_error` is not granted either. The first version granted it, but it holds the runner's raw message (`msg.slice(0, 500)` in `app/api/data-export/run-scheduled/route.ts`), which can name the endpoint's host (a DNS failure: `getaddrinfo ENOTFOUND <host>`) or carry the remote's response body (`Webhook <status>: <body>`, `lib/exportRunner.ts`). A ninth probe checks it; the shape test pins the grant to the table's columns less the credentials, the coordinates and `last_run_error` ("last_run_error is withheld because the runner stores raw messages that can name the destination").
 
 Nothing in the app reads the table with a member session, and a test pins that. The file is one paste:
 - a count-only inventory before the transaction: rows, rows holding a credential, active members who could read them, and whether `authenticated` held SELECT;
-- one final `(check, ok, n)` SELECT carrying eight probes;
+- one final `(check, ok, n)` SELECT carrying nine probes;
 - the rollback in the header: `GRANT SELECT ON export_destinations TO anon, authenticated;`.
 
 Test: `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`.
@@ -656,7 +682,7 @@ Test: `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`.
 Done-when 2 (the export nulls the credentials) holds by document-control `XEDGE-10` (`REDACT_COLUMNS.export_destinations`), and is now pinned by value as well (`lib/__tests__/exportContractRoundTrip.test.ts`, the `BKP-1` block).
 
 **Done-when.**
-1. ✓ (pending migration `20261154`) — narrowed to non-credential columns by a column privilege, the policy kept.
+1. ✓ (pending migration `20261154`) — narrowed to the card columns (no credential, coordinate or raw run error) by a column privilege, the policy kept.
 2. ✓ — the export nulls the credential columns (`XEDGE-10`; pinned by value).
 3. ◐ — the restore half ✓ (P1). The remaining limb is that enabling a destination must require its credentials (the s3 / r2 keys, the webhook secret). It belongs to `app/api/data-export/destinations/[id]/route.ts` PATCH, admin-and-org P3's file, as P1 recorded.
 

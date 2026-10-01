@@ -185,6 +185,33 @@ export const EXPORT_KEYED_BY: Record<string, { column: string; parent?: string; 
   curated_collection_items: { column: "collection_id", parent: "curated_collections", reason: "a curated collection's contents carry no org_id; read through this workspace's curated collections" },
 };
 
+/** intelligence ILIFE-6 (the export half): the export pages every table in
+ *  a STABLE, UNIQUE order, so no row is read twice or skipped between pages.
+ *  A table pages by `id` (keyset: `id > last`, so a concurrent delete can
+ *  never move a page); the exported tables with no `id` column are listed
+ *  here with their PRIMARY KEY / UNIQUE key — a one-column key pages by
+ *  keyset too, a composite key pages ordered by every key column.
+ *  lib/__tests__/exportCoverage.test.ts fails when an exported table has
+ *  neither an `id` column nor an entry here, or an entry is not one of the
+ *  table's keys. */
+export const EXPORT_ORDER_KEYS: Record<string, readonly string[]> = {
+  archive_settings: ["org_id"],
+  codebook_config: ["org_id"],
+  curated_collection_items: ["collection_id", "document_id"],
+  document_equipment_suggestions: ["org_id", "document_id"],
+  document_favorites: ["user_id", "document_id"],
+  library_numbering: ["library_id"],
+  notification_preferences: ["user_id"],
+  recently_viewed_docs: ["user_id", "document_id"],
+  team_members: ["team_id", "uid"],
+  ticket_number_counters: ["org_id", "year"],
+};
+
+/** The columns the export orders `table` by (see EXPORT_ORDER_KEYS). */
+export function exportOrderKey(table: string): readonly string[] {
+  return Object.prototype.hasOwnProperty.call(EXPORT_ORDER_KEYS, table) ? EXPORT_ORDER_KEYS[table] : ["id"];
+}
+
 /** User-scoped tables exported alongside (membership in this org acts as
  *  the join — we only include rows for users who belong to the org). */
 export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;

@@ -25,6 +25,8 @@ import {
   EXPORT_EXCLUDED_TABLES,
   REDACT_COLUMNS,
   EXPORT_KEYED_BY,
+  EXPORT_ORDER_KEYS,
+  exportOrderKey,
   redactRow,
 } from "@/lib/exportTables";
 import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn, ORG_LESS_RESTORE_PARENTS } from "@/lib/dataRestore";
@@ -252,5 +254,35 @@ describe("export scope tripwire (BKP-4): every org-scoped table is read by a col
       Object.entries(EXPORT_KEYED_BY).filter(([, k]) => k.parent).map(([t, k]) => [t, { column: k.column, parent: k.parent }]),
     );
     expect(exportParents).toEqual({ ...ORG_LESS_RESTORE_PARENTS });
+  });
+});
+
+// intelligence ILIFE-6 (the export half): the export pages every table in a
+// stable, unique order — by `id`, or by the declared key of a table without
+// one. Ordering an id-less table by `id` fails the read (42703) and the
+// backup goes INCOMPLETE; ordering by a column set that is not unique can
+// still hand a row to two pages. This block pins both.
+describe("export paging order tripwire (ILIFE-6): every exported table pages by a unique key it has", () => {
+  const census = censusSchema();
+  const exported = [...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES] as readonly string[];
+
+  it("every exported table has an id column or an EXPORT_ORDER_KEYS entry", () => {
+    const unordered = exported.filter((t) => !census.get(t)?.columns.has("id") && !EXPORT_ORDER_KEYS[t]);
+    expect(unordered, `Exported tables with no id column and no EXPORT_ORDER_KEYS entry: ${unordered.join(", ")}`).toEqual([]);
+  });
+
+  it("an EXPORT_ORDER_KEYS entry is an exported, id-less table, and its columns are exactly one of the table's PRIMARY KEY / UNIQUE keys", () => {
+    for (const [table, cols] of Object.entries(EXPORT_ORDER_KEYS)) {
+      expect(exported.includes(table), `${table} is not exported`).toBe(true);
+      expect(census.get(table)?.columns.has("id"), `${table} has an id now — drop its entry`).toBe(false);
+      const keys = (census.get(table)?.keys ?? []).map((k) => [...k].sort().join(","));
+      expect(keys, `${table}: ${cols.join(",")} is not a key`).toContain([...cols].sort().join(","));
+    }
+  });
+
+  it("the export orders an id-keyed table by id, and an id-less table by its declared key", () => {
+    expect(exportOrderKey("documents")).toEqual(["id"]);
+    expect(exportOrderKey("curated_collection_items")).toEqual(["collection_id", "document_id"]);
+    expect(exportOrderKey("notification_preferences")).toEqual(["user_id"]);
   });
 });

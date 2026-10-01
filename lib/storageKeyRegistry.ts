@@ -14,10 +14,18 @@
 // neither knew cost_documents.file_url, so every vendor quote was both absent
 // from every backup and eligible for permanent deletion.
 // lib/__tests__/storageKeyRegistry.test.ts is the binary analogue of
-// exportCoverage.test.ts: it censuses every column in supabase/ whose NAME
-// says "storage key" and fails when one is neither registered here nor
-// declared NOT a key (with the reason), and it checks that the two
-// collectors read exactly this list.
+// exportCoverage.test.ts, from three sides:
+//   - the column census: every column in supabase/ whose NAME says "storage
+//     key" is registered here or declared NOT a key (with the reason), and
+//     every key that sits INSIDE a JSON column under some other name is
+//     declared in JSON_KEY_COLUMNS (a name census cannot see those);
+//   - the writer census: every call site in the app that writes an object to
+//     storage (uploadToPath, PutObjectCommand, the presigned-PUT doors) names
+//     the column its key is persisted into, and that column must be
+//     registered here — this is how a JSON-embedded key is caught when it is
+//     added (the page backgrounds in libraries / collections.page_config were
+//     missed by the name census until it existed);
+//   - the two collectors read exactly this list.
 //
 // Kept dependency-free (a type-only supabase import, no aws) so tests and
 // both collectors import it without side effects; the database read below
@@ -25,10 +33,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** A storage key a row references, with the byte size the row records (null when none). */
+/** A storage key a row references, with the byte size the row records (null
+ *  when none) and the key column (`table.column`) it was read from. */
 export interface StorageKeyRef {
   path: string;
   size: number | null;
+  column: string;
 }
 
 export interface StorageKeySource {
@@ -41,82 +51,106 @@ export interface StorageKeySource {
   keyColumns: readonly string[];
   /** Other columns the extractor reads (a size, a filter) — never keys. */
   readColumns?: readonly string[];
-  /** Every candidate key in one row, with the size the row records. The
-   *  caller drops values that are not storage keys (blank, URL, data URI). */
-  extract: (row: Record<string, unknown>) => Array<{ path: unknown; size?: unknown }>;
+  /** Every candidate key in one row, with the size the row records and the
+   *  key column (one of `keyColumns`) it sits in. The caller drops values
+   *  that are not storage keys (blank, URL, data URI). */
+  extract: (row: Record<string, unknown>) => Array<{ column: string; path: unknown; size?: unknown }>;
 }
 
 const list = (v: unknown): Array<Record<string, unknown>> =>
   (Array.isArray(v) ? v : []).filter((x): x is Record<string, unknown> => !!x && typeof x === "object");
 
-/** Every source of a storage key in the schema. Order is the file manifest's order. */
+/** A library's or folder's page background: page_config.background.imagePath
+ *  (types/schema.ts PageConfig), uploaded by components/documents/
+ *  CustomizeNodeModal.tsx under orgs/<org>/branding/backgrounds/. */
+const pageBackground = (v: unknown): unknown =>
+  ((v as { background?: { imagePath?: unknown } | null } | null)?.background ?? null)?.imagePath;
+
+/** Every source of a storage key in the schema (the sweep reads them in this
+ *  order; the backup's file manifest is ordered by STORAGE_KEY_COLUMNS). */
 export const STORAGE_KEY_SOURCES: readonly StorageKeySource[] = [
   {
     // The issued PDF AND the native source (the DWG behind it — BKP-9): a
     // drawing whose source is not in the backup cannot be revised again.
     label: "document_versions", table: "document_versions",
     keyColumns: ["file_url", "source_file_key"], readColumns: ["size"],
-    extract: (r) => [{ path: r.file_url, size: r.size }, { path: r.source_file_key }],
+    extract: (r) => [
+      { column: "file_url", path: r.file_url, size: r.size },
+      { column: "source_file_key", path: r.source_file_key },
+    ],
   },
   {
     // Every knowledge-library source PDF (BKP-9). A mirror of a controlled
     // revision names the SAME object as that revision (ILIFE-5).
     label: "knowledge_documents", table: "knowledge_documents",
     keyColumns: ["file_key"], readColumns: ["file_size"],
-    extract: (r) => [{ path: r.file_key, size: r.file_size }],
+    extract: (r) => [{ column: "file_key", path: r.file_key, size: r.file_size }],
   },
   {
     label: "asset_photos", table: "asset_photos",
     keyColumns: ["file_url"], readColumns: ["file_size"],
-    extract: (r) => [{ path: r.file_url, size: r.file_size }],
+    extract: (r) => [{ column: "file_url", path: r.file_url, size: r.file_size }],
   },
   {
-    // Nested in JSONB; an intake redline records its size as text ("2.00 MB"),
-    // which is not a byte count — keysOf reads it as unknown.
+    // Nested in JSONB; an attachment records its size as text ("2.00 MB",
+    // formatBytes / CheckInPanel), which is not a byte count — keysOf reads
+    // it as unknown and the export asks storage for the real size.
     label: "tickets(attachments)", table: "tickets",
     keyColumns: ["attachments"],
-    extract: (r) => list(r.attachments).map((a) => ({ path: a.url, size: a.size })),
+    extract: (r) => list(r.attachments).map((a) => ({ column: "attachments", path: a.url, size: a.size })),
   },
   {
     label: "markup_requests", table: "markup_requests",
     keyColumns: ["shared_markup_url"],
-    extract: (r) => [{ path: r.shared_markup_url }],
+    extract: (r) => [{ column: "shared_markup_url", path: r.shared_markup_url }],
   },
   {
     label: "plot_plans", table: "plot_plans",
     keyColumns: ["image_path"],
-    extract: (r) => [{ path: r.image_path }],
+    extract: (r) => [{ column: "image_path", path: r.image_path }],
   },
   {
     label: "libraries(cover)", table: "libraries",
     keyColumns: ["cover_image_url"],
-    extract: (r) => [{ path: r.cover_image_url }],
+    extract: (r) => [{ column: "cover_image_url", path: r.cover_image_url }],
   },
   {
     label: "collections(cover)", table: "collections",
     keyColumns: ["cover_image_url"],
-    extract: (r) => [{ path: r.cover_image_url }],
+    extract: (r) => [{ column: "cover_image_url", path: r.cover_image_url }],
+  },
+  {
+    // The library's page background image, inside JSON (page_config).
+    label: "libraries(page background)", table: "libraries",
+    keyColumns: ["page_config"],
+    extract: (r) => [{ column: "page_config", path: pageBackground(r.page_config) }],
+  },
+  {
+    // The folder's page background image, inside JSON (page_config).
+    label: "collections(page background)", table: "collections",
+    keyColumns: ["page_config"],
+    extract: (r) => [{ column: "page_config", path: pageBackground(r.page_config) }],
   },
   {
     // Not in any backup: `users` is excluded from the export whole (global
     // identity — lib/exportTables.ts). The sweep must still protect it.
     label: "users(avatar)", table: "users",
     keyColumns: ["avatar_path"],
-    extract: (r) => [{ path: r.avatar_path }],
+    extract: (r) => [{ column: "avatar_path", path: r.avatar_path }],
   },
   {
     // The org logo: the {key:'branding'} row's data.logoPath.
     label: "org_configurations(branding)", table: "org_configurations",
     keyColumns: ["data"], readColumns: ["key"],
-    extract: (r) => (r.key === "branding" ? [{ path: (r.data as { logoPath?: unknown } | null)?.logoPath }] : []),
+    extract: (r) => (r.key === "branding" ? [{ column: "data", path: (r.data as { logoPath?: unknown } | null)?.logoPath }] : []),
   },
   {
     // The authored .docx / .xlsx template and its examples (BKP-9).
     label: "output_templates", table: "output_templates",
     keyColumns: ["template_file_key", "example_files"],
     extract: (r) => [
-      { path: r.template_file_key },
-      ...list(r.example_files).map((ex) => ({ path: ex.key ?? ex.url })),
+      { column: "template_file_key", path: r.template_file_key },
+      ...list(r.example_files).map((ex) => ({ column: "example_files", path: ex.key ?? ex.url })),
     ],
   },
   {
@@ -125,30 +159,55 @@ export const STORAGE_KEY_SOURCES: readonly StorageKeySource[] = [
     // the registry (BKP-2 / ILIFE-1).
     label: "cost_documents", table: "cost_documents",
     keyColumns: ["file_url"],
-    extract: (r) => [{ path: r.file_url }],
+    extract: (r) => [{ column: "file_url", path: r.file_url }],
   },
 ];
 
 /** Every `table.column` in the schema that holds a storage key — the census
- *  (lib/__tests__/storageKeyRegistry.test.ts) pins this list to supabase/.
- *  The orphan sweep refuses to run when a source no longer reads one of
- *  them (`registryGaps`, BKP-2 Done-when 3). */
+ *  (lib/__tests__/storageKeyRegistry.test.ts) pins this list to supabase/
+ *  and to the app's storage writers. The orphan sweep refuses to run when a
+ *  source no longer reads one of them (`registryGaps`, BKP-2 Done-when 3).
+ *
+ *  ORDER IS THE BACKUP'S FILE ORDER (collectFilePaths): a server ZIP embeds
+ *  binaries in this order up to its byte cap (lib/exportRunner.ts
+ *  EXPORT_MAX_EMBED_BYTES) and lists the rest as omitted. The columns every
+ *  backup carried before the registry come first, in their old order, so a
+ *  workspace near the cap keeps embedding what it embedded before; the
+ *  columns the registry added (BKP-9 / BKP-2) follow. */
 export const STORAGE_KEY_COLUMNS: readonly string[] = [
-  "asset_photos.file_url",
-  "collections.cover_image_url",
-  "cost_documents.file_url",
+  // what collectFilePaths carried before the registry, in its order
   "document_versions.file_url",
-  "document_versions.source_file_key",
-  "knowledge_documents.file_key",
-  "libraries.cover_image_url",
-  "markup_requests.shared_markup_url",
-  "org_configurations.data",
-  "output_templates.example_files",
-  "output_templates.template_file_key",
-  "plot_plans.image_path",
   "tickets.attachments",
+  "markup_requests.shared_markup_url",
+  "asset_photos.file_url",
+  "plot_plans.image_path",
+  "libraries.cover_image_url",
+  "collections.cover_image_url",
+  "org_configurations.data",
+  // added by the registry
+  "document_versions.source_file_key",
+  "cost_documents.file_url",
+  "output_templates.template_file_key",
+  "output_templates.example_files",
+  "knowledge_documents.file_key",
+  "libraries.page_config",
+  "collections.page_config",
+  // never in an org backup (`users` is excluded whole); the sweep protects it
   "users.avatar_path",
 ];
+
+/** The registered columns whose key sits INSIDE a JSON value under a name the
+ *  census cannot read (a column-name census sees `attachments`, not the
+ *  `url` inside it). Declared here, with where the key sits, so the census
+ *  counts them (storageKeyRegistry.test.ts) and a database `.in()` match
+ *  skips them (`plainKeyColumns`). */
+export const JSON_KEY_COLUMNS: Record<string, string> = {
+  "tickets.attachments": "attachments[].url — every ticket attachment and intake redline",
+  "org_configurations.data": "data.logoPath on the {key:'branding'} row — the workspace logo",
+  "output_templates.example_files": "example_files[].key (or .url) — an output template's filled-in examples",
+  "libraries.page_config": "page_config.background.imagePath — the library page's background image",
+  "collections.page_config": "page_config.background.imagePath — the folder page's background image",
+};
 
 /** Columns whose NAME looks like a storage key but whose value is not one of
  *  ours. The census tripwire reads this map; each needs its reason. */
@@ -198,7 +257,7 @@ const byteSize = (v: unknown): number | null =>
 export function keysOf(source: StorageKeySource, row: Record<string, unknown>): StorageKeyRef[] {
   const out: StorageKeyRef[] = [];
   for (const c of source.extract(row)) {
-    if (isStorageKey(c.path)) out.push({ path: c.path, size: byteSize(c.size) });
+    if (isStorageKey(c.path)) out.push({ path: c.path, size: byteSize(c.size), column: `${source.table}.${c.column}` });
   }
   return out;
 }
@@ -258,9 +317,8 @@ export function findUnregisteredOrgKeys(
 
 /** The plain (non-JSON) key columns — the ones a database `.in()` can match. */
 export function plainKeyColumns(sources: readonly StorageKeySource[] = STORAGE_KEY_SOURCES): Array<{ table: string; column: string }> {
-  const JSON_KEY_COLUMNS = new Set(["tickets.attachments", "org_configurations.data", "output_templates.example_files"]);
   return sources.flatMap((s) => s.keyColumns
-    .filter((c) => !JSON_KEY_COLUMNS.has(`${s.table}.${c}`))
+    .filter((c) => !Object.prototype.hasOwnProperty.call(JSON_KEY_COLUMNS, `${s.table}.${c}`))
     .map((column) => ({ table: s.table, column })));
 }
 
@@ -271,8 +329,8 @@ export function plainKeyColumns(sources: readonly StorageKeySource[] = STORAGE_K
  *  document shed) must keep every key this returns. Bucket-wide on purpose,
  *  like the orphan sweep's reference set (DEC-57): a reference anywhere
  *  protects the object. Plain columns only (the JSON-embedded keys —
- *  ticket attachments, the branding logo, template examples — are never a
- *  revision's key). Throws on ANY read error: the caller refuses to free
+ *  ticket attachments, the branding logo, template examples, page
+ *  backgrounds — are never a revision's key). Throws on ANY read error: the caller refuses to free
  *  rather than guess (fail closed). `except` lists `table.column` entries
  *  the caller already judged (the shed's own document_versions.file_url,
  *  RET-8's sharedLiveKeys). */

@@ -25,6 +25,9 @@ const numbered = readdirSync(MIGRATIONS).filter((n) => /^\d{8}.*\.sql$/.test(n))
 
 const CREDENTIALS = ["access_key_id_encrypted", "secret_access_key_encrypted", "webhook_secret_encrypted"];
 const COORDINATES = ["endpoint", "region", "bucket", "prefix", "webhook_url"];
+/** Fix pass: the runner's raw error message can carry the coordinates (a DNS
+ *  failure names the host; a webhook failure carries the remote's body). */
+const RAW_ERRORS = ["last_run_error"];
 
 function grantedColumns(): string[] {
   const m = sql.match(/GRANT\s+SELECT\s*\(([^)]*)\)\s*ON\s+TABLE\s+export_destinations\s+TO\s+authenticated\s*;/i);
@@ -83,11 +86,22 @@ describe("20261154 — the narrowing is a privilege, the policy is kept (the rev
     expect(sql).toMatch(/REVOKE\s+SELECT\s+ON\s+TABLE\s+export_destinations\s+FROM\s+PUBLIC,\s*anon,\s*authenticated\s*;/i);
   });
 
-  it("grants back exactly the card columns: every column of the table but the credentials and the coordinates", () => {
+  it("grants back exactly the card columns: every column of the table but the credentials, the coordinates and the raw run error", () => {
     const cols = [...(censusSchema().get("export_destinations")?.columns ?? [])];
     expect(cols.length).toBeGreaterThan(20);
-    const expected = cols.filter((c) => !CREDENTIALS.includes(c) && !COORDINATES.includes(c)).sort();
+    expect(cols).toContain("last_run_error");
+    const expected = cols.filter((c) => !CREDENTIALS.includes(c) && !COORDINATES.includes(c) && !RAW_ERRORS.includes(c)).sort();
     expect(grantedColumns().sort()).toEqual(expected);
+    expect(grantedColumns()).toEqual(expect.arrayContaining(["last_run_at", "last_run_status", "last_run_bytes"]));
+  });
+
+  it("last_run_error is withheld because the runner stores raw messages that can name the destination", () => {
+    const runner = readFileSync(join(root, "lib", "exportRunner.ts"), "utf8");
+    expect(runner).toMatch(/lookup\(/);                       // a DNS failure names the host
+    expect(runner).toMatch(/Webhook \$\{[^}]+\}: /);           // a webhook failure carries the remote's body
+    const scheduled = readFileSync(join(root, "app", "api", "data-export", "run-scheduled", "route.ts"), "utf8");
+    expect(scheduled).toMatch(/last_run_error/);
+    expect(grantedColumns()).not.toContain("last_run_error");
   });
 
   it("no credential the export redacts is ever granted (BKP-11 and DEC-45 agree on what a credential is)", () => {
@@ -96,7 +110,7 @@ describe("20261154 — the narrowing is a privilege, the policy is kept (the rev
   });
 
   it("the probes check each limb: no credential, no coordinate, the card columns, anon nothing, service role whole", () => {
-    for (const c of [...CREDENTIALS, ...COORDINATES]) {
+    for (const c of [...CREDENTIALS, ...COORDINATES, ...RAW_ERRORS]) {
       expect(sql).toMatch(new RegExp(`NOT has_column_privilege\\('authenticated', 'public\\.export_destinations', '${c}', 'SELECT'\\)`));
     }
     expect(sql).toMatch(/NOT has_any_column_privilege\('anon', 'public\.export_destinations', 'SELECT'\)/);

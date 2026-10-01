@@ -10,7 +10,13 @@
 //
 //   * the census: every column in supabase/ whose NAME says "storage key" is
 //     registered or declared not-a-key with its reason (the binary analogue
-//     of exportCoverage.test.ts) — and the declared list is exactly that;
+//     of exportCoverage.test.ts) — and the declared list is exactly that plus
+//     the JSON columns that hold a key under another name (JSON_KEY_COLUMNS);
+//   * the writer census (fix pass): every call site that writes an object to
+//     storage names the column its key is persisted into, and that column is
+//     registered — the name census could not see libraries / collections.
+//     page_config (a page background's imagePath), which the orphan purge
+//     therefore deleted while every backup lacked it;
 //   * the two collectors read the same sources and return the same keys
 //     (less the one table the export does not carry, `users`, excluded);
 //   * the orphan sweep refuses to run on a source list smaller than the
@@ -20,12 +26,14 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
 
 import { censusSchema } from "./helpers/schemaKeys";
 import {
-  STORAGE_KEY_SOURCES, STORAGE_KEY_COLUMNS, NOT_STORAGE_KEY_COLUMNS, BINARY_LINK_TABLES, KEY_MENTION_TABLES,
+  STORAGE_KEY_SOURCES, STORAGE_KEY_COLUMNS, NOT_STORAGE_KEY_COLUMNS, BINARY_LINK_TABLES, KEY_MENTION_TABLES, JSON_KEY_COLUMNS,
   registryGaps, keysOf, selectFor, isStorageKey, findUnregisteredOrgKeys, keysReferencedOutside, plainKeyColumns,
   type StorageKeySource,
 } from "@/lib/storageKeyRegistry";
@@ -51,8 +59,11 @@ const ROWS: Record<string, Row[]> = {
   tickets: [{ id: "t1", attachments: [{ url: k("tickets/t1/redline.pdf"), size: "2.00 MB" }, { url: "https://example.com/x.pdf" }] }],
   markup_requests: [{ id: "m1", shared_markup_url: k("markups/m1.pdf") }],
   plot_plans: [{ id: "pp1", image_path: k("plot-plans/pp1.png") }],
-  libraries: [{ id: "l1", cover_image_url: k("branding/covers/l1.png") }],
-  collections: [{ id: "c1", cover_image_url: "data:image/png;base64,AAAA" }, { id: "c2", cover_image_url: k("branding/covers/c2.png") }],
+  libraries: [{ id: "l1", cover_image_url: k("branding/covers/l1.png"), page_config: { header: { height: "md" }, background: { type: "image", imagePath: k("branding/backgrounds/l1.jpg"), opacity: 0.18 } } }],
+  collections: [
+    { id: "c1", cover_image_url: "data:image/png;base64,AAAA", page_config: { background: { type: "tint", tint: "brand" } } },
+    { id: "c2", cover_image_url: k("branding/covers/c2.png"), page_config: { background: { type: "image", imagePath: k("branding/backgrounds/c2.png") } } },
+  ],
   users: [{ id: "u1", avatar_path: `avatars/u1.png` }],
   org_configurations: [{ id: "oc1", key: "branding", data: { logoPath: k("branding/logo-1.svg") } }, { id: "oc2", key: "drafting", data: { logoPath: k("not-a-logo.svg") } }],
   output_templates: [{ id: "ot1", template_file_key: k("output-templates/ds.docx"), example_files: [{ key: k("output-examples/ex1.docx") }, { url: k("output-examples/ex2.docx") }] }],
@@ -122,9 +133,21 @@ describe("the storage-key census (BKP-2 Done-when 2: the binary analogue of the 
     }
   });
 
-  it("STORAGE_KEY_COLUMNS is exactly the key-named columns plus the JSON-embedded logo — no more, no less", () => {
-    const expected = new Set([...candidates.filter((c) => !(c in NOT_STORAGE_KEY_COLUMNS)), "org_configurations.data"]);
+  it("STORAGE_KEY_COLUMNS is exactly the key-named columns plus the declared JSON key columns — no more, no less", () => {
+    const expected = new Set([...candidates.filter((c) => !(c in NOT_STORAGE_KEY_COLUMNS)), ...Object.keys(JSON_KEY_COLUMNS)]);
     expect([...STORAGE_KEY_COLUMNS].sort()).toEqual([...expected].sort());
+    expect(new Set(STORAGE_KEY_COLUMNS).size).toBe(STORAGE_KEY_COLUMNS.length);
+  });
+
+  it("every JSON key column is registered, says where the key sits, and a registered column the name census cannot see is one", () => {
+    for (const [col, where] of Object.entries(JSON_KEY_COLUMNS)) {
+      expect(STORAGE_KEY_COLUMNS, col).toContain(col);
+      expect(where.trim().length, col).toBeGreaterThan(20);
+    }
+    const invisible = STORAGE_KEY_COLUMNS.filter((c) => !KEY_NAME_RE.test(c.split(".")[1]));
+    for (const c of invisible) expect(Object.keys(JSON_KEY_COLUMNS), `${c} holds a key the name census cannot see`).toContain(c);
+    // the fix pass's two: the page backgrounds the purge deleted and no backup carried
+    expect(invisible).toEqual(expect.arrayContaining(["libraries.page_config", "collections.page_config", "org_configurations.data"]));
   });
 
   it("the sources read exactly the declared key columns (no gap either way)", () => {
@@ -135,6 +158,15 @@ describe("the storage-key census (BKP-2 Done-when 2: the binary analogue of the 
       }
       expect(census.get(s.table)?.columns.has("id"), `${s.table} needs an id for keyset paging`).toBe(true);
       expect(selectFor(s).split(", ")[0]).toBe("id");
+    }
+  });
+
+  it("every extracted key names one of its source's key columns (the manifest order and the census read that column)", () => {
+    for (const s of STORAGE_KEY_SOURCES) {
+      for (const r of ROWS[s.table] ?? []) {
+        for (const c of s.extract(r)) expect(s.keyColumns, `${s.label}: ${c.column}`).toContain(c.column);
+        for (const ref of keysOf(s, r)) expect(STORAGE_KEY_COLUMNS, ref.column).toContain(ref.column);
+      }
     }
   });
 
@@ -184,6 +216,44 @@ describe("one registry, two collectors (BKP-9 Done-when 1-2; BKP-2 Done-when 1)"
     }
   });
 
+  it("the manifest order is STORAGE_KEY_COLUMNS': what every backup carried before the registry first, the added columns after", () => {
+    const order = collectFilePaths(ROWS).map((r) => r.path);
+    const rank = (key: string) => order.indexOf(key);
+    // a capped server ZIP embeds in this order: the old categories keep their place
+    for (const before of [k("libraries/l1/P-101.pdf"), k("tickets/t1/redline.pdf"), k("assets/a1/photos/1.jpg"), k("plot-plans/pp1.png"), k("branding/logo-1.svg")]) {
+      for (const after of [k("libraries/l1/P-101.dwg"), k("knowledge/kl1/manual.pdf"), k("project-costs/p1/quote-1-acme.pdf"), k("output-templates/ds.docx"), k("branding/backgrounds/l1.jpg")]) {
+        expect(rank(before), `${before} before ${after}`).toBeLessThan(rank(after));
+      }
+    }
+    expect(STORAGE_KEY_COLUMNS.slice(0, 8)).toEqual([
+      "document_versions.file_url", "tickets.attachments", "markup_requests.shared_markup_url", "asset_photos.file_url",
+      "plot_plans.image_path", "libraries.cover_image_url", "collections.cover_image_url", "org_configurations.data",
+    ]);
+    // a key two columns name (a knowledge mirror of a revision) keeps the earlier column's place
+    const mirrored = collectFilePaths({
+      knowledge_documents: [{ id: "kd", file_key: k("libraries/l1/P-101.pdf") }, { id: "kd2", file_key: k("knowledge/x.pdf") }],
+      asset_photos: [{ id: "ap", file_url: k("assets/a1/photos/1.jpg") }],
+      document_versions: [{ id: "v", file_url: k("libraries/l1/P-101.pdf") }],
+    }).map((r) => r.path);
+    expect(mirrored).toEqual([k("libraries/l1/P-101.pdf"), k("assets/a1/photos/1.jpg"), k("knowledge/x.pdf")]);
+  });
+
+  it("a library's and a folder's page background are in BOTH collectors (the purge no longer deletes them)", async () => {
+    const exportKeys = new Set(collectFilePaths(ROWS).map((r) => r.path));
+    const sweepKeys = await collectReferencedKeys(fakeDb(ROWS));
+    for (const key of [k("branding/backgrounds/l1.jpg"), k("branding/backgrounds/c2.png")]) {
+      expect(exportKeys.has(key), `export: ${key}`).toBe(true);
+      expect(sweepKeys.has(key), `sweep: ${key}`).toBe(true);
+    }
+    // on the registry before this fix pass, the export's own value scan named the gap
+    const pages = { libraries: ROWS.libraries, collections: ROWS.collections };
+    const before = STORAGE_KEY_SOURCES.filter((s) => !s.keyColumns.includes("page_config"));
+    const knownBefore = new Set(before.flatMap((s) => (pages[s.table as keyof typeof pages] ?? []).flatMap((r) => keysOf(s, r).map((x) => x.path))));
+    expect(findUnregisteredOrgKeys(pages, ORG, knownBefore).map((u) => u.at).sort()).toEqual(["collections.page_config", "libraries.page_config"]);
+    expect(findUnregisteredOrgKeys(pages, ORG, new Set(collectFilePaths(pages).map((r) => r.path)))).toEqual([]);
+    expect(registryGaps(before).unread).toEqual(["collections.page_config", "libraries.page_config"]);
+  });
+
   it("values that are not our keys never enter either list; a byte size is a number or unknown", () => {
     const refs = collectFilePaths(ROWS);
     expect(refs.find((r) => r.path.startsWith("https:") || r.path.startsWith("data:"))).toBeUndefined();
@@ -228,6 +298,7 @@ describe("ILIFE-5 — keysReferencedOutside: the predicate a step freeing a revi
     expect(cols).toContain("cost_documents.file_url");
     expect(cols).toContain("document_versions.source_file_key");
     expect(cols).not.toContain("tickets.attachments"); // JSON — no .in() match
+    for (const json of Object.keys(JSON_KEY_COLUMNS)) expect(cols, json).not.toContain(json);
     // without the exclusion, the shed's own column answers too
     expect([...(await keysReferencedOutside(fakeDb(rows), [live, freeable]))].sort()).toEqual([freeable, live].sort());
   });
@@ -261,5 +332,101 @@ describe("BKP-9 Done-when 3 — the export's value scan for keys no registered c
   it("finds nothing without an org, and nothing the registry already collected", () => {
     expect(findUnregisteredOrgKeys(tables, "", known)).toEqual([]);
     expect(findUnregisteredOrgKeys({ document_versions: tables.document_versions }, ORG, known)).toEqual([]);
+  });
+});
+
+// ── The writer census (fix pass) ───────────────────────────────────────────
+// The column census reads NAMES, so a key stored inside JSON under another
+// name is invisible to it — libraries / collections.page_config (a page
+// background's `imagePath`) was, and the purge deleted those images. This
+// census works from the other end: every call site in the app that writes an
+// object into OUR storage is listed with the column its key is persisted
+// into, and that column must be registered. A new upload site, or a new call
+// in a listed file, fails until someone says where its key lives.
+const WRITE_RE = /\b(uploadToPath|uploadFile|uploadTicketAttachment|uploadUserPrivateFile|putWithXhr|putObject)\s*\(|new\s+(PutObjectCommand|CreateMultipartUploadCommand)\s*\(|["'`]\/api\/storage\/(upload-url|multipart)\b/g;
+
+/** file → how many write sites it has, and where their keys are persisted (or why they are not). */
+const STORAGE_WRITERS: Record<string, { calls: number; persists?: string[]; why?: string }> = {
+  // the doors themselves: they write the key their caller names; the callers are censused below
+  "lib/storage.ts": { calls: 13, why: "the upload door (uploadToPath / putWithXhr / multipart and its wrappers); its connectivity probe writes orgs/<org>/diagnostics/probe-*, which no row names by design" },
+  "app/api/storage/upload-url/route.ts": { calls: 1, why: "presigns a PUT for the key its caller names — the callers persist it (uploadToPath and the restore page)" },
+  "app/api/storage/multipart/route.ts": { calls: 1, why: "the multipart door for the key its caller names (uploadToPath's big-file path)" },
+  // writers into registered columns
+  "app/(protected)/admin/branding/page.tsx": { calls: 1, persists: ["org_configurations.data"] },
+  "components/branding/LogoUploadModal.tsx": { calls: 1, persists: ["org_configurations.data"] },
+  "app/(protected)/documents/[libraryId]/page.tsx": { calls: 1, persists: ["document_versions.file_url"] },
+  "lib/documentLifecycle/common.ts": { calls: 1, persists: ["document_versions.file_url"] },
+  "lib/revisions.ts": { calls: 5, persists: ["document_versions.file_url", "document_versions.source_file_key"] },
+  "lib/knowledge.ts": { calls: 1, persists: ["knowledge_documents.file_key"] },
+  "lib/plotPlans.ts": { calls: 1, persists: ["plot_plans.image_path"] },
+  "lib/costDocs.ts": { calls: 1, persists: ["cost_documents.file_url"] },
+  "lib/userProfiles.ts": { calls: 1, persists: ["users.avatar_path"] },
+  "lib/outputTemplates.ts": { calls: 1, persists: ["output_templates.template_file_key", "output_templates.example_files"],
+    why: "uploadTemplateFile also stages a generation's source spreadsheet under output-data/, which no row keeps (the sweep reclaims it)" },
+  "components/assets/AssetPhotoUploader.tsx": { calls: 1, persists: ["asset_photos.file_url"] },
+  "components/documents/CustomizeNodeModal.tsx": { calls: 2, persists: ["libraries.cover_image_url", "collections.cover_image_url", "libraries.page_config", "collections.page_config"] },
+  "app/(protected)/requests/new/page.tsx": { calls: 1, persists: ["tickets.attachments"] },
+  "app/(protected)/requests/[id]/page.tsx": { calls: 3, persists: ["tickets.attachments"] },
+  "components/documents/CheckInPanel.tsx": { calls: 1, persists: ["tickets.attachments"] },
+  "app/api/admin/ticket-shed/restore/route.ts": { calls: 1, persists: ["tickets.attachments"] },
+  "app/api/intake/upload/route.ts": { calls: 6, persists: ["document_versions.file_url", "tickets.attachments", "cost_documents.file_url"] },
+  "app/submit/[token]/page.tsx": { calls: 1, persists: ["document_versions.file_url", "tickets.attachments", "cost_documents.file_url"],
+    why: "the vendor portal PUTs to the intake door's staged URL; app/api/intake/upload/route.ts persists the key" },
+  "app/(protected)/admin/restore/page.tsx": { calls: 1, persists: [...STORAGE_KEY_COLUMNS.filter((c) => c !== "users.avatar_path")],
+    why: "\"Put the files back\" re-uploads a backup's binaries under the keys its restored rows name — every column the backup carries" },
+  // not our storage
+  "lib/exportRunner.ts": { calls: 2, why: "writes the export archive into the CUSTOMER's own bucket (an export destination), never ours" },
+};
+
+describe("the writer census: every storage write names a registered column (fix pass)", () => {
+  const root = process.cwd();
+  function walk(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((d) => {
+      const p = join(dir, d.name);
+      if (d.isDirectory()) return d.name === "__tests__" || d.name === "node_modules" ? [] : walk(p);
+      return /\.(ts|tsx)$/.test(d.name) ? [p] : [];
+    });
+  }
+  const found = new Map<string, number>();
+  for (const dir of ["app", "lib", "components", "hooks"]) {
+    for (const f of walk(join(root, dir))) {
+      const n = [...readFileSync(f, "utf8").matchAll(WRITE_RE)].length;
+      if (n > 0) found.set(f.slice(root.length + 1).split("\\").join("/"), n);
+    }
+  }
+
+  it("sees the writers (not vacuous)", () => {
+    expect(found.get("components/documents/CustomizeNodeModal.tsx")).toBe(2);
+    expect(found.get("lib/costDocs.ts")).toBe(1);
+    expect(found.size).toBeGreaterThan(15);
+  });
+
+  it("every file that writes to storage is listed, with its exact number of write sites", () => {
+    const listed = Object.fromEntries(Object.entries(STORAGE_WRITERS).map(([f, w]) => [f, w.calls]));
+    expect(
+      Object.fromEntries([...found].sort()),
+      "A storage write site was added, removed or moved. List the file in STORAGE_WRITERS (storageKeyRegistry.test.ts) with the " +
+      "column its key is persisted into, and register that column in lib/storageKeyRegistry.ts (JSON_KEY_COLUMNS too when the key sits inside JSON).",
+    ).toEqual(Object.fromEntries(Object.entries(listed).sort()));
+  });
+
+  it("every column a writer persists into is registered, so both collectors read it", () => {
+    for (const [file, w] of Object.entries(STORAGE_WRITERS)) {
+      expect((w.persists?.length ?? 0) > 0 || (w.why ?? "").trim().length > 30, `${file} needs persisted columns or a reason`).toBe(true);
+      for (const col of w.persists ?? []) expect(STORAGE_KEY_COLUMNS, `${file} persists into ${col}`).toContain(col);
+    }
+    // the page backgrounds this census exists for
+    expect(STORAGE_WRITERS["components/documents/CustomizeNodeModal.tsx"].persists).toEqual(
+      expect.arrayContaining(["libraries.page_config", "collections.page_config"]),
+    );
+  });
+
+  it("the customize modal's background upload really is persisted into page_config.background.imagePath", () => {
+    const modal = readFileSync(join(root, "components/documents/CustomizeNodeModal.tsx"), "utf8");
+    expect(modal).toMatch(/\/backgrounds\/\$\{rand\}\.\$\{ext\}`;\s*await uploadToPath\(file, path/);
+    expect(modal).toMatch(/set\(\{ bgImagePath: path/);
+    const page = readFileSync(join(root, "app/(protected)/documents/page.tsx"), "utf8");
+    expect(page).toMatch(/imagePath: v\.bgImagePath/);
+    expect(page).toMatch(/page_config: pageConfig/);
   });
 });
