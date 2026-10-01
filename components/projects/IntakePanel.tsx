@@ -392,7 +392,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       // still checks authority and holds). A required one: the roster must
       // be complete.
       const res = await finalizeReviewedRevision({
-        orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer",
+        orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,
         requireRosterComplete: rosterRequired,
       });
       if (!res.published) throw new Error(finalizeReasonMessage(res.reason));

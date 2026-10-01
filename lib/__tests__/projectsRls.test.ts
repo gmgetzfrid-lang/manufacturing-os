@@ -355,7 +355,7 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     // the audit roles read every row (admin.audit_view through the evaluator) …
     expect(trail.body).toMatch(/org_capability_allows\(org_id, 'admin\.audit_view', auth\.uid\(\)\)\s*\n\s*OR NOT \(/);
     // … anyone else: not the org-level trail AND the row's project is visible
-    expect(trail.body).toMatch(/\)\s*\n\s*AND audit_row_project_visible\(resource_type, resource_id\)\s*\n\s*\)\s*$/);
+    expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n\s*\)\s*$/);
     const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
     expect(set.filter(([, p]) => p.cmd === "INSERT").map(([n]) => n)).toEqual(["audit_logs_insert"]);

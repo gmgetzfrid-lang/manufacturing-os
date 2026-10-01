@@ -10,12 +10,15 @@ const db = vi.hoisted(() => ({
    *  20261141 (PGRST202), so the earlier cases exercise the direct-update path. */
   rpc: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: { message: string; code?: string } | null }),
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** INTK-16: an error for one read, by table and selected columns. */
+  failSelect: null as null | ((table: string, columns: string) => { message: string; code?: string } | null),
 }));
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string) => {
     const ops: Array<[string, unknown[]]> = [];
     db.queries.push({ table, ops });
     let write: { method: string; payload: unknown } | null = null;
+    let selected = "";
     const matches = (r: Record<string, unknown>) => ops.every(([op, a]) => {
       const [col, val] = a as [string, unknown];
       switch (op) {
@@ -33,6 +36,8 @@ vi.mock("@/lib/supabase", () => {
       }
     });
     const run = () => {
+      const hooked = !write ? db.failSelect?.(table, selected) ?? null : null;
+      if (hooked) return { data: null, error: hooked };
       const errs = db.errors[`${table}.${write ? write.method : "select"}`];
       const err = errs?.shift() ?? null;
       if (err) return { data: null, error: err };
@@ -48,7 +53,8 @@ vi.mock("@/lib/supabase", () => {
         return (...args: unknown[]) => {
           if (prop === "update" || prop === "insert" || prop === "upsert") write = { method: prop, payload: args[0] };
           else if (prop === "maybeSingle" || prop === "single") { const r = run(); return Promise.resolve({ data: Array.isArray(r.data) ? r.data[0] ?? null : r.data, error: r.error }); }
-          else if (prop !== "select") ops.push([prop, args]);
+          else if (prop === "select") selected = String(args[0] ?? "");
+          else ops.push([prop, args]);
           return proxy;
         };
       },
@@ -72,7 +78,7 @@ import {
   type TransitionCandidate, type TransitionImpact,
 } from "@/lib/transitionIn";
 
-beforeEach(() => { db.tables = {}; db.queries = []; db.errors = {}; db.rpc = null; db.rpcCalls = []; });
+beforeEach(() => { db.tables = {}; db.queries = []; db.errors = {}; db.rpc = null; db.rpcCalls = []; db.failSelect = null; });
 
 describe("extractCandidateTags", () => {
   it("finds equipment tags across number and title fields", () => {
@@ -489,7 +495,7 @@ describe("INTK-3 / INTK-4 (verification fix) — a pending pointer on a RETIRED 
 describe("INTK-16 — adoption goes through adopt_intake_document", () => {
   const seed = () => {
     db.tables.documents = [
-      { id: "sheet1", org_id: "o1", document_number: "D-25-1042", title: "Tie-in", rev: "A", status: "Issued", metadata: {}, library_id: "lib-intake", collection_id: INTAKE, current_version_id: "v1", pending_version_id: null },
+      { id: "sheet1", org_id: "o1", document_number: "D-25-1042", title: "Tie-in", rev: "A", status: "Issued", metadata: {}, library_id: "lib-intake", collection_id: INTAKE, current_version_id: "v1", pending_version_id: null, authored_by_link_id: "l1" },
     ];
     db.tables.document_versions = [{ record_id: "sheet1", review_state: "approved", intake_link_id: "l1", created_at: "1" }];
     db.tables.libraries = [{ id: "lib-dest", org_id: "o1", uniqueness_keys: null }];
@@ -545,6 +551,34 @@ describe("INTK-16 — adoption goes through adopt_intake_document", () => {
     expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", collection_id: "col-dest", document_number: "D-25-3000", uniqueness_key: "d-25-3000" });
     expect(auditInserts()).toHaveLength(1);
     expect(docWrites().length).toBeGreaterThan(0);
+  });
+
+  it("a document in the intake folder the door did NOT create (filed there by hand, or older than the authorship backfill) is adopted by the direct update, as before — the function, which adopts intake-born sheets only, is never asked", async () => {
+    seed();
+    db.tables.documents[0].authored_by_link_id = null;
+    // the database WOULD refuse it (adopt_intake_document: 'Only a document that came in through a contractor link is adopted here.')
+    db.rpc = () => ({ data: null, error: { message: "Only a document that came in through a contractor link is adopted here.", code: "23514" } });
+    expect(await adopt("D-25-3000")).toEqual({ ok: true });
+    expect(db.rpcCalls).toEqual([]);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest", collection_id: "col-dest", document_number: "D-25-3000", uniqueness_key: "d-25-3000" });
+    expect(auditInserts()).toHaveLength(1);
+  });
+
+  it("the authorship read: before 20261104 (no column) the function path is tried — and falls back while the function is missing too; any other read error refuses with a sentence and moves nothing", async () => {
+    seed();
+    db.failSelect = (table, cols) => (table === "documents" && cols === "authored_by_link_id"
+      ? { message: "column documents.authored_by_link_id does not exist", code: "42703" } : null);
+    expect(await adopt()).toEqual({ ok: true });
+    expect(db.rpcCalls.map((c) => c.fn)).toEqual(["adopt_intake_document"]);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-dest" });
+    seed();
+    db.rpcCalls = [];
+    db.failSelect = (table, cols) => (table === "documents" && cols === "authored_by_link_id"
+      ? { message: "canceling statement due to statement timeout", code: "57014" } : null);
+    expect(await adopt()).toEqual({ ok: false, error: "Couldn't read the sheet — try again." });
+    expect(db.rpcCalls).toEqual([]);
+    expect(db.tables.documents[0]).toMatchObject({ library_id: "lib-intake" });
+    expect(auditInserts()).toHaveLength(1);   // the first adoption's only
   });
 
   it("TransitionInPanel adopts through adoptDocument (the database path) — it writes no documents row itself", async () => {

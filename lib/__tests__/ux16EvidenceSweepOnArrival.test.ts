@@ -123,10 +123,20 @@ describe("UX-16 — an approved revision sweeps the projects whose register cite
   };
   it("an intake approval (the approve click is the review) publishes, then sweeps — with the approver as the actor", async () => {
     draft();
-    const res = await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "dc", actorName: "dc@example.com", requireRosterComplete: false });
+    const res = await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "dc", actorName: "dc@example.com", actorEmail: "dc@example.com", requireRosterComplete: false });
     expect(res.published).toBe(true);
     expect(state.docSweepCalls).toEqual([{ orgId: "o1", documentId: "d1", actor: { uid: "dc", email: "dc@example.com" } }]);
     expect(res.evidenceSweep).toMatchObject({ projects: 1, satisfied: 1 });
+  });
+  it("the sweep's actor email is the approver's email — never the display name: an approver whose email is not loaded is recorded with none, not 'Reviewer'", async () => {
+    draft();
+    await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "dc", actorName: "Reviewer", actorEmail: null, requireRosterComplete: false });
+    expect(state.docSweepCalls).toEqual([{ orgId: "o1", documentId: "d1", actor: { uid: "dc", email: null } }]);
+    // both callers pass the session email as actorEmail
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("components/projects/IntakePanel.tsx", "utf8")).toContain('actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,');
+    expect(readFileSync("components/documents/ReviewGateSection.tsx", "utf8")).toContain("actorName: userEmail, actorEmail: userEmail ?? null });");
+    expect(readFileSync("lib/reviewControl.ts", "utf8")).toContain("actor: { uid: input.actorId, email: input.actorEmail ?? null },");
   });
   it("a publish that did not land sweeps nothing", async () => {
     draft();

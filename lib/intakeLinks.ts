@@ -31,6 +31,11 @@ export const INTAKE_TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 /** Header the portal sends the token in (the query string works too). */
 export const INTAKE_TOKEN_HEADER = "x-intake-token";
 
+/** INTK-15: header a multipart fallback carries naming the direct upload it
+ *  replaces (the begin's staged key) — the begin already counted the
+ *  attempt, so the door claims it once and does not count it again. */
+export const INTAKE_BEGUN_HEADER = "x-intake-begun";
+
 /** The token a request carries — header first, then `?token=`. Never read
  *  from the body (INTK-8: the credential is checked before the body is). */
 export function intakeTokenFromRequest(req: { headers: Headers; url: string }): string {

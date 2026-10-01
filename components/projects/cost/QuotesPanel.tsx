@@ -507,7 +507,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     for (const d of groupDocs) {
       if (d.status === "void" || d.status === "draft") continue;
       const q = parsedQuoteFrom(d);
-      if (q) out.push({ doc: d, quote: withHumanTotal(q, d.totalAmount, d.currency) });
+      if (q) out.push({ doc: d, quote: bidFromRow(d, q) });
       else if ((d.totalAmount ?? 0) > 0) {
         out.push({ doc: d, quote: priceOnlyQuote({ id: d.id, vendorName: d.vendorName ?? d.fileName ?? "Bid", total: d.totalAmount!, currency: d.currency }) });
       }
@@ -1044,6 +1044,24 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
  *  the typed total (never replacing it). */
 function typedTotalUnread(doc: CostDocument): boolean {
   return doc.status === "parsed" && doc.parsed == null;
+}
+
+/** ONE number per bid (BID-1): the row's human-visible total overlays the
+ *  extraction. COST-15: a read saved BESIDE a total typed before any read
+ *  leaves the row's currency as the person left it — and a row with no
+ *  currency whose extraction names one is exactly that case (an ordinary
+ *  read writes its currency to the row, a correction keeps or restates it).
+ *  The typed figure's currency stays UNKNOWN, as it was before the read and
+ *  as posting sees it: the read's currency never becomes the bid's, and the
+ *  read stays on the bid as what the AI read. */
+function bidFromRow(d: CostDocument, q: ParsedQuote): ParsedQuote {
+  const bid = withHumanTotal(q, d.totalAmount, d.currency);
+  const readCurrency = isoCurrency(q.currency);
+  if (isoCurrency(d.currency) != null || readCurrency == null || !((d.totalAmount ?? 0) > 0)) return bid;
+  return {
+    ...bid, total: d.totalAmount!, currency: null, totalSource: "human",
+    extractedTotal: bid.extractedTotal ?? q.total, extractedCurrency: bid.extractedCurrency ?? readCurrency,
+  };
 }
 
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {

@@ -488,3 +488,34 @@ describe("COST-5 dw3 / BID-9 — what the row says, and what a typed total may b
     expect(db.calls.some((c) => c.table === "cost_documents" && c.method === "update")).toBe(false);
   });
 });
+
+// projects Round G (J11) — projects-and-cost COST-15 (fix pass): a read saved
+// BESIDE a total typed before any read leaves the row's currency as the
+// person left it. The bid table must not re-denominate the typed figure in
+// the currency the AI read.
+describe("COST-15 — a read beside a typed total never re-denominates the typed figure", () => {
+  const usd = (id: string, vendorName: string, total: number) => doc({
+    id, vendorName, currency: "USD", totalAmount: total,
+    parsed: { vendorName, total, currency: "USD", lineItems: [{ description: "Repipe exchanger circuits", total, hours: 1500 }], exclusions: [] },
+  });
+  const typedThenRead = doc({
+    id: "typed", vendorName: "Scanned Co", currency: null, totalAmount: 150_000,
+    parsed: { vendorName: "Scanned Co", total: 148_000, currency: "EUR", lineItems: [{ description: "Repipe exchanger circuits", total: 148_000, hours: 1500 }], exclusions: [] },
+  });
+  it("the typed figure's currency stays unknown, as before the read and as posting sees it — never the read's euro; the field is not mixed by it", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render([usd("alpha", "Alpha Piping", 140_000), usd("beta", "Beta Mechanical", 160_000), typedThenRead], "USD");
+    const row = [...host.querySelectorAll("tbody tr")].find((r) => /Scanned Co/.test(r.textContent ?? ""))!;
+    expect(row.textContent).not.toMatch(/€150,000/);
+    expect(row.textContent).toMatch(/\$150,000/);
+    expect(row.textContent).toMatch(/currency not printed — assumed USD/);
+    expect(host.textContent).not.toMatch(/This field mixes currencies/);
+  });
+  it("a row whose currency WAS set keeps it (an ordinary read, a restated correction) — unchanged", async () => {
+    reg.listCompanies.mockResolvedValue([]);
+    await render([usd("alpha", "Alpha Piping", 140_000), usd("beta", "Beta Mechanical", 160_000), { ...typedThenRead, currency: "EUR" }], "USD");
+    const row = [...host.querySelectorAll("tbody tr")].find((r) => /Scanned Co/.test(r.textContent ?? ""))!;
+    expect(row.textContent).toMatch(/€150,000/);
+    expect(host.textContent).toMatch(/This field mixes currencies/);
+  });
+});

@@ -90,7 +90,8 @@ describe("OWN-11 done-when 1 — the last signature never publishes; it routes t
     expect(signoff).not.toMatch(/autoPublished|AUTO-FINALIZE/);
     expect(signoff).toContain('action: "REVIEW_COMPLETE_AWAITING_PUBLISH"');
     expect(rc).toContain("export async function finalizeReviewedRevision(");
-    expect(src("components/documents/ReviewGateSection.tsx")).toContain("await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail });");
+    // (J11 UX-16 passes the approver's email for the evidence sweep's audit rows too)
+    expect(src("components/documents/ReviewGateSection.tsx")).toContain("await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });");
     expect(src("components/permissions/RoleModelTree.tsx")).toContain("A completed roster never publishes itself");
     expect(src("components/permissions/RoleModelTree.tsx")).not.toContain("triggers auto-finalize");
   });

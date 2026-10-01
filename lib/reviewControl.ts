@@ -686,6 +686,9 @@ export function finalizeReasonMessage(reason: string | undefined): string {
  *  existing publish trigger, so only an authorized publisher/owner can finalize. */
 export async function finalizeReviewedRevision(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
+  /** UX-16: the approver's email for the evidence sweep's audit rows — never
+   *  the display name (`actorName`). */
+  actorEmail?: string | null;
   /** Project-intake approvals have no sign-off roster — the approve click IS
    *  the review. The DB publish guard still verifies authority + holds, and
    *  its completion gate only binds when roster rows exist. */
@@ -850,7 +853,7 @@ export async function finalizeReviewedRevision(input: {
     try {
       const { sweepEvidenceForDocument } = await import("@/lib/checklists");
       const evidenceSweep = await sweepEvidenceForDocument({
-        orgId: input.orgId, documentId: input.documentId, actor: { uid: input.actorId, email: input.actorName ?? null },
+        orgId: input.orgId, documentId: input.documentId, actor: { uid: input.actorId, email: input.actorEmail ?? null },
       });
       if (evidenceSweep.projects > 0 || evidenceSweep.error) return { published: true, evidenceSweep };
     } catch { /* best-effort: never fails a landed publish */ }

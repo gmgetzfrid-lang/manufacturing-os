@@ -65,8 +65,21 @@
 --          adoptDocument calls it (TransitionInPanel adopts through that).
 --
 -- REQUIRES 20261104 (documents.authored_by_link_id, the intake-link budget)
--- and 20261105. The first statement checks and stops with a sentence when
+-- and 20261105. The second statement checks and stops with a sentence when
 -- 20261104 is missing.
+--
+-- DEPLOY PREREQUISITE (SEC-19 — IRREVERSIBLE): apply ONLY after the J11 build
+-- is live in production — the build whose public routes look a link up by
+-- its hash (lib/intakeLinks.ts readIntakeLinkByToken) and whose Intake and
+-- Costs tabs list token_prefix and re-issue a lost address. This file nulls
+-- every stored token and its CHECK keeps the column NULL; code from before
+-- that build looks a link up by the plain token (every contractor URL would
+-- answer "link invalid") and builds Copy link and the RFQ from it (a
+-- /submit/null address sent to a vendor). A code ROLLBACK to a build before
+-- J11 after this is applied breaks every link the same way — the plain
+-- tokens are not kept anywhere, so there is no way back but re-issuing each
+-- link. The FIRST statement refuses to run until the operator confirms:
+-- uncomment the SET line just above it once the J11 build is live.
 --
 -- NOT a widening: every change narrows who may do what or adds a fact. The
 -- DEC-30 inventory (aggregate counts only, never rows) is captured BEFORE the
@@ -76,6 +89,17 @@
 -- once (a second run is safe: every step is idempotent). The final SELECT is
 -- the only result set shown — probe rows must read ok = true; inventory rows
 -- carry ok NULL and a count in n.
+
+-- DEPLOY PREREQUISITE (see above). Uncomment the next line ONLY once the J11
+-- build is live in production:
+-- SET app.j11_deployed = 'yes';
+DO $$
+BEGIN
+  IF COALESCE(current_setting('app.j11_deployed', true), '') <> 'yes' THEN
+    RAISE EXCEPTION 'DEPLOY PREREQUISITE: apply 20261141 only after the J11 build (intake links looked up by their hash, token_prefix lists, re-issue) is live in production. This file nulls every stored intake token; code from before that build — or a rollback to it — breaks every contractor link, irreversibly. Once the J11 build is live, uncomment the line  SET app.j11_deployed = ''yes'';  just above this block and run the whole file again. Nothing was changed.';
+  END IF;
+END;
+$$;
 
 DO $$
 BEGIN

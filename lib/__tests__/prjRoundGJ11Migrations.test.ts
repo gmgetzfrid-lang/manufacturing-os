@@ -95,6 +95,18 @@ describe("20261141 — SEC-19: the intake token stored as its SHA-256", () => {
     const vector = /encode\(sha256\(convert_to\('abc', 'UTF8'\)\), 'hex'\) = '([0-9a-f]{64})'/.exec(M141)?.[1];
     expect(vector).toBe(createHash("sha256").update("abc").digest("hex"));
   });
+  it("DEPLOY PREREQUISITE (irreversible): the FIRST statement refuses to run until the operator confirms the J11 build is live — the confirming SET ships commented, and the header says why", () => {
+    const first = c.indexOf("DO $$");
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(c.slice(first, c.indexOf("$$;", first + 5))).toContain("IF COALESCE(current_setting('app.j11_deployed', true), '') <> 'yes' THEN");
+    expect(c.indexOf("app.j11_deployed")).toBeLessThan(c.indexOf("RAISE EXCEPTION 'Apply 20261104"));
+    expect(c.indexOf("app.j11_deployed")).toBeLessThan(c.indexOf("CREATE TEMP TABLE"));
+    // the operator uncomments it — it never ships live
+    expect(c).not.toMatch(/^\s*SET app\.j11_deployed/m);
+    expect(M141).toMatch(/^-- SET app\.j11_deployed = 'yes';$/m);
+    expect(M141).toContain("-- DEPLOY PREREQUISITE (SEC-19 — IRREVERSIBLE): apply ONLY after the J11 build");
+    expect(M141).toMatch(/A code ROLLBACK to a build before\s*\n-- J11 after this is applied breaks every link/);
+  });
   it("20261104's TTL CHECK, budget columns and bump_intake_use grants are not touched", () => {
     expect(c).not.toMatch(/project_intake_links_ttl|max_submissions|bump_intake_use/);
   });
@@ -181,28 +193,44 @@ describe("20261142 — SEC-20: audit_logs_admin_trail re-created from its NEWEST
       "20261142_prj_roundG_project_audit_rows.sql",
     ]);
   });
-  it("lineDiff: nothing of 20261063's body is lost; only the comment and the project clause are added", () => {
+  it("lineDiff: nothing of 20261063's body is lost; only the comment and the project clause (its type test inline) are added", () => {
     const { onlyInA, onlyInB } = lineDiff(live, next);
     expect(onlyInA).toEqual([]);
-    expect(onlyInB.filter((l) => !/^\s*--/.test(l))).toEqual(["    AND audit_row_project_visible(resource_type, resource_id)"]);
+    expect(onlyInB.filter((l) => !/^\s*--/.test(l))).toEqual([
+      "    AND (COALESCE(resource_type, '') NOT IN ('project', 'cost', 'project_checklist', 'turnover_item')",
+      "         OR audit_row_project_visible(resource_type, resource_id))",
+    ]);
     expect(onlyInB.filter((l) => /^\s*--/.test(l)).length).toBeGreaterThan(0);
+  });
+  it("the policy's inline type list and the function's are the same four types — a row of any other type never calls the function", () => {
+    const types = (text: string) => /NOT IN \(('[^)]*')\)/.exec(text)?.[1];
+    const fn = between(code(M142), "CREATE OR REPLACE FUNCTION public.audit_row_project_visible(p_type text, p_resource text)", "\n$$;");
+    expect(types(next)).toBe("'project', 'cost', 'project_checklist', 'turnover_item'");
+    expect(types(fn)).toBe(types(next));
   });
   it("still RESTRICTIVE SELECT, still no TO clause, and the INSERT policy and the base member policy are untouched", () => {
     expect(next).toMatch(/AS RESTRICTIVE FOR SELECT\s*\n\s*USING \(/);
     expect(next).not.toMatch(/\bTO\b\s+(anon|authenticated|public)/i);
     expect(code(M142)).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
   });
-  it("audit_row_project_visible: SECURITY INVOKER (reads only what the caller may read), search_path pinned, project rows by project_visible_to_me, cost rows through every 'cost' writer's table", () => {
-    const fn = between(code(M142), "CREATE OR REPLACE FUNCTION audit_row_project_visible(p_type text, p_resource text)", "\n$$;");
-    expect(fn).toMatch(/RETURNS boolean LANGUAGE sql STABLE SET search_path = public AS \$\$/);
-    expect(fn).not.toMatch(/SECURITY DEFINER/);
-    expect(fn).toContain("WHEN p_type IS DISTINCT FROM 'project' AND p_type IS DISTINCT FROM 'cost' THEN true");
-    expect(fn).toContain("WHEN p_type = 'project' THEN project_visible_to_me(p_resource::uuid)");
-    for (const t of ["cost_documents", "cost_entries", "cost_accounts", "project_parties"]) {
-      expect(fn).toContain(`EXISTS (SELECT 1 FROM ${t} c WHERE c.id = p_resource::uuid AND project_visible_to_me(c.project_id))`);
+  it("audit_row_project_visible: SECURITY INVOKER (reads only what the caller may read), NO SET clause (no per-row GUC save / restore) with every name schema-qualified; project rows by project_visible_to_me, cost rows through every 'cost' writer's table, the quality sign-off's e-signature rows through their checklist / turnover item", () => {
+    const fn = between(code(M142), "CREATE OR REPLACE FUNCTION public.audit_row_project_visible(p_type text, p_resource text)", "\n$$;");
+    expect(fn).toMatch(/RETURNS boolean LANGUAGE sql STABLE AS \$\$/);
+    expect(fn).not.toMatch(/SECURITY DEFINER|SET search_path/);
+    expect(fn).toContain("WHEN p_type IS NULL OR p_type NOT IN ('project', 'cost', 'project_checklist', 'turnover_item') THEN true");
+    expect(fn).toContain("WHEN p_type = 'project' THEN public.project_visible_to_me(p_resource::uuid)");
+    for (const t of ["cost_documents", "cost_entries", "cost_accounts", "project_parties", "project_checklists", "turnover_items"]) {
+      expect(fn).toContain(`EXISTS (SELECT 1 FROM public.${t} c WHERE c.id = p_resource::uuid AND public.project_visible_to_me(c.project_id))`);
     }
+    // every table and function the body names is schema-qualified
+    expect(fn.match(/\bFROM\s+(?!public\.)\w+/g)).toBeNull();
+    expect(fn.match(/(?<!public\.)project_visible_to_me\(/g)).toBeNull();
     // a non-UUID id is answered false, never a cast error inside a policy
     expect(fn.indexOf("p_resource !~*")).toBeLessThan(fn.indexOf("p_resource::uuid"));
+  });
+  it("the e-signature resource types are the quality sign-off's (lib/checklists.ts QUALITY_SIGNOFF_RESOURCE)", async () => {
+    const { QUALITY_SIGNOFF_RESOURCE } = await import("@/lib/checklists");
+    expect(Object.values(QUALITY_SIGNOFF_RESOURCE).sort()).toEqual(["project_checklist", "turnover_item"]);
   });
   it("every 'cost' audit writer names a row of those four tables (the vocabulary the function covers)", () => {
     const writers = ["lib/costs.ts", "lib/costDocs.ts", "app/api/projects/cost-docs/route.ts", "app/api/intake/upload/route.ts", "components/projects/cost/QuotesPanel.tsx"];
@@ -332,7 +360,7 @@ describe("INTK-15 — the direct door's presigned PUT binds the declared size", 
       credentials: { accessKeyId: "AK", secretAccessKey: "SK" }, requestChecksumCalculation: "WHEN_REQUIRED",
     });
     const url = new URL(await getSignedUrl(client, new PutObjectCommand({
-      Bucket: "b", Key: "orgs/o1/project-intake/p1/staging/l1/00000000-0000-4000-8000-000000000000",
+      Bucket: "b", Key: "intake-staging/o1/p1/l1/00000000-0000-4000-8000-000000000000",
       ContentLength: 1234, ContentType: "application/octet-stream",
     }), { expiresIn: 600, signableHeaders: new Set(["content-length", "content-type"]) }));
     expect(url.searchParams.get("X-Amz-SignedHeaders")?.split(";").sort()).toEqual(["content-length", "content-type", "host"]);

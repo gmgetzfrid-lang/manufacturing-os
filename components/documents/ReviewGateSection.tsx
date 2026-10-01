@@ -140,7 +140,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     if (!doc.id) return;
     setBusy(true);
     try {
-      const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail });
+      const res = await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });
       if (!res.published) { await appAlert({ tone: "danger", message: finalizeReasonMessage(res.reason) }); }
       // UX-16: the publish swept the open checklists of the projects citing
       // this document; a sweep that could not finish is said, never silent.

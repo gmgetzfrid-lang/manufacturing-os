@@ -12,8 +12,8 @@ import {
   UploadCloud, FileText, Loader2, AlertTriangle, CheckCircle2, Clock, Building2, Pen,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { putWithXhr } from "@/lib/storage";
-import { INTAKE_TOKEN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
+import { putWithXhr, UploadCancelledError } from "@/lib/storage";
+import { INTAKE_TOKEN_HEADER, INTAKE_BEGUN_HEADER, LINK_GONE_MESSAGE, LINK_INVALID_MESSAGE, PROJECT_CLOSED_MESSAGE } from "@/lib/intakeLinks";
 
 interface IntakeItem {
   docId: string; label: string; rev: string | null; status: string | null;
@@ -58,11 +58,19 @@ async function doorHeaders(token: string): Promise<Record<string, string>> {
   return headers;
 }
 
-async function postToDoor(token: string, form: FormData): Promise<{ res: Response; body: DoorBody }> {
-  const res = await fetch("/api/intake/upload", { method: "POST", body: form, headers: await doorHeaders(token) });
+async function postToDoor(token: string, form: FormData, begunKey?: string | null): Promise<{ res: Response; body: DoorBody }> {
+  const headers = await doorHeaders(token);
+  // INTK-15: the fallback for a direct upload names its begin — the door
+  // counted that attempt already and does not count it twice.
+  if (begunKey) headers[INTAKE_BEGUN_HEADER] = begunKey;
+  const res = await fetch("/api/intake/upload", { method: "POST", body: form, headers });
   const body = (await res.json().catch(() => null)) as DoorBody;
   return { res, body };
 }
+
+/** The largest file the multipart door is sure to take: the platform caps a
+ *  function's request body at about 4.5 MB (multipart framing included). */
+const MULTIPART_SAFE_BYTES = 4 * 1024 * 1024;
 
 type BeginBody = { ok?: boolean; uploadKey?: string; uploadUrl?: string; contentType?: string; error?: string; ref?: string; code?: string } | null;
 
@@ -70,15 +78,18 @@ type BeginBody = { ok?: boolean; uploadKey?: string; uploadUrl?: string; content
  *  straight to storage on a PUT the door presigned for this link (so the
  *  100 MB limit is real), then the door checks the stored file (the same
  *  type sniff, budget, review rules and notices as before) and files it.
- *  The token travels in a header on both steps. A door that cannot presign,
- *  or a storage PUT the browser cannot make, falls back to the multipart
- *  POST (fine for small files; a large one gets the size sentence). */
+ *  The token travels in a header on both steps. The multipart POST is the
+ *  fallback, carrying the begin so the attempt is counted once: when the
+ *  door cannot presign; when the browser cannot reach storage (a network
+ *  error — no PUT CORS) at any size, a large file then getting the size
+ *  sentence; and when storage refuses the PUT (a 403, a 400, a 5xx, a
+ *  stall) for a file the multipart door can take. */
 async function sendToDoor(token: string, file: File, fields: Record<string, string>): Promise<{ res: Response; body: DoorBody }> {
-  const multipart = () => {
+  const multipart = (begunKey?: string | null) => {
     const form = new FormData();
     form.set("file", file);
     for (const [k, v] of Object.entries(fields)) form.set(k, v);
-    return postToDoor(token, form);
+    return postToDoor(token, form, begunKey);
   };
   const json = async (step: "begin" | "finalize", payload: Record<string, unknown>) => fetch(`/api/intake/upload?step=${step}`, {
     method: "POST", body: JSON.stringify(payload),
@@ -89,13 +100,14 @@ async function sendToDoor(token: string, file: File, fields: Record<string, stri
   if (!begin.ok || !b?.ok || !b.uploadUrl || !b.uploadKey) {
     // A refusal the door made (link, size, rate, budget) is the answer; an
     // unavailable direct path is retried the old way.
-    if (b?.code === "direct_unavailable" || !b) return multipart();
+    if (b?.code === "direct_unavailable" || !b) return multipart(b?.uploadKey);
     return { res: begin, body: b };
   }
   try {
     await putWithXhr(b.uploadUrl, file, b.contentType ?? "application/octet-stream");
   } catch (e) {
-    if (/network error/i.test((e as Error).message)) return multipart();
+    if (e instanceof UploadCancelledError) throw e;
+    if (/network error/i.test((e as Error).message) || file.size <= MULTIPART_SAFE_BYTES) return multipart(b.uploadKey);
     throw new Error("The file didn't reach storage — try again. If it keeps failing, contact your project contact.");
   }
   const fin = await json("finalize", { uploadKey: b.uploadKey, fileName: file.name, contentType: file.type, fields });

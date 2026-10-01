@@ -526,21 +526,29 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     return { ok: false, error: `Couldn't adopt ${label} — try again, or ask Document Control.` };
   };
 
-  // INTK-16 (20261141): the move runs IN THE DATABASE — adopt_intake_document
-  // re-checks the caller's tier, computes the destination's uniqueness key and
-  // writes the move and its TRANSITION_IN audit row, and
-  // trg_documents_intake_adoption_guard applies the cross-library number rule
-  // (SAF-12) to it and to any direct update of an intake sheet's library,
-  // folder or number. The checks above stay for the operator's sentences; the
-  // database is the authority. Before 20261141 the function does not exist
-  // and the move is the direct update (the move guard and the unique index
-  // still bind).
-  const rpc = await supabase.rpc("adopt_intake_document", {
-    p_doc: input.docId, p_library: input.libraryId, p_collection: input.collectionId,
-    p_new_number: newNumber, p_details: auditDetails,
-  });
-  const viaDatabase = !rpc.error;
-  if (rpc.error && !missingAdoptFunction(rpc.error)) return refused(rpc.error);
+  // INTK-16 (20261141): the move of an INTAKE-BORN sheet runs IN THE
+  // DATABASE — adopt_intake_document re-checks the caller's tier, computes
+  // the destination's uniqueness key and writes the move and its
+  // TRANSITION_IN audit row, and trg_documents_intake_adoption_guard applies
+  // the cross-library number rule (SAF-12) to it and to any direct update of
+  // an intake sheet's library, folder or number. The checks above stay for
+  // the operator's sentences; the database is the authority. A document in
+  // the intake folder that the door did NOT create (a sheet filed there by
+  // hand, an intake sheet older than 20261104's authorship backfill) is not
+  // the function's — and not the guard's: it takes the direct update, as
+  // before (the move guard and the unique index still bind). Before 20261141
+  // the function does not exist and every move is the direct update.
+  const born = await intakeBorn(input.docId, input.orgId);
+  if (born === "unreadable") return { ok: false, error: "Couldn't read the sheet — try again." };
+  let viaDatabase = false;
+  if (born !== false) {
+    const rpc = await supabase.rpc("adopt_intake_document", {
+      p_doc: input.docId, p_library: input.libraryId, p_collection: input.collectionId,
+      p_new_number: newNumber, p_details: auditDetails,
+    });
+    if (rpc.error && !missingAdoptFunction(rpc.error)) return refused(rpc.error);
+    viaDatabase = !rpc.error;
+  }
   if (!viaDatabase) {
     const patch: Record<string, unknown> = {
       library_id: input.libraryId,
@@ -593,6 +601,20 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
   }
 
   return note ? { ok: true, note } : { ok: true };
+}
+
+/** INTK-16: did the door create this document (documents.authored_by_link_id,
+ *  20261104)? `null` when the column is not there yet (the function cannot
+ *  be either — 20261141 requires 20261104), "unreadable" on any other error. */
+async function intakeBorn(docId: string, orgId: string): Promise<boolean | null | "unreadable"> {
+  const { data, error } = await supabase
+    .from("documents").select("authored_by_link_id").eq("id", docId).eq("org_id", orgId).maybeSingle();
+  if (error) {
+    const msg = `${error.message ?? ""} ${(error as { details?: string | null }).details ?? ""}`;
+    const missing = /^(42703|PGRST204)$/.test(String(error.code ?? "")) || /authored_by_link_id.*(does not exist|could not find)|could not find.*authored_by_link_id/i.test(msg);
+    return missing ? null : "unreadable";
+  }
+  return ((data as { authored_by_link_id?: string | null } | null)?.authored_by_link_id ?? null) != null;
 }
 
 /** adopt_intake_document is not in the database yet (before 20261141). */

@@ -1260,8 +1260,10 @@ function headQuery(table: string) {
  *    caller is a controller AND gives a reason (the default is Archive);
  *  · revokes the project's contractor intake links (PM-2's inline limb —
  *    PC-1 / J1 exports the shared intake-link revoke helper);
- *  · writes PROJECT_DELETED (org-readable) with the counts and how many
- *    stored files the delete orphans, and PURGE_PROJECT_SNAPSHOT — a
+ *  · writes PROJECT_DELETED with the counts and how many stored files the
+ *    delete orphans — readable by the org's audit viewers only once
+ *    20261142 is applied (SEC-20: a project row whose project is gone is no
+ *    member's; before it, by every member) — and PURGE_PROJECT_SNAPSHOT — a
  *    serialized snapshot of the cost and quality rows plus the orphaned
  *    storage keys (they carry original file names) for the orphan sweep,
  *    readable by the org's audit viewers only (a PURGE_ action is inside the
