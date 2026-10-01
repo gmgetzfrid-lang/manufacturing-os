@@ -22,7 +22,7 @@ import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
   getAiUsage, setAiCap,
-  type AiConnectionInfo, type AiUsageSummary,
+  type AiConnectionInfo, type AiUsageSummary, type AiCapSetResult,
 } from "@/lib/knowledge";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
@@ -82,6 +82,11 @@ type UsageView = AiUsageSummary & {
   /** GOV-10: the viewer's uid — their own row in `team`. */
   selfUserId?: string;
 };
+/** What POST /api/ai/usage answers beyond lib/knowledge's AiCapSetResult
+ *  (GOV-10): after a default raise, the setter's own cap when it is no
+ *  longer where it started — `selfCapSetByAnother` when the figure that
+ *  applies now is one another holder set (their raise, never a hold). */
+type CapSetView = AiCapSetResult & { selfCapUsd?: number; selfCapSetByAnother?: boolean };
 
 /** The meter line each feature writes, named for a person (GOV-1: every
  *  line counts against the one cap). An unknown op shows as itself. */
@@ -609,14 +614,18 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     }
     setSavingCap(true);
     try {
-      const res = await setAiCap(orgId, cap);
+      const res: CapSetView = await setAiCap(orgId, cap);
       // GOV-10: what happened to YOUR cap is the server's answer, never a
       // guess from what this panel read when it opened (the roster may have
       // changed since): raising the default you follow holds you at your
       // current figure (`selfHeldAtUsd`) — unless nobody else manages AI
-      // caps, when yours follows it, recorded as such (`soleHolder`).
+      // caps, when yours follows it, recorded as such (`soleHolder`). A
+      // figure another holder set while it was saved (`selfCapUsd` with
+      // `selfCapSetByAnother`) is theirs: never said as a hold.
       showToast({ type: "success", title: cap === 0
         ? "Default monthly cap set to $0 — AI is locked for everyone on the default."
+        : typeof res.selfCapUsd === "number"
+          ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap is now ${fmtUsd(res.selfCapUsd)}${res.selfCapSetByAnother === true ? " — set by another person who manages AI caps" : ""}.`
         : typeof res.selfHeldAtUsd === "number"
           ? `Default monthly cap set to ${fmtUsd(cap)} per person. Your own cap stays at ${fmtUsd(res.selfHeldAtUsd)} — nobody raises their own cap, so another person who manages AI caps has to raise yours.`
           : res.soleHolder === true
