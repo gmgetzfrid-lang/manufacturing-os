@@ -30,7 +30,12 @@
 // pages (listCodebookUnits): loadCodebook is one request, which PostgREST
 // cuts at 1,000 entries of every kind. Equipment follows the mapping in the
 // database (20261138): mapping, remapping or archiving a unit moves its
-// projected equipment at once, and a refiled item follows its filing.
+// projected equipment at once, and a refiled item follows its filing. So
+// releasing a mapped unit's code — archiving the unit, unmapping it or
+// remapping it — is confirmed with what it does (codebookReleaseConfirm):
+// the codebook unit, how many equipment items lose the unit
+// (countProjectedEquipment), and that restoring an archived unit does not
+// bring its mapping back.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -43,6 +48,7 @@ import {
   updatePlant, updateUnit, updateSystem,
   archivePlant, archiveUnit, archiveSystem,
   setUnitCodebookCode, runUnitIdentityBackfill, listCodebookMappings, listCodebookUnits,
+  countProjectedEquipment, codebookReleaseConfirm,
   type ScopeNode, type UnitIdentityReport, type CodebookMappingHolder,
 } from "@/lib/operationalGraph";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
@@ -182,20 +188,45 @@ export default function ScopePage() {
     await refresh();
   };
 
-  const onMapUnit = async (unitId: string, code: string | null) => {
+  const labelOf = (code: string | null | undefined) =>
+    (code ? book.units.find((u) => u.code === code)?.label : null) ?? null;
+
+  /** Releasing a mapped unit's code moves equipment (20261138) — said first,
+   *  with the count, never as "keeps its data". */
+  const confirmRelease = async (
+    action: "archive" | "unmap" | "remap", unit: { id: string; name: string }, code: string, nextCode?: string | null,
+  ): Promise<boolean> => {
+    if (!activeOrgId) return false;
+    const projected = await countProjectedEquipment(activeOrgId, unit.id, code);
+    return appConfirm({
+      ...codebookReleaseConfirm({
+        action, unitName: unit.name, code, label: labelOf(code), projected,
+        nextCode: nextCode ?? null, nextLabel: labelOf(nextCode),
+      }),
+      tone: "danger",
+    });
+  };
+
+  const onMapUnit = async (unit: { id: string; name: string }, current: string | null, code: string | null) => {
     if (!uid) return;
     setError(null);
     try {
-      await setUnitCodebookCode(unitId, code, uid);
+      if (current && code !== current
+          && !(await confirmRelease(code ? "remap" : "unmap", unit, current, code))) return;
+      await setUnitCodebookCode(unit.id, code, uid);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const onArchive = async (kind: "plant" | "unit" | "system", id: string) => {
+  const onArchive = async (kind: "plant" | "unit" | "system", id: string, mapped?: { name: string; code: string | null }) => {
     if (!uid) return;
-    if (!(await appConfirm({ message: "Archive this scope node? Documents and equipment that reference it keep their data; the row is hidden from picker UIs.", tone: "danger" }))) return;
+    // A MAPPED unit's archive releases its Site Codebook code and takes the
+    // unit off its projected equipment (20261138) — its own confirmation.
+    if (kind === "unit" && mapped?.code) {
+      if (!(await confirmRelease("archive", { id, name: mapped.name }, mapped.code))) return;
+    } else if (!(await appConfirm({ message: "Archive this scope node? Documents and equipment that reference it keep their data; the row is hidden from picker UIs.", tone: "danger" }))) return;
     if (kind === "plant")  await archivePlant(id, uid);
     if (kind === "unit")   await archiveUnit(id, uid);
     if (kind === "system") await archiveSystem(id, uid);
@@ -353,7 +384,7 @@ export default function ScopePage() {
                                   takenBy={mappedTo}
                                   unitId={unit.id!}
                                   canEdit={canEdit && !unit.archived}
-                                  onChange={(code) => onMapUnit(unit.id!, code)}
+                                  onChange={(code) => onMapUnit({ id: unit.id!, name: unit.name }, codebookCode, code)}
                                 />
                               }
                               badge={`${systems.length} system${systems.length === 1 ? "" : "s"}`}
@@ -362,7 +393,7 @@ export default function ScopePage() {
                               onAdd={() => setAddingChildOf({ kind: "unit", parentId: unit.id })}
                               addLabel="Add System"
                               onEdit={() => setEditing({ kind: "unit", row: unit })}
-                              onArchive={() => onArchive("unit", unit.id!)}
+                              onArchive={() => onArchive("unit", unit.id!, { name: unit.name, code: codebookCode })}
                             />
 
                             {addingChildOf?.kind === "unit" && addingChildOf.parentId === unit.id && (
@@ -566,7 +597,7 @@ function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
         )}
       </div>
       <div className="text-[11px] text-[var(--color-text-muted)]">
-        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to (a unit already set by hand is never changed). Equipment follows the mapping on its own — mapping, remapping or archiving a unit, or refiling an item, moves its unit at once; the decode fills what was missed. A number that does not decode is listed here — never guessed.
+        Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to. Equipment follows the mapping on its own — mapping, remapping or archiving a unit, or refiling an item, moves its unit at once; the decode fills what was missed. A unit set by hand that disagrees with the filing is never changed; one that matches the filing cannot be told from the mapping&apos;s and follows the filing and the mapping like it. A number that does not decode is listed here — never guessed.
       </div>
       {err && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -586,8 +617,8 @@ function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
             <details>
               <summary className="cursor-pointer">{d.notDecoding.count} number{d.notDecoding.count === 1 ? "" : "s"} do not decode</summary>
               <ul className="mt-1 ml-4 list-disc space-y-0.5">
-                {d.notDecoding.samples.map((s) => (
-                  <li key={s.number}><span className="font-mono">{s.number}</span> — {s.reason}</li>
+                {d.notDecoding.samples.map((s, i) => (
+                  <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>
                 ))}
                 {d.notDecoding.count - (d.notDecoding.unlisted ?? 0) > d.notDecoding.samples.length && (
                   <li>… and {d.notDecoding.count - (d.notDecoding.unlisted ?? 0) - d.notDecoding.samples.length} more</li>

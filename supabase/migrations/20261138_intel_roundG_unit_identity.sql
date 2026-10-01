@@ -82,7 +82,11 @@
 --      whatever the trigger order), writes only assets.unit_id, only the
 --      org's equipment under the code that moved, and the registry guard
 --      (assets_guard_registry, 20261045) still sees the caller.
---      search_path pinned.
+--      search_path pinned. EXECUTE is revoked from PUBLIC, anon and
+--      authenticated (DRLS-16): a trigger function is never called by name,
+--      and PostgreSQL checks no EXECUTE privilege when a trigger fires, so
+--      the revoke changes nothing for the trigger and keeps the function off
+--      the anon-executable SECURITY DEFINER sweep (20261129).
 --
 -- WIDENS one read: an active member may learn how many documents the org
 -- holds, including ones they cannot open (a count only — the same class as
@@ -93,7 +97,8 @@
 -- and a unit that disagrees with the filing is kept; 7. moves it for a
 -- mapping change 5. admitted even when the assets UPDATE overlay would
 -- refuse that caller a registry write of their own (a scope writer who also
--- holds Viewer or Auditor). The application half — POST /api/admin/unit-
+-- holds Viewer or Auditor — counted in the inventory below, so the paste
+-- says how many members gain it). The application half — POST /api/admin/unit-
 -- identity reads every document with the service role — lists a document's
 -- number in its report only to a caller who may read it (the controller
 -- tier sees all; the rest of the scope writer tier sees open-visibility
@@ -133,7 +138,13 @@ SELECT 'assets filed under a Site Codebook unit (assets.unit_code set)', COUNT(*
   FROM assets WHERE unit_code IS NOT NULL
 UNION ALL
 SELECT 'documents whose visibility is not normal (what a non-controller''s map can leave out — GM-6)', COUNT(*)
-  FROM documents WHERE visibility IS NOT NULL AND visibility <> 'normal';
+  FROM documents WHERE visibility IS NOT NULL AND visibility <> 'normal'
+UNION ALL
+SELECT 'active members who GAIN the widening of 7.: a scope writer role (Admin, Manager, Supervisor, DocCtrl) held together with Viewer or Auditor (role or roles) — the assets UPDATE overlay refuses them a registry write, yet a mapping change they make moves assets.unit_id', COUNT(*)
+  FROM org_members
+ WHERE status = 'active'
+   AND (role = ANY(ARRAY['Admin','Manager','Supervisor','DocCtrl']::text[]) OR roles && ARRAY['Admin','Manager','Supervisor','DocCtrl']::text[])
+   AND (role = ANY(ARRAY['Viewer','Auditor']::text[]) OR roles && ARRAY['Viewer','Auditor']::text[]);
 
 BEGIN;
 
@@ -302,6 +313,8 @@ DROP TRIGGER IF EXISTS trg_units_codebook_code_follow ON units;
 CREATE TRIGGER trg_units_codebook_code_follow
   AFTER INSERT OR UPDATE OF codebook_code, archived ON units
   FOR EACH ROW EXECUTE FUNCTION units_codebook_code_follow();
+-- DRLS-16: no one calls it by name (a trigger fires with no EXECUTE check).
+REVOKE ALL ON FUNCTION units_codebook_code_follow() FROM PUBLIC, anon, authenticated;
 
 COMMIT;
 
@@ -387,6 +400,11 @@ SELECT 'the projection follows the mapping: a code moved, cleared or released ta
                    AND prosecdef
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
               FROM pg_proc WHERE proname = 'units_codebook_code_follow'),
+       NULL
+UNION ALL
+SELECT 'units_codebook_code_follow (SECURITY DEFINER): anon and authenticated cannot execute it by name (DRLS-16 rule; the trigger fires without an EXECUTE check)',
+       NOT has_function_privilege('anon', 'units_codebook_code_follow()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'units_codebook_code_follow()', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'inventory (before): ' || what, NULL, n::text FROM _intel_g38_before

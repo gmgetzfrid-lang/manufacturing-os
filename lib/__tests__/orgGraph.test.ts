@@ -258,6 +258,39 @@ describe("GPV-14 — a unit's pinned libraries and its bound knowledge library a
     // a filing edge carries no `via` — the three statements are told apart
     expect(g.edges.find((e) => e.a === "doc:d1" && e.b === "lib:L1")!.via).toBeUndefined();
   });
+
+  it("a folder pin is a SCOPED edge in the data (folderIds), not a folder named only in the note; every folder of the library rides on its one edge; a whole-library pin covers its folders", async () => {
+    const unit = (code: string, sort: number, links: unknown[]) =>
+      o({ id: `cb${code}`, kind: "unit", code, label: `Unit ${code}`, sort, meta: { links } });
+    reset(plant({
+      codebook_entries: [
+        unit("20", 0, [
+          { id: "k1", label: "P&IDs", libraryId: "L1", libraryName: "P&IDs", folderId: "f-20", folderName: "Unit 20" },
+          { id: "k2", label: "Isometrics", libraryId: "L1", libraryName: "P&IDs", folderId: "f-21", folderName: "Unit 20 ISOs" },
+          { id: "k3", label: "Again", libraryId: "L1", libraryName: "P&IDs", folderId: "f-20", folderName: "Unit 20" },
+        ]),
+        unit("30", 1, [
+          { id: "k4", label: "All P&IDs", libraryId: "L1", libraryName: "P&IDs" },
+          { id: "k5", label: "One folder", libraryId: "L1", libraryName: "P&IDs", folderId: "f-30", folderName: "Unit 30" },
+        ]),
+      ],
+      assets: [
+        o({ id: "a1", tag: "E-22", description: null, unit_code: "20", unit_id: null, archived: false }),
+        o({ id: "a3", tag: "C-301", description: null, unit_code: "30", unit_id: null, archived: false }),
+      ],
+    }));
+    const g = await buildOrgGraph(ORG);
+    const pins20 = g.edges.filter((e) => e.a === "cbunit:20" && e.b === "lib:L1");
+    expect(pins20).toHaveLength(1);
+    expect(pins20[0]).toMatchObject({ type: "library", via: "pinned", folderIds: ["f-20", "f-21"] });
+    expect(pins20[0].note).toContain("Unit 20 ISOs");
+    const pins30 = g.edges.filter((e) => e.a === "cbunit:30" && e.b === "lib:L1");
+    expect(pins30).toHaveLength(1);
+    expect(pins30[0].via).toBe("pinned");
+    expect(pins30[0].folderIds).toBeUndefined();
+    // no other edge carries folderIds
+    expect(g.edges.filter((e) => e.folderIds !== undefined)).toHaveLength(1);
+  });
 });
 
 describe("FLOW-8 / GM-8 — direction survives assembly", () => {
@@ -496,6 +529,19 @@ describe("GM-13 / FLOW-9 (orgGraph half) — every capped pull is said; the mirr
     expect(g.edges).toContainEqual({ a: "doc:d1", b: "asset:a1", type: "mention" });
     expect(g.truncations.join("\n")).toMatch(/^1 mention come from library-only documents/m);
     expect(g.mentionCoverage).toMatchObject({ installed: true, rows: 2, drawn: 1, unmapped: 1, capped: false });
+  });
+
+  it("IRLS-14: mentionCoverage claims only what it can tell — 'not installed' from 'installed, nothing visible' — never 'never built' or a failed build", async () => {
+    reset(plant());
+    const g = await buildOrgGraph(ORG);
+    // installed, built or not, nothing named, or all out of view: the same answer
+    expect(g.mentionCoverage).toEqual({ installed: true, rows: 0, drawn: 0, unmapped: 0, capped: false });
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/orgGraph.ts", "utf8");
+    const doc = src.slice(src.indexOf("/** IRLS-14 (the lib/orgGraph.ts half)"), src.indexOf("export interface MentionCoverage"));
+    expect(doc).not.toMatch(/so the page can tell "never built"/);
+    expect(doc).toMatch(/does NOT tell "never\s*\n?\s*\*?\s*built"/);
+    expect(doc).toMatch(/Nor does it carry a failed build/);
   });
 });
 

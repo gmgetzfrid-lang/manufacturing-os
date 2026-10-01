@@ -111,11 +111,25 @@ export interface GraphEdge {
   via?: "pinned" | "knowledge";
   /** Human-readable qualifier — the pinned link's label and folder. */
   note?: string;
+  /** GPV-14 — a pin of FOLDERS of the library, not the whole of it: the
+   *  pinned folders' ids (each with its subtree, as lib/scope.ts resolves
+   *  it). One edge per unit and library carries every folder pinned; absent
+   *  when the whole library is pinned (a whole-library pin covers its
+   *  folders) and on every other edge. Data, so a consumer never parses
+   *  `note` to learn the folder. */
+  folderIds?: string[];
 }
 
-/** IRLS-14 (the lib/orgGraph.ts half): what the mention index contributed,
- *  so the page can tell "never built" from "built, nothing named" from
- *  "built, but out of view". */
+/** IRLS-14 (the lib/orgGraph.ts half): what the mention read found. It tells
+ *  "not installed" (installed: false — entity_mentions does not exist) from
+ *  "installed, no rows visible to this reader" (installed: true, rows: 0),
+ *  and says how many rows were read and drawn. It does NOT tell "never
+ *  built" from "built, nothing named" from "built, but every row out of
+ *  view": with installed: true and rows: 0 those three look the same here.
+ *  Nor does it carry a failed build: the indexer (lib/mentionIndexer.ts)
+ *  keeps no run state — a failure is logged and thrown to its caller — so
+ *  "see the failure" needs an index-run state this assembly has nowhere to
+ *  read (IRLS-14's remainder, I-14's). */
 export interface MentionCoverage {
   /** false: entity_mentions does not exist (the mention migration is not applied). */
   installed: boolean;
@@ -783,7 +797,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   const put = (n: GraphNode) => { if (!inScope || inScope(n.id)) nodes.set(n.id, n); };
 
   type Outcome = "added" | "duplicate" | "self" | "severed" | "boundary" | "unrelated";
-  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note">): Outcome => {
+  const addEdge = (a: string, b: string, type: GraphEdgeType, extra?: Pick<GraphEdge, "via" | "note" | "folderIds">): Outcome => {
     if (a === b) return "self";
     const hasA = nodes.has(a), hasB = nodes.has(b);
     if (!hasA || !hasB) {
@@ -924,12 +938,25 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
 
   // GPV-14: what an org states about a unit on its codebook entry — the
   // libraries (or folders) pinned to it and its bound knowledge library.
+  // One edge per unit and library (the pair is the edge): every folder of
+  // that library pinned to the unit rides on it as folderIds, and a pin of
+  // the whole library covers its folders.
   for (const u of rows.codebookUnits) {
+    const byLibrary = new Map<string, { whole: boolean; folders: string[]; notes: string[] }>();
     for (const link of u.meta?.links ?? []) {
       if (!link?.libraryId) continue;
+      const pin = byLibrary.get(link.libraryId) ?? { whole: false, folders: [], notes: [] };
+      if (link.folderId) { if (!pin.folders.includes(link.folderId)) pin.folders.push(link.folderId); }
+      else pin.whole = true;
       const where = link.folderId ? `${link.libraryName || "library"} › ${link.folderName || "folder"}` : (link.libraryName || "");
-      addEdge(`cbunit:${u.code}`, `lib:${link.libraryId}`, "library", {
-        via: "pinned", note: [link.label, where].filter(Boolean).join(" — ") || undefined,
+      const note = [link.label, where].filter(Boolean).join(" — ");
+      if (note && !pin.notes.includes(note)) pin.notes.push(note);
+      byLibrary.set(link.libraryId, pin);
+    }
+    for (const [libraryId, pin] of byLibrary) {
+      addEdge(`cbunit:${u.code}`, `lib:${libraryId}`, "library", {
+        via: "pinned", note: pin.notes.join("; ") || undefined,
+        ...(pin.whole ? {} : { folderIds: pin.folders }),
       });
     }
     const kl = (u.meta?.knowledgeLibraryId ?? "").trim();

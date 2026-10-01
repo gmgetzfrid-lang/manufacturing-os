@@ -55,7 +55,9 @@
 // PostgREST cuts at max-rows (1,000 entries of every kind); a unit past the
 // cut would read as "unknown" and its decodes would be CLEARED. The unit
 // entries are therefore read again here in keyset pages and replace the
-// book's unit list; if they cannot be read, nothing is planned.
+// book's unit list; if they cannot be read, nothing is planned. Every read
+// here (units, documents, equipment, codebook units) pages until an EMPTY
+// window, so a project whose max-rows is set below 1,000 is still read whole.
 //
 // BOUNDED PER CALL. An apply writes at most WRITE_BUDGET rows (documents
 // first), in parallel waves, and reports `remaining`; the panel calls again
@@ -115,7 +117,11 @@ interface Narrowable {
 }
 
 /** Every row of an org's table, in keyset order (id ascending), in windows
- *  of PAGE (PostgREST's max-rows). */
+ *  of at most PAGE. It stops only at an EMPTY window, never at a short one:
+ *  PostgREST cuts a response at db-max-rows WITHOUT an error, and a project
+ *  whose max-rows is set below PAGE returns short windows that are not the
+ *  end — stopping there would plan the decode over a cut set and report it
+ *  whole. The keyset (id > the last id read) makes the extra request safe. */
 async function readAll<T extends { id: string }>(
   table: string, select: string, orgId: string, narrow?: (q: Narrowable) => Narrowable,
 ): Promise<{ rows: T[]; error: PgErr | null }> {
@@ -128,8 +134,8 @@ async function readAll<T extends { id: string }>(
     const { data, error } = await q.order("id", { ascending: true }).limit(PAGE);
     if (error) return { rows, error: error as PgErr };
     const batch = ((data ?? []) as unknown) as T[];
+    if (batch.length === 0) return { rows, error: null };
     rows.push(...batch);
-    if (batch.length < PAGE) return { rows, error: null };
     last = String(batch[batch.length - 1].id);
   }
 }

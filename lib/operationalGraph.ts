@@ -193,6 +193,75 @@ export async function setUnitCodebookCode(unitId: string, codebookCode: string |
   if (saved !== code) throw new Error("Not saved — an archived unit holds no Site Codebook unit (restore it first).");
 }
 
+/** GAP-305 — how many equipment items point at this operational unit AND are
+ *  filed under `code` (assets.unit_id = the unit, assets.unit_code = the
+ *  code): the items 20261138's trg_units_codebook_code_follow takes the unit
+ *  off when that code is released — the unit unmapped, remapped, or archived
+ *  (the guard releases an archived unit's code). A unit set by hand that
+ *  equals the projection cannot be told apart from it (assets.unit_id has no
+ *  provenance), so it is counted — and it does move. A head count under the
+ *  reader's RLS; null when the count cannot be read (said as unknown, never
+ *  as none). */
+export async function countProjectedEquipment(orgId: string, unitId: string, code: string): Promise<number | null> {
+  const { count, error } = await supabase.from("assets")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).eq("unit_id", unitId).eq("unit_code", code);
+  if (error) return null;
+  return typeof count === "number" ? count : null;
+}
+
+/** GAP-305 — what the scope page says before a mapped unit's Site Codebook
+ *  code is released: by archiving the unit, unmapping it, or mapping it to
+ *  another code. The release takes the unit off every item filed under the
+ *  old code that points at it (20261138), so "equipment keeps its data" would
+ *  be false — this names the codebook unit, the count, and what restoring
+ *  does not bring back. */
+export function codebookReleaseConfirm(input: {
+  action: "archive" | "unmap" | "remap";
+  unitName: string;
+  code: string;
+  /** The codebook unit's label, when the codebook holds it. */
+  label?: string | null;
+  /** countProjectedEquipment; null = could not be counted. */
+  projected: number | null;
+  /** remap only: the code the unit takes instead. */
+  nextCode?: string | null;
+  nextLabel?: string | null;
+}): { title: string; message: string; confirmLabel: string } {
+  const cb = (code: string, label?: string | null) => `Site Codebook unit ${code}${label ? ` · ${label}` : ""}`;
+  const n = input.projected;
+  const items = n === null
+    ? `Every equipment item filed under ${input.code} that points at ${input.unitName} loses that operational unit (the count could not be read)`
+    : n === 0
+      ? `No equipment filed under ${input.code} points at ${input.unitName} now`
+      : `${n} equipment item${n === 1 ? "" : "s"} filed under ${input.code} point${n === 1 ? "s" : ""} at ${input.unitName} and lose${n === 1 ? "s" : ""} that operational unit`;
+  const kept = n === 0 ? "." : ` — ${n === 1 ? "it stays" : "they stay"} filed under ${input.code}, and searches and counts by operational unit no longer find ${n === 1 ? "it" : "them"} there.`;
+  if (input.action === "archive") {
+    return {
+      title: `Archive ${input.unitName}?`,
+      message: `${input.unitName} is ${cb(input.code, input.label)}. Archiving it releases that mapping. ${items}${kept} `
+        + `Restoring the unit later does NOT bring the mapping back: it stays unmapped until someone maps it again on this page. `
+        + `Documents that reference the unit keep it; the row is hidden from picker UIs.`,
+      confirmLabel: "Archive and release the mapping",
+    };
+  }
+  if (input.action === "unmap") {
+    return {
+      title: `Unmap ${input.unitName}?`,
+      message: `${input.unitName} is ${cb(input.code, input.label)}. Unmapping releases it. ${items}${kept} `
+        + `Mapping it again puts the unit back on equipment filed under ${input.code} that has none.`,
+      confirmLabel: "Unmap",
+    };
+  }
+  const next = input.nextCode ?? "";
+  return {
+    title: `Map ${input.unitName} to ${next} instead?`,
+    message: `${input.unitName} is ${cb(input.code, input.label)}. Mapping it to ${cb(next, input.nextLabel)} releases ${input.code}. ${items}${kept} `
+      + `Equipment filed under ${next} with no operational unit takes ${input.unitName}.`,
+    confirmLabel: "Remap",
+  };
+}
+
 /** A Site Codebook unit and the operational unit that holds it. */
 export interface CodebookMappingHolder {
   code: string;

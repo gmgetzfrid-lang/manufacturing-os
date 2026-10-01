@@ -49,6 +49,7 @@ vi.mock("@/lib/supabase", async () => {
 
 import {
   planUnitIdentity, setUnitCodebookCode, getScopeTree, runUnitIdentityBackfill, listCodebookMappings, listCodebookUnits,
+  countProjectedEquipment, codebookReleaseConfirm,
   UNIT_IDENTITY_WRITE_BUDGET, type UnitIdentityReport,
 } from "@/lib/operationalGraph";
 import { createAsset, updateAsset } from "@/lib/assets";
@@ -568,6 +569,47 @@ describe("the codebook is read whole — a unit past PostgREST's max-rows never 
   });
 });
 
+describe("every route read pages until an EMPTY window — never planned over a set PostgREST cut", () => {
+  it("with max-rows set below 1,000 (3 here) the decode still reads every document, item, unit and codebook unit", async () => {
+    seed({
+      codebook_entries: [
+        o({ id: "e20", kind: "unit", code: "20", label: "Crude Unit", meta: {}, sort: 0, origin: "manual" }),
+        o({ id: "e30", kind: "unit", code: "30", label: "Coker", meta: {}, sort: 1, origin: "manual" }),
+        o({ id: "e40", kind: "unit", code: "40", label: "Alky", meta: {}, sort: 2, origin: "manual" }),
+        o({ id: "e50", kind: "unit", code: "50", label: "Reformer", meta: {}, sort: 3, origin: "manual" }),
+      ],
+      units: [
+        o({ id: "u20", codebook_code: "20", archived: false }), o({ id: "u30", codebook_code: null, archived: false }),
+        o({ id: "u40", codebook_code: null, archived: false }), o({ id: "u50", codebook_code: "50", archived: false }),
+      ],
+      documents: [
+        ...Array.from({ length: 6 }, (_, i) => o({ id: `d${i}`, document_number: `2002-D-${i + 1}`, unit_code: null, unit_id: null })),
+        o({ id: "d9", document_number: "5002-D-1", unit_code: null, unit_id: null }),
+      ],
+      assets: [
+        ...Array.from({ length: 4 }, (_, i) => o({ id: `a${i}`, unit_code: "20", unit_id: null })),
+        o({ id: "a9", unit_code: "50", unit_id: null }),
+      ],
+    });
+    db.maxRows = 3;
+    const preview = await (await call({ orgId: ORG })).json();
+    // the 7th document decodes to unit 50 — the codebook's 4th unit, past the first window
+    expect(preview.documents).toMatchObject({ scanned: 7, decoded: 7, toWrite: 7 });
+    expect(preview.documents.unknownUnit.count).toBe(0);
+    // the 5th item is filed to 50, held by the 4th operational unit
+    expect(preview.assets).toMatchObject({ scanned: 5, toSet: 5 });
+    const body = await (await call({ orgId: ORG, dryRun: false })).json();
+    expect(body.remaining).toBe(0);
+    expect(row("documents", "d9").unit_code).toBe("50");
+    expect(row("assets", "a9").unit_id).toBe("u50");
+    expect(db.tables.assets.filter((a) => a.unit_code === "20").every((a) => a.unit_id === "u20")).toBe(true);
+    // the reader stops on an empty window, not a short one
+    const src = readFileSync("app/api/admin/unit-identity/route.ts", "utf8");
+    expect(src).toContain("if (batch.length === 0) return { rows, error: null };");
+    expect(src).not.toContain("if (batch.length < PAGE) return");
+  });
+});
+
 describe("runUnitIdentityBackfill — the panel works through the bounded calls", () => {
   const report = (over: Partial<UnitIdentityReport> & { dw?: number; aw?: number; dr?: number }): UnitIdentityReport => ({
     dryRun: false,
@@ -680,6 +722,58 @@ describe("the mapping on /admin/scope — data, and every write checked", () => 
     await expect(setUnitCodebookCode("u30", "20", "uid-1")).rejects.toThrow(/20261138\) is not applied/);
   });
 
+  it("countProjectedEquipment counts the items that point at the unit AND are filed under the code (what a release takes the unit off); null when it cannot be read", async () => {
+    db.tables.assets = [
+      o({ id: "a1", unit_code: "20", unit_id: "u20" }),
+      o({ id: "a2", unit_code: "20", unit_id: "u20" }),
+      o({ id: "a3", unit_code: "30", unit_id: "u20" }),   // set by hand to u20, filed elsewhere: not moved by a release of 20
+      o({ id: "a4", unit_code: "20", unit_id: null }),
+      { id: "a5", org_id: "org-2", unit_code: "20", unit_id: "u20" },
+    ];
+    expect(await countProjectedEquipment(ORG, "u20", "20")).toBe(2);
+    expect(await countProjectedEquipment(ORG, "u30", "20")).toBe(0);
+    db.readError = { assets: { message: "boom" } };
+    expect(await countProjectedEquipment(ORG, "u20", "20")).toBeNull();
+  });
+
+  it("releasing a mapped unit's code is confirmed as what it does — the codebook unit, the count, and that restoring an archived unit does not restore the mapping", () => {
+    const archive = codebookReleaseConfirm({ action: "archive", unitName: "Crude Unit", code: "20", label: "Crude", projected: 14 });
+    expect(archive.title).toBe("Archive Crude Unit?");
+    expect(archive.message).toMatch(/Crude Unit is Site Codebook unit 20 · Crude\. Archiving it releases that mapping\./);
+    expect(archive.message).toMatch(/14 equipment items filed under 20 point at Crude Unit and lose that operational unit — they stay filed under 20/);
+    expect(archive.message).toMatch(/Restoring the unit later does NOT bring the mapping back/);
+    // never the old promise
+    expect(archive.message).not.toMatch(/equipment that reference it keep(s)? (its|their) data/i);
+    expect(archive.confirmLabel).toMatch(/release the mapping/);
+    expect(codebookReleaseConfirm({ action: "archive", unitName: "U", code: "20", projected: 1 }).message).toMatch(/1 equipment item filed under 20 points at U and loses that operational unit — it stays filed under 20/);
+    expect(codebookReleaseConfirm({ action: "archive", unitName: "U", code: "20", projected: 0 }).message).toMatch(/No equipment filed under 20 points at U now\./);
+    // a count that could not be read is said as unknown, never as none
+    const unknown = codebookReleaseConfirm({ action: "unmap", unitName: "U", code: "20", projected: null });
+    expect(unknown.message).toMatch(/the count could not be read/);
+    expect(unknown.message).not.toMatch(/No equipment/);
+    expect(unknown.title).toBe("Unmap U?");
+    const remap = codebookReleaseConfirm({ action: "remap", unitName: "U", code: "20", label: "Crude", projected: 3, nextCode: "30", nextLabel: "Coker" });
+    expect(remap.message).toMatch(/Mapping it to Site Codebook unit 30 · Coker releases 20\. 3 equipment items filed under 20/);
+    expect(remap.message).toMatch(/Equipment filed under 30 with no operational unit takes U\./);
+  });
+
+  it("the scope page confirms a mapped unit's archive, unmap and remap with that message and the count; an unmapped unit, a plant and a system keep the plain one", () => {
+    const src = readFileSync("app/(protected)/admin/scope/page.tsx", "utf8");
+    expect(src).toContain("countProjectedEquipment(activeOrgId, unit.id, code)");
+    expect(src).toContain("...codebookReleaseConfirm({");
+    expect(src).toMatch(/if \(kind === "unit" && mapped\?\.code\) \{\s*if \(!\(await confirmRelease\("archive", \{ id, name: mapped\.name \}, mapped\.code\)\)\) return;\s*\} else if \(!\(await appConfirm\(\{ message: "Archive this scope node\? Documents and equipment that reference it keep their data/);
+    expect(src).toContain('onArchive={() => onArchive("unit", unit.id!, { name: unit.name, code: codebookCode })}');
+    expect(src).toMatch(/if \(current && code !== current\s*&& !\(await confirmRelease\(code \? "remap" : "unmap", unit, current, code\)\)\) return;\s*await setUnitCodebookCode\(unit\.id, code, uid\);/);
+    expect(src).toContain("onChange={(code) => onMapUnit({ id: unit.id!, name: unit.name }, codebookCode, code)}");
+    // the panel no longer promises a hand-set unit is never changed
+    expect(src).not.toMatch(/a unit already set by hand is never changed/);
+    expect(src).toMatch(/A unit set by hand that disagrees with the filing is never changed; one that matches the filing cannot be told from the mapping&apos;s and follows the filing and the mapping like it\./);
+    // a multi-sheet set shares a number: the sample list is keyed by position too
+    expect(src).toContain("d.notDecoding.samples.map((s, i) => (");
+    expect(src).toContain("<li key={`${s.number}-${i}`}>");
+    expect(src).not.toContain("<li key={s.number}>");
+  });
+
   it("the value is read back: an archived unit (whose code the database releases) is not a green save", async () => {
     // stand-in for 20261138's units_codebook_code_guard: an archived row holds no code
     db.triggers = { units: (r, patch) => ({ ...patch, ...((patch.archived ?? r.archived) ? { codebook_code: null } : {}) }) };
@@ -711,8 +805,16 @@ describe("20261138 — one paste, counts only, every object new", () => {
     expect(temp).toBeLessThan(begin);
     const inventory = code.slice(temp, begin);
     const selects = inventory.match(/SELECT\s+'[^']*(?:''[^']*)*'[^;]*?FROM/g) ?? [];
-    expect(selects.length).toBe(8);
+    expect(selects.length).toBe(9);
     for (const s of selects) expect(s).toMatch(/COUNT\(\*\)/);
+    // the widening's population (DEC-30, 20261040/41's convention): a scope writer
+    // role held together with Viewer or Auditor, read from the role COLLECTION
+    const gain = inventory.slice(inventory.indexOf("'active members who GAIN the widening of 7."));
+    expect(gain).toMatch(/FROM org_members\s*WHERE status = 'active'/);
+    const writerSet = gain.match(/role = ANY\(ARRAY\[([^\]]*)\]::text\[\]\) OR roles && ARRAY\[\1\]::text\[\]\)\s*AND/);
+    expect(writerSet).not.toBeNull();
+    expect(writerSet![1].split(",").map((r) => r.trim().replace(/^'|'$/g, "")).sort()).toEqual([...(adminSurface("scope")?.writes ?? [])].sort());
+    expect(gain).toMatch(/AND \(role = ANY\(ARRAY\['Viewer','Auditor'\]::text\[\]\) OR roles && ARRAY\['Viewer','Auditor'\]::text\[\]\);/);
     // never a customer row: no number, title, tag or name leaves the database
     expect(inventory).not.toMatch(/SELECT\s+(?:d\.|u\.)?(?:document_number|title|tag|name)\b/);
   });
@@ -858,6 +960,22 @@ describe("20261138 — one paste, counts only, every object new", () => {
     expect(code).toContain("AND (tgtype & 1) <> 0 AND (tgtype & 2) = 0 AND (tgtype & 4) <> 0 AND (tgtype & 16) <> 0)");
     expect(code).toContain("prosrc LIKE '%caller_holds_any_role(NEW.org_id, ARRAY[''Admin'',''Manager'',''Supervisor'',''DocCtrl'']::text[])%'");
     expect(code).toMatch(/AND prosecdef\s*\n\s*AND array_to_string\(proconfig, ','\) LIKE '%search_path=public%'\s*\n\s*FROM pg_proc WHERE proname = 'units_codebook_code_follow'/);
+  });
+
+  it("the SECURITY DEFINER trigger function is not executable by name (DRLS-16): EXECUTE revoked from PUBLIC, anon and authenticated, and probed", () => {
+    const create = code.indexOf("CREATE TRIGGER trg_units_codebook_code_follow");
+    const revoke = code.indexOf("REVOKE ALL ON FUNCTION units_codebook_code_follow() FROM PUBLIC, anon, authenticated;");
+    expect(create).toBeGreaterThan(-1);
+    expect(revoke).toBeGreaterThan(create);
+    expect(revoke).toBeLessThan(code.indexOf("COMMIT;"));
+    // nothing grants it back
+    expect(code).not.toMatch(/GRANT EXECUTE ON FUNCTION units_codebook_code_follow/);
+    expect(code).toContain("NOT has_function_privilege('anon', 'units_codebook_code_follow()', 'EXECUTE')");
+    expect(code).toContain("AND NOT has_function_privilege('authenticated', 'units_codebook_code_follow()', 'EXECUTE'),");
+    // every SECURITY DEFINER function this file creates is revoked from anon
+    const definers = [...code.matchAll(/CREATE OR REPLACE FUNCTION (\w+)\(([^)]*)\)[^$]*?SECURITY DEFINER/g)].map((m) => m[1]);
+    expect(definers.sort()).toEqual(["documents_total_for_org", "units_codebook_code_follow"]);
+    for (const fn of definers) expect(code).toMatch(new RegExp(`REVOKE ALL ON FUNCTION ${fn}\\([^)]*\\) FROM PUBLIC, anon`));
   });
 
   it("pg_proc probes double the apostrophes of the body's literals; no bare cast inside a LIKE pattern", () => {
