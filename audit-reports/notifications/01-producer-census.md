@@ -33,7 +33,7 @@ Which parts of the app notify, which are silent, and which vocabulary is dead. T
 ## PROD-1 · 26 of 48 NotificationKinds badge nothing: sectionForKind drops the entire compliance vocabulary into an unrendered 'other' bucket
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:124-132`, `components/navigation/Sidebar.tsx:229-235`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The claim is accurate and precisely counted. Downgraded from HIGH to MEDIUM because the summary's 'the user's legal obligation to read' framing overstates the blast radius: the notification is NOT swallowed — hooks/useTicketNotifications.ts:311 exposes `count: items.length` over the full merged feed, so the bell badge, NotificationCenter, and app/(protected)/inbox/page.tsx:36 (which consumes the same `items`) all surface ack_requested. Only the per-section sidebar badge is missing, and document-level AckSection/AckPill surfaces exist independently. Consistent with OS-12, which grades the identical defect MEDIUM.
@@ -73,6 +73,23 @@ components/navigation/Sidebar.tsx:229 —
 - [ ] sectionForKind maps every member of the NotificationKind union to a rendered section (or the union is narrowed to what is renderable)
 - [ ] A compile-time exhaustiveness check (`const _never: never = kind`) in sectionForKind's default arm makes a new kind a build error until it is mapped
 - [ ] Sidebar renders a badge for every section sectionCounts allocates, or emptySectionCounts stops allocating buckets nobody reads
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `lib/__tests__/notificationKinds.test.ts` was committed BEFORE any change (`e595cf5`) with the TODAY tables read from the source — `sectionForKind` returned `'other'` for 28 of the 50 union members (the audit's 26 plus `member_revoked` and `library_unowned`, added by R&P) and `'scratchpad'` for 3; `emptySectionCounts()` allocated five buckets; `components/navigation/Sidebar.tsx` badges three (`badgeOf(sectionCounts.documents|projects|requests)`); and the rendered hook, given one row of every kind written on `b9cdfdc`, tallied 33 rows into `other` and 3 into `scratchpad`, which no row reads. All seven assertions passed on the base, i.e. the defect reproduced as recorded.
+
+**Fix (package N2 KIND-REGISTRY, commit `95dbe50`).** New `lib/notificationKinds.ts` `KIND_META` (:72) classifies every `NotificationKind` in one literal — `section`, `actionRequired`, `compliance`, `icon`, `tone`, `group` — with `as const satisfies Record<NotificationKind, KindMeta>` (:163), and each kind's section decision written next to it (:73 requests, :81 documents — the moved kinds under :100, :128 projects — `project_comment` at :132, :135 bell-only). `NOTIFICATION_SECTIONS` (:38) is exactly `requests | documents | projects`. `hooks/useTicketNotifications.ts` `sectionForKind` (:96) reads it, with a `never` guard over the registry's own keys (:102), so a kind added to the union without an entry fails `tsc` twice (here and at the `satisfies`); `emptySectionCounts` (:135) allocates one bucket per rendered section and no other. `'scratchpad'` and `'other'` are gone from `AttentionSection`; a kind with `section: null` is bell-only — counted by the header bell, listed by the Center and `/inbox`, counted by no rail row, which is exactly where `'other'` left it. A legacy row whose kind is in no union (a retired `task_nudge`) resolves to null at runtime. Decision recorded as `DEC-44 (N2)` in `DECISIONS.md` (provisional number; the integrator renumbers).
+
+**Where each kind went** (`DEC-44 (N2)` §3; the plan's default): every kind that badged a row on `b9cdfdc` badges the same row; the document-scoped kinds that fell to `'other'` — `ack_requested`, `ack_complete`, `ack_overdue`, `ack_unsatisfiable`, `review_due`, `review_requested`, `review_signed`, `review_invalidated`, `review_complete`, `review_overdue`, `review_alternate_activated`, `library_doc_added`, `library_doc_revised`, `effective_now`, `owner_assigned`, `owner_behind`, `deletion_requested`, `retention_eligible`, `legal_hold_placed`, `legal_hold_released`, `access_recert_due`, `revision_published_over_checkout` — badge **Documents**; `project_comment` badges **Projects**; `orchestrator_message`, `security_export`, `member_revoked`, `library_unowned`, the three storage kinds, `ai_cap_changed` and `transmittal_unstampable` are bell-only, each with its reason in the registry. Nothing was mapped to Documents wholesale, and no emitted kind was deleted.
+
+- Files: `lib/notificationKinds.ts` (new), `lib/inAppNotifications.ts` (the union), `hooks/useTicketNotifications.ts`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` — "sectionForKind and KIND_META agree with TODAY + the departures, kind by kind"; "every kind that badged a row on b9cdfdc badges the same row now"; "the sections are exactly the rows the Sidebar badges" (parses `Sidebar.tsx`); "'other' is gone: the bell-only kinds are exactly the deliberate list"; "GAP-201 acceptance 1: a kind added without a KIND_META entry fails the type check" (type-checks the hook in memory with a probe kind appended: the `never` guard and the `satisfies` both fail; clean without it); and the rendered hook over one row of every kind written on `b9cdfdc` — every row still renders (55 items, as before), requests 5 (unchanged), documents 12 → 34, projects 2 → 3, and `sectionCounts` has exactly the three rendered keys.
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Every member of the union maps to a section a surface renders: one of the three rows the Sidebar badges, or `null` = bell-only, which the header bell renders (the union is not narrowed; the bell-only set is an explicit, tested list).
+- ✓ The compile-time guard: `const _never: never = kind` in `sectionForKind` (`hooks/useTicketNotifications.ts:102`), typed over `keyof typeof KIND_META`, plus the `satisfies` — proven by the in-memory type-check test.
+- ✓ `emptySectionCounts` allocates only `requests`, `documents`, `projects`, the buckets the Sidebar reads; a test pins the two lists equal.
+
+**Scope / residual.** NEDGE-1 stays REFUTED (DEC-41) and was not worked: the gap closed here is the per-section rail badge, not a missed notification. The trail below the rail (library / folder / document markers) is GAP-202 / `TRAIL-1`, N11; the badge's doorway to exactly its items is `TAX-1` / `TRAIL-3`, N3.
 
 ---
 
@@ -333,7 +350,7 @@ hooks/useTicketNotifications.ts:176 —
 ## PROD-8 · Five NotificationKinds have zero emitters anywhere in the repository — scratchpad leftovers plus checkout_handoff
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:33-36`, `lib/inAppNotifications.ts:16`, `hooks/useTicketNotifications.ts:80-87`, `components/notifications/NotificationBell.tsx:26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All five kinds confirmed emitter-free. The checkout_handoff half is also confirmed downstream: CheckInPanel.tsx:423-428 routes handoff_release through postHandoff() rather than emitting checkout_handoff, so the Lock icon at NotificationBell.tsx:26 is unreachable.
@@ -371,6 +388,20 @@ lib/inAppNotifications.ts:33-36 —
 
 - [ ] task_reminder, task_nudge, morning_digest, task_overdue_digest removed from the union, from KIND_ICON, and from sectionForKind; the 'scratchpad' member of AttentionSection deleted
 - [ ] notifyCheckoutActivity maps input.kind === 'handoff' to kind 'checkout_handoff' (and 'markup_ref' to 'markup_request') rather than collapsing all six to checkout_message
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `task_reminder`, `task_nudge`, `morning_digest`, `task_overdue_digest` have no producer (the comment-stripped search over `app/`, `lib/`, `components/`, `hooks/`, `scripts/`, `types/`, `public/`, `supabase/`), and `lib/activityThread.ts:158` wrote `kind: "checkout_message"` for every post kind, so `checkout_handoff` was never written. `markup_request` had no producer either (PROD-14's, N8).
+
+**Fix (commit `95dbe50`).** The four scratchpad kinds leave the union, `KIND_ICON` and `sectionForKind`; `'scratchpad'` leaves `AttentionSection`. `notifyCheckoutActivity` (`lib/activityThread.ts:158`) maps a `handoff` post to `checkout_handoff` and a `markup_ref` post to `markup_request`; every other post stays `checkout_message`. All three are Documents kinds, FYI, so no badge moves; the channel stays in-app (`notifyMany` has no email leg — so PROD-7's "chatty kinds pass `channels: ['inapp']`" has nothing to change at this site).
+
+- Files: `lib/inAppNotifications.ts`, `lib/notificationKinds.ts`, `hooks/useTicketNotifications.ts`, `components/notifications/NotificationBell.tsx`, `lib/activityThread.ts`.
+- Tests: `lib/__tests__/notificationKindThreadProducer.test.ts` (a handoff → `checkout_handoff`; a markup post → `markup_request`; chat / proposal / question / answer → `checkout_message`; a system post notifies nobody; all three badge Documents); `lib/__tests__/notificationKinds.test.ts` "a retired kind has no producer anywhere", "no declared kind without a producer".
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `task_reminder`, `task_nudge`, `morning_digest`, `task_overdue_digest` removed from the union, from `KIND_ICON` and from `sectionForKind`; the `'scratchpad'` member of `AttentionSection` deleted.
+- ✓ `notifyCheckoutActivity` maps `handoff` → `checkout_handoff` and `markup_ref` → `markup_request`.
+
+**Scope / residual.** A `markup_ref` post is written when markups are SHARED against a request (`lib/markupRequests.ts:134-148`, LIFE-8), and the thread renders it as "Markup request"; its notification title still reads "… requested markup on …" (`kindWord`, unchanged here — the wording belongs with TAX-3/TAX-4, N3/N9). If N8 (PROD-14) makes the ask itself an action, it must split the share off rather than flag `markup_request` as a whole.
 
 ---
 
@@ -415,7 +446,7 @@ lib/ownership.ts:79 (the unused-here resolver) —
 ## PROD-10 · Storage alerts bypass the NotificationKind union entirely, one of them via a template literal
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageAlerts.ts:60-66`, `lib/storageUsage.ts:255-258`, `supabase/migrations/20260621_in_app_notifications.sql:17`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — both bypass notify()/emit() with raw inserts, and the untyped `kind` column means they insert successfully rather than failing loudly. Downstream they fall through sectionForKind's `default: return 'other'` (useTicketNotifications.ts:100-101) and miss KIND_ICON (NotificationBell.tsx:19-44), so the generic-icon/no-badge rendering described is accurate.
@@ -444,6 +475,21 @@ supabase/migrations/20260621_in_app_notifications.sql:17 —
 - [ ] storage_alert (and each storage_${key} variant) is added to NotificationKind, or the storage alerts are folded into an existing kind
 - [ ] Both call sites route through notify()/emit() so the kind is type-checked
 - [ ] Optionally: a CHECK constraint or a trigger on notifications.kind so an unknown kind fails loudly instead of rendering as a generic bell
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `lib/storageAlerts.ts:60-65` and `lib/storageUsage.ts:255-258` inserted raw rows with `storage_alert` and `` `storage_${alert.key}` ``; neither kind was in the union. `lib/__tests__/notificationKindStorageProducers.test.ts` fails on the base producers (3 of 6 — the rows lacked `notify()`'s columns and the kinds were undeclared) and passes after.
+
+**Fix (commit `95dbe50`).** The set is finite (`storageUsage.ts`'s `hot[]` has two entries): `storage_alert`, `storage_platform_r2`, `storage_platform_db` join the union and `KIND_META` (bell-only, as `'other'` left them; HardDrive / Database icons, and the bell's `KIND_ICON` gains the three entries). Both watchdogs write through `notifyAsServiceRole` (`lib/storageAlerts.ts:23`) — `notify()`'s typed insert (`notifyChecked`, `lib/inAppNotifications.ts:101`) under the watchdog's service-role client for that call only (`lib/serverClientScope`, the intake door's pattern; the cron runs these steps outside its module-wide swap, so an unbound `notify()` would write as the anonymous client and be refused). `hot[]` carries a typed `kind: NotificationKind`, never a template string. The 7-day dedupe read is unchanged (it reads `kind = <the same kind>`). A refused write is no longer counted as an alert (`notifyChecked` answers whether the row landed; `notify()` keeps its fire-and-forget signature for its other callers).
+
+- Files: `lib/storageAlerts.ts`, `lib/storageUsage.ts`, `lib/inAppNotifications.ts`, `lib/notificationKinds.ts`, `components/notifications/NotificationBell.tsx` (`KIND_ICON` entries only).
+- Tests: `lib/__tests__/notificationKindStorageProducers.test.ts` (real `lib/supabase` proxy and `lib/inAppNotifications`, a service-role double: the row carries `notify()`'s full column set and the declared kind; the dedupe read stays; a refused write counts 0; the binding does not outlive the write; R2 and DB ceilings write `storage_platform_r2` / `_db`); the census in `lib/__tests__/notificationKinds.test.ts` (no raw insert left in either file).
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `storage_alert` and each `storage_${key}` variant (`storage_platform_r2`, `storage_platform_db`) are in `NotificationKind`.
+- ✓ Both call sites route through `notify()`'s typed insert, so the kind is type-checked.
+- Not done here (optional): a database CHECK / trigger on `notifications.kind`. That is N5's `notification_kinds` allowlist (migration A, seeded from `KIND_META`); this package needs no migration.
+
+**Scope / residual.** None in this finding.
 
 ---
 

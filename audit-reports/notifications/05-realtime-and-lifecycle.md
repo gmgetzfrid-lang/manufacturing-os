@@ -206,7 +206,7 @@ const isFirstRun = useRef(true);
 ## RT-6 · Roughly half of all notification kinds map to sidebar sections that no nav item renders — the bell counts them, nothing badges them, and the trail never starts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:100-102`, `hooks/useTicketNotifications.ts:284`, `components/navigation/Sidebar.tsx:229`, `components/navigation/Sidebar.tsx:231`, `components/navigation/Sidebar.tsx:235`, `lib/inAppNotifications.ts:10-58`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate, and if anything understated: 32 of ~52 kinds land in 'other' and 3 more in the unrendered 'scratchpad', so roughly two-thirds — not half — of kinds inflate the bell while badging nothing in the rail. ack_requested, every review_*/ack_* kind, library_doc_added/revised and effective_now are all in that unbadged set.
@@ -232,6 +232,24 @@ default:
 - [ ] the `'scratchpad'` section is deleted (its surface no longer exists) or a nav destination is restored for it
 - [ ] `sectionCounts.other` is either rendered somewhere (e.g. on the bell or an 'Everything else' nav row) or the type no longer permits producing an unrendered bucket
 - [ ] a test asserts: for each `NotificationKind`, `sectionForKind(kind)` returns a section that Sidebar badges
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `lib/__tests__/notificationKinds.test.ts` was committed BEFORE any change (`e595cf5`) with the TODAY tables read from the source — `sectionForKind` returned `'other'` for 28 of the 50 union members (the audit's 26 plus `member_revoked` and `library_unowned`, added by R&P) and `'scratchpad'` for 3; `emptySectionCounts()` allocated five buckets; `components/navigation/Sidebar.tsx` badges three (`badgeOf(sectionCounts.documents|projects|requests)`); and the rendered hook, given one row of every kind written on `b9cdfdc`, tallied 33 rows into `other` and 3 into `scratchpad`, which no row reads. All seven assertions passed on the base, i.e. the defect reproduced as recorded.
+
+**Fix (package N2 KIND-REGISTRY, commit `95dbe50`).** New `lib/notificationKinds.ts` `KIND_META` (:72) classifies every `NotificationKind` in one literal — `section`, `actionRequired`, `compliance`, `icon`, `tone`, `group` — with `as const satisfies Record<NotificationKind, KindMeta>` (:163), and each kind's section decision written next to it (:73 requests, :81 documents — the moved kinds under :100, :128 projects — `project_comment` at :132, :135 bell-only). `NOTIFICATION_SECTIONS` (:38) is exactly `requests | documents | projects`. `hooks/useTicketNotifications.ts` `sectionForKind` (:96) reads it, with a `never` guard over the registry's own keys (:102), so a kind added to the union without an entry fails `tsc` twice (here and at the `satisfies`); `emptySectionCounts` (:135) allocates one bucket per rendered section and no other. `'scratchpad'` and `'other'` are gone from `AttentionSection`; a kind with `section: null` is bell-only — counted by the header bell, listed by the Center and `/inbox`, counted by no rail row, which is exactly where `'other'` left it. A legacy row whose kind is in no union (a retired `task_nudge`) resolves to null at runtime. Decision recorded as `DEC-44 (N2)` in `DECISIONS.md` (provisional number; the integrator renumbers).
+
+**Where each kind went** (`DEC-44 (N2)` §3; the plan's default): every kind that badged a row on `b9cdfdc` badges the same row; the document-scoped kinds that fell to `'other'` — `ack_requested`, `ack_complete`, `ack_overdue`, `ack_unsatisfiable`, `review_due`, `review_requested`, `review_signed`, `review_invalidated`, `review_complete`, `review_overdue`, `review_alternate_activated`, `library_doc_added`, `library_doc_revised`, `effective_now`, `owner_assigned`, `owner_behind`, `deletion_requested`, `retention_eligible`, `legal_hold_placed`, `legal_hold_released`, `access_recert_due`, `revision_published_over_checkout` — badge **Documents**; `project_comment` badges **Projects**; `orchestrator_message`, `security_export`, `member_revoked`, `library_unowned`, the three storage kinds, `ai_cap_changed` and `transmittal_unstampable` are bell-only, each with its reason in the registry. Nothing was mapped to Documents wholesale, and no emitted kind was deleted.
+
+- Files: `lib/notificationKinds.ts` (new), `lib/inAppNotifications.ts` (the union), `hooks/useTicketNotifications.ts`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` — "sectionForKind and KIND_META agree with TODAY + the departures, kind by kind"; "every kind that badged a row on b9cdfdc badges the same row now"; "the sections are exactly the rows the Sidebar badges" (parses `Sidebar.tsx`); "'other' is gone: the bell-only kinds are exactly the deliberate list"; "GAP-201 acceptance 1: a kind added without a KIND_META entry fails the type check" (type-checks the hook in memory with a probe kind appended: the `never` guard and the `satisfies` both fail; clean without it); and the rendered hook over one row of every kind written on `b9cdfdc` — every row still renders (55 items, as before), requests 5 (unchanged), documents 12 → 34, projects 2 → 3, and `sectionCounts` has exactly the three rendered keys.
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Every kind maps to a section a surface renders, and the default is provably unreachable: the `never` guard at compile time (the type-check test proves it bites).
+- ✓ `'scratchpad'` is deleted (its surface is a redirect stub); its three kinds left the union with it (`PROD-8`).
+- ✓ The type no longer permits an unrendered bucket: `AttentionSection` is the three rendered rows, and `sectionCounts` has exactly those keys (rendered-hook test).
+- ✓ A test asserts, for each kind, that `sectionForKind` returns a section the Sidebar badges (parsed from `Sidebar.tsx`) — or null, for the explicit bell-only list.
+
+**Scope / residual.** None in this finding.
 
 ---
 

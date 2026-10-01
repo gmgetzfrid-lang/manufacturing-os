@@ -506,7 +506,7 @@ vercel.json:9-10  `      "path": "/api/cron/maintenance",\n      "schedule": "0 
 ## NEDGE-13 · Two declared digest kinds have full consumer support and no producer anywhere, while a live producer emits a kind that is not in the union at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:33-36`, `components/notifications/NotificationBell.tsx:41`, `hooks/useTicketNotifications.ts:80-83`, `lib/storageAlerts.ts:60-61`, `app/api/data-export/run/route.ts:54-58`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `kind: "task_overdue_digest"` and `kind: "morning_digest"` are each written **0** times anywhere in `app/` or `lib/`; the kinds exist only in the type union and in the consumer that renders them.
@@ -532,5 +532,20 @@ storageAlerts.ts:60-61  `      await sb.from("notifications").insert({\n        
 - [ ] morning_digest and task_overdue_digest are either implemented (a composer that writes bell rows) or deleted from the union, the icon map and sectionForKind — no declared kind without a producer
 - [ ] storage_alert joins the union and lib/storageAlerts.ts routes through notify()
 - [ ] Raw `from("notifications").insert` call sites are migrated onto notify()/notifyMany() so kind is type-checked at every producer, or a lint rule bans the direct insert outside lib/inAppNotifications.ts
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `task_overdue_digest` and `morning_digest` (and `task_nudge`, `task_reminder`) appear only in the union, `sectionForKind` and `KIND_ICON` — no producer in `app/`, `lib/`, `components/`, `hooks/`, `scripts/`, `types/`, `public/` or any SQL (the census test's comment-stripped search); `storage_alert` was a raw insert outside the union (`lib/storageAlerts.ts:60`).
+
+**Fix (commit `95dbe50`).** The four producer-less kinds are deleted from the union (`lib/inAppNotifications.ts`, with a note saying why and what to grep before removing a kind), from `sectionForKind` (now registry-driven) and from `KIND_ICON` (the `task_overdue_digest: ListChecks` entry). `storage_alert` joins the union and `lib/storageAlerts.ts` writes through `notify()`'s typed insert (`PROD-10`). The census test is the rule for raw inserts.
+
+- Files: `lib/inAppNotifications.ts`, `lib/notificationKinds.ts`, `hooks/useTicketNotifications.ts`, `components/notifications/NotificationBell.tsx`, `lib/storageAlerts.ts`, `lib/storageUsage.ts`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` "a retired kind has no producer anywhere", "a legacy row of a retired kind is bell-only and FYI", "the bell's icon map: the dead task_overdue_digest entry gone", "the producer census"; `lib/__tests__/notificationKindStorageProducers.test.ts`.
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `morning_digest` and `task_overdue_digest` are deleted from the union, the icon map and `sectionForKind` — no declared kind without a producer (a census test asserts every declared kind is written somewhere).
+- ✓ `storage_alert` joins the union and `lib/storageAlerts.ts` routes through `notify()`.
+- ✓ (the rule arm) The census test bans a NEW direct insert outside `lib/inAppNotifications.ts` and type-checks the kind of every existing one (a raw insert's kind must evaluate to union members). The eleven existing raw inserts are pinned by file with their owners (listed under `TAX-11`); they move to `notify()` with those packages.
+
+**Scope / residual.** A legacy row of a retired kind still renders, bell-only and FYI — where its unrendered bucket left it. The only digest remains the cron's compliance email (N6).
 
 ---

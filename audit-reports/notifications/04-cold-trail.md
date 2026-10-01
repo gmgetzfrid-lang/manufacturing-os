@@ -81,7 +81,7 @@ ProjectCard, projects/page.tsx:216-228 — status pill + Private/Public pill onl
 ## TRAIL-2 · 26 of the 48 notification kinds fall through sectionForKind's default to 'other', and no sidebar row badges 'other' or 'scratchpad' — including every PSM compliance action (ack_requested, review_requested, review_due)
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:124-132`, `components/navigation/Sidebar.tsx:225-250`, `lib/inAppNotifications.ts:10-58`
 - **Also surfaced independently as** [`PROD-1`](./01-producer-census.md#prod-1) — two lenses found this separately. Fix once.
@@ -122,6 +122,23 @@ Grep for `sectionCounts` across the repo returns hits only in Sidebar.tsx (3 bad
 - [ ] sectionForKind maps every document-scoped kind (ack_*, review_*, library_doc_*, effective_now, owner_*, deletion_requested, retention_eligible, legal_hold_*, access_recert_due, revision_published_over_checkout) to 'documents' and project_comment to 'projects'
 - [ ] an exhaustiveness check (switch over NotificationKind with a never-typed default) fails the build when a new kind is added without a section
 - [ ] either a nav row consumes sectionCounts.other/scratchpad or those buckets are deleted
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: `lib/__tests__/notificationKinds.test.ts` was committed BEFORE any change (`e595cf5`) with the TODAY tables read from the source — `sectionForKind` returned `'other'` for 28 of the 50 union members (the audit's 26 plus `member_revoked` and `library_unowned`, added by R&P) and `'scratchpad'` for 3; `emptySectionCounts()` allocated five buckets; `components/navigation/Sidebar.tsx` badges three (`badgeOf(sectionCounts.documents|projects|requests)`); and the rendered hook, given one row of every kind written on `b9cdfdc`, tallied 33 rows into `other` and 3 into `scratchpad`, which no row reads. All seven assertions passed on the base, i.e. the defect reproduced as recorded.
+
+**Fix (package N2 KIND-REGISTRY, commit `95dbe50`).** New `lib/notificationKinds.ts` `KIND_META` (:72) classifies every `NotificationKind` in one literal — `section`, `actionRequired`, `compliance`, `icon`, `tone`, `group` — with `as const satisfies Record<NotificationKind, KindMeta>` (:163), and each kind's section decision written next to it (:73 requests, :81 documents — the moved kinds under :100, :128 projects — `project_comment` at :132, :135 bell-only). `NOTIFICATION_SECTIONS` (:38) is exactly `requests | documents | projects`. `hooks/useTicketNotifications.ts` `sectionForKind` (:96) reads it, with a `never` guard over the registry's own keys (:102), so a kind added to the union without an entry fails `tsc` twice (here and at the `satisfies`); `emptySectionCounts` (:135) allocates one bucket per rendered section and no other. `'scratchpad'` and `'other'` are gone from `AttentionSection`; a kind with `section: null` is bell-only — counted by the header bell, listed by the Center and `/inbox`, counted by no rail row, which is exactly where `'other'` left it. A legacy row whose kind is in no union (a retired `task_nudge`) resolves to null at runtime. Decision recorded as `DEC-44 (N2)` in `DECISIONS.md` (provisional number; the integrator renumbers).
+
+**Where each kind went** (`DEC-44 (N2)` §3; the plan's default): every kind that badged a row on `b9cdfdc` badges the same row; the document-scoped kinds that fell to `'other'` — `ack_requested`, `ack_complete`, `ack_overdue`, `ack_unsatisfiable`, `review_due`, `review_requested`, `review_signed`, `review_invalidated`, `review_complete`, `review_overdue`, `review_alternate_activated`, `library_doc_added`, `library_doc_revised`, `effective_now`, `owner_assigned`, `owner_behind`, `deletion_requested`, `retention_eligible`, `legal_hold_placed`, `legal_hold_released`, `access_recert_due`, `revision_published_over_checkout` — badge **Documents**; `project_comment` badges **Projects**; `orchestrator_message`, `security_export`, `member_revoked`, `library_unowned`, the three storage kinds, `ai_cap_changed` and `transmittal_unstampable` are bell-only, each with its reason in the registry. Nothing was mapped to Documents wholesale, and no emitted kind was deleted.
+
+- Files: `lib/notificationKinds.ts` (new), `lib/inAppNotifications.ts` (the union), `hooks/useTicketNotifications.ts`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` — "sectionForKind and KIND_META agree with TODAY + the departures, kind by kind"; "every kind that badged a row on b9cdfdc badges the same row now"; "the sections are exactly the rows the Sidebar badges" (parses `Sidebar.tsx`); "'other' is gone: the bell-only kinds are exactly the deliberate list"; "GAP-201 acceptance 1: a kind added without a KIND_META entry fails the type check" (type-checks the hook in memory with a probe kind appended: the `never` guard and the `satisfies` both fail; clean without it); and the rendered hook over one row of every kind written on `b9cdfdc` — every row still renders (55 items, as before), requests 5 (unchanged), documents 12 → 34, projects 2 → 3, and `sectionCounts` has exactly the three rendered keys.
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Every document-scoped kind listed — `ack_*`, `review_*`, `library_doc_*`, `effective_now`, `owner_*`, `deletion_requested`, `retention_eligible`, `legal_hold_*`, `access_recert_due`, `revision_published_over_checkout` — is `'documents'`, and `project_comment` is `'projects'` (`KIND_META`, pinned kind by kind).
+- ✓ The exhaustiveness check fails the build for a new unclassified kind (the `never` guard and the `satisfies`; the type-check test).
+- ✓ The `'other'` and `'scratchpad'` buckets are deleted; bell-only kinds tally into no bucket.
+
+**Scope / residual.** `ack_requested` now also turns the Documents badge red (`DEC-44 (N2)` §2, `TRAIL-5`). Following the badge to the item is N3 (`TAX-1` / `TRAIL-3`) and N11 (`TRAIL-1`).
 
 ---
 
@@ -230,7 +247,7 @@ Grep for `markRead|read_at` across components/, app/, hooks/, lib/ (excluding in
 ## TRAIL-5 · tally(section, false) hardcodes actionRequired to zero for every notification-sourced item — the Documents and Projects badges are structurally incapable of turning red
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:301`, `hooks/useTicketNotifications.ts:288`, `hooks/useTicketNotifications.ts:272`, `components/navigation/Sidebar.tsx:128-131`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Claim is exactly right: sectionCounts.documents.actionRequired and .projects.actionRequired are literally unreachable, so those rows can only ever badge blue ('unread FYI' per the Sidebar's own contract at line 22). Downgraded to MEDIUM because no information is lost — the count still renders and the badge button (Sidebar.tsx:537-544) opens the Notification Center, whose own counts.action (NotificationCenter.tsx:78) does classify these items correctly; only the tone and the pre-filter are wrong.
@@ -271,6 +288,21 @@ Sidebar.tsx:22 (the contract this violates): `//     Badges: red = action requir
 - [ ] tally(section, actionKinds.has(n.kind)) — the computed flag reaches the tally
 - [ ] a checkout_conflict / checkout_released / overlap_advisory / branch_open notification turns the Documents badge red
 - [ ] a test asserts sectionCounts.documents.actionRequired > 0 for a checkout_conflict row
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: the TODAY test (`e595cf5`) renders the hook with one row of every kind written; the four conflict rows carried `actionRequired: true` on the item, yet `sectionCounts.documents` was `{ total: 12, actionRequired: 0 }` — `tally(section, false)` at the old `:348`.
+
+**Fix (commit `95dbe50`).** `hooks/useTicketNotifications.ts:332` reads the flag from the registry (`kindMeta(n.kind)?.actionRequired ?? false`) and `:351` passes it to the tally — `if (section) tally(section, actionRequired)`. The flag is `KIND_META.actionRequired`: the conflict class as before, plus the PSM obligations `ack_requested`, `review_requested`, `review_invalidated`, `ack_overdue`, `review_overdue`, `access_recert_due`, `effective_now` (`DEC-44 (N2)` §2 — the plan's default, for ratification), so a Documents badge can turn red, and pulse (`Sidebar.tsx`), for a PSM obligation. `review_due` stays FYI: it is sent up to 30 days ahead of the date, and a lapse escalates as `owner_behind`.
+
+- Files: `hooks/useTicketNotifications.ts`, `lib/notificationKinds.ts`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` "TRAIL-5: a checkout_conflict row turns the Documents badge red" (`{ total: 1, actionRequired: 1 }`); the all-kinds render (documents `actionRequired` 0 → 11 = 4 conflict + 7 PSM); "actionRequired: the conflict class as before, plus the PSM obligations".
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The computed flag reaches the tally.
+- ✓ A `checkout_conflict` / `checkout_released` / `overlap_advisory` / `branch_open` notification turns the Documents badge red (`badgeOf` is unchanged: red when `actionRequired > 0`).
+- ✓ A test asserts `sectionCounts.documents.actionRequired > 0` for a `checkout_conflict` row.
+
+**Scope / residual.** An action notification counts until it is read; clearing it on arrival is `TRAIL-4` (N11). The Center's "Mark all read" still shows only when there is activity (unchanged rule), so a feed holding only action items offers per-row mark-read there; the bell's button is unchanged (N3 relabels it).
 
 ---
 
@@ -591,7 +623,7 @@ lib/branches.ts:144: ``link: input.libraryId ? `/documents/${input.libraryId}?do
 ## TRAIL-13 · actionRequiredCount and the notification center's 'Action' tab disagree about what counts as action-required
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:256`, `hooks/useTicketNotifications.ts:288`, `components/notifications/NotificationCenter.tsx:78`, `components/dashboard/widgets.tsx:1223`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — one hook call yields two different action counts, and a checkout_conflict/checkout_released/overlap_advisory/branch_open row is counted by the center's 'Action' tab but not by actionRequiredCount, which the Command Deck stat that opens that tab renders.
@@ -621,5 +653,19 @@ widgets.tsx:1223: `const { count: attentionCount, actionRequiredCount } = useTic
 
 - [ ] actionRequiredCount is derived from items.filter(i => i.actionRequired) so every consumer agrees
 - [ ] or the notification loop increments ar/ur alongside the item push
+
+**Resolution (2026-10-01, notifications Round G).** **Reproduced first** on `b9cdfdc`: the TODAY test (`e595cf5`) renders the hook with four conflict-class notifications in the feed (`items` flagged them `actionRequired`) and `actionRequiredCount` was 0 — the old `ar` counted tickets only.
+
+**Fix (commit `95dbe50`).** `hooks/useTicketNotifications.ts` computes `counts` once from the merged feed (:356, `{ all, action, activity }`) and returns `actionRequiredCount: counts.action` (:370) — tickets and notifications alike — and `unreadCount: counts.activity` (:373). The ticket-only `ar` / `ur` counters are gone (the ticket loop's `isActionRequired(...)` evaluation under policy + `activeMemberCount` is untouched — WF-24 / DEC-12 / DEC-37). The Command Deck (`inbox/page.tsx:189`, `widgets.tsx:1288`) reads that `actionRequiredCount`; the Center's Action filter counts the same `counts.action`.
+
+- Files: `hooks/useTicketNotifications.ts`, `app/(protected)/inbox/page.tsx`, `components/dashboard/widgets.tsx`, `components/notifications/NotificationCenter.tsx`.
+- Tests: `lib/__tests__/notificationKinds.test.ts` "TRAIL-13: tickets and notifications are counted together" (an unread ticket, a conflict and an FYI row: `counts` `{ all: 3, action: 1, activity: 2 }`, `actionRequiredCount === items.filter(actionRequired).length`) and "counts are computed once — action + activity = all".
+- Verified: loop on `fleet/N2-kind-registry` at `95dbe50`: `npx tsc --noEmit` exit 0; `npx eslint` on the 14 changed code and test files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` (full suite) exit 0 — 349 files, 7298 passed, 5 expected-fail. (Two default-worker runs on a machine at load 25 on 4 CPUs each timed out two unrelated fuzz tests at the 5 s default — a different pair each time, each passing alone.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `actionRequiredCount` is derived from the items (`counts.action` = `items.filter(i => i.actionRequired).length`), so every consumer agrees.
+- (alternative arm, not needed) the notification loop no longer keeps a separate counter at all.
+
+**Scope / residual.** None.
 
 ---
