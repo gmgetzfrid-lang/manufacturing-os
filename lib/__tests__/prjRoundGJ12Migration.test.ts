@@ -2,7 +2,8 @@
 // registry rail on an award (projects-tab MON-12), the award as one
 // transaction (GAP-406), the one-request checklist apply (PERF-7 / DEC-52
 // item 10), the contractor-link and item-contractor rules (MON-13 / DEC-76
-// item 3) and the project audit rows written under another type (SEC-21).
+// item 3), the project audit rows written under another type (SEC-21) and
+// the contractor outcome notice's claim (SAF-9).
 //
 // There is no live database here: the migration is read as text — the
 // one-paste protocol (DEC-30), the DRLS-16 rule for every function it adds,
@@ -112,6 +113,25 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(C).toMatch(/CREATE TRIGGER trg_cost_documents_award_registry\s*\n\s*BEFORE INSERT OR UPDATE OF status ON cost_documents/);
     expect(rail).toContain("IF NEW.status IS DISTINCT FROM 'awarded' THEN RETURN NEW; END IF;");
     expect(rail).toContain("IF TG_OP = 'UPDATE' AND OLD.status = 'awarded' THEN RETURN NEW; END IF;");
+  });
+  it("the write that awards a quote may not also move the link, the contractor or the vendor name it is judged by (review major)", () => {
+    const guard = rail.indexOf("IF TG_OP = 'UPDATE' AND (NEW.party_id IS DISTINCT FROM OLD.party_id");
+    expect(guard).toBeGreaterThan(rail.indexOf("IF TG_OP = 'UPDATE' AND OLD.status = 'awarded' THEN RETURN NEW; END IF;"));
+    expect(guard).toBeLessThan(rail.indexOf("v_company := cost_doc_company_behind("));
+    expect(rail).toContain("OR NEW.vendor_name IS DISTINCT FROM OLD.vendor_name");
+    expect(rail).toContain("OR (to_jsonb(NEW) ->> 'company_id') IS DISTINCT FROM (to_jsonb(OLD) ->> 'company_id')) THEN");
+    // award_quote's own claim changes status and its stamps only — it never trips the guard
+    expect(fn("award_quote")).toContain("UPDATE cost_documents SET status = 'awarded', posted_at = now(), posted_by = v_uid\n");
+    // and so does the lib's client-sequence claim
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    expect(lib).toContain("? { status: to, posted_at: new Date().toISOString(), posted_by: actorUid }");
+  });
+  it("a link counts only to a company of the document's own org — the rail reads as the definer, past every org's RLS (review major)", () => {
+    const behind = fn("cost_doc_company_behind");
+    expect(behind).toContain("FROM companies c WHERE c.id = p_company AND c.org_id = p_org;");
+    expect(behind).toContain("FROM companies c WHERE c.id = v_party_company AND c.org_id = p_org;");
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    expect(between(lib, "async function companyBehind(", "\n}\n")).toContain('.eq("id", id).eq("org_id", doc.orgId).maybeSingle()');
   });
   it("refuses a do-not-use or inactive company unless award_quote set the override for THIS document", () => {
     expect(rail).toMatch(/v_company ->> 'status' IN \('do_not_use', 'inactive'\)\s*\n\s*AND COALESCE\(current_setting\('app\.cost_doc_award_override', true\), ''\) IS DISTINCT FROM NEW\.id::text/);
@@ -255,7 +275,34 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     expect(audit).toMatch(/"MILESTONE_CREATED"/);
     expect(audit).toContain("milestoneId: params.milestoneId");
   });
+  it("a gone (or unreadable) milestone's row stays readable when it is typed milestone (org-level); a document-typed one is the audit roles' (review minor)", () => {
+    const f = between(C, "CREATE OR REPLACE FUNCTION public.audit_row_project_ref_visible(", "\n$$;");
+    const found = f.indexOf("AND EXISTS (SELECT 1 FROM public.milestones m WHERE m.id = (p_details ->> 'milestoneId')::uuid)");
+    const orgLevel = f.indexOf("WHEN p_type = 'milestone' THEN true");
+    expect(found).toBeGreaterThan(0);
+    expect(orgLevel).toBeGreaterThan(found);
+    expect(f.slice(orgLevel)).toMatch(/^WHEN p_type = 'milestone' THEN true\s*\n\s*ELSE false END/);
+    // lib/milestones.ts writes 'milestone' only for a milestone on no project and no document
+    const ms = readFileSync(join(root, "lib/milestones.ts"), "utf8");
+    expect(ms).toMatch(/function pickResource\(/);
+    expect(C).toContain("audit_row_project_ref_visible('MILESTONE_DELETED', 'milestone', '00000000-0000-0000-0000-000000000000', '{\"milestoneId\":\"00000000-0000-0000-0000-000000000000\"}'::jsonb)");
+  });
   it("leaves the other audit_logs policies alone", () => {
     expect(C).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
+  });
+});
+
+describe("SAF-9 — the contractor outcome notice is claimed once per attempt", () => {
+  it("a UNIQUE partial index on the claim rows (org, version, attempt), inside the one transaction, probed after it", () => {
+    const idx = C.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS audit_logs_intake_outcome_notice_claim_uniq");
+    expect(idx).toBeGreaterThan(C.indexOf("\nBEGIN;"));
+    expect(idx).toBeLessThan(C.indexOf("\nCOMMIT;"));
+    expect(C).toMatch(/ON audit_logs \(org_id, \(details ->> 'versionId'\), \(details ->> 'attempt'\)\)\s*\n\s*WHERE action = 'INTAKE_OUTCOME_NOTICE_CLAIMED';/);
+    expect(C.slice(C.indexOf("\nCOMMIT;"))).toContain("indexname = 'audit_logs_intake_outcome_notice_claim_uniq'");
+    // the route claims with exactly these keys
+    const route = readFileSync(join(root, "app/api/intake/outcome-notice/route.ts"), "utf8");
+    expect(route).toContain('const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";');
+    expect(route).toContain("details: { versionId, attempt, projectId: l.project_id, linkId: l.id, outcome },");
+    expect(route.indexOf("action: CLAIMED")).toBeLessThan(route.indexOf('await fetch("https://api.resend.com/emails"'));
   });
 });

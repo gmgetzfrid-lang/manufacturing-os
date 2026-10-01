@@ -209,6 +209,9 @@ export default function ProjectDetailPage() {
         listProjectCheckouts(projectId),
       ]);
       setMembers(m);
+      // PERF-8: the coach mounts with what this load read, and gathers
+      // beside the checkout hydration below rather than after it.
+      setCoachPre({ project: got.row, members: m });
       activeOrgMemberIds(proj.orgId, m.map((x) => x.userId))
         .then(setActiveMemberIds)
         .catch(() => setActiveMemberIds(null));
@@ -236,7 +239,6 @@ export default function ProjectDetailPage() {
       } else {
         setCheckouts([]);
       }
-      setCoachPre({ project: got.row, members: m });
       setCoachKey((k) => k + 1);
     } catch (e) {
       setError((e as Error)?.message ? userFacingCaughtError(e, { action: "read", context: "project page" }) : "Failed to load project");

@@ -2,7 +2,9 @@
 // the contractor is emailed the decision on their submission, on approval
 // and on rejection alike, through the server's email path — by a caller
 // who may decide the submission, with the outcome read from the database,
-// to the contact the org entered on the link (DEC-56), once.
+// to the contact the org entered on the link (DEC-56), once — claimed before
+// it is sent, so two concurrent calls send one email (20261157's unique
+// index on the claim rows, played by the mock below).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -13,14 +15,28 @@ const state = vi.hoisted(() => ({
   rows: {} as Record<string, Row[]>,
   errors: {} as Record<string, { message: string }>,
   inserts: [] as Array<{ table: string; row: Row }>,
+  /** 20261157 applied: the claim rows are unique per (org, version, attempt). */
+  uniqueClaims: true,
+  insertErrors: {} as Record<string, { code?: string; message: string }>,
 }));
+const claimKey = (r: Row) => `${r.org_id}|${(r.details as Row | undefined)?.versionId}|${(r.details as Row | undefined)?.attempt}`;
 function chain(table: string) {
   const preds: Array<(r: Row) => boolean> = [];
   let insertRow: Row | null = null;
   const rows = () => (state.rows[table] ?? []).filter((r) => preds.every((p) => p(r)));
   const answer = () => {
     if (state.errors[table]) return { data: null, error: state.errors[table] };
-    if (insertRow) { state.inserts.push({ table, row: insertRow }); return { data: null, error: null }; }
+    if (insertRow) {
+      const row = insertRow;
+      if (state.insertErrors[table]) return { data: null, error: state.insertErrors[table] };
+      if (state.uniqueClaims && table === "audit_logs" && row.action === "INTAKE_OUTCOME_NOTICE_CLAIMED"
+          && (state.rows.audit_logs ?? []).some((r) => r.action === row.action && claimKey(r) === claimKey(row))) {
+        return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"audit_logs_intake_outcome_notice_claim_uniq\"" } };
+      }
+      state.inserts.push({ table, row });
+      (state.rows[table] ??= []).push(row);
+      return { data: null, error: null };
+    }
     return { data: rows(), error: null };
   };
   const c: Row = {};
@@ -29,6 +45,7 @@ function chain(table: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => resolve(answer());
       return (...args: unknown[]) => {
         if (prop === "eq") preds.push((r) => r[args[0] as string] === args[1]);
+        if (prop === "in") preds.push((r) => (args[1] as unknown[]).includes(r[args[0] as string]));
         if (prop === "contains") {
           const [col, sub] = args as [string, Row];
           preds.push((r) => Object.entries(sub).every(([k, v]) => (r[col] as Row | undefined)?.[k] === v));
@@ -69,6 +86,8 @@ beforeEach(() => {
   state.user = { id: "u-owner", email: "owner@plant.io" };
   state.errors = {};
   state.inserts = [];
+  state.uniqueClaims = true;
+  state.insertErrors = {};
   state.rows = {
     org_members: [
       { org_id: ORG, uid: "u-owner", role: "Requester", roles: [], status: "active" },
@@ -145,10 +164,16 @@ describe("POST /api/intake/outcome-notice — what it sends, and when", () => {
     const mail = JSON.parse(init.body) as { from: string; to: string; subject: string; text: string };
     expect(mail).toMatchObject({ from: "noreply@plant.io", to: "qa@gulfmech.example", subject: "Not accepted — resubmit: WPS-12 — Weld procedure Rev B for Unit 300" });
     expect(mail.text).toContain("Reviewer's reason: Missing PQR reference.");
-    expect(audits()).toEqual([expect.objectContaining({
-      action: "INTAKE_OUTCOME_NOTIFIED", resource_type: "document", resource_id: DOC, org_id: ORG, user_id: "u-owner",
-      details: { versionId: VER, projectId: PROJ, linkId: LINK, company: "Gulf Mechanical", outcome: "rejected" },
-    })]);
+    expect(audits()).toEqual([
+      expect.objectContaining({
+        action: "INTAKE_OUTCOME_NOTICE_CLAIMED", resource_type: "document", resource_id: DOC, org_id: ORG, user_id: "u-owner",
+        details: { versionId: VER, attempt: 1, projectId: PROJ, linkId: LINK, outcome: "rejected" },
+      }),
+      expect.objectContaining({
+        action: "INTAKE_OUTCOME_NOTIFIED", resource_type: "document", resource_id: DOC, org_id: ORG, user_id: "u-owner",
+        details: { versionId: VER, attempt: 1, projectId: PROJ, linkId: LINK, company: "Gulf Mechanical", outcome: "rejected" },
+      }),
+    ]);
   });
   it("an approval (or a release with no review state) is sent as accepted", async () => {
     Object.assign(state.rows.document_versions[0], { review_state: null, released_at: "2026-10-01T00:00:00Z" });
@@ -185,8 +210,55 @@ describe("POST /api/intake/outcome-notice — what it sends, and when", () => {
     const res = await post({ orgId: ORG, versionId: VER });
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ sent: false, reason: "send_failed" });
-    const [row] = audits();
+    const [claim, row] = audits();
+    expect(claim.action).toBe("INTAKE_OUTCOME_NOTICE_CLAIMED");
     expect(row.action).toBe("INTAKE_OUTCOME_NOTICE_FAILED");
     expect((row.details as { error: string }).error).toBe("Resend 403: domain not verified");
+    // a failed send frees the next attempt: a retry claims attempt 2 and sends
+    sent.mockImplementation(async () => new Response("{}", { status: 200 }));
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: true, outcome: "rejected" });
+    expect(audits().slice(2).map((a) => [a.action, (a.details as Row).attempt])).toEqual([
+      ["INTAKE_OUTCOME_NOTICE_CLAIMED", 2], ["INTAKE_OUTCOME_NOTIFIED", 2],
+    ]);
+  });
+});
+
+describe("POST /api/intake/outcome-notice — one email, however many calls (review minor: claim before send)", () => {
+  it("two concurrent calls (a double-click, a decision in two tabs) send ONE email: the second claim of the attempt is refused", async () => {
+    const [a, b] = await Promise.all([post({ orgId: ORG, versionId: VER }), post({ orgId: ORG, versionId: VER })]);
+    const answers = [await a.json(), await b.json()];
+    expect(answers).toContainEqual({ sent: true, outcome: "rejected" });
+    expect(answers).toContainEqual({ sent: false, reason: "in_progress" });
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(audits().filter((x) => x.action === "INTAKE_OUTCOME_NOTICE_CLAIMED")).toHaveLength(1);
+    expect(audits().filter((x) => x.action === "INTAKE_OUTCOME_NOTIFIED")).toHaveLength(1);
+    // and a later call answers "already"
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: false, reason: "already" });
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+  it("a claim with no outcome after it (a send under way, or one that died) answers in_progress and never sends again", async () => {
+    state.rows.audit_logs.push({ org_id: ORG, action: "INTAKE_OUTCOME_NOTICE_CLAIMED", resource_id: DOC, details: { versionId: VER, attempt: 1 } });
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: false, reason: "in_progress" });
+    expect(sent).not.toHaveBeenCalled();
+  });
+  it("a claim that cannot be written sends nothing (503); nor does a failed read of what was already done", async () => {
+    state.insertErrors.audit_logs = { code: "42501", message: "permission denied" };
+    const res = await post({ orgId: ORG, versionId: VER });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/could not be recorded before sending — nothing was sent/);
+    expect(sent).not.toHaveBeenCalled();
+    state.insertErrors = {};
+    state.errors.audit_logs = { message: "network" };
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(503);
+    expect(sent).not.toHaveBeenCalled();
+  });
+  it("the claim comes BEFORE the provider call", async () => {
+    let claimedBeforeSend = false;
+    sent.mockImplementation(async () => {
+      claimedBeforeSend = audits().some((x) => x.action === "INTAKE_OUTCOME_NOTICE_CLAIMED");
+      return new Response("{}", { status: 200 });
+    });
+    await post({ orgId: ORG, versionId: VER });
+    expect(claimedBeforeSend).toBe(true);
   });
 });

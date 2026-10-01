@@ -1,6 +1,6 @@
 -- 20261157_prj_roundG_server_remainders.sql
 --
--- projects Round G — J12 SERVER REMAINDERS. Five database halves that the
+-- projects Round G — J12 SERVER REMAINDERS. Six database halves that the
 -- merged packages left in the browser, in one paste:
 --
 -- WHAT:
@@ -16,11 +16,17 @@
 --      registry link (cost_documents.company_id, 20261096 — read through
 --      to_jsonb so a database without the column is not broken), then its
 --      contractor's (project_parties.company_id), then ONE exact
---      case-insensitive name match in the org. The rail reads the registry
---      as the definer (`cost_doc_company_behind` called from it runs as the
---      owner), so a row the caller cannot read does not slip past. The
---      service role (auth.uid() NULL — restores, server routes, the SQL
---      editor) keeps its pass, as every Round G rail does.
+--      case-insensitive name match in the org; a link counts only to a
+--      company of the document's own org. The rail reads the registry as
+--      the definer (`cost_doc_company_behind` called from it runs as the
+--      owner), so a row the caller cannot read does not slip past. The write
+--      that awards a quote may not also change the company link, the
+--      contractor or the vendor name it is judged by. NOT covered (recorded
+--      on projects-tab MON-12, which stays OPEN): moving those first, in a
+--      write of their own, and awarding after — the bid row's company picker
+--      asks a reason for moving a bid off a do-not-use company only in the
+--      browser. The service role (auth.uid() NULL — restores, server routes,
+--      the SQL editor) keeps its pass, as every Round G rail does.
 --   2. GAP-406 — the award as ONE transaction. `award_quote(p_doc,
 --      p_cost_account, p_expected_total, p_override_reason,
 --      p_confirmed_total)` (SECURITY INVOKER: every read and write is the
@@ -77,12 +83,22 @@
 --      `details.projectId` follows that project; an intake-link row
 --      (`project_intake_link`) follows the link's project; a MILESTONE_* row
 --      follows its milestone's project (`details.milestoneId`; a milestone
---      with no project is org-level, a project-typed row is SEC-20's), and a
---      milestone row whose milestone is gone or unreadable is the audit
---      roles' only. `audit_logs_admin_trail` is re-created from its NEWEST
+--      with no project is org-level, a project-typed row is SEC-20's). A
+--      milestone row whose milestone is gone or unreadable stays readable
+--      when it is typed `milestone` (written for an org-level milestone);
+--      any other such row (typed `document` — its project can no longer be
+--      traced) is the audit roles' only. `audit_logs_admin_trail` is re-created from its NEWEST
 --      definition (20261142) byte for byte with ONE added clause — the type /
 --      action test inline, so a row of any other kind never calls the
 --      function.
+--   6. SAF-9 — the contractor's outcome notice is CLAIMED before it is
+--      sent. A partial UNIQUE index on audit_logs (org, details.versionId,
+--      details.attempt) WHERE action = 'INTAKE_OUTCOME_NOTICE_CLAIMED':
+--      /api/intake/outcome-notice writes that claim row before it calls the
+--      mail provider, so two concurrent calls (a double-click, a decision in
+--      two tabs) send ONE email; a failed send frees the next attempt. The
+--      index matches no existing row; building it reads audit_logs once
+--      (a short pause for audit writes on a large trail).
 --
 -- NOT a widening: every rule here refuses or narrows. The DEC-30 inventory
 -- (aggregate counts only, never rows) is captured BEFORE the transaction and
@@ -148,9 +164,14 @@ SELECT 'inventory (SEC-21): MILESTONE_* audit rows not typed project whose miles
   JOIN projects p ON p.id = m.project_id
  WHERE left(a.action, 10) = 'MILESTONE_' AND COALESCE(a.resource_type, '') <> 'project' AND p.visibility = 'private'
 UNION ALL
-SELECT 'inventory (SEC-21): MILESTONE_* audit rows not typed project whose milestone no longer exists (now readable only by the audit roles)', COUNT(*)::text
+SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) whose milestone no longer exists (now readable only by the audit roles — its project can no longer be traced)', COUNT(*)::text
   FROM audit_logs a
- WHERE left(a.action, 10) = 'MILESTONE_' AND COALESCE(a.resource_type, '') <> 'project'
+ WHERE left(a.action, 10) = 'MILESTONE_' AND COALESCE(a.resource_type, '') NOT IN ('project', 'milestone')
+   AND NOT EXISTS (SELECT 1 FROM milestones m WHERE m.id::text = a.details ->> 'milestoneId')
+UNION ALL
+SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed milestone (org-level) whose milestone no longer exists (stay readable by every member, as before)', COUNT(*)::text
+  FROM audit_logs a
+ WHERE left(a.action, 10) = 'MILESTONE_' AND a.resource_type = 'milestone'
    AND NOT EXISTS (SELECT 1 FROM milestones m WHERE m.id::text = a.details ->> 'milestoneId')
 UNION ALL
 SELECT 'inventory (SEC-21): intake-link audit rows (project_intake_link) and INTAKE_* rows naming a PRIVATE project (now readable only by those who can see it, and the audit roles)', COUNT(*)::text
@@ -163,7 +184,10 @@ BEGIN;
 
 -- ── 1. the company behind a cost document (MON-12 / GAP-406) ─────────────
 -- lib/costDocs.ts companyBehind, in SQL: the document's own registry link,
--- then its contractor's, then one exact case-insensitive name in the org.
+-- then its contractor's, then one exact case-insensitive name in the org. A
+-- link counts only to a company of the document's own org — called by the
+-- rail it reads as the owner, past every org's RLS, so a link re-pointed at
+-- another org's company never stands in for this org's registry.
 -- SECURITY INVOKER: called by award_quote it reads what the caller may
 -- read; called by the rail (a definer) it reads as the owner.
 CREATE OR REPLACE FUNCTION public.cost_doc_company_behind(p_org uuid, p_company uuid, p_party uuid, p_vendor text)
@@ -179,14 +203,14 @@ DECLARE
 BEGIN
   IF p_company IS NOT NULL THEN
     SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row
-      FROM companies c WHERE c.id = p_company;
+      FROM companies c WHERE c.id = p_company AND c.org_id = p_org;
     IF v_row IS NOT NULL THEN RETURN v_row; END IF;
   END IF;
   IF p_party IS NOT NULL THEN
     SELECT pp.company_id INTO v_party_company FROM project_parties pp WHERE pp.id = p_party;
     IF v_party_company IS NOT NULL THEN
       SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row
-        FROM companies c WHERE c.id = v_party_company;
+        FROM companies c WHERE c.id = v_party_company AND c.org_id = p_org;
       IF v_row IS NOT NULL THEN RETURN v_row; END IF;
     END IF;
   END IF;
@@ -220,6 +244,16 @@ BEGIN
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;              -- the service pass: restores, server routes, the SQL editor
   IF NEW.status IS DISTINCT FROM 'awarded' THEN RETURN NEW; END IF;
   IF TG_OP = 'UPDATE' AND OLD.status = 'awarded' THEN RETURN NEW; END IF;   -- no move to awarded
+  -- The award is judged by the company behind the row AS IT STANDS: the one
+  -- write that awards it never also moves the link, the contractor or the
+  -- vendor name it is judged by (award_quote and the app's claim change
+  -- status and its stamps only).
+  IF TG_OP = 'UPDATE' AND (NEW.party_id IS DISTINCT FROM OLD.party_id
+                           OR NEW.vendor_name IS DISTINCT FROM OLD.vendor_name
+                           OR (to_jsonb(NEW) ->> 'company_id') IS DISTINCT FROM (to_jsonb(OLD) ->> 'company_id')) THEN
+    RAISE EXCEPTION 'An award never changes the company link, the contractor or the vendor name it is judged by in the same write — award the quote as it stands; nothing was changed. (MON-12, 20261157)'
+      USING ERRCODE = 'check_violation';
+  END IF;
   v_company := cost_doc_company_behind(NEW.org_id, NULLIF(to_jsonb(NEW) ->> 'company_id', '')::uuid, NEW.party_id, NEW.vendor_name);
   IF v_company IS NOT NULL AND v_company ->> 'status' IN ('do_not_use', 'inactive')
      AND COALESCE(current_setting('app.cost_doc_award_override', true), '') IS DISTINCT FROM NEW.id::text THEN
@@ -571,19 +605,27 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
     -- A milestone row names its milestone (details.milestoneId): the
     -- milestone's project; a milestone with no project is org-level. A
     -- project-typed milestone row is a project row (SEC-20's clause decides).
+    -- A milestone the caller cannot find (deleted, or hidden from them): a
+    -- row written as resource_type 'milestone' was written for a milestone
+    -- on no project and no document (lib/milestones.ts pickResource) — an
+    -- org-level row, readable as it was; any other names no project it can
+    -- still be traced to, and is the audit roles' only.
     WHEN left(COALESCE(p_action, ''), 10) = 'MILESTONE_' THEN
       CASE WHEN p_type = 'project' THEN true
-           WHEN COALESCE(p_details ->> 'milestoneId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN false
-           ELSE EXISTS (SELECT 1 FROM public.milestones m
-                         WHERE m.id = (p_details ->> 'milestoneId')::uuid
-                           AND (m.project_id IS NULL OR public.project_visible_to_me(m.project_id))) END
+           WHEN COALESCE(p_details ->> 'milestoneId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                AND EXISTS (SELECT 1 FROM public.milestones m WHERE m.id = (p_details ->> 'milestoneId')::uuid)
+             THEN EXISTS (SELECT 1 FROM public.milestones m
+                           WHERE m.id = (p_details ->> 'milestoneId')::uuid
+                             AND (m.project_id IS NULL OR public.project_visible_to_me(m.project_id)))
+           WHEN p_type = 'milestone' THEN true
+           ELSE false END
     -- Anything else (an INTAKE_ row that names no project): its own type's reach.
     ELSE true
   END;
 $$;
 
 COMMENT ON FUNCTION public.audit_row_project_ref_visible(text, text, text, jsonb) IS
-  'SEC-21 (20261157): may the caller read an audit row about a project written under another resource type? details.projectId → that project; a project_intake_link row → the link''s project; a MILESTONE_* row → its milestone''s project (no project = org-level; a gone or unreadable milestone → not visible; a project-typed row → SEC-20 decides); else true. SECURITY INVOKER, no SET clause, names schema-qualified.';
+  'SEC-21 (20261157): may the caller read an audit row about a project written under another resource type? details.projectId → that project; a project_intake_link row → the link''s project; a MILESTONE_* row → its milestone''s project (no project = org-level; a gone or unreadable milestone → visible only when the row is typed milestone, the org-level kind, else not; a project-typed row → SEC-20 decides); else true. SECURITY INVOKER, no SET clause, names schema-qualified.';
 
 REVOKE ALL ON FUNCTION public.audit_row_project_ref_visible(text, text, text, jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.audit_row_project_ref_visible(text, text, text, jsonb) TO anon, authenticated, service_role;
@@ -618,15 +660,26 @@ CREATE POLICY audit_logs_admin_trail ON audit_logs
          OR audit_row_project_ref_visible(action, resource_type, resource_id, details))
   );
 
+-- ── 8. SAF-9: one outcome notice per submission attempt ──────────────────
+-- The route claims (org, version, attempt) with an INTAKE_OUTCOME_NOTICE_CLAIMED
+-- row before it sends; a second claim of the same attempt is a unique
+-- violation (23505) and sends nothing.
+CREATE UNIQUE INDEX IF NOT EXISTS audit_logs_intake_outcome_notice_claim_uniq
+  ON audit_logs (org_id, (details ->> 'versionId'), (details ->> 'attempt'))
+  WHERE action = 'INTAKE_OUTCOME_NOTICE_CLAIMED';
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
 --    Expect ok = true on every probe row; inventory rows carry n only.
 --    pg_policies.qual is DEPARSED; pg_proc.prosrc is verbatim.
-SELECT 'MON-12: the registry rail is a SECURITY DEFINER trigger function with search_path pinned, EXECUTE revoked from anon and authenticated, reading the award override for the one document' AS check,
+SELECT 'MON-12: the registry rail is a SECURITY DEFINER trigger function with search_path pinned, EXECUTE revoked from anon and authenticated, reading the award override for the one document, and refusing an award that also moves the link, contractor or vendor name' AS check,
        (SELECT prosecdef AND proconfig::text LIKE '%search_path=public%'
                AND prosrc LIKE '%app.cost_doc_award_override%' AND prosrc LIKE '%''do_not_use'', ''inactive''%'
                AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
+               AND prosrc LIKE '%NEW.party_id IS DISTINCT FROM OLD.party_id%'
+               AND prosrc LIKE '%NEW.vendor_name IS DISTINCT FROM OLD.vendor_name%'
+               AND prosrc LIKE '%(to_jsonb(NEW) ->> ''company_id'') IS DISTINCT FROM (to_jsonb(OLD) ->> ''company_id'')%'
           FROM pg_proc WHERE proname = 'enforce_cost_document_award_registry' AND pronargs = 0)
        AND NOT has_function_privilege('anon', 'public.enforce_cost_document_award_registry()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'public.enforce_cost_document_award_registry()', 'EXECUTE') AS ok,
@@ -639,8 +692,10 @@ SELECT 'MON-12: trg_cost_documents_award_registry fires BEFORE INSERT OR UPDATE 
                   AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT OR UPDATE OF status ON public.cost_documents%'),
        NULL::text
 UNION ALL
-SELECT 'MON-12: cost_doc_company_behind resolves the document link, then the contractor link, then one exact name — SECURITY INVOKER, not executable by anon',
+SELECT 'MON-12: cost_doc_company_behind resolves the document link, then the contractor link (each only to a company of the document''s org), then one exact name — SECURITY INVOKER, not executable by anon',
        (SELECT NOT prosecdef AND prosrc LIKE '%FROM project_parties pp WHERE pp.id = p_party%'
+               AND prosrc LIKE '%WHERE c.id = p_company AND c.org_id = p_org;%'
+               AND prosrc LIKE '%WHERE c.id = v_party_company AND c.org_id = p_org;%'
                AND prosrc LIKE '%IF v_n <> 1 THEN RETURN NULL; END IF;%'
           FROM pg_proc WHERE proname = 'cost_doc_company_behind' AND pronargs = 4)
        AND NOT has_function_privilege('anon', 'public.cost_doc_company_behind(uuid,uuid,uuid,text)', 'EXECUTE'),
@@ -716,15 +771,25 @@ SELECT 'SEC-21: audit_row_project_ref_visible is SECURITY INVOKER with no SET cl
        AND has_function_privilege('authenticated', 'public.audit_row_project_ref_visible(text,text,text,jsonb)', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'SEC-21: the test answers — another kind → visible; a milestone row naming no milestone, an unknown milestone or link, an unknown project → not (no session here, so no project is visible)',
+SELECT 'SEC-21: the test answers — another kind → visible; an org-level (milestone-typed) row of a gone milestone → visible; a document milestone row naming no milestone or an unknown one, an unknown link, an unknown project → not (no session here, so no project is visible)',
        audit_row_project_ref_visible('DOCUMENT_UPLOADED', 'document', 'x', '{}'::jsonb)
        AND audit_row_project_ref_visible('INTAKE_LINKS_REVOKED_WITH_PROJECT', 'project', 'x', '{}'::jsonb)
        AND audit_row_project_ref_visible('MILESTONE_CREATED', 'project', '00000000-0000-0000-0000-000000000000', '{}'::jsonb)
+       AND audit_row_project_ref_visible('MILESTONE_DELETED', 'milestone', '00000000-0000-0000-0000-000000000000', '{"milestoneId":"00000000-0000-0000-0000-000000000000"}'::jsonb)
        AND NOT audit_row_project_ref_visible('MILESTONE_CREATED', 'document', 'x', '{}'::jsonb)
        AND NOT audit_row_project_ref_visible('MILESTONE_COMPLETED', 'document', 'x', '{"milestoneId":"00000000-0000-0000-0000-000000000000"}'::jsonb)
        AND NOT audit_row_project_ref_visible('INTAKE_LINK_REVOKED', 'project_intake_link', 'not-a-uuid', '{}'::jsonb)
        AND NOT audit_row_project_ref_visible('INTAKE_LINK_REVOKED', 'project_intake_link', '00000000-0000-0000-0000-000000000000', '{}'::jsonb)
        AND NOT audit_row_project_ref_visible('INTAKE_REJECTED', 'document', 'x', '{"projectId":"00000000-0000-0000-0000-000000000000"}'::jsonb),
+       NULL::text
+UNION ALL
+SELECT 'SAF-9: a contractor outcome notice is claimed once per submission attempt (a UNIQUE partial index on the claim rows)',
+       EXISTS (SELECT 1 FROM pg_indexes
+                WHERE schemaname = 'public' AND tablename = 'audit_logs'
+                  AND indexname = 'audit_logs_intake_outcome_notice_claim_uniq'
+                  AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+                  AND indexdef LIKE '%versionId%' AND indexdef LIKE '%attempt%'
+                  AND indexdef LIKE '%INTAKE_OUTCOME_NOTICE_CLAIMED%'),
        NULL::text
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM prj_g_j12_inventory;

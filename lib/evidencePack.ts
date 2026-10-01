@@ -151,7 +151,10 @@ interface ProjectEvidence {
 // citations, who decided it — a person, or the automated sweep / AI
 // assessment, marked as such), the turnover package (status, reviewer, date,
 // note) and the punch list (closure, who, when, why). A read that fails is
-// said to have failed — never printed as "none".
+// said to have failed — never printed as "none". Every read pages past
+// PostgREST's 1,000-row answer (a short page is the end), so the pack holds
+// every row; a read that reaches PACK_ROW_CEILING stops and the pack SAYS
+// how far it got — never a silently shortened list printed as complete.
 
 export interface ProjectQualityEvidence {
   checklists: Array<Record<string, unknown> & { items: Array<Record<string, unknown>> }>;
@@ -160,32 +163,78 @@ export interface ProjectQualityEvidence {
   /** Which of "checklists" / "checklist items" / "turnover items" / "punch
    *  items" could not be read. */
   unread: string[];
+  /** Which of the same reads stopped at PACK_ROW_CEILING rows (more exist
+   *  and were not read). */
+  capped: string[];
+}
+
+/** PostgREST's default answer size: a page this long may have more after it. */
+const PACK_PAGE = 1000;
+/** The most rows one quality read gathers into a pack; a read that reaches
+ *  it stops and the pack says "the first N" (projects Round G J12). */
+export const PACK_ROW_CEILING = 20_000;
+
+type RowsAnswer = PromiseLike<{ data: unknown; error: unknown }>;
+/** Every row a query matches, in PACK_PAGE pages until a short one — or up
+ *  to PACK_ROW_CEILING, then `capped`. A failed page is `failed`. */
+async function readEveryRow(page: (from: number, to: number) => RowsAnswer): Promise<{ rows: Array<Record<string, unknown>>; failed: boolean; capped: boolean }> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; from < PACK_ROW_CEILING; from += PACK_PAGE) {
+    const { data, error } = await page(from, Math.min(from + PACK_PAGE, PACK_ROW_CEILING) - 1);
+    if (error) return { rows, failed: true, capped: false };
+    const got = (data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...got);
+    if (got.length < PACK_PAGE) return { rows, failed: false, capped: false };
+  }
+  return { rows, failed: false, capped: true };
 }
 
 export async function gatherProjectQualityEvidence(projectId: string): Promise<ProjectQualityEvidence> {
   const unread: string[] = [];
+  const capped: string[] = [];
+  const note = (label: string, r: { failed: boolean; capped: boolean }) => {
+    if (r.failed) unread.push(label); else if (r.capped) capped.push(label);
+  };
+  // Ordered by a unique key last, so the pages never skip or repeat a row.
   const [cl, to, pu] = await Promise.all([
-    supabase.from("project_checklists").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(200),
-    supabase.from("turnover_items").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(500),
-    supabase.from("punch_items").select("*").eq("project_id", projectId).order("created_at", { ascending: true }).limit(1000),
+    readEveryRow((f, t) => supabase.from("project_checklists").select("*").eq("project_id", projectId)
+      .order("created_at", { ascending: true }).order("id", { ascending: true }).range(f, t)),
+    readEveryRow((f, t) => supabase.from("turnover_items").select("*").eq("project_id", projectId)
+      .order("created_at", { ascending: true }).order("id", { ascending: true }).range(f, t)),
+    readEveryRow((f, t) => supabase.from("punch_items").select("*").eq("project_id", projectId)
+      .order("created_at", { ascending: true }).order("id", { ascending: true }).range(f, t)),
   ]);
-  if (cl.error) unread.push("checklists");
-  if (to.error) unread.push("turnover items");
-  if (pu.error) unread.push("punch items");
-  const lists = ((cl.data as Array<Record<string, unknown>>) ?? []);
+  note("checklists", cl);
+  note("turnover items", to);
+  note("punch items", pu);
+  const lists = cl.failed ? [] : cl.rows;
   const items: Array<Record<string, unknown>> = [];
   const ids = lists.map((c) => String(c.id));
+  // Items in chunks of 100 checklists (a bounded filter), each chunk read in
+  // full — checklist by checklist, then by seq — so a ceiling, if reached,
+  // cuts whole later checklists, never the tail of every list.
+  let itemsCapped = false;
   for (let i = 0; i < ids.length; i += 100) {
-    const { data, error } = await supabase.from("checklist_items").select("*")
-      .in("checklist_id", ids.slice(i, i + 100)).order("seq", { ascending: true }).limit(5000);
-    if (error) { unread.push("checklist items"); break; }
-    items.push(...((data as Array<Record<string, unknown>>) ?? []));
+    const chunk = ids.slice(i, i + 100);
+    const r = await readEveryRow((f, t) => supabase.from("checklist_items").select("*").in("checklist_id", chunk)
+      .order("checklist_id", { ascending: true }).order("seq", { ascending: true }).order("id", { ascending: true }).range(f, t));
+    if (r.failed) { unread.push("checklist items"); break; }
+    items.push(...r.rows);
+    if (r.capped) { itemsCapped = true; break; }
+  }
+  if (itemsCapped) capped.push("checklist items");
+  const byList = new Map<string, Array<Record<string, unknown>>>();
+  for (const it of items) {
+    const k = String(it.checklist_id);
+    const cur = byList.get(k);
+    if (cur) cur.push(it); else byList.set(k, [it]);
   }
   return {
-    checklists: lists.map((c) => ({ ...c, items: items.filter((it) => String(it.checklist_id) === String(c.id)) })),
-    turnover: (to.data as Array<Record<string, unknown>>) ?? [],
-    punch: (pu.data as Array<Record<string, unknown>>) ?? [],
+    checklists: lists.map((c) => ({ ...c, items: byList.get(String(c.id)) ?? [] })),
+    turnover: to.failed ? [] : to.rows,
+    punch: pu.failed ? [] : pu.rows,
     unread,
+    capped,
   };
 }
 
@@ -200,7 +249,12 @@ export function checklistItemDecider(it: Record<string, unknown>): { who: string
 
 function renderQualitySections(q: ProjectQualityEvidence): string {
   const unread = new Set(q.unread);
+  const capped = new Set(q.capped);
   const couldNot = (what: string) => `<div class="empty">Could not read the ${what} — this section is left out, not empty.</div>`;
+  const firstN = (what: string) => capped.has(what)
+    ? `<div class="empty">Only the first ${PACK_ROW_CEILING.toLocaleString("en-US")} ${what} were read — the rest are left out of this pack, not absent from the record.</div>`
+    : "";
+  const itemsCut = capped.has("checklist items");
   const checklistBlocks = q.checklists.map((c) => {
     const itemRows = c.items.map((it) => {
       const chips = normalizeEvidence(it.evidence);
@@ -223,19 +277,19 @@ function renderQualitySections(q: ProjectQualityEvidence): string {
       ? ` · completed ${date(c.completed_at)}${c.completed_by_name ? ` by ${esc(c.completed_by_name)}` : ""}${c.completed_basis ? ` (basis: ${esc(c.completed_basis)})` : ""}`
       : "";
     return `<h3>${esc(c.title || "Checklist")} <span class="small">${esc(String(c.kind ?? "").toUpperCase())} · ${esc(c.status || "—")}${done}</span></h3>
-      ${c.items.length === 0 ? '<div class="empty">No items.</div>' : `<table><thead><tr><th>#</th><th>Item</th><th>Status</th><th>Applies</th><th>Evidence</th><th>Decided by</th></tr></thead><tbody>${itemRows}</tbody></table>`}`;
+      ${c.items.length === 0 ? (itemsCut ? '<div class="empty">Items not read — the item read stopped at its limit; left out, not absent.</div>' : '<div class="empty">No items.</div>') : `<table><thead><tr><th>#</th><th>Item</th><th>Status</th><th>Applies</th><th>Evidence</th><th>Decided by</th></tr></thead><tbody>${itemRows}</tbody></table>`}`;
   }).join("");
   const turnoverRows = q.turnover.map((t) => `<tr><td>${esc(t.name)}${t.required === false ? ' <span class="small">(optional)</span>' : ""}</td><td><b>${esc(t.status || "—")}</b></td><td>${esc(t.reviewed_by_name || "—")}</td><td>${date(t.reviewed_at)}</td><td>${esc(t.review_note || "—")}</td></tr>`).join("");
   const punchRows = q.punch.map((p) => `<tr><td>${esc(p.title)}${p.location ? ` <span class="small">${esc(p.location)}</span>` : ""}</td><td><b>${esc(p.status || "—")}</b></td><td>${date(p.closed_at)}</td><td>${esc(p.closed_by_name || "—")}</td><td>${esc(p.closure_note || "—")}</td></tr>`).join("");
   return `
-  <h2>Checklists — PSSR / MI / QA-QC (${q.checklists.length})</h2>
-  ${unread.has("checklists") ? couldNot("checklists") : unread.has("checklist items") ? couldNot("checklist items") : q.checklists.length === 0 ? '<div class="empty">No checklists.</div>' : `<div class="small">Rows marked [automated] were set green by the evidence sweep from the citation shown; every other decision names the person who made it and their reason.</div>${checklistBlocks}`}
+  <h2>Checklists — PSSR / MI / QA-QC (${q.checklists.length}${capped.has("checklists") ? "+" : ""})</h2>
+  ${unread.has("checklists") ? couldNot("checklists") : unread.has("checklist items") ? couldNot("checklist items") : q.checklists.length === 0 ? '<div class="empty">No checklists.</div>' : `${firstN("checklists")}${firstN("checklist items")}<div class="small">Rows marked [automated] were set green by the evidence sweep from the citation shown; every other decision names the person who made it and their reason.</div>${checklistBlocks}`}
 
-  <h2>Turnover package (${q.turnover.length})</h2>
-  ${unread.has("turnover items") ? couldNot("turnover items") : q.turnover.length === 0 ? '<div class="empty">No turnover items.</div>' : `<table><thead><tr><th>Item</th><th>Status</th><th>Reviewer</th><th>Reviewed</th><th>Note</th></tr></thead><tbody>${turnoverRows}</tbody></table>`}
+  <h2>Turnover package (${q.turnover.length}${capped.has("turnover items") ? "+" : ""})</h2>
+  ${unread.has("turnover items") ? couldNot("turnover items") : q.turnover.length === 0 ? '<div class="empty">No turnover items.</div>' : `${firstN("turnover items")}<table><thead><tr><th>Item</th><th>Status</th><th>Reviewer</th><th>Reviewed</th><th>Note</th></tr></thead><tbody>${turnoverRows}</tbody></table>`}
 
-  <h2>Punch list (${q.punch.length})</h2>
-  ${unread.has("punch items") ? couldNot("punch items") : q.punch.length === 0 ? '<div class="empty">No punch items.</div>' : `<table><thead><tr><th>Item</th><th>Status</th><th>Closed</th><th>Closed by</th><th>Closure note</th></tr></thead><tbody>${punchRows}</tbody></table>`}
+  <h2>Punch list (${q.punch.length}${capped.has("punch items") ? "+" : ""})</h2>
+  ${unread.has("punch items") ? couldNot("punch items") : q.punch.length === 0 ? '<div class="empty">No punch items.</div>' : `${firstN("punch items")}<table><thead><tr><th>Item</th><th>Status</th><th>Closed</th><th>Closed by</th><th>Closure note</th></tr></thead><tbody>${punchRows}</tbody></table>`}
 `;
 }
 
@@ -244,6 +298,16 @@ function renderQualitySections(q: ProjectQualityEvidence): string {
 export const PROJECT_PACK_COVERAGE =
   "Assembled from the project record, team, schedule, transmittals, the quality program (every checklist with its items, the turnover package and the punch list) and the project's audit trail (its first 1,000 rows). " +
   "Not included: the documents themselves and their revision history (each document's own evidence pack), the cost ledger (the project report), and audit rows recorded against other records.";
+
+/** The footer as THIS pack was read: the coverage, plus any quality read
+ *  that failed or stopped at its limit — the footer never claims a
+ *  completeness the reads did not reach. */
+export function projectPackCoverage(q: ProjectQualityEvidence): string {
+  const parts = [PROJECT_PACK_COVERAGE];
+  if (q.unread.length > 0) parts.push(`Not read this time: ${q.unread.join(", ")} — left out above, never printed as empty.`);
+  if (q.capped.length > 0) parts.push(`Read only to the first ${PACK_ROW_CEILING.toLocaleString("en-US")} rows: ${q.capped.join(", ")} — the rest are left out above, not absent from the record.`);
+  return parts.join(" ");
+}
 
 export async function gatherProjectEvidence(projectId: string): Promise<ProjectEvidence> {
   const [project, members, milestones, audit, transmittals] = await Promise.all([
@@ -349,7 +413,7 @@ ${data.quality ? renderQualitySections(data.quality) : ""}
   <h2>Audit trail (${data.audit.length})</h2>
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table><thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead><tbody>${join(auditRows)}</tbody></table>`}
 
-  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · ${data.quality ? esc(PROJECT_PACK_COVERAGE) : "Assembled from the project record, team, schedule, and immutable audit trail."}</div>
+  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · ${data.quality ? esc(projectPackCoverage(data.quality)) : "Assembled from the project record, team, schedule, and immutable audit trail."}</div>
 </body></html>`;
 }
 

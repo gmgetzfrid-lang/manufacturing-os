@@ -3,6 +3,9 @@
 // status, applicability, evidence citations and who decided it — the
 // automated sweep marked as automated), the turnover package and the punch
 // list. A read that fails is said to have failed, never printed as "none".
+// Every read pages past PostgREST's 1,000-row answer (the mock below caps
+// each answer at 1,000 rows, as PostgREST does), and a read that reaches the
+// pack's ceiling says so.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -11,13 +14,24 @@ const state = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   errors: {} as Record<string, string>,
   inCalls: [] as Array<{ table: string; n: number }>,
+  pages: [] as Array<{ table: string; from: number; to: number }>,
 }));
+/** PostgREST's default answer size: a request without a range gets at most this. */
+const SERVER_CAP = 1000;
 vi.mock("@/lib/supabase", () => {
   function chain(table: string) {
     const preds: Array<(r: Row) => boolean> = [];
-    const answer = () => state.errors[table]
-      ? { data: null, error: { message: state.errors[table] } }
-      : { data: (state.tables[table] ?? []).filter((r) => preds.every((p) => p(r))), error: null };
+    const orders: Array<[string, boolean]> = [];
+    let range: [number, number] | null = null;
+    const cmp = (a: unknown, b: unknown) => (typeof a === "number" && typeof b === "number" ? a - b : String(a ?? "").localeCompare(String(b ?? "")));
+    const answer = () => {
+      if (state.errors[table]) return { data: null, error: { message: state.errors[table] } };
+      const rows = (state.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+      rows.sort((x, y) => { for (const [k, asc] of orders) { const d = cmp(x[k], y[k]); if (d) return asc ? d : -d; } return 0; });
+      const [from, to] = range ?? [0, rows.length - 1];
+      // PostgREST answers at most SERVER_CAP rows, whatever range was asked
+      return { data: rows.slice(from, Math.min(to + 1, from + SERVER_CAP)), error: null };
+    };
     const c: Row = {};
     const h: ProxyHandler<Row> = {
       get(_t, prop: string) {
@@ -25,6 +39,8 @@ vi.mock("@/lib/supabase", () => {
         return (...args: unknown[]) => {
           if (prop === "eq") preds.push((r) => r[args[0] as string] === args[1]);
           if (prop === "in") { state.inCalls.push({ table, n: (args[1] as unknown[]).length }); preds.push((r) => (args[1] as unknown[]).includes(r[args[0] as string])); }
+          if (prop === "order") orders.push([args[0] as string, (args[1] as { ascending?: boolean } | undefined)?.ascending !== false]);
+          if (prop === "range") { range = [args[0] as number, args[1] as number]; state.pages.push({ table, from: range[0], to: range[1] }); }
           if (prop === "maybeSingle") { const a = answer(); return Promise.resolve({ data: a.data?.[0] ?? null, error: a.error }); }
           return new Proxy(c, h);
         };
@@ -37,12 +53,14 @@ vi.mock("@/lib/supabase", () => {
 
 import {
   gatherProjectQualityEvidence, gatherProjectEvidence, renderProjectEvidenceHtml, checklistItemDecider, PROJECT_PACK_COVERAGE,
+  PACK_ROW_CEILING,
 } from "@/lib/evidencePack";
 import { MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT } from "@/lib/checklistEngine";
 
 beforeEach(() => {
   state.errors = {};
   state.inCalls = [];
+  state.pages = [];
   state.tables = {
     projects: [{ id: "p1", name: "Unit 300 repipe", status: "active" }],
     project_members: [], milestones: [], audit_logs: [], transmittals: [],
@@ -80,6 +98,38 @@ describe("QUAL-10 — the quality program in the project evidence pack", () => {
     state.tables.project_checklists = Array.from({ length: 230 }, (_, i) => ({ id: `c${i}`, project_id: "p1", title: `L${i}`, status: "open" }));
     await gatherProjectQualityEvidence("p1");
     expect(state.inCalls.filter((c) => c.table === "checklist_items").map((c) => c.n)).toEqual([100, 100, 30]);
+  });
+
+  it("reads past PostgREST's 1,000-row answer: 12 checklists x 120 items (1,440) all land, none prints 'No items.' (review major)", async () => {
+    state.tables.project_checklists = Array.from({ length: 12 }, (_, i) => ({ id: `cl${String(i).padStart(2, "0")}`, project_id: "p1", title: `MI loop ${i}`, kind: "mi", status: "open", created_at: `2026-09-${String(i + 1).padStart(2, "0")}T00:00:00Z` }));
+    state.tables.checklist_items = state.tables.project_checklists.flatMap((c) => Array.from({ length: 120 }, (_, j) => ({
+      id: `${c.id}-i${String(j).padStart(3, "0")}`, checklist_id: c.id, seq: j + 1, text: `Item ${j + 1}`, applicability: "applies", status: "open", evidence: [],
+    })));
+    state.tables.punch_items = Array.from({ length: 1_234 }, (_, i) => ({ id: `pu${String(i).padStart(5, "0")}`, project_id: "p1", title: `Punch ${i}`, status: "open", created_at: "2026-09-01T00:00:00Z" }));
+    const q = await gatherProjectQualityEvidence("p1");
+    expect(q.unread).toEqual([]);
+    expect(q.capped).toEqual([]);
+    expect(q.checklists.map((c) => c.items.length)).toEqual(Array(12).fill(120));
+    expect(q.checklists[11].items.map((i) => i.seq)).toEqual(Array.from({ length: 120 }, (_, j) => j + 1));
+    expect(q.punch).toHaveLength(1_234);
+    // two pages of items (1,000 + 440), two of punch (1,000 + 234)
+    expect(state.pages.filter((p) => p.table === "checklist_items").map((p) => p.from)).toEqual([0, 1000]);
+    expect(state.pages.filter((p) => p.table === "punch_items").map((p) => p.from)).toEqual([0, 1000]);
+    const html = renderProjectEvidenceHtml(await gatherProjectEvidence("p1"));
+    expect(html).not.toContain("No items.");
+    expect(html).toContain("<h2>Punch list (1234)</h2>");
+    expect(html).not.toMatch(/Only the first|Read only to the first/);
+  });
+
+  it("a read that reaches the pack's ceiling SAYS so in its section and in the footer — never a shortened list printed as complete", async () => {
+    state.tables.punch_items = Array.from({ length: PACK_ROW_CEILING + 5 }, (_, i) => ({ id: `pu${String(i).padStart(6, "0")}`, project_id: "p1", title: `Punch ${i}`, status: "open", created_at: "2026-09-01T00:00:00Z" }));
+    const q = await gatherProjectQualityEvidence("p1");
+    expect(q.capped).toEqual(["punch items"]);
+    expect(q.punch).toHaveLength(PACK_ROW_CEILING);
+    const html = renderProjectEvidenceHtml(await gatherProjectEvidence("p1"));
+    expect(html).toContain(`<h2>Punch list (${PACK_ROW_CEILING}+)</h2>`);
+    expect(html).toContain("Only the first 20,000 punch items were read — the rest are left out of this pack, not absent from the record.");
+    expect(html).toContain("Read only to the first 20,000 rows: punch items");
   });
 
   it("the automated sweep and the AI assessment are named as automated; a person is named as themselves", () => {

@@ -48,7 +48,7 @@ vi.mock("@/lib/eSignatures", () => ({
 
 import {
   applyAssessment, createChecklist, gatherProjectEvidenceState, listChecklistItems, listChecklists,
-  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH,
+  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH, APPLY_CHUNK,
   type Checklist, type ChecklistItem,
 } from "@/lib/checklists";
 import { MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP } from "@/lib/checklistEngine";
@@ -287,6 +287,35 @@ describe("the machine's writes in ONE request (20261157 apply_checklist_item_wri
     const legacy = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["c"], actor });
     expect(legacy.applied).toBe(1);
     expect(itemWrites()).toHaveLength(2);
+  });
+
+  it("more writes than one call may carry (the function refuses > 2,000) go in calls of APPLY_CHUNK, outcomes merged (review minor)", async () => {
+    state.tables.checklist_items = Array.from({ length: 2_300 }, (_, i) => row({ id: `x${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    state.rpc = {
+      apply_checklist_item_writes: (args) => {
+        // the function's own cap, as 20261157 has it
+        if ((args.p_writes as unknown[]).length > 2000) return { data: null, error: { code: "22023", message: "apply_checklist_item_writes takes an array of at most 2000 item writes; nothing was changed." } };
+        return play()(args);
+      },
+    };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 2_300, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(APPLY_CHUNK).toBeLessThanOrEqual(2000);
+    expect(calls.map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length)).toEqual([1000, 1000, 300]);
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.every((r) => r.status === "na")).toBe(true);
+  });
+
+  it("a later call answering without the function's shape hands only what is left to the single-row writes; the earlier calls' rows stand", async () => {
+    state.tables.checklist_items = Array.from({ length: 1_200 }, (_, i) => row({ id: `y${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    let n = 0;
+    state.rpc = { apply_checklist_item_writes: (args) => (++n === 1 ? play()(args) : { data: null, error: null }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 1_200, refused: 0, failed: 0 });
+    expect(itemWrites()).toHaveLength(200);
   });
 
   it("the evidence sweep goes through the same one request: the citation lands, the machine actor is the function's to stamp", async () => {

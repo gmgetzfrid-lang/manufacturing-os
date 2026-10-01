@@ -13,7 +13,15 @@
 // The outcome is read from the DATABASE (the version's review_state and its
 // reason), never from the request, so a caller cannot make the door say
 // something that did not happen. One notice per submission: a second call
-// for the same version answers `already` and sends nothing.
+// for the same version answers `already` and sends nothing. The send is
+// CLAIMED first — an INTAKE_OUTCOME_NOTICE_CLAIMED audit row carrying the
+// version and the attempt number, unique per (org, version, attempt) by
+// 20261157's index — so two concurrent calls (a double-click, a decision in
+// two tabs) send ONE email: the second claim is refused and answers
+// `in_progress`. A failed send frees the next attempt; a claim with no
+// outcome row after it (the process died mid-send, or the outcome row could
+// not be written) keeps answering `in_progress` — the system never risks
+// a second email, and the portal shows the outcome whatever happens.
 //
 // Delivery: the app's server email path — Resend, through the same
 // RESEND_API_KEY / RESEND_FROM_EMAIL the queue drain
@@ -33,6 +41,9 @@ import { intakeOutcomeEmail, type IntakeOutcome } from "@/lib/intakeOutcomeNotic
 export const runtime = "nodejs";
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
+const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";
+const NOTIFIED = "INTAKE_OUTCOME_NOTIFIED";
+const FAILED = "INTAKE_OUTCOME_NOTICE_FAILED";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
@@ -85,12 +96,16 @@ export async function POST(req: NextRequest) {
   const to = (l.contact_email ?? "").trim();
   if (!to) return NextResponse.json({ sent: false, reason: "no_contact" });
 
-  // One notice per submission.
-  const { data: prior, error: priorErr } = await supabaseAdmin.from("audit_logs").select("id")
-    .eq("org_id", orgId).eq("action", "INTAKE_OUTCOME_NOTIFIED").eq("resource_id", v.record_id ?? versionId)
-    .contains("details", { versionId }).limit(1);
+  // One notice per submission: what this version's notice has done so far.
+  const { data: prior, error: priorErr } = await supabaseAdmin.from("audit_logs").select("action")
+    .eq("org_id", orgId).in("action", [NOTIFIED, CLAIMED, FAILED]).eq("resource_id", v.record_id ?? versionId)
+    .contains("details", { versionId }).limit(1000);
   if (priorErr) return bad("Whether the contractor was already told could not be checked — nothing was sent; try again.", 503);
-  if (((prior ?? []) as unknown[]).length > 0) return NextResponse.json({ sent: false, reason: "already" });
+  const done = ((prior ?? []) as Array<{ action?: string }>).map((r) => r.action);
+  if (done.includes(NOTIFIED)) return NextResponse.json({ sent: false, reason: "already" });
+  const claims = done.filter((a) => a === CLAIMED).length;
+  // A claim with no outcome after it: a send is under way (or died mid-way) — never a second email.
+  if (claims > done.filter((a) => a === FAILED).length) return NextResponse.json({ sent: false, reason: "in_progress" });
 
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return NextResponse.json({ sent: false, reason: "not_configured" });
@@ -109,6 +124,19 @@ export async function POST(req: NextRequest) {
     document: docLabel, revision: v.revision_label ?? null, reason: v.review_note ?? null,
   });
 
+  // The claim, before the send: one caller per attempt (20261157's unique
+  // index); the loser sends nothing.
+  const attempt = claims + 1;
+  const { error: claimErr } = await supabaseAdmin.from("audit_logs").insert({
+    action: CLAIMED, resource_type: "document", resource_id: v.record_id ?? versionId,
+    org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
+    details: { versionId, attempt, projectId: l.project_id, linkId: l.id, outcome },
+  });
+  if (claimErr) {
+    if ((claimErr as { code?: string | null }).code === "23505") return NextResponse.json({ sent: false, reason: "in_progress" });
+    return bad("The notice could not be recorded before sending — nothing was sent; try again.", 503);
+  }
+
   let sendError: string | null = null;
   try {
     const resp = await fetch("https://api.resend.com/emails", {
@@ -122,10 +150,10 @@ export async function POST(req: NextRequest) {
   }
 
   const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
-    action: sendError ? "INTAKE_OUTCOME_NOTICE_FAILED" : "INTAKE_OUTCOME_NOTIFIED",
+    action: sendError ? FAILED : NOTIFIED,
     resource_type: "document", resource_id: v.record_id ?? versionId,
     org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
-    details: { versionId, projectId: l.project_id, linkId: l.id, company: l.company_name ?? null, outcome, ...(sendError ? { error: sendError } : {}) },
+    details: { versionId, attempt, projectId: l.project_id, linkId: l.id, company: l.company_name ?? null, outcome, ...(sendError ? { error: sendError } : {}) },
   });
   if (auditErr) console.error(`[intake/outcome-notice] audit row for ${versionId} failed: ${auditErr.message}`);
   if (sendError) {

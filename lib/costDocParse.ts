@@ -9,7 +9,7 @@
 // read, typed and bounded; anything else the model returned is dropped. It
 // is a pure function so the route and its tests share it.
 
-import { isoCurrency } from "@/lib/bidTab";
+import { isoCurrency, companyCandidatesByName, matchCompanyByName } from "@/lib/bidTab";
 
 export interface ParsedInvoiceLine {
   description: string;
@@ -76,4 +76,25 @@ export function validateParsedInvoice(raw: unknown): ParsedInvoice {
  *  the file is fetched and before the caller's AI key is spent). */
 export function closedProjectReadMessage(status: string): string {
   return `This project is ${status} — its cost records are read-only, so nothing is read into them. An Admin / Document Control can reopen it.`;
+}
+
+/**
+ * COST-3 done-when 2: the Known Company a bid is linked to WITHOUT a person
+ * (at upload, lib/costDocs.ts uploadCostDoc; at the read, the cost-docs
+ * route). Only when the vendor name could be exactly ONE registry row — the
+ * normalised candidates (lib/bidTab companyCandidatesByName, the set the
+ * do-not-use gate reads) are that one row, and it is the row the name binds
+ * to (matchCompanyByName). An exact-name hit with a look-alike beside it
+ * ("Gulf Mechanical" active, "Gulf Mechanical, Inc." do-not-use) is never
+ * linked: every gate reads a stored link as a person's choice and reads only
+ * that row, so a machine link to the active row would clear the flag the
+ * look-alike raises. Ambiguity, of either kind, is left to a person.
+ */
+export function registryLinkFor<T extends { id: string; name: string }>(
+  vendorName: string | null | undefined, registry: T[],
+): T | null {
+  const candidates = companyCandidatesByName(vendorName, registry);
+  if (candidates.length !== 1) return null;
+  const hit = matchCompanyByName(vendorName, registry);
+  return hit && hit.id === candidates[0].id ? hit : null;
 }

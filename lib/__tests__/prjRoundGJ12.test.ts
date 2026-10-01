@@ -146,7 +146,13 @@ describe("PERF-8 — the coach takes the project row and roster the page already
   it("the page holds the pre-read, sets it from the same load, and mounts the coach only with it", () => {
     const page = src("app/(protected)/projects/[id]/page.tsx");
     expect(page).toMatch(/const \[coachPre, setCoachPre\] = useState<SnapshotPreRead \| null>\(null\);/);
-    expect(page).toMatch(/setCoachPre\(\{ project: got\.row, members: m \}\);\s*\n\s*setCoachKey\(\(k\) => k \+ 1\);/);
+    // set as soon as the roster is read — the coach gathers beside the
+    // checkout hydration, not after it (review minor: and outside the lines
+    // J10b holds)
+    expect(page).toMatch(/setMembers\(m\);\s*\n(\s*\/\/[^\n]*\n)*\s*setCoachPre\(\{ project: got\.row, members: m \}\);/);
+    expect(page.indexOf("setCoachPre({ project: got.row, members: m });")).toBeLessThan(page.indexOf("// Hydrate doc + library context for checkouts"));
+    expect(page.match(/setCoachPre\(/g)).toHaveLength(1);
+    expect(page).toMatch(/setCheckouts\(\[\]\);\s*\n\s*\}\s*\n\s*setCoachKey\(\(k\) => k \+ 1\);/);
     expect(page).toMatch(/&& coachPre && \(/);
     expect(page).toMatch(/<ProjectCoach orgId=\{project\.orgId\} projectId=\{project\.id\} refreshKey=\{coachKey\} preRead=\{coachPre\} \/>/);
   });

@@ -18,8 +18,9 @@
 // through, so the refusal is the route's own); the read answers inside its
 // own time limit with a readable 504 (PERF-6, lib/routeDeadline); an
 // invoice's extraction is validated before it is stored (PR-2,
-// lib/costDocParse); and a quote whose vendor name matches exactly one
-// Known Company is linked to it on the row (COST-3 done-when 2).
+// lib/costDocParse); and a quote that names no contractor and whose vendor
+// name could be only one Known Company is linked to it on the row (COST-3
+// done-when 2, lib/costDocParse registryLinkFor).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -27,8 +28,8 @@ import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { countPdfPages } from "@/lib/pdfPageCount";
-import { validateParsedQuote, isoCurrency, matchCompanyByName } from "@/lib/bidTab";
-import { validateParsedInvoice, closedProjectReadMessage } from "@/lib/costDocParse";
+import { validateParsedQuote, isoCurrency } from "@/lib/bidTab";
+import { validateParsedInvoice, closedProjectReadMessage, registryLinkFor } from "@/lib/costDocParse";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { CLOSED_PROJECT_STATUSES } from "@/lib/intakeLinks";
 import { isTimeoutError } from "@/lib/ai/providerCall";
@@ -72,11 +73,12 @@ const INVOICE_SYSTEM =
   "- Numbers must be numbers, not strings.\n" +
   'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","total":41250,"currency":"USD","lineItems":[{"description":"…","total":41250}]}';
 
-/** COST-3 done-when 2: the Known Company a quote's vendor name binds to —
- *  an exact name, else the ONE row it normalises to (lib/bidTab
- *  matchCompanyByName; ambiguity never binds). Null when the registry
- *  cannot be read: binding is an improvement, never a reason to refuse a
- *  read. */
+/** COST-3 done-when 2: the Known Company a quote's vendor name could ONLY
+ *  be — exactly one normalised candidate, and it is the name's binding
+ *  (lib/costDocParse registryLinkFor: an exact-name hit with a look-alike
+ *  beside it never links, so a do-not-use look-alike keeps its flag). Null
+ *  when the registry cannot be read: linking is an improvement, never a
+ *  reason to refuse a read. */
 async function registryMatch(orgId: string, vendorName: string): Promise<{ id: string; name: string } | null> {
   const rows: Array<{ id: string; name: string }> = [];
   for (let from = 0; ; from += REGISTRY_PAGE) {
@@ -90,7 +92,7 @@ async function registryMatch(orgId: string, vendorName: string): Promise<{ id: s
     rows.push(...page);
     if (page.length < REGISTRY_PAGE) break;
   }
-  const hit = matchCompanyByName(vendorName, rows);
+  const hit = registryLinkFor(vendorName, rows);
   return hit ? { id: hit.id, name: hit.name } : null;
 }
 
@@ -231,21 +233,17 @@ export async function POST(req: NextRequest) {
     // letterhead — only fill vendor_name when the row has none.
     if (!doc.vendor_name && quote.vendorName !== "Unknown vendor") patch.vendor_name = quote.vendorName;
     // COST-3 done-when 2: a bid nobody has linked is linked here when its
-    // vendor name binds to exactly one Known Company — so the do-not-use
-    // gates read a stored link, not an AI-read name, on every render. Only
-    // where the row carries the column (20261096), has no link of its own,
-    // and its contractor has none either (a person's link outranks a name).
+    // vendor name could be only one Known Company — so the do-not-use gates
+    // read a stored link, not an AI-read name, on every render. Only where
+    // the row carries the column (20261096) and has no link of its own, and
+    // only for a bid that names no contractor: a contractor's link is a
+    // person's (set once — MON-13), may still be made, and must not be
+    // outranked by a machine's link on the document (the award reads the
+    // document's link first).
     const docRaw = docRow as Record<string, unknown>;
     const vendorForLink = (doc.vendor_name ?? (patch.vendor_name as string | undefined) ?? "").trim();
-    if ("company_id" in docRaw && docRaw.company_id == null && vendorForLink) {
-      let partyLinked = false;
-      const partyId = (docRaw.party_id as string | null | undefined) ?? null;
-      if (partyId) {
-        const { data: party, error: partyErr } = await supabaseAdmin.from("project_parties")
-          .select("company_id").eq("id", partyId).maybeSingle();
-        partyLinked = !!partyErr || !!(party as { company_id?: string | null } | null)?.company_id;
-      }
-      if (!partyLinked) companyLinked = await registryMatch(orgId, vendorForLink);
+    if ("company_id" in docRaw && docRaw.company_id == null && docRaw.party_id == null && vendorForLink) {
+      companyLinked = await registryMatch(orgId, vendorForLink);
     }
   } else {
     // PR-2 criterion 3: the invoice's extraction is validated against its

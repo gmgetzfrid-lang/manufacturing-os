@@ -149,6 +149,8 @@ import {
   approvedChangesByAccount, changeOrderOnLedger, summarizeChangeOrders, parseThresholdAmount, isReversal, type ChangeOrder,
 } from "@/lib/changeOrders";
 import { voidEntry, listAccounts, listEntries, saveAccount, NO_ROW_MATCHED } from "@/lib/costs";
+import { barredCompanyFor } from "@/lib/bidTab";
+import { registryLinkFor } from "@/lib/costDocParse";
 
 const actor = { uid: "u-owner", email: "owner@x.test" };
 const docRow = (over: Row): Row => ({
@@ -1253,7 +1255,7 @@ describe("BID-10 — quoteGroups keys groups case- and space-insensitively", () 
 });
 
 // ── COST-3 done-when 2: a new bid is linked to the ONE company its vendor binds to ──
-describe("COST-3 — uploadCostDoc links a bid whose vendor name binds to one Known Company", () => {
+describe("COST-3 — uploadCostDoc links a bid whose vendor name could be only one Known Company", () => {
   const file = { name: "q.pdf", type: "application/pdf" } as unknown as File;
   beforeEach(() => { db.defaults.cost_documents = { company_id: null }; });
 
@@ -1274,10 +1276,36 @@ describe("COST-3 — uploadCostDoc links a bid whose vendor name binds to one Kn
     expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "invoice", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
     db.tables.project_parties.push({ id: "pp1", company_id: "c9" });
     expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp1", actor })).ok).toBe(true);
-    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null]);
+    // a contractor with no link yet: a person may still link it (set once —
+    // MON-13), so the machine never links the document over it
+    db.tables.project_parties.push({ id: "pp2", company_id: null });
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp2", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null, null]);
     db.defaults = {}; // before 20261096: no company_id column on the row
     expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
-    expect(db.tables.cost_documents[4]).not.toHaveProperty("company_id");
+    expect(db.tables.cost_documents[5]).not.toHaveProperty("company_id");
+  });
+
+  it("an EXACT name with a do-not-use look-alike beside it is not linked, so every gate still flags the bid (review blocker, Gulf Mechanical)", async () => {
+    const registry = [
+      { id: "a", org_id: "o1", name: "Gulf Mechanical", status: "active" },
+      { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    ];
+    db.tables.companies.push(...registry);
+    // before: the bid tab's gate flags the bid by its name (any row it could be)
+    expect(barredCompanyFor("Gulf Mechanical", null, registry)?.id).toBe("dnu");
+    const res = await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor });
+    expect(res.ok).toBe(true);
+    const boundId = (db.tables.cost_documents[0].company_id as string | null) ?? null;
+    expect(boundId).toBeNull();
+    expect(auditRows("COST_DOC_UPLOADED")[0].details).not.toHaveProperty("companyLinked");
+    // after: with no stored link the gate still reads the name — still flagged
+    expect(barredCompanyFor("Gulf Mechanical", boundId, registry)?.id).toBe("dnu");
+    // the shared rule, directly: one normalised candidate AND it is the binding
+    expect(registryLinkFor("Gulf Mechanical", registry)).toBeNull();
+    expect(registryLinkFor("Gulf Mechanical, Inc.", registry)).toBeNull();
+    expect(registryLinkFor("GULF MECHANICAL LLC", [registry[0]])?.id).toBe("a");
+    expect(registryLinkFor("Gulf Mechanical", [registry[1]])?.id).toBe("dnu"); // a lone barred row links — and flags through its link
   });
 
   it("a failed registry read or a refused link write never fails the upload", async () => {

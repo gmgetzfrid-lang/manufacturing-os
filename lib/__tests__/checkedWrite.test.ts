@@ -181,6 +181,20 @@ const LIB_RATCHET: Record<string, number> = {
     "lib/subscriptions.ts": 1, "lib/tableViews.ts": 1, "lib/teams.ts": 3, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
     "lib/whiteboard.ts": 1,
 };
+/** Files packages running BESIDE this one (projects Round G wave of
+ *  2026-10-01) are editing: the census does not judge them until their
+ *  package merges, so a raw write they add fails their own review, not this
+ *  census at the merge. Their measured counts stay in the lists above; the
+ *  integrator removes a file from here when its package merges (and lowers
+ *  or re-measures its number if the package changed it). */
+const IN_FLIGHT: Record<string, string> = {
+    "components/projects/IntakePanel.tsx": "projects-joint J10b", "components/projects/cost/QuotesPanel.tsx": "projects-joint J10b",
+    "lib/acknowledgments.ts": "document-control P14", "lib/retention.ts": "document-control P14",
+    "lib/revisions.ts": "document-control P14", "lib/reviewControl.ts": "document-control P14",
+    "lib/holds.ts": "document-control P15", "lib/transmittals.ts": "document-control P15",
+    "lib/processFlows.ts": "intelligence I-09",
+};
+const judged = (f: string) => !(f in IN_FLIGHT);
 /** The Projects surface outside lib (components/projects, the project and intake routes). */
 const PROJECTS_UI_CLEAN = [
     "components/projects/ProjectDocumentsCard.tsx", "components/projects/cost/QuotesPanel.tsx",
@@ -193,13 +207,13 @@ const PROJECTS_UI_RATCHET: Record<string, number> = {
 
 describe("census, widened — every lib file and the Projects surface (GAP-402 remainder → SAF-18)", () => {
   it("the clean files stay clean", () => {
-    for (const f of [...CLEAN_LIB, ...PROJECTS_UI_CLEAN]) {
+    for (const f of [...CLEAN_LIB, ...PROJECTS_UI_CLEAN].filter(judged)) {
       const raw = unchecked(f);
       expect(raw, `${f}: unchecked write(s): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toEqual([]);
     }
   });
   it("the ratcheted files may only fall (lower the number here when one does)", () => {
-    for (const [f, max] of Object.entries({ ...LIB_RATCHET, ...PROJECTS_UI_RATCHET })) {
+    for (const [f, max] of Object.entries({ ...LIB_RATCHET, ...PROJECTS_UI_RATCHET }).filter(([f]) => judged(f))) {
       const raw = unchecked(f);
       expect(raw.length, `${f}: ${raw.length} unchecked (was ${max}): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toBeLessThanOrEqual(max);
     }
@@ -210,7 +224,11 @@ describe("census, widened — every lib file and the Projects surface (GAP-402 r
       ...walkTs("lib"), ...walkTs("components/projects"),
       ...walkTs("app/api/projects"), ...walkTs("app/api/intake"), ...walkTs("app/(protected)/projects"),
     ];
-    const offenders = scope.filter((f) => !known.has(f)).filter((f) => unchecked(f).length > 0);
+    const offenders = scope.filter((f) => !known.has(f) && judged(f)).filter((f) => unchecked(f).length > 0);
     expect(offenders).toEqual([]);
+  });
+  it("every in-flight file is one the lists above measured (it is set aside, never forgotten)", () => {
+    const known = new Set([...CLEAN_LIB, ...Object.keys(LIB_RATCHET), ...PROJECTS_UI_CLEAN, ...Object.keys(PROJECTS_UI_RATCHET)]);
+    for (const f of Object.keys(IN_FLIGHT)) expect(known.has(f), f).toBe(true);
   });
 });

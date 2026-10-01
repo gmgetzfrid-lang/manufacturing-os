@@ -401,6 +401,11 @@ type ItemWriteOutcome = { landed: string[]; refused: string[]; failed: Array<{ i
  *  (the server's clock) and updated_by NULL itself. */
 const MACHINE_WRITE_COLUMNS = ["status", "applicability", "ai_rationale", "evidence", "updated_by_name"] as const;
 
+/** The most writes one apply_checklist_item_writes call carries — the
+ *  function refuses more than 2,000 (22023); a larger list goes in calls of
+ *  this size and their outcomes are merged. */
+export const APPLY_CHUNK = 1000;
+
 /** A function the database does not have yet: Postgres 42883, or PostgREST's
  *  schema-cache miss (PGRST202). */
 function isMissingRpc(err: { code?: string | null; message?: string | null }): boolean {
@@ -453,14 +458,24 @@ async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrit
  *  (PERF-7) — or, before 20261157 is applied, batches of WRITE_BATCH
  *  single-row writes in parallel. */
 async function writeItemPatches(writes: ItemWrite[]): Promise<ItemWriteOutcome> {
+  const landed: string[] = [], refused: string[] = [], failed: Array<{ id: string; error: string }> = [];
+  let rest = writes;
   const checklistId = writes[0]?.item.checklistId;
   if (checklistId && writes.every((w) => w.item.checklistId === checklistId)) {
-    const inOne = await applyItemWritesInOneRequest(checklistId, writes);
-    if (inOne) return inOne;
+    // In calls of at most APPLY_CHUNK (the function's own cap is 2,000). A
+    // call answering "not here" (the migration is missing, or a shapeless
+    // answer) hands what is left to the single-row writes; what earlier
+    // calls landed stands.
+    let i = 0;
+    for (; i < writes.length; i += APPLY_CHUNK) {
+      const part = await applyItemWritesInOneRequest(checklistId, writes.slice(i, i + APPLY_CHUNK));
+      if (!part) break;
+      landed.push(...part.landed); refused.push(...part.refused); failed.push(...part.failed);
+    }
+    rest = writes.slice(i);
   }
-  const landed: string[] = [], refused: string[] = [], failed: Array<{ id: string; error: string }> = [];
-  for (let i = 0; i < writes.length; i += WRITE_BATCH) {
-    const batch = writes.slice(i, i + WRITE_BATCH);
+  for (let i = 0; i < rest.length; i += WRITE_BATCH) {
+    const batch = rest.slice(i, i + WRITE_BATCH);
     const results = await Promise.all(batch.map(async (w) => ({
       id: w.item.id,
       res: await checkedWrite((w.item.updatedAt

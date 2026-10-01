@@ -32,7 +32,8 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
-import { validateParsedQuote, matchCompanyByName, type ParsedQuote } from "@/lib/bidTab";
+import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
+import { registryLinkFor } from "@/lib/costDocParse";
 import { emit } from "@/lib/notify/dispatch";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
@@ -168,8 +169,9 @@ export async function uploadCostDoc(input: {
   }
 
   const doc = mapDoc(data as Record<string, unknown>);
-  // COST-3 done-when 2: a bid whose vendor binds to ONE Known Company is
-  // linked on its row now — the do-not-use gates then read a stored link.
+  // COST-3 done-when 2: a bid whose vendor name could be only ONE Known
+  // Company is linked on its row now — the do-not-use gates then read a
+  // stored link.
   const linked = input.kind === "quote" ? await linkBidToRegistry(input.orgId, data as Record<string, unknown>) : null;
   await audit("COST_DOC_UPLOADED", input.orgId, doc.id, input.actor, {
     kind: input.kind, fileName: input.file.name, rfqGroup: input.rfqGroup ?? null, vendor: input.vendorName ?? null,
@@ -184,23 +186,23 @@ const REGISTRY_PAGE = 1000;
 
 /**
  * COST-3 done-when 2 (projects Round G J12): link a new bid to the Known
- * Company its vendor name binds to — an exact name, else the ONE row it
- * normalises to (lib/bidTab matchCompanyByName; ambiguity never binds) — so
- * the do-not-use gates (the bid tab, awardQuote, 20261157's rail) read a
- * stored link rather than re-deriving a match from a name on every render.
- * Only where the row carries the column (20261096), has no link, and its
- * contractor has none either (a person's link outranks a name). Best effort:
- * the upload stands whatever happens here, and the write is guarded on the
- * row still having no link.
+ * Company its vendor name could ONLY be — lib/costDocParse registryLinkFor:
+ * exactly one normalised candidate, and it is the name's binding (an
+ * exact-name hit with a look-alike beside it is NOT linked: every gate reads
+ * a stored link as a person's choice, so it would clear the look-alike's
+ * do-not-use flag) — so the do-not-use gates (the bid tab, awardQuote,
+ * 20261157's rail) read a stored link rather than re-deriving a match from a
+ * name on every render. Only where the row carries the column (20261096)
+ * and has no link, and only for a bid that names no contractor: a
+ * contractor's link is a person's (set once — MON-13), may still be made,
+ * and must not be outranked by a machine's link on the document
+ * (companyBehind reads the document's link first). Best effort: the upload
+ * stands whatever happens here, and the write is guarded on the row still
+ * having no link.
  */
 async function linkBidToRegistry(orgId: string, row: Record<string, unknown>): Promise<{ id: string; name: string } | null> {
   const vendor = String(row.vendor_name ?? "").trim();
-  if (!vendor || !("company_id" in row) || row.company_id != null) return null;
-  const partyId = (row.party_id as string | null | undefined) ?? null;
-  if (partyId) {
-    const { data: party, error } = await supabase.from("project_parties").select("company_id").eq("id", partyId).maybeSingle();
-    if (error || (party as { company_id?: string | null } | null)?.company_id) return null;
-  }
+  if (!vendor || !("company_id" in row) || row.company_id != null || row.party_id != null) return null;
   const registry: Array<{ id: string; name: string }> = [];
   for (let from = 0; ; from += REGISTRY_PAGE) {
     const { data, error } = await supabase.from("companies").select("id, name")
@@ -210,7 +212,7 @@ async function linkBidToRegistry(orgId: string, row: Record<string, unknown>): P
     registry.push(...page);
     if (page.length < REGISTRY_PAGE) break;
   }
-  const hit = matchCompanyByName(vendor, registry);
+  const hit = registryLinkFor(vendor, registry);
   if (!hit) return null;
   const { data: written, error } = await supabase.from("cost_documents").update({ company_id: hit.id })
     .eq("id", String(row.id)).is("company_id", null).select("id");
@@ -360,11 +362,13 @@ type CompanyRow = { id: string; name: string; status: string };
  *  first (cost_documents.company_id, J4's 20261096 column, read from the raw
  *  row so it is simply absent before that migration), then the party's
  *  (project_parties.company_id), then an exact name with a single match.
+ *  A link counts only to a company of the document's own org (20261157's
+ *  cost_doc_company_behind reads as the definer, so it checks the same).
  *  Any failed read is an ERROR, never "no company": the refusal must not
  *  pass silently because a lookup timed out. */
 async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; error?: string }> {
   const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
-    const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).eq("org_id", doc.orgId).maybeSingle();
     if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
     return { company: (data as CompanyRow | null) ?? null };
   };

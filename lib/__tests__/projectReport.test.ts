@@ -21,10 +21,12 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/lib/supabase", () => {
   // Honours what the report's bound depends on: order("planned_at"),
-  // limit(n) and select(…, { count: "exact" }) — as PostgREST does.
+  // limit(n), range(from, to) and select(…, { count: "exact" }) — as
+  // PostgREST does.
   function chain(table: string) {
     const c: Record<string, unknown> = {};
     let limit: number | null = null;
+    let range: [number, number] | null = null;
     let orderBy: string | null = null;
     let wantCount = false;
     const settle = () => {
@@ -36,6 +38,7 @@ vi.mock("@/lib/supabase", () => {
       }
       const total = rows.length;
       if (limit != null) rows = rows.slice(0, limit);
+      if (range) rows = rows.slice(range[0], range[1] + 1);
       return Promise.resolve({ data: rows, error: null, count: wantCount ? total : null });
     };
     const handler: ProxyHandler<Record<string, unknown>> = {
@@ -46,6 +49,7 @@ vi.mock("@/lib/supabase", () => {
         return (...args: unknown[]) => {
           if (prop === "select") wantCount = (args[1] as { count?: string } | undefined)?.count === "exact";
           if (prop === "limit") limit = Number(args[0]);
+          if (prop === "range") range = [Number(args[0]), Number(args[1])];
           if (prop === "order" && orderBy == null) orderBy = String(args[0]);
           if (prop === "maybeSingle") {
             return settle().then((r) => ({ data: Array.isArray(r.data) ? (r.data[0] ?? null) : null, error: r.error }));
@@ -607,5 +611,41 @@ describe("the report prints each closeout decision with its reason (GAP-405)", (
   it("no decisions → no section", async () => {
     const html = renderReportHtml(await gatherReportData("o1", "p1"));
     expect(html).not.toContain("Decisions on the record");
+  });
+
+  it("every decision on the project, not only the first ten checklists or 500 punch items (review minor)", async () => {
+    // 14 checklists; the reasoned N/A rulings sit on checklists 11-14, past
+    // the ten-line progress table.
+    state.tables.project_checklists = Array.from({ length: 14 }, (_, i) => ({ id: `cl${String(i + 1).padStart(2, "0")}`, org_id: "o1", project_id: "p1", title: `MI loop ${i + 1}`, kind: "mi", status: "open", created_at: `2026-09-${String(i + 1).padStart(2, "0")}T00:00:00Z` }));
+    state.tables.checklist_items = [11, 12, 13, 14].map((n) => ({
+      id: `i${n}`, checklist_id: `cl${n}`, seq: 1, text: `Relief valve ${n}`, applicability: "na", status: "na", evidence: [],
+      manual_note: `No relief valve on loop ${n}`, updated_by: "u-b", updated_by_name: "jchen", updated_at: `2026-09-2${n - 10}T00:00:00Z`,
+    }));
+    // 1,200 punch items voided with a reason — past the old 500-row read and
+    // past PostgREST's 1,000-row answer
+    state.tables.punch_items = Array.from({ length: 1_200 }, (_, i) => ({ id: `pu${String(i).padStart(5, "0")}`, project_id: "p1", title: `Punch ${i}`, status: "void", closure_note: `Duplicate ${i}`, closed_by_name: "pat", closed_at: "2026-09-01T00:00:00Z" }));
+    const d = await gatherReportData("o1", "p1");
+    expect(d.readFailures).toEqual([]);
+    expect(d.checklistLines).toHaveLength(10); // the progress table stays ten lines
+    expect(d.decisions.filter((x) => x.area === "Checklist").map((x) => x.item).sort()).toEqual([
+      "MI loop 11 — Relief valve 11", "MI loop 12 — Relief valve 12", "MI loop 13 — Relief valve 13", "MI loop 14 — Relief valve 14",
+    ]);
+    expect(d.decisions.filter((x) => x.area === "Punch")).toHaveLength(1_200);
+    expect(d.decisionsCapped).toBe(false);
+    const html = renderReportHtml(d);
+    expect(html).toContain("(the newest 200 of 1204)");
+    expect(html).toContain("No relief valve on loop 14");
+    expect(html).not.toContain("later decisions are left out");
+  });
+
+  it("a failed decisions read is said, never printed as 'no decisions'", async () => {
+    decided();
+    state.errors.checklist_items = "permission denied";
+    state.errorCodes.checklist_items = "42501";
+    const d = await gatherReportData("o1", "p1");
+    expect(d.readFailures).toContain("decisions on the record");
+    const html = renderReportHtml(d);
+    expect(html).toContain("Could not read the decisions on the record</span> — they are left out, not shown as none.");
+    expect(html).not.toContain("Decisions on the record — each with the reason");
   });
 });
