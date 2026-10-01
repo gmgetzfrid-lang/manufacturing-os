@@ -16,7 +16,7 @@
 -- What: restate GRANT EXECUTE … TO authenticated, service_role, then
 -- REVOKE EXECUTE … FROM anon (and PUBLIC) on EVERY overload of publish_revision and
 -- post_ticket_comment present in this database (whatever signature is live —
--- 20261049 / 20261060 / 20261105 / 20261130's), then probes, then the live
+-- 20261049 / 20261105 / 20261130's), then probes, then the live
 -- sweep: every SECURITY DEFINER function in `public` anon can still execute
 -- (signatures only — schema, never rows), each to be read for a NULL-uid
 -- branch (DRLS-16 done-when 2).
