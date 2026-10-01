@@ -864,6 +864,76 @@ describe("ASK-1 — a document deleted since never hides its asker's own answer;
     expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
     expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
+
+  it("reproduction → fix (fix pass 6): a mirror the mirror list did not hold, on a database whose roster cannot say which documents are mirrors (no vision_pages: read without the source columns), is never recorded as an upload — deleting it still withholds a teammate's view", async () => {
+    seed({
+      documents: [dcDoc("dc-1")],
+      knowledge_documents: [
+        kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+        kdoc(K_MIRROR, { name: "INC-0042 — Incident report", source_document_id: "dc-1", source_rev: "B" }),
+      ],
+      knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }), kchunk(K_MIRROR, RESTRICTED, { id: "c-9mirror", page: 2 })],
+    }, [ENG]);
+    // 20260917 applied, 20260922 not: the mirror list reads, the roster falls
+    // back to its base columns (no source_document_id on its rows).
+    db.missingColumns.knowledge_documents = ["vision_pages"];
+    mirrorListOmits(K_MIRROR);
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    // The Viewer may read dc-1, so its passage reaching their prompt exposes nothing.
+    expect((await ask({ question: "What is the relief valve set pressure?" }, "viewer")).status).toBe(200);
+    expect(allPrompts()).toContain("312 psig");
+    const row = rowsOf("knowledge_questions")[0];
+    const ctx = row.context as { documents: string[]; uploads: string[] };
+    expect(ctx.documents.sort()).toEqual([K_OPEN, K_MIRROR].sort());
+    // Not KNOWN to be an upload: the list did not hold it, but its roster row
+    // names no controlled document only because the column was not read —
+    // nor is the real upload known as one there (deleting it withholds, as
+    // before fix pass 5); never every unlisted document.
+    expect(ctx.uploads).toEqual([]);
+    expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows).toHaveLength(1);
+
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== K_MIRROR);
+    db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== K_MIRROR);
+    const team = await (await history({ action: "list" }, "as:u-eng")).json();
+    expect(team.rows).toEqual([]);
+    expect(team.withheld).toBe(1);
+    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
+  });
+
+  it("reproduction → fix (fix pass 6): a MIRROR legend the asker may read is recorded, never as an upload — deleting it still withholds a teammate's view", async () => {
+    const LEGEND = U(901);
+    seed({
+      knowledge_libraries: [{ id: LIB2, org_id: ORG, name: "Engineering", ai_features: {}, ai_instructions: null }],
+      documents: [dcDoc("dc-legend")],
+      knowledge_documents: [
+        kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+        kdoc(LEGEND, { library_id: LIB2, name: "Legend sheet", source_document_id: "dc-legend", source_rev: "A" }),
+      ],
+      knowledge_chunks: [
+        kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }),
+        kchunk(LEGEND, "LEGEND: PSV = pressure safety valve; restricted engineering note 7741.", { library_id: LIB2, id: "c-legend" }),
+      ],
+    }, [ENG]);
+    h.legendDocIds = [LEGEND];
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    expect((await ask({ question: "What is the relief valve set pressure?" }, "viewer")).status).toBe(200);
+    expect(answerCall().user).toContain("7741");
+    const row = rowsOf("knowledge_questions")[0];
+    const ctx = row.context as { documents: string[]; uploads: string[] };
+    expect(ctx.documents.sort()).toEqual([K_OPEN, LEGEND].sort());
+    expect(ctx.uploads).toEqual([K_OPEN]);
+    expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows).toHaveLength(1);
+
+    // A sync removes the legend's mirror.
+    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== LEGEND);
+    db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== LEGEND);
+    const team = await (await history({ action: "list" }, "as:u-eng")).json();
+    expect(team.rows).toEqual([]);
+    expect(team.withheld).toBe(1);
+    expect(JSON.stringify(team)).not.toContain("7741");
+    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
+    expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
+  });
 });
 
 // ── ASK-5 ───────────────────────────────────────────────────────────────────
