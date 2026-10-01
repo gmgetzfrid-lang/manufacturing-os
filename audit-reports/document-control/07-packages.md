@@ -315,6 +315,11 @@ lib/workPackages.ts:99-106 — `const pinned = (m.pinned_version_id as string | 
 - **The cover is built from the merged sheets** (`buildCoverAfter(includedSheets, skipped)`, PKG-6's hook). The unreadable member appears in the toast's left-out list and on the print snapshot as left out (`VFY-19`).
 - `/packages` shows a slate "Unknown · N" pill instead of "Fresh", and "status unknown to you" on the member's row.
 - Tests: `lib/__tests__/dcRoundFField.test.ts` "PKG-7 — …" (six): the pack's explicit skip and the cover's sheet set; order, de-duplication and missing ids; a failed read throws; the `unknown` list state; refresh never writes the hidden member's pin; create refuses with nothing inserted.
+- **Fix pass (review findings).** The first pass checked the documents read in `listWorkPackages` but not the MEMBER read, and it named every member of a failed documents read "Restricted document" (a permission it had not learned):
+  - The member read is checked. A failed read sets `WorkPackage.membersUnread`; `/packages` shows "Unknown · not read" and "sheets not read just now" (never "0 docs, Fresh"), counts it in "need attention", and disables Print pack for it.
+  - A failed documents read marks its members `unknownReason: "unread"`, labelled "Document (not read just now)" with "not read just now — reload to try again". "Restricted document" / "status unknown to you" are kept for a read that answered without the row (`unknownReason: "restricted"`).
+  - Both `.in()` reads are chunked at 150 ids (members by package, so each package's members stay in one ordered read), so ~30 open packages of ~20 sheets is no longer one 600-id GET.
+  - Tests: three more in "PKG-7 — …" (the failed member read, the failed documents read, the chunked reads).
 
 **Done-when.**
 1. ✓ Every consumer compares the requested ids against the returned rows: `drifted` is `unknown` (not false) for an unreadable member; refresh refuses to write rather than NULLing a pin; `createWorkPackage` errors; docPack records an explicit skipped entry.
@@ -410,6 +415,7 @@ lib/downloads.ts:198-210 — `if (!policy?.enabled || !policy.hardGate) return; 
   - The book viewer refuses a book containing a gated sheet, naming it, before anything is stamped.
 - **Both pack buttons.** `assessPackDocs(ids, { userId })` (the `/packages` pre-print gate) and `buildAndDownloadDocPack` (the `/packages` build and the asset hub's "Print doc pack") both apply it. A gated sheet is skipped with "read-&-understood sign-off outstanding — sign it before taking a copy" (code `ack_required`) and never merged.
 - Tests: `dcRoundFField.test.ts` "PKG-9 — …": a gated sheet is left out and never stamped; `assessPackDocs` applies the gate before any side-effect and passes the sheet once signed; the single download still refuses through the same helper, and the three callers are pinned; the gate fails open on a broken policy read.
+- **Fix pass (review findings).** The helper resolved every candidate's effective policy first — up to two sequential collection / library reads per distinct key — and only then asked for pending acknowledgments, so a 150-sheet pack spread over many folders could make ~300 round trips before printing (twice: `assessPackDocs`, then the build). It now reads the person's PENDING acknowledgments for the candidates first (one read per 150 ids) and resolves a policy only for a document with one; a person with none pending makes no policy read at all. The fail-open rule is unchanged (an errored chunk gates nothing). Test: "reads the printer's PENDING acknowledgments first (chunked) …".
 
 **Done-when.**
 1. ✓ `buildAndDownloadDocPack` runs the same ack gate per document and reports gated documents in `skipped` with a clear reason.
@@ -571,13 +577,22 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
   - the caller's order kept, with page counts;
   - the cover's page labels and the ordered member read.
 
+- **Fix pass (review findings).**
+  - **The split is offered where it can be acted on.** The asset hub (`app/(protected)/assets/[tag]/page.tsx`, outside the plan, disclosed) turns a refused pack into "Print part i of N" buttons (`runPack`, `splitPackIds` — no longer unused); a part refused for pages or bytes re-splits at the smaller size. A single sheet over the budget alone is not split (it is downloaded on its own).
+  - **`/packages` has no one-click split, by design (the lost capability, recorded).** A part-print of a work package would need its own snapshot semantics — the parts not on that paper would read "added since this pack was printed" on every scan. A package over 150 sheets can no longer be printed as ONE pack; the refusal names the remedy (split the work package, e.g. one per area).
+  - **Who the budget removes is measured, not assumed.** No count was taken when the budget was set (this package has no database access). Migration `20261143` (DRLS-10's) carries two read-only MEASURE rows in its one result set: open / executing packages with more than 150 sheets, and asset tags carried by more than 150 non-archived documents. The count lands with the paste. The 150 MB source-byte cap also catches a few dozen high-resolution scans; that population has no measure (file sizes per pack are not stored).
+  - **Behaviour change, stated.** A pack that printed yesterday may be refused today: a package or asset tag over 150 sheets, a pack over 1000 pages, or one whose source files exceed 150 MB.
+  - **The failure scenario is the finding's, not an incident.** "A 180-sheet pack" in DEC-44 (P8 FIELD)'s rationale is now worded as this finding's scenario.
+  - Test: "the asset hub turns a refused pack into the parts it names …".
+
 **Done-when.**
-1. ✓ docPack enforces an explicit cap — document count, cumulative pages and cumulative bytes — and refuses above it with a clear message offering a split. The split is an instruction with the counts; there is no one-click "print as N packs" button.
+1. ✓ docPack enforces an explicit cap — document count, cumulative pages and cumulative bytes — and refuses above it with a clear message offering a split. The asset hub offers the split as part buttons; `/packages` offers it as an instruction (split the work package — see the fix pass for why there is no part-print there).
 2. ✓ Both reads give a deterministic order (the documents in the caller's order, the members by `added_at`, `id`), and the cover is generated from the merged pack's actual page order with a page reference per entry.
 3. ✓ (PS-VERIFY, 2026-10-01) The cover lists every sheet, with continuation pages.
 
 **Scope / residual.**
-- The asset hub's `.limit(500)` read (`app/(protected)/assets/[tag]/page.tsx`, PS-VERIFY's file) is unchanged. docPack now refuses any pack over 150 sheets with the split, whichever page calls it.
+- The asset hub's `.limit(500)` read (`app/(protected)/assets/[tag]/page.tsx`, PS-VERIFY's file) is unchanged. docPack now refuses any pack over 150 sheets with the split, whichever page calls it; the asset hub prints the parts.
+- The budget's reach is the `20261143` MEASURE rows, pending the paste.
 - Ink analysis still caps at 40 pages per document (`lib/stamping.ts`, PS-STAMP's file), as the verifier noted.
 - The budget values are a stated default (provisional DEC-44 (P8 FIELD) — the integrator renumbers).
 

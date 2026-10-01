@@ -1,6 +1,6 @@
 # 06 · Transmittals & the external portal
 
-**15 findings** — 7 HIGH · 7 MEDIUM · 1 LOW (`TRX-15` opened at the P7 merge, 2026-10-01).
+**16 findings** — 7 HIGH · 7 MEDIUM · 2 LOW (`TRX-15` opened at the P7 merge, `TRX-16` at P8 FIELD's fix pass, 2026-10-01).
 
 What leaves the building, and what the recipient can reach.
 
@@ -716,7 +716,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 ## TRX-15 · A PDF over 64 MiB leaves the transmittal portal unstamped, and the portal page holds every download in memory
 
 - **Severity:** LOW
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** document-control P8 FIELD (a stamping consumer; after PS-STAMP merges) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; the bound and the fallback are pinned in `lib/__tests__/transmittalPortalRoute.test.ts`)
 - **Blast radius:** document-control integrity (an uncontrolled copy without its marking)
@@ -736,7 +736,7 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - Every PDF served by the portal carries the stamp, whatever its size — or a PDF that cannot be stamped is refused at issue with the reason.
 - The portal page does not hold a download in memory.
 
-**Resolution (2026-10-01, document-control Round F wave 2).** P8 FIELD, a stamping consumer. `lib/stamping.ts` is consumed as PS-STAMP left it; narrow edits to P7's route and page. Reproduced at `55e281d`:
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD, a stamping consumer. (Recorded as resolved on the first pass; the review found the "refused at issue" limb undone and the issuer told only by an audit row, so it stays open — see the fix pass.) `lib/stamping.ts` is consumed as PS-STAMP left it; narrow edits to P7's route and page. Reproduced at `55e281d`:
 - `app/api/transmittal/route.ts` piped a PDF over `PORTAL_STAMP_MAX_BYTES` (64 MiB) through unstamped (`unstampedReason: "oversize"`), and delivered a PDF the stamper refused unstamped too ("stamping failed — delivering unstamped").
 - The portal page read every download with `res.blob()`.
 
@@ -758,14 +758,47 @@ Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
 
 `lib/__tests__/dcRoundFTransmittals.test.ts` (P7's test): its response-header pin is re-pointed at the per-item notice.
 
+**Fix pass (review findings).**
+- **Who this refuses, named.** `PDFDocument.load(source)` without `ignoreEncryption` throws on EVERY encrypted PDF — owner-password (permission-restricted) vendor and certified drawings included, which open in any viewer. That is the main population the TRX-15 refusal reaches, then PDFs over 64 MiB. Both used to reach the recipient unstamped and recorded; both are now refused at download.
+- **The issuer is told, not only the trail.** On a refusal the route now writes, besides `TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED`, a bell notification (`kind: "transmittal_unstampable"`, linking `/transmittals`) and a queued email to the issuer (`event_type: "transmittal_refused"`, which no per-category toggle mutes), naming the document, the likely cause (a permission-restricted PDF, else a damaged file; or the size bound) and the remedy (re-save without restrictions or split, then re-issue — "this one still reads issued on the register"). Once per transmittal and document: a refusal already on the trail for the pair means the issuer was told (`unstampableAlreadyOnTrail`; an unreadable trail errs toward telling again). `lib/notify`'s `emit()` runs on the signed-in browser client and cannot be called from this service-role route, so it uses the route's own issuer path — the same two rows the receipt path writes. Best-effort: it never blocks the refusal.
+- **The issue-time check is a tracked finding**, not prose: `TRX-16` (owner P7 / `lib/transmittals.ts`).
+- Tests (`transmittalPortalRoute.test.ts` "TRX-15 — …"): the issuer is told once — bell and email, with the restricted-PDF wording — and a retry is refused and trailed again without a second notice; an oversize PDF names the bound; a transmittal with no issuer on the row is still refused.
+
 **Done-when.**
-1. ✓ Every PDF served by the portal carries the stamp, whatever its size: a PDF that cannot be stamped is not served. It is refused at DOWNLOAD with the reason, on the issuer's trail; it is not refused at ISSUE. The done-when's second branch ("refused at issue") would need the issue gate (`lib/transmittals.ts`, P7's file) to open and parse every PDF in the browser at issue time.
-2. ✓ The portal page does not hold a download in memory.
+1. ◐ Every PDF served by the portal carries the stamp, whatever its size: a PDF that cannot be stamped is not served. It is refused at DOWNLOAD with the reason, on the issuer's trail, and the issuer is told then. It is NOT refused or warned at ISSUE — that branch is `TRX-16` (the issue gate, `lib/transmittals.ts`, P7's file).
+2. ◐ The portal page does not hold a download in memory (the hidden-frame save, `&nav=1`). Not yet checked on a device: the page now depends on frame navigation to save the file, and no iOS Safari or Firefox download was exercised (no browser in this environment). To check once on each before this closes.
 
 **Scope / residual.**
-- The issuer learns of an unstampable PDF from the trail row and from the recipient, not at issue. An issue-time check is a `lib/transmittals.ts` (P7) follow-up.
-- Behaviour change: a PDF under the bound that pdf-lib cannot stamp, and that went out unstamped before, is now refused.
+- Stays OPEN for done-when 1's issue-time branch (`TRX-16`) and done-when 2's device check (iOS Safari, Firefox).
+- Behaviour change: a PDF that pdf-lib cannot stamp — chiefly an encrypted / permission-restricted one — and a PDF over 64 MiB, both of which went out unstamped before, are now refused at download.
 - The page's "your browser is saving the file" line shows after 8 s. A refusal that lands later replaces it.
+
+---
+
+<a id="trx-16"></a>
+
+## TRX-16 · A PDF the portal cannot stamp is accepted at issue and refused only when the recipient downloads it
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** document-control P7 TRANSMITTALS follow-up (`lib/transmittals.ts`, the issue path) — opened 2026-10-01 at P8 FIELD's fix pass, at the reviewer's request (the issue-time limb of `TRX-15`).
+- **Verification:** CONFIRMED (by reading; the download-time refusal it follows is pinned in `lib/__tests__/transmittalPortalRoute.test.ts` "TRX-15 — …")
+- **Blast radius:** document-control delivery (an issued transmittal its recipient cannot receive)
+- **Locations:**
+  - `lib/transmittals.ts` — the issue transition (with the `20261133` issue rail) checks each item's status, holds and pinned revision, but not whether a PDF item can be stamped
+  - `app/api/transmittal/route.ts` — `refuseUnstampable` (`TRX-15`): the refusal happens at download
+- **Related:** `TRX-15`, `TRX-5`, `DEC-61`
+- **Independently verified:** — (`author`: opened at P8 FIELD's fix pass per `DEC-31`; not yet challenged)
+
+**Mechanism.** Since `TRX-15` a PDF leaves the portal stamped or not at all. pdf-lib's plain load refuses every encrypted PDF — owner-password (permission-restricted) vendor and certified drawings included, though they open in any viewer — and the portal does not stamp above 64 MiB. Issuing checks neither, so the transmittal is issued, the register reads it as sent, and the first refusal is the recipient's download. The issuer is told at that moment (a bell and an email, once per transmittal and document), not before.
+
+**Failure scenario.** A DocCtrl issues TR-0107 carrying a permission-restricted vendor datasheet. The external contractor clicks Download and is refused ("could not be marked … Contact the issuer"). The issuer hears of it then, re-saves the file without restrictions and issues again — a day lost on a transmittal the register showed as issued.
+
+**Remediation.** At issue (the draft → issued transition, before the update), for each PDF item: refuse or warn when the version's stored size is over the portal's stamping bound, and when a pdf-lib load of its bytes (without `ignoreEncryption`) fails — in a server route, so the browser does not fetch every file — naming the item and the reason ("permission-restricted PDF: re-save it without restrictions, then issue").
+
+**Done when.**
+- Issuing a transmittal with a PDF the portal cannot stamp is refused or warned at issue, naming the item and the reason.
+- A test pins the check for an encrypted PDF and for one over the bound.
 
 ---
 

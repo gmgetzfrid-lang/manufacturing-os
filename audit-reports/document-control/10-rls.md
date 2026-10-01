@@ -438,7 +438,7 @@ schema.sql:1090 `CREATE POLICY "download_audits_org_access" ON download_audits F
 - [ ] A re-pin records that the package had gone stale, rather than erasing the signal
 - [ ] A test re-pins another member's package as a Viewer and asserts refusal
 
-**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD — the app half. **The database half needs a migration, which this package did not write** (the brief expected none: "if one is needed, stop and say so"). Reproduced at `55e281d`, newest definitions in the migration sequence:
+**Partial (2026-10-01, document-control Round F wave 2).** P8 FIELD — the app half on the first pass; the database close / delete line followed in the fix pass (migration `20261143`, below — the brief had expected no migration, and the integrator assigned the number). Reproduced at `55e281d`, newest definitions in the migration sequence:
 - `work_package_documents` UPDATE / DELETE were narrowed to the package owner or a controller by `20261032` (`PKG-5`, applied 2026-08-24).
 - `work_packages` keeps the `20260825` member-level `work_packages_org_update` / `_org_delete` policies — no later migration re-creates them — so any active member can still close or delete a package through PostgREST.
 - `refreshWorkPackage` erased the stale signal: no record of what had drifted.
@@ -457,13 +457,23 @@ What landed:
   - a census over the migration sequence proves the newest pin UPDATE / DELETE policies require the owner or a controller;
   - the page's affordance pins.
 
+**Fix pass (review findings, same day).**
+- **The database line — migration `20261143_dc_roundF_work_package_close_rail.sql`** (number assigned by the integrator). `work_packages_org_update` and `work_packages_org_delete` are re-created from their newest definition (`20260825`; nothing later, `schema.sql` included, re-creates them) with every line kept verbatim, AND the `20261032` pin predicate: `owner_user_id = auth.uid()`, or an active Admin / DocCtrl member of the row's org (headline role or the roles collection).
+  - UPDATE gains a WITH CHECK with the same terms (it had none), so the owner cannot hand the row to someone else unless they are a controller.
+  - DELETE is also refused while the package has a print snapshot (`work_package_prints`, `ON DELETE CASCADE` since `20261028`): a printed package is closed, never deleted through the API, so the snapshots its paper is verified against survive. The service role and the org-deletion cascade are unaffected (RLS does not apply to either). The app never deletes a package.
+  - SELECT and INSERT are untouched; no function, no trigger, no SECURITY DEFINER helper.
+  - DEC-30 one paste: a TEMP-table inventory before `BEGIN` (open / executing / closed packages; open packages whose owner is no longer an active member — they become controller-only; packages with a print snapshot; the policy count, expect 4; plus two read-only PKG-12 MEASURE rows), one `BEGIN` / `COMMIT`, and one final `SELECT (check, ok, n)` — five probes on the deparsed `qual` / `with_check` (no cast inside a `LIKE`), then the inventory rows.
+  - Exercised against a scratch PostgreSQL 16 (stub `auth.uid()` / `org_members` / `documents`, the real `20260825` and `20261028`): a Viewer's close and delete of the owner's package match 0 rows; the owner closes their own; the owner handing the package to a Viewer is refused (WITH CHECK); a headline DocCtrl and a roles-collection DocCtrl close an orphaned package; an admin of another org matches 0 rows; a member removed from the org cannot close their own; neither the owner nor a DocCtrl deletes a printed package (its two snapshots survive); the owner deletes an unprinted one; SELECT and INSERT still work for a Viewer; the probes read true × 5 and a second run is clean.
+  - Test: `lib/__tests__/dcRoundFWorkPackageCloseRail.test.ts` — `20260825` is the newest definition; the authority term is `20261032`'s line for line; lineDiff proves every `20260825` line survives in both policies and the additions are exactly the authority term (plus UPDATE's WITH CHECK and DELETE's snapshot refusal); nothing else is touched; the one-paste shape; no cast inside a probe's `LIKE`.
+- **The re-pin record is truthful.** `WORK_PACKAGE_REPINNED` is still written before any pin moves (nothing moves without a record). Any drifted member whose pin then did NOT move — the policy matched no row (a stale page, a lost role, another person's package) or the write failed — is named in a compensating `WORK_PACKAGE_REPIN_REFUSED` row (`details.corrects`, `notMoved` with `cause: "refused" | "failed"`, `movedCount`). If that correction cannot be written, the refusal says the trail names N pins as moved that did not move. A refused no-op on an already-fresh member is no correction. Tests: the Viewer's refused re-pin now asserts the correction; a partial re-pin names only the unmoved member; a fresh-member-only refusal writes none; a failed correction is said.
+
 **Done-when.**
 1. ✓ Re-pinning is limited to the package owner and controllers (`20261032`, verified by the census test).
-2. ✗ **Not done — needs a migration.** Closing or deleting a `work_packages` row is still member-level in the database. The UI no longer offers Close to others, and the lib reports a refusal, but a direct PostgREST PATCH or DELETE by any active member succeeds. The fix re-creates `work_packages_org_update` / `work_packages_org_delete` (newest definition `20260825`) with the `20261032` pin predicate: `p.owner_user_id = auth.uid()` or a controller (`is_org_controller`). It should come with a DEC-30 inventory of open packages by owner. Numbers `20261143`+ are free.
-3. ◐ The app's re-pin records the stale signal before resolving it. A re-pin made outside the app (a direct PATCH by the owner or a controller) leaves no record; a database-side record would ride the same migration (a trigger on `work_package_documents` UPDATE of `pinned_version_id`).
-4. ✓ A test re-pins another member's package as a Viewer and asserts refusal, at the lib level against the policy's zero-row answer, with the live policy pinned by the census.
+2. ✓ (pending the paste of `20261143`) Closing or deleting a `work_packages` row is limited to the owner and controllers in the database, not only in the browser; deleting a printed package is refused to everyone through the API.
+3. ◐ The app's re-pin records the stale signal before resolving it, and corrects the record when a pin did not move. A re-pin made outside the app (a direct PATCH by the owner or a controller, both allowed) still leaves no database-side record — that would be a trigger on `work_package_documents` UPDATE of `pinned_version_id`, not written here.
+4. ✓ A test re-pins another member's package as a Viewer and asserts refusal, at the lib level against the policy's zero-row answer (with the correction row), with the live policy pinned by the census.
 
-**Scope / residual.** Stays OPEN for done-when 2, and for 3's database half — one migration, to be assigned by the integrator.
+**Scope / residual.** Stays OPEN for done-when 3's database half (a trigger recording a direct re-pin). `20261143` is live only once pasted; until then a direct PostgREST close or delete by any active member still succeeds.
 
 ---
 
