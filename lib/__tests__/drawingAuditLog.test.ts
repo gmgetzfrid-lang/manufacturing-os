@@ -389,11 +389,13 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "flagged" } }, { status: "flagged", provisional: { settledStatus: "flagged" } })).toBe("write");
     expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, { status: "passed" })).toBe("write");
     expect(replaceDecision({ revision_code: "", status: "broken_connectors", provisional: { settledStatus: "broken_connectors" } }, { status: "passed" })).toBe("write");
-    // While a document of the library is still in flight, a settled verdict
-    // that would lower what an unrevised row settled waits: the document may
-    // hold what drops a finding out of the set's scope (review fix pass 7).
-    // One that raises it, or matches it, is written; a known revision keeps.
-    const inFlight = { inFlight: true };
+    // While a document of the library is still being read (in flight, or
+    // parked on AI vision), a settled verdict that would lower what an
+    // unrevised row settled waits: the document may hold what drops a
+    // finding out of the set's scope (review fix pass 7 for a document in
+    // flight; review fix pass 8 for a parked one). One that raises it, or
+    // matches it, is written; a known revision keeps.
+    const inFlight = { stillReading: true };
     expect(replaceDecision({ revision_code: "", status: "broken_connectors" }, { status: "passed" }, inFlight)).toBe("wait");
     expect(replaceDecision({ revision_code: "", status: "flagged" }, { status: "passed" }, inFlight)).toBe("wait");
     expect(replaceDecision({ revision_code: "", status: "flagged", provisional: { settledStatus: "passed" } }, { status: "passed" }, inFlight)).toBe("write");
@@ -485,6 +487,28 @@ describe("a finding that waits on a sheet not read whole FOR NOW is provisional 
     expect(prov.provisional!.waitingOn).toHaveLength(300);
     const [row] = verdictRows("o1", [prov], "u1", { libraryId: "kl-1", sheets: ["PID-44-012"] });
     expect((row.audit_details as { provisional: { waitingOn: string[] } }).provisional.waitingOn).toHaveLength(WAITING_NAMES_MAX + 1);
+  });
+
+  it("a gap a parked document may yet hold on a page it has not read is filed, and waits on it — settled without it (review fix pass 8)", () => {
+    const parked = ["025-PID-0107.pdf (page(s) 2 never read)"];
+    const [v] = verdictsForSheets([sheet()], {
+      ...NOTHING, missingInSeries: [{ ref: "025-PID-0108", referencedBy: ["PID-44-012.pdf"], waitsOn: parked }],
+    });
+    // Shown as a gap — never hidden as unchecked — and not settled: fix pass
+    // 7 filed it settled, and at a known revision it was never lowered once
+    // the page turned out to declare it.
+    expect(v.status).toBe("flagged");
+    expect(v.details.missingReferences).toEqual(["References 025-PID-0108, which isn't in the set"]);
+    expect(v.details.uncheckedReferences).toEqual([]);
+    expect(v.provisional).toEqual({ waitingOn: parked, settledStatus: "passed" });
+    // A gap that waits on nothing is settled, as before.
+    const [w] = verdictsForSheets([sheet()], {
+      ...NOTHING, missingInSeries: [
+        { ref: "025-PID-0108", referencedBy: ["PID-44-012.pdf"], waitsOn: parked },
+        { ref: "025-PID-0199", referencedBy: ["PID-44-012.pdf"], waitsOn: [] },
+      ],
+    });
+    expect(w.provisional).toEqual({ waitingOn: parked, settledStatus: "flagged" });
   });
 
   it("verdictRows writes the marker; a settled verdict carries none", () => {

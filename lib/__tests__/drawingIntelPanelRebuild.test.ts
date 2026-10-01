@@ -158,6 +158,28 @@ describe("the lens and the record name what they did not judge (review fix pass 
     }));
   });
 
+  // Review fix pass 8: a gap a document parked on AI vision may yet hold on
+  // a page it has not read is shown as a gap — never hidden as unchecked —
+  // and said to be unsettled.
+  it("a gap a parked document may yet hold is listed as a gap, and says it is not settled (review fix pass 8)", async () => {
+    ui.getDrawingIntel.mockResolvedValue({
+      ...INTEL,
+      audit: {
+        ...INTEL.audit,
+        missingInSeries: [
+          { ref: "040-TK-0009", referencedBy: ["040-TK-0001.pdf"], count: 1, pendingIn: ["025-PID-0107.pdf (page(s) 1 never read)"] },
+          { ref: "040-TK-0010", referencedBy: ["040-TK-0002.pdf"], count: 1 },
+        ],
+      },
+    });
+    await render();
+    const toggle = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("referenced but not loaded"));
+    expect(toggle).toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    expect(host.textContent).toMatch(/040-TK-0009referenced 1× by 040-TK-0001\.pdf — not settled yet: 025-PID-0107\.pdf \(page\(s\) 1 never read\) still has pages waiting on AI vision/);
+    expect(host.textContent).toMatch(/040-TK-0010referenced 1× by 040-TK-0002\.pdf(?! — not settled)/);
+  });
+
   it("an unpaired box on a page whose box numbers were never read says which page (review fix pass 5)", async () => {
     ui.getDrawingIntel.mockResolvedValue({
       ...INTEL,

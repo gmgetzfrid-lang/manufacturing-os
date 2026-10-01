@@ -69,8 +69,10 @@ export interface AuditFindings {
   connectorsWithNoTarget: Array<{ sheet: string; box: string }>;
   /** Connector leaves a sheet; the named sheet has no matching box. */
   unreturnedConnectors: Array<{ from: string; to: string; box: string }>;
-  /** Referenced sheets from a loaded series that aren't in the set. */
-  missingInSeries: Array<{ ref: string; referencedBy: string[] }>;
+  /** Referenced sheets from a loaded series that aren't in the set. A gap
+   *  that a document parked on AI vision may yet hold on a page it has not
+   *  read is filed, and waits on it (`waitsOn` — review fix pass 8). */
+  missingInSeries: Array<{ ref: string; referencedBy: string[]; waitsOn?: readonly string[] }>;
   /** Both sheets loaded, target never references back. */
   oneWay: Array<{ from: string; to: string }>;
   /** Connectors whose destination could not be read — the stored line may
@@ -181,7 +183,7 @@ export function verdictsForSheets(
     // A missing sheet is a finding against every sheet that pointed at it —
     // that's who has to chase it. The caller passes EVERY referencer, never
     // a display cut (review fix pass 5).
-    for (const by of m.referencedBy) push(missing, by, `References ${m.ref}, which isn't in the set`);
+    for (const by of m.referencedBy) push(missing, by, `References ${m.ref}, which isn't in the set`, m.waitsOn);
   }
   for (const o of findings.oneWay) {
     push(oneWay, o.from, `References ${o.to}, which never references back`);
@@ -520,22 +522,23 @@ export function storedProvisional(details: unknown): { settledStatus: string } |
  * Under an unknown revision ("") a SETTLED computation is written — the
  * latest verdict is the only one that can be about the drawing in front of
  * us — except `skipped`, which never erases a verdict, and except while a
- * document of the library is still in flight (`inFlight`: queued, mid-read,
- * reset by a rebuild — it may hold any sheet, and what it has declared so
- * far says nothing about the pages it has yet to read): then a computation
- * that would LOWER what the row settled waits, and is judged again once the
- * document is read (the set digest names it). What such a document has yet
- * to declare can drop a finding out of the set's scope altogether — a
- * series only it held, a connector's destination only it declared — so a
- * lower settled verdict then is not yet the latest verdict about the
- * drawing (review fix pass 7). `neverLower` applies the known-revision rule
- * whatever the revision (a row another library filed on the org-wide key,
- * before 20261124).
+ * document of the library is still being READ (`stillReading`: in flight —
+ * queued, mid-read, reset by a rebuild — or parked on AI vision with pages
+ * left unread): then a computation that would LOWER what the row settled
+ * waits, and is judged again once the document is read (the set digest
+ * names it). What such a document has yet to declare can drop a finding out
+ * of the set's scope altogether — a series only it held, a connector's
+ * destination only it declared — so a lower settled verdict then is not yet
+ * the latest verdict about the drawing (review fix pass 7 for a document in
+ * flight; review fix pass 8 for a parked one, whose unread page could hold
+ * a destination outside the set's scope, and the guard was not applied to
+ * it). `neverLower` applies the known-revision rule whatever the revision
+ * (a row another library filed on the org-wide key, before 20261124).
  */
 export function replaceDecision(
   stored: { revision_code: string; status: string; provisional?: { settledStatus: string } | null } | null | undefined,
   next: { status: AuditStatus; provisional?: { settledStatus: AuditStatus } | null },
-  opts: { neverLower?: boolean; inFlight?: boolean } = {},
+  opts: { neverLower?: boolean; stillReading?: boolean } = {},
 ): "write" | "keep" | "wait" {
   if (!stored) return "write";
   const latestWins = stored.revision_code === "" && !opts.neverLower;
@@ -547,7 +550,7 @@ export function replaceDecision(
   }
   if (latestWins) {
     if (next.status === "skipped") return stored.status === "skipped" ? "write" : "keep";
-    return opts.inFlight && wouldLowerSeverity(floor, next.status) ? "wait" : "write";
+    return opts.stillReading && wouldLowerSeverity(floor, next.status) ? "wait" : "write";
   }
   return wouldLowerSeverity(floor, next.status) ? "keep" : "write";
 }

@@ -405,6 +405,12 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                   <span className="font-mono font-black text-[var(--color-text)] shrink-0">{m.ref}</span>
                   <span className="text-[var(--color-text-muted)]">
                     referenced {m.count}× by {m.referencedBy.join("; ")}
+                    {/* A gap a document parked on AI vision may yet hold on
+                        a page it has not read: shown, and said to be
+                        unsettled (review fix pass 8). */}
+                    {(m.pendingIn ?? []).length > 0 && (
+                      <> — not settled yet: {m.pendingIn!.join("; ")} still has pages waiting on AI vision</>
+                    )}
                   </span>
                 </li>
               ))}
