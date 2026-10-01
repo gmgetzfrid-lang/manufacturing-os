@@ -52,6 +52,16 @@ export interface ProjectStateSnapshot {
   checklistCount: number;
   checklistOpenItems: number;
   checklistNeedsEvidence: number;
+  /** QUAL-15: non-void checklists not yet signed off (status not
+   *  `complete`) — open at closeout whatever their items' colours. */
+  checklistsAwaitingSignoff?: number;
+  /** QUAL-15: checklists `complete` with no signature on record (once
+   *  20261136's `completed_signature_id` exists; 0 before it). */
+  checklistsCompletedUnsigned?: number;
+  /** QUAL-15: voided checklists — they leave every count above, so each is
+   *  named at closeout with who voided it (the CHECKLIST_STATUS audit row;
+   *  null = none on record; `voidedByUnreadable` = that read failed). */
+  checklistsVoided?: Array<{ id: string; title: string; voidedBy: string | null; voidedByUnreadable?: boolean }>;
   turnoverRequired: number;
   turnoverAccepted: number;
   punchOpen: number;
