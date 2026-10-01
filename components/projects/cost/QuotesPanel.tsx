@@ -732,10 +732,14 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     setErr(failure);
   };
 
-  /** MON-10: the explicit, audited "not selected" for an ungrouped bid that
-   *  competed with an award — an ungrouped award declines nothing on its own
-   *  (DEC-50 rule 8), and the award's warning names the quotes left open.
-   *  The reason is optional and recorded. */
+  /** MON-10: the explicit, audited "not selected" for a bid that competed
+   *  with an award and is still open — an ungrouped quote (an ungrouped
+   *  award declines nothing on its own, DEC-50 rule 8, and the award's
+   *  warning names the quotes left open), or any open quote in a group that
+   *  already holds an award (a grouped rival whose automatic decline failed
+   *  — the warning says to decline it by hand — or a second quote that
+   *  tabulates under the same "Ungrouped — <vendor>" heading). The reason is
+   *  optional and recorded. */
   const decline = async (doc: CostDocument) => {
     const reason = await appPrompt({
       title: `Decline ${doc.vendorName ?? doc.fileName ?? "this quote"}?`,
@@ -756,11 +760,18 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     onChanged();
   };
 
-  // MON-10: the actions column stays while the group holds a declined bid —
-  // an award declines its group's rivals (DEC-50 rule 8), and each declined
-  // row keeps its Void. Award, Decline and correct-total stay award-gated
-  // (rowActions).
-  const showActions = canManage && (!awarded || groupDocs.some((d) => d.status === "declined"));
+  // MON-10: who is declined by hand — an open UNGROUPED quote (an award
+  // declines only its own RFQ group, DEC-50 rule 8), and ANY open quote once
+  // its group holds an award (a grouped rival whose automatic decline
+  // failed, or a second quote under the same "Ungrouped — <vendor>"
+  // heading). Gated apart from the award (rowActions): the award's warning
+  // is what sends the user here.
+  const mayDecline = (d: CostDocument) =>
+    canManage && d.kind === "quote" && (d.status === "parsed" || d.status === "draft") && (!d.rfqGroup?.trim() || !!awarded);
+  // MON-10: the actions column stays while an awarded group still has a row
+  // with an action — a declined bid keeps its Void, an open quote its
+  // Decline and Void. Award and correct-total stay award-gated (rowActions).
+  const showActions = canManage && (!awarded || entries.some(({ doc: d }) => d.status === "declined" || mayDecline(d)));
   const colCount = 7 + (showActions ? 1 : 0);
 
   return (
@@ -788,6 +799,14 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                   <OpenPdfButton doc={d} setErr={setErr} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
                   {canManage && <button onClick={() => void typeTotal(d)} className={`${DECISION_TARGET} text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>type total</button>}
+                  {/* MON-10: an unread quote the award's warning names is declined here — no read first. */}
+                  {mayDecline(d) && (
+                    <button onClick={() => void decline(d)} disabled={busy === d.id}
+                      title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
+                      className={`${DECISION_TARGET} inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
+                      <XIcon className="w-3 h-3" /> decline
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -831,6 +850,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
                     const rowActions = doc && canManage && !awarded && (doc.status === "parsed" || doc.status === "draft");
+                    const rowDecline = doc && mayDecline(doc);
                     const totalNote = quote ? quoteTotalNote(quote) : null;
                     return (
                       <React.Fragment key={e.quoteId}>
@@ -961,21 +981,21 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                                 <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="The registry or the company links failed to load — a do-not-use flag could be missing, so Award is withheld. Reload the page.">registry unavailable — reload to award</span>
                               )}
                               {rowActions && (
-                                <>
-                                  <button onClick={() => void typeTotal(doc)} title="Correct the total by hand — the AI's reading stays on the record"
-                                    className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
-                                    <Pencil className="w-3 h-3" /> correct total
-                                  </button>
-                                  {/* MON-10: an ungrouped bid is declined by hand (an award declines only its own RFQ group). */}
-                                  {!doc.rfqGroup?.trim() && doc.kind === "quote" && (
-                                    <button onClick={() => void decline(doc)} disabled={busy === doc.id}
-                                      title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
-                                      className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
-                                      <XIcon className="w-3 h-3" /> Decline
-                                    </button>
-                                  )}
-                                  <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
-                                </>
+                                <button onClick={() => void typeTotal(doc)} title="Correct the total by hand — the AI's reading stays on the record"
+                                  className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
+                                  <Pencil className="w-3 h-3" /> correct total
+                                </button>
+                              )}
+                              {/* MON-10: declined by hand — an ungrouped bid (an award declines only its own RFQ group), or any bid still open in an awarded group. */}
+                              {rowDecline && (
+                                <button onClick={() => void decline(doc)} disabled={busy === doc.id}
+                                  title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
+                                  className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
+                                  <XIcon className="w-3 h-3" /> Decline
+                                </button>
+                              )}
+                              {(rowActions || rowDecline) && (
+                                <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
                               )}
                               {/* MON-10 / MON-3: a declined bid moved no money — it can still be voided (junk, or declined in error). */}
                               {doc && canManage && doc.status === "declined" && (
@@ -1128,10 +1148,20 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
  *  The stored check describes the EXTRACTION (the total the AI read against
  *  the lines it read); once a person restated the total, the number on
  *  screen is reconciled instead (lib/bidTab reconcileQuoteTotal) — never the
- *  stored note beside a corrected total. A price-only bid has no lines. */
+ *  stored note beside a corrected total. A total restated into ANOTHER
+ *  currency is not compared with the lines at all: they stay in the currency
+ *  the AI read, so any sum would be a false mismatch. Only a relabel (the
+ *  same figure, the currency corrected) keeps the extraction's own check —
+ *  the lines and the total are still the numbers printed together. A
+ *  price-only bid has no lines. */
 export function quoteTotalNote(q: ParsedQuote): string | null {
   if (q.priceOnly) return null;
   if (q.totalSource === "human") {
+    const shown = isoCurrency(q.currency);
+    const read = isoCurrency(q.extractedCurrency);
+    if (shown != null && read != null && shown !== read) {
+      return q.total === q.extractedTotal && q.totalCheck?.mismatch ? q.totalCheck.note : null;
+    }
     const onScreen = reconcileQuoteTotal(q.total, q.lineItems);
     return onScreen?.mismatch ? onScreen.note : null;
   }

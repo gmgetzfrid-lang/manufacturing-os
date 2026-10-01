@@ -2617,7 +2617,7 @@ view; 8 is `awardQuote`'s group filter plus `declineQuote`; 10 is
 tab (from budget − spent to budget − exposure); the previous figure stays
 visible as the secondary line.
 
-*Landed 2026-10-01 (projects Round G): rule 8's hand decline reaches the user. The bid table (`components/projects/cost/QuotesPanel.tsx`) shows the award's `warning`, offers Decline (`declineQuote`, with an optional reason) on an open ungrouped quote and Void (`voidCostDoc`) on a declined one — in an awarded RFQ group too, where a grouped award's own decline leaves it — and the award confirm promises the group decline only for a grouped quote (`MON-10`, package J10b).*
+*Landed 2026-10-01 (projects Round G): rule 8's hand decline reaches the user. The bid table (`components/projects/cost/QuotesPanel.tsx`) shows the award's `warning`. It offers Decline (`declineQuote`, with an optional reason) and the open document's Void on every quote the warning can name, gated apart from the award: an open ungrouped quote; any open quote in a group that already holds an award, such as a second quote from the same vendor (both tabulate under "Ungrouped — <vendor>") or a grouped rival whose automatic decline failed ("refresh and decline them by hand"); and an unread one, from the "not read yet" strip. It offers Void (`voidCostDoc`) on a declined quote, including in an awarded RFQ group, where a grouped award's own decline leaves it. The award confirm promises the group decline only for a grouped quote (`MON-10`, package J10b). The review fix pass removed the award gate from Decline: the first pass offered it only in a group with no award, so the same-vendor and failed-decline cases had no control.*
 
 <a id="dec-51"></a>
 ## DEC-51 · A schedule re-import is a reviewed merge, never a guess
@@ -4544,7 +4544,7 @@ against.
 
 **Risk:** low. `20261147` is purely additive and should be pasted BEFORE or WITH this package's deploy; until it is pasted no assistant write can be confirmed (the cards say so) — reads and answers are unaffected. A member who relied on the assistant to record an audit as Manager or Supervisor must now use a controller (the drawing route already required one). A non-controller whose document carries no ACL deny is now offered a checkout handoff the controller-only gate refused before; the handoff writes nothing and the real flow enforces its own guards.
 
-*Landed 2026-10-01 (projects Round G): item 5's display. The bid table (`components/projects/cost/QuotesPanel.tsx` `quoteTotalNote`) flags the stored `totalCheck` beside an AI-read total and reconciles a person-restated total on screen with `reconcileQuoteTotal`, never showing the stored note beside it. Award stays offered (`PR-2` criterion 2, package J10b).*
+*Landed 2026-10-01 (projects Round G): item 5's display. The bid table (`components/projects/cost/QuotesPanel.tsx` `quoteTotalNote`) flags the stored `totalCheck` beside an AI-read total and reconciles a person-restated total on screen with `reconcileQuoteTotal`, never showing the stored note beside it. A total restated into another currency is never summed against lines still in the currency that was read; a relabel of the same figure keeps the stored check. Award stays offered (`PR-2` criterion 2, package J10b).*
 
 <a id="dec-73"></a>
 ## DEC-73 · AI spend and keys: one cap over every op, reserved before the call, set by a capability; keys never stored in plaintext in production

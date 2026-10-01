@@ -10,6 +10,12 @@
 //       and says to decline the bids that competed;
 //     * an open UNGROUPED quote offers Decline — lib/costDocs declineQuote,
 //       an optional recorded reason — and a refusal is said;
+//     * (fix pass) Decline and Void are gated apart from the award: ANY open
+//       quote in a group that already holds an award keeps them — a second
+//       quote from the same vendor (both tabulate under "Ungrouped —
+//       <vendor>"), or a grouped rival whose automatic decline failed — and
+//       an unread ungrouped quote the warning names is declined from the
+//       "not read yet" strip;
 //     * a DECLINED bid offers Void (it moved no money) through
 //       lib/costDocs voidCostDoc — in an awarded RFQ group too, where a
 //       grouped award's own decline leaves it (the common case).
@@ -18,7 +24,8 @@
 //     the AI read lines that do not add up to the total it read; a total a
 //     person restated is reconciled on screen instead, and the stored note is
 //     never shown beside a corrected total (DEC-72 item 5). Never a block:
-//     Award is still offered.
+//     Award is still offered. (fix pass) A total restated into another
+//     currency is never summed against lines still in the currency read.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -228,6 +235,81 @@ describe("MON-10 — the award's warning, its promise, and the hand decline", ()
     expect(rowOf("Bayline").children).toHaveLength(7);
     expect(btn(rowOf("Bayline"), /Void/)).toBeUndefined();
   });
+
+  // Review (fix pass): two quotes from one vendor with no RFQ group — an
+  // original and a revision — tabulate as ONE field ("Ungrouped — Gulf
+  // Mechanical"). Award the revision and its warning says to decline the
+  // original; the original's row must offer that Decline (and its Void),
+  // though the group now holds an award.
+  it("two same-vendor ungrouped quotes, one awarded: the other row offers Decline and Void (never Award or correct total); Decline calls declineQuote", async () => {
+    const REV = doc({ id: "rev", vendorName: "Gulf Mechanical", fileName: "gulf-rev1.pdf", totalAmount: 140_000, status: "awarded", parsed: parsedQuote("Gulf Mechanical", 140_000, 140_000) });
+    const ORIG = doc({ id: "orig", vendorName: "Gulf Mechanical", fileName: "gulf.pdf", totalAmount: 150_000, parsed: parsedQuote("Gulf Mechanical", 150_000, 150_000) });
+    await render([REV, ORIG]);
+    expect(host.textContent).toContain("Awarded to Gulf Mechanical");
+    const rows = [...host.querySelectorAll("tbody tr")].filter((tr) => tr.textContent?.includes("Gulf Mechanical")) as HTMLTableRowElement[];
+    expect(rows).toHaveLength(2);
+    const [won, open] = rows[0].textContent!.includes("awarded") ? rows : [rows[1], rows[0]];
+    expect(host.querySelectorAll("thead th")).toHaveLength(8);
+    for (const r of rows) expect(r.children).toHaveLength(8);
+    for (const re of [/Award/, /correct total/, /Decline/, /Void/]) expect(btn(won, re), String(re)).toBeUndefined();
+    for (const re of [/Award/, /correct total/]) expect(btn(open, re), String(re)).toBeUndefined();
+    for (const re of [/Decline/, /Void/]) {
+      expect(btn(open, re), String(re)).toBeTruthy();
+      expect(btn(open, re)!.className, String(re)).toContain("min-h-6");
+    }
+    dlg.appPrompt.mockResolvedValueOnce("Superseded by revision 1");
+    cd.declineQuote.mockResolvedValueOnce({ ok: true });
+    await act(async () => { btn(open, /Decline/)!.click(); });
+    await settle();
+    expect(cd.declineQuote).toHaveBeenCalledWith({ doc: ORIG, actor: { uid: "u1", email: "u1@example.com" }, reason: "Superseded by revision 1" });
+    expect(events).toContain("changed");
+  });
+
+  it("a GROUPED rival the award could not decline (\"refresh and decline them by hand\") offers Decline and Void in the awarded group", async () => {
+    const WON = doc({ ...BAY, rfqGroup: "Unit 300 Repipe", status: "awarded" });
+    const LEFT = doc({ ...COLE, rfqGroup: "Unit 300 Repipe" });
+    await render([WON, LEFT]);
+    const row = rowOf("Cole Paint");
+    expect(row.children).toHaveLength(8);
+    for (const re of [/Award/, /correct total/]) expect(btn(row, re), String(re)).toBeUndefined();
+    expect(btn(row, /Decline/)).toBeTruthy();
+    // its Void is the open document's guarded write (still parsed — it moved no money), not voidCostDoc
+    dlg.appConfirm.mockResolvedValueOnce(true);
+    db.byOp["cost_documents.update"] = { data: [{ id: "cole" }], error: null };
+    await act(async () => { btn(row, /Void/)!.click(); });
+    await settle();
+    expect(cd.voidCostDoc).not.toHaveBeenCalled();
+    const upd = db.calls.filter((c) => c.table === "cost_documents" && c.op === "update");
+    expect(upd.find((c) => c.method === "update")?.args[0]).toEqual({ status: "void" });
+    expect(upd.find((c) => c.method === "eq")?.args).toEqual(["id", "cole"]);
+    expect(events).toContain("changed");
+  });
+
+  it("an UNREAD ungrouped quote is declined from the 'not read yet' strip; an unread GROUPED one in an unawarded group is not", async () => {
+    const UNREAD = doc({ id: "u", vendorName: "Cole Paint", fileName: "cole.pdf", status: "draft" });
+    const UNREAD_GROUPED = doc({ id: "g", vendorName: "Delta Fab", fileName: "delta.pdf", status: "draft", rfqGroup: "Unit 300 Repipe" });
+    await render([BAY, UNREAD, UNREAD_GROUPED]);
+    const chip = (name: string) => [...host.querySelectorAll("span")].find((sp) => sp.className.includes("rounded-lg border") && sp.textContent?.includes(name)) as HTMLSpanElement;
+    const decline = btn(chip("Cole Paint"), /decline/i);
+    expect(decline).toBeTruthy();
+    expect(decline!.className).toContain("min-h-6");
+    expect(btn(chip("Delta Fab"), /decline/i)).toBeUndefined();
+    dlg.appPrompt.mockResolvedValueOnce("");
+    cd.declineQuote.mockResolvedValueOnce({ ok: true });
+    await act(async () => { decline!.click(); });
+    await settle();
+    expect(cd.declineQuote).toHaveBeenCalledWith({ doc: UNREAD, actor: { uid: "u1", email: "u1@example.com" }, reason: null });
+  });
+
+  it("an unread quote in an AWARDED group is declined from the strip too", async () => {
+    const WON = doc({ ...BAY, rfqGroup: "Unit 300 Repipe", status: "awarded" });
+    const LATE = doc({ id: "late", vendorName: "Delta Fab", fileName: "delta.pdf", status: "draft", rfqGroup: "Unit 300 Repipe" });
+    await render([WON, LATE]);
+    const chip = [...host.querySelectorAll("span")].find((sp) => sp.className.includes("rounded-lg border") && sp.textContent?.includes("Delta Fab")) as HTMLSpanElement;
+    expect(btn(chip, /decline/i)).toBeTruthy();
+    // no table row has an action, so the awarded group draws no actions column
+    expect(host.querySelectorAll("thead th")).toHaveLength(7);
+  });
 });
 
 describe("PR-2 criterion 2 — the bid table shows the total check, never the stored note beside a corrected total", () => {
@@ -255,6 +337,15 @@ describe("PR-2 criterion 2 — the bid table shows the total check, never the st
     expect(host.textContent).not.toContain("not the quoted total of 182,000");
   });
 
+  it("a total restated into ANOTHER currency is never summed against lines still in the currency read: no false flag", async () => {
+    const EUR = { ...parsedQuote("Gulf Mechanical", 150_000, 150_000), currency: "EUR" };
+    const RESTATED = doc({ id: "r", vendorName: "Gulf Mechanical", totalAmount: 165_000, currency: "USD", parsed: EUR });
+    await render([RESTATED]);
+    expect(host.textContent).toContain("corrected");
+    expect(host.textContent).not.toContain("lines ≠ total");
+    expect(host.textContent).not.toContain("total check:");
+  });
+
   it("quoteTotalNote (the rule): extraction → the stored check; human → reconciled on screen; matching or price-only → none", () => {
     const read = validateParsedQuote(parsedQuote("V", 182_000, 1_820_000), "x");
     expect(quoteTotalNote(read)).toBe(read.totalCheck!.note);
@@ -262,5 +353,14 @@ describe("PR-2 criterion 2 — the bid table shows the total check, never the st
     expect(quoteTotalNote(withHumanTotal(read, 1_900_000))).toMatch(/not the quoted total of 1,900,000/);
     expect(quoteTotalNote(validateParsedQuote(parsedQuote("V", 140_000, 140_000), "y"))).toBeNull();
     expect(quoteTotalNote({ ...read, priceOnly: true })).toBeNull();
+    // currency restatement: the lines stay in the currency read
+    const eur = validateParsedQuote({ ...parsedQuote("V", 150_000, 150_000), currency: "EUR" }, "z");
+    expect(quoteTotalNote(withHumanTotal(eur, 165_000, "USD"))).toBeNull();              // converted: never a false mismatch
+    const eurOff = validateParsedQuote({ ...parsedQuote("V", 182_000, 1_820_000), currency: "EUR" }, "w");
+    expect(quoteTotalNote(withHumanTotal(eurOff, 200_000, "USD"))).toBeNull();           // converted: not comparable either way
+    expect(quoteTotalNote(withHumanTotal(eurOff, null, "USD"))).toBe(eurOff.totalCheck!.note);   // relabelled only: the extraction's own check stands
+    // naming a currency the read did not print is not a conversion — reconciled as before
+    const unnamed = validateParsedQuote({ ...parsedQuote("V", 182_000, 1_820_000), currency: null }, "n");
+    expect(quoteTotalNote(withHumanTotal(unnamed, 1_900_000, "USD"))).toMatch(/not the quoted total of 1,900,000/);
   });
 });

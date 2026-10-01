@@ -113,14 +113,16 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 - **The rule.** `components/projects/cost/QuotesPanel.tsx` exports `quoteTotalNote(q)`:
   - a price-only quote has no note;
   - when `q.totalSource === "human"`, it reconciles the number on screen with `reconcileQuoteTotal(q.total, q.lineItems)` and returns that `note` when it mismatches;
+  - *review fix:* a person's total restated into **another currency** (both the shown and the read currency known, and different) is never summed against the lines. The lines stay in the currency the AI read, so the sum would be a false mismatch, for example EUR lines adding up to the EUR 150,000 that was read, against a restated USD 165,000. Such a total gets no note. The one exception is a relabel: if the figure is unchanged (`q.total === q.extractedTotal`) and only the currency was corrected, the extraction's stored check still applies. Naming a currency the read did not print is not a conversion, so that total is reconciled as before;
   - otherwise it returns the stored `q.totalCheck.note` when `totalCheck.mismatch`.
 - **The display.** The bid table shows "lines ≠ total — check the PDF" under the total, with the full sentence as its title, and the full sentence again in the row's extras ("total check: …"). The stored note is never shown beside a total a person corrected.
 - **It never blocks.** Award and the human total stay offered (DEC-72 item 5).
-- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "PR-2 criterion 2 —" (4):
+- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "PR-2 criterion 2 —" (5):
   - the finding's 182,000-vs-1,820,000 extraction is flagged beside the total and under the row, and Award is still offered;
   - a person restating 1,820,000 gets no note;
   - a person restating a figure the lines still miss gets the on-screen total reconciled and named;
-  - the rule's four cases.
+  - (review fix, rendered) an EUR read restated as USD 165,000 shows neither "lines ≠ total" nor a "total check";
+  - the rule's cases, plus the currency cases: a converted total, matching or not, gets no note; a relabel keeps the stored check; a currency named where none was printed is reconciled.
 
 **Done-when.**
 1. ✓ Unchanged (intelligence Round G).
