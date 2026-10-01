@@ -245,6 +245,17 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 
 **Hand-off.** PS-STAMP (publicOrigin server fallback); the owners of IntakePanel / QuotesPanel / the library page for their copy links.
 
+**Partial (2026-10-01, public-surfaces Round F).** Done-when 2 is now met. Done-when 1 still names copy-link builders outside this package, so the finding stays OPEN.
+- `lib/publicOrigin.ts`: on a server with `NEXT_PUBLIC_SITE_URL` unset, it falls back to Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`, never `VERCEL_URL`) and otherwise returns `""`. Every caller treats `""` as "no link": a stamp drops the QR and the instruction to scan it and logs, and the transmittal callers refuse to email or print. In a browser it never returns a `*.vercel.app` host. The transmittal portal link is built on `configuredPublicOrigin()`, so with nothing configured no link exists in either runtime (`TRX-14`, now RESOLVED).
+- Tests: `lib/__tests__/psStampRoundF.test.ts` ("PHYS-11 — publicOrigin() …", "TRX-14 / XEDGE-5 — the portal link needs a configured origin in a browser too").
+
+**Done-when (this pass).**
+1. ◐ Unchanged: `transmittalPortalUrl` ✓ and `ShareLinkModal` ✓. The `/submit` link builders (`components/projects/IntakePanel.tsx:424`, `components/projects/cost/QuotesPanel.tsx:1255,1285`) and the `/d/` copy actions (`app/(protected)/documents/[libraryId]/page.tsx:755,3091`) still read `window.location.origin`. Those files belong to the projects-and-cost intake / quotes owners and the document library page's owner.
+2. ✓ With `NEXT_PUBLIC_SITE_URL` unset on the server, `publicOrigin()` returns Vercel's production domain or `""`, never a hostless or preview link, and the callers refuse to print or email a link on `""`.
+3. ✓ (P7) The test asserting an absolute `NEXT_PUBLIC_SITE_URL`-rooted URL with `window` undefined.
+
+**Hand-off.** The owners of IntakePanel, QuotesPanel and the library page, for their copy links: build them on `publicOrigin()`.
+
 ---
 
 <a id="xedge-6"></a>

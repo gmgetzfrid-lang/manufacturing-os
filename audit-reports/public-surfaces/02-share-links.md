@@ -365,7 +365,7 @@ resolve/route.ts:52-58 `// Resolve the current PUBLISHED version's file (never a
 ## SHR-8 · On shared copies the stamp is placed by a hardcoded fallback that assumes the bottom-right corner is empty — on an engineering drawing that is the title block
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/share/file/route.ts:107-118`, `lib/stamping.ts:257`, `lib/stamping.ts:100-101`, `lib/stampLayout.ts:150-154`, `lib/stampLayout.ts:131-146`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than stated: even if sourceBytes were passed, lib/stamping.ts:100 `if (typeof document === "undefined") return null;` makes ink analysis impossible in any server route, so every server-stamped share copy is hardcoded to bottom-right QR + bottom footer. I found no guard anywhere on this path.
@@ -389,6 +389,27 @@ file/route.ts:109-117 — the StampOptions object contains no sourceBytes key. s
 - [ ] the server-side stamp either performs a real ink analysis or uses a fallback that does not assume the bottom-right corner is blank on a drawing sheet
 - [ ] the parity claim in app/api/share/file/route.ts:12 is corrected or made true
 - [ ] a stamped shared copy of a representative title-blocked drawing is inspected and the QR/footer do not overlap the title block
+
+**Resolution (2026-10-01, public-surfaces Round F).** Reproduced against `c23611b`: with no DOM, `applyStampToPdfDoc` fell back to `FALLBACK_INK` (`{ br: 0, … bottomBand: 0 }`), which put the QR plate bottom-right and the footer bottom. In a fixture of four representative title-blocked sheets, every one had a mark over its title block. That held after the rotation fix too. Server-side ink analysis would need a Node canvas, a new native dependency, so the fix is a title-block-aware blind placement:
+- `lib/stampLayout.ts` `fallbackInk(pageW, pageH)` replaces the `FALLBACK_INK` constant. The QR goes top-left, the one corner neither ISO 7200 nor ASME Y14.1 gives a block. The footer runs from the left edge: along the top of a landscape sheet, where a small sheet's title block can span the bottom, and along the bottom of a portrait page (a text page's footer margin). `titleBlockReserve(pageW)` (≤ half the sheet, at most 520 pt, which covers ASME's ≈450 pt and ISO's ≤510 pt) is left free on the right of the band for the title or revision block.
+- `lib/stamping.ts` uses the blind placement only for a page that was not measured (`measured ?? fallbackInk(width, height)`, `reserveRight: measured ? 0 : titleBlockReserve(width)`). A measured page in the browser still places by its ink.
+- `app/api/share/file/route.ts`: the header comment now says the server stamp carries the same marks but placed BLIND, by the title-block-aware fallback. It no longer implies parity with the browser paths. This is a comment-only edit in P1's merged file.
+- Tests:
+  - `lib/__tests__/stampingRotation.test.ts` "SHR-8 — the blind stamp keeps the QR and the footer off the title block": four sheets with title blocks drawn where the standards put them. They are an ASME B landscape with a top-right revision block, an ANSI D stored portrait at `/Rotate 90`, an ISO A4 landscape with a 180 mm title block, and an ISO A3 stored portrait at `/Rotate 270`. The QR, caption and every footer line are on-page and never intersect a title or revision block, and the QR is top-left. A measured page is unaffected. All four sheets fail on the base fallback.
+  - `lib/__tests__/stampLayout.test.ts` "fallbackInk — the blind placement is title-block-aware".
+  - `lib/__tests__/psStampRoundF.test.ts` "SHR-8 — the share route no longer claims a placement parity it cannot have".
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ The server-side stamp uses a fallback that does not assume the bottom-right corner is blank on a drawing sheet.
+2. ✓ The parity claim in `app/api/share/file/route.ts`'s header is corrected.
+3. ✓ A stamped copy of representative title-blocked drawings is inspected programmatically: the drawn geometry of every mark is checked against the title and revision blocks, and none overlaps. There was no visual inspection; this audit has no browser.
+
+**Scope / residual.**
+- The blind placement cannot know where a particular sheet's blocks are; it encodes the two standards' layout.
+- A portrait drawing whose title block spans the full bottom width (ISO A4 portrait) still has its footer in the bottom margin, under that block's lower edge.
+- The diagonal watermark crosses everything by design (15% opacity).
+- See DEC-44 (public-surfaces PS-STAMP).
 
 ---
 
@@ -484,7 +505,7 @@ sw.js:196-213 `event.respondWith((async () => { try { const res = await fetch(re
 ## SHR-11 · The verify QR the shared copy promises is silently omitted whenever NEXT_PUBLIC_SITE_URL is unset — while the footer printed on the page tells the reader to scan it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/share/file/route.ts:114-116`, `lib/publicOrigin.ts:17-21`, `lib/stamping.ts:246-254`, `app/api/share/file/route.ts:113`, `.env.example:46`, `app/share/[token]/page.tsx:140-142`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating path: nothing logs or warns when the QR is dropped, and app/share/[token]/page.tsx:141 additionally promises the recipient the 'copy is watermarked with a verify QR'. The .env.example comment even claims a VERCEL_URL fallback that publicOrigin() does not implement.
@@ -525,6 +546,21 @@ file/route.ts:109-117 `await applyStampToPdfDoc(pdfDoc, { userLabel: "shared-lin
 **Scope / residual.** Stays OPEN for items 2–4. **Closer: PS-STAMP** (public-surfaces, this wave) — `PHYS-11` (the server-side `publicOrigin()` fallback, the `lib/stamping.ts` warning when `verifyUrl` is absent, the `.env.example` note); whoever lands `PHYS-11` closes `SHR-11` by pointer (the same shape as `SHR-12` and `PHYS-13`: OPEN, the closer named).
 
 **Verification fix (2026-09-30, document-control Round F wave 2).** Citation only: `shareFooterNotice` moved from `lib/shareServe.ts:224` to `:240` when `SHR-3`'s serve-time download-deny check landed above it; the code and this finding's status are unchanged.
+
+**Resolution (2026-10-01, public-surfaces Round F).** Items 2–4 are `PHYS-11` (03-physical-bridge.md), which landed in this package; item 1 landed in P1 SHARE (above).
+- `lib/publicOrigin.ts`: on the server, an unset `NEXT_PUBLIC_SITE_URL` falls back to Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL`, never the preview host `VERCEL_URL`). With neither, the share download fails honestly: the copy has no QR, no instruction to scan one, and a logged warning.
+- `lib/stamping.ts` logs when `verifyUrl` is absent and, as a backstop for every caller, drops any scan instruction from a page that carries no QR.
+- `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required for share and print verification.
+- Tests: `lib/__tests__/psStampRoundF.test.ts` ("PHYS-11 — publicOrigin() …", "PHYS-11 / SHR-11 — the stamp never tells a reader to scan a QR it does not carry"), plus P1's `shareRoutes.test.ts` SHR-11 pins, still green.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ (P1) The footer text is conditional on the QR actually being stamped. The stamper now also enforces it for a QR that failed to generate.
+2. ✓ `publicOrigin()` on the server falls back to Vercel's production domain instead of returning `""`. It chooses that over `VERCEL_URL`, which on a preview is the gated host.
+3. ✓ `lib/stamping.ts` logs when `verifyUrl` is absent, not only when QR generation throws.
+4. ✓ `.env.example` documents `NEXT_PUBLIC_SITE_URL` as required.
+
+**Scope / residual.** None. Closed by pointer to `PHYS-11`.
 
 ---
 

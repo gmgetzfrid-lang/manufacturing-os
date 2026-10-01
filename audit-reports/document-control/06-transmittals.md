@@ -622,7 +622,7 @@ supabase/migrations/20260910_transmittal_portal.sql:12-13 — `--      from an i
 ## TRX-14 · transmittalPortalUrl builds the external link from window.location.origin, bypassing the publicOrigin() helper that exists in this repo specifically to stop that
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:381-384`, `lib/publicOrigin.ts:1-22`, `lib/downloads.ts:90-100`, `lib/transmittals.ts:304-314`, `app/(protected)/transmittals/page.tsx:261`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — transmittalPortalUrl is the only URL builder in the repo that still uses window.location.origin for an externally-consumed link, and publicOrigin() exists precisely for this. Note the fix only helps where NEXT_PUBLIC_SITE_URL is set, since publicOrigin falls back to window.location.origin (publicOrigin.ts:20).
@@ -659,6 +659,26 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - ✓ The issue flow warns when NEXT_PUBLIC_SITE_URL is unset.
 
 **Scope / residual.** Left OPEN for the browser half of done-when 1. Making `publicOrigin()` itself refuse when NEXT_PUBLIC_SITE_URL is unset is PS-STAMP's (XEDGE-5 dw2); when it lands, `transmittalPortalUrl` follows it with no change here. The other builders XEDGE-5 names belong to their owners (XEDGE-5 stays OPEN for them).
+
+**Resolution (2026-10-01, public-surfaces Round F).** The browser half is closed by the origin rule changing in `lib/publicOrigin.ts`, as P7 anticipated ("until the origin rule itself changes").
+- `lib/publicOrigin.ts` (PS-STAMP) gains `configuredPublicOrigin()`: `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser; never `VERCEL_URL`). It never answers with the page's own host. `publicOrigin()` itself no longer returns a `*.vercel.app` host from a browser.
+- `lib/transmittals.ts` (P7's merged file, two lines): `transmittalPortalUrl` builds on `configuredPublicOrigin()`, and `portalOriginConfigured()` is `!!configuredPublicOrigin()`. A browser and the server therefore build the same link, and with nothing configured neither builds one: `null` in the browser too. The cover sheet then prints no portal block, the copy action refuses, and the email route refuses (unchanged).
+- On a Vercel production without `NEXT_PUBLIC_SITE_URL`, the production domain keeps the link working. That was P7's reason for not returning `null` in the browser.
+- `app/(protected)/transmittals/page.tsx` (P7's, one line): the issue toast now says no portal link can be built, instead of "the link uses this browser's address".
+- `lib/__tests__/dcRoundFTransmittals.test.ts`: the "unset on the server" test also clears the two Vercel variables, so it holds on a Vercel builder.
+- Tests: `lib/__tests__/psStampRoundF.test.ts` "TRX-14 / XEDGE-5 — the portal link needs a configured origin in a browser too":
+  - with nothing configured, a browser builds no link (`null`) on a preview host and off Vercel alike;
+  - on a preview deploy the browser's link equals the server's: the production link;
+  - the lib and toast pins.
+  P7's three TRX-14 tests stay green.
+- Verified: `tsc` 0, `eslint` 0 on every touched file, full `vitest` green (258 files / 4636 tests: 4629 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `transmittalPortalUrl` builds on the public-origin helper (`configuredPublicOrigin()`) and returns `null` when no origin is configured, in a browser as on the server. Callers therefore refuse to email or print a hostless or preview-host link.
+2. ✓ (P7) `sendTransmittalEmail` (its route) and `openTransmittalSheet` handle the no-origin case explicitly.
+3. ✓ The issue flow says when no public origin is configured, and now says that no link was built.
+
+**Scope / residual.** The copy-link toast's warning suffix in `transmittals/page.tsx` (`portalOriginConfigured() ? "" : " NEXT_PUBLIC_SITE_URL is not set …"`) can no longer run, because a URL exists only when an origin is configured. It is left in place, dead but harmless, for P7's owner to tidy. See DEC-44 (public-surfaces PS-STAMP) and the DEC-61 landed note.
 
 ---
 
