@@ -9,11 +9,15 @@
 // (loadPrincipal + readableControlledDocIds — never a parallel evaluator).
 //
 // The rule, fail-safe for what a row records: an answer is as restricted as
-// its most restricted CITED source. A row is shown only when every document
-// it cites resolves, now, to a document the reader may read (a row does not
-// record passages retrieved but not cited, nor drawing facts — until the ask
-// route records them, an answer citing some readable documents is judged by
-// those alone; ASK-1 / KACL-1 / IEDGE-5 stay open on it):
+// its most restricted SOURCE. A row is shown only when every document it
+// cites — and, on a row the ask route wrote with its context (20261153,
+// intelligence Round G I-03), every knowledge document whose passages, legend
+// text, page images or drawing facts reached the model — resolves, now, to a
+// document the reader may read. A row whose context could not be recorded in
+// full (more documents than ANSWER_CONTEXT_DOC_CAP) or whose conversation
+// history came from the client unverified (ASK-5) proves nothing about its
+// sources and is its asker's alone. A row written before 20261153 carries no
+// context and is judged by what it cites, as before:
 //   - an upload-origin knowledge document of the reader's org — readable (the
 //     same content as the PDF every member can open, by design);
 //   - a mirror of a controlled document — readable when
@@ -51,6 +55,54 @@ export interface StoredAnswerRow {
   citations?: unknown;
   mode?: string | null;
   created_at: string;
+  /** knowledge_questions.context (20261153) — what reached the model. */
+  context?: unknown;
+}
+
+/** The most knowledge documents one row's context records. A larger set is
+ *  recorded as incomplete, which keeps the row its asker's alone. */
+export const ANSWER_CONTEXT_DOC_CAP = 2000;
+
+/** knowledge_questions.context, as the ask route writes it (ASK-1 / KACL-1 /
+ *  IEDGE-5, ASK-3, ASK-5, PR-9, IRLS-13; migration 20261153). */
+export interface AnswerContext {
+  v: 1;
+  /** Every knowledge document whose passages, legend text, page images or
+   *  drawing facts reached the model for this answer. */
+  documents: string[];
+  /** False when there were more than ANSWER_CONTEXT_DOC_CAP of them. */
+  complete: boolean;
+  /** Where the conversation context came from: the record of the asker's own
+   *  thread, unverified client input, or none. */
+  history: "none" | "thread" | "client";
+  /** ASK-3: the answer stopped at the model's length limit. */
+  partial?: boolean;
+  /** PR-9: the answer carries arithmetic nothing re-derived. */
+  arithmetic?: "unverified";
+  /** IRLS-13: the Reasoning Skills that rode the prompt. */
+  skills?: string[];
+}
+
+/** Read a stored context; null for a row written before 20261153 (or a value
+ *  that is not one) — such a row is judged by its citations alone. */
+export function parseAnswerContext(raw: unknown): AnswerContext | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const c = raw as Record<string, unknown>;
+  if (!Array.isArray(c.documents)) return null;
+  return {
+    v: 1,
+    documents: c.documents.filter((d): d is string => typeof d === "string" && d.length > 0),
+    complete: c.complete === true,
+    history: c.history === "thread" || c.history === "client" ? c.history : "none",
+    ...(c.partial === true ? { partial: true } : {}),
+    ...(c.arithmetic === "unverified" ? { arithmetic: "unverified" as const } : {}),
+    ...(Array.isArray(c.skills) ? { skills: c.skills.filter((x): x is string => typeof x === "string") } : {}),
+  };
+}
+
+/** The knowledge documents a stored row's context says reached the model. */
+export function contextKnowledgeDocIds(raw: unknown): string[] {
+  return parseAnswerContext(raw)?.documents ?? [];
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,9 +145,18 @@ export function planVisibleHistory(
   const citesUnreadable = (r: StoredAnswerRow) => {
     const cited = citedKnowledgeDocIds(r.citations);
     if (cited.some((id) => !readable.has(id))) return true;
+    const ownRow = !!readerUid && r.user_id === readerUid;
+    // What reached the model, recorded since 20261153: every one must be
+    // readable too, and a context that is incomplete or rests on unverified
+    // client history proves nothing, so only its asker sees the row.
+    const ctx = parseAnswerContext(r.context);
+    if (ctx) {
+      if (ctx.documents.some((id) => !readable.has(id))) return true;
+      if ((!ctx.complete || ctx.history === "client") && !ownRow) return true;
+    }
     // Nothing cited: a web answer is safe; a library answer proves nothing
     // about the passages it was built from, so only its asker sees it.
-    if (cited.length === 0 && r.mode !== "internet") return !readerUid || r.user_id !== readerUid;
+    if (cited.length === 0 && r.mode !== "internet") return !ownRow;
     return false;
   };
 
