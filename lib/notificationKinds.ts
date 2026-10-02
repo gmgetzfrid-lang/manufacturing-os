@@ -40,6 +40,16 @@
 // package as the entry here, and paste it BEFORE the deploy that writes the
 // kind: a browser's row of a kind the live function does not list is
 // refused and only logged (99-fix-sequencing.md, the N5 hand-off).
+//
+// A browser row names its writer (20261160, rule 1): once that migration is
+// live, a signed-in member's row whose actor_user_id is anyone else is
+// refused (42501) and only logged by notify(). So a browser producer passes
+// as `actorUserId` the signed-in member or nothing (the trigger stamps the
+// caller), never a stored uid (a document's owner, a ticket's requester, a
+// hold's opener), not even on someone's behalf. A function that forwards an
+// actor hands the same obligation to its callers.
+// lib/__tests__/notificationWriteRails.test.ts pins every producer's actor
+// and the callers one hop up (DEC-44 (N5) §2).
 
 import type { NotificationKind } from "@/lib/inAppNotifications";
 

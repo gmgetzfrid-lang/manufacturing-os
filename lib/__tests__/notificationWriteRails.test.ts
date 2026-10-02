@@ -257,7 +257,7 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(first.startsWith("IF v_uid IS NULL THEN\n    RETURN NEW;\n  END IF;")).toBe(true);
   });
 
-  it("runs its rules in order: caller's membership → actor + date → kind (declared, not server-only) → link → watermark keys → recipient → resource key → lock → caps", () => {
+  it("runs its rules in order: caller's membership → actor + date → kind (declared, not server-only) → link → watermark keys → recipient → resource key → caps (counted unlocked, re-counted under the actor's lock near a cap)", () => {
     const at = (s: string) => { const i = body.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     const order = [
       at("m.org_id = NEW.org_id AND m.uid = v_uid AND m.status = 'active'"),
@@ -269,11 +269,13 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       at("IF NEW.metadata ?| ARRAY["),
       at("m.org_id = NEW.org_id AND m.uid = NEW.user_id AND m.status = 'active'"),
       at("v_res_ok := CASE NEW.resource_type"),
+      at("v_lock := coalesce(current_setting('notif_rail.wrote_row', true), '') = 'y';"),
       at("PERFORM pg_advisory_xact_lock("),
       at("IF v_same >= 60 THEN"),
       at("IF v_any >= 600 THEN"),
       at("IF v_hour >= 1200 THEN"),
       at("IF v_actor >= 3000 THEN"),
+      at("EXIT WHEN v_lock"),
     ];
     expect([...order].sort((x, y) => x - y)).toEqual(order);
   });
@@ -412,17 +414,47 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(A).toMatch(/CREATE INDEX IF NOT EXISTS notifications_actor_created_idx\s+ON notifications \(actor_user_id, created_at DESC\)\s+WHERE actor_user_id IS NOT NULL;/);
   });
 
-  it("REVIEW (concurrency): one actor's inserts are counted one after another — a transaction-scoped advisory lock keyed on the actor, after the skip and before every count", () => {
-    const lock = "PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));";
-    expect(body).toContain(lock);
+  it("REVIEW (concurrency, fix 3): the counts are taken without a lock; a row near a cap, or a later row of one transaction, is counted again under the actor's lock — an ordinary fan-out never queues on it", () => {
     const code = strip(body);
-    // one lock per row, one key per actor: a transaction holds a single key, so two inserts can
-    // never take the same pair of locks in opposite orders; a different actor never waits
+    const lock = "PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));";
+    expect(squash(code)).toContain(squash(`v_lock := coalesce(current_setting('notif_rail.wrote_row', true), '') = 'y';
+  PERFORM set_config('notif_rail.wrote_row', 'y', true);
+  LOOP
+    IF v_lock THEN
+      ${lock}
+    END IF;`));
+    expect(squash(code)).toContain(squash(`EXIT WHEN v_lock
+           OR (v_same = 0 AND v_any < 600 - 64 AND v_hour < 1200 - 64 AND v_actor < 3000 - 64);
+    v_lock := true;
+  END LOOP;
+
+  RETURN NEW;`));
+    expect(fn).toMatch(/v_lock boolean;/);
+    // one lock call, transaction-scoped (never left held on a pooled connection), keyed on the actor alone
     expect(code.match(/pg_advisory/g)).toHaveLength(1);
-    expect(code).not.toMatch(/pg_advisory_lock\(|pg_try_advisory/);          // transaction-scoped, never left held
-    expect(code.indexOf(lock)).toBeGreaterThan(code.indexOf("RETURN NULL;")); // a skipped row takes no lock
+    expect(code).not.toMatch(/pg_advisory_lock\(|pg_try_advisory|_shared\(/);
+    // the "later row" mark is transaction-local: a session-level setting would follow the pooled
+    // connection into the next member's request
+    expect(code.match(/set_config\(/g)).toHaveLength(1);
+    expect(code).toContain("set_config('notif_rail.wrote_row', 'y', true)");
+    // a skipped row takes no lock and leaves no mark; the mark is read before it is set
+    expect(code.indexOf("v_lock := coalesce(")).toBeGreaterThan(code.indexOf("RETURN NULL;"));
+    expect(code.indexOf("v_lock := coalesce(")).toBeLessThan(code.indexOf("PERFORM set_config("));
+    // both counts and all four refusals sit inside the loop, before its exit: a count already at its
+    // cap is refused on the first, unlocked pass (a refusal never queues); a near one is re-counted
+    const loopAt = code.indexOf("\n  LOOP"), exitAt = code.indexOf("EXIT WHEN v_lock"), endAt = code.indexOf("END LOOP;");
+    expect(loopAt).toBeGreaterThan(code.indexOf("PERFORM set_config("));
+    for (const t of [lock, "INTO v_same, v_any, v_hour", "IF v_same >= 60 THEN", "IF v_any >= 600 THEN", "IF v_hour >= 1200 THEN",
+      "SELECT COUNT(*) INTO v_actor", "IF v_actor >= 3000 THEN"]) {
+      expect(code.indexOf(t), t).toBeGreaterThan(loopAt);
+      expect(code.indexOf(t), t).toBeLessThan(exitAt);
+    }
     expect(code.indexOf(lock)).toBeLessThan(code.indexOf("INTO v_same, v_any, v_hour"));
-    expect(code.indexOf(lock)).toBeLessThan(code.indexOf("SELECT COUNT(*) INTO v_actor"));
+    expect(code.indexOf("v_lock := true;")).toBeGreaterThan(exitAt);
+    expect(code.indexOf("v_lock := true;")).toBeLessThan(endAt);
+    // the probe the paste reports pins the same shape
+    expect(A).toContain("an ordinary row takes no lock");
+    expect(A).toContain("%EXIT WHEN v_lock%OR (v_same = 0 AND v_any < 600 - 64 AND v_hour < 1200 - 64 AND v_actor < 3000 - 64);%v_lock := true;%END LOOP;%");
   });
 
   it("OS-1 (review): resource_id is caller-written, so it keys the same-notice cap only when it names a row of resource_type in the row's org", () => {
@@ -478,7 +510,9 @@ function fnRange(src: string, name: string): [number, number] {
 const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string }>> = {
   "app/api/cron/maintenance/route.ts": [
     { marks: '.contains("metadata", { staleSessionId: row.id })', keys: ["staleSessionId"] },
-    { marks: '.in("kind", COMPLIANCE_KINDS)', none: "the compliance digest composes each recipient's list from their compliance rows: a forged row adds a line to someone's digest, never removes one" },
+    // not a dedupe, and not safe from forged rows either (third review fix): the read has no org filter
+    // and no order and is cut at .limit(2000), so browser-legal compliance rows can push other lines out
+    { marks: '.in("kind", COMPLIANCE_KINDS)', none: "not a dedupe: the compliance digest composes each recipient's list from compliance rows. Its read is cross-org, unordered and cut at 2,000 rows, so a member's browser-legal compliance rows (ack_requested, doc_superseded, review_requested), within the caps, can displace other people's and other tenants' lines — NEDGE-17, handed to N6" },
   ],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
@@ -589,21 +623,30 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
 // ── the caps, as a model (OS-1; each number and key pinned to the SQL) ──────
 // A row the trigger has let through: who wrote it, to whom, its kind, its
 // resource_id, whether that resource_id named a row of its type in the org,
-// and when (seconds). The service role never reaches the caps. Rows are
-// judged one after another — what the actor-keyed advisory lock makes true
-// of concurrent requests too (on PostgreSQL 16, 90 concurrent single-row
-// inserts of one notice from one actor landed 90 without the lock, 60 with it).
+// and when (seconds). The service role never reaches the caps. `attempt`
+// judges rows one after another, as the trigger does for requests that
+// arrive one at a time; how concurrent requests are counted (without the
+// actor's lock far from a cap, under it near one) is modelled further down.
 type Sent = { actor: string; to: string; kind: string; res: string | null; resOk: boolean; t: number };
 const CAP = { same: 60, anyMinute: 600, anyHour: 1200, actorMinute: 3000 };
-function capVerdict(log: Sent[], row: Omit<Sent, "t">, now: number): "ok" | "same" | "any" | "hour" | "actor" {
+/** The four counts rule 7 takes for `row` at `now`, over the rows already committed. */
+function countsFor(log: Sent[], row: Omit<Sent, "t">, now: number) {
   const mine = log.filter((r) => r.actor === row.actor);
   const toThemThisHour = mine.filter((r) => r.to === row.to && r.t > now - 3600);
   const toThemThisMinute = toThemThisHour.filter((r) => r.t > now - 60);
-  const same = toThemThisMinute.filter((r) => r.kind === row.kind && (!row.resOk || r.res === row.res)).length;
-  if (same >= CAP.same) return "same";
-  if (toThemThisMinute.length >= CAP.anyMinute) return "any";
-  if (toThemThisHour.length >= CAP.anyHour) return "hour";
-  if (mine.filter((r) => r.t > now - 60).length >= CAP.actorMinute) return "actor";
+  return {
+    same: toThemThisMinute.filter((r) => r.kind === row.kind && (!row.resOk || r.res === row.res)).length,
+    any: toThemThisMinute.length,
+    hour: toThemThisHour.length,
+    actor: mine.filter((r) => r.t > now - 60).length,
+  };
+}
+function capVerdict(log: Sent[], row: Omit<Sent, "t">, now: number): "ok" | "same" | "any" | "hour" | "actor" {
+  const c = countsFor(log, row, now);
+  if (c.same >= CAP.same) return "same";
+  if (c.any >= CAP.anyMinute) return "any";
+  if (c.hour >= CAP.anyHour) return "hour";
+  if (c.actor >= CAP.actorMinute) return "actor";
   return "ok";
 }
 /** Try rows in order at time `now`; land the admitted ones. Answers how many landed and the first refusal. */
@@ -687,6 +730,124 @@ describe("OS-1 — the caps model: the review's loops are bounded, every legitim
     log = [];
     expect(attempt(log, Array.from({ length: 61 }, () => ({ actor: "x", to: "y", kind: "checkout_message", res: uuid(7), resOk: true })), 0))
       .toEqual({ landed: 60, refused: "same" });
+  });
+});
+
+// ── which rows take the actor's lock (OS-1, third review fix) ───────────────
+// Rule 7 counts without a lock first. A count already at its cap is refused
+// there; a row NEAR a cap (the same notice already sent to that person this
+// minute, or a count within MARGIN of its cap) and every later row of one
+// transaction are counted again under the actor's lock. A count sees
+// committed rows only, so requests judged without the lock each see the same
+// baseline: a burst is modelled as rows that all count one committed log,
+// and the rows that need the lock as landing one after another, each seeing
+// every row committed before it.
+const MARGIN = 64;
+type Counts = ReturnType<typeof countsFor>;
+function lockPass(c: Counts, laterRowOfItsTransaction: boolean): "refused" | "lock" | "unlocked" {
+  if (c.same >= CAP.same || c.any >= CAP.anyMinute || c.hour >= CAP.anyHour || c.actor >= CAP.actorMinute) return "refused";
+  if (laterRowOfItsTransaction) return "lock";
+  return c.same === 0 && c.any < CAP.anyMinute - MARGIN && c.hour < CAP.anyHour - MARGIN && c.actor < CAP.actorMinute - MARGIN
+    ? "unlocked" : "lock";
+}
+/** One wave of concurrent single-row requests: each counts the log as it stood before the wave;
+ *  the unlocked ones all land; the ones that need the lock then land one after another. */
+function wave(log: Sent[], rows: Array<Omit<Sent, "t">>, now: number) {
+  const before = [...log];
+  const queued: Array<Omit<Sent, "t">> = [];
+  let unlocked = 0;
+  for (const row of rows) {
+    const p = lockPass(countsFor(before, row, now), false);
+    if (p === "unlocked") { log.push({ ...row, t: now }); unlocked++; }
+    else if (p === "lock") queued.push(row);
+  }
+  return { unlocked, locked: attempt(log, queued, now, false).landed };
+}
+/** Concurrent multi-row statements: each one's first row counts the log as it stood before them (and,
+ *  near a cap, again under the lock); every later row is judged under the lock, statement after
+ *  statement, seeing the committed rows and its own; a refusal aborts its whole statement. */
+function statements(log: Sent[], stmts: Array<Array<Omit<Sent, "t">>>, now: number): number {
+  const before = [...log];
+  let landed = 0;
+  for (const st of stmts) {
+    const first = lockPass(countsFor(before, st[0], now), false);
+    if (first === "refused") continue;
+    if (first === "lock" && lockPass(countsFor(log, st[0], now), true) === "refused") continue;   // re-counted under the lock
+    const mine: Sent[] = [{ ...st[0], t: now }];
+    const ok = st.slice(1).every((row) => {
+      if (lockPass(countsFor([...log, ...mine], row, now), true) === "refused") return false;
+      mine.push({ ...row, t: now });
+      return true;
+    });
+    if (ok) { log.push(...mine); landed += mine.length; }
+  }
+  return landed;
+}
+
+describe("OS-1 (third review fix) — the actor's lock: only near a cap or for a later row of one transaction", () => {
+  const fn = between(A, "CREATE OR REPLACE FUNCTION enforce_notification_insert()", "$$;");
+  const poke = { actor: "m", to: "v", kind: "checkout_message", res: uuid(7), resOk: true };
+
+  it("the model's margin and conditions are the SQL's", () => {
+    const exit = squash(fn.slice(fn.indexOf("EXIT WHEN v_lock"), fn.indexOf("v_lock := true;")));
+    expect(exit).toBe(`EXIT WHEN v_lock OR (v_same = 0 AND v_any < ${CAP.anyMinute} - ${MARGIN} AND v_hour < ${CAP.anyHour} - ${MARGIN} AND v_actor < ${CAP.actorMinute} - ${MARGIN});`);
+  });
+
+  it("REGRESSION (the review's pool starvation): an ordinary fan-out is judged as it stands — none of its requests queues on the lock", () => {
+    const passes = (rows: Array<Omit<Sent, "t">>) => {
+      const log: Sent[] = [];
+      return new Set(rows.map((row) => { const p = lockPass(countsFor(log, row, 0), false); log.push({ ...row, t: 0 }); return p; }));
+    };
+    // an ack roster: 300 real documents to one assignee
+    expect(passes(Array.from({ length: 300 }, (_, i) => ({ actor: "dc", to: "op", kind: "ack_requested", res: uuid(i), resOk: true })))).toEqual(new Set(["unlocked"]));
+    // a role broadcast to 300 members
+    expect(passes(Array.from({ length: 300 }, (_, i) => ({ actor: "dc", to: `m${i}`, kind: "hold_opened", res: uuid(1), resOk: true })))).toEqual(new Set(["unlocked"]));
+    // a bulk upload under an ack policy: 100 documents x 25 assignees, one request each, in one minute
+    const bulk = Array.from({ length: 100 }, (_, d) => Array.from({ length: 25 }, (_, a) => ({ actor: "dc", to: `op${a}`, kind: "ack_requested", res: uuid(d), resOk: true }))).flat();
+    expect(passes(bulk)).toEqual(new Set(["unlocked"]));
+  });
+
+  it("what takes the lock: a later row of one statement (the sweep), the same notice again this minute, a count within the margin of its cap; a count at its cap is refused without queueing", () => {
+    const zero = { same: 0, any: 0, hour: 0, actor: 0 };
+    expect(lockPass(zero, false)).toBe("unlocked");
+    expect(lockPass(zero, true)).toBe("lock");
+    expect(lockPass({ ...zero, same: 1, any: 1, hour: 1, actor: 1 }, false)).toBe("lock");
+    expect(lockPass({ ...zero, any: 535, hour: 535, actor: 535 }, false)).toBe("unlocked");
+    expect(lockPass({ ...zero, any: 536, hour: 536, actor: 536 }, false)).toBe("lock");
+    expect(lockPass({ ...zero, hour: 1136 }, false)).toBe("lock");
+    expect(lockPass({ ...zero, actor: 2936 }, false)).toBe("lock");
+    expect(lockPass({ ...zero, any: 600, hour: 600, actor: 600 }, false)).toBe("refused");
+    expect(lockPass({ ...zero, same: 60, any: 60, hour: 60, actor: 60 }, true)).toBe("refused");
+  });
+
+  it("the bound, as the PostgreSQL 16 runs found it: through a 20-connection pool one notice lands 60 of 100; 90 requests counted at the same instant all land — a burst passes a cap only by what it holds beyond the margin", () => {
+    let log: Sent[] = [];
+    let landed = 0;
+    for (let w = 0; w < 5; w++) { const r = wave(log, Array(20).fill(poke), 0); landed += r.unlocked + r.locked; }
+    expect(landed).toBe(CAP.same);
+    // 90 sessions at once, each counting before any commits: all see no earlier same notice
+    log = [];
+    expect(wave(log, Array(90).fill(poke), 0)).toEqual({ unlocked: 90, locked: 0 });
+    // a burst of up to 60 at one instant never passes a cap: the same-notice cap from nothing ...
+    log = [];
+    expect(wave(log, Array(60).fill(poke), 0).unlocked).toBe(60);
+    expect(countsFor(log, poke, 0).same).toBe(CAP.same);
+    // ... and the 600 cap from the last count below its margin: 535 already this minute, 65 at once
+    log = Array.from({ length: 535 }, (_, i) => ({ actor: "m", to: "v", kind: KINDS[i % KINDS.length], res: uuid(i), resOk: true, t: 0 }));
+    const burst = Array.from({ length: 65 }, (_, i) => ({ actor: "m", to: "v", kind: "checkout_message", res: uuid(10_000 + i), resOk: true }));
+    expect(wave(log, burst, 0)).toEqual({ unlocked: 65, locked: 0 });
+    expect(countsFor(log, burst[0], 0).any).toBe(CAP.anyMinute);
+    // one past the margin, the next request queues on the lock and is refused there
+    expect(lockPass(countsFor(log, poke, 0), false)).toBe("refused");
+  });
+
+  it("a multi-row statement is judged under the lock from its second row: 20 concurrent 40-row statements to one person land 600, not 800 (PostgreSQL 16: 800 without the later-row rule)", () => {
+    const log: Sent[] = [];
+    const stmts = Array.from({ length: 20 }, (_, s) => Array.from({ length: 40 }, (_, i) => ({ actor: "m", to: "v", kind: "checkout_message", res: uuid(s * 40 + i), resOk: true })));
+    expect(statements(log, stmts, 0)).toBe(CAP.anyMinute);
+    // and the browser's sweep — one statement, one row per expired holder — lands whole
+    const sweep = [Array.from({ length: 500 }, (_, i) => ({ actor: "sweeper", to: `m${i}`, kind: "checkout_released", res: uuid(i), resOk: true }))];
+    expect(statements([], sweep, 0)).toBe(500);
   });
 });
 
@@ -960,6 +1121,293 @@ function sourceFiles(): string[] {
   for (const d of ["app", "lib", "components", "hooks"]) walk(join(ROOT, d));
   return out;
 }
+
+// ── rule 1's obligation on the producers (third review fix) ────────────────
+// 20261160 refuses (42501) a signed-in writer's row whose actor_user_id names
+// anyone but the caller. Each notify / notifyMany / notifyChecked / emit call
+// with an object literal is judged by where its actorUserId comes from:
+// absent (the trigger stamps the caller), the signed-in member by name, or a
+// parameter of the enclosing NAMED function — a pass-through, pinned in
+// ACTOR_PASS_THROUGHS. A stored uid (a document's owner, a ticket's requester,
+// a hold's opener), a callback's parameter, a spread row or anything the
+// census cannot see is an offender. Then one hop up: every call of a pinned
+// pass-through is judged the same way, and the callers that forward their own
+// caller's value are pinned in ACTOR_CALLER_PASS_THROUGHS. Deeper callers (the
+// pages and panels that call those) carry the obligation as recorded in
+// lib/notificationKinds.ts and DEC-44 (N5) §2. The route files and the
+// orchestrator's tools write on the service role, which the rule never
+// reaches.
+const ACTOR_SERVER_FILES = ["lib/orchestrator/tools.ts"];
+const SESSION_ACTOR = /^(?:uid|currentUserId|currentUser\??\.uid)$/;
+/** Every function that forwards a parameter as a browser row's actor (`file#fn(param.path)`). Its
+ *  callers pass the signed-in member today (read at this commit); a caller that passed a stored uid
+ *  instead would have every row from that path refused once 20261160 is pasted — the obligation
+ *  lib/notificationKinds.ts and DEC-44 (N5) §2 record. A new pass-through fails here until listed. */
+const ACTOR_PASS_THROUGHS = [
+  "lib/acknowledgments.ts#maybeNotifyComplete(actorId)",
+  "lib/acknowledgments.ts#recomputeDocumentAck(input.actorId)",
+  "lib/activityThread.ts#notifyCheckoutActivity(input.userId)",
+  "lib/branches.ts#resolveBranch(input.actorUserId)",
+  "lib/changeOrders.ts#notifyApproval(actorId)",
+  "lib/checkoutEpisodes.ts#forceReleaseDocument(input.actorUserId)",
+  "lib/costDocs.ts#notifyAward(actor.uid)",
+  "lib/distributionAcks.ts#renudgeUnacked(input.actorUserId)",
+  "lib/distributionAcks.ts#requestAcks(input.actorUserId)",
+  "lib/holds.ts#notifyHoldChange(input.actorUserId)",
+  "lib/libraryCollections.ts#createLibrary(input.createdBy)",
+  "lib/members.ts#revokeMember(input.actorUserId)",
+  "lib/ownership.ts#requestDeletion(input.requesterId)",
+  "lib/ownership.ts#setOwner(input.actorId)",
+  "lib/postPublish.ts#notifyPackagesOfRetirement(input.actorUserId)",
+  "lib/postPublish.ts#notifySuperseded(input.actorUserId)",
+  "lib/projects.ts#addMember(input.actorUserId)",
+  "lib/projects.ts#notifyProjectAudience(input.actorUserId)",
+  "lib/projects.ts#removeMember(input.actorUserId)",
+  "lib/projects.ts#transferOwnership(input.actorUserId)",
+  "lib/retention.ts#notifyHold(actorId)",
+  "lib/reviewControl.ts#activateAlternate(input.actorId)",
+  "lib/reviewControl.ts#openReviewRoster(input.actorId)",
+  "lib/reviewControl.ts#recordReviewSignoff(input.signerUserId)",
+  "lib/revisionImpact.ts#notifyConnectedWork(input.actorUserId)",
+  "lib/revisions.ts#noteOverrideOnHolder(opts.actorUserId)",
+  "lib/revisions.ts#notifyHolderOfRetirement(opts.actorUserId)",
+  "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
+  "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
+  "lib/transitionIn.ts#flagCollisionToDrafting(input.actorId)",
+  "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
+];
+/** Judges where an actor value comes from, in one source file. */
+function actorAnalyzer(src: string, file: string) {
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    for (;;) {
+      if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) { e = e.expression; continue; }
+      // `x ?? undefined`, `x || ""`, `uid ?? "unknown"`: a literal fallback never names another member
+      // (taken, it fails as an invalid uuid), so the actor is whatever `x` is
+      if (ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(e.operatorToken.kind)
+          && (e.right.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e.right) && e.right.text === "undefined")
+            || ts.isStringLiteral(e.right))) { e = e.left; continue; }
+      return e;
+    }
+  };
+  const findBinding = (b: ts.BindingName, name: string): ts.BindingElement | undefined => {
+    if (ts.isIdentifier(b)) return undefined;
+    for (const e of b.elements) {
+      if (ts.isOmittedExpression(e)) continue;
+      if (ts.isIdentifier(e.name) && e.name.text === name) return e;
+      const inner = findBinding(e.name, name);
+      if (inner) return inner;
+    }
+    return undefined;
+  };
+  /** A named function's name; null for a callback, whose parameters are data, never the session. */
+  const fnName = (f: ts.SignatureDeclaration): string | null => {
+    if ((ts.isFunctionDeclaration(f) || ts.isMethodDeclaration(f)) && f.name) return f.name.getText(sf);
+    if ((ts.isArrowFunction(f) || ts.isFunctionExpression(f)) && ts.isVariableDeclaration(f.parent) && ts.isIdentifier(f.parent.name)) return f.parent.name.text;
+    return null;
+  };
+  type Decl = { fn: ts.SignatureDeclaration; param: string } | { init: ts.Expression; via: string[] };
+  /** What `name` refers to at `at`, nearest scope first: a parameter, or a variable's initialiser. */
+  const resolve = (name: string, at: ts.Node): Decl | undefined => {
+    for (let n: ts.Node | undefined = at.parent; n; n = n.parent) {
+      if (ts.isFunctionLike(n)) {
+        for (const p of n.parameters) {
+          if (ts.isIdentifier(p.name) && p.name.text === name) return { fn: n, param: name };
+          const b = findBinding(p.name, name);
+          if (b) return { fn: n, param: `{ ${(b.propertyName ?? b.name).getText(sf)} }` };
+        }
+      }
+      const statements = ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n) ? n.statements : undefined;
+      for (const st of [...(statements ?? [])].reverse()) {
+        if (!ts.isVariableStatement(st) || st.pos >= at.pos) continue;
+        for (const d of st.declarationList.declarations) {
+          if (!d.initializer) continue;
+          if (ts.isIdentifier(d.name) && d.name.text === name) return { init: d.initializer, via: [] };
+          const b = findBinding(d.name, name);
+          if (b) return { init: d.initializer, via: [(b.propertyName ?? b.name).getText(sf)] };
+        }
+      }
+    }
+    return undefined;
+  };
+  /** "absent" | "session" | "pass:fn(param.path)" | "offender:text" */
+  const judge = (e0: ts.Expression | undefined, extra: string[] = [], depth = 0): string => {
+    if (!e0) return "absent";
+    const e = unwrap(e0);
+    const shown = `${e.getText(sf)}${extra.length ? `.${extra.join(".")}` : ""}`;
+    if (!extra.length && (e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === "undefined"))) return "absent";
+    if (!extra.length && SESSION_ACTOR.test(e.getText(sf))) return "session";
+    let root: ts.Expression = e;
+    const path: string[] = [];
+    while (ts.isPropertyAccessExpression(root)) { path.unshift(root.name.text); root = root.expression; }
+    if (ts.isIdentifier(root) && depth < 5) {
+      const d = resolve(root.text, root);
+      if (d && "fn" in d) {
+        const name = fnName(d.fn);
+        if (name) return `pass:${name}(${[d.param, ...path, ...extra].join(".")})`;
+      } else if (d) return judge(d.init, [...d.via, ...path, ...extra], depth + 1);
+    }
+    return `offender:${shown}`;
+  };
+  /** The actor an object-literal argument supplies under `key`: its own property, else what its last
+   *  spread carries under that key (`{ ...input }` forwards input.key), else none. */
+  const supplied = (obj: ts.ObjectLiteralExpression, key: string, extra: string[] = []): string => {
+    const own = obj.properties.find((q) => (ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)) && q.name.getText(sf).replace(/["']/g, "") === key);
+    if (own) return judge(ts.isShorthandPropertyAssignment(own) ? own.name : (own as ts.PropertyAssignment).initializer, extra);
+    const spread = [...obj.properties].reverse().find((q): q is ts.SpreadAssignment => ts.isSpreadAssignment(q));
+    return spread ? judge(spread.expression, [key, ...extra]) : "absent";
+  };
+  return { sf, judge, supplied };
+}
+/** One hop up: the callers of those functions that forward THEIR caller's value in turn (a lib
+ *  function's input, a component's prop). Pinned the same way, so a caller that starts handing a
+ *  pass-through a row's field (`{ selectedDoc }.ownerUserId`) fails until someone reads it. */
+const ACTOR_CALLER_PASS_THROUGHS = [
+  "app/(protected)/projects/[id]/page.tsx#MembersTab({ actorUserId })",
+  "components/documents/DocumentLinkPicker.tsx#DocumentLinkPicker({ userId })",
+  "lib/acknowledgments.ts#onDocumentIssuedAck(input.actorId)",
+  "lib/acknowledgments.ts#recordAcknowledgment(input.signerUserId)",
+  "lib/acknowledgments.ts#setAckPolicy(input.actorId)",
+  "lib/acknowledgments.ts#waiveAcknowledgment(input.actorId)",
+  "lib/activityThread.ts#postActivity(input.userId)",
+  "lib/changeOrders.ts#decideChangeOrder(input.actorId)",
+  "lib/costDocs.ts#awardQuote(input.actor.uid)",
+  "lib/documentLifecycle/merge.ts#finishMerge(input.actorUserId)",
+  "lib/documentLifecycle/split.ts#splitDocument(input.actorUserId)",
+  "lib/holds.ts#openHold(input.openedBy)",
+  "lib/holds.ts#releaseHold(input.releasedBy)",
+  "lib/postPublish.ts#runPostPublishSideEffects(input.actorUserId)",
+  "lib/projects.ts#convertTicketToProject(input.actorUserId)",
+  "lib/projects.ts#postComment(input.actorUserId)",
+  "lib/projects.ts#reopenProject(input.actorUserId)",
+  "lib/projects.ts#transitionProjectStatus(input.actorUserId)",
+  "lib/retention.ts#placeLegalHold(input.actorId)",
+  "lib/retention.ts#releaseLegalHold(input.actorId)",
+  "lib/revisions.ts#revUpDocument(input.actorUserId)",
+  "lib/revisions.ts#revertToVersion(input.actorUserId)",
+  "lib/revisions.ts#submitForReview(input.actorUserId)",
+  "lib/revisions.ts#supersedeDocument(input.actorUserId)",
+];
+function actorSources(src: string, file: string): { calls: number; passThroughs: string[]; offenders: string[] } {
+  const { sf, supplied } = actorAnalyzer(src, file);
+  const out = { calls: 0, passThroughs: [] as string[], offenders: [] as string[] };
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n)) {
+      const callee = ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : "";
+      const arg = n.arguments[0];
+      if (["notify", "notifyMany", "notifyChecked", "emit"].includes(callee) && arg && ts.isObjectLiteralExpression(arg)) {
+        out.calls++;
+        const v = supplied(arg, "actorUserId");
+        const line = sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+        if (v.startsWith("pass:")) out.passThroughs.push(`${file}#${v.slice(5)}`);
+        else if (v.startsWith("offender:")) out.offenders.push(`${file}:${line} actorUserId: ${v.slice(9)}`);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+describe("rule 1's obligation on the producers — a browser row names the signed-in member as its actor, or no actor (third review fix)", () => {
+  it("every browser producer passes no actor, the signed-in member, or a pinned pass-through — never a stored uid", () => {
+    let calls = 0;
+    const pass = new Set<string>();
+    const offenders: string[] = [];
+    for (const f of sourceFiles()) {
+      const rel = relative(ROOT, f);
+      if (rel.startsWith("app/api/") || ACTOR_SERVER_FILES.includes(rel) || rel === "lib/notify/dispatch.ts" || rel === "lib/inAppNotifications.ts") continue;
+      const src = readFileSync(f, "utf8");
+      if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(/.test(src)) continue;
+      const r = actorSources(src, rel);
+      calls += r.calls;
+      r.passThroughs.forEach((x) => pass.add(x));
+      offenders.push(...r.offenders);
+    }
+    expect(calls).toBeGreaterThan(50);
+    expect(offenders).toEqual([]);
+    expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
+  });
+
+  it("one hop up: every call of a pinned pass-through supplies no actor, the signed-in member, or a pinned forward of its own caller's value — never a stored uid", () => {
+    const files = sourceFiles().map((f) => relative(ROOT, f))
+      .filter((rel) => !rel.startsWith("app/api/") && !ACTOR_SERVER_FILES.includes(rel));
+    const analyzers = new Map<string, ReturnType<typeof actorAnalyzer>>();
+    const analyzer = (rel: string) => analyzers.get(rel) ?? analyzers.set(rel, actorAnalyzer(readFileSync(join(ROOT, rel), "utf8"), rel)).get(rel)!;
+    let judged = 0;
+    const offenders: string[] = [];
+    const forwarded = new Set<string>();
+    for (const key of ACTOR_PASS_THROUGHS) {
+      const m = key.match(/^(.+)#(\w+)\((.+)\)$/)!;
+      const [, file, fn, chain] = m;
+      const [param, ...path] = chain.split(".");
+      // the parameter's position in the function's own declaration
+      const decl = analyzer(file).sf;
+      let index = -1;
+      const findDecl = (n: ts.Node) => {
+        const f = ts.isFunctionDeclaration(n) && n.name?.text === fn ? n
+          : ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === fn && n.initializer && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer)) ? n.initializer : undefined;
+        if (f) index = f.parameters.findIndex((p) => p.name.getText(decl) === param);
+        ts.forEachChild(n, findDecl);
+      };
+      findDecl(decl);
+      expect(index, `${key}: parameter found`).toBeGreaterThanOrEqual(0);
+      for (const rel of files) {
+        const src = readFileSync(join(ROOT, rel), "utf8");
+        if (!new RegExp(`\\b${fn}\\(`).test(src)) continue;
+        const { sf, judge, supplied } = analyzer(rel);
+        const visit = (n: ts.Node) => {
+          if (ts.isCallExpression(n) && (ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : "") === fn) {
+            const arg = n.arguments[index];
+            let v: string;
+            if (!path.length || !arg) v = judge(arg);
+            else if (ts.isObjectLiteralExpression(arg)) v = supplied(arg, path[0], path.slice(1));
+            else v = judge(arg, path);   // the caller forwards its whole argument
+            judged++;
+            if (v.startsWith("pass:")) forwarded.add(`${rel}#${v.slice(5)}`);
+            if (v.startsWith("offender:")) offenders.push(`${rel}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} ${fn}(… ${path.join(".") || param}: ${v.slice(9)})`);
+          }
+          ts.forEachChild(n, visit);
+        };
+        visit(sf);
+      }
+    }
+    expect(judged).toBeGreaterThan(40);
+    expect(offenders).toEqual([]);
+    expect([...forwarded].sort()).toEqual([...ACTOR_CALLER_PASS_THROUGHS].sort());
+  });
+
+  it("the census is not vacuous: a stored uid, a callback's parameter, a spread row and a call are offenders; the session, a named function's parameter (by name or by spread) and no actor are not", () => {
+    const probe = actorSources([
+      'function a() { const doc = docs[0]; notify({ orgId, userId, kind, title, actorUserId: doc.owner_user_id }); }', // a stored uid
+      'function b() { rows.forEach((r) => notifyMany({ userIds, actorUserId: r.requested_by })); }',            // a callback's parameter
+      'function c() { emit({ orgId, ...row }); }',                                                              // a stored row, spread
+      'function d() { notify({ actorUserId: pickActor() }); }',                                                 // a call
+      'function e() { const who = hold.opened_by; notify({ actorUserId: who }); }',                             // a stored uid, by name
+      'function f() { notify({ actorUserId: uid ?? undefined }); emit({ actorUserId: currentUser.uid }); }',    // the session
+      'function g(input: { requesterId: string }) { notify({ actorUserId: input.requesterId }); }',             // a pass-through
+      'const h = async ({ actor }: { actor: string }) => { const { id } = { id: actor }; notifyMany({ actorUserId: actor }); };',
+      'function k() { notify({ kind, title }); notify({ actorUserId: null }); }',                               // no actor: stamped
+      'function m(input: I) { void emit({ ...input, kind }); notify({ actorUserId: uid ?? "unknown" }); }',     // forwarded by spread; a literal fallback
+      'function n(doc: D) { notify({ actorUserId: doc.owner_user_id }); }',                                     // a NEW pass-through: the ratchet lists it for review
+    ].join("\n"), "probe.ts");
+    expect(probe.calls).toBe(14);
+    expect(probe.offenders).toEqual([
+      "probe.ts:1 actorUserId: docs[0].owner_user_id",
+      "probe.ts:2 actorUserId: r.requested_by",
+      "probe.ts:3 actorUserId: row.actorUserId",
+      "probe.ts:4 actorUserId: pickActor()",
+      "probe.ts:5 actorUserId: hold.opened_by",
+    ]);
+    expect(probe.passThroughs).toEqual(["probe.ts#g(input.requesterId)", "probe.ts#h({ actor })", "probe.ts#m(input.actorUserId)", "probe.ts#n(doc.owner_user_id)"]);
+    // and one hop up, a caller that hands a pass-through a stored uid is judged an offender
+    const caller = actorAnalyzer('async function p() { const doc = await load(); requestDeletion({ documentId, requesterId: doc.owner_user_id }); requestDeletion({ documentId, requesterId: uid }); }', "caller.ts");
+    const calls: ts.CallExpression[] = [];
+    const collect = (n: ts.Node) => { if (ts.isCallExpression(n) && n.expression.getText(caller.sf) === "requestDeletion") calls.push(n); ts.forEachChild(n, collect); };
+    collect(caller.sf);
+    expect(calls.map((c) => caller.supplied(c.arguments[0] as ts.ObjectLiteralExpression, "requesterId"))).toEqual(["offender:await load().owner_user_id", "session"]);
+  });
+});
 
 describe("REGRESSION census — every app write to notifications fits the read_at-only rail", () => {
   const writes: Array<{ file: string; op: string; text: string }> = [];

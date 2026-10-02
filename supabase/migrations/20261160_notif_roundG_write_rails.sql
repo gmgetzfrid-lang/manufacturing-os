@@ -79,14 +79,8 @@
 --          'ticket', 'project', 'library' — the types the app's producers
 --          fan out about) in the row's org. Any other resource_id is no key:
 --          the cap then counts the kind alone.
---       7. rate caps (P0001), counted over the signed-in writer's own rows,
---          one actor's inserts one after another: a transaction-scoped
---          advisory lock keyed on the actor is taken before the counts, so
---          concurrent requests from one member (a Promise.all of notify()
---          calls) are counted in turn instead of all seeing the same
---          baseline and overshooting each cap by the pool's width. One key
---          per transaction, so no lock-order deadlock; a different actor
---          never waits:
+--       7. rate caps (P0001), counted over the signed-in writer's own rows
+--          (how the counts meet concurrency follows the list):
 --            · per actor and recipient, last minute — 60 rows of the same
 --              kind about the same verified resource, or of the same kind
 --              when the resource is not verified (a poke pressed 60 times; a
@@ -100,6 +94,32 @@
 --              role broadcast, an ack roster, the sweep's release notices —
 --              each one row per recipient) never meets it, and no member can
 --              flood the whole org.
+--          A count sees committed rows only, so requests of one member in
+--          flight at once each see the same baseline. The counts are taken
+--          first WITHOUT a lock: a count already at its cap is refused
+--          there, and a row far from every cap is judged as it stands, so
+--          the requests of one fan-out (notifyMany's Promise.all, one
+--          insert per recipient, each holding one of the API's pooled
+--          connections) run side by side. A row NEAR a cap — the same
+--          notice already sent to that person in the minute (the 60 cap is
+--          smaller than the margin), or a count within 64 of its cap — and
+--          every later row of one transaction (a transaction-local setting
+--          marks the first; a multi-row statement such as the browser's
+--          checkout sweep) are counted again under a transaction-scoped
+--          advisory lock keyed on the actor, one after another, each seeing
+--          every row committed before it. One key per transaction, so no
+--          lock-order deadlock. A request waiting on the lock still holds
+--          its pooled connection, which is why ordinary traffic never takes
+--          it: until the third review fix it was taken for every row, so
+--          one member's bulk fan-out ran one insert at a time and could
+--          fill the API's pool for every other member. What the margin
+--          buys: each row judged without the lock was at least 64 below
+--          every cap (the first same notice of the minute, for the 60 cap),
+--          so a count passes its cap only by such rows still uncommitted
+--          when later rows reach the cap under the lock — at most one per
+--          request of that member in flight at that moment, fewer than the
+--          API pool's width; a burst of up to 60 concurrent requests that
+--          commit as they land stays within every cap.
 --          Legitimate paths that can meet a cap: a multi-document
 --          operation under a wide ack policy (a bulk upload, a library-wide
 --          policy change) the hourly or the per-actor one; and more than 60
@@ -293,6 +313,7 @@ DECLARE
   v_any int;
   v_hour int;
   v_actor int;
+  v_lock boolean;
 BEGIN
   IF v_uid IS NULL THEN
     RETURN NEW;
@@ -351,42 +372,56 @@ BEGIN
   END IF;
 
   -- 7. rate caps: per (actor, recipient) a minute and an hour, per actor a
-  --    minute — one actor's inserts counted one after another (a concurrent
-  --    insert from the same actor waits here until this one commits)
-  PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));
-  SELECT COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute' AND n.kind = NEW.kind
-                            AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)),
-         COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute'),
-         COUNT(*)
-    INTO v_same, v_any, v_hour
-    FROM notifications n
-   WHERE n.actor_user_id = v_uid
-     AND n.user_id = NEW.user_id
-     AND n.created_at > now() - interval '1 hour';
-  IF v_same >= 60 THEN
-    RAISE EXCEPTION 'notifications: rate limit — 60 of the same notification to one person per minute';
-  END IF;
-  IF v_any >= 600 THEN
-    RAISE EXCEPTION 'notifications: rate limit — 600 notifications to one person per minute';
-  END IF;
-  IF v_hour >= 1200 THEN
-    RAISE EXCEPTION 'notifications: rate limit — 1200 notifications to one person per hour';
-  END IF;
-  SELECT COUNT(*) INTO v_actor
-    FROM (SELECT 1 FROM notifications n
-           WHERE n.actor_user_id = v_uid
-             AND n.created_at > now() - interval '1 minute'
-           LIMIT 3000) s;
-  IF v_actor >= 3000 THEN
-    RAISE EXCEPTION 'notifications: rate limit — 3000 notifications per minute from one member';
-  END IF;
+  --    minute. Counted first without a lock, so one fan-out's requests run
+  --    side by side; a count already at a cap is refused there. A row near
+  --    a cap — the same notice already sent to this person in the minute,
+  --    or a count within 64 of its cap — and every later row of one
+  --    transaction are counted again under the actor's lock, one after
+  --    another (a concurrent insert from the same actor that needs the
+  --    lock waits here until this one commits)
+  v_lock := coalesce(current_setting('notif_rail.wrote_row', true), '') = 'y';
+  PERFORM set_config('notif_rail.wrote_row', 'y', true);
+  LOOP
+    IF v_lock THEN
+      PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));
+    END IF;
+    SELECT COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute' AND n.kind = NEW.kind
+                              AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)),
+           COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute'),
+           COUNT(*)
+      INTO v_same, v_any, v_hour
+      FROM notifications n
+     WHERE n.actor_user_id = v_uid
+       AND n.user_id = NEW.user_id
+       AND n.created_at > now() - interval '1 hour';
+    IF v_same >= 60 THEN
+      RAISE EXCEPTION 'notifications: rate limit — 60 of the same notification to one person per minute';
+    END IF;
+    IF v_any >= 600 THEN
+      RAISE EXCEPTION 'notifications: rate limit — 600 notifications to one person per minute';
+    END IF;
+    IF v_hour >= 1200 THEN
+      RAISE EXCEPTION 'notifications: rate limit — 1200 notifications to one person per hour';
+    END IF;
+    SELECT COUNT(*) INTO v_actor
+      FROM (SELECT 1 FROM notifications n
+             WHERE n.actor_user_id = v_uid
+               AND n.created_at > now() - interval '1 minute'
+             LIMIT 3000) s;
+    IF v_actor >= 3000 THEN
+      RAISE EXCEPTION 'notifications: rate limit — 3000 notifications per minute from one member';
+    END IF;
+    EXIT WHEN v_lock
+           OR (v_same = 0 AND v_any < 600 - 64 AND v_hour < 1200 - 64 AND v_actor < 3000 - 64);
+    v_lock := true;
+  END LOOP;
 
   RETURN NEW;
 END;
 $$;
 
 COMMENT ON FUNCTION enforce_notification_insert() IS
-  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer must be an active member of the row''s org (checked before anything else of that org is read), is stamped as the actor (another actor refused) and the row dated now; the kind must be declared (notification_kinds()) and not server-only, the link app-relative, the metadata free of the server''s dedupe watermark keys; a recipient who is not an active member of the org is skipped; the caps, counted one insert at a time per actor (an advisory lock), are 60 same-notice (the resource counts only when it names a row of its type in the org) and 600 any rows per actor and recipient per minute, 1200 per actor and recipient per hour, and 3000 per actor per minute across all recipients. notifications Round G, 20261160.';
+  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer must be an active member of the row''s org (checked before anything else of that org is read), is stamped as the actor (another actor refused) and the row dated now; the kind must be declared (notification_kinds()) and not server-only, the link app-relative, the metadata free of the server''s dedupe watermark keys; a recipient who is not an active member of the org is skipped; the caps — counted without a lock, and again one insert at a time per actor (an advisory lock) for a row near a cap or a later row of one transaction — are 60 same-notice (the resource counts only when it names a row of its type in the org) and 600 any rows per actor and recipient per minute, 1200 per actor and recipient per hour, and 3000 per actor per minute across all recipients. notifications Round G, 20261160.';
 
 REVOKE ALL ON FUNCTION enforce_notification_insert() FROM PUBLIC, anon, authenticated;
 
@@ -492,9 +527,9 @@ SELECT 'enforce_notification_insert: the caps are 60 same-notice and 600 any per
                   AND prosrc LIKE '%IF v_same >= 60 THEN%IF v_any >= 600 THEN%IF v_hour >= 1200 THEN%LIMIT 3000%IF v_actor >= 3000 THEN%'),
        NULL
 UNION ALL
-SELECT 'enforce_notification_insert: one actor''s inserts are counted one after another — an advisory lock keyed on the actor is taken before the caps are counted',
+SELECT 'enforce_notification_insert: a row near a cap, and every later row of one transaction, is counted again one after another under an advisory lock keyed on the actor — an ordinary row takes no lock',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
-                  AND prosrc LIKE '%PERFORM pg_advisory_xact_lock(hashtextextended(''notif-cap:'' || v_uid::text, 0));%INTO v_same, v_any, v_hour%'),
+                  AND prosrc LIKE '%v_lock := coalesce(current_setting(''notif_rail.wrote_row'', true), '''') = ''y'';%PERFORM set_config(''notif_rail.wrote_row'', ''y'', true);%LOOP%IF v_lock THEN%PERFORM pg_advisory_xact_lock(hashtextextended(''notif-cap:'' || v_uid::text, 0));%END IF;%INTO v_same, v_any, v_hour%IF v_actor >= 3000 THEN%EXIT WHEN v_lock%OR (v_same = 0 AND v_any < 600 - 64 AND v_hour < 1200 - 64 AND v_actor < 3000 - 64);%v_lock := true;%END LOOP;%'),
        NULL
 UNION ALL
 SELECT 'trg_notifications_enforce_insert is BEFORE INSERT FOR EACH ROW on notifications, enabled',
