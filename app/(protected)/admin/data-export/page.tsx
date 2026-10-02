@@ -68,6 +68,10 @@ type Run = {
   completed_at?: string | null;
   duration_ms?: number | null;
   diagnostics?: Array<{ step?: string; detail?: string }> | null;
+  /** BKP-6: a retention purge's counts on the run row (20261172) — NULL when
+   *  no purge ran, and on a run closed before that migration was pasted. */
+  retention_deleted?: number | null;
+  retention_failed?: number | null;
 };
 
 export default function DataExportPage() {
@@ -513,11 +517,22 @@ function RunRow({ run }: { run: Run }) {
   );
 }
 
-/** BKP-6: what a run's retention purge did, from the run's own trace — shown
- *  on the run row (a failure is also the run's error_message). */
+/** BKP-6: what a run's retention purge did — shown on the run row (a failure
+ *  is also the run's error_message). Read from the run row's own counts
+ *  (retention_deleted / retention_failed, migration 20261172); a run closed
+ *  before that paste has none, and its retention step in the trace is read
+ *  instead, as before. A purge that stopped with nothing failed (refused for
+ *  a missing prefix) is still a failure: its trace step says so. */
 function retentionOf(run: Run): { detail: string; failed: boolean } | null {
   const steps = (run.diagnostics ?? []).filter((d) => d?.step === "s3:retention:done" || d?.step === "s3:retention:err");
   const last = steps[steps.length - 1];
+  if (typeof run.retention_deleted === "number") {
+    const notDeleted = typeof run.retention_failed === "number" ? run.retention_failed : 0;
+    return {
+      detail: `deleted ${run.retention_deleted} archive(s)` + (notDeleted > 0 ? `, ${notDeleted} could not be deleted` : ""),
+      failed: notDeleted > 0 || last?.step === "s3:retention:err",
+    };
+  }
   if (!last) return null;
   return { detail: last.detail || (last.step === "s3:retention:err" ? "the purge failed" : "done"), failed: last.step === "s3:retention:err" };
 }

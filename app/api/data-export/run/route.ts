@@ -5,7 +5,10 @@
 // or webhook). If omitted, builds an inline ZIP and streams it to the
 // caller as a download response.
 //
-// Always writes an export_runs row with the result.
+// Always writes an export_runs row with the result — for a bucket push whose
+// retention purge ran, its deleted and failed counts in the row's own
+// columns (admin-and-org BKP-6, migration 20261172; until that is pasted the
+// row is written without them, the counts in its diagnostics as before).
 //
 // Admin-only (admin-and-org BKP-8): held to the data-export admin surface by
 // the one gate (lib/adminGate.ts; the role set lives in lib/adminSurfaces.ts).
@@ -45,7 +48,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
-import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote } from "@/lib/exportAlerts";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
@@ -185,9 +188,12 @@ export async function POST(req: NextRequest) {
     const duration = Date.parse(completedAt) - Date.parse(startedAt);
     // The closing writes are CHECKED: a refused one is logged and named in the
     // answer. The export itself left and is recorded, so the run succeeded.
+    // BKP-6 Done-when 3: the purge's deleted and failed counts go on the run
+    // row's own columns (20261172); before that paste the row closes as it
+    // always did, the counts in its diagnostics (closeSucceededRun).
     const unrecorded: string[] = [];
     {
-      const { error: runUpdErr } = await auth.admin.from("export_runs").update({
+      const { error: runUpdErr } = await closeSucceededRun(auth.admin, runId, {
         status: "succeeded",
         table_count: result.tableCount,
         total_rows: result.totalRows,
@@ -199,7 +205,7 @@ export async function POST(req: NextRequest) {
         ...(retentionNote ? { error_message: retentionNote.slice(0, 1000) } : {}),
         completed_at: completedAt,
         duration_ms: duration,
-      }).eq("id", runId);
+      }, result.retention);
       if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
     }
 

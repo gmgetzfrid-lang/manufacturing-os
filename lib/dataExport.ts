@@ -553,7 +553,9 @@ const LEDGER_CLOCK_ALLOWANCE_MS = 60_000;
  *  function (maxDuration 300 s), so its earliest part lies within this of
  *  its newest; every delta on its chain was written after the baseline was
  *  read back whole, so after its newest part. Both ends are the database's
- *  own clock. */
+ *  own clock. The same bound serves a recall's DATA_EXPORT_UNDELIVERED read
+ *  (rebuildExportList): that row is written by the export's own function,
+ *  after its DATA_EXPORT row, so within this after it. */
 const LEDGER_WRITE_WINDOW_MS = 15 * 60_000;
 
 /** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
@@ -810,13 +812,28 @@ async function readLedgerChain(
 export interface RebuiltExportList {
   recordId: string;
   /** Who took the export, from its DATA_EXPORT row: the person (or the
-   *  machine, user_id null), the role the surface admitted them by, when. */
+   *  machine, user_id null), the role the surface admitted them by, when.
+   *  `userId` is the authoritative field. `audit_logs_insert` checks only
+   *  `user_id = auth.uid()` on a member's insert, so on a row a member wrote
+   *  `email` and `role` are whatever that member put there: display hints,
+   *  until admin-and-org ALOG-7's trigger resolves them from org_members. A
+   *  machine row (user_id null) can be written only by the service role, so
+   *  its label and role are the app's own. */
   exporter: { userId: string | null; email: string | null; role: string | null; at: string | null };
   /** The record's own fileRecord: its mode, its ledger, its count and digest. */
   fileRecord: Record<string, unknown>;
   /** Every file the export handed out, by path, with its document and
    *  revision where it has them; its paths hash to the record's sha256. */
   files: LedgerFile[];
+  /** Whether the export arrived. Null: no DATA_EXPORT_UNDELIVERED row names
+   *  the record, so nothing says it failed after it was recorded. Set: the
+   *  export was recorded as leaving and then did not (its file list refused,
+   *  its ZIP not built, the destination refusing it — recordExportUndelivered),
+   *  with that row's error and when it was written. The list is still what
+   *  the export carried; the files never reached the other end, so its
+   *  exporter took nothing. Read from machine rows only (user_id NULL), which
+   *  no member can write, so no member can unsay a delivered export. */
+  undelivered: { error: string | null; at: string | null } | null;
 }
 
 /** DEC-44 (A&O P3) §3: rebuild one export's file list from the audit trail
@@ -827,10 +844,17 @@ export interface RebuiltExportList {
  *  to the record it points at, `prev`) — read by readLedgerChain, the code
  *  the next export reads its ledger with, from the ledger's machine rows
  *  only — and checked against the record's `sha256`. A recall asks it of
- *  each DATA_EXPORT row to learn whether a drawing was in that export. Never
- *  throws: `list` null with a `problem` when the record is unknown, names
- *  no list (an export recorded before this package), is named by more than
- *  one DATA_EXPORT row, or cannot be rebuilt whole and matching its digest. */
+ *  each DATA_EXPORT row to learn whether a drawing was in that export — and
+ *  checks `undelivered` before it names the exporter as having taken it: an
+ *  export recorded and then not delivered (a DATA_EXPORT_UNDELIVERED machine
+ *  row naming the record, one read on the record's resource) carried the
+ *  list but handed nothing out (A&O P3 fix pass 7). Who took it is
+ *  `exporter.userId`; `email` and `role` are display hints on a member's row
+ *  (RebuiltExportList). Never throws: `list` null with a `problem` when the
+ *  record is unknown, names no list (an export recorded before this
+ *  package), is named by more than one DATA_EXPORT row, cannot be rebuilt
+ *  whole and matching its digest, or whether it was delivered cannot be
+ *  read. */
 export async function rebuildExportList(
   sb: Pick<SupabaseClient, "from">,
   orgId: string,
@@ -884,6 +908,27 @@ export async function rebuildExportList(
   if (exportFileListDigest(paths) !== sha256) {
     return { list: null, problem: `the list rebuilt for the export ${recordId} does not hash to its record` };
   }
+  // Did it arrive? recordExportUndelivered writes its machine row on the
+  // export's resource (the destination's, or the workspace's "org"), naming
+  // the record, from the same function as the DATA_EXPORT row (maxDuration
+  // 300 s) and after it — both dated by the database (audit_logs.timestamp
+  // DEFAULT NOW()). So the read walks the resource's rows from the record's
+  // own time to LEDGER_WRITE_WINDOW_MS after it, never the resource's whole
+  // history; with no readable time on the record it is unbounded.
+  const recordedAt = typeof row.timestamp === "string" ? row.timestamp : null;
+  const recordedMs = recordedAt ? Date.parse(recordedAt) : NaN;
+  const gone = sb.from("audit_logs").select("error:details->>error, timestamp")
+    .eq("resource_type", destinationId ? DESTINATION_FILES_RESOURCE_TYPE : "org").eq("resource_id", destinationId ?? orgId)
+    .eq("action", "DATA_EXPORT_UNDELIVERED").eq("org_id", orgId).is("user_id", null)
+    .eq("details->>recordId", recordId);
+  const undeliveredRead = await (Number.isFinite(recordedMs)
+    ? gone.gte("timestamp", recordedAt as string).lte("timestamp", new Date(recordedMs + LEDGER_WRITE_WINDOW_MS).toISOString())
+    : gone
+  ).order("timestamp", { ascending: true }).limit(1);
+  if (undeliveredRead.error) {
+    return { list: null, problem: `whether the export ${recordId} was delivered could not be read (${undeliveredRead.error.message})` };
+  }
+  const u = ((undeliveredRead.data ?? []) as Array<Record<string, unknown> | null>)[0];
   return {
     list: {
       recordId,
@@ -891,10 +936,13 @@ export async function rebuildExportList(
         userId: typeof row.user_id === "string" ? row.user_id : null,
         email: typeof row.user_email === "string" ? row.user_email : null,
         role: typeof row.user_role === "string" ? row.user_role : null,
-        at: typeof row.timestamp === "string" ? row.timestamp : null,
+        at: recordedAt,
       },
       fileRecord,
       files: paths.sort().map((p) => read.files.get(p) ?? { path: p }),
+      undelivered: u
+        ? { error: typeof u.error === "string" ? u.error : null, at: typeof u.timestamp === "string" ? u.timestamp : null }
+        : null,
     },
   };
 }

@@ -165,8 +165,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (enabling) {
     // BILL-3 Done-when 3: enabling a bucket destination is the act the plan
     // gate guards (a body that adds or changes the bucket, or moves its
-    // store, was gated above).
-    if (nextBucket && !bucketGated) {
+    // store, was gated above). A bucket destination is one that pushes to a
+    // bucket after this save — s3 / r2 with a bucket: a row converted to a
+    // webhook and enabled in the same save is not one, though the edit form
+    // still sends its old bucket name (A&O P3 fix pass 7).
+    if (BUCKET_TYPES.has(nextType) && nextBucket && !bucketGated) {
       const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
       if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
     }

@@ -28,7 +28,9 @@
 //           under SUBSCRIPTION_ENFORCE (Done-when 3); enabling one re-checks.
 //   BKP-6   a retention purge's failures and real deletion count reach the
 //           run row and the destination card; the page asks for a prefix
-//           before it takes a retention.
+//           before it takes a retention. Fix pass 7: the purge's deleted and
+//           failed counts are the run row's own columns (20261172), written
+//           without them while the migration is not pasted.
 //
 // The database is the in-memory stand-in the export/restore round trips use
 // (lib/__tests__/helpers/restoreMemoryDb.ts); the caller's identity is the
@@ -37,7 +39,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { readFileSync, promises as fsPromises } from "node:fs";
+import { readFileSync, existsSync, promises as fsPromises } from "node:fs";
 import { join } from "node:path";
 import { db, type Row } from "./helpers/restoreMemoryDb";
 
@@ -95,8 +97,12 @@ import {
   runOrgExport, PRIVATE_NOTES_CARRIED, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest,
   fileListEntries, fileListRemoved, readDestinationLedger, DESTINATION_FILES_RESOURCE_TYPE,
   EXPORT_LEDGER_ACTOR, LEDGER_CHAIN_MAX_ROWS, WORKSPACE_FILES_RESOURCE_TYPE, readWorkspaceLedger, rebuildExportList,
+  recordExportUndelivered,
 } from "@/lib/dataExport";
-import { s3PurgeOlderThan, retentionProblem, destinationCredentialGap, MAX_EXPORT_RUNS_PER_HOUR } from "@/lib/exportRunner";
+import {
+  s3PurgeOlderThan, retentionProblem, destinationCredentialGap, MAX_EXPORT_RUNS_PER_HOUR,
+  retentionRunColumns, isMissingRetentionColumn, closeSucceededRun, RETENTION_COLUMNS_MIGRATION,
+} from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
 import { ALERT_LINKS } from "@/lib/exportAlerts";
 import { encryptSecret } from "@/lib/serverCrypto";
@@ -2175,5 +2181,358 @@ describe("BKP-6 — a retention purge's failures and real deletion count reach t
     expect(page).toMatch(/Deletes this app's export archives \(manufacturing-os-export-….zip\) older than this under/);
     expect(page).toMatch(/d\?\.step === "s3:retention:done" \|\| d\?\.step === "s3:retention:err"/);
     expect(page).toMatch(/Retention: \{retention\.detail\}/);
+  });
+});
+
+// ─── A&O P3 fix pass 7 ───────────────────────────────────────────────────
+//
+// BKP-6 Done-when 3: a clean purge's count lived only in the run's trace.
+// The run row now has its own columns for the purge's deleted and failed
+// counts (supabase/migrations/20261172_ao_roundG_export_run_retention.sql),
+// written by both run routes through lib/exportRunner.ts closeSucceededRun.
+// The app deploys before the paste, so a database that does not know the
+// columns (PGRST204 / 42703) gets the same update without them: the run
+// closes exactly as before, its counts in its trace.
+
+describe("A&O P3 fix pass 7 — BKP-6 Done-when 3: a retention purge's counts on the run row's own columns (20261172)", () => {
+  const bucketDue = (extra: Row = {}) => dueDestination({
+    destination_type: "s3", webhook_url: null, bucket: "b", prefix: "backups", retention_days: 30,
+    access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"), ...extra,
+  });
+  const delivered = (retention: Record<string, unknown> | undefined, step = "s3:retention:done", detail = "scanned 4, deleted 3 app archive(s)") => async () => ({
+    bytes: 10, fileCount: 0, tableCount: 1, totalRows: 1, destinationPath: "b/backups/x.zip",
+    diagnostics: [{ ts: "t", step: "s3:push", detail: "b/backups/x.zip" }, ...(retention ? [{ ts: "t", step, detail }] : [])],
+    ...(retention ? { retention } : {}),
+  });
+  const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
+  /** A database before the paste: an export_runs update naming a retention column is refused, as PostgREST refuses an unknown column. */
+  const columnsAbsent = (code: "PGRST204" | "42703", seen: Row[] = []) => {
+    db.writeError = (table, op, rows) => {
+      if (table !== "export_runs" || op !== "update") return null;
+      seen.push({ ...rows[0] });
+      if (!("retention_deleted" in rows[0]) && !("retention_failed" in rows[0])) return null;
+      return code === "PGRST204"
+        ? { code, message: "Could not find the 'retention_deleted' column of 'export_runs' in the schema cache" }
+        : { code, message: 'column "retention_deleted" of relation "export_runs" does not exist' };
+    };
+    return seen;
+  };
+
+  it("the columns are the purge's own counts; none when no purge ran; a missing column is 42703 or PGRST204", () => {
+    expect(retentionRunColumns({ keepDays: 30, scanned: 4, deleted: 3, failed: 0 })).toEqual({ retention_deleted: 3, retention_failed: 0 });
+    expect(retentionRunColumns({ keepDays: 7, scanned: 0, deleted: 0, failed: 0, error: "Retention purge refused: no prefix" })).toEqual({ retention_deleted: 0, retention_failed: 0 });
+    expect(retentionRunColumns(undefined)).toBeNull();
+    expect(isMissingRetentionColumn({ code: "PGRST204", message: "Could not find the 'retention_deleted' column of 'export_runs' in the schema cache" })).toBe(true);
+    expect(isMissingRetentionColumn({ code: "42703", message: 'column "retention_failed" of relation "export_runs" does not exist' })).toBe(true);
+    expect(isMissingRetentionColumn({ code: "42501", message: "permission denied for table export_runs" })).toBe(false);
+    expect(isMissingRetentionColumn(null)).toBe(false);
+    expect(RETENTION_COLUMNS_MIGRATION).toBe("20261172_ao_roundG_export_run_retention.sql");
+    expect(existsSync(join(process.cwd(), "supabase", "migrations", RETENTION_COLUMNS_MIGRATION))).toBe(true);
+  });
+
+  it("a clean purge's count is on the run row — the scheduled push and Run Now — with its trace and the run's other fields as before", async () => {
+    db.rows.export_destinations = [bucketDue()];
+    state.deliver = delivered({ keepDays: 30, scanned: 4, deleted: 3, failed: 0 });
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: true });
+    expect(body.results[0]).not.toHaveProperty("warnings");
+    const [scheduled] = rowsOf("export_runs");
+    expect(scheduled).toMatchObject({ status: "succeeded", retention_deleted: 3, retention_failed: 0, destination_path: "b/backups/x.zip", table_count: 1, total_bytes: 10 });
+    expect(scheduled).not.toHaveProperty("error_message");
+    expect(scheduled.diagnostics).toEqual(expect.arrayContaining([{ ts: "t", step: "s3:retention:done", detail: "scanned 4, deleted 3 app archive(s)" }]));
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "succeeded", last_run_error: null });
+
+    state.deliver = delivered({ keepDays: 30, scanned: 6, deleted: 5, failed: 0 }, "s3:retention:done", "scanned 6, deleted 5 app archive(s)");
+    const res = await runNow();
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty("warnings");
+    expect(rowsOf("export_runs").at(-1)).toMatchObject({ trigger_type: "manual", status: "succeeded", retention_deleted: 5, retention_failed: 0 });
+  });
+
+  it("a purge that did not finish: the run row carries the failed count beside the sentence, and stays succeeded; the card says it", async () => {
+    db.rows.export_destinations = [bucketDue()];
+    state.deliver = delivered({ keepDays: 30, scanned: 4, deleted: 2, failed: 1, error: "storage refused k: AccessDenied" }, "s3:retention:err", "scanned 4, deleted 2 app archive(s), 1 could not be deleted — storage refused k: AccessDenied");
+    await sweep();
+    expect(rowsOf("export_runs")[0]).toMatchObject({
+      status: "succeeded", retention_deleted: 2, retention_failed: 1,
+      error_message: "Backup delivered and verified, but the retention purge did not finish: deleted 2 archive(s) older than 30 day(s), 1 could not be deleted — storage refused k: AccessDenied.",
+    });
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "succeeded", last_run_error: expect.stringMatching(/retention purge did not finish/) });
+    // Run Now: a purge refused outright (no counts) is 0 and 0 on the row, its reason the run's error_message
+    state.deliver = delivered({ keepDays: 30, scanned: 0, deleted: 0, failed: 0, error: "Retention purge refused: this destination has no prefix" }, "s3:retention:err", "Retention purge refused: this destination has no prefix");
+    expect((await runNow()).status).toBe(200);
+    expect(rowsOf("export_runs").at(-1)).toMatchObject({ status: "succeeded", retention_deleted: 0, retention_failed: 0, error_message: expect.stringMatching(/Retention purge refused/) });
+  });
+
+  for (const code of ["PGRST204", "42703"] as const) {
+    it(`before 20261172 is pasted (${code}): the run row is written without the columns — the same update as before, its counts in its trace; no warning, nothing lost`, async () => {
+      const seen = columnsAbsent(code);
+      db.rows.export_destinations = [bucketDue()];
+      state.deliver = delivered({ keepDays: 30, scanned: 4, deleted: 3, failed: 0 });
+      const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+      expect(body.results[0]).toMatchObject({ ok: true });
+      expect(body.results[0]).not.toHaveProperty("warnings");
+      const [scheduled] = rowsOf("export_runs");
+      expect(scheduled).toMatchObject({ status: "succeeded", destination_path: "b/backups/x.zip", table_count: 1, completed_at: expect.any(String) });
+      expect(scheduled).not.toHaveProperty("retention_deleted");
+      expect(scheduled).not.toHaveProperty("retention_failed");
+      expect(scheduled.diagnostics).toEqual(expect.arrayContaining([{ ts: "t", step: "s3:retention:done", detail: "scanned 4, deleted 3 app archive(s)" }]));
+      // the closing update was tried with the columns, then written without them — the rest of it identical
+      const closing = seen.filter((u) => u.status === "succeeded");
+      expect(closing).toHaveLength(2);
+      const { retention_deleted: _d, retention_failed: _f, ...rest } = closing[0];
+      expect(closing[0]).toMatchObject({ retention_deleted: 3, retention_failed: 0 });
+      expect(closing[1]).toEqual(rest);
+      expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "succeeded", last_run_error: null });
+
+      // Run Now the same, a failed purge included: the sentence still reaches the row and the card
+      state.deliver = delivered({ keepDays: 30, scanned: 4, deleted: 2, failed: 1, error: "storage refused k: AccessDenied" }, "s3:retention:err", "scanned 4, deleted 2 app archive(s), 1 could not be deleted");
+      const res = await runNow();
+      expect(res.status).toBe(200);
+      expect(await res.json()).not.toHaveProperty("warnings");
+      const manual = rowsOf("export_runs").at(-1)!;
+      expect(manual).toMatchObject({ status: "succeeded", error_message: expect.stringMatching(/1 could not be deleted/) });
+      expect(manual).not.toHaveProperty("retention_failed");
+    });
+  }
+
+  it("a run with no purge never names the columns: a webhook push, a bucket with no retention, a download", async () => {
+    const seen = columnsAbsent("PGRST204");
+    db.rows.export_destinations = [dueDestination()];
+    await sweep();
+    db.rows.export_destinations = [bucketDue({ retention_days: null })];
+    await runNow();
+    const zip = await runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG } }));
+    expect(zip.status).toBe(200);
+    expect(zip.headers.get("X-Export-Unrecorded")).toBeNull();
+    const closing = seen.filter((u) => u.status === "succeeded");
+    expect(closing).toHaveLength(3);
+    for (const u of closing) { expect(u).not.toHaveProperty("retention_deleted"); expect(u).not.toHaveProperty("retention_failed"); }
+    expect(rowsOf("export_runs").map((r) => r.status)).toEqual(["succeeded", "succeeded", "succeeded"]);
+  });
+
+  it("a refused run-row update that is not a missing column is named, as before (checked), and not retried as one", async () => {
+    let tries = 0;
+    db.writeError = (table, op, rows) => {
+      if (table !== "export_runs" || op !== "update" || rows[0].status !== "succeeded") return null;
+      tries++;
+      return { code: "42501", message: "permission denied for table export_runs" };
+    };
+    db.rows.export_destinations = [bucketDue()];
+    state.deliver = delivered({ keepDays: 30, scanned: 4, deleted: 3, failed: 0 });
+    const body = (await (await sweep()).json()) as { results: Array<{ ok: boolean; warnings?: string[] }> };
+    expect(body.results[0].ok).toBe(true);
+    expect(body.results[0].warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^run row not updated: permission denied/)]));
+    expect(tries).toBe(1);
+    // the helper's own answer
+    tries = 0;
+    expect(await closeSucceededRun({ from: (await import("./helpers/restoreMemoryDb")).from } as never, "run-x", { status: "succeeded" }, { keepDays: 1, scanned: 0, deleted: 0, failed: 0 }))
+      .toEqual({ error: { code: "42501", message: "permission denied for table export_runs" }, retention: "unrecorded" });
+    expect(tries).toBe(1);
+  });
+
+  it("the page reads the run row's counts, and a run closed before the paste from its trace (rendered: lib/__tests__/dataExportPageRetention.test.ts)", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/data-export/page.tsx"), "utf8");
+    expect(page).toMatch(/retention_deleted\?: number \| null;/);
+    expect(page).toMatch(/retention_failed\?: number \| null;/);
+    expect(page).toMatch(/if \(typeof run\.retention_deleted === "number"\)/);
+    expect(page).toMatch(/d\?\.step === "s3:retention:done" \|\| d\?\.step === "s3:retention:err"/);
+  });
+});
+
+// A&O P3 fix pass 7, item 2: a recall named an exporter for an export that
+// never arrived. rebuildExportList now reads the export's
+// DATA_EXPORT_UNDELIVERED machine row (one read, on the record's resource,
+// bounded to the record's write window) and says so in `undelivered`.
+
+describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrived (DATA_EXPORT_UNDELIVERED); userId is who took it", () => {
+  let night = 0;
+  beforeEach(() => { night = 0; vi.useFakeTimers({ toFake: ["Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const DEST = "dest-u";
+  const push = async (destinationId = DEST) => {
+    vi.setSystemTime(nightOf(night++));
+    return runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
+      auditDetails: { channel: "scheduled", destinationId }, fileRecord: { destinationId },
+    });
+  };
+  const personExport = async () => {
+    vi.setSystemTime(nightOf(night++));
+    return runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com", exporterRole: "Admin",
+      auditDetails: { channel: "zip", exporterRoles: ["Admin"] },
+    });
+  };
+  const sb = async () => ({ from: (await import("./helpers/restoreMemoryDb")).from }) as never;
+  const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
+
+  it("a push recorded and then not delivered: `undelivered` carries the UNDELIVERED row's error and time; the list is still what it carried", async () => {
+    db.rows.document_versions = destVersions(3);
+    const env = await push();
+    const record = lastRecord();
+    later(40_000);
+    const undeliveredAt = new Date().toISOString();
+    expect(await recordExportUndelivered(await sb(), { orgId: ORG, recordId: record.recordId, destinationId: DEST, exporterUserId: null, exporterEmail: "system:scheduled-export", error: "Webhook 500: down" })).toBeNull();
+    const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
+    expect(problem).toBeUndefined();
+    expect(list!.undelivered).toEqual({ error: "Webhook 500: down", at: undeliveredAt });
+    expect(new Set(list!.files.map((f) => f.path))).toEqual(new Set(handedOut(env)));
+    expect(list!.exporter).toMatchObject({ userId: null, email: "system:scheduled-export" });
+  });
+
+  it("…a person's export the same (the workspace's resource)", async () => {
+    db.rows.document_versions = destVersions(3);
+    await personExport();
+    const record = lastRecord();
+    later(5_000);
+    expect(await recordExportUndelivered(await sb(), { orgId: ORG, recordId: record.recordId, destinationId: null, exporterUserId: "u-admin", exporterEmail: "me@acme.com", error: "ZIP not built" })).toBeNull();
+    const { list } = await rebuildExportList(await sb(), ORG, record.recordId);
+    expect(list).toMatchObject({ exporter: { userId: "u-admin" }, undelivered: { error: "ZIP not built" } });
+  });
+
+  it("a delivered export: `undelivered` is null — the night before's and the night after's UNDELIVERED rows are not this record's", async () => {
+    const failed = async (recordId: string) => expect(await recordExportUndelivered(await sb(), {
+      orgId: ORG, recordId, destinationId: DEST, exporterUserId: null, exporterEmail: "system:scheduled-export", error: "Webhook 500",
+    })).toBeNull();
+    db.rows.document_versions = destVersions(3);
+    await push();
+    const first = lastRecord();
+    await failed(first.recordId);
+    db.rows.document_versions.push(...destVersions(1, 50));
+    await push();
+    const second = lastRecord();
+    db.rows.document_versions.push(...destVersions(1, 60));
+    await push();
+    const third = lastRecord();
+    await failed(third.recordId);
+    const { list, problem } = await rebuildExportList(await sb(), ORG, second.recordId);
+    expect(problem).toBeUndefined();
+    expect(list!.undelivered).toBeNull();
+    for (const r of [first, third]) expect((await rebuildExportList(await sb(), ORG, r.recordId)).list!.undelivered).toMatchObject({ error: "Webhook 500" });
+  });
+
+  it("negative controls: a member's UNDELIVERED row naming the record (their own uid — all audit_logs_insert lets them write), another destination's, or one dated outside the record's write window, never unsays a delivered export", async () => {
+    db.rows.document_versions = destVersions(3);
+    await push();
+    const record = lastRecord();
+    const at = new Date().toISOString();
+    const forged = (extra: Row) => db.rows.audit_logs.push({
+      action: "DATA_EXPORT_UNDELIVERED", org_id: ORG, resource_type: DESTINATION_FILES_RESOURCE_TYPE, resource_id: DEST,
+      user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, timestamp: at, details: { recordId: record.recordId, error: "forged" }, ...extra,
+    });
+    forged({ user_id: "u-dc", user_email: "dc@acme.com" });
+    forged({ resource_id: "dest-other" });
+    forged({ timestamp: new Date(Date.parse(at) - 3_600_000).toISOString() });
+    forged({ timestamp: new Date(Date.parse(at) + 3_600_000).toISOString() });
+    forged({ details: { recordId: "another-record", error: "forged" } });
+    const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
+    expect(problem).toBeUndefined();
+    expect(list!.undelivered).toBeNull();
+    // and the machine row it would have written is read
+    forged({});
+    expect((await rebuildExportList(await sb(), ORG, record.recordId)).list!.undelivered).toEqual({ error: "forged", at });
+  });
+
+  it("the read is one statement on the record's resource, bounded to its write window; a failed read is a problem, never 'delivered'", async () => {
+    db.rows.document_versions = destVersions(3);
+    await push();
+    const record = lastRecord();
+    const { client, calls } = await recordingClient();
+    await rebuildExportList(client as never, ORG, record.recordId);
+    const reads = calls.filter((log) => log.some((c) => c.m === "eq" && c.args[0] === "action" && c.args[1] === "DATA_EXPORT_UNDELIVERED"));
+    expect(reads).toHaveLength(1);
+    const [read] = reads;
+    const arg = (m: string, col: string) => read.find((c) => c.m === m && c.args[0] === col)?.args[1];
+    expect(arg("eq", "resource_type")).toBe(DESTINATION_FILES_RESOURCE_TYPE);
+    expect(arg("eq", "resource_id")).toBe(DEST);
+    expect(arg("is", "user_id")).toBeNull();
+    expect(arg("eq", "details->>recordId")).toBe(record.recordId);
+    const recordedAt = String(audits("DATA_EXPORT").at(-1)!.timestamp);
+    expect(arg("gte", "timestamp")).toBe(recordedAt);
+    expect(Date.parse(String(arg("lte", "timestamp"))) - Date.parse(recordedAt)).toBe(15 * 60_000);
+    // a client whose UNDELIVERED read fails
+    const mem = await import("./helpers/restoreMemoryDb");
+    const failing = {
+      from: (t: string) => {
+        const inner = mem.from(t) as Record<string, (...a: unknown[]) => unknown>;
+        let undelivered = false;
+        const proxy: Record<string, unknown> = new Proxy({}, {
+          get: (_o, p: string) => (p === "then"
+            ? (res: (v: unknown) => void, rej: (e: unknown) => void) => (undelivered
+              ? res({ data: null, error: { code: "57014", message: "statement timeout" } })
+              : (inner.then as unknown as (a: unknown, b: unknown) => void)(res, rej))
+            : (...a: unknown[]) => { if (p === "eq" && a[1] === "DATA_EXPORT_UNDELIVERED") undelivered = true; inner[p](...a); return proxy; }),
+        });
+        return proxy;
+      },
+    };
+    expect(await rebuildExportList(failing as never, ORG, record.recordId)).toEqual({
+      list: null, problem: `whether the export ${record.recordId} was delivered could not be read (statement timeout)`,
+    });
+  });
+
+  it("who took it is `userId`: a member's own DATA_EXPORT row naming a new record carries their uid, whatever email and role they wrote (display hints until ALOG-7)", async () => {
+    db.rows.document_versions = destVersions(3);
+    await push();
+    const rec = lastRecord();
+    db.rows.audit_logs.push({
+      action: "DATA_EXPORT", org_id: ORG, resource_type: "org", resource_id: ORG, user_id: "u-dc", user_email: "ceo@acme.com", user_role: "Admin", timestamp: new Date().toISOString(),
+      details: { fileRecord: { mode: "delta", destinationId: DEST, recordId: "forged-1", sha256: rec.sha256, baseline: { recordId: rec.recordId }, prev: rec.recordId, added: 0, removed: 0 } },
+    });
+    const { list } = await rebuildExportList(await sb(), ORG, "forged-1");
+    expect(list!.exporter).toMatchObject({ userId: "u-dc", email: "ceo@acme.com", role: "Admin" });
+    const src = readFileSync(join(process.cwd(), "lib", "dataExport.ts"), "utf8");
+    expect(src).toMatch(/`userId` is the authoritative field/);
+    expect(src).toMatch(/display hints,\s+\*\s+until admin-and-org ALOG-7's trigger resolves them/);
+  });
+});
+
+// A&O P3 fix pass 7, item 4: enabling was plan-gated on the bucket's name
+// alone, so off plan a disabled s3 row converted to a webhook and enabled in
+// one save (the form still sends the old bucket name) was refused 402.
+
+describe("A&O P3 fix pass 7 — enabling is the Growth act only for a row that pushes to a bucket after the save (BILL-3 Done-when 3)", () => {
+  const disabledBucket = (extra: Row = {}): Row => dueDestination({
+    enabled: false, name: "Old bucket", destination_type: "s3", webhook_url: null, bucket: "plant-backups", region: null, endpoint: null,
+    access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"), ...extra,
+  });
+  const save = (body: Row) => destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body }), params("dest-1"));
+  const offPlan = () => Object.assign(db.rows.orgs[0], { subscribed_plan: "starter", subscription_status: "active" });
+  const toWebhook = (d: Row): Row => ({
+    ...editFormBody(d), destination_type: "webhook", enabled: true, webhook_url: "https://hooks.example.com/in", webhook_secret: "whsec",
+  });
+
+  it("off plan: a disabled s3 row converted to a webhook and enabled in one save is 200 (was: 402) — enabled, confirmed, announced", async () => {
+    offPlan();
+    db.rows.export_destinations = [disabledBucket()];
+    const body = toWebhook(db.rows.export_destinations[0]);
+    expect(body).toMatchObject({ bucket: "plant-backups" }); // the form still sends the old bucket name
+    const res = await save(body);
+    expect(res.status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", enabled: true, webhook_url: "https://hooks.example.com/in", updated_by: "u-admin" });
+    expect(audits("EXPORT_DESTINATION_UPDATED")).toHaveLength(1);
+    expect(bells().length).toBeGreaterThan(0);
+  });
+
+  it("off plan: enabling it as a bucket destination — as it is, or moved r2 -> s3 — is still 402, and nothing changes", async () => {
+    offPlan();
+    db.rows.export_destinations = [disabledBucket()];
+    expect((await save({ ...editFormBody(db.rows.export_destinations[0]), enabled: true })).status).toBe(402);
+    db.rows.export_destinations = [disabledBucket({ destination_type: "r2", endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto" })];
+    expect((await save({ ...editFormBody(db.rows.export_destinations[0]), destination_type: "s3", endpoint: undefined, enabled: true })).status).toBe(402);
+    // a webhook row carrying a bucket name, turned into a bucket push and enabled
+    db.rows.export_destinations = [dueDestination({ enabled: false, bucket: "plant-backups", webhook_secret_encrypted: encryptSecret("whsec") })];
+    expect((await save({
+      orgId: ORG, destination_type: "s3", enabled: true, access_key_id: "AK", secret_access_key: "SK",
+    })).status).toBe(402);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, destination_type: "webhook" });
+    expect(audits("EXPORT_DESTINATION_UPDATED")).toEqual([]);
+  });
+
+  it("on plan: the conversion and enabling in one save is 200, as before", async () => {
+    db.rows.export_destinations = [disabledBucket()];
+    expect((await save(toWebhook(db.rows.export_destinations[0]))).status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", enabled: true });
   });
 });

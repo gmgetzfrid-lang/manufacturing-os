@@ -43,12 +43,18 @@
 // carries the same sentence on its run row, its card (after the failure) and
 // the sweep result (fifth review fix: it was dropped there); no bell rings
 // for an export that did not leave.
+//
+// admin-and-org BKP-6: a succeeded bucket push whose retention purge ran puts
+// the purge's deleted and failed counts on its run row's own columns
+// (migration 20261172; until that is pasted the row is written without them,
+// the counts in its diagnostics as before — lib/exportRunner.ts
+// closeSucceededRun).
 
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor } from "@/lib/exportAlerts";
 
@@ -272,7 +278,10 @@ async function handler(req: NextRequest) {
       const completedAt = new Date().toISOString();
       const unrecorded: string[] = [];
       {
-        const { error: runUpdErr } = await sb.from("export_runs").update({
+        // BKP-6 Done-when 3: the purge's deleted and failed counts on the run
+        // row's own columns (20261172); before that paste the row closes as
+        // it always did, the counts in its diagnostics (closeSucceededRun).
+        const { error: runUpdErr } = await closeSucceededRun(sb, runId, {
           status: "succeeded",
           table_count: result.tableCount,
           total_rows: result.totalRows,
@@ -290,7 +299,7 @@ async function handler(req: NextRequest) {
           ...(retentionNote ? { error_message: retentionNote.slice(0, 1000) } : {}),
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
-        }).eq("id", runId);
+        }, result.retention);
         if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
       }
       const { error: destUpdErr } = await sb.from("export_destinations").update({

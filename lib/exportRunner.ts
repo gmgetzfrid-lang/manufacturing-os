@@ -172,7 +172,8 @@ export type ExportRunResult = {
   downloadUrlExpiresAt?: string;
   diagnostics: DiagnosticStep[];
   /** BKP-6: what a bucket push's retention purge did — set whenever one ran
-   *  (or was refused), so the route can put a failure on the run row. */
+   *  (or was refused), so the route puts its counts on the run row
+   *  (closeSucceededRun) and a failure on the run row and the card. */
   retention?: RetentionOutcome;
 };
 
@@ -195,6 +196,61 @@ export function retentionProblem(r: RetentionOutcome | undefined): string | null
   return `Backup delivered and verified, but the retention purge did not finish: ${did}` +
     (r.failed > 0 ? `, ${r.failed} could not be deleted` : "") +
     (r.error ? ` — ${r.error}` : "") + ".";
+}
+
+/** BKP-6 Done-when 3 (A&O P3 fix pass 7): the migration that gives
+ *  export_runs its retention columns. */
+export const RETENTION_COLUMNS_MIGRATION = "20261172_ao_roundG_export_run_retention.sql";
+
+/** BKP-6 Done-when 3: a retention purge's counts as the run row's columns
+ *  (RETENTION_COLUMNS_MIGRATION) — what the purge deleted (`deleted`) and
+ *  what it chose but storage did not delete (`failed`, RetentionOutcome).
+ *  Null when no purge ran: a webhook, a bucket with no retention, a
+ *  download. Those runs, a failed run and every run closed before the paste
+ *  leave both columns NULL; why a purge stopped stays in `error_message`
+ *  (retentionProblem). */
+export function retentionRunColumns(r: RetentionOutcome | undefined): { retention_deleted: number; retention_failed: number } | null {
+  return r ? { retention_deleted: r.deleted, retention_failed: r.failed } : null;
+}
+
+type RunWriteError = { code?: string; message: string } | null;
+
+/** The run row's retention columns are not in the database yet — the app
+ *  deploys before RETENTION_COLUMNS_MIGRATION is pasted: Postgres 42703, or
+ *  PostgREST's schema cache PGRST204. */
+export function isMissingRetentionColumn(e: { code?: string; message?: string } | null | undefined): boolean {
+  if (!e) return false;
+  const msg = e.message ?? "";
+  return e.code === "42703" || e.code === "PGRST204" || (/retention_(deleted|failed)/.test(msg) && /column/i.test(msg));
+}
+
+/** Close a succeeded run's export_runs row: `patch` (the counts, the path,
+ *  the diagnostics — exactly what the run routes wrote before) plus the
+ *  retention purge's counts (retentionRunColumns, BKP-6 Done-when 3). When
+ *  the database does not know those columns yet, the same update is written
+ *  again without them, so a run closes exactly as it did before the paste:
+ *  its counts stay in its diagnostics (the `s3:retention:*` step), where the
+ *  data-export page still reads them. `retention` says which happened:
+ *  "written", "none" (no purge ran — the update is the patch alone) or
+ *  "unrecorded" (the columns are not there yet). `error` is the update's
+ *  own, for the caller's checked write. */
+export async function closeSucceededRun(
+  admin: Pick<SupabaseClient, "from">,
+  runId: string,
+  patch: Record<string, unknown>,
+  outcome: RetentionOutcome | undefined,
+): Promise<{ error: RunWriteError; retention: "written" | "none" | "unrecorded" }> {
+  const cols = retentionRunColumns(outcome);
+  if (!cols) {
+    const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
+    return { error: error as RunWriteError, retention: "none" };
+  }
+  const first = await admin.from("export_runs").update({ ...patch, ...cols }).eq("id", runId);
+  if (!first.error) return { error: null, retention: "written" };
+  if (!isMissingRetentionColumn(first.error)) return { error: first.error as RunWriteError, retention: "unrecorded" };
+  console.warn(`[data-export] run ${runId}: export_runs has no retention columns yet (paste ${RETENTION_COLUMNS_MIGRATION}); its purge counts stay in its diagnostics`);
+  const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
+  return { error: error as RunWriteError, retention: "unrecorded" };
 }
 
 type DeliveryMode =
@@ -512,8 +568,9 @@ async function buildAndDeliver(
         // Enforce retention if configured. The purge's outcome — including a
         // refusal (no prefix) — lands in diagnostics, so a purge that did
         // nothing is visible, never a silent "succeeded" (XEDGE-4), and is
-        // returned (BKP-6) so the route puts a failure on the run row and
-        // the destination card, where the admin looks.
+        // returned (BKP-6) so the route puts its deleted and failed counts
+        // on the run row (closeSucceededRun) and a failure on the run row
+        // and the destination card, where the admin looks.
         let retention: RetentionOutcome | undefined;
         if (dest.retention_days && dest.retention_days > 0) {
           step("s3:retention", `purge older than ${dest.retention_days}d`);
