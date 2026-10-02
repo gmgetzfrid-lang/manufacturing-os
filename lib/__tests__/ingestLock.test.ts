@@ -1339,6 +1339,31 @@ describe("ING-13 (I-06b) — a keyless batch never consumes, text-only, a page A
     expect(rowsOf("knowledge_chunks")).toHaveLength(3);
   });
 
+  it("…and on a rev-up, the old sheet's cached line traces survive it too: they are listed before anything is deleted (fix pass 3)", async () => {
+    // The reset used to purge the traces (step 1) before it read the owed
+    // pages: a read that failed then reported "nothing was reset" with the
+    // traces already gone. (The line tracer is retired and 20261007 drops
+    // its table; a database that still has it loses nothing here either.)
+    const doc = await lastGeneration({ source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3" });
+    db.tables.knowledge_line_traces = [{ id: "t1", document_id: DOC, org_id: "o1", page: 2, from_tag: "V-102", to_tag: "P-202A" }];
+    db.hooks.push((op, filters) => op.table === "knowledge_chunks" && op.kind === "select" && filters.some((f) => f.col === "source")
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const reset = await resetKnowledgeIndex([DOC], {
+      purgeLineTraces: true, supersedeBusy: true,
+      expect: () => ({ source_version_id: "ver-3" }),
+      rowUpdate: () => ({ file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", source_rev: "4" }),
+    });
+    expect(reset.reset).toEqual([]);
+    expect(reset.errors).toEqual([`${DOC}: the pages AI vision read could not be listed, so nothing was reset: canceling statement due to statement timeout`]);
+    expect(rowsOf("knowledge_line_traces")).toEqual([{ id: "t1", document_id: DOC, org_id: "o1", page: 2, from_tag: "V-102", to_tag: "P-202A" }]);
+    expect(db.ops.some((o) => o.kind === "delete")).toBe(false);
+    expect(docRow()).toMatchObject({
+      status: "ready", pages_indexed: 3, vision_pages: 1, vision_owed_pages: [], ingest_claimed_by: null,
+      file_key: doc.file_key, source_version_id: "ver-3", source_rev: "3",
+    });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(3);
+  });
+
   it("the cron drain without a sponsored key holds the page too: never 'ready' text-only, never billed", async () => {
     await lastGeneration({ created_by: "u-nokey" });
     db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", ai_features: {} }];

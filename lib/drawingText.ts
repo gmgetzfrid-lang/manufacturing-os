@@ -483,9 +483,10 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // prompt and the parser cannot drift apart again (the prompt once asked for
 // no OPC line at all, and the whole connector layer — including the audit's
 // top-severity verdict — had no input). The destination drawing comes
-// FIRST, right after the box: an evidence line is stored cut to
-// OPC_RAW_STORED_MAX characters, and a long service description must never
-// push the drawing number off the end of it (DWG-8).
+// FIRST, right after the box: an evidence line was stored cut to
+// OPC_RAW_STORED_MAX characters until I-06b (and is still cut, longer, at
+// OPC_EVIDENCE_MAX), and a long service description must never push the
+// drawing number off the end of it (DWG-8).
 //
 // The destination is LABELLED (DWG) and read BY POSITION (parseOpcLine).
 // Sites number drawings every way there is — 025-M-0107, 4410-01-001,
@@ -515,11 +516,15 @@ export const OPC_NO_DRAWING = "NONE";
  *  sheet: it continues on another sheet of this same drawing. */
 export const OPC_SAME_DRAWING = "SAME";
 /** Ingest stored a connector's evidence line cut to this many characters
- *  (truncateSafe(line, 160)) until intelligence Round G I-06b; it now stores
- *  the line whole up to OPC_EVIDENCE_MAX, or a window of that size around the
- *  box (opcEvidence in lib/knowledgeIngest.ts — pinned by a test). Either
- *  way a stored line this long may have been cut: its missing drawing number
- *  is UNKNOWN, never evidence of a broken connector. */
+ *  (truncateSafe(line, 160)) until intelligence Round G I-06b. It now stores
+ *  at most OPC_EVIDENCE_MAX characters (opcEvidence in lib/knowledgeIngest.ts
+ *  — pinned by a test): a connector in the contract's shape that does not
+ *  open its line is stored from its own box token, whatever the line's
+ *  length; any other line is stored whole up to OPC_EVIDENCE_MAX, and a
+ *  longer one as a window of that size around the box. The audit cannot
+ *  tell a row stored before then from one stored since, so a stored line
+ *  this long may have been cut: its missing drawing number is UNKNOWN,
+ *  never evidence of a broken connector. */
 export const OPC_RAW_STORED_MAX = 160;
 
 const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;

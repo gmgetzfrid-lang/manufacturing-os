@@ -504,7 +504,9 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
  *      refused with 409 before anything is audited or reset: the library
  *      page checks the clicking person's key too, but a direct call or any
  *      other client never meets that check. The refusal carries the gate's
- *      status and details (the agreement to sign, the cap figures).
+ *      status and details (the agreement to sign, the cap figures). A check
+ *      that cannot run at all (a saved key that cannot be decrypted) answers
+ *      500 with the reason, again before anything is audited or reset.
  *    - A document reset with part of its old index left is reported by id in
  *      `leftovers` ({ documentId, left, message }); `errors` keeps its
  *      message too, for a client that predates the field (ING-13). */
@@ -551,7 +553,12 @@ async function reindex(libraryId: string, chunker: unknown, userId: string, dryR
       try {
         await assertAiGates({ orgId: lib.org_id as string, userId, op: "knowledgeVision" });
       } catch (e) {
-        if (!(e instanceof GovernedCallError)) throw e;
+        // A check that could not run at all (a saved key that cannot be
+        // decrypted, say) is not a refusal: answered as JSON, with nothing
+        // audited or reset.
+        if (!(e instanceof GovernedCallError)) {
+          return bad(`The AI vision check could not run, so nothing was reset: ${(e as Error).message}`, 500);
+        }
         const n = plan.visionPagesToReread;
         const lead = visionAllPages ? "This library reads every page with AI vision"
           : `This re-index reads ${n} page${n === 1 ? "" : "s"} AI vision read before again`;

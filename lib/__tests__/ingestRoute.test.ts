@@ -55,7 +55,7 @@ vi.mock("@/lib/ai/usageServer", async (orig) => ({
   getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn(),
 }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
+vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: vi.fn((k: string) => k) }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
 import {
@@ -64,6 +64,7 @@ import {
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const DOC = "kd-9";
@@ -767,6 +768,16 @@ describe("ING-13 (I-06b) — the re-index's vision gate is the server's, before 
     const body = await res.json();
     expect(body).toMatchObject({ gateStatus: 503 });
     expect(body.error).toMatch(/AI usage can't be read right now/);
+    untouched();
+  });
+
+  it("a vision check that cannot run at all (a saved key that cannot be decrypted) answers a JSON 500 with the reason — nothing audited, nothing reset (fix pass 3)", async () => {
+    library(); keyed();
+    vi.mocked(openAiKey).mockImplementationOnce(() => { throw new Error("Unsupported state or unable to authenticate data"); });
+    const res = await reindex();
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "The AI vision check could not run, so nothing was reset: Unsupported state or unable to authenticate data" });
     untouched();
   });
 

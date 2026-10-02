@@ -434,7 +434,9 @@ async function visionOwedPages(documentId: string, row: Record<string, unknown>)
  *  the drawing intelligence "Rebuild index" is to call once I-07 moves
  *  app/api/knowledge/drawing/route.ts onto it (today that rebuild resets
  *  without the claim), so none can forget a table again.
- *  Under the document's ingest claim, in order:
+ *  Under the document's ingest claim, and once the pages the index being
+ *  reset owes AI vision are read (20261162, ING-13 — a reset that cannot
+ *  read them deletes nothing, not even the line traces), in order:
  *
  *    1. on a rev-up (`purgeLineTraces`), the cached line traces drawn over
  *       the old sheet — a pure cache, dropped while the row still names the
@@ -530,24 +532,10 @@ export async function resetKnowledgeIndex(
     }
     if (lease.kind === "busy" && !opts.supersedeBusy) { out.busy.push(id); continue; }
 
-    // 1. The old sheet's cached traces (rev-up only), while the row still
-    //    names the old file.
-    if (opts.purgeLineTraces) {
-      const { error: trErr } = await supabaseAdmin
-        .from("knowledge_line_traces").delete().eq("document_id", id);
-      if (trErr && !isMissingTable(trErr)) {
-        out.errors.push(`${id}: line traces: ${trErr.message}`);
-        await release();
-        continue;
-      }
-    }
-
-    // 2. The row: queued and zeroed (and re-pointed) FIRST. Under our own
-    //    claim the claim is kept through the deletes; under someone else's
-    //    (supersedeBusy) theirs is left exactly as it is. With 20261162 it
-    //    records the pages the index being reset owes AI vision (ING-13) —
-    //    read before anything is deleted; a reset that cannot read them
-    //    changes nothing.
+    // What step 2 writes on the row. With 20261162 it records the pages the
+    // index being reset owes AI vision (ING-13) — read here, before anything
+    // is deleted, the old sheet's line traces (step 1) included: a reset that
+    // cannot read them changes nothing.
     const full: Record<string, unknown> = { ...RESET_ROW, ...(opts.rowUpdate?.(id) ?? {}) };
     if (seen && "vision_owed_pages" in seen) {
       const owed = await visionOwedPages(id, seen);
@@ -568,6 +556,23 @@ export async function resetKnowledgeIndex(
         ? [OWES_EVERY_VISION_PAGE]
         : owed.pages;
     }
+
+    // 1. The old sheet's cached traces (rev-up only), while the row still
+    //    names the old file.
+    if (opts.purgeLineTraces) {
+      const { error: trErr } = await supabaseAdmin
+        .from("knowledge_line_traces").delete().eq("document_id", id);
+      if (trErr && !isMissingTable(trErr)) {
+        out.errors.push(`${id}: line traces: ${trErr.message}`);
+        await release();
+        continue;
+      }
+    }
+
+    // 2. The row: queued and zeroed (and re-pointed) FIRST — `full`, with the
+    //    owed pages read above. Under our own claim the claim is kept through
+    //    the deletes; under someone else's (supersedeBusy) theirs is left
+    //    exactly as it is.
     let updErr: DbError = null;
     let wrote = 0;
     if (seen) {
