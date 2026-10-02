@@ -118,6 +118,8 @@ guard and the MOC gate in one move.
 3. `runPostPublishSideEffects` fires for it — verified by a fresh ack roster and
    a supersede notification.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-11`](../drafting-flow/06-state-machine.md#sm-11) closes on this record's `rowToTicket` fix (route test added in `lib/__tests__/dfRoundG_P0.test.ts`); [`PERS-5`](../drafting-flow/07-persistence-and-rls.md) stays OPEN on the `as Ticket` cast (DF-P4). [`HAND-3`](../drafting-flow/11-document-handoff.md) (stamp / QR wording → DF-P10; a captured base version id → DF-P2), [`PROJ-1`](../drafting-flow/12-projects-boundary.md) (source-less promotion → DF-P4; the project reference → DF-P8) and [`DCW-4`](../drafting-flow/03-doc-control-wiring.md) (tickets with no source document → DF-P4) record the hand-back and keep those residuals.*
+
 ---
 
 ## LIFE-2 · `related_ticket_id` is a review-gate waiver that no code path writes — a loaded gun
@@ -198,6 +200,8 @@ waive review is not.
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `WIRE-9` is recorded `INVALID` on `DEC-23` (this deletion), with the contradicting code quoted there.*
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`PROJ-11`](../drafting-flow/12-projects-boundary.md) closes on this record.*
+
 ---
 
 ## LIFE-3 · Viewer markup is never persisted — the redline exists only in React state
@@ -264,6 +268,8 @@ the human to launder it through their filesystem. Persisting markup unblocks
    attached marked-up file.
 3. A markup that exists is discoverable from the document without the user
    having downloaded anything.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`HAND-8`](../drafting-flow/11-document-handoff.md) records the markup store and stays OPEN on Send to Drafting's silent clean-original fallback (`components/viewers/FullScreenViewer.tsx:950-958`); the fleet plan assigns that region to public-surfaces PS-STAMP, which has merged, so the integrator re-owns it.*
 
 ---
 
@@ -416,6 +422,8 @@ fix with no dependencies.
    silently acquire an MOC number.
 3. `document_versions.moc_reference` for ticket-originated revisions is
    reconcilable to `tickets.metadata.moc`.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`TIER-6`](../drafting-flow/01-review-tiering.md) records this and stays OPEN only on its "additionally" clause — MOC applicability through the work-class mechanism — owner DF-P6.*
 
 ---
 
@@ -945,6 +953,8 @@ recovery, and neither reconciles the orphaned tickets.
    instance, links to the existing ticket rather than creating a second.
 2. No path leaves a committed ticket with a NULL `outcome` on its originating
    session.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-6`](../drafting-flow/04-flow-leaks.md) closes on this record (re-verified after document-control P6's sweep rework).*
 
 ---
 

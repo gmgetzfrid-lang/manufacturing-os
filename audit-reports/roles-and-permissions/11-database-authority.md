@@ -492,6 +492,8 @@ hazard, and the next agent should not have to re-derive it.
 **Done when.** Every `SECURITY DEFINER` function in the migration set pins
 `search_path`, and a lint or test asserts it for new ones.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`PERS-8`](../drafting-flow/07-persistence-and-rls.md) closes on this record (`my_org_ids()` pinned by `20261020`; the finding's `public, pg_temp` value is recorded there as a divergence from the house style).*
+
 ---
 
 ## DB-7 · The authority-function census — what reads what

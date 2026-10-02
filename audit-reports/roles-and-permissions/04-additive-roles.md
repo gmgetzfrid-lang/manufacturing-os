@@ -115,6 +115,8 @@ Priority order:
 - Adding a role always grants what the picker said it would grant.
 - A test asserts a `["Manager","Drafter"]` member gets drafter actions.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-2`](../drafting-flow/04-flow-leaks.md) and [`ROUTE-10`](../drafting-flow/08-routing-and-attention.md) (routing pools) and [`AUTHZ-9`](../drafting-flow/09-authority-surfaces.md) (the workflow route) close on this record.*
+
 ---
 
 ## ADD-2 · The view-as simulator evaluates authority differently than production does

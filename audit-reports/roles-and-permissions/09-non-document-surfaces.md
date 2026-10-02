@@ -617,6 +617,8 @@ P&ID. One person clicked twelve times. Eleven people have never seen it.
 **Done when.** A member can acknowledge only their own `distribution_acks` row,
 matching the `document_acknowledgments` rule.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`EVID-2`](../drafting-flow/10-audit-evidence.md) (the `distribution_acks` forgery) records the `20261032` / `20261033` rails this record cites and stays OPEN on un-acknowledging by the recipient, `requested_at` writes, and the missing audit row on acknowledgment — owner DF-P11.*
+
 ---
 
 ## SURF-13 · `document_review_signoffs` UPDATE does not pin reviewer identity
