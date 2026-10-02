@@ -20,7 +20,11 @@
 //     placed keeps the amber it always had.
 //   * A notification row coalesces with another about the same event — the
 //     same kind and resource within the toast provider's window — into one
-//     card with a count (`coalesceKey`, RT-11 / OS-4).
+//     card with a count (`coalesceKey`, RT-11 / OS-4). The card keeps the
+//     first row's words (ToastProvider's merge), so two people posting on one
+//     document read as the first author "×2" until that merge shows the newest
+//     words — a trade-off recorded in DEC-44 (N3) item 4 and handed to
+//     ToastProvider's next holder.
 //   * A burst is one summary: at most BURST_SHOWN_MAX informational toasts
 //     per BURST_WINDOW_MS; the rest of that window's rows become one
 //     "N more notifications" card when it closes (TAX-9 dw4). Action rows

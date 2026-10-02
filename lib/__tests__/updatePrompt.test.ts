@@ -20,6 +20,7 @@ import { resolve } from "node:path";
 
 import UpdatePill, { UPDATE_PROMPT_TEXT, UpdatePillForWaitingWorker } from "@/components/system/UpdatePill";
 import ServiceWorkerManager, { __resetWaitingWorkerForTests, waitingWorkerSnapshot, OFFLINE_PILL_TEXT } from "@/components/pwa/ServiceWorkerManager";
+import { reportWaitingWorker, updatePromptShellMounted } from "@/components/pwa/swUpdate";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -112,10 +113,26 @@ describe("TAX-15 — one component, one wording, one prompt", () => {
     expect(prompts()).toHaveLength(1);
   });
 
-  it("the stand-in renders nothing while the shell's pill is mounted, and nothing without a waiting worker", async () => {
+  it("the stand-in renders nothing without a waiting worker", async () => {
     installServiceWorker(false);
     await mount(React.createElement(React.Fragment, null, React.createElement(UpdatePillForWaitingWorker)));
     expect(prompts()).toHaveLength(0);
+  });
+
+  it("the stand-in renders nothing while the shell's pill is mounted: a waiting worker, the shell's UpdatePill and the stand-in mounted directly → one prompt, the shell's", async () => {
+    installServiceWorker(true);
+    reportWaitingWorker();
+    // the stand-in alone shows the prompt…
+    await mount(React.createElement(UpdatePillForWaitingWorker));
+    expect(prompts()).toHaveLength(1);
+    // …and stands down the moment the shell's UpdatePill mounts beside it
+    await mount(React.createElement(React.Fragment, null, React.createElement(UpdatePill), React.createElement(UpdatePillForWaitingWorker)));
+    expect(prompts()).toHaveLength(1);
+    expect(updatePromptShellMounted()).toBe(true);
+    // the shell's pill gone again, the stand-in is back
+    await mount(React.createElement(UpdatePillForWaitingWorker));
+    expect(updatePromptShellMounted()).toBe(false);
+    expect(prompts()).toHaveLength(1);
   });
 
   it("the tap is the one reload path: it activates the waiting worker (SKIP_WAITING) through loadLatestBuild", async () => {

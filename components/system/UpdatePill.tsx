@@ -15,21 +15,23 @@
 // (STACK-13), then loadLatestBuild, which activates the waiting worker. The
 // protected shell mounts it (and polls); a page without the shell gets it
 // from ServiceWorkerManager for the waiting worker only — and only while no
-// shell instance is mounted, so two never show at once.
+// shell instance is mounted, so two never show at once. The shared state
+// (the waiting worker, the shell's registration, the wording, the reload
+// path) lives in the leaf module components/pwa/swUpdate.ts.
 
 import React, { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { RefreshCw } from "lucide-react";
-import { loadLatestBuild } from "@/components/pwa/ServiceWorkerManager";
-import { subscribeWaitingWorker, waitingWorkerSnapshot } from "@/components/pwa/ServiceWorkerManager";
+import {
+  UPDATE_PROMPT_BUTTON_CLASS, UPDATE_PROMPT_TEXT, UPDATE_PROMPT_WRAP_CLASS, loadLatestBuildInThisTab, registerUpdatePromptShell,
+  subscribeUpdatePromptShell, subscribeWaitingWorker, updatePromptShellMounted, waitingWorkerSnapshot,
+} from "@/components/pwa/swUpdate";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { hasUploadsInFlight, releaseUploadUnloadGuard } from "@/lib/uploadActivity";
 
 const POLL_MS = 5 * 60_000;
 
-/** The one wording for "a newer build exists" (TAX-15). It used to be two:
- *  "This tab is running an old version — tap to load the update" here and
- *  "Update available — tap to refresh" on the service worker's button. */
-export const UPDATE_PROMPT_TEXT = "A newer version of the app is available — tap to load it";
+/** The one wording for "a newer build exists" (TAX-15) — swUpdate's. */
+export { UPDATE_PROMPT_TEXT };
 
 /** STACK-13: loading the update reloads the tab, which kills an upload on
  *  the wire with no record. While one is in flight the pill asks first; a
@@ -51,21 +53,6 @@ export async function confirmReloadDuringUploads(deps: {
   return ok;
 }
 
-// The shell's instances, so the service worker's fallback instance stands
-// down while one is mounted: one prompt at a time.
-let shellInstances = 0;
-const shellListeners = new Set<() => void>();
-function subscribeShell(cb: () => void) {
-  shellListeners.add(cb);
-  return () => { shellListeners.delete(cb); };
-}
-function shellMounted(): boolean { return shellInstances > 0; }
-function emitShell() {
-  for (const l of shellListeners) {
-    try { l(); } catch { /* ignore */ }
-  }
-}
-
 /** The protected shell's mount: polls the build id and owns the prompt. */
 export default function UpdatePill() {
   return <UpdatePrompt shell />;
@@ -80,13 +67,13 @@ export function UpdatePillForWaitingWorker() {
 function UpdatePrompt({ shell }: { shell: boolean }) {
   const [stale, setStale] = useState(false);
   const workerWaiting = useSyncExternalStore(subscribeWaitingWorker, waitingWorkerSnapshot, () => false);
-  const shellUp = useSyncExternalStore(subscribeShell, shellMounted, () => false);
+  const shellUp = useSyncExternalStore(subscribeUpdatePromptShell, updatePromptShellMounted, () => false);
 
+  // The shell's instance registers, so any other instance stands down while
+  // it is mounted: one prompt at a time.
   useLayoutEffect(() => {
     if (!shell) return;
-    shellInstances++;
-    emitShell();
-    return () => { shellInstances--; emitShell(); };
+    return registerUpdatePromptShell();
   }, [shell]);
 
   useEffect(() => {
@@ -117,19 +104,14 @@ function UpdatePrompt({ shell }: { shell: boolean }) {
   if (!shell && shellUp) return null;
   if (!stale && !workerWaiting) return null;
   return (
-    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop" data-update-prompt>
+    <div className={UPDATE_PROMPT_WRAP_CLASS} data-update-prompt>
       <button
+        type="button"
         onClick={async () => {
           if (!(await confirmReloadDuringUploads())) return;
-          const sw = "serviceWorker" in navigator ? navigator.serviceWorker : null;
-          void loadLatestBuild({
-            serviceWorker: sw,
-            getRegistration: sw ? () => sw.getRegistration() : null,
-            reload: () => window.location.reload(),
-            setTimeout: (cb, ms) => window.setTimeout(cb, ms),
-          });
+          void loadLatestBuildInThisTab();
         }}
-        className="inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors"
+        className={UPDATE_PROMPT_BUTTON_CLASS}
       >
         <RefreshCw className="w-3.5 h-3.5" aria-hidden />
         {UPDATE_PROMPT_TEXT}

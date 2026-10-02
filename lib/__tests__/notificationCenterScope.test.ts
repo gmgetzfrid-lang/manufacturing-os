@@ -14,7 +14,10 @@
 //     "Mark notifications read", and what that leaves behind is said in place.
 //   * RT-11 dw1: opened while the corner dock is raised over an upload modal,
 //     the center opens ABOVE that modal (Z.dialog, a listed layer), and the
-//     raised dock moves left of it.
+//     raised dock moves left of it; while the upload runs, a row or the inbox
+//     link asks before it leaves the page that owns it (review fix).
+//   * "Mark these read" in a scope is a checked write: a refusal is said in
+//     the panel (review fix).
 //
 // The REAL Sidebar, NotificationBell, NotificationCenter and the REAL
 // attention hook render here; only the database, the session and the router
@@ -35,15 +38,25 @@ const fx = vi.hoisted(() => ({
   },
   markMany: [] as string[][],
   markAll: 0,
+  markReadCalls: 0,
+  updates: [] as Array<{ table: string; payload: Record<string, unknown>; ids: unknown }>,
+  updateError: null as string | null,
 }));
 
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string): Record<string, unknown> => {
     const result = { data: table === "tickets" ? fx.tickets : [], error: null, count: 0 };
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "not", "in", "order", "limit", "is", "or", "gte"]) q[m] = () => q;
+    let update: { table: string; payload: Record<string, unknown>; ids: unknown } | null = null;
+    for (const m of ["select", "eq", "not", "order", "limit", "is", "or", "gte"]) q[m] = () => q;
+    q.update = (payload: Record<string, unknown>) => { update = { table, payload, ids: null }; return q; };
+    q.in = (_col: string, ids: unknown) => { if (update) update.ids = ids; return q; };
     q.maybeSingle = async () => ({ data: null, error: null });
-    q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(result).then(ok, ko);
+    q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
+      if (!update) return Promise.resolve(result).then(ok, ko);
+      fx.updates.push(update);
+      return Promise.resolve({ data: null, error: fx.updateError ? { message: fx.updateError } : null }).then(ok, ko);
+    };
     return q;
   };
   const channel = { on: () => channel, subscribe: () => channel };
@@ -66,7 +79,7 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => {
   return {
     ...actual,
     listMyNotifications: async () => fx.rows,
-    markRead: async () => {},
+    markRead: async () => { fx.markReadCalls++; },
     markAllRead: async () => { fx.markAll++; },
     markManyRead: async (ids: string[]) => { fx.markMany.push(ids); },
   };
@@ -79,6 +92,8 @@ import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { CornerDock, __resetDockForTests, useDockAllowances, useDockRaise, NOTIFICATION_CENTER_RAIL_PX } from "@/components/ui/CornerDock";
 import { ToastProvider, useToast } from "@/components/providers/ToastProvider";
 import { Z } from "@/lib/zLayers";
+import { MARK_READ_FAILED, confirmLeaveDuringUploads } from "@/components/notifications/NotificationCenter";
+import { beginUpload, endUpload } from "@/lib/uploadActivity";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -129,6 +144,9 @@ beforeEach(() => {
   fx.tickets = [];
   fx.markMany = [];
   fx.markAll = 0;
+  fx.markReadCalls = 0;
+  fx.updates = [];
+  fx.updateError = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -201,14 +219,40 @@ describe("TAX-1 / TRAIL-3 / TAX-2 dw4 — a section badge opens its own section,
     expect(scoped.getAttribute("aria-label")).toBe("Mark the notifications in Documents read");
     await act(async () => { scoped.click(); });
     await flush();
-    expect(fx.markMany).toHaveLength(1);
-    expect([...fx.markMany[0]].sort()).toEqual(["n1", "n2", "n3"]);
+    // one checked update of exactly the listed rows' read_at
+    expect(fx.updates).toHaveLength(1);
+    expect(fx.updates[0].table).toBe("notifications");
+    expect(Object.keys(fx.updates[0].payload)).toEqual(["read_at"]);
+    expect([...(fx.updates[0].ids as string[])].sort()).toEqual(["n1", "n2", "n3"]);
+    expect(fx.markMany).toHaveLength(0);
     expect(fx.markAll).toBe(0);
+    expect(panel().querySelector("[data-center-mark-error]")).toBeNull();
     await act(async () => { opener.open("all"); });
     await flush();
     await act(async () => { (panel().querySelector('button[title="Mark all notifications read"]') as HTMLButtonElement).click(); });
     await flush();
     expect(fx.markAll).toBe(1);
+  });
+
+  it("a refused 'mark these read' says so in the panel — never a silent success; the next try clears the line", async () => {
+    fx.updateError = "new row violates row-level security policy for table \"notifications\"";
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(GrabCenter)));
+    await act(async () => { opener.open("all", "documents"); });
+    await flush();
+    const scoped = () => panel().querySelector('button[title="Mark the notifications in Documents read"]') as HTMLButtonElement;
+    await act(async () => { scoped().click(); });
+    await flush();
+    const alert = panel().querySelector("[data-center-mark-error]") as HTMLElement;
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toBe(MARK_READ_FAILED);
+    // the rows are still listed: nothing claims they were cleared
+    expect(listedTitles()).toHaveLength(3);
+    fx.updateError = null;
+    await act(async () => { scoped().click(); });
+    await flush();
+    expect(panel().querySelector("[data-center-mark-error]")).toBeNull();
+    expect(fx.updates).toHaveLength(2);
   });
 
   it("the headline is the opener's number in every case (pure)", () => {
@@ -306,7 +350,7 @@ describe("NEDGE-5 / RT-9 — the bell", () => {
     expect(dialog.querySelector("[data-bell-action]")!.textContent).toContain("2 need action");
     const mark = [...dialog.querySelectorAll("button")].find((b) => /Mark notifications read/.test(b.textContent ?? ""))!;
     expect(mark).toBeTruthy();
-    expect(mark.getAttribute("title")).toBe("Marks the 7 notifications read. 1 request stay until the work is done or the request is opened.");
+    expect(mark.getAttribute("title")).toBe("Marks the 7 notifications read. 1 request stays until the work is done or the request is opened.");
     expect(dialog.querySelector("[data-bell-remaining]")!.textContent)
       .toBe("1 request in this list clears when the work is done or the request is opened — marking notifications read leaves it.");
     expect(dialog.textContent).not.toContain("Mark all read");
@@ -393,5 +437,111 @@ describe("RT-11 dw1 — raised over an upload modal, '+N more' opens the center 
     expect(panel().style.zIndex).toBe("");
     expect(panel().className).toContain("z-[241]");
     expect((document.querySelector("[data-center-backdrop]") as HTMLElement).className).toContain("z-[240]");
+  });
+});
+
+describe("RT-11 (review fix) — above an upload modal, a link asks before it leaves the page running the upload", () => {
+  const openRaised = async () => {
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, React.createElement(Shell, { raised: true }), React.createElement(GrabCenter))));
+    await act(async () => { opener.open("all"); });
+    await flush();
+    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+  };
+  /** Every click on the page, and whether its navigation went ahead: one the
+   *  guard stopped never reaches the document; one followed reaches it with
+   *  its default intact (jsdom has no navigation, so it is cancelled there). */
+  const seen: Event[] = [];
+  const followed = new Set<Event>();
+  const atStart = (e: Event) => { seen.push(e); };
+  const atEnd = (e: Event) => { if (!e.defaultPrevented) followed.add(e); e.preventDefault(); };
+  const clicks = {
+    get length() { return seen.length; },
+    set length(n: number) { seen.length = n; followed.clear(); },
+    list: () => seen.map((e) => ({ href: (e.target as Element).closest("a")?.getAttribute("href") ?? null, followed: followed.has(e) })),
+  };
+  beforeEach(() => {
+    clicks.length = 0;
+    window.addEventListener("click", atStart, { capture: true });
+    document.addEventListener("click", atEnd);
+  });
+  afterEach(() => {
+    window.removeEventListener("click", atStart, { capture: true });
+    document.removeEventListener("click", atEnd);
+  });
+
+  it("an upload in flight: a row asks first; 'Stay' keeps the page (no navigation, no mark read), 'Leave anyway' follows the row", async () => {
+    await openRaised();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    beginUpload();
+    try {
+      const rowLink = panel().querySelector("li a") as HTMLAnchorElement;
+      await act(async () => { rowLink.click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(confirm.mock.calls[0][0]).toContain("An upload is still running");
+      expect(clicks.list()).toEqual([{ href: rowLink.getAttribute("href"), followed: false }]);
+      expect(fx.markReadCalls).toBe(0);
+      expect(panel().hasAttribute("inert")).toBe(false);
+
+      confirm.mockReturnValue(true);
+      await act(async () => { rowLink.click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(2);
+      // the first tap (stayed), the second tap (asked), then the row's own
+      // click replayed and followed
+      expect(clicks.list().map((c) => c.followed)).toEqual([false, false, true]);
+      expect(fx.markReadCalls).toBe(1);
+    } finally { endUpload(); }
+  });
+
+  it("the inbox link asks too; a row's own 'mark read' control never asks", async () => {
+    await openRaised();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    beginUpload();
+    try {
+      const inbox = [...panel().querySelectorAll("a")].find((a) => a.getAttribute("href") === "/inbox")!;
+      await act(async () => { inbox.click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(clicks.list()).toEqual([{ href: "/inbox", followed: false }]);
+      const markOne = panel().querySelector("li a button") as HTMLButtonElement;
+      expect(markOne).toBeTruthy();
+      await act(async () => { markOne.click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(fx.markReadCalls).toBe(1);
+      // it marked the row read and went nowhere
+      expect(clicks.list().at(-1)!.followed).toBe(false);
+    } finally { endUpload(); }
+  });
+
+  it("no upload in flight, or opened at rest: a link is followed at once, as before", async () => {
+    await openRaised();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await act(async () => { (panel().querySelector("li a") as HTMLAnchorElement).click(); });
+    await flush();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(clicks.list().map((c) => c.followed)).toEqual([true]);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    clicks.length = 0;
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, React.createElement(Shell, { raised: false }), React.createElement(GrabCenter))));
+    await act(async () => { opener.open("all"); });
+    await flush();
+    beginUpload();
+    try {
+      await act(async () => { (panel().querySelector("li a") as HTMLAnchorElement).click(); });
+      await flush();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(clicks.list().map((c) => c.followed)).toEqual([true]);
+    } finally { endUpload(); }
+  });
+
+  it("the question reuses the reload prompt's words (pure)", async () => {
+    const confirm = vi.fn(async () => true);
+    expect(await confirmLeaveDuringUploads({ inFlight: () => false, confirm })).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await confirmLeaveDuringUploads({ inFlight: () => true, confirm })).toBe(true);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "An upload is still running", confirmLabel: "Leave anyway", cancelLabel: "Stay", tone: "danger" }));
   });
 });

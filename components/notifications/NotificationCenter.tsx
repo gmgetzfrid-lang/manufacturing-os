@@ -23,7 +23,10 @@
 // doorway while the dock is raised over a modal that started an upload — so
 // when it is opened while the dock is raised, it opens at `Z.dialog`, above
 // that modal (and under the raised dock, which then moves left of the panel),
-// and keeps that layer until it closes.
+// and keeps that layer until it closes. Opened there, every row and the inbox
+// link lead away from the page that owns the running upload, and a client-side
+// navigation meets no leave-page prompt — so while an upload is in flight such
+// a link asks first (`confirmLeaveDuringUploads`) and is followed only on yes.
 //
 // Accessible (NEDGE-5): a labelled modal dialog that takes focus when it
 // opens and gives it back to the opener when it closes; inert while closed.
@@ -35,7 +38,9 @@ import { X, BellRing, Inbox } from "lucide-react";
 import { useTicketNotifications, type AttentionCounts, type AttentionSection } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import { isDockRaised, useOccupyRightRail } from "@/components/ui/CornerDock";
-import { markManyRead } from "@/lib/inAppNotifications";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { supabase } from "@/lib/supabase";
+import { hasUploadsInFlight } from "@/lib/uploadActivity";
 import { Z } from "@/lib/zLayers";
 
 /** The section names a scoped header says — the Sidebar rows' labels. */
@@ -89,6 +94,38 @@ export function NotificationCenterProvider({ children }: { children: React.React
   );
 }
 
+/** Scoped "mark read" (TAX-1): marks the rows the view lists, as a checked
+ *  write — a refused update throws, and the panel says so; never a silent
+ *  success. (lib/inAppNotifications `markManyRead`, which this replaced here,
+ *  does not read the error; it is not this package's file.) */
+export async function markTheseRead(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { error } = await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
+  if (error) throw new Error(error.message || "The update was refused.");
+}
+
+/** What a failed "mark read" says in the panel. */
+export const MARK_READ_FAILED = "Couldn't mark these notifications read. They are still listed here — try again in a moment.";
+
+/** RT-11 (review fix): opened above an upload modal, a row or the inbox link
+ *  navigates away from the page running the upload, which ends it — and a
+ *  client-side navigation never meets the browser's leave-page prompt. So
+ *  while one is in flight, ask first (the wording of UpdatePill's
+ *  `confirmReloadDuringUploads`). */
+export async function confirmLeaveDuringUploads(deps: {
+  inFlight: () => boolean;
+  confirm: (o: { title: string; message: string; confirmLabel: string; cancelLabel: string; tone: "danger" }) => Promise<boolean>;
+} = { inFlight: hasUploadsInFlight, confirm: appConfirm }): Promise<boolean> {
+  if (!deps.inFlight()) return true;
+  return deps.confirm({
+    title: "An upload is still running",
+    message: "Opening this leaves the page that is running the upload, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
+    confirmLabel: "Leave anyway",
+    cancelLabel: "Stay",
+    tone: "danger",
+  });
+}
+
 /** The header line: the number the opener showed, and where it came from.
  *  Scoped, it is the section badge's count ("3 items in Documents"); unscoped
  *  under "All", the bell's. A filter is named when one is on. */
@@ -114,7 +151,10 @@ function CenterPanel({
 }) {
   const { items, counts, sectionCounts, markRead, markAllRead, loading } = useTicketNotifications();
   const [markingAll, setMarkingAll] = useState(false);
+  const [markError, setMarkError] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
+  // The confirmed link's own click, replayed after "Leave anyway".
+  const followingRef = useRef(false);
   // Opened above a raising modal, the panel is a rail above the raise: the
   // raised dock moves left of it instead of covering its rows (RT-11).
   useOccupyRightRail(panelRef, isOpen && aboveModal, true);
@@ -165,15 +205,45 @@ function CenterPanel({
       }
     : counts;
 
+  // A failure line belongs to the view it was raised in.
+  useEffect(() => { setMarkError(null); }, [isOpen, section]);
+
   const handleMarkAll = useCallback(async () => {
     setMarkingAll(true);
+    setMarkError(null);
     try {
       // Scoped, "mark read" clears the rows this view lists — never the
       // other sections' (the button says so).
-      if (section) await markManyRead(scopedNotificationIds);
+      if (section) await markTheseRead(scopedNotificationIds);
       else await markAllRead();
-    } catch { /* best-effort */ } finally { setMarkingAll(false); }
+    } catch (e) {
+      console.warn("[NotificationCenter] mark read failed", e);
+      setMarkError(MARK_READ_FAILED);
+    } finally { setMarkingAll(false); }
   }, [markAllRead, section, scopedNotificationIds]);
+
+  // RT-11 (review fix): above an upload modal, a link in the panel asks
+  // before it leaves while an upload is in flight. Capture phase, so the
+  // link's own handler (mark read, close) runs only when it is followed.
+  const guardLeave = useCallback((e: React.MouseEvent) => {
+    if (followingRef.current || !aboveModal || e.defaultPrevented) return;
+    // a new tab or window leaves this page alone
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const target = e.target instanceof Element ? e.target : null;
+    const link = target?.closest("a[href]");
+    if (!(link instanceof HTMLAnchorElement)) return;
+    // a control inside a row (its "mark read") never navigates
+    const control = target?.closest("button");
+    if (control && link.contains(control)) return;
+    if (!hasUploadsInFlight()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void confirmLeaveDuringUploads().then((ok) => {
+      if (!ok || !link.isConnected) return;
+      followingRef.current = true;
+      try { link.click(); } finally { followingRef.current = false; }
+    });
+  }, [aboveModal]);
 
   if (typeof document === "undefined") return null;
 
@@ -213,6 +283,7 @@ function CenterPanel({
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
         style={{ transitionTimingFunction: "var(--ease-spring)", ...layer }}
+        onClickCapture={guardLeave}
       >
         <div className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
           <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-accent)] text-white shadow-lg shadow-orange-500/25 shrink-0">
@@ -247,6 +318,11 @@ function CenterPanel({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
+          {markError && (
+            <div role="alert" data-center-mark-error className="mb-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-[12px] font-bold text-red-700 dark:text-red-300">
+              {markError}
+            </div>
+          )}
           {loading && items.length === 0 ? (
             <div className="space-y-2">
               {[0, 1, 2, 3].map((i) => (

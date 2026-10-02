@@ -160,7 +160,7 @@ export default function NotificationBell(_props: NotificationBellProps) {
                     type="button"
                     onClick={async () => { await markAllRead(); }}
                     title={remaining > 0
-                      ? `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read. ${remaining} request${remaining === 1 ? "" : "s"} stay until the work is done or the request is opened.`
+                      ? `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read. ${remaining} request${remaining === 1 ? " stays" : "s stay"} until the work is done or the request is opened.`
                       : `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read.`}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >

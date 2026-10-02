@@ -84,6 +84,13 @@ describe("the toast echo of a bell row, through the real dock", () => {
     const cards = document.getElementById("corner-dock")!.querySelectorAll('[data-dock-slot="transient"] .rounded-xl');
     expect(cards).toHaveLength(1);
     expect(text()).toContain("×2");
+    // KNOWN TRADE-OFF, not the goal (DEC-44 (N3) item 4): N7's merge keeps the
+    // FIRST row's words, so the card reads "Alice posted … first ×2" and Bob's
+    // post shows only in the bell. Handed to the next holder of
+    // components/providers/ToastProvider.tsx (show the newest words, or a
+    // neutral "2 posts on P-1204-03", on a merge) — this pin changes with it.
+    expect(text()).toContain("Alice posted to P-1204-03");
+    expect(text()).not.toContain("Bob posted to P-1204-03");
     // another event (a different kind, a different resource) is its own card
     // (an action row: never held by the burst rule, so it shows at once)
     await deliver({ kind: "checkout_conflict", title: "Checkout conflict on P-9", body: "x", resource_id: "d9" });
