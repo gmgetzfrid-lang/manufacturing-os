@@ -58,7 +58,7 @@ CREATE POLICY documents_delete_controllers ON documents
 - ✗ The FOR ALL policy is not split into explicit SELECT / INSERT / UPDATE / DELETE policies with a written WITH CHECK — `supabase/schema.sql:1118-1119` is unchanged; the INSERT and UPDATE contracts are carried by the two triggers instead.
 - ✓ INSERT requires `requester_id = auth.uid()` and the intake status: `NEW.requester_id := auth.uid();` (`20261038:130`), `NEW.status := 'PENDING_ASSIGNMENT';` (`:140`), non-members refused (`:125-127`).
 
-**Scope / residual.** → **DF-P1**: the policy split with written WITH CHECKs, plus the history-in-place / client-writable arrays residual (binding, fleet plan). The `request_type` UPDATE gap is recorded on `LEAK-3` (same owner).
+**Scope / residual.** → **DF-P1**: the policy split with written WITH CHECKs, plus the history-in-place / client-writable arrays residual (binding, fleet plan). The `request_type` / `unit` UPDATE gap is recorded on `LEAK-3` (same owner).
 
 ---
 
@@ -237,12 +237,12 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 - [ ] The `as Ticket` cast is removed so the compiler flags any future field that is added to the Ticket type but not mapped
 - [ ] A test asserts that a row with metadata.source_document.id round-trips through rowToTicket and that computeTransition to DRAFTING produces a document_intents upsert
 
-**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; the dead bridge is live since roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) (`a84f712`) — evidence and tests on [`SM-11`](./06-state-machine.md#sm-11): `lib/ticketTransitions.ts:86` maps `metadata`, and `lib/__tests__/dfRoundG_P0.test.ts:379` drives the route's intent upsert on entering `DRAFTING` and its delete on close. Round D3 (`DRAFT-2`) also mapped `engineer_review_requested_at`, `engineer_approved_at`, `engineer_review_reason` (`lib/ticketTransitions.ts:77-79`). The cast that hid the omission is still there.
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; the dead bridge is live since roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) (`a84f712`) — evidence and tests on [`SM-11`](./06-state-machine.md#sm-11): `lib/ticketTransitions.ts:86` maps `metadata`, and `lib/__tests__/dfRoundG_P0.test.ts:448` drives the route's intent upsert on entering `DRAFTING` and its delete on close. Round D3 (`DRAFT-2`) also mapped `engineer_review_requested_at`, `engineer_approved_at`, `engineer_review_reason` (`lib/ticketTransitions.ts:77-79`). The cast that hid the omission is still there.
 
 **Done-when.**
 - ✓ (in part) `rowToTicket` maps `metadata`; of the other columns this finding lists, the engineering stamps are mapped, while `closed_at`, `archived_at`, `archive_id`, `target_completion_at`, `sla_breach_warned_at` / `sla_breached_at` and `updated_at` are still not (server readers that need them read the raw row today — e.g. the archived gate, `app/api/tickets/workflow-action/route.ts:81-87`).
 - ✗ The `as Ticket` cast is not removed: `} as Ticket;` (`lib/ticketTransitions.ts:94`), so a field added to `Ticket` but not mapped is still not flagged by the compiler.
-- ✓ A test asserts `metadata.source_document.id` round-trips through `rowToTicket` and that the transition to `DRAFTING` produces a `document_intents` upsert (`lib/__tests__/dfRoundG_P0.test.ts:372`, `lib/__tests__/dfRoundG_P0.test.ts:379`).
+- ✓ A test asserts `metadata.source_document.id` round-trips through `rowToTicket` and that the transition to `DRAFTING` produces a `document_intents` upsert (`lib/__tests__/dfRoundG_P0.test.ts:441`, `lib/__tests__/dfRoundG_P0.test.ts:448`).
 
 **Scope / residual.** Remove the cast (map the remaining columns the server path reads, or narrow the return type so omissions are compile errors) → **DF-P4**, the next package whose brief edits `rowToTicket` (it maps `library_id`). Not in the handed-on list — found on re-verification.
 
@@ -385,7 +385,7 @@ SET search_path = public
 - [ ] A CI check asserts every SECURITY DEFINER function in supabase/ carries an explicit SET search_path
 
 **Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`DB-6`](../roles-and-permissions/11-database-authority.md) (`2af2ebe`, 2026-08-24; document-control `DRLS-11` closed on the same record). `my_org_ids()` — still `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$ SELECT org_id FROM org_members WHERE uid = auth.uid() AND status = 'active'; $$;` (`supabase/schema.sql:1069-1072`, no redefinition in `supabase/migrations/`) — is pinned by migration: `'my_org_ids()',` in the signature list of `supabase/migrations/20261020_pin_search_path.sql:32`, applied by `EXECUTE format('ALTER FUNCTION %s SET search_path = public', sig);` (`:64`) — **applied & verified live 2026-08-24** (zero unpinned `SECURITY DEFINER` functions in `public`; MIGRATION-PASTE-ORDER row 22 LIVE). ALTER, not re-CREATE, so the deployed body is untouched.
-- Tests: `lib/__tests__/searchPathPin.test.ts:114` (every live definer function is pinned at creation or by `20261020`; the census fails the suite on a new unpinned one); `lib/__tests__/dfRoundG_P0.test.ts:454` (new — the `my_org_ids()` entry and the `ALTER … SET search_path = public` statement, against the `SECURITY DEFINER` body in `schema.sql`).
+- Tests: `lib/__tests__/searchPathPin.test.ts:114` (every live definer function is pinned at creation or by `20261020`; the census fails the suite on a new unpinned one); `lib/__tests__/dfRoundG_P0.test.ts:531` (new — the `my_org_ids()` entry and the `ALTER … SET search_path = public` statement, against the `SECURITY DEFINER` body in `schema.sql`).
 
 **Done-when.**
 - ✓ with a recorded divergence: `my_org_ids()` is pinned by a migration, so live databases carry it — but to `search_path = public` (the corpus's house style for every definer function, and the value `searchPathPin.test.ts` and `DB-6` / `DRLS-11` verify), not the finding's `public, pg_temp`. The shadowing vector this finding names — a relation in a schema ahead of `public` — is closed by the pin; the residual `pg_temp`-first lookup needs the caller to create a temporary relation, which the PostgREST surface cannot do (the verifier's correction). Moving the corpus to `public, pg_temp` would be a change to every definer function (`DEC-31`), not to this one.

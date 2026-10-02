@@ -134,7 +134,7 @@ clock, and the document-intent bridge.
 2. Every legitimate client write that exists today still succeeds.
 3. A test attempts the raw PATCH above and asserts refusal.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus two items found on re-verification: the FOR ALL policy is not split (`PERS-1`), and `request_type` is unguarded on UPDATE (`LEAK-3`). Owner: drafting-flow DF-P1.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus items found on re-verification and review: the FOR ALL policy is not split (`PERS-1`); `request_type` **and `unit`** — the whole `DEC-13` resource every scoped capability rule reads — are unguarded on UPDATE (`LEAK-3`); and `last_modified`, the route's compare-and-set token, is nullable and unguarded, so nulling it reduces the CAS to status-only (`EDGE-11`). Owner: drafting-flow DF-P1.*
 
 ---
 
@@ -466,7 +466,7 @@ touches only `lib/workflow.ts:74-75`.** It is also the prerequisite for `WF-7`.
    ticket assigned to someone else.
 3. The queue-claim behaviour for unassigned tickets is unchanged.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-6`](../drafting-flow/09-authority-surfaces.md) records this scoping and stays OPEN only on the `CAPABILITY_DEFS` descriptions, which do not yet tell an admin the narrowed reach — owner DF-P6. Drafting-flow `LEAK-3`'s done-when 3 rests on this record.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-6`](../drafting-flow/09-authority-surfaces.md) records this scoping and stays OPEN on the `CAPABILITY_DEFS` descriptions, which do not yet tell an admin the narrowed reach — owner DF-P6; its resource done-when is ticked in code only, because the `request_type` / `unit` a scoped rule is evaluated against are client-writable until DF-P1 (`LEAK-3`). Drafting-flow `LEAK-3`'s done-when 3 rests on this record.*
 
 ---
 
@@ -1074,7 +1074,7 @@ constant.
 org's configured list, and the close-without-review behaviour is a property of
 the configured type rather than a hardcoded string comparison.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — owner DF-P1 (`ticket_update_guard` re-creation). This record's own done-when (creation) holds.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — and, with `unit`, rewrite the resource every `DEC-13` scoped rule reads (a Manager can re-type a request out of a type-scoped engineer-gate rule) — owner DF-P1 (`ticket_update_guard` re-creation). This record's own done-when (creation) holds.*
 
 ---
 
@@ -1434,7 +1434,7 @@ revision label, and a ticket back under review does not verify as current.
 
 **Scope / residual.** The `FINAL_DRAFT → reject_final → REVISION_REQ` path (an issued label still on the row while a new cycle is in draft, until the drafter's next `submit_draft` writes the letter rev) still verifies the old print as `current` for that interval — outside this finding (`drafting-flow/EDGE-2` territory); noted, not fixed here. Likewise the letter-rev path (a `3A` on the row) still infers the last issue as cycle − 1 without consulting the history, so a cycle bumped by a reject before any issue can still name a phantom issue there — the same `EDGE-2` territory, unchanged.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-7`](../drafting-flow/04-flow-leaks.md) closes on this record; [`SM-5`](../drafting-flow/06-state-machine.md#sm-5) stays OPEN on an explicit history check against re-issuing a label (a ticket reopened before Round E keeps its old cycle and issued label — read-only inventory query recorded on SM-5) and an attachment-identity verdict — owner DF-P10.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-7`](../drafting-flow/04-flow-leaks.md) records this record's code half and is `BLOCKED` (`DEC-30`) on one population: a ticket reopened before Round E keeps its old cycle and issued label, so it verifies `current` while under review and its next approval repeats the label — the read-only inventory query is its unblocking step; [`SM-5`](../drafting-flow/06-state-machine.md#sm-5) stays OPEN on an explicit history check against re-issuing a label and an attachment-identity verdict — owner DF-P10 for both, including any data repair.*
 
 ---
 

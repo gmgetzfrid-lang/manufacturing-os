@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { WorkflowEngine, requiresEngineerApproval, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
-import { __resetCapabilityPolicyCache } from "@/lib/capabilityPolicy";
+import { __resetCapabilityPolicyCache, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { computeTransition, rowToTicket, type TransitionInput } from "@/lib/ticketTransitions";
 import { isActionRequired } from "@/lib/ticketAttention";
 import { ALL_ROLES, type Role, type Ticket, type TicketAttachment, type TicketStatus } from "@/types/schema";
@@ -217,6 +217,22 @@ describe("AUTHZ-3 — a forged requester_role snapshot does not waive the engine
     expect((await sent.json()).status).toBe("PENDING_FINAL_APPROVAL");
     expect(updateOf("tickets")[0]).toMatchObject({ status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" });
   });
+
+  it("route: the requester's CURRENT collection is read from org_members — a requester who still holds the exempt role (snapshot Engineer-4, current Engineer-4) approves directly; without that read the collection would default to known-empty and the gate would refuse them", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Engineer-4"), member("d-1", "Drafter"), member("e-1", "Engineer-2")];
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-4", attachments: [DRAFT] })];
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("PENDING_IFC");
+    expect(updateOf("tickets")[0]).toMatchObject({ status: "PENDING_IFC" });
+    // the read itself (DEC-16): the requester's collection — `role, roles`, distinct
+    // from the caller's `role, roles, email, display_name` — by uid, active only
+    const at = state.calls.findIndex((c) => c.table === "org_members" && c.method === "select" && c.args[0] === "role, roles");
+    expect(at).toBeGreaterThan(-1);
+    expect(state.calls.slice(at + 1, at + 4).filter((c) => c.table === "org_members" && c.method === "eq").map((c) => c.args))
+      .toEqual([["org_id", "o1"], ["uid", "req-1"], ["status", "active"]]);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -324,6 +340,20 @@ describe("ROUTE-2 — every (Role × TicketStatus): the attention badge is the e
       expect(isActionRequired(ticketAt(status), { uid: "stranger", roles: ["DocCtrl"] }), status).toBe(false);
     }
   });
+
+  it("documents WF-24's recorded edge: the badge cannot take the requester's current collection, so for a requester known to have left (requesterRoles: [], what the route resolves) the page and route require the co-review while the badge does not — an under-count, never an unclearable badge", () => {
+    const t = ticketAt("PENDING_REVIEW");
+    for (const role of ["Manager", "Engineer-2"] as Role[]) {
+      const present = WorkflowEngine.getActions(t, role, "stranger", undefined, { userRoles: [role] }).filter((a) => !a.optional && !a.disabledReason);
+      const departed = WorkflowEngine.getActions(t, role, "stranger", undefined, { userRoles: [role], requesterRoles: [] }).filter((a) => !a.optional && !a.disabledReason);
+      // same inputs → same answer (the requester assumed present)
+      expect(isActionRequired(t, { uid: "stranger", roles: [role] }), role).toBe(present.length > 0);
+      expect(present.length, role).toBe(0);
+      // the departed-requester input the badge has no field for
+      expect(departed.length, role).toBeGreaterThan(0);
+      expect(isActionRequired(t, { uid: "stranger", roles: [role] }), role).toBe(false);
+    }
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -364,6 +394,45 @@ describe("LEAK-8 / SM-13 — submit_final without a deliverable is refused by th
     expect(ok.status).toBe(200);
     expect((await ok.json()).status).toBe("FINAL_DRAFT");
     expect((updateOf("tickets")[0].attachments as TicketAttachment[]).map((a) => a.id)).toEqual(["a-d", "a-f"]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+describe("LEAK-3 / AUTHZ-6 (records the open gap) — every DEC-13 scoped rule reads the row's request_type and unit, which the live guard does not own", () => {
+  it("engine: a type-scoped engineer_gate_exempt and a unit-scoped direct_approve bind exactly as the row's two columns say — change the column and the gate changes with it", () => {
+    // DEC-13 stage 3: nobody is exempt on NEW_DESIGN requests; the base list (shipped default) applies elsewhere
+    const gate: CapabilityPolicy = { caps: { "ticket.engineer_gate_exempt": [{ tokens: [], when: { requestType: ["NEW_DESIGN"] } }] } };
+    const mgrCtx: WorkflowContext = { userRoles: ["Manager"], requesterRoles: ["Manager"] };
+    const asFiled = mkTicket({ requestType: "NEW_DESIGN", requesterId: "req", requesterRole: "Manager" as Role });
+    expect(names(WorkflowEngine.getActions(asFiled, "Manager", "req", gate, mgrCtx))).toEqual(expect.arrayContaining(["request_final_engineer_approval"]));
+    expect(names(WorkflowEngine.getActions(asFiled, "Manager", "req", gate, mgrCtx))).not.toContain("approve_draft_ifc");
+    const retyped = { ...asFiled, requestType: "ISO" } as Ticket;
+    expect(names(WorkflowEngine.getActions(retyped, "Manager", "req", gate, mgrCtx))).toContain("approve_draft_ifc");
+
+    // a unit-scoped direct_approve: on U-200 only Engineer-4 approves, so an Engineer-2 requester is scoped out
+    const unitRule: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-4"], when: { unit: ["U-200"] } }] } };
+    const engCtx: WorkflowContext = { userRoles: ["Engineer-2"], requesterRoles: ["Engineer-2"] };
+    const onU200 = mkTicket({ unit: "U-200", requesterId: "req", requesterRole: "Engineer-2" as Role });
+    expect(names(WorkflowEngine.getActions(onU200, "Engineer-2", "req", unitRule, engCtx))).not.toContain("approve_draft_ifc");
+    expect(names(WorkflowEngine.getActions({ ...onU200, unit: "U-100" } as Ticket, "Engineer-2", "req", unitRule, engCtx))).toContain("approve_draft_ifc");
+  });
+
+  it("the live ticket_update_guard (20261038 — no later migration re-creates it) owns neither column; no browser writer touches them after insert", () => {
+    const guard = src("supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql");
+    const body = guard.slice(guard.indexOf("CREATE OR REPLACE FUNCTION ticket_update_guard()"), guard.indexOf("DROP TRIGGER IF EXISTS trg_ticket_update_guard"));
+    expect(body).toContain("IF NEW.status ");
+    expect(body).not.toMatch(/NEW\.request_type\b/);
+    expect(body).not.toMatch(/NEW\.unit\b/);
+    expect(src("lib/workflow.ts")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+    let writers = 0;
+    for (const f of ["app/(protected)/requests/page.tsx", "app/(protected)/requests/[id]/page.tsx", "lib/projects.ts"]) {
+      for (const m of src(f).matchAll(/from\(['"]tickets['"]\)\s*\.update\(\{([^}]*)\}/g)) {
+        writers++;
+        expect(m[1], f).not.toMatch(/\b(request_type|unit)\b/);
+      }
+    }
+    // the four browser writers SM-2's census names (priority ×2, unread_by, the dormant history push)
+    expect(writers).toBe(4);
   });
 });
 
@@ -438,13 +507,21 @@ describe("EDGE-11 — the load-bearing invariants carry regression tests", () =>
     expect((legacy.comments as Array<{ text: string }>).map((c) => c.text)).toEqual(["hello again"]);
   });
 
-  it("the other invariants are where EDGE-11 names them (source pins): RPC numbering with a row lock, all-or-nothing archive capture, the archived-stub gate", () => {
+  it("the other invariants are where EDGE-11 names them (source pins on code, not comments): RPC numbering with a row lock, all-or-nothing archive capture, service-role preference reads, the archived-stub gate", () => {
     const numbering = src("supabase/migrations/20260724_ticket_numbering.sql");
     expect(numbering).toMatch(/SECURITY DEFINER\s+SET search_path = public/);
     expect(numbering).toContain("ON CONFLICT (org_id, year)");
     expect(numbering).toContain("DO UPDATE SET next_seq = ticket_number_counters.next_seq + 1");
-    expect(src("app/api/admin/ticket-shed/route.ts")).toContain("Only commit the ticket to the");
+    // all-or-nothing capture: an unreadable binary skips the WHOLE ticket before
+    // anything of it is written to the zip (route harness: dfRoundG_P0_shed.test.ts)
+    const shed = src("app/api/admin/ticket-shed/route.ts");
+    const skip = shed.indexOf("if (incomplete) { skippedIncomplete++; continue; }");
+    expect(skip).toBeGreaterThan(-1);
+    expect(skip).toBeLessThan(shed.indexOf("ticketsFolder?.file(`${t.id}.json`"));
     expect(src("app/api/admin/ticket-shed/commit/route.ts")).toContain('.is("archived_at", null)');
+    for (const route of ["app/api/tickets/comment/route.ts", "app/api/tickets/workflow-action/route.ts"]) {
+      expect(src(route), route).toContain('supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients)');
+    }
     expect(src("app/api/tickets/workflow-action/route.ts")).toContain("This ticket is archived; restore it from its archive before acting on it.");
   });
 });

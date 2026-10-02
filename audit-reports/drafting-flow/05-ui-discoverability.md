@@ -113,7 +113,7 @@ channel real work arrives through.**
 
 **Done when.** See `FRIC-7`.
 
-**Resolution (2026-10-02, drafting-flow Round G).** Closed with [`FRIC-7`](./02-friction-latency.md) (its done-when defers there), by pointer to roles-and-permissions [`WF-24`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`), re-verified against `f1ac550`. `lib/ticketAttention.ts:79-91` derives "needs my action" from `WorkflowEngine.getActions` — a viewer is flagged only when the engine offers them a non-optional, non-disabled action — so a document controller is no longer sent to a `FINAL_DRAFT` or `PENDING_IFC` ticket that offers them nothing. Pinned by `lib/__tests__/dfRoundG_P0.test.ts:309` (DocCtrl unflagged at both statuses; badge equals the engine's live set for every role × status) and `lib/__tests__/ticketAttention.test.ts:78`.
+**Resolution (2026-10-02, drafting-flow Round G).** Closed with [`FRIC-7`](./02-friction-latency.md) (its done-when defers there), by pointer to roles-and-permissions [`WF-24`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`), re-verified against `f1ac550`. `lib/ticketAttention.ts:79-91` derives "needs my action" from `WorkflowEngine.getActions` — a viewer is flagged only when the engine offers them a non-optional, non-disabled action — so a document controller is no longer sent to a `FINAL_DRAFT` or `PENDING_IFC` ticket that offers them nothing. Pinned by `lib/__tests__/dfRoundG_P0.test.ts:325` (DocCtrl unflagged at both statuses; badge equals the engine's live set for every role × status) and `lib/__tests__/ticketAttention.test.ts:78`.
 
 **Done-when.** ✓ See FRIC-7.
 

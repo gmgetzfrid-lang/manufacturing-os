@@ -314,21 +314,54 @@ reproduces is `INVALID`, and that is a real outcome** (`DEC-28`).
 
 `EDGE-11` (`13-edges-and-invariants.md`) is this area's do-not-break list, and it
 is the `DEC-29` item-5 diff-check **every** drafting-flow package cites by name.
-Re-verified on `f1ac550` (drafting-flow Round G, DF-P0), each with a test:
+Re-verified on `f1ac550` (drafting-flow Round G, DF-P0), each with a behavioural test or a source pin on code (never on a comment):
 
 | Invariant | Where it lives | Pinned by |
 |---|---|---|
 | Server-side action validation against `WorkflowEngine.getActions` under the org's own policy; archived stubs refused; referenced members active and qualified | `app/api/tickets/workflow-action/route.ts` | `lib/__tests__/sweepRoundE_A.test.ts`, `lib/__tests__/dfRoundG_P0.test.ts` |
-| `(status, last_modified)` compare-and-set; `computeTransition` always stamps `last_modified` | the same route; `lib/ticketTransitions.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (two concurrent `save_progress` → one 409) |
+| `(status, last_modified)` compare-and-set; `computeTransition` always stamps `last_modified`. **Caveat:** the `last_modified` leg is applied only when the row carries a token (`ticket.lastModified ? … .eq("last_modified", …) : baseQuery`), and the column is nullable and not guarded — a member can null it and reduce the CAS to status-only (handed to DF-P1, `EDGE-11` Scope) | the same route; `lib/ticketTransitions.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (two concurrent `save_progress` → one 409, on a row whose token is set) |
 | `post_ticket_comment` falls back only on PGRST202 / "could not find the function" | `app/api/tickets/comment/route.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (an in-function error is a 500, nothing written) |
-| Recipient preferences read under the service role in both ticket routes | both routes' fan-out | (source; the comment and workflow routes' `notification_preferences` reads) |
+| Recipient preferences read under the service role in both ticket routes | both routes' fan-out | `lib/__tests__/dfRoundG_P0.test.ts` (source pin on code: `supabaseAdmin.from("notification_preferences")…` in both routes) |
 | One attention rule — `isActionRequired`, derived from the engine | `lib/ticketAttention.ts` | `lib/__tests__/ticketAttention.test.ts`, `lib/__tests__/dfRoundG_P0.test.ts` |
 | Ticket numbers from `next_ticket_number` (definer, pinned, row lock) | `supabase/migrations/20260724_ticket_numbering.sql` | `lib/__tests__/dfRoundG_P0.test.ts` (source pin) |
-| All-or-nothing ticket-shed capture; commit re-verifies before deleting | `app/api/admin/ticket-shed/route.ts`, `commit/route.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (source pin) |
+| All-or-nothing ticket-shed capture; commit re-verifies before deleting | `app/api/admin/ticket-shed/route.ts`, `commit/route.ts` | `lib/__tests__/dfRoundG_P0_shed.test.ts` (route harness: one unreadable binary skips the whole ticket, un-claimed and counted; nothing readable → 502, catalog row removed) and `lib/__tests__/dfRoundG_P0.test.ts` (source pin on the skip, ordered before the zip write) |
 
 A fix that needs one of these changed is a design error in the fix (`DEC-27`
 halt condition 2). Extend them — the server create route (DF-P2) reuses the
 numbering RPC and the service-role preference read; it does not replace them.
+
+## Hand-offs from DF-P0 (Round G) that no package brief carries yet
+
+DF-P0 re-verified 38 ids against `f1ac550`. The residuals the fleet plan already
+handed on (`SM-2` / `PERS-1` / `AUTHZ-2` / `EVID-1` history + arrays → DF-P1,
+`LEAK-4` priority / `unread_by` writes → DF-P9, `DCW-4` → DF-P4, `ROUTE-5`
+re-entry routing → DF-P3, `TIER-7` → DF-P6) are in the plan. The rows below were
+found on re-verification or in DF-P0's review, are recorded OPEN (or `BLOCKED`)
+on the named finding with that owner, and are **not** in the owner's brief in
+`audit-reports/fleet-plans/drafting-flow.json`. The integrator appends each (id
+plus the line below) to the owner's findings / files before that package starts,
+or re-owns it in the plan's "remainder re-owned by the integrator" form.
+
+| Finding | Owner | What the owner must add |
+|---|---|---|
+| `LEAK-3` (+ `AUTHZ-6` done-when 1, `SM-2`) | DF-P1 | Make **`request_type` and `unit`** workflow-owned in the re-created `ticket_update_guard` (brief item (a) names history and the arrays only). They are the whole `DEC-13` resource: `ticket.engineer_gate_exempt`, `ticket.direct_approve` scoping, the reviewer / drafter pick scoping, `engineeringFirst` and close-without-review all read them. |
+| `EDGE-11` invariant 2 | DF-P1 | A row whose `last_modified` is `NULL` gets a status-only CAS (the leg is conditional; the column is nullable and unguarded): treat a null token as its own leg (`.is("last_modified", null)`) or as a conflict, and/or refuse a client write that nulls it. |
+| `PERS-1` done-when 3 | DF-P1 | Split `tickets_org_access` (`FOR ALL`, `supabase/schema.sql:1118-1119`) into per-verb policies with written `WITH CHECK`s. |
+| `SM-12` | DF-P1 | Stamp `assigned_drafter_name` (`assign`, `reassign_drafter`, `self_assign`) from `org_members.display_name` server-side. |
+| `SM-13` (server half) | DF-P1 | Refuse a `finalAttachment` not typed `Final` (the same hunk as `AUTHZ-11`, which the brief does carry). |
+| `AUTHZ-3` | DF-P2 | The create route stamps `requester_name` from `org_members.display_name` (the brief replicates requester id / role / status / type only). |
+| `LEAK-6` | DF-P2 | When `CheckInPanel` moves behind the create route, the `metadata.checkin.episodeId` resume key must survive. |
+| `ROUTE-5` (comments) | DF-P3 | `lib/ticketAttention.ts:24-27` ("A supervisor is told about a PENDING_IFC package") becomes true only if LEAK-1's `PENDING_IFC` pool includes the supervisors; otherwise the comment must be corrected (DF-P9 owns that file). |
+| `PERS-5` | DF-P4 | Remove the `} as Ticket` cast in `rowToTicket` (map the columns the server path reads, or narrow the return type); the brief maps `library_id` only. |
+| `AUTHZ-6` | DF-P6 | Rewrite the `CAPABILITY_DEFS` descriptions of `ticket.requester_review`, `ticket.draft_work`, `ticket.direct_approve` (`lib/capabilityPolicy.ts:108-112`) to state their reach. |
+| `TIER-6` | DF-P6 | MOC applicability through the work-class mechanism, after `GAP-101` (`TIER-6` is not among DF-P6's findings). |
+| `LEAK-4` / `EVID-1` (project push) | DF-P8 | `lib/projects.ts:1588-1599` `convertTicketToProject`'s browser history push becomes part of the server-side project link, or is removed (dormant: no caller). |
+| `PROJ-1` (project half) | DF-P8 | The project reference on promotion of a ticket deliverable (`DEC-40`: reference, never copy). |
+| `HAND-8` | DF-P9 | `components/viewers/FullScreenViewer.tsx` `sendToDrafting` (`:912-990` only): a failed bake surfaces (`appAlert` + confirm-or-abort) instead of silently filing the clean original. Not PS-STAMP's `downloadWithMarkup` region, so the plan's conditional hand-off did not apply. |
+| `SM-13` (client half) | DF-P9 | `app/(protected)/requests/[id]/page.tsx:1245-1247` tests the attachment type the action needs, not `attachments.length > 0`. |
+| `FRIC-7` (WF-24 edge) | DF-P9 | Optional: an `AttentionContext.requesterRoles` input so a departed requester's ticket is counted by the badge (WF-24 accepted the under-count; DF-P9 decides). |
+| `SM-5`, `LEAK-7` (`BLOCKED`) | DF-P10 | An explicit history check against re-issuing a label; run `LEAK-7`'s inventory query and, if it returns rows, repair them in a `DEC-30` migration. |
+| `EVID-2` | DF-P11 | Refuse un-acknowledging for non-service callers, bound `requested_at` writes, write an `ACK_*` audit row (substrate DC `DIST-3`, not `20261047`). |
 
 ## Verification you cannot skip
 
