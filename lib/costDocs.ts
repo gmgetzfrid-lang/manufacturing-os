@@ -32,7 +32,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
-import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
+import { validateParsedQuote, normalizeCompanyName, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
@@ -315,15 +315,31 @@ async function currencyMismatch(doc: CostDocument, costAccountId: string): Promi
 
 type CompanyRow = { id: string; name: string; status: string };
 
-/** MON-12: the company behind a quote — the document's own registry link
- *  first (cost_documents.company_id, J4's 20261096 column, read from the raw
- *  row so it is simply absent before that migration), then the party's
- *  (project_parties.company_id), then an exact name with a single match.
- *  A link counts only to a company of the document's own org (20261157's
- *  cost_doc_company_behind reads as the definer, so it checks the same).
+/** The registry statuses an award must answer for (MON-12): `inactive` has
+ *  the same behaviour as `do_not_use` — refused without a typed override. */
+const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
+
+/** MON-12 / DEC-48: the company behind a quote, as two answers.
+ *  - `company` — the registry row the quote BINDS to, which the award
+ *    records: the document's own registry link first (cost_documents.company_id,
+ *    J4's 20261096 column, read from the raw row so it is simply absent
+ *    before that migration), then the party's (project_parties.company_id),
+ *    then an exact name with a single match. Binding refuses ambiguity.
+ *  - `barred` — the flagged (do-not-use / inactive) row the award must ANSWER
+ *    FOR: a link that stands decides, flagged or not (a person chose it);
+ *    with no link standing, ANY flagged registry row the vendor name
+ *    normalises to (lib/bidTab `normalizeCompanyName`, the bid tab's
+ *    `barredCompanyFor` gate). Gating does not refuse ambiguity — it fails
+ *    toward the flag, so "Gulf Mechanical Inc" answers for a do-not-use
+ *    "Gulf Mechanical, Inc." it does not bind to.
+ *  20261157's `cost_doc_company_behind` / `cost_doc_company_barred` are the
+ *  same two rules in SQL (the rail and `award_quote` read them as the
+ *  database's own check). A link counts only to a company of the document's
+ *  own org (the rail reads as the definer, so it checks the same).
  *  Any failed read is an ERROR, never "no company": the refusal must not
  *  pass silently because a lookup timed out. */
-async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; error?: string }> {
+async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; barred: CompanyRow | null; error?: string }> {
+  const flaggedOrNull = (c: CompanyRow): CompanyRow | null => (FLAGGED_COMPANY_STATUSES.includes(c.status) ? c : null);
   const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
     const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).eq("org_id", doc.orgId).maybeSingle();
     if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
@@ -332,24 +348,53 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
   const docCompanyId = (raw.company_id as string | null | undefined) ?? null;
   if (docCompanyId) {
     const hit = await byId(docCompanyId);
-    if (hit.error || hit.company) return hit;
+    if (hit.error) return { company: null, barred: null, error: hit.error };
+    if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };
   }
   if (doc.partyId) {
     const { data, error } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
-    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+    if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
     const partyCompanyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
     if (partyCompanyId) {
       const hit = await byId(partyCompanyId);
-      if (hit.error || hit.company) return hit;
+      if (hit.error) return { company: null, barred: null, error: hit.error };
+      if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };
     }
   }
   const name = doc.vendorName?.trim();
-  if (!name) return { company: null };
+  if (!name) return { company: null, barred: null };
   const { data, error } = await supabase.from("companies").select("id, name, status")
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
-  if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+  if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
   const rows = (data ?? []) as CompanyRow[];
-  return { company: rows.length === 1 ? rows[0] : null };
+  const lookAlike = await flaggedLookAlike(doc.orgId, name);
+  if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
+  return { company: rows.length === 1 ? rows[0] : null, barred: lookAlike.company };
+}
+
+/** MON-12's gate for a bid nobody has linked: ANY do-not-use or inactive
+ *  registry row of the org whose name normalises to the vendor's
+ *  (`normalizeCompanyName`; 20261157's `company_name_key` is the same rule),
+ *  do-not-use first. The read is narrowed server-side to the org's flagged
+ *  rows whose name holds the key's longest word — every word of the key
+ *  except "and" (which may stand for "&") appears, case aside, in the name
+ *  as written — and paged past PostgREST's 1,000-row answer. */
+async function flaggedLookAlike(orgId: string, vendorName: string): Promise<{ company: CompanyRow | null; error?: string }> {
+  const key = normalizeCompanyName(vendorName);
+  if (!key) return { company: null };
+  const word = key.split(" ").filter((w) => w !== "and").sort((a, b) => b.length - a.length)[0] ?? null;
+  const hits: CompanyRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    let q = supabase.from("companies").select("id, name, status").eq("org_id", orgId).in("status", FLAGGED_COMPANY_STATUSES);
+    if (word) q = q.ilike("name", `%${word}%`);
+    const { data, error } = await q.order("id").range(from, from + 999);
+    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+    const rows = (data ?? []) as CompanyRow[];
+    hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));
+    if (rows.length < 1000) break;
+  }
+  hits.sort((a, b) => Number(b.status === "do_not_use") - Number(a.status === "do_not_use") || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return { company: hits[0] ?? null };
 }
 
 /** The RFQ group as a grouping KEY — case-folded, whitespace collapsed —
@@ -392,9 +437,8 @@ function postableTotal(fresh: CostDocument): { total: number | null; extracted: 
 function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confirmedTotal: number | null | undefined): string | null {
   const { total, extracted } = postableTotal(fresh);
   if (total == null || !(total > 0)) return null;   // the no-total refusal follows the claim
-  const shown = total.toLocaleString();
   if (confirmedTotal != null && (!Number.isFinite(confirmedTotal) || Math.round(confirmedTotal) !== Math.round(total))) {
-    return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${shown}) — correct the total first if the paper says something else.`;
+    return confirmMismatchMessage(confirmedTotal, total);
   }
   if (extracted == null) return null;
   const ext = readExtentOf(raw);
@@ -403,8 +447,18 @@ function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confir
   const unknown = ext.pagesRead == null || ext.pagesTotal == null;
   if (!truncated && !unknown) return null;
   if (confirmedTotal != null) return null;   // typed back and equal (checked above)
-  return truncated
-    ? `The AI read only pages 1–${ext.pagesRead} of ${ext.pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`
+  return extentMessage(ext.pagesRead, ext.pagesTotal, total);
+}
+
+/** COST-13's two sentences — the lib's guard and 20261157 `award_quote`'s
+ *  re-check under its lock (`confirm_mismatch`, `extent`) say the same. */
+function confirmMismatchMessage(confirmedTotal: number, total: number): string {
+  return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${total.toLocaleString()}) — correct the total first if the paper says something else.`;
+}
+function extentMessage(pagesRead: number | null, pagesTotal: number | null, total: number): string {
+  const shown = total.toLocaleString();
+  return pagesRead != null && pagesTotal != null && pagesRead < pagesTotal
+    ? `The AI read only pages 1–${pagesRead} of ${pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`
     : `How much of this document the AI read is unknown, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`;
 }
 
@@ -484,17 +538,16 @@ async function notifyAward(fresh: CostDocument, total: number, actor: Actor, cos
 async function awardGuard(
   f: CostDocument, raw: Record<string, unknown>, costAccountId: string,
   override: string | null, confirmedTotal: number | null | undefined,
-): Promise<{ refusal: string | null; company: CompanyRow | null; flagged: boolean }> {
+): Promise<{ refusal: string | null; company: CompanyRow | null; barred: CompanyRow | null }> {
   const mismatch = await currencyMismatch(f, costAccountId);
-  if (mismatch) return { refusal: mismatch, company: null, flagged: false };
+  if (mismatch) return { refusal: mismatch, company: null, barred: null };
   const behind = await companyBehind(f, raw);
   if (behind.error) {
-    return { refusal: `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`, company: null, flagged: false };
+    return { refusal: `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`, company: null, barred: null };
   }
-  const company = behind.company;
-  const flagged = !!company && (company.status === "do_not_use" || company.status === "inactive");
-  if (company && flagged && !override) return { refusal: flaggedMessage(company), company, flagged };
-  return { refusal: extentRefusal(f, raw, confirmedTotal), company, flagged };
+  const { company, barred } = behind;
+  if (barred && !override) return { refusal: flaggedMessage(barred), company, barred };
+  return { refusal: extentRefusal(f, raw, confirmedTotal), company, barred };
 }
 
 function flaggedMessage(company: CompanyRow): string {
@@ -527,8 +580,9 @@ type AwardResult = {
  * award. The guard (currency, registry, read extent) runs here first
  * against the row as read, so a refusal reads exactly as the client
  * sequence's; the function re-checks what it can under its lock (status,
- * budget line, currency, the total the guard saw, the registry). Returns
- * AWARD_RPC_MISSING while the migration is not applied.
+ * budget line, currency, the total the guard saw, the registry gate on any
+ * normalised look-alike, and COST-13's confirmed figure and read extent).
+ * Returns AWARD_RPC_MISSING while the migration is not applied.
  */
 async function awardInOneTransaction(
   input: Parameters<typeof awardQuote>[0], override: string | null,
@@ -542,8 +596,8 @@ async function awardInOneTransaction(
   }
   const verdict = await awardGuard(fresh, raw, input.costAccountId, override, input.confirmedTotal);
   if (verdict.refusal) {
-    return verdict.flagged && !override && verdict.company
-      ? { ok: false, error: verdict.refusal, needsOverride: { companyId: verdict.company.id, companyName: verdict.company.name, status: verdict.company.status } }
+    return verdict.barred && !override
+      ? { ok: false, error: verdict.refusal, needsOverride: { companyId: verdict.barred.id, companyName: verdict.barred.name, status: verdict.barred.status } }
       : { ok: false, error: verdict.refusal };
   }
   const total = postableTotal(fresh).total;
@@ -564,6 +618,7 @@ async function awardInOneTransaction(
   }
   const out = (res.data ?? {}) as {
     ok?: boolean; code?: string; status?: string; total?: number;
+    confirmed?: number; pagesRead?: number | null; pagesTotal?: number | null;
     docCurrency?: string; accountCurrency?: string;
     company?: { id?: string; name?: string; status?: string } | null;
     rivals?: number; declined?: number; ungroupedOpen?: unknown;
@@ -587,6 +642,11 @@ async function awardInOneTransaction(
         return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
       case "total_changed":
         return { ok: false, error: `The total of this quote changed since it was checked${typeof out.total === "number" ? ` (it is now ${out.total.toLocaleString()})` : ""} — refresh and check it before awarding. Nothing was changed.` };
+      // COST-13, re-checked under the lock: the guard's own sentences.
+      case "confirm_mismatch":
+        return { ok: false, error: confirmMismatchMessage(Number(out.confirmed ?? input.confirmedTotal), Number(out.total ?? total)) };
+      case "extent":
+        return { ok: false, error: extentMessage(out.pagesRead ?? null, out.pagesTotal ?? null, Number(out.total ?? total)) };
       case "not_quote":
         return { ok: false, error: "Only quotes can be awarded." };
       case "not_found":
@@ -655,17 +715,18 @@ export async function awardQuote(input: {
   // Refusals that move nothing run against the RE-READ row, before the
   // claim's UPDATE (claimDocTransition's guard).
   let company: CompanyRow | null = null;
-  let flagged = false;
+  let barred: CompanyRow | null = null;
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid, true, async (f, raw) => {
     const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal);
     company = verdict.company;
-    flagged = verdict.flagged;
+    barred = verdict.barred;
     return verdict.refusal;
   });
   const awardedCompany = company as CompanyRow | null;
+  const barredCompany = barred as CompanyRow | null;
   if (!claim.ok) {
-    return flagged && !override && awardedCompany
-      ? { ok: false, error: claim.error, needsOverride: { companyId: awardedCompany.id, companyName: awardedCompany.name, status: awardedCompany.status } }
+    return barredCompany && !override
+      ? { ok: false, error: claim.error, needsOverride: { companyId: barredCompany.id, companyName: barredCompany.name, status: barredCompany.status } }
       : { ok: false, error: claim.error };
   }
   const fresh = claim.fresh;
@@ -698,9 +759,9 @@ export async function awardQuote(input: {
     return { ok: false, error: back.ok ? postErr : stuckMessage(doc.id, "awarded", postErr, back.error ?? "unknown") };
   }
 
-  if (flagged && override && awardedCompany) {
+  if (barredCompany && override) {
     await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, doc.id, input.actor, {
-      companyId: awardedCompany.id, companyName: awardedCompany.name, companyStatus: awardedCompany.status, reason: override,
+      companyId: barredCompany.id, companyName: barredCompany.name, companyStatus: barredCompany.status, reason: override,
     });
   }
 

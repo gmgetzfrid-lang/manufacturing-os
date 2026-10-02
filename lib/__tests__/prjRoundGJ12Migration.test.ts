@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT } from "@/lib/checklistEngine";
 import { normalizeCurrency } from "@/lib/costDocs";
 import { PER_ROW_CHUNK } from "@/lib/checklists";
+import { normalizeCompanyName, barredCompanyFor } from "@/lib/bidTab";
 
 const root = process.cwd();
 const migDir = join(root, "supabase", "migrations");
@@ -64,6 +65,16 @@ describe("the one-paste protocol (DEC-30)", () => {
     // counts only, never rows
     for (const sel of inv.split(/UNION ALL/)) expect(sel, sel).toMatch(/COUNT\(\*\)::text/);
   });
+  it("HOW TO APPLY says it is pasted only after the J12 code is deployed, and why (review minor: the old client's reasoned override would be refused)", () => {
+    const how = between(M, "-- HOW TO APPLY:", "\nDO $$");
+    expect(how).toContain("PASTE ORDER: after 20261142");
+    expect(how).toContain("only\n-- once the J12 code is deployed");
+    expect(how).toContain("it never sets\n-- app.cost_doc_award_override, so section 2 would refuse every reasoned\n-- override");
+    // and the J12 code is what sets it: award_quote, with the lib calling it first
+    expect(fn("award_quote")).toContain("PERFORM set_config('app.cost_doc_award_override', p_doc::text, true)");
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    expect(lib).toContain('res = await supabase.rpc("award_quote", {');
+  });
   it("is named in the package's reserved number and the sequence holds no other 20261157", () => {
     expect(numbered().filter((f) => f.startsWith("20261157"))).toEqual([FILE]);
   });
@@ -94,9 +105,9 @@ describe("the one-paste protocol (DEC-30)", () => {
 
 describe("DRLS-16 — every function this migration adds", () => {
   const added = [
-    "cost_doc_company_behind", "enforce_cost_document_award_registry", "award_quote",
+    "cost_doc_company_behind", "company_name_key", "cost_doc_company_barred", "enforce_cost_document_award_registry", "award_quote",
     "apply_checklist_item_writes", "enforce_project_party_company_link", "enforce_quality_item_contractor",
-    "audit_row_project_ref_visible", "stamp_milestone_audit_project",
+    "audit_row_project_ref_visible", "enforce_intake_outcome_notice_server_only", "stamp_milestone_audit_project",
   ];
   it("each is NEW — no earlier migration defines it (so there is no older body to start from)", () => {
     for (const f of numbered().filter((x) => x < FILE)) {
@@ -126,7 +137,7 @@ describe("DRLS-16 — every function this migration adds", () => {
     }
   });
   it("the trigger functions keep the service pass (auth.uid() NULL) the Round G rails keep, and nobody may call them", () => {
-    for (const name of ["enforce_cost_document_award_registry", "enforce_project_party_company_link", "enforce_quality_item_contractor", "stamp_milestone_audit_project"]) {
+    for (const name of ["enforce_cost_document_award_registry", "enforce_project_party_company_link", "enforce_quality_item_contractor", "enforce_intake_outcome_notice_server_only", "stamp_milestone_audit_project"]) {
       expect(fn(name)).toMatch(/RETURNS trigger/);
       expect(fn(name)).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
       expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}() FROM anon;`);
@@ -144,7 +155,7 @@ describe("MON-12 — the registry rail on an award", () => {
   it("the write that awards a quote may not also move the link, the contractor or the vendor name it is judged by (review major)", () => {
     const guard = rail.indexOf("IF TG_OP = 'UPDATE' AND (NEW.party_id IS DISTINCT FROM OLD.party_id");
     expect(guard).toBeGreaterThan(rail.indexOf("IF TG_OP = 'UPDATE' AND OLD.status = 'awarded' THEN RETURN NEW; END IF;"));
-    expect(guard).toBeLessThan(rail.indexOf("v_company := cost_doc_company_behind("));
+    expect(guard).toBeLessThan(rail.indexOf("v_company := cost_doc_company_barred("));
     expect(rail).toContain("OR NEW.vendor_name IS DISTINCT FROM OLD.vendor_name");
     expect(rail).toContain("OR (to_jsonb(NEW) ->> 'company_id') IS DISTINCT FROM (to_jsonb(OLD) ->> 'company_id')) THEN");
     // award_quote's own claim changes status and its stamps only — it never trips the guard
@@ -182,6 +193,98 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(ts.indexOf("project_parties")).toBeLessThan(ts.indexOf(".ilike(\"name\""));
     expect(ts).toContain("rows.length === 1");
   });
+  it("the rail judges the GATE, not the binding: an unlinked bid answers for ANY flagged row its name normalises to (review major)", () => {
+    expect(rail).toContain("v_company := cost_doc_company_barred(NEW.org_id, NULLIF(to_jsonb(NEW) ->> 'company_id', '')::uuid, NEW.party_id, NEW.vendor_name);");
+    expect(rail).not.toContain("cost_doc_company_behind(");
+    const gate = fn("cost_doc_company_barred");
+    expect(gate).toMatch(/LANGUAGE plpgsql STABLE\s*\n\s*SECURITY INVOKER\s*\n\s*SET search_path = public/);
+    // a standing link decides, flagged or not — the document's, then the contractor's, each in the org
+    const own = gate.indexOf("FROM companies c WHERE c.id = p_company AND c.org_id = p_org;");
+    const party = gate.indexOf("FROM companies c WHERE c.id = v_party_company AND c.org_id = p_org;");
+    const names = gate.indexOf("v_key := company_name_key(p_vendor);");
+    expect(own).toBeGreaterThan(0);
+    expect(own).toBeLessThan(party);
+    expect(party).toBeLessThan(names);
+    expect(gate.split("RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;").length - 1).toBe(2);
+    // no link: ANY flagged row of the org with the same key — no uniqueness, do_not_use first
+    expect(gate).toContain("WHERE c.org_id = p_org AND c.status IN ('do_not_use', 'inactive')\n     AND company_name_key(c.name) = v_key\n   ORDER BY (c.status = 'do_not_use') DESC, c.name, c.id\n   LIMIT 1;");
+    expect(gate).not.toMatch(/COUNT\(\*\)|v_n <> 1/);
+    expect(gate).toContain("IF v_key = '' THEN RETURN NULL; END IF;");
+    // the lib's gate is the same rule: barredCompanyFor's candidates, the link deciding
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    const look = between(lib, "async function flaggedLookAlike(", "\n}\n");
+    expect(look).toContain("const key = normalizeCompanyName(vendorName);");
+    expect(look).toContain('.in("status", FLAGGED_COMPANY_STATUSES)');
+    expect(look).toContain("hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));");
+    expect(look).toContain("if (rows.length < 1000) break;");
+    expect(lib).toContain('const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];');
+    const behind = between(lib, "async function companyBehind(", "\n}\n");
+    expect(behind).toContain("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };");
+    expect(behind).toContain("const lookAlike = await flaggedLookAlike(doc.orgId, name);");
+    expect(behind).toContain("if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };");
+  });
+  it("company_name_key is lib/bidTab.ts normalizeCompanyName in SQL: the same suffix list in the same order, the same steps, the same answers", () => {
+    const key = fn("company_name_key");
+    expect(key).toMatch(/LANGUAGE plpgsql IMMUTABLE\s*\n\s*SECURITY INVOKER\s*\n\s*SET search_path = public/);
+    const ts = readFileSync(join(root, "lib/bidTab.ts"), "utf8");
+    const tsSet = between(ts, "const LEGAL_SUFFIXES = new Set([", "]);");
+    const tsList = [...tsSet.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+    const sqlArr = between(key, "v_suffixes CONSTANT text[] := ARRAY[", "];");
+    const sqlList = [...sqlArr.matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+    expect(tsList.length).toBeGreaterThan(10);
+    expect(sqlList).toEqual(tsList);
+    // the steps, as written in the TypeScript
+    expect(ts).toContain('const tokens = s.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9 ]+/g, " ").split(/\\s+/).filter(Boolean);');
+    expect(ts).toContain("while (tokens.length > 1 && LEGAL_SUFFIXES.has(tokens[tokens.length - 1])) tokens.pop();");
+    expect(ts).toContain('if (tokens.length > 1 && tokens[0] === "the") tokens.shift();');
+    expect(ts).toContain('return tokens.join(" ");');
+    expect(key).toContain("regexp_replace(replace(lower(COALESCE(p_name, '')), '&', ' and '), '[^a-z0-9 ]+', ' ', 'g'), ' +'), '');");
+    expect(key).toContain("v_tokens := array_remove(regexp_split_to_array(");
+    expect(key).toContain("WHILE cardinality(v_tokens) > 1 AND v_tokens[cardinality(v_tokens)] = ANY (v_suffixes) LOOP\n    v_tokens := v_tokens[1:cardinality(v_tokens) - 1];\n  END LOOP;");
+    expect(key).toContain("IF cardinality(v_tokens) > 1 AND v_tokens[1] = 'the' THEN\n    v_tokens := v_tokens[2:cardinality(v_tokens)];\n  END IF;");
+    expect(key).toContain("RETURN array_to_string(v_tokens, ' ');");
+    // A literal mirror of the SQL steps (an array, the suffix list read from the SQL) agrees with the TypeScript
+    // on these vectors; the same vectors, with these answers, were run through company_name_key on the scratch
+    // PostgreSQL 16 (records: MON-12) and the final SELECT re-checks six of them on paste.
+    const sqlMirror = (name: string | null): string => {
+      let t = (name ?? "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9 ]+/g, " ").split(/ +/).filter((x) => x !== "");
+      while (t.length > 1 && sqlList.includes(t[t.length - 1])) t = t.slice(0, -1);
+      if (t.length > 1 && t[0] === "the") t = t.slice(1);
+      return t.join(" ");
+    };
+    const vectors: Array<[string, string]> = [
+      ["Gulf Mechanical, Inc.", "gulf mechanical"], ["Gulf Mechanical Inc", "gulf mechanical"], ["  gulf   MECHANICAL inc ", "gulf mechanical"],
+      ["GULF MECHANICAL, INC.", "gulf mechanical"], ["Gulf Mechanical Co. Ltd.", "gulf mechanical"], ["The Smith & Sons Co.", "smith and sons"],
+      ["Smith and Sons", "smith and sons"], ["A&B Welding LLC", "a and b welding"], ["The", "the"], ["Inc.", "inc"], ["The Inc", "the"],
+      ["Co Co", "co"], ["Apex Industrial Services, LLC", "apex industrial services"], ["Apex Industrial", "apex industrial"],
+      ["Bayline Piping, L.L.C.", "bayline piping l l c"], ["O'Brien Electric Pty Ltd", "o brien electric"], ["3M Company", "3m"],
+      ["Müller GmbH", "m ller"], ["", ""], ["   ", ""], ["---", ""], ["The The Company", "the"], ["Acme   Holdings  PLC", "acme holdings"],
+      ["Delta-Tech S.A.", "delta tech s a"], ["Delta Tech SA", "delta tech"], ["Northwind, Inc. (USA)", "northwind inc usa"],
+    ];
+    for (const [name, want] of vectors) {
+      expect(normalizeCompanyName(name), name).toBe(want);
+      expect(sqlMirror(name), name).toBe(want);
+    }
+    const probe = C.slice(C.indexOf("\nCOMMIT;"));
+    for (const [name, want] of [["Gulf Mechanical, Inc.", "gulf mechanical"], ["The Smith & Sons Co.", "smith and sons"], ["Apex Industrial Services, LLC", "apex industrial services"]]) {
+      expect(probe).toContain(`company_name_key('${name}') = '${want}'`);
+      expect(normalizeCompanyName(name)).toBe(want);
+    }
+    // the gate's answer for the review's case, in the TypeScript the bid tab runs
+    const registry = [{ id: "dnu", name: "Gulf Mechanical, Inc.", status: "do_not_use" }];
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, registry)?.id).toBe("dnu");
+  });
+  it("award_quote gates on the same rule and records the binding: the refusal and the override name the flagged company, COST_DOC_AWARDED the bound one", () => {
+    const rpc = fn("award_quote");
+    expect(rpc).toContain("v_company := cost_doc_company_behind(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);");
+    expect(rpc).toContain("v_barred := cost_doc_company_barred(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);");
+    expect(rpc).toContain("v_flagged := v_barred IS NOT NULL AND v_barred ->> 'status' IN ('do_not_use', 'inactive');");
+    expect(rpc).toContain("jsonb_build_object('companyId', v_barred ->> 'id', 'companyName', v_barred ->> 'name',");
+    expect(rpc).toContain("'companyId', v_company ->> 'id', 'override', CASE WHEN v_flagged THEN v_override END,");
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    expect(lib).toContain("companyId: barredCompany.id, companyName: barredCompany.name, companyStatus: barredCompany.status, reason: override,");
+    expect(lib).toContain("companyId: awardedCompany?.id ?? null, override,");
+  });
 });
 
 describe("GAP-406 — the award as one transaction", () => {
@@ -205,9 +308,29 @@ describe("GAP-406 — the award as one transaction", () => {
     expect(rpc).toContain("IF v_doc.status NOT IN ('draft', 'parsed') THEN");
     expect(rpc).toContain("v_account.project_id IS DISTINCT FROM v_doc.project_id");
     expect(rpc).toContain("IF p_expected_total IS NULL OR v_total <> p_expected_total THEN");
-    expect(rpc).toContain("RETURN jsonb_build_object('ok', false, 'code', 'company_flagged', 'company', v_company);");
+    expect(rpc).toContain("RETURN jsonb_build_object('ok', false, 'code', 'company_flagged', 'company', v_barred);");
     expect(rpc).toContain("IF v_flagged THEN PERFORM set_config('app.cost_doc_award_override', p_doc::text, true); END IF;");
     expect(rpc).toContain("PERFORM set_config('app.cost_doc_award_override', '', true);");
+  });
+  it("re-checks COST-13 under the lock before the claim: a confirmed figure that is not the total, an AI total from a truncated or unknown read with none (review minor)", () => {
+    const mismatch = rpc.indexOf("IF p_confirmed_total IS NOT NULL AND round(p_confirmed_total) <> round(v_total) THEN");
+    const extent = rpc.indexOf("IF p_confirmed_total IS NULL AND v_extracted IS NOT NULL AND (v_raw ? 'pages_read' OR v_raw ? 'pages_total') THEN");
+    const claim = rpc.indexOf("UPDATE cost_documents SET status = 'awarded'");
+    expect(mismatch).toBeGreaterThan(rpc.indexOf("'code', 'company_flagged'"));
+    expect(mismatch).toBeLessThan(extent);
+    expect(extent).toBeLessThan(claim);
+    expect(rpc).toContain("RETURN jsonb_build_object('ok', false, 'code', 'confirm_mismatch', 'total', v_total, 'confirmed', p_confirmed_total);");
+    expect(rpc).toContain("IF v_pages_read IS NULL OR v_pages_total IS NULL OR v_pages_read < v_pages_total THEN");
+    expect(rpc).toContain("RETURN jsonb_build_object('ok', false, 'code', 'extent', 'total', v_total, 'pagesRead', v_pages_read, 'pagesTotal', v_pages_total);");
+    // the lib's extentRefusal is the same rule, and the codes read as its sentences
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    const er = between(lib, "function extentRefusal(", "\n}\n");
+    expect(er).toContain("Math.round(confirmedTotal) !== Math.round(total)");
+    expect(er).toContain("if (extracted == null) return null;");
+    expect(er).toContain("if (!ext.recorded) return null;");
+    expect(er).toContain("return extentMessage(ext.pagesRead, ext.pagesTotal, total);");
+    expect(lib).toContain('case "confirm_mismatch":\n        return { ok: false, error: confirmMismatchMessage(');
+    expect(lib).toContain('case "extent":\n        return { ok: false, error: extentMessage(');
   });
   it("normalises a currency as lib/costDocs.ts normalizeCurrency does ($ / US$ / USD$ / $US are USD; else three letters or unknown)", () => {
     expect(rpc).toContain("IN ('$', 'US$', 'USD$', '$US') THEN 'USD'");
@@ -335,7 +458,7 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     const orgLevel = f.indexOf("WHEN p_type = 'milestone' THEN true");
     expect(found).toBeGreaterThan(0);
     expect(orgLevel).toBeGreaterThan(found);
-    expect(f.slice(orgLevel)).toMatch(/^WHEN p_type = 'milestone' THEN true\s*\n\s*ELSE false END/);
+    expect(f.slice(orgLevel)).toMatch(/^WHEN p_type = 'milestone' THEN true\s*\n\s*WHEN p_details @> '\{"projectIdFrom": "milestone", "orgLevel": true\}'::jsonb THEN true\s*\n\s*ELSE false END/);
     // lib/milestones.ts writes 'milestone' only for a milestone on no project and no document
     const ms = readFileSync(join(root, "lib/milestones.ts"), "utf8");
     expect(ms).toMatch(/function pickResource\(/);
@@ -351,19 +474,21 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf("SELECT m.project_id INTO v_project"));
     // the writer's projectId never stands: the trigger decides it, and marks its own
     expect(f).not.toContain("IF NEW.details ? 'projectId' THEN RETURN NEW;");
-    expect(f).toContain("NEW.details := (NEW.details - 'projectId' - 'projectIdFrom')");
-    expect(f).toContain("THEN jsonb_build_object('projectId', v_project::text, 'projectIdFrom', 'milestone')");
+    expect(f).toContain("NEW.details := NEW.details - 'projectId' - 'projectIdFrom' - 'orgLevel';");
+    expect(f).toContain("NEW.details := NEW.details || jsonb_build_object('projectId', v_project::text, 'projectIdFrom', 'milestone');");
     // the milestone's own project, in the row's org; once it is gone, the
     // project its earlier rows in the same org and resource recorded
     expect(f).toContain("WHERE m.id = (NEW.details ->> 'milestoneId')::uuid AND m.org_id = NEW.org_id;");
-    const gone = f.slice(f.indexOf("IF NOT FOUND THEN"));
+    const gone = f.slice(f.indexOf("ELSIF COALESCE(NEW.resource_type, '') <> 'project' THEN"));
+    expect(gone.length).toBeLessThan(f.length);
     expect(gone).toContain("WHERE a.resource_id = NEW.resource_id");
     expect(gone).toContain("AND a.org_id = NEW.org_id");
     expect(gone).toContain("AND a.details ->> 'milestoneId' = NEW.details ->> 'milestoneId'");
     // only the trigger's own stamps are trusted for a gone milestone
     expect(gone).toContain("AND a.details ->> 'projectIdFrom' = 'milestone'");
-    // a milestone on no project names none (an org-level row stays one)
-    expect(f).toContain("ELSE '{}'::jsonb END;");
+    // a milestone on no project carries the org-level marker, never a project (review major)
+    expect(f).toContain("v_org_level := v_project IS NULL;");
+    expect(f).toContain("NEW.details := NEW.details || jsonb_build_object('projectIdFrom', 'milestone', 'orgLevel', true);");
     // why the stamp is needed: the lib names the milestone, not the project,
     // and writes MILESTONE_DELETED once the row is gone
     const audit = readFileSync(join(root, "lib/audit.ts"), "utf8");
@@ -374,6 +499,44 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     const ref = fn("audit_row_project_ref_visible");
     expect(ref.indexOf("COALESCE(p_details ->> 'projectId', '')")).toBeLessThan(ref.indexOf("WHEN left(COALESCE(p_action, ''), 10) = 'MILESTONE_' THEN"));
   });
+  it("an org-level (document-scoped, project-less) milestone's rows stay every member's after it is deleted: the trigger marks them, the DELETED row carries the newest mark, section 6 reads it (review major)", () => {
+    const f = fn("stamp_milestone_audit_project");
+    // the marker is decided before any write, from the milestone itself
+    const found = f.indexOf("IF FOUND THEN\n    v_org_level := v_project IS NULL;");
+    expect(found).toBeGreaterThan(f.indexOf("SELECT m.project_id INTO v_project"));
+    // a gone milestone takes what the newest own stamp held — a project OR the org-level marker
+    const gone = f.slice(f.indexOf("ELSIF COALESCE(NEW.resource_type, '') <> 'project' THEN"));
+    expect(gone).toContain("COALESCE(a.details @> '{\"orgLevel\": true}'::jsonb, false)\n      INTO v_project, v_org_level");
+    expect(gone).toContain("OR a.details @> '{\"orgLevel\": true}'::jsonb)");
+    // a writer's orgLevel is stripped with its projectId, before anything is decided
+    expect(f.indexOf("NEW.details := NEW.details - 'projectId' - 'projectIdFrom' - 'orgLevel';")).toBeLessThan(f.indexOf("SELECT m.project_id INTO v_project"));
+    // section 6 trusts the marker only with the trigger's projectIdFrom, and only once the milestone is gone
+    const ref = fn("audit_row_project_ref_visible");
+    const exists = ref.indexOf("AND EXISTS (SELECT 1 FROM public.milestones m WHERE m.id = (p_details ->> 'milestoneId')::uuid)");
+    const marker = ref.indexOf(`WHEN p_details @> '{"projectIdFrom": "milestone", "orgLevel": true}'::jsonb THEN true`);
+    expect(exists).toBeGreaterThan(0);
+    expect(marker).toBeGreaterThan(exists);
+    expect(C).toContain(`audit_row_project_ref_visible('MILESTONE_COMPLETED', 'document', 'x', '{"milestoneId":"00000000-0000-0000-0000-000000000000","projectIdFrom":"milestone","orgLevel":true}'::jsonb)`);
+    expect(C).toContain(`AND NOT audit_row_project_ref_visible('MILESTONE_COMPLETED', 'document', 'x', '{"milestoneId":"00000000-0000-0000-0000-000000000000","orgLevel":true}'::jsonb)`);
+    // the header no longer says rows written after the paste can be lost
+    const what = between(M, "-- WHAT:", "-- NOT a widening:");
+    expect(what).toContain("§9 stamps every milestone row written from now on with\n--      its project or the org-level marker, so that is pre-migration\n--      history only.");
+    expect(what).not.toContain("§9 stamps the project on every\n--      milestone row written from now on, so that is pre-migration history\n--      only.");
+  });
+  it("the newest own stamp is chosen by the server's clock, never the writer's; a project-typed delete is not traced (review minors)", () => {
+    const f = fn("stamp_milestone_audit_project");
+    const clock = f.indexOf('NEW."timestamp" := now();');
+    expect(clock).toBeGreaterThan(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
+    expect(clock).toBeLessThan(f.indexOf("IF NEW.details IS NULL OR jsonb_typeof(NEW.details) <> 'object' THEN RETURN NEW; END IF;"));
+    expect(f).toContain('ORDER BY a."timestamp" DESC NULLS LAST');
+    // the app's audit writer never sets the column, so the server's clock is what it already gets (DEFAULT now())
+    const audit = readFileSync(join(root, "lib/audit.ts"), "utf8");
+    expect(between(audit, "export async function logAuditAction(", "\n}\n")).not.toMatch(/timestamp:/);
+    // a project-typed row's resource_id is the project — every row of the project shares it; SEC-20 decides it
+    expect(f).toContain("ELSIF COALESCE(NEW.resource_type, '') <> 'project' THEN");
+    const ref = fn("audit_row_project_ref_visible");
+    expect(ref).toContain("CASE WHEN p_type = 'project' THEN true");
+  });
   it("leaves the other audit_logs policies alone", () => {
     expect(C).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
   });
@@ -381,19 +544,29 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
 
 describe("the DEC-30 inventory counts everything the migration narrows (review minor)", () => {
   const inv = between(C, "CREATE TEMP TABLE prj_g_j12_inventory AS", "\nBEGIN;");
-  it("MON-12: quotes are judged as the award judges them — the document's own link (through to_jsonb), then the contractor's, then ONE exact name", () => {
+  it("MON-12: quotes are judged as the rail judges them — the document's own link (through to_jsonb), then the contractor's, then ANY flagged row the vendor name normalises to (review major)", () => {
     const rows = inv.split(/UNION ALL/).filter((r) => /inventory \(MON-12\)/.test(r));
     expect(rows).toHaveLength(2);
     for (const r of rows) {
       const own = r.indexOf("c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id");
       const party = r.indexOf("FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id");
-      const name = r.indexOf("lower(c.name) = lower(btrim(d.vendor_name))");
+      const name = r.indexOf("AND pg_temp.prj_g_j12_name_key(c.name) = pg_temp.prj_g_j12_name_key(d.vendor_name)");
       expect(own).toBeGreaterThan(0);
       expect(own).toBeLessThan(party);
       expect(party).toBeLessThan(name);
-      expect(r).toContain("HAVING COUNT(*) = 1");
+      expect(r).toContain("WHERE c.org_id = d.org_id AND c.status IN ('do_not_use', 'inactive')");
+      expect(r).not.toContain("HAVING COUNT(*) = 1");
       expect(r).not.toMatch(/\bd\.company_id\b/); // a database without 20261096 still runs
     }
+  });
+  it("the inventory's session copy of the normaliser is section 1's company_name_key, byte for byte (it runs before the transaction creates it)", () => {
+    const temp = between(M, "CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key(p_name text)", "\n$$;");
+    const real = between(M, "CREATE OR REPLACE FUNCTION public.company_name_key(p_name text)", "\n$$;");
+    const body = (x: string) => x.slice(x.indexOf("AS $$"));
+    expect(body(temp)).toBe(body(real));
+    expect(body(temp).length).toBeGreaterThan(400);
+    expect(M.indexOf("CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key")).toBeLessThan(M.indexOf("CREATE TEMP TABLE prj_g_j12_inventory AS"));
+    expect(M.indexOf("CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key")).toBeGreaterThan(M.indexOf("Apply 20261142_prj_roundG_project_audit_rows.sql first"));
   });
   it("SEC-21: link rows with no project named, rows whose project or link is gone, and the milestone rows a later delete would hide", () => {
     expect(inv).toContain("inventory (SEC-21): intake-link audit rows (project_intake_link) with no details.projectId");
@@ -401,7 +574,11 @@ describe("the DEC-30 inventory counts everything the migration narrows (review m
     expect(inv).toContain("NOT EXISTS (SELECT 1 FROM projects p WHERE p.id::text = lower(a.details ->> 'projectId'))");
     expect(inv).toContain("NOT EXISTS (SELECT 1 FROM project_intake_links l WHERE l.id::text = lower(a.resource_id))");
     expect(inv).toContain("inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId whose milestone is on a NON-private project");
-    expect(inv).toContain("inventory (SEC-21): other BEFORE INSERT row triggers on audit_logs");
+    expect(inv).toContain("inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId and no org-level marker whose milestone is on NO project");
+    expect(inv).toContain("AND NOT COALESCE(a.details @> '{\"projectIdFrom\": \"milestone\", \"orgLevel\": true}'::jsonb, false)\n   AND m.project_id IS NULL");
+    expect(inv).toContain("inventory (SEC-21 / SAF-9): other BEFORE INSERT row triggers on audit_logs");
+    expect(inv).toContain("AND t.tgname NOT IN ('trg_audit_logs_milestone_project', 'trg_audit_logs_intake_outcome_notice');");
+    expect(inv).toContain("inventory (SAF-9): contractor outcome notice rows already on the trail");
   });
 });
 
@@ -417,5 +594,29 @@ describe("SAF-9 — the contractor outcome notice is claimed once per attempt", 
     expect(route).toContain('const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";');
     expect(route).toContain("details: { versionId, attempt, projectId: l.project_id, linkId: l.id, outcome },");
     expect(route.indexOf("action: CLAIMED")).toBeLessThan(route.indexOf('await fetch("https://api.resend.com/emails"'));
+  });
+  it("the notice's three rows are the route's: a signed-in insert of one is refused; the route writes them as the service role (review minor)", () => {
+    const f = fn("enforce_intake_outcome_notice_server_only");
+    expect(f).toMatch(/RETURNS trigger\s*\n\s*LANGUAGE plpgsql\s*\n\s*SECURITY INVOKER\s*\n\s*SET search_path = public/);
+    expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf("RAISE EXCEPTION"));
+    expect(f).toContain("USING ERRCODE = 'insufficient_privilege';");
+    for (const role of ["PUBLIC", "anon", "authenticated"]) {
+      expect(C).toContain(`REVOKE ALL ON FUNCTION public.enforce_intake_outcome_notice_server_only() FROM ${role};`);
+    }
+    expect(C).toMatch(/CREATE TRIGGER trg_audit_logs_intake_outcome_notice\s*\n\s*BEFORE INSERT ON audit_logs\s*\n\s*FOR EACH ROW\s*\n\s*WHEN \(NEW\.action IN \('INTAKE_OUTCOME_NOTICE_CLAIMED', 'INTAKE_OUTCOME_NOTICE_FAILED', 'INTAKE_OUTCOME_NOTIFIED'\)\)\s*\n\s*EXECUTE FUNCTION public\.enforce_intake_outcome_notice_server_only\(\);/);
+    const idx = C.indexOf("CREATE TRIGGER trg_audit_logs_intake_outcome_notice");
+    expect(idx).toBeGreaterThan(C.indexOf("\nBEGIN;"));
+    expect(idx).toBeLessThan(C.indexOf("\nCOMMIT;"));
+    expect(C.slice(C.indexOf("\nCOMMIT;"))).toContain("t.tgname = 'trg_audit_logs_intake_outcome_notice'");
+    // the route's three actions are exactly these, and every write of them goes through the service-role client
+    const route = readFileSync(join(root, "app/api/intake/outcome-notice/route.ts"), "utf8");
+    expect(route).toContain('const NOTIFIED = "INTAKE_OUTCOME_NOTIFIED";');
+    expect(route).toContain('const FAILED = "INTAKE_OUTCOME_NOTICE_FAILED";');
+    const inserts = route.match(/\.from\("audit_logs"\)\.insert\(/g) ?? [];
+    expect(inserts.length).toBe(3);
+    expect(route.match(/supabaseAdmin\.from\("audit_logs"\)\.insert\(/g)).toHaveLength(3);
+    // no other file writes them
+    const libNotice = readFileSync(join(root, "lib/intakeOutcomeNotice.ts"), "utf8");
+    expect(libNotice).not.toMatch(/INTAKE_OUTCOME_NOTI(FIED|CE_)/);
   });
 });

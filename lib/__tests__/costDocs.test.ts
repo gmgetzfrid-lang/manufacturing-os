@@ -91,8 +91,18 @@ function chain(table: string) {
             break;
           }
           case "ilike": {
-            const want = String(args[1]).replace(/\\([%_\\])/g, "$1").toLowerCase();
-            preds.push((r) => String(r[args[0] as string] ?? "").toLowerCase() === want);
+            // PostgREST ILIKE: an unescaped % is any run, _ any one character;
+            // a backslash-escaped one is itself (MON-12's look-alike read uses
+            // %word%, the exact-name read escapes its pattern).
+            const pat = String(args[1]);
+            let re = "";
+            for (let i = 0; i < pat.length; i++) {
+              const ch = pat[i];
+              if (ch === "\\" && i + 1 < pat.length) { re += pat[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+              re += ch === "%" ? ".*" : ch === "_" ? "." : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            }
+            const rx = new RegExp(`^${re}$`, "is");
+            preds.push((r) => rx.test(String(r[args[0] as string] ?? "")));
             break;
           }
           case "update": mode = "update"; patch = args[0] as Row; break;
@@ -1030,6 +1040,60 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-bad" });
   });
 
+  it("MON-12 (review fix 3): an UNLINKED bid answers for ANY flagged registry row its name normalises to — 'Gulf Mechanical Inc' for a do-not-use 'Gulf Mechanical, Inc.'", async () => {
+    db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));
+    const refused = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/Gulf Mechanical, Inc\. is flagged DO NOT USE/);
+    expect(refused.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(entries()).toHaveLength(0);
+    const ok = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Sole source" });
+    expect(ok.ok).toBe(true);
+    // the override names the company it overrode; the award records the binding (none — no exact name)
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-dnu", companyStatus: "do_not_use", reason: "Sole source" });
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ companyId: null, override: "Sole source" });
+  });
+
+  it("MON-12 (review fix 3): an exact ACTIVE match binds but never clears the flag of a look-alike; a person's link to the active row decides; another org's row is not this registry", async () => {
+    db.tables.companies.push(
+      { id: "c-ok", org_id: "o1", name: "Harbor Welding", status: "active" },
+      { id: "c-dnu", org_id: "o1", name: "Harbor Welding, Inc.", status: "do_not_use" },
+      { id: "c-inact", org_id: "o1", name: "Keel Insulation Ltd", status: "inactive" },
+      { id: "c-other", org_id: "o2", name: "Tern Coatings, Inc.", status: "do_not_use" },
+    );
+    db.tables.cost_documents.push(
+      docRow({ id: "d-exact", vendor_name: "harbor   welding" }),
+      docRow({ id: "d-linked", vendor_name: "Harbor Welding, Inc.", company_id: "c-ok" }),
+      docRow({ id: "d-inact", vendor_name: "The Keel Insulation Company" }),
+      docRow({ id: "d-other", vendor_name: "Tern Coatings" }),
+    );
+    const exact = await awardQuote({ doc: doc({ id: "d-exact", vendorName: "harbor   welding" }), siblings: [], costAccountId: "a1", actor });
+    expect(exact.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Harbor Welding, Inc.", status: "do_not_use" });
+    const inact = await awardQuote({ doc: doc({ id: "d-inact", vendorName: "The Keel Insulation Company" }), siblings: [], costAccountId: "a1", actor });
+    expect(inact.needsOverride).toEqual({ companyId: "c-inact", companyName: "Keel Insulation Ltd", status: "inactive" });
+    const linked = await awardQuote({ doc: doc({ id: "d-linked", vendorName: "Harbor Welding, Inc." }), siblings: [], costAccountId: "a1", actor });
+    expect(linked.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-ok", override: null });
+    const other = await awardQuote({ doc: doc({ id: "d-other", vendorName: "Tern Coatings" }), siblings: [], costAccountId: "a1", actor });
+    expect(other.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 3): the look-alike read fails closed, and the gate agrees with the bid tab's barredCompanyFor", async () => {
+    db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));
+    db.fail["companies:select"] = [null, { message: "timeout" }]; // the exact read passes, the look-alike read fails
+    const res = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check the company registry/);
+    expect(res.needsOverride).toBeUndefined();
+    expect(entries()).toHaveLength(0);
+    const { barredCompanyFor } = await import("@/lib/bidTab");
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)?.id).toBe("c-dnu");
+  });
+
   it("COST-8: '$' / 'US$' read as USD, non-codes as unstated; a null account currency is USD; setManualTotal corrects the currency", async () => {
     expect(normalizeCurrency("$")).toBe("USD");
     expect(normalizeCurrency(" us$ ")).toBe("USD");
@@ -1200,6 +1264,16 @@ describe("GAP-406 — awardQuote runs the award as one transaction when award_qu
     rpc.handler = playAward({ data: { ok: false, code: "company_flagged", company: { id: "c9", name: "Gulf", status: "inactive" } } });
     const flagged = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
     expect(flagged.needsOverride).toEqual({ companyId: "c9", companyName: "Gulf", status: "inactive" });
+    // COST-13 re-checked under the lock (review fix 3): the guard's own sentences
+    rpc.handler = playAward({ data: { ok: false, code: "confirm_mismatch", total: 1000, confirmed: 1 } });
+    const mismatch = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(mismatch.error).toBe("The confirmed total (1) doesn't match the stored total (1,000) — correct the total first if the paper says something else.");
+    rpc.handler = playAward({ data: { ok: false, code: "extent", total: 1000, pagesRead: 8, pagesTotal: 20 } });
+    const truncated = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(truncated.error).toBe("The AI read only pages 1–8 of 20 of this document, so its total (1,000) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).");
+    rpc.handler = playAward({ data: { ok: false, code: "extent", total: 1000, pagesRead: null, pagesTotal: null } });
+    const unknown = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(unknown.error).toMatch(/^How much of this document the AI read is unknown, so its total \(1,000\) may come from an incomplete read\./);
     // None of these fell back to the client sequence: no entry, no claim, no notice.
     expect(entries()).toHaveLength(0);
     expect(db.tables.cost_documents[0].status).toBe("parsed");
