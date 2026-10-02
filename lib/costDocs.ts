@@ -315,8 +315,10 @@ async function currencyMismatch(doc: CostDocument, costAccountId: string): Promi
 
 type CompanyRow = { id: string; name: string; status: string };
 
-/** The registry statuses an award must answer for (MON-12): `inactive` has
- *  the same behaviour as `do_not_use` — refused without a typed override. */
+/** The registry statuses an award must answer for (MON-12) on the company
+ *  the quote is BOUND to: `inactive` has the same behaviour as
+ *  `do_not_use` — refused without a typed override. A look-alike the quote
+ *  is not bound to counts only when it is `do_not_use` (DEC-48's gate). */
 const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
 
 /** MON-12 / DEC-48: the company behind a quote, as two answers.
@@ -327,11 +329,15 @@ const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
  *    then an exact name with a single match. Binding refuses ambiguity.
  *  - `barred` — the flagged (do-not-use / inactive) row the award must ANSWER
  *    FOR: a link that stands decides, flagged or not (a person chose it);
- *    with no link standing, ANY flagged registry row the vendor name
+ *    with no link standing, ANY do-not-use registry row the vendor name
  *    normalises to (lib/bidTab `normalizeCompanyName`, the bid tab's
- *    `barredCompanyFor` gate). Gating does not refuse ambiguity — it fails
- *    toward the flag, so "Gulf Mechanical Inc" answers for a do-not-use
- *    "Gulf Mechanical, Inc." it does not bind to.
+ *    `barredCompanyFor` gate, DEC-48), else the bound company itself when
+ *    it is flagged. Gating does not refuse ambiguity — it fails toward the
+ *    flag, so "Gulf Mechanical Inc" answers for a do-not-use "Gulf
+ *    Mechanical, Inc." it does not bind to. An INACTIVE look-alike the
+ *    quote does not bind to is not the bid's (the bid tab never flags it;
+ *    a registry de-duplicated by marking the old row inactive leaves one
+ *    beside the active row the bid binds to).
  *  20261157's `cost_doc_company_behind` / `cost_doc_company_barred` are the
  *  same two rules in SQL (the rail and `award_quote` read them as the
  *  database's own check). A link counts only to a company of the document's
@@ -367,25 +373,29 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
   if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
   const rows = (data ?? []) as CompanyRow[];
+  const bound = rows.length === 1 ? rows[0] : null;
   const lookAlike = await flaggedLookAlike(doc.orgId, name);
   if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
-  return { company: rows.length === 1 ? rows[0] : null, barred: lookAlike.company };
+  return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };
 }
 
-/** MON-12's gate for a bid nobody has linked: ANY do-not-use or inactive
- *  registry row of the org whose name normalises to the vendor's
- *  (`normalizeCompanyName`; 20261157's `company_name_key` is the same rule),
- *  do-not-use first. The read is narrowed server-side to the org's flagged
- *  rows whose name holds the key's longest word — every word of the key
- *  except "and" (which may stand for "&") appears, case aside, in the name
- *  as written — and paged past PostgREST's 1,000-row answer. */
+/** MON-12's gate for a bid nobody has linked: ANY do-not-use registry row
+ *  of the org whose name normalises to the vendor's (`normalizeCompanyName`;
+ *  20261157's `company_name_key` is the same rule; DEC-48 and the bid tab's
+ *  `barredCompanyFor` flag do-not-use look-alikes only), the exact name
+ *  first so the refusal names the bound company when that one is barred.
+ *  The read is narrowed server-side to the org's do-not-use rows whose name
+ *  holds the key's longest word — every word of the key except "and"
+ *  (which may stand for "&") appears, case aside, in the name as written —
+ *  and paged past PostgREST's 1,000-row answer. */
 async function flaggedLookAlike(orgId: string, vendorName: string): Promise<{ company: CompanyRow | null; error?: string }> {
   const key = normalizeCompanyName(vendorName);
   if (!key) return { company: null };
   const word = key.split(" ").filter((w) => w !== "and").sort((a, b) => b.length - a.length)[0] ?? null;
+  const exact = vendorName.trim().toLowerCase();
   const hits: CompanyRow[] = [];
   for (let from = 0; ; from += 1000) {
-    let q = supabase.from("companies").select("id, name, status").eq("org_id", orgId).in("status", FLAGGED_COMPANY_STATUSES);
+    let q = supabase.from("companies").select("id, name, status").eq("org_id", orgId).eq("status", "do_not_use");
     if (word) q = q.ilike("name", `%${word}%`);
     const { data, error } = await q.order("id").range(from, from + 999);
     if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
@@ -393,7 +403,7 @@ async function flaggedLookAlike(orgId: string, vendorName: string): Promise<{ co
     hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));
     if (rows.length < 1000) break;
   }
-  hits.sort((a, b) => Number(b.status === "do_not_use") - Number(a.status === "do_not_use") || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  hits.sort((a, b) => Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return { company: hits[0] ?? null };
 }
 
@@ -581,7 +591,8 @@ type AwardResult = {
  * against the row as read, so a refusal reads exactly as the client
  * sequence's; the function re-checks what it can under its lock (status,
  * budget line, currency, the total the guard saw, the registry gate on any
- * normalised look-alike, and COST-13's confirmed figure and read extent).
+ * normalised do-not-use look-alike, and COST-13's confirmed figure and read
+ * extent).
  * Returns AWARD_RPC_MISSING while the migration is not applied.
  */
 async function awardInOneTransaction(

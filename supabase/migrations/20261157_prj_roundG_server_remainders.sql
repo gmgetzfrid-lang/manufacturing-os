@@ -21,15 +21,20 @@
 --      (cost_documents.company_id, 20261096 — read through to_jsonb so a
 --      database without the column is not broken), then its contractor's
 --      (project_parties.company_id), each only to a company of the
---      document's own org; with no link standing, ANY do_not_use or
---      inactive registry row of the org whose name normalises as the
---      vendor name does (`company_name_key` — lib/bidTab.ts
---      normalizeCompanyName in SQL: case, '&' as 'and', punctuation and
---      whitespace, trailing legal suffixes, a leading 'the'), so "Gulf
---      Mechanical Inc" answers for a do-not-use "Gulf Mechanical, Inc.".
---      The binding (`cost_doc_company_behind`: the links, then ONE exact
---      case-insensitive name) is what the award records, never what clears
---      the flag. The rail reads the registry as the definer (the functions
+--      document's own org; with no link standing, ANY do_not_use registry
+--      row of the org whose name normalises as the vendor name does
+--      (`company_name_key` — lib/bidTab.ts normalizeCompanyName in SQL:
+--      case, '&' as 'and', punctuation and whitespace, trailing legal
+--      suffixes, a leading 'the'), so "Gulf Mechanical Inc" answers for a
+--      do-not-use "Gulf Mechanical, Inc." — DEC-48's gate, which flags
+--      do-not-use look-alikes only, as barredCompanyFor does; else the
+--      company the quote binds to by ONE exact name, which answers for its
+--      own `inactive` flag as it did before this migration. An inactive
+--      look-alike the quote does not bind to is not the bid's (a registry
+--      de-duplicated by marking the old row inactive leaves exactly that
+--      beside the active row). The binding (`cost_doc_company_behind`: the
+--      links, then ONE exact case-insensitive name) is what the award
+--      records, never what clears a do-not-use look-alike's flag. The rail reads the registry as the definer (the functions
 --      called from it run as the owner), so a row the caller cannot read
 --      does not slip past. The write
 --      that awards a quote may not also change the company link, the
@@ -215,45 +220,50 @@ $$;
 
 DROP TABLE IF EXISTS pg_temp.prj_g_j12_inventory;
 CREATE TEMP TABLE prj_g_j12_inventory AS
-SELECT 'inventory (MON-12): open quotes (draft / parsed) that answer for a do-not-use or inactive company — the document''s own link, else its contractor''s, else ANY registry row its vendor name normalises to (an award now needs the typed override, through award_quote; a direct status write is refused)' AS inventory, COUNT(*)::text AS n
-  FROM cost_documents d
-  CROSS JOIN LATERAL (
-    -- As the rail judges it (section 1, cost_doc_company_barred): a link
-    -- that stands decides — the document's own (read through to_jsonb — a
-    -- database without 20261096's column still runs), then its
-    -- contractor's, each only to a company of the document's org; with no
-    -- link standing, ANY do-not-use or inactive row of the org whose name
-    -- normalises as the vendor name does.
-    SELECT COALESCE(
-      (SELECT c.status FROM companies c WHERE c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id),
-      (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
-        WHERE pp.id = d.party_id),
-      (SELECT min(c.status) FROM companies c
-        WHERE c.org_id = d.org_id AND c.status IN ('do_not_use', 'inactive')
-          AND pg_temp.prj_g_j12_name_key(d.vendor_name) <> ''
-          AND pg_temp.prj_g_j12_name_key(c.name) = pg_temp.prj_g_j12_name_key(d.vendor_name))) AS status
-  ) b
- WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed') AND b.status IN ('do_not_use', 'inactive')
+WITH
+-- MON-12, read ONCE each (never re-normalised per quote): every do-not-use
+-- registry row's name key per org — the gate's no-link rule — and every
+-- exact (case-insensitive) name per org with how many rows carry it — the
+-- binding. Each quote's name is normalised once and looked up in the keys
+-- (an IN list, which the server hashes once), and its exact name is joined
+-- to the names.
+prj_g_j12_dnu_keys AS MATERIALIZED (
+  SELECT DISTINCT c.org_id, pg_temp.prj_g_j12_name_key(c.name) AS k
+    FROM companies c
+   WHERE c.status = 'do_not_use' AND pg_temp.prj_g_j12_name_key(c.name) <> ''
+),
+prj_g_j12_exact_names AS MATERIALIZED (
+  SELECT c.org_id, lower(c.name) AS n, COUNT(*) AS hits, min(c.status) AS status
+    FROM companies c
+   GROUP BY c.org_id, lower(c.name)
+),
+prj_g_j12_quotes AS MATERIALIZED (
+  -- As the rail judges a quote (section 1, cost_doc_company_barred): a link
+  -- that stands decides — the document's own (read through to_jsonb — a
+  -- database without 20261096's column still runs), then its contractor's,
+  -- each only to a company of the document's org; with no link standing, a
+  -- do-not-use row of the org whose name normalises as the vendor name
+  -- does, else the company it binds to by one exact name (its own flag).
+  SELECT d.status AS doc_status,
+         COALESCE(
+           (SELECT c.status FROM companies c
+             WHERE c.id = NULLIF(to_jsonb(d) ->> 'company_id', '')::uuid AND c.org_id = d.org_id),
+           (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
+             WHERE pp.id = d.party_id),
+           CASE WHEN (d.org_id, pg_temp.prj_g_j12_name_key(d.vendor_name)) IN (SELECT f.org_id, f.k FROM prj_g_j12_dnu_keys f)
+                THEN 'do_not_use' END,
+           CASE WHEN x.hits = 1 THEN x.status END) AS status
+    FROM cost_documents d
+    LEFT JOIN prj_g_j12_exact_names x ON x.org_id = d.org_id AND x.n = lower(btrim(d.vendor_name)) AND btrim(d.vendor_name) <> ''
+   WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed', 'awarded')
+)
+SELECT 'inventory (MON-12): open quotes (draft / parsed) that answer for a do-not-use or inactive company — the document''s own link, else its contractor''s, else ANY do-not-use row its vendor name normalises to, else the company it binds to by one exact name (an award now needs the typed override, through award_quote; a direct status write is refused)' AS inventory, COUNT(*)::text AS n
+  FROM prj_g_j12_quotes
+ WHERE doc_status IN ('draft', 'parsed') AND status IN ('do_not_use', 'inactive')
 UNION ALL
 SELECT 'inventory (MON-12): awarded quotes that answer (judged the same way) for a do-not-use or inactive company (kept as they are — the rail binds the next award)', COUNT(*)::text
-  FROM cost_documents d
-  CROSS JOIN LATERAL (
-    -- As the rail judges it (section 1, cost_doc_company_barred): a link
-    -- that stands decides — the document's own (read through to_jsonb — a
-    -- database without 20261096's column still runs), then its
-    -- contractor's, each only to a company of the document's org; with no
-    -- link standing, ANY do-not-use or inactive row of the org whose name
-    -- normalises as the vendor name does.
-    SELECT COALESCE(
-      (SELECT c.status FROM companies c WHERE c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id),
-      (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
-        WHERE pp.id = d.party_id),
-      (SELECT min(c.status) FROM companies c
-        WHERE c.org_id = d.org_id AND c.status IN ('do_not_use', 'inactive')
-          AND pg_temp.prj_g_j12_name_key(d.vendor_name) <> ''
-          AND pg_temp.prj_g_j12_name_key(c.name) = pg_temp.prj_g_j12_name_key(d.vendor_name))) AS status
-  ) b
- WHERE d.kind = 'quote' AND d.status = 'awarded' AND b.status IN ('do_not_use', 'inactive')
+  FROM prj_g_j12_quotes
+ WHERE doc_status = 'awarded' AND status IN ('do_not_use', 'inactive')
 UNION ALL
 SELECT 'inventory (GAP-406): awarded / posted documents with no linked cost entry (the repair backlog — Repair on the Costs tab; this migration prevents new ones)', COUNT(*)::text
   FROM cost_documents d
@@ -442,9 +452,13 @@ GRANT EXECUTE ON FUNCTION public.company_name_key(text) TO authenticated, servic
 -- barredCompanyFor, lib/costDocs.ts companyBehind's `barred`; DEC-48:
 -- binding refuses ambiguity, gating does not). A link that stands decides,
 -- flagged or not: the document's own, else its contractor's, each only to a
--- company of the document's org. With no link standing, ANY do_not_use or
--- inactive row of the org whose name normalises as the vendor name does —
--- do_not_use first. Returns the flagged company, or NULL when the award
+-- company of the document's org. With no link standing, ANY do_not_use row
+-- of the org whose name normalises as the vendor name does (DEC-48's gate
+-- flags do-not-use look-alikes only — the exact name first, so the refusal
+-- names the company the quote binds to when that one is barred); else the
+-- company it binds to by one exact name (cost_doc_company_behind), when
+-- that one is itself inactive — an inactive look-alike it does not bind to
+-- is not the bid's. Returns the flagged company, or NULL when the award
 -- needs no override. SECURITY INVOKER, as cost_doc_company_behind.
 CREATE OR REPLACE FUNCTION public.cost_doc_company_barred(p_org uuid, p_company uuid, p_party uuid, p_vendor text)
 RETURNS jsonb
@@ -475,19 +489,23 @@ BEGIN
     END IF;
   END IF;
   v_key := company_name_key(p_vendor);
-  IF v_key = '' THEN RETURN NULL; END IF;
-  SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row
-    FROM companies c
-   WHERE c.org_id = p_org AND c.status IN ('do_not_use', 'inactive')
-     AND company_name_key(c.name) = v_key
-   ORDER BY (c.status = 'do_not_use') DESC, c.name, c.id
-   LIMIT 1;
-  RETURN v_row;
+  IF v_key <> '' THEN
+    SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row
+      FROM companies c
+     WHERE c.org_id = p_org AND c.status = 'do_not_use'
+       AND company_name_key(c.name) = v_key
+     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.name, c.id
+     LIMIT 1;
+    IF v_row IS NOT NULL THEN RETURN v_row; END IF;
+  END IF;
+  -- No do-not-use look-alike: the company the quote binds to answers for its own flag.
+  v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);
+  RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;
 END;
 $$;
 
 COMMENT ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) IS
-  'MON-12 (20261157): the do-not-use / inactive company a cost document''s award must answer for — its own registry link, else its contractor''s (a standing link decides, flagged or not), else ANY flagged registry row of the org its vendor name normalises to (company_name_key); NULL when no override is needed. SECURITY INVOKER.';
+  'MON-12 (20261157): the do-not-use / inactive company a cost document''s award must answer for — its own registry link, else its contractor''s (a standing link decides, flagged or not), else ANY do_not_use registry row of the org its vendor name normalises to (company_name_key; DEC-48), else the company it binds to by one exact name when that one is flagged; NULL when no override is needed. SECURITY INVOKER.';
 
 REVOKE ALL ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) FROM anon;
@@ -528,7 +546,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.enforce_cost_document_award_registry() IS
-  'MON-12 (20261157): a signed-in move of a quote to awarded is refused while the company it answers for (cost_doc_company_barred, read as the definer: its standing link, else ANY flagged registry row its vendor name normalises to) is do_not_use or inactive, unless award_quote set app.cost_doc_award_override to the document id after a typed reason. The service role passes.';
+  'MON-12 (20261157): a signed-in move of a quote to awarded is refused while the company it answers for (cost_doc_company_barred, read as the definer: its standing link, else ANY do_not_use registry row its vendor name normalises to, else the company it binds to by one exact name) is do_not_use or inactive, unless award_quote set app.cost_doc_award_override to the document id after a typed reason. The service role passes.';
 
 REVOKE ALL ON FUNCTION public.enforce_cost_document_award_registry() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_cost_document_award_registry() FROM anon;
@@ -620,9 +638,9 @@ BEGIN
   END IF;
 
   -- The registry (MON-12): the company the quote binds to is what the award
-  -- records; the company it answers for (a standing link, else ANY flagged
-  -- row its vendor name normalises to — the rail's own rule) needs the
-  -- typed reason.
+  -- records; the company it answers for (a standing link, else ANY
+  -- do-not-use row its vendor name normalises to, else the bound company's
+  -- own flag — the rail's own rule) needs the typed reason.
   v_company := cost_doc_company_behind(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);
   v_barred := cost_doc_company_barred(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);
   v_flagged := v_barred IS NOT NULL AND v_barred ->> 'status' IN ('do_not_use', 'inactive');
@@ -1176,7 +1194,7 @@ SELECT 'MON-12: cost_doc_company_behind resolves the document link, then the con
        AND NOT has_function_privilege('anon', 'public.cost_doc_company_behind(uuid,uuid,uuid,text)', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyName (answers checked here), and cost_doc_company_barred gates on ANY do-not-use / inactive row the vendor name normalises to when no link stands — both SECURITY INVOKER, not executable by anon',
+SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyName (answers checked here), and cost_doc_company_barred gates on ANY do-not-use row the vendor name normalises to when no link stands (DEC-48), else on the company the quote binds to by one exact name — both SECURITY INVOKER, not executable by anon',
        company_name_key('Gulf Mechanical, Inc.') = 'gulf mechanical'
        AND company_name_key('  gulf   MECHANICAL inc ') = 'gulf mechanical'
        AND company_name_key('The Smith & Sons Co.') = 'smith and sons'
@@ -1187,6 +1205,9 @@ SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyNam
        AND (SELECT NOT prosecdef
                    AND prosrc LIKE '%RETURN CASE WHEN v_row ->> ''status'' IN (''do_not_use'', ''inactive'') THEN v_row END;%'
                    AND prosrc LIKE '%AND company_name_key(c.name) = v_key%'
+                   AND prosrc LIKE '%WHERE c.org_id = p_org AND c.status = ''do_not_use''%'
+                   AND prosrc NOT LIKE '%c.status IN (%'
+                   AND prosrc LIKE '%v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);%'
                    AND prosrc LIKE '%WHERE c.id = p_company AND c.org_id = p_org;%'
                    AND prosrc LIKE '%WHERE c.id = v_party_company AND c.org_id = p_org;%'
               FROM pg_proc WHERE proname = 'cost_doc_company_barred' AND pronargs = 4)

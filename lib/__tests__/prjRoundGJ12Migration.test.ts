@@ -193,7 +193,7 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(ts.indexOf("project_parties")).toBeLessThan(ts.indexOf(".ilike(\"name\""));
     expect(ts).toContain("rows.length === 1");
   });
-  it("the rail judges the GATE, not the binding: an unlinked bid answers for ANY flagged row its name normalises to (review major)", () => {
+  it("the rail judges the GATE, not the binding: an unlinked bid answers for ANY do-not-use row its name normalises to, else for the company it binds to (review major; review fix 4)", () => {
     expect(rail).toContain("v_company := cost_doc_company_barred(NEW.org_id, NULLIF(to_jsonb(NEW) ->> 'company_id', '')::uuid, NEW.party_id, NEW.vendor_name);");
     expect(rail).not.toContain("cost_doc_company_behind(");
     const gate = fn("cost_doc_company_barred");
@@ -205,16 +205,24 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(own).toBeGreaterThan(0);
     expect(own).toBeLessThan(party);
     expect(party).toBeLessThan(names);
-    expect(gate.split("RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;").length - 1).toBe(2);
-    // no link: ANY flagged row of the org with the same key — no uniqueness, do_not_use first
-    expect(gate).toContain("WHERE c.org_id = p_org AND c.status IN ('do_not_use', 'inactive')\n     AND company_name_key(c.name) = v_key\n   ORDER BY (c.status = 'do_not_use') DESC, c.name, c.id\n   LIMIT 1;");
+    // a standing link answers for its own flag, do_not_use or inactive (twice); so does the bound company (once)
+    expect(gate.split("RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;").length - 1).toBe(3);
+    // no link: ANY do_not_use row of the org with the same key — no uniqueness, the exact name first (DEC-48's
+    // gate flags do-not-use look-alikes only, as barredCompanyFor does — review fix 4: an INACTIVE look-alike
+    // the quote does not bind to is not the bid's)
+    expect(gate).toContain("IF v_key <> '' THEN\n    SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row\n      FROM companies c\n     WHERE c.org_id = p_org AND c.status = 'do_not_use'\n       AND company_name_key(c.name) = v_key\n     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.name, c.id\n     LIMIT 1;\n    IF v_row IS NOT NULL THEN RETURN v_row; END IF;\n  END IF;");
+    expect(gate).not.toContain("c.status IN (");
     expect(gate).not.toMatch(/COUNT\(\*\)|v_n <> 1/);
-    expect(gate).toContain("IF v_key = '' THEN RETURN NULL; END IF;");
+    // else the company the quote binds to by one exact name (cost_doc_company_behind with no link), on its own flag
+    const bound = gate.indexOf("v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);\n  RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;\nEND;");
+    expect(bound).toBeGreaterThan(gate.indexOf("IF v_row IS NOT NULL THEN RETURN v_row; END IF;"));
     // the lib's gate is the same rule: barredCompanyFor's candidates, the link deciding
     const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
     const look = between(lib, "async function flaggedLookAlike(", "\n}\n");
     expect(look).toContain("const key = normalizeCompanyName(vendorName);");
-    expect(look).toContain('.in("status", FLAGGED_COMPANY_STATUSES)');
+    expect(look).toContain('.eq("status", "do_not_use")');
+    expect(look).not.toContain("FLAGGED_COMPANY_STATUSES");
+    expect(look).toContain("Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact)");
     expect(look).toContain("hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));");
     expect(look).toContain("if (rows.length < 1000) break;");
     expect(lib).toContain('const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];');
@@ -222,6 +230,11 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(behind).toContain("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };");
     expect(behind).toContain("const lookAlike = await flaggedLookAlike(doc.orgId, name);");
     expect(behind).toContain("if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };");
+    expect(behind).toContain("return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };");
+    // the bid tab's own gate: a do-not-use look-alike flags, an inactive one does not (review fix 4's parity)
+    const reg = [{ id: "a", name: "Harbor Welding", status: "active" }, { id: "old", name: "Harbor Welding, Inc.", status: "inactive" }];
+    expect(barredCompanyFor("Harbor Welding", null, reg)).toBeNull();
+    expect(barredCompanyFor("Harbor Welding", null, [...reg, { id: "dnu", name: "Harbor Welding LLC", status: "do_not_use" }])?.id).toBe("dnu");
   });
   it("company_name_key is lib/bidTab.ts normalizeCompanyName in SQL: the same suffix list in the same order, the same steps, the same answers", () => {
     const key = fn("company_name_key");
@@ -544,20 +557,33 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
 
 describe("the DEC-30 inventory counts everything the migration narrows (review minor)", () => {
   const inv = between(C, "CREATE TEMP TABLE prj_g_j12_inventory AS", "\nBEGIN;");
-  it("MON-12: quotes are judged as the rail judges them — the document's own link (through to_jsonb), then the contractor's, then ANY flagged row the vendor name normalises to (review major)", () => {
+  it("MON-12: quotes are judged as the rail judges them — the document's own link (through to_jsonb), then the contractor's, then ANY do-not-use row the vendor name normalises to, then the company it binds to by one exact name (review major; review fix 4)", () => {
     const rows = inv.split(/UNION ALL/).filter((r) => /inventory \(MON-12\)/.test(r));
     expect(rows).toHaveLength(2);
-    for (const r of rows) {
-      const own = r.indexOf("c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id");
-      const party = r.indexOf("FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id");
-      const name = r.indexOf("AND pg_temp.prj_g_j12_name_key(c.name) = pg_temp.prj_g_j12_name_key(d.vendor_name)");
-      expect(own).toBeGreaterThan(0);
-      expect(own).toBeLessThan(party);
-      expect(party).toBeLessThan(name);
-      expect(r).toContain("WHERE c.org_id = d.org_id AND c.status IN ('do_not_use', 'inactive')");
-      expect(r).not.toContain("HAVING COUNT(*) = 1");
-      expect(r).not.toMatch(/\bd\.company_id\b/); // a database without 20261096 still runs
-    }
+    for (const r of rows) expect(r).toContain("FROM prj_g_j12_quotes\n");
+    const quotes = between(inv, "prj_g_j12_quotes AS MATERIALIZED (", "\n)\nSELECT 'inventory (MON-12)");
+    const own = quotes.indexOf("WHERE c.id = NULLIF(to_jsonb(d) ->> 'company_id', '')::uuid AND c.org_id = d.org_id");
+    const party = quotes.indexOf("FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id");
+    const dnu = quotes.indexOf("CASE WHEN (d.org_id, pg_temp.prj_g_j12_name_key(d.vendor_name)) IN (SELECT f.org_id, f.k FROM prj_g_j12_dnu_keys f)\n                THEN 'do_not_use' END,");
+    const exact = quotes.indexOf("CASE WHEN x.hits = 1 THEN x.status END) AS status");
+    expect(own).toBeGreaterThan(0);
+    expect(own).toBeLessThan(party);
+    expect(party).toBeLessThan(dnu);
+    expect(dnu).toBeLessThan(exact);
+    expect(quotes).not.toMatch(/\bd\.company_id\b/); // a database without 20261096 still runs
+    // the look-alike keys are do-not-use rows only (DEC-48's gate — review fix 4), one key per org and name
+    expect(inv).toContain("prj_g_j12_dnu_keys AS MATERIALIZED (\n  SELECT DISTINCT c.org_id, pg_temp.prj_g_j12_name_key(c.name) AS k\n    FROM companies c\n   WHERE c.status = 'do_not_use' AND pg_temp.prj_g_j12_name_key(c.name) <> ''\n)");
+    expect(inv).toContain("prj_g_j12_exact_names AS MATERIALIZED (\n  SELECT c.org_id, lower(c.name) AS n, COUNT(*) AS hits, min(c.status) AS status\n    FROM companies c\n   GROUP BY c.org_id, lower(c.name)\n)");
+    expect(inv).not.toContain("'do_not_use', 'inactive')\n          AND pg_temp");
+    // review minor: the registry's names are normalised ONCE, in the keys (no empty key), and each quote's name once,
+    // looked up in an uncorrelated IN list (hashed once by the server; scratch PG16: 5,000 quotes beside 400
+    // flagged rows in 85 ms, against 39 s re-normalising the registry inside each quote's subquery) — never a
+    // per-quote subquery over the registry
+    expect(inv.split("pg_temp.prj_g_j12_name_key(").length - 1).toBe(3);
+    expect(quotes.split("pg_temp.prj_g_j12_name_key(").length - 1).toBe(1);
+    expect(quotes).not.toMatch(/FROM companies c\s+WHERE c\.org_id = d\.org_id/);
+    expect(quotes).toContain("LEFT JOIN prj_g_j12_exact_names x ON x.org_id = d.org_id AND x.n = lower(btrim(d.vendor_name)) AND btrim(d.vendor_name) <> ''");
+    expect(inv).not.toContain("pg_temp.prj_g_j12_name_key(c.name) = pg_temp.prj_g_j12_name_key(d.vendor_name)");
   });
   it("the inventory's session copy of the normaliser is section 1's company_name_key, byte for byte (it runs before the transaction creates it)", () => {
     const temp = between(M, "CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key(p_name text)", "\n$$;");

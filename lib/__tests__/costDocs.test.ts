@@ -1071,14 +1071,63 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     );
     const exact = await awardQuote({ doc: doc({ id: "d-exact", vendorName: "harbor   welding" }), siblings: [], costAccountId: "a1", actor });
     expect(exact.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Harbor Welding, Inc.", status: "do_not_use" });
+    // an INACTIVE look-alike the quote does not bind to is not the bid's — DEC-48's gate flags do-not-use
+    // look-alikes only, as barredCompanyFor does (review fix 4; review fix 3 had flagged it)
     const inact = await awardQuote({ doc: doc({ id: "d-inact", vendorName: "The Keel Insulation Company" }), siblings: [], costAccountId: "a1", actor });
-    expect(inact.needsOverride).toEqual({ companyId: "c-inact", companyName: "Keel Insulation Ltd", status: "inactive" });
+    expect(inact.ok).toBe(true);
+    expect(inact.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: null, override: null });
     const linked = await awardQuote({ doc: doc({ id: "d-linked", vendorName: "Harbor Welding, Inc." }), siblings: [], costAccountId: "a1", actor });
     expect(linked.ok).toBe(true);
     expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-ok", override: null });
     const other = await awardQuote({ doc: doc({ id: "d-other", vendorName: "Tern Coatings" }), siblings: [], costAccountId: "a1", actor });
     expect(other.ok).toBe(true);
     expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 4): an INACTIVE look-alike is not the bid's — 'Harbor Welding' binds to the active row and is awarded with no prompt beside an inactive 'Harbor Welding, Inc.'", async () => {
+    // A registry de-duplicated by marking the old row inactive (the review's case).
+    db.tables.companies.push(
+      { id: "c-active", org_id: "o1", name: "Harbor Welding", status: "active" },
+      { id: "c-old", org_id: "o1", name: "Harbor Welding, Inc.", status: "inactive" },
+    );
+    db.tables.cost_documents.push(docRow({ id: "d-hw", vendor_name: "Harbor Welding" }));
+    const res = await awardQuote({ doc: doc({ id: "d-hw", vendorName: "Harbor Welding" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-active", override: null });
+    // the bid tab shows no flag either
+    expect(barredCompanyFor("Harbor Welding", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)).toBeNull();
+  });
+
+  it("MON-12 (review fix 4): the bound company's own inactive flag still asks; a do-not-use look-alike outranks it; the exact name is named first", async () => {
+    db.tables.companies.push(
+      { id: "k-inact", org_id: "o1", name: "Keel Insulation", status: "inactive" },
+      { id: "s-inact", org_id: "o1", name: "Spar Rigging", status: "inactive" },
+      { id: "s-dnu", org_id: "o1", name: "Spar Rigging Ltd", status: "do_not_use" },
+      { id: "t-other", org_id: "o1", name: "Tern Coatings Inc", status: "do_not_use" },
+      { id: "t-exact", org_id: "o1", name: "The Tern Coatings", status: "do_not_use" },
+    );
+    db.tables.cost_documents.push(
+      docRow({ id: "d-keel", vendor_name: "Keel Insulation" }),
+      docRow({ id: "d-spar", vendor_name: "Spar Rigging" }),
+      docRow({ id: "d-tern", vendor_name: "The Tern Coatings" }),
+    );
+    // bound by its one exact name to an inactive company, no look-alike: asked, as before 20261157
+    const keel = await awardQuote({ doc: doc({ id: "d-keel", vendorName: "Keel Insulation" }), siblings: [], costAccountId: "a1", actor });
+    expect(keel.needsOverride).toEqual({ companyId: "k-inact", companyName: "Keel Insulation", status: "inactive" });
+    // bound to an inactive company with a do-not-use look-alike beside it: the do-not-use row is named
+    const spar = await awardQuote({ doc: doc({ id: "d-spar", vendorName: "Spar Rigging" }), siblings: [], costAccountId: "a1", actor });
+    expect(spar.needsOverride).toEqual({ companyId: "s-dnu", companyName: "Spar Rigging Ltd", status: "do_not_use" });
+    // two do-not-use rows normalise alike: the one the quote binds to is named, though the other sorts first
+    const tern = await awardQuote({ doc: doc({ id: "d-tern", vendorName: "The Tern Coatings" }), siblings: [], costAccountId: "a1", actor });
+    expect(tern.needsOverride).toEqual({ companyId: "t-exact", companyName: "The Tern Coatings", status: "do_not_use" });
+    const ok = await awardQuote({ doc: doc({ id: "d-tern", vendorName: "The Tern Coatings" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE").at(-1)!.details).toMatchObject({ companyId: "t-exact", companyStatus: "do_not_use" });
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "t-exact", override: "Sole source" });
+    expect(entries()).toHaveLength(1);
   });
 
   it("MON-12 (review fix 3): the look-alike read fails closed, and the gate agrees with the bid tab's barredCompanyFor", async () => {
