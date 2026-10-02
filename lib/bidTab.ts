@@ -659,12 +659,19 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
 /** The do-not-use row a bid must answer for (MON-12 / COST-3): the
  *  explicitly linked company when there is a link (a human chose it);
  *  otherwise ANY registry row the vendor name could be. Fails toward the
- *  flag — ambiguity never clears it. */
+ *  flag — ambiguity never clears it. Of several, the exact name first
+ *  (`lower(name) = lower(btrim(vendor))` — spaces trimmed only), then the
+ *  id in byte order: 20261157 `cost_doc_company_barred`'s order and
+ *  lib/costDocs.ts `flaggedLookAlike`'s, so the bid tab's override prompt
+ *  names the company `award_quote`'s override row records. */
 export function barredCompanyFor<T extends { id: string; name: string; status: string }>(
   vendorName: string | null | undefined, boundId: string | null | undefined, registry: T[],
 ): T | null {
   if (boundId) return registry.find((c) => c.id === boundId && c.status === "do_not_use") ?? null;
-  return companyCandidatesByName(vendorName, registry).find((c) => c.status === "do_not_use") ?? null;
+  const exact = (vendorName ?? "").replace(/^ +| +$/g, "").toLowerCase();
+  const isExact = (c: T) => Number(c.name.toLowerCase() === exact);
+  return companyCandidatesByName(vendorName, registry).filter((c) => c.status === "do_not_use")
+    .sort((a, b) => isExact(b) - isExact(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
 }
 
 // ── Read extent (COST-13) ─────────────────────────────────────────────────

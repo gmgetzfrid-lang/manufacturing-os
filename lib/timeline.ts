@@ -449,6 +449,7 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   MILESTONE_CREATED: "noise",
   MILESTONE_UPDATED: "noise",
   MILESTONE_DELETED: "noise",
+  MILESTONE_SCOPE_RECORDED: "noise", // SEC-21: the database's scope stamp (SCOPE_STAMP_ACTIONS)
   TASKS_GROUPED: "noise",
   // The project itself — the feed already carries these as activity rows
   PROJECT_CREATED: "mirrored",
@@ -479,6 +480,15 @@ export function isProjectFeedAction(action: string): boolean {
 }
 
 const pgList = (xs: string[]) => `(${xs.map((x) => `"${x}"`).join(",")})`;
+
+/** SEC-21 (20261157): audit rows the DATABASE writes to stamp a scope — not
+ *  an event anyone did. `MILESTONE_SCOPE_RECORDED` is written as a document's
+ *  milestone is deleted, beside the `MILESTONE_DELETED` row the person's
+ *  delete writes, so a timeline that showed both would show the one delete
+ *  twice. The document and project timelines and the Activity feed leave
+ *  them out; the admin audit page shows every row. */
+export const SCOPE_STAMP_ACTIONS: ReadonlySet<string> = new Set(["MILESTONE_SCOPE_RECORDED"]);
+const withoutScopeStamps = (rows: AuditRow[]): AuditRow[] => rows.filter((r) => !SCOPE_STAMP_ACTIONS.has(r.action));
 
 const money = (v: unknown): string | null => {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
@@ -610,7 +620,7 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
   // name — an audit row whose hold row was deleted still renders. "Deleted"
   // is decided by a targeted lookup of the referenced ids, not by absence
   // from the paged holds query.
-  const auditRows = (auditResult.data as AuditRow[]) ?? [];
+  const auditRows = withoutScopeStamps((auditResult.data as AuditRow[]) ?? []);
   const holdRows = (holdResult.data as HoldRow[]) ?? [];
   const existingHoldIds = await lookupExistingHoldIds(holdIdsReferencedBy(auditRows), new Set(holdRows.map((h) => h.id)));
   const { auditEvents, holdEvents } = mergeHoldHistory(auditRows, holdRows, existingHoldIds);
@@ -773,7 +783,7 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
         .eq("resource_type", "document")
         .in("resource_id", part)
         .order("timestamp", { ascending: false })
-        .limit(limit)),
+        .limit(limit)).then(withoutScopeStamps),
       readByIdChunks<VersionRow>(docIds, (part) => supabase
         .from("document_versions")
         .select("*")

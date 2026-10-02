@@ -178,8 +178,9 @@
 --      milestone still exists — so the MILESTONE_DELETED row written after
 --      the delete takes its project or the marker. A project- or
 --      milestone-typed milestone needs none (SEC-20 decides a project row;
---      a milestone-typed row is org-level); the service role and the org's
---      own delete write none. lib/milestones.ts is not changed.
+--      a milestone-typed row is org-level); the service role,
+--      delete_project_record's audited purge (20261103's app.record_purge)
+--      and the org's own delete write none. lib/milestones.ts is not changed.
 --
 -- NOT a widening: every rule here refuses or narrows. The DEC-30 inventory
 -- (aggregate counts only, never rows) is captured BEFORE the transaction and
@@ -492,8 +493,9 @@ GRANT EXECUTE ON FUNCTION public.company_name_key(text) TO authenticated, servic
 -- do_not_use row of the org whose name normalises as the vendor name does
 -- (DEC-48's gate flags do-not-use look-alikes only — the exact name first,
 -- so the refusal names the company the quote binds to when that one is
--- barred; then by id, as lib/costDocs.ts flaggedLookAlike orders them, so
--- the prompt and the override row name the same company); else the
+-- barred; then by id, as lib/costDocs.ts flaggedLookAlike and lib/bidTab.ts
+-- barredCompanyFor order them, so the lib's and the bid tab's prompts and
+-- the override row name the same company); else the
 -- company it binds to (cost_doc_company_behind: its contractor's link,
 -- else one exact name), when that one is itself inactive — an inactive
 -- look-alike it does not bind to is not the bid's. Returns the flagged
@@ -1217,8 +1219,21 @@ CREATE TRIGGER trg_audit_logs_milestone_project
 -- project-typed or milestone-typed milestone needs none (SEC-20 decides a
 -- project row by its project; section 6 reads a milestone-typed row as
 -- org-level). A delete RLS refuses fires nothing. The service role keeps
--- its pass (a purge or a restore writes no row) and the org's own delete
--- (its FK cascade) writes none. SECURITY DEFINER so the row is written
+-- its pass (auth.uid() NULL — a server-side delete or the SQL editor writes
+-- no row). delete_project_record (20261103) is SECURITY DEFINER with
+-- auth.uid() still the caller, and deletes every milestone of the project
+-- inside its purge: it sets app.record_purge = 'project:<id>' around the
+-- purge, and under it this trigger writes nothing — the purge is audited by
+-- its own PROJECT_DELETED / PURGE_PROJECT_SNAPSHOT rows, and a row naming
+-- a deleted project is the audit roles' alone (SEC-20, section 6), so one
+-- row per milestone (300 for a 300-task schedule) would only lengthen the
+-- purge's statement. The org's own delete
+-- (its FK cascade) writes none. No other path deletes milestones in bulk:
+-- projects and documents are ON DELETE SET NULL on milestones (an update),
+-- delete_milestone_keep_subtree (20261107) and lib/milestones.ts
+-- deleteMilestone delete one row, and lib/projects.ts
+-- legacyDeleteRecordlessProject runs only where delete_project_record does
+-- not exist (before 20261103). SECURITY DEFINER so the row is written
 -- whatever the deleter may insert; nobody may call it.
 CREATE OR REPLACE FUNCTION public.record_milestone_scope_on_delete()
 RETURNS trigger
@@ -1227,7 +1242,10 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF auth.uid() IS NULL THEN RETURN OLD; END IF;              -- the service pass: a purge or a restore
+  IF auth.uid() IS NULL THEN RETURN OLD; END IF;              -- the service pass
+  IF COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.project_id::text THEN
+    RETURN OLD;                                                -- delete_project_record's audited purge
+  END IF;
   IF OLD.document_id IS NULL THEN RETURN OLD; END IF;          -- not document-typed: nothing to carry
   IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN RETURN OLD; END IF;   -- the org's own delete
   INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, details)
@@ -1238,7 +1256,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.record_milestone_scope_on_delete() IS
-  'SEC-21 (20261157): as a signed-in caller deletes a document-scoped milestone, writes one MILESTONE_SCOPE_RECORDED audit row on its document (stamped by stamp_milestone_audit_project while the milestone still exists — its project or the org-level marker), so the MILESTONE_DELETED row lib/milestones.ts writes after the delete takes that stamp. The service role and the org''s own delete write none.';
+  'SEC-21 (20261157): as a signed-in caller deletes a document-scoped milestone, writes one MILESTONE_SCOPE_RECORDED audit row on its document (stamped by stamp_milestone_audit_project while the milestone still exists — its project or the org-level marker), so the MILESTONE_DELETED row lib/milestones.ts writes after the delete takes that stamp. The service role, delete_project_record''s audited purge (app.record_purge = project:<id>, 20261103) and the org''s own delete write none.';
 
 REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM anon;
@@ -1443,7 +1461,7 @@ SELECT 'SEC-21: trg_audit_logs_milestone_project fires BEFORE INSERT on audit_lo
        AND NOT has_function_privilege('authenticated', 'public.stamp_milestone_audit_project()', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'SEC-21: trg_milestones_record_scope_on_delete fires BEFORE DELETE on milestones for a document-scoped milestone only; its function is SECURITY DEFINER with search_path pinned, keeps the service pass, skips the org''s own delete, writes one MILESTONE_SCOPE_RECORDED row on the milestone''s document, and nobody may call it',
+SELECT 'SEC-21: trg_milestones_record_scope_on_delete fires BEFORE DELETE on milestones for a document-scoped milestone only; its function is SECURITY DEFINER with search_path pinned, keeps the service pass, skips delete_project_record''s purge and the org''s own delete, writes one MILESTONE_SCOPE_RECORDED row on the milestone''s document, and nobody may call it',
        EXISTS (SELECT 1 FROM pg_trigger t
                 WHERE t.tgrelid = 'public.milestones'::regclass AND t.tgname = 'trg_milestones_record_scope_on_delete'
                   AND NOT t.tgisinternal AND t.tgenabled <> 'D'
@@ -1451,6 +1469,7 @@ SELECT 'SEC-21: trg_milestones_record_scope_on_delete fires BEFORE DELETE on mil
                   AND pg_get_triggerdef(t.oid) LIKE '%document_id IS NOT NULL%')
        AND (SELECT prosecdef AND proconfig::text LIKE '%search_path=public%'
                    AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN OLD; END IF;%'
+                   AND prosrc LIKE '%IF COALESCE(current_setting(''app.record_purge'', true), '''') = ''project:'' || OLD.project_id::text THEN%'
                    AND prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN RETURN OLD; END IF;%'
                    AND prosrc LIKE '%VALUES (''MILESTONE_SCOPE_RECORDED'', ''document'', OLD.document_id::text, OLD.org_id, auth.uid(),%'
               FROM pg_proc WHERE proname = 'record_milestone_scope_on_delete' AND pronargs = 0)

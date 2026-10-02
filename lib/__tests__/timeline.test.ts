@@ -285,3 +285,33 @@ describe("SAF-6 / PERF-8 — a busy project's id lists are read in chunks", () =
     await expect(getProjectTimeline({ projectId: "p1" })).rejects.toThrow(/Request-URI Too Long/);
   });
 });
+
+describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope stamp is not an event", () => {
+  // 20261157's record_milestone_scope_on_delete writes MILESTONE_SCOPE_RECORDED on the milestone's document as
+  // a signed-in caller deletes it; lib/milestones.ts then writes MILESTONE_DELETED on the same document.
+  const pair = () => [
+    audit("21", "MILESTONE_SCOPE_RECORDED", { resource_type: "document", resource_id: "d1", details: { milestoneId: "m1", name: "Hydrotest", projectId: "p1", projectIdFrom: "milestone" }, timestamp: "2026-09-21T10:00:00Z" }),
+    audit("22", "MILESTONE_DELETED", { resource_type: "document", resource_id: "d1", details: { milestoneId: "m1", name: "Hydrotest", projectId: "p1", projectIdFrom: "milestone" }, timestamp: "2026-09-21T10:00:01Z" }),
+  ];
+  it("the document timeline shows one milestone delete as one entry", async () => {
+    state.rows.audit_logs = pair();
+    const events = await getDocumentTimeline({ documentId: "d1" });
+    expect(events.map((e) => e.summary)).toEqual(["Milestone deleted: Hydrotest"]);
+  });
+  it("the project feed's linked-document rows show it once too", async () => {
+    state.rows.project_activity = [];
+    state.rows.cost_documents = [];
+    state.rows.project_documents = [{ id: "pd1", project_id: "p1", document_id: "d1" }];
+    state.rows.audit_logs = pair();
+    const events = await getProjectTimeline({ projectId: "p1" });
+    expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Hydrotest"]);
+  });
+  it("the stamp is classed in the one vocabulary, as MILESTONE_DELETED is; the set names it alone", async () => {
+    const { SCOPE_STAMP_ACTIONS } = await import("@/lib/timeline");
+    expect([...SCOPE_STAMP_ACTIONS]).toEqual(["MILESTONE_SCOPE_RECORDED"]);
+    expect(PROJECT_EVENT_VOCABULARY.MILESTONE_SCOPE_RECORDED).toBe("noise");
+    expect(hiddenProjectActions()).toContain("MILESTONE_SCOPE_RECORDED");
+    // the label stays for the raw audit lists (the admin audit page shows every row)
+    expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: { name: "Hydrotest" } })).toBe("Milestone deletion recorded by the database: Hydrotest");
+  });
+});

@@ -12,6 +12,8 @@
 //   PERF-8  the page hands the coach the project row and roster it read
 //   PERF-5  the board's date labels reuse their formatters; the axis and
 //           gridlines are memo'd (a drag does not rebuild them)
+//   SEC-21  the Activity feed shows and counts a milestone delete once (the
+//           database's MILESTONE_SCOPE_RECORDED stamp is not an event)
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -19,6 +21,8 @@ import { join } from "node:path";
 import { milestonePctIndex, computeCostRollup, type CostAccount, type CostEntry } from "@/lib/costs";
 import { computeProjectHealth, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { intakeOutcomeEmail } from "@/lib/intakeOutcomeNotice";
+import { SCOPE_STAMP_ACTIONS } from "@/lib/timeline";
+import ts from "typescript";
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
@@ -182,5 +186,37 @@ describe("PERF-5 — a drag does not rebuild the axis or construct a date format
     expect(new Intl.DateTimeFormat(undefined, { timeZone: "UTC" }).format(d)).toBe(d.toLocaleDateString(undefined, { timeZone: "UTC" }));
     expect(new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit", timeZone: "UTC" }).format(d))
       .toBe(d.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" }));
+  });
+});
+
+describe("SEC-21 — the Activity feed shows and counts one milestone delete once (review fix 6)", () => {
+  // The page's own two memos, run as written: each callback body is lifted from the page source and
+  // transpiled, so the test exercises the code the page runs (a page module exports nothing else).
+  const page = src("app/(protected)/activity/page.tsx");
+  const memo = (name: string) => {
+    const head = `const ${name} = useMemo(() => {`;
+    const from = page.indexOf(head);
+    expect(from, name).toBeGreaterThan(0);
+    const body = page.slice(from + head.length, page.indexOf("\n  }, [rows]);", from));
+    const js = ts.transpileModule(`function memo(rows, SCOPE_STAMP_ACTIONS) {${body}\n}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+    return new Function(`${js}\nreturn memo;`)() as (rows: unknown[], stamps: ReadonlySet<string>) => unknown;
+  };
+  const now = new Date().toISOString();
+  const row = (id: string, action: string) => ({ id, action, resourceType: "document", resourceId: "d1", userEmail: "owner@x.io", userRole: null, details: { name: "Hydrotest" }, timestamp: now });
+  // one signed-in delete of a document's milestone: the database's stamp, then the lib's MILESTONE_DELETED
+  const rows = [row("a2", "MILESTONE_DELETED"), row("a1", "MILESTONE_SCOPE_RECORDED"), row("a0", "MILESTONE_COMPLETED")];
+  it("the pulse counts the delete once: two milestone events today, not three", () => {
+    const pulse = memo("pulse")(rows, SCOPE_STAMP_ACTIONS) as { today: number; milestones: number; actors: number };
+    expect(pulse.milestones).toBe(2);
+    expect(pulse.today).toBe(2);
+    expect(pulse.actors).toBe(1);
+  });
+  it("the feed lists the delete once", () => {
+    const grouped = memo("grouped")(rows, SCOPE_STAMP_ACTIONS) as Array<{ day: string; rows: Array<{ action: string }> }>;
+    expect(grouped.flatMap((g) => g.rows.map((r) => r.action))).toEqual(["MILESTONE_DELETED", "MILESTONE_COMPLETED"]);
+  });
+  it("the page reads the one set lib/timeline.ts keeps, and the load-more test still reads every loaded row", () => {
+    expect(page).toContain('import { SCOPE_STAMP_ACTIONS } from "@/lib/timeline";');
+    expect(page).toContain("{rows.length >= limit && (");
   });
 });

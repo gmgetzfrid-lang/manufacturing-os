@@ -640,6 +640,71 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: { name: "Hydrotest" } })).toBe("Milestone deletion recorded by the database: Hydrotest");
     expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: {} })).toBe("Milestone deletion recorded by the database");
   });
+  it("delete_project_record's purge writes no scope row, an ordinary signed-in delete still writes one — the trigger function transcribed statement by statement (review fix 6)", () => {
+    // The purge: 20261103's delete_project_record is SECURITY DEFINER with auth.uid() still the caller,
+    // and deletes the project's milestones between setting app.record_purge = 'project:<id>' and clearing it.
+    // No later migration re-defines it (the newest definer found by scanning the sequence is 20261103's).
+    const definers = numbered().filter((f) => /CREATE OR REPLACE FUNCTION\s+(public\.)?delete_project_record\s*\(/.test(code(mig(f))));
+    expect(definers[definers.length - 1]).toBe("20261103_prj_roundG_project_closeout_rails.sql");
+    const purge = between(code(mig("20261103_prj_roundG_project_closeout_rails.sql")), "CREATE OR REPLACE FUNCTION delete_project_record(", "\n$$;");
+    expect(purge).toMatch(/LANGUAGE plpgsql SECURITY DEFINER/);
+    expect(purge).toMatch(/v_actor\s+uuid := auth\.uid\(\);/);
+    const set = purge.indexOf("PERFORM set_config('app.record_purge', 'project:' || p_project::text, true);");
+    const del = purge.indexOf("DELETE FROM milestones WHERE project_id = p_project;");
+    const clear = purge.indexOf("PERFORM set_config('app.record_purge', '', true);");
+    expect(set).toBeGreaterThan(0);
+    expect(set).toBeLessThan(del);
+    expect(del).toBeLessThan(clear);
+
+    // The trigger function, read as a list of guards and then the one INSERT; every guard must be one this
+    // table knows (a new guard fails the test until it is transcribed here too).
+    type Old = { id: string; project_id: string | null; document_id: string | null; org_id: string; name: string };
+    type Ctx = { uid: string | null; purge: string | null; orgs: Set<string>; old: Old };
+    const COND: Record<string, (x: Ctx) => boolean> = {
+      "auth.uid() IS NULL": (x) => x.uid === null,
+      // 'project:' || NULL is NULL, and NULL = '…' is not true
+      "COALESCE(current_setting('app.record_purge', true), '') = 'project:' || OLD.project_id::text": (x) =>
+        x.old.project_id !== null && (x.purge ?? "") === `project:${x.old.project_id}`,
+      "OLD.document_id IS NULL": (x) => x.old.document_id === null,
+      "NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id)": (x) => !x.orgs.has(x.old.org_id),
+    };
+    const f = fn("record_milestone_scope_on_delete");
+    let body = f.slice(f.indexOf("AS $$\nBEGIN\n") + "AS $$\nBEGIN\n".length, f.lastIndexOf("\n  RETURN OLD;\nEND;"))
+      .split("\n").map((l) => l.replace(/\s+--\s.*$/, "")).join("\n").trim();
+    const guards: Array<(x: Ctx) => boolean> = [];
+    while (body.startsWith("IF ")) {
+      const then = body.indexOf(" THEN");
+      const end = body.indexOf("END IF;");
+      const cond = body.slice(3, then);
+      expect(body.slice(then + " THEN".length, end).trim(), cond).toBe("RETURN OLD;");
+      expect(COND[cond], `untranscribed guard: ${cond}`).toBeTypeOf("function");
+      guards.push(COND[cond]);
+      body = body.slice(end + "END IF;".length).trim();
+    }
+    expect(body).toBe("INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, details)\n  VALUES ('MILESTONE_SCOPE_RECORDED', 'document', OLD.document_id::text, OLD.org_id, auth.uid(),\n          jsonb_build_object('milestoneId', OLD.id::text, 'name', OLD.name));");
+    const fire = (x: Ctx): Array<{ action: string; resource_id: string; milestoneId: string }> =>
+      guards.some((g) => g(x)) ? [] : [{ action: "MILESTONE_SCOPE_RECORDED", resource_id: x.old.document_id!, milestoneId: x.old.id }];
+
+    const orgs = new Set(["o1"]);
+    const ms = (i: number, project: string | null): Old => ({ id: `m${i}`, project_id: project, document_id: `d${i}`, org_id: "o1", name: `Task ${i}` });
+    // delete_project_record over a 300-task schedule: the owner signed in, the purge GUC naming the project
+    const schedule = Array.from({ length: 300 }, (_, i) => ms(i, "p1"));
+    expect(schedule.flatMap((old) => fire({ uid: "u-owner", purge: "project:p1", orgs, old }))).toEqual([]);
+    // an ordinary signed-in delete (lib/milestones.ts deleteMilestone — no GUC, or the purge's cleared '') still writes one
+    expect(fire({ uid: "u-owner", purge: null, orgs, old: ms(1, "p1") })).toEqual([{ action: "MILESTONE_SCOPE_RECORDED", resource_id: "d1", milestoneId: "m1" }]);
+    expect(fire({ uid: "u-owner", purge: "", orgs, old: ms(2, "p1") })).toHaveLength(1);
+    // the GUC skips only the purged project's milestones: another project's, or one on no project, still writes
+    expect(fire({ uid: "u-owner", purge: "project:p2", orgs, old: ms(3, "p1") })).toHaveLength(1);
+    expect(fire({ uid: "u-owner", purge: "project:p1", orgs, old: ms(4, null) })).toHaveLength(1);
+    // unchanged: the service pass, a milestone on no document, the org's own delete
+    expect(fire({ uid: null, purge: null, orgs, old: ms(5, "p1") })).toEqual([]);
+    expect(fire({ uid: "u-owner", purge: null, orgs, old: { ...ms(6, "p1"), document_id: null } })).toEqual([]);
+    expect(fire({ uid: "u-owner", purge: null, orgs: new Set(), old: ms(7, "p1") })).toEqual([]);
+    expect(guards).toHaveLength(4);
+    // the final SELECT checks the purge guard on paste
+    const probe = C.slice(C.indexOf("\nCOMMIT;"));
+    expect(probe).toContain("AND prosrc LIKE '%IF COALESCE(current_setting(''app.record_purge'', true), '''') = ''project:'' || OLD.project_id::text THEN%'");
+  });
   it("leaves the other audit_logs policies alone", () => {
     expect(C).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
   });

@@ -399,8 +399,12 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
  *  first so the refusal names the bound company when that one is barred,
  *  then by id in byte order — `cost_doc_company_barred`'s own order
  *  (exact name as `lower(btrim(vendor))`, which trims spaces only; then
- *  `c.id`), with no collation in either, so the override prompt and the
- *  override row `award_quote` writes name the same company.
+ *  `c.id`), with no collation in either, so the lib's prompt
+ *  (`needsOverride`) and the override row `award_quote` writes name the
+ *  same company. The bid tab's own prompt and intent row come from
+ *  lib/bidTab.ts `barredCompanyFor`, which orders its look-alikes the same
+ *  way since J12 review fix pass 6 (before it the panel took the first
+ *  do-not-use look-alike by id, with no exact-name preference).
  *  The read is narrowed server-side to the org's do-not-use rows whose name
  *  holds the key's longest word — every word of the key except "and"
  *  (which may stand for "&") appears, case aside, in the name as written —

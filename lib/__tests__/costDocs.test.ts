@@ -1215,6 +1215,30 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     expect(exact.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000005d9" });
   });
 
+  it("MON-12 (review fix 6): the bid tab's override prompt names the company the lib's prompt and award_quote's override row name — two do-not-use look-alikes, the exact-name one with the HIGHER id", async () => {
+    // listBarredCompanies hands the panel the org's do-not-use rows ordered by id
+    const registry = [
+      { id: "00000000-0000-0000-0000-0000000006c1", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+      { id: "00000000-0000-0000-0000-0000000006c2", org_id: "o1", name: "Gulf Mechanical", status: "do_not_use" },
+    ];
+    db.tables.companies.push(...registry);
+    db.tables.cost_documents.push(docRow({ id: "d-gulf", vendor_name: "Gulf Mechanical" }));
+    const refused = await awardQuote({ doc: doc({ id: "d-gulf", vendorName: "Gulf Mechanical" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000006c2", companyName: "Gulf Mechanical" });
+    // the bid tab's prompt and intent row (QuotesPanel barredNow / registryFor → barredCompanyFor)
+    expect(barredCompanyFor("Gulf Mechanical", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    // the panel's render-time list is the barred rows then the name-sorted registry — the order never decides
+    expect(barredCompanyFor("Gulf Mechanical", null, [...registry].reverse())?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    // the exact test is btrim's: spaces trimmed, nothing else, case aside
+    expect(barredCompanyFor("  GULF MECHANICAL ", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    expect(barredCompanyFor("\tGulf Mechanical", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c1");
+    // with no exact name, the lower id, whatever the list's order (cost_doc_company_barred's c.id)
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, [...registry].reverse())?.id).toBe("00000000-0000-0000-0000-0000000006c1");
+    const ok = await awardQuote({ doc: doc({ id: "d-gulf", vendorName: "Gulf Mechanical" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Client-directed sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000006c2", companyName: "Gulf Mechanical" });
+  });
+
   it("MON-12 (review fix 3): the look-alike read fails closed, and the gate agrees with the bid tab's barredCompanyFor", async () => {
     db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
     db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));
