@@ -89,4 +89,9 @@ describe("20261162 — the code reads the column, and runs without it", () => {
     expect(sql).toMatch(/0 = its chunks do not say which, so every page that needs AI vision/);
     expect(sql).toMatch(/for one indexed before 20261122, every page that needs AI vision/);
   });
+
+  it("…and for a reset that points the row at a new file (the rev-up): the old file's page numbers name nothing in it (review fix pass 2)", () => {
+    expect(sql).toMatch(/also written when the reset points the row at a new file, whose pages the old numbers do not name/);
+    expect(sql).toMatch(/So does a reset that points the row at\n-- a new file \(the rev-up refresh\)/);
+  });
 });

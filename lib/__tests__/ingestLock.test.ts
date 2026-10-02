@@ -1438,6 +1438,56 @@ describe("ING-13 (I-06b) — a keyless batch never consumes, text-only, a page A
     // The prose page was never read by AI vision: it owes nothing.
     expect(rowsOf("knowledge_chunks").some((c) => c.page === 3)).toBe(true);
   });
+
+  it("a rev-up that inserts a sheet before the one AI vision read: the reset owes the new file every page that needs AI vision — the old numbers name nothing in it — and a keyless batch holds the moved sheet (review fix pass 2)", async () => {
+    // The review's reproduction. Rev 3: [sheet 1, the SHX sheet AI vision
+    // read (page 2), prose]. Rev 4 inserts a prose page, so the SHX sheet
+    // is page 3 now; owing "page 2" held the prose page's number, and the
+    // keyless batch took Rev 4 to 'ready' with the SHX sheet empty.
+    await lastGeneration({ source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3" });
+    const REV4 = "orgs/o1/dc/rev4.pdf";
+    r2.objects.set(REV4, await makePdf([drawingSheet(1, ["V-101", "P-201A", "E-301"]), prosePage("gaskets"), null, prosePage("bolting")]));
+    const reset = await resetKnowledgeIndex([DOC], {
+      purgeLineTraces: true, supersedeBusy: true,
+      expect: () => ({ source_version_id: "ver-3" }),
+      rowUpdate: () => ({ file_key: REV4, source_version_id: "ver-4", source_rev: "4" }),
+    });
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(docRow()).toMatchObject({ status: "stale", file_key: REV4, source_rev: "4", vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+
+    // A keyless driver (the cron drain: a mirror has no uploader).
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: false, pagesIndexed: 4, visionFailedPages: [3], visionHeldPages: 1, visionPages: 0 });
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [3], error: null });
+    expect([...new Set(rowsOf("knowledge_chunks").map((c) => c.page as number))].sort((a, b) => a - b)).toEqual([1, 2, 4]);
+    expect(vision.calls).toEqual([]);
+
+    // A key reads the moved sheet — exactly what a keyed driver reads first.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([3]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 1 });
+  });
+
+  it("any reset that re-points the row at another file owes the same; one that keeps the file keeps the page numbers; a re-pointed document AI vision never read owes nothing (review fix pass 2)", async () => {
+    const REV4 = "orgs/o1/dc/rev4.pdf";
+    // A new file_key without purgeLineTraces (any other re-pointing caller).
+    await lastGeneration();
+    await resetKnowledgeIndex([DOC], { rowUpdate: () => ({ file_key: REV4 }) });
+    expect(docRow()).toMatchObject({ file_key: REV4, vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+
+    // The same file named again (no change of file): page 2 is page 2.
+    const doc = await lastGeneration();
+    await resetKnowledgeIndex([DOC], { rowUpdate: () => ({ file_key: doc.file_key, source_rev: "3" }) });
+    expect(docRow().vision_owed_pages).toEqual([2]);
+
+    // A rev-up of a document no AI vision ever read (a keyless org's).
+    await lastGeneration({ vision_pages: 0 });
+    db.tables.knowledge_chunks = db.tables.knowledge_chunks.filter((c) => c.page !== 2);
+    await resetKnowledgeIndex([DOC], { purgeLineTraces: true, supersedeBusy: true, rowUpdate: () => ({ file_key: REV4 }) });
+    expect(docRow()).toMatchObject({ file_key: REV4, vision_owed_pages: [] });
+  });
 });
 
 describe("ING-13 / ING-6 (I-06b) — the drain's fileBehind stamps only a row no one holds, still as the drain read it", () => {

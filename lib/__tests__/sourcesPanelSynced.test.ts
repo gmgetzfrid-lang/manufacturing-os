@@ -27,9 +27,9 @@ const SOURCE = {
 let host: HTMLDivElement;
 let root: Root;
 const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
-async function mount(answer: Record<string, unknown>) {
+async function mount(answer: Record<string, unknown>, isController = true) {
   list.fn.mockResolvedValue(answer);
-  await act(async () => { root.render(React.createElement(SourcesPanel, { orgId: "o1", libraryId: "kl-1", isController: true, onChanged: () => undefined })); });
+  await act(async () => { root.render(React.createElement(SourcesPanel, { orgId: "o1", libraryId: "kl-1", isController, onChanged: () => undefined })); });
   await flush();
 }
 const line = () => host.querySelector('[data-testid="sources-last-synced"]');
@@ -45,9 +45,18 @@ describe("ILIFE-13 — the Sources strip shows the library's last sync", () => {
     expect(line()?.getAttribute("title")).toBe(new Date(at).toLocaleString());
   });
 
-  it("a library never synced (or due first) says the nightly run reaches it first", async () => {
+  it("a library never synced, or left due by a sync whose revision refresh was deferred, says the nightly run reaches it first — never that it was never synced", async () => {
     await mount({ sources: [{ ...SOURCE, lastSyncedAt: null }], canManage: true, lastSyncedAt: null, syncTracked: true });
-    expect(line()?.textContent).toMatch(/^Not synced with Document Control yet — the nightly run reaches it first/);
+    expect(line()?.textContent).toBe(
+      "Due to sync with Document Control: not fully reconciled yet, so the nightly run reaches it first. Sync now tries it at once.",
+    );
+    expect(line()?.textContent).not.toMatch(/Not synced/);
+  });
+
+  it("someone without the Sync now button is never told to press it", async () => {
+    await mount({ sources: [{ ...SOURCE, lastSyncedAt: null }], canManage: false, lastSyncedAt: null, syncTracked: true }, false);
+    expect(host.textContent).not.toContain("Sync now");
+    expect(line()?.textContent).toBe("Due to sync with Document Control: not fully reconciled yet, so the nightly run reaches it first.");
   });
 
   it("nothing is invented where the database does not record it, or the route predates the field", async () => {

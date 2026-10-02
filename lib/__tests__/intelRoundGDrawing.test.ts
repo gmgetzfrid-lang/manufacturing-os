@@ -338,4 +338,27 @@ describe("DWG-8 — a connector's evidence is its whole line, so the audit reads
     const prose = `${notes}FROM V-1402 VIA OPC 5 CONTINUED ON DRAWING 2002-D-2001 SHEET 4 ${notes}`;
     expect(opcEvidence(prose, "5").indexOf("OPC 5")).toBe(160);
   });
+
+  it("…on a run-together line within the cap too: the second connector is stored from its own box, never paired on the first one's destination (review fix pass 2)", () => {
+    // The review's reproduction: 84 characters, so the old shortcut stored
+    // the whole line for box 4, and the anchored parse read box 3's
+    // destination (0101 SH 2) as box 4's.
+    const short = "OPC 3: DWG 025-PID-0101 SH 2 — TO V-1402 OPC 4: DWG 025-PID-0107 SH 1 — FROM P-1401A";
+    expect(short.length).toBeLessThanOrEqual(400);
+    const raw4 = opcEvidence(short, "4");
+    expect(raw4).toBe("OPC 4: DWG 025-PID-0107 SH 1 — FROM P-1401A");
+    expect(parseOpcLine(raw4)).toMatchObject({ box: "4", destination: "025-PID-0107", sheet: "1" });
+    // Box 3 opens the line: it is stored whole, exactly as before.
+    expect(opcEvidence(short, "3")).toBe(short);
+    expect(parseOpcLine(opcEvidence(short, "3"))).toMatchObject({ box: "3", destination: "025-PID-0101", sheet: "2" });
+    const self = new Map([
+      ["d101", ["025-PID-0101", "025-PID-0101-SH2"]],
+      ["d107", ["025-PID-0107", "025-PID-0107-SH1"]],
+    ]);
+    const names = new Map([["src", "src.pdf"], ["d101", "0101.pdf"], ["d107", "0107.pdf"]]);
+    expect(auditOpcBoxes([{ document_id: "src", page: 1, tag: "4", raw: raw4 }], self, names).targetsByDoc.get("src")).toEqual(["d107"]);
+    // A short line with no contract shape after its box is stored whole, as before.
+    const plain = "FROM V-1402 VIA OPC 5 CONTINUED ON DRAWING 2002-D-2001 SHEET 4";
+    expect(opcEvidence(plain, "5")).toBe(plain);
+  });
 });

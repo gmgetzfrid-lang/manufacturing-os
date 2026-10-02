@@ -419,7 +419,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       {(sources?.length ?? 0) > 0 && synced?.tracked && (
         <p className="mt-1.5 text-[10px] font-bold text-[var(--color-text-muted)]" data-testid="sources-last-synced"
           title={synced.at ? new Date(synced.at).toLocaleString() : undefined}>
-          {lastSyncedLabel(synced.at)}
+          {lastSyncedLabel(synced.at, undefined, isController)}
         </p>
       )}
       {(sources?.length ?? 0) > 0 && (

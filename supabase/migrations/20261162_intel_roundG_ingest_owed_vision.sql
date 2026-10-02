@@ -15,7 +15,10 @@
 -- their provenance — every chunk 20261122 found reads 'text', so every
 -- document indexed before it — counts AI-vision pages (vision_pages > 0)
 -- that no chunk names: its reset writes 0 (no page is page 0), which owes
--- AI vision every page that needs it. An ingest batch with NO vision
+-- AI vision every page that needs it. So does a reset that points the row at
+-- a new file (the rev-up refresh), whenever the index it resets owed AI
+-- vision any page: the old file's page numbers do not name the new file's
+-- pages (a sheet inserted before another moves it). An ingest batch with NO vision
 -- context (a keyless controller's tab, the nightly drain with no sponsored
 -- key, a member at their cap) then HOLDS such a page wherever a batch with a
 -- key would read it with AI vision now (the page needs it, or the library
@@ -57,7 +60,7 @@ BEGIN;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_owed_pages INTEGER[] NOT NULL DEFAULT '{}';
 
 COMMENT ON COLUMN knowledge_documents.vision_owed_pages IS
-  'Pages the last index generation read with AI vision, recorded by the reset (intelligence Round G I-06b, ING-13); 0 = its chunks do not say which, so every page that needs AI vision. A batch with no vision context holds them for a key instead of indexing them text-only.';
+  'Pages the last index generation read with AI vision, recorded by the reset (intelligence Round G I-06b, ING-13); 0 = its chunks do not say which, so every page that needs AI vision (also written when the reset points the row at a new file, whose pages the old numbers do not name). A batch with no vision context holds them for a key instead of indexing them text-only.';
 
 COMMIT;
 

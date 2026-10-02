@@ -1429,12 +1429,18 @@ export interface KnowledgeSource {
 }
 
 /** "Last synced …" for a knowledge library's Sources strip (ILIFE-13): how
- *  long ago the sync last reconciled it, or that it has not yet — the
- *  nightly run reaches a never-synced library first. */
-export function lastSyncedLabel(at: string | null | undefined, nowMs: number = Date.now()): string {
+ *  long ago the sync last reconciled it, or that it is due. No time means a
+ *  source never synced OR the last sync left a published revision
+ *  unrefreshed (deferred, or failed — syncKnowledgeLibrarySources marks
+ *  the library due, even straight after a Sync now): either way the
+ *  nightly run reaches it first, so the sentence says that, never that
+ *  the library was never synced. `canSync` (a controller, who has the
+ *  Sync now button) adds that it can be tried at once. */
+export function lastSyncedLabel(at: string | null | undefined, nowMs: number = Date.now(), canSync = false): string {
   const t = at ? Date.parse(at) : NaN;
   if (!Number.isFinite(t)) {
-    return "Not synced with Document Control yet — the nightly run reaches it first, or Sync now reconciles it at once.";
+    return "Due to sync with Document Control: not fully reconciled yet, so the nightly run reaches it first."
+      + (canSync ? " Sync now tries it at once." : "");
   }
   const mins = Math.max(0, Math.round((nowMs - t) / 60_000));
   const hours = Math.round(mins / 60);

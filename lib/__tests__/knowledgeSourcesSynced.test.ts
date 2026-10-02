@@ -75,9 +75,16 @@ describe("ILIFE-13 — the library's last sync, from the sources route", () => {
     expect(lastSyncedLabel("2026-10-02T11:59:50Z", now)).toBe("Last synced with Document Control just now.");
     expect(lastSyncedLabel("2026-10-02T09:00:00Z", now)).toBe("Last synced with Document Control 3 hours ago.");
     expect(lastSyncedLabel("2026-09-28T12:00:00Z", now)).toBe("Last synced with Document Control 4 days ago.");
+    // No time: a source never synced, or the last sync (a Sync now, say)
+    // left a revision unrefreshed — true in both, never "not synced yet";
+    // only a controller, who has the button, is offered Sync now.
     expect(lastSyncedLabel(null, now)).toBe(
-      "Not synced with Document Control yet — the nightly run reaches it first, or Sync now reconciles it at once.",
+      "Due to sync with Document Control: not fully reconciled yet, so the nightly run reaches it first.",
     );
+    expect(lastSyncedLabel(null, now, true)).toBe(
+      "Due to sync with Document Control: not fully reconciled yet, so the nightly run reaches it first. Sync now tries it at once.",
+    );
+    expect(lastSyncedLabel("2026-10-02T11:55:00Z", now, true)).toBe("Last synced with Document Control 5 minutes ago.");
   });
 });
 

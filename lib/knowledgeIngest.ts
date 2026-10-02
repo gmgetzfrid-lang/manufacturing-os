@@ -87,25 +87,26 @@ export const OPC_EVIDENCE_MAX = 400;
  *  how much before its box token the window keeps. */
 const OPC_EVIDENCE_LEAD = 160;
 
-/** The evidence stored for connector `box` found on `line`. A line within
- *  OPC_EVIDENCE_MAX is stored whole. A longer one is a text layer with no
- *  line breaks — a whole sheet run together — so the window is taken around
- *  THIS box's token. A connector in the contract's shape ("OPC <n>: DWG
- *  <destination> …", read by position — parseOpcLine, anchored at its box)
- *  opens the window AT its box: one opening before it would hold the
- *  previous connector's drawing number and fail the anchored parse, and
- *  the audit would then read every number in the window, that one
- *  included. Any other line keeps up to OPC_EVIDENCE_LEAD characters
- *  before the box. Either way its destination survives, and the sheet's
- *  first numbers (a title block, another connector) no longer stand in for
- *  it. A window still at the cap may have been cut, which the audit
- *  records as unknown, never broken (OPC_RAW_STORED_MAX in
- *  lib/drawingText.ts). */
+/** The evidence stored for connector `box` found on `line`. A connector in
+ *  the contract's shape ("OPC <n>: DWG <destination> …", read by position —
+ *  parseOpcLine, anchored at its box) is stored FROM its box, whatever the
+ *  line's length: evidence opening before it would hold whatever precedes
+ *  it — on a run-together line, the previous connector, whose box and
+ *  drawing number the anchored parse would then read as this one's (or,
+ *  past the cap, the audit would read every number in the window, that one
+ *  included). Any other line within OPC_EVIDENCE_MAX is stored whole. A
+ *  longer one is a text layer with no line breaks — a whole sheet run
+ *  together — so the window is taken around THIS box's token, keeping up
+ *  to OPC_EVIDENCE_LEAD characters before it. Either way its destination
+ *  survives, and the sheet's first numbers (a title block, another
+ *  connector) no longer stand in for it. A window still at the cap may
+ *  have been cut, which the audit records as unknown, never broken
+ *  (OPC_RAW_STORED_MAX in lib/drawingText.ts). */
 export function opcEvidence(line: string, box: string): string {
-  if (line.length <= OPC_EVIDENCE_MAX) return line;
   const digits = box.replace(/\D/g, "");
   const at = digits ? line.search(new RegExp(String.raw`\bOPC[\s#.:-]*0*${digits}\b`, "i")) : -1;
-  if (at >= 0 && parseOpcLine(line.slice(at))) return truncateSafe(line.slice(at), OPC_EVIDENCE_MAX);
+  if (at > 0 && parseOpcLine(line.slice(at))) return truncateSafe(line.slice(at), OPC_EVIDENCE_MAX);
+  if (line.length <= OPC_EVIDENCE_MAX) return line;
   let start = Math.max(0, Math.min(Math.max(0, at) - OPC_EVIDENCE_LEAD, line.length - OPC_EVIDENCE_MAX));
   const c = line.charCodeAt(start);
   if (c >= 0xdc00 && c <= 0xdfff) start++;               // never open on half a surrogate pair
@@ -379,8 +380,9 @@ const RESET_ROW = {
 /** Written in vision_owed_pages in place of page numbers (no page is page
  *  0): the index being reset read pages with AI vision, but its chunks do
  *  not say which — every chunk written before 20261122 gave them their
- *  provenance reads 'text' — so it owes AI vision every page that needs it
- *  (ING-13). */
+ *  provenance reads 'text' — or the reset points the row at a new file (a
+ *  rev-up), whose pages the old numbers do not name; so it owes AI vision
+ *  every page that needs it (ING-13). */
 export const OWES_EVERY_VISION_PAGE = 0;
 /** vision_owed_pages says the index owes AI vision every page that needs
  *  it (OWES_EVERY_VISION_PAGE). */
@@ -554,7 +556,17 @@ export async function resetKnowledgeIndex(
         await release();
         continue;
       }
-      full.vision_owed_pages = owed.pages;
+      // A reset that points the row at another file (the rev-up): the old
+      // file's page numbers name nothing in the new one — a sheet inserted
+      // or removed before the one AI vision read moves it — so an index
+      // that owed AI vision anything owes the new file every page that
+      // needs it (OWES_EVERY_VISION_PAGE). Only pages a driver with a key
+      // reads anyway are held for it (ingestKnowledgeDocBatch).
+      const newFile = opts.purgeLineTraces === true
+        || ("file_key" in full && (full.file_key ?? null) !== (seen.file_key ?? null));
+      full.vision_owed_pages = newFile && (owed.pages.length > 0 || Number(seen.vision_pages ?? 0) > 0)
+        ? [OWES_EVERY_VISION_PAGE]
+        : owed.pages;
     }
     let updErr: DbError = null;
     let wrote = 0;
@@ -1396,13 +1408,17 @@ export async function ingestKnowledgeDocBatch(
     const retryMode = from >= pageCount && queueBefore.length > 0 && !accepted;
     // ING-13: pages the last index generation read with AI vision (recorded
     // by the reset, 20261162) — or, for a document whose chunks never said
-    // which, every page that needs it (OWES_EVERY_VISION_PAGE). Only a
-    // batch with NO vision context reads this: it holds such a page for a
-    // key, as it holds one for a reason someone can fix — but only where a
-    // driver with a key would read it with AI vision now (the page needs
-    // it, or the library reads every page), so the pages read, and billed,
-    // never depend on which driver reached the document first. A batch with
-    // a key reads exactly the pages it always did.
+    // which, or one a rev-up re-pointed at a new file, every page that
+    // needs it (OWES_EVERY_VISION_PAGE). Only a batch with NO vision
+    // context reads this: it holds such a page for a key, as it holds one
+    // for a reason someone can fix — but only where a driver with a key
+    // would read it with AI vision now (the page needs it, or the library
+    // reads every page), so a regenerated document's owed pages are read,
+    // and billed, whichever driver reaches it first. A batch with a key
+    // reads exactly the pages it always did. A page nothing owes (a first
+    // index, a document whose last generation was keyless) is still
+    // indexed from its text layer by a batch with no key: no background
+    // job bills anyone.
     const owedVision = vision ? new Set<number>() : new Set<number>(pageQueue(cur.vision_owed_pages));
     const owedEveryVisionPage = !vision && owesEveryVisionPage(cur.vision_owed_pages);
     const readsEveryPage = vision ? vision.forceAllPages === true : opts.visionAllPages === true;
@@ -1652,8 +1668,8 @@ export async function ingestKnowledgeDocBatch(
         // Off-page connector BOX NUMBERS — the small numbered box at the page
         // edge that pairs with the same number on the continuation sheet. The
         // raw line keeps the stream/destination + drawing ref for pairing —
-        // the whole line (DWG-8: opcEvidence), never one cut before its
-        // drawing number.
+        // from its own box on a contract line, else the whole line (DWG-8:
+        // opcEvidence), never one cut before its drawing number.
         for (const line of lines) {
           for (const box of parseOpcBoxes(line)) {
             entities.push({
