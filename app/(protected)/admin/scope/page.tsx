@@ -52,6 +52,7 @@ import {
   type ScopeNode, type UnitIdentityReport, type CodebookMappingHolder,
 } from "@/lib/operationalGraph";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
+import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
@@ -559,6 +560,24 @@ function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
   const [busy, setBusy] = useState<null | "preview" | "apply">(null);
   const [report, setReport] = useState<UnitIdentityReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // GAP-314 acceptance 2: how many documents carry no decode since the last
+  // run — the staleness, said before anyone runs the decode.
+  const [staleness, setStaleness] = useState<{ lastRunAt: string | null; undecodedSince: number } | null>(null);
+  useEffect(() => {
+    if (!canEdit) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`/api/admin/unit-identity?orgId=${encodeURIComponent(orgId)}`, {
+          headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        if (alive && res.ok) setStaleness({ lastRunAt: (json.lastRunAt as string | null) ?? null, undecodedSince: Number(json.undecodedSince ?? 0) });
+      } catch { /* the panel works without it */ }
+    })();
+    return () => { alive = false; };
+  }, [orgId, canEdit, report]);
   // Counted over every holder, under any plant — not the tree on screen.
   const mapped = book.units.filter((u) => mappedTo.has(u.code)).length;
   const underArchivedPlant = [...mappedTo.values()].filter((h) => h.plantArchived).length;
@@ -599,6 +618,14 @@ function UnitIdentityPanel({ orgId, canEdit, book, mappedTo }: {
       <div className="text-[11px] text-[var(--color-text-muted)]">
         Each drawing number is decoded with the Site Codebook and the unit it names is written to the document; equipment with no operational unit takes the one its codebook unit is mapped to. Equipment follows the mapping on its own — mapping, remapping or archiving a unit, or refiling an item, moves its unit at once; the decode fills what was missed. A unit set by hand that disagrees with the filing is never changed; one that matches the filing cannot be told from the mapping&apos;s and follows the filing and the mapping like it. A number that does not decode is listed here — never guessed.
       </div>
+      {staleness && (
+        <div className="text-[11px] text-[var(--color-text-muted)]" data-testid="unit-decode-staleness">
+          {staleness.lastRunAt
+            ? `Last decode run ${new Date(staleness.lastRunAt).toLocaleString()} — ${staleness.undecodedSince} numbered document${staleness.undecodedSince === 1 ? "" : "s"} created or changed since carry no decode.`
+            : `The decode has never run — ${staleness.undecodedSince} numbered document${staleness.undecodedSince === 1 ? "" : "s"} carry no decode.`}
+          {" "}New drawings are decoded as they are indexed and documents as they are created or renumbered; a number that does not decode stays without one until the codebook can read it.
+        </div>
+      )}
       {err && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           <AlertTriangle className="w-3.5 h-3.5" /> {err}
