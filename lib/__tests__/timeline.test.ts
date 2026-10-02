@@ -144,6 +144,12 @@ describe("SAF-6 — the controls program reaches the project's Activity tab", ()
     expect(PROJECT_EVENT_VOCABULARY.COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED).toBe("noise");
     expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
       .toBe('Do-not-use letterhead acknowledged at an award — "Apex Industrial, Inc." could be Apex Industrial');
+    // J12 review fix 9: an acknowledgement of the STORED vendor name's look-alike (a flagged contractor answered
+    // the override first) says so — it never reads as a letterhead's
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { matchedOn: ["vendorOnFile", "letterhead"], vendorOnFile: "Apex Industrial", letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use look-alike acknowledged at an award — the vendor on file "Apex Industrial" could be Apex Industrial');
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { matchedOn: ["letterhead"], vendorOnFile: "Bayline Scaffold", letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use letterhead acknowledged at an award — "Apex Industrial, Inc." could be Apex Industrial');
     // The map lives in lib/timeline.ts and nowhere else.
     const src = readFileSync(join(process.cwd(), "lib/timeline.ts"), "utf8");
     expect(src.match(/PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass>> = \{/g)).toHaveLength(1);

@@ -409,8 +409,11 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   // Money & commercial (resource_type 'cost', resource_id = the cost row)
   COST_DOC_AWARDED: "milestone",
   COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "milestone",
-  // J12 review fix pass 8: the bid tab's acknowledgement of a do-not-use row
-  // only the letterhead the AI read could be — never an override.
+  // J12 review fix passes 8 and 9: the bid tab's acknowledgement of a
+  // do-not-use row the letterhead the AI read, or the stored vendor name
+  // behind a flagged contractor, could be (`details.matchedOn`) — never an
+  // override. Like the override intent above it stays a milestone when its
+  // award is then abandoned (its ..._ABANDONED row is noise).
   COST_DOC_AWARD_LETTERHEAD_ACK: "milestone",
   COST_DOC_UPLOADED: "noise",
   COST_DOC_PARSED: "noise",
@@ -560,7 +563,9 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     // SAF-6: the controls program's milestone vocabulary (PROJECT_EVENT_VOCABULARY).
     case "COST_DOC_AWARDED":    return `Quote awarded${d.vendor ? ` — ${d.vendor}` : ""}${money(d.total) ? ` (${money(d.total)})` : ""}`;
     case "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE": return `Award made over a do-not-use flag${d.vendor ? ` — ${d.vendor}` : ""}`;
-    case "COST_DOC_AWARD_LETTERHEAD_ACK": return `Do-not-use letterhead acknowledged at an award${typeof d.letterhead === "string" && typeof d.company === "string" ? ` — "${d.letterhead}" could be ${d.company}` : ""}`;
+    case "COST_DOC_AWARD_LETTERHEAD_ACK": return Array.isArray(d.matchedOn) && d.matchedOn.includes("vendorOnFile")
+      ? `Do-not-use look-alike acknowledged at an award${typeof d.vendorOnFile === "string" && typeof d.company === "string" ? ` — the vendor on file "${d.vendorOnFile}" could be ${d.company}` : ""}`
+      : `Do-not-use letterhead acknowledged at an award${typeof d.letterhead === "string" && typeof d.company === "string" ? ` — "${d.letterhead}" could be ${d.company}` : ""}`;
     case "CHANGE_ORDER_PROPOSED": return `Change order proposed${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_APPROVED": return `Change order approved${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_REJECTED": return `Change order rejected${d.coNumber ? ` ${d.coNumber}` : ""}`;

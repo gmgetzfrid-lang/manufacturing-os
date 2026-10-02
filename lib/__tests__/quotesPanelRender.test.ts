@@ -626,7 +626,7 @@ describe("MON-12 (J12 review fix 7) — the bid tab names the company the award 
     await awardOn(/Gulf Mechanical/);
     // asked at the click, and again after the dialogs (J12 review fix pass 8)
     expect(rpcCalls()).toEqual(Array(2).fill({ p_org: "o1", p_company: null, p_party: null, p_vendor: "Gulf Mechanical" }));
-    expect(dlg.appPrompt).toHaveBeenCalledTimes(1);   // the letterhead normalises as the stored name: no second prompt
+    expect(dlg.appPrompt).toHaveBeenCalledTimes(1);   // the override is a do-not-use row of the stored name's key, which the letterhead shares: no second prompt
     expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
     expect(intent()).toMatchObject({ companyId: GULF.id, company: "Gulf Mechanical", companyStatus: "do_not_use" });
     // what award_quote / the lib record for this row: the exact name of the stored vendor name, first
@@ -651,6 +651,10 @@ describe("MON-12 (J12 review fix 7) — the bid tab names the company the award 
     expect(rpcCalls()).toEqual(Array(2).fill({ p_org: "o1", p_company: null, p_party: "pp1", p_vendor: "Gulf Mechanical" }));
     expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is flagged DO NOT USE");
     expect(intent()).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "do_not_use" });
+    // J12 review fix 9: the contractor answers first, so the override never names the stored name's look-alike —
+    // the bid tab stops on it for an acknowledgement (review 9's S1c shape)
+    expect(promptTitles()).toEqual(["Coastal Fabricators is flagged DO NOT USE", "The vendor on file could be Gulf Mechanical — flagged DO NOT USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ companyId: GULF.id, company: "Gulf Mechanical", matchedOn: ["vendorOnFile", "letterhead"], overrideCompanyId: "c-coastal" });
   });
 
   it("cause 2, before 20261157: the client asks the client sequence's order — the contractor's flagged company first; an ACTIVE one falls through to the look-alike (negative control)", async () => {
@@ -662,12 +666,15 @@ describe("MON-12 (J12 review fix 7) — the bid tab names the company the award 
     expect(companyReads()[0]).toEqual({ id: "c-coastal", org_id: "o1" });
     expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is flagged DO NOT USE");
     expect(intent()).toMatchObject({ companyId: "c-coastal" });
+    // J12 review fix 9: and the stored name's look-alike the contractor hides is acknowledged
+    expect(promptTitles()).toEqual(["Coastal Fabricators is flagged DO NOT USE", "The vendor on file could be Gulf Mechanical — flagged DO NOT USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ companyId: GULF.id });
 
     // negative control: the same contractor's company ACTIVE — it binds, but never hides the look-alike
     db.inserts = []; dlg.appPrompt.mockClear();
     db.single.companies = [companyRow({ ...COASTAL, status: "active" })];
     await awardOn(/Gulf Mechanical/);
-    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
+    expect(promptTitles()).toEqual(["Gulf Mechanical is flagged DO NOT USE"]);      // the override names the look-alike: no acknowledgement
     expect(intent()).toMatchObject({ companyId: GULF.id });
   });
 
@@ -692,6 +699,8 @@ describe("MON-12 (J12 review fix 7) — the bid tab names the company the award 
     await awardOn(/Gulf Mechanical/);
     expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is marked INACTIVE");
     expect(intent()).toMatchObject({ companyId: "c-coastal", companyStatus: "inactive" });
+    // J12 review fix 9: the inactive contractor answers first; the stored name's do-not-use look-alike is acknowledged (review 9's S1 shape)
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", "The vendor on file could be Gulf Mechanical — flagged DO NOT USE"]);
     expect(cd.awardQuote).toHaveBeenCalledTimes(1);
     expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe("Sole bidder for the outage window");
   });
@@ -1001,14 +1010,16 @@ describe("MON-12 / COST-3 (J12 review fix 8) — the reviewer's nits", () => {
     expect(cd.awardQuote).toHaveBeenCalledTimes(1);
   });
 
+  // (J12 review fix 9: a realistic shape — the database answers a company whose name key is not the stored
+  // name's only through a link or a contractor; here the contractor's company is re-filed meanwhile.)
   it("nit 2: the database's answer moves while the confirm is open — the new company is asked about; the intent and the award carry ITS reason, never the one typed for the first", async () => {
-    gateAnswers(APEX);
-    const d = bid("Apex Industrial");
+    gateAnswers(APEX);                                                // the contractor's company: Apex
+    const d = bid("Bayline Scaffold", { partyId: "pp1" });
     db.single.cost_documents = storedRow(d);
     dlg.appPrompt.mockResolvedValueOnce("typed for Apex").mockResolvedValueOnce("typed for Coastal");
-    dlg.appConfirm.mockImplementation(async () => { gateAnswers(COASTAL_CO); return true; });   // someone re-files the bid meanwhile
+    dlg.appConfirm.mockImplementation(async () => { gateAnswers(COASTAL_CO); return true; });   // someone re-files the bid's contractor meanwhile
     await render(fieldOf(d));
-    await awardOn(/Apex Industrial/);
+    await awardOn(/Bayline Scaffold/);
     expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE", "Coastal Fabricators is flagged DO NOT USE"]);
     expect(promptText(1)).toMatch(/changed while the award was being confirmed — it answered for Apex Industrial; the award now answers for Coastal Fabricators/);
     expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
@@ -1042,12 +1053,12 @@ describe("MON-12 / COST-3 (J12 review fix 8) — the reviewer's nits", () => {
 
   it("nit 2: an answer that keeps moving stops the award after three re-asks, with nothing recorded", async () => {
     let n = 0;
-    gateAnswers(company(`c-${n}`, `Mover ${n}`, "do_not_use"));
+    gateAnswers(company(`c-${n}`, `Mover ${n}`, "do_not_use"));       // the contractor's company, re-filed at every prompt
     dlg.appPrompt.mockImplementation(async () => { n++; gateAnswers(company(`c-${n}`, `Mover ${n}`, "do_not_use")); return "reason"; });
-    const d = bid("Apex Industrial");
+    const d = bid("Bayline Scaffold", { partyId: "pp1" });
     db.single.cost_documents = storedRow(d);
     await render(fieldOf(d));
-    await awardOn(/Apex Industrial/);
+    await awardOn(/Bayline Scaffold/);
     expect(cd.awardQuote).not.toHaveBeenCalled();
     expect(auditActions()).toEqual([]);
     expect(dlg.appPrompt).toHaveBeenCalledTimes(3);
@@ -1088,5 +1099,207 @@ describe("MON-12 / COST-3 (J12 review fix 8) — the reviewer's nits", () => {
     expect(dlg.appPrompt).not.toHaveBeenCalled();
     expect(auditActions()).toEqual([]);
     expect(cd.awardQuote.mock.calls[0][0].overrideReason ?? null).toBeNull();
+  });
+});
+
+// projects Round G — projects-joint J12, review fix pass 9 (projects-tab MON-12 / COST-3). Fix pass 8 skipped a
+// letterhead that normalises as the stored vendor name, on the premise that the stored name's look-alikes are
+// already the database's question. They are not when a flagged contractor answers first: the override names ONE
+// company, the first its order reaches (the link, a flagged contractor, the stored name's do-not-use look-alike,
+// the bound company's own flag). Review 9's S1: vendor on file "Apex Industrial", letterhead "Apex Industrial,
+// Inc.", "Apex Industrial" do-not-use, the contractor's company "Coastal Fabricators" inactive — pass 8 asked
+// only about Coastal, and Apex appeared in no prompt and no audit row. The bid tab now stops for an
+// acknowledgement on the do-not-use look-alike of the STORED name too (a typed-total bid included — S6), unless
+// the override is a do-not-use row with that name's key (or, for the stored name, there is none); one prompt
+// per name key. Each case runs before 20261157 (the client sequence) and after it (the database's answer).
+const COASTAL_INACTIVE = company("c-coastal", "Coastal Fabricators", "inactive");
+const ZENITH = company("c-zenith", "Zenith Rigging", "do_not_use");
+const VENDOR_TITLE = "The vendor on file could be Apex Industrial — flagged DO NOT USE";
+
+describe.each(MODES)("MON-12 (J12 review fix 9) — a do-not-use look-alike a flagged contractor hides from the override is acknowledged, $mode", ({ after }) => {
+  const database = (c: Pick<Company, "id" | "name" | "status"> | null) => { if (after) gateAnswers(c); };
+  /** The bid filed against contractor pp1, whose company is `contractor`. */
+  const filed = (d: CostDocument, contractor: Company) => {
+    db.single.cost_documents = storedRow(d);
+    db.single.project_parties = { company_id: contractor.id };
+    db.single.companies = [companyRow(contractor)];
+  };
+  const OVERRIDE_REASON = "Coastal reinstated for the outage window";
+  const ACK_REASON = "Apex's name on a Coastal bid — checked with purchasing";
+  beforeEach(() => {
+    reg.listCompanies.mockResolvedValue([APEX]);
+    reg.listBarredCompanies.mockResolvedValue([APEX]);
+    dlg.appConfirm.mockResolvedValue(true);
+    dlg.appPrompt.mockResolvedValueOnce(OVERRIDE_REASON).mockResolvedValueOnce(ACK_REASON);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+  });
+
+  it("S1: an INACTIVE contractor, the vendor on file and the letterhead both Apex's key — Coastal's override AND one acknowledgement naming Apex; the ack row names Apex, the intent row Coastal", async () => {
+    database(COASTAL_INACTIVE);
+    const d = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);   // Apex once: two names, one key
+    const opts = dlg.appPrompt.mock.calls[1][0] as { tone?: string; required?: boolean; placeholder?: string };
+    expect(opts).toMatchObject({ tone: "danger", required: true, placeholder: "Acknowledgement reason (required)" });
+    expect(promptText(1)).toMatch(/^The vendor on file, "Apex Industrial", and the letterhead the AI read, "Apex Industrial, Inc\.", could be Apex Industrial, flagged DO NOT USE in the registry\./);
+    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, marked inactive, so no override for Apex Industrial is recorded/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({
+      matchedOn: ["vendorOnFile", "letterhead"], vendorOnFile: "Apex Industrial", letterhead: "Apex Industrial, Inc.",
+      companyId: "c-apex", company: "Apex Industrial", companyStatus: "do_not_use",
+      overrideCompanyId: "c-coastal", overrideCompany: "Coastal Fabricators", reason: ACK_REASON,
+      total: 150_000, currency: "EUR", rfqGroup: "Unit 300 Repipe", costAccountId: "a1",
+    });
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "inactive", reason: OVERRIDE_REASON });
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);              // never the acknowledgement's
+    const confirm = dlg.appConfirm.mock.calls[0][0] as { message: string; tone?: string };
+    expect(confirm.tone).toBe("danger");
+    expect(confirm.message).toMatch(/The vendor on file \("Apex Industrial"\) and the letterhead the AI read \("Apex Industrial, Inc\."\) could be Apex Industrial, flagged DO NOT USE — the award's override names Coastal Fabricators/);
+  });
+
+  it("S1b: the same contractor, the vendor on file 'Bayline Scaffold' — Coastal's override and the LETTERHEAD's acknowledgement for Apex (unchanged from fix pass 8)", async () => {
+    database(COASTAL_INACTIVE);
+    const d = frontBid({ partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", LETTERHEAD_TITLE]);
+    expect(promptText(1)).toMatch(/The AI read the letterhead as "Apex Industrial, Inc\.", which could be Apex Industrial, flagged DO NOT USE/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ matchedOn: ["letterhead"], letterhead: "Apex Industrial, Inc.", vendorOnFile: "Bayline Scaffold", companyId: "c-apex", company: "Apex Industrial", reason: ACK_REASON });
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", companyStatus: "inactive", reason: OVERRIDE_REASON });
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);
+  });
+
+  it("S1c: a DO-NOT-USE contractor (Coastal), the vendor on file 'Apex Industrial' — Coastal's override and one acknowledgement naming Apex", async () => {
+    reg.listBarredCompanies.mockResolvedValue([APEX, COASTAL_CO]);
+    database(COASTAL_CO);
+    const d = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    filed(d, COASTAL_CO);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is flagged DO NOT USE", VENDOR_TITLE]);
+    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, flagged do-not-use, so no override for Apex Industrial is recorded/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ matchedOn: ["vendorOnFile", "letterhead"], companyId: "c-apex", company: "Apex Industrial", overrideCompanyId: "c-coastal", reason: ACK_REASON });
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "do_not_use", reason: OVERRIDE_REASON });
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);
+  });
+
+  it("S6: a typed-total bid (no letterhead) on file as 'Apex Industrial', the contractor inactive — the stored name's acknowledgement is asked, naming no letterhead", async () => {
+    database(COASTAL_INACTIVE);
+    const d = doc({ id: "front", vendorName: "Apex Industrial", currency: "EUR", totalAmount: 150_000, parsed: null, partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    await render(fieldOf(d, [0, 0]));
+    await awardOn(/Apex Industrial/);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
+    expect(promptText(1)).toMatch(/^The vendor on file, "Apex Industrial" could be Apex Industrial, flagged DO NOT USE in the registry\./);
+    expect(promptText(1)).not.toMatch(/letterhead/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ matchedOn: ["vendorOnFile"], letterhead: null, vendorOnFile: "Apex Industrial", companyId: "c-apex", company: "Apex Industrial", reason: ACK_REASON });
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", companyStatus: "inactive", reason: OVERRIDE_REASON });
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);
+  });
+
+  it("cancelling the stored name's acknowledgement stops the award: nothing recorded, nothing awarded", async () => {
+    database(COASTAL_INACTIVE);
+    const d = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    dlg.appPrompt.mockReset();
+    dlg.appPrompt.mockResolvedValueOnce(OVERRIDE_REASON).mockResolvedValueOnce(null);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(auditActions()).toEqual([]);
+    expect(errors.at(-1)).toBe('Award stopped — the vendor on file "Apex Industrial" could be Apex Industrial (flagged do-not-use) and no acknowledgement was given.');
+  });
+
+  it("two DIFFERENT do-not-use companies — the vendor on file's and the letterhead's — are each acknowledged; a failed award closes both", async () => {
+    reg.listBarredCompanies.mockResolvedValue([APEX, ZENITH]);
+    database(COASTAL_INACTIVE);
+    const d = frontBid({ vendorName: "Zenith Rigging", partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    dlg.appPrompt.mockReset();
+    dlg.appPrompt.mockResolvedValueOnce(OVERRIDE_REASON).mockResolvedValueOnce("for Zenith").mockResolvedValueOnce("for Apex");
+    cd.awardQuote.mockResolvedValue({ ok: false, error: "Someone else just decided this document — refresh to see the latest." });
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", "The vendor on file could be Zenith Rigging — flagged DO NOT USE", LETTERHEAD_TITLE]);
+    const acks = db.inserts.filter((i) => i.row.action === "COST_DOC_AWARD_LETTERHEAD_ACK").map((i) => i.row.details);
+    expect(acks).toMatchObject([
+      { matchedOn: ["vendorOnFile"], companyId: "c-zenith", company: "Zenith Rigging", letterhead: null, reason: "for Zenith" },
+      { matchedOn: ["letterhead"], companyId: "c-apex", company: "Apex Industrial", letterhead: "Apex Industrial, Inc.", reason: "for Apex" },
+    ]);
+    expect(auditActions()).toEqual([
+      "COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE",
+      "COST_DOC_AWARD_OVERRIDE_ABANDONED", "COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED", "COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED",
+    ]);
+    const closed = db.inserts.filter((i) => i.row.action === "COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED").map((i) => i.row.details);
+    expect(closed).toMatchObject([{ companyId: "c-zenith", company: "Zenith Rigging" }, { companyId: "c-apex", company: "Apex Industrial" }]);
+  });
+
+  it("the second acknowledgement cannot be recorded: the award stops and the first is closed", async () => {
+    reg.listBarredCompanies.mockResolvedValue([APEX, ZENITH]);
+    database(COASTAL_INACTIVE);
+    const d = frontBid({ vendorName: "Zenith Rigging", partyId: "pp1" });
+    filed(d, COASTAL_INACTIVE);
+    dlg.appPrompt.mockReset();
+    dlg.appPrompt.mockResolvedValue("checked");
+    db.insertError = (table, row) => (table === "audit_logs" && row.action === "COST_DOC_AWARD_LETTERHEAD_ACK" && (row.details as { companyId?: string }).companyId === "c-apex"
+      ? { code: "42501", message: "new row violates row-level security policy" } : null);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED")).toMatchObject({ companyId: "c-zenith", why: expect.stringMatching(/^The letterhead acknowledgement could not be recorded/) });
+    expect(errors.at(-1)).toMatch(/^The letterhead acknowledgement could not be recorded \(.+\) — award stopped\.$/);
+  });
+
+  it("the contractor's company turns inactive while the confirm is open: the new override and the look-alike it now hides are asked after it; the award carries the new override's reason", async () => {
+    const COASTAL_ACTIVE = company("c-coastal", "Coastal Fabricators", "active");
+    database(APEX);                                                   // an active contractor binds; the stored name's look-alike answers
+    const d = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    filed(d, COASTAL_ACTIVE);
+    dlg.appPrompt.mockReset();
+    dlg.appPrompt.mockResolvedValueOnce("typed for Apex").mockResolvedValueOnce(OVERRIDE_REASON).mockResolvedValueOnce(ACK_REASON);
+    dlg.appConfirm.mockImplementation(async () => { database(COASTAL_INACTIVE); db.single.companies = [companyRow(COASTAL_INACTIVE)]; return true; });
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE", "Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
+    expect(promptText(1)).toMatch(/it answered for Apex Industrial; the award now answers for Coastal Fabricators/);
+    expect(promptText(2)).toMatch(/^This bid's company link, contractor, vendor name or letterhead changed while the award was being confirmed\./);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ companyId: "c-apex", reason: ACK_REASON });
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", reason: OVERRIDE_REASON });
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);
+  });
+
+  it("negative controls: a person's link to a company of the org decides — its override is asked, no acknowledgement behind it; an ACTIVE contractor leaves the look-alike to the override — one prompt", async () => {
+    // the link (to a do-not-use company) decides, though the stored name's do-not-use look-alike is another company (DEC-48)
+    reg.listBarredCompanies.mockResolvedValue([APEX, COASTAL_CO]);
+    database(COASTAL_CO);
+    const d = frontBid({ vendorName: "Apex Industrial" });
+    db.single.cost_documents = storedRow(d, { company_id: "c-coastal" });
+    db.single.companies = [companyRow(COASTAL_CO)];
+    dlg.appPrompt.mockReset(); dlg.appPrompt.mockResolvedValue("Linked on purpose");
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is flagged DO NOT USE"]);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    // the contractor's company ACTIVE, no link: the override is Apex's (the stored name's look-alike) — asked once, no acknowledgement
+    db.inserts = []; dlg.appPrompt.mockReset(); dlg.appPrompt.mockResolvedValue("Sole bidder"); cd.awardQuote.mockClear();
+    database(APEX);
+    const e = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    await render(fieldOf(e));
+    filed(e, company("c-coastal", "Coastal Fabricators", "active"));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-apex" });
   });
 });

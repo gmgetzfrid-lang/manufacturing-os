@@ -674,7 +674,9 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
  *  the stored name too. The bid tab also calls it over the letterhead the
  *  AI read — the chip's labelled hint, and the award's acknowledgement stop
  *  (QuotesPanel `awardGateFor`, J12 review fix pass 8), which records a
- *  typed acknowledgement and is never the override.
+ *  typed acknowledgement and is never the override — and, for that stop,
+ *  over the stored name when the award's override names another company
+ *  (a flagged contractor answers first; J12 review fix pass 9).
  *  ASCII names only: JavaScript's `toLowerCase` and Postgres `lower()`
  *  disagree on a few non-ASCII letters (a final sigma, a dotted capital
  *  İ — and Postgres' answer depends on the database's collation), in the
