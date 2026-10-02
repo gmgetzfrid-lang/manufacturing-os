@@ -414,7 +414,9 @@ one-paste migration:
   rosters open at the paste are never retrofitted. The legacy reversal's
   bare un-supersede of an unstamped Superseded source stays open to a
   controller over a carried hold — `REV-22` limb 2, open. **P16 (`REV-21`)
-  re-creates this guard next, from `20261159`'s body.**
+  re-creates this guard next, from `20261159`'s body.** *(Superseded by P18
+  below: limb 2 resolved by `20261164`, and P16 starts from `20261164`'s
+  body.)*
 
 ⚠ **Paste order — P18 RECORDED REVERSAL RESTORE (2026-10-02).** One
 one-paste migration:
@@ -439,9 +441,12 @@ one-paste migration:
   a controller's bare un-supersede of a held Superseded document retired
   before `20261144` (or by the service role) into an issue status is
   refused ("…release the hold before issuing it."); the reversal of a
-  recorded split / merge puts such a source back through the function,
-  recorded as `REV_HOLD_OVERRIDDEN`. **P16 (`REV-21`) re-creates this guard
-  next, from `20261164`'s body** (no longer `20261159`'s).
+  recorded split / merge that no recorded reversal has undone puts such a
+  source back through the function, recorded as `REV_HOLD_OVERRIDDEN` (and
+  corrected by `REV_HOLD_OVERRIDE_UNDONE` if the reversal then rolls back).
+  A controller's bare put-back of a held STAMPED retirement (`v_restoring`)
+  still passes unrecorded — outside `REV-22`. **P16 (`REV-21`) re-creates
+  this guard next, from `20261164`'s body** (no longer `20261159`'s).
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,

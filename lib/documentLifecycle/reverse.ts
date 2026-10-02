@@ -56,7 +56,11 @@
 //   un-supersede of a held source retired before 20261144 (no retirement
 //   stamp) while this reversal still brings it back over the carried hold.
 //   On a database without the function (PGRST202 / 42883) the restore is the
-//   direct write it always was, which the guard there still admits.
+//   direct write it always was, which the guard there still admits. If the
+//   saga then rolls that recorded put-back back (a later step refused), the
+//   REV_HOLD_OVERRIDDEN row stays — audit rows are append-only — so the
+//   rollback writes its correction beside it (REV_HOLD_OVERRIDE_UNDONE),
+//   once the source reads back as it was.
 //
 //   A split or merge recorded before Round F carries no prior status: the
 //   reversal REFUSES rather than guess one (it used to write 'Issued', which
@@ -77,7 +81,7 @@
 // did in the same session.
 
 import { supabase } from "@/lib/supabase";
-import { logRevisionEvent } from "@/lib/audit";
+import { logRevisionEvent, logAuditAction } from "@/lib/audit";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
@@ -333,10 +337,33 @@ async function finishParking(docId: string, actorUserId: string): Promise<{ revo
   return { revokedShareLinks: shares.revoked, liveShareLinksLeft: shares.liveLeft, shareRevokeError: shareProblem, voidedDraft: draftVoid.voidedVersionId, voidProblem: draftVoid.problem };
 }
 
+/** REV-22 (P18, review fix): why a reversal's saga rolled back — set by
+ *  withRollbackCause once a step has thrown, read by a compensation that
+ *  records it. */
+interface SagaRollback { reason: string | null }
+
+/** withCompensation, keeping the error that rolled the saga back for the
+ *  compensations that put it on the record (REV-22 P18 review fix: the
+ *  correction of a recorded hold pass the rollback undid). The compensations
+ *  run, and the error is re-thrown, exactly as withCompensation does. */
+async function withRollbackCause<T>(work: (register: Register, rollback: SagaRollback) => Promise<T>): Promise<T> {
+  const rollback: SagaRollback = { reason: null };
+  return withCompensation(async (register) => {
+    try {
+      return await work(register, rollback);
+    } catch (e) {
+      rollback.reason = (e as Error)?.message || String(e);
+      throw e;
+    }
+  });
+}
+
 /** REV-22 (P18): the reversal being run, which restore_reversed_source binds
  *  its recorded door to (the source must be that DOC_SPLIT / DOC_MERGED's
- *  resource or merge sibling) and puts on its REV_HOLD_OVERRIDDEN record. */
-interface RestoreDoor { reversalOf: string; reason: string }
+ *  resource or merge sibling, and no recorded reversal may have undone it)
+ *  and puts on its REV_HOLD_OVERRIDDEN record; and who is running it and why
+ *  its saga rolled back, for the correction of that record (review fix). */
+interface RestoreDoor { reversalOf: string; reason: string; actor: ActorContext; rollback: SagaRollback }
 
 /** REV-22 (P18): PostgREST's answer for a function that does not exist yet
  *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
@@ -348,6 +375,52 @@ export function isMissingRestoreRpc(e: { code?: string | null; message?: string 
     || /could not find the function|function .*restore_reversed_source.* does not exist/i.test(e.message ?? "");
 }
 
+/** REV-22 (P18, review fix): the compensation for a restore that
+ *  restore_reversed_source RECORDED as a pass over a hold (it answered
+ *  restored_over_hold) when the reversal's saga then rolls back. The
+ *  REV_HOLD_OVERRIDDEN row stays (audit rows are append-only), so this writes
+ *  the correction beside it — REV_HOLD_OVERRIDE_UNDONE, naming the reversed
+ *  event and why the saga rolled back — as WORK_PACKAGE_REPIN_REFUSED
+ *  corrects a re-pin that did not happen (P8). It is registered BEFORE the
+ *  source's put-back, so the LIFO rollback runs it AFTER that put-back, and
+ *  it writes only once the source reads back at the status it was put back
+ *  to: if the put-back did not land, the pass over the hold stands and its
+ *  record is true (the put-back's own failure is already named). A
+ *  correction that cannot be confirmed or written throws, so
+ *  withCompensation names it for manual attention. */
+function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: string, door: RestoreDoor, pass: { recorded: boolean }): () => Promise<void> {
+  return async () => {
+    if (!pass.recorded) return;
+    let after: StatusSnapshot;
+    try {
+      after = await readStatusSnapshot(docId);
+    } catch (e) {
+      throw new Error(`whether ${docId} was put back could not be confirmed (${(e as Error).message}), so the record of the reversal's pass over its hold (REV_HOLD_OVERRIDDEN) was not corrected — check its status and history`);
+    }
+    if (after.status !== snap.status) return;
+    const { error } = await logAuditAction({
+      action: "REV_HOLD_OVERRIDE_UNDONE",
+      resourceId: docId,
+      resourceType: "document",
+      orgId: door.actor.orgId,
+      userId: door.actor.actorUserId,
+      userEmail: door.actor.actorEmail,
+      userRole: door.actor.actorRole,
+      details: {
+        via: "reversal_restore",
+        corrects: "REV_HOLD_OVERRIDDEN",
+        reversedAuditEventId: door.reversalOf,
+        restoredStatus: restoredTo,
+        putBackTo: snap.status,
+        rollbackReason: door.rollback.reason,
+      },
+    });
+    if (error) {
+      throw new Error(`the record of the reversal's pass over ${docId}'s hold (REV_HOLD_OVERRIDDEN) could not be corrected (${error}) — its history shows a hold override that did not stand`);
+    }
+  };
+}
+
 /** Un-supersede one document to the status it held (checked). Its put-back
  *  (Superseded again, with its own supersession fields) is registered
  *  before the write and runs if the restore landed — or may have (review
@@ -355,10 +428,14 @@ export function isMissingRestoreRpc(e: { code?: string | null; message?: string 
  *  (P18): through restore_reversed_source (20261164) — the same write, run
  *  as the caller, recorded when Document Control brings a held source back
  *  over its hold — and the direct write below only while that function is
- *  absent. Any other answer from it is the restore's refusal. */
+ *  absent. Any other answer from it is the restore's refusal. A recorded
+ *  pass the saga later undoes is corrected on the record (review fix,
+ *  correctRecordedPass). */
 async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register, door: RestoreDoor): Promise<void> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
+  const pass = { recorded: false };
+  register({ describe: `correct the hold-override record on ${docId}`, run: correctRecordedPass(docId, snap, status, door, pass) });
   register({ describe: `put ${docId} back to ${snap.status}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
   const { data: answer, error: rpcErr } = await supabase.rpc("restore_reversed_source", {
@@ -368,8 +445,9 @@ async function restoreStatus(docId: string, status: string, actorUserId: string,
     p_reason: door.reason.trim() || null,
   });
   if (!rpcErr) {
-    if (answer === "restored") {
+    if (answer === "restored" || answer === "restored_over_hold") {
       outcome.landed = true;
+      pass.recorded = answer === "restored_over_hold";
       return;
     }
     const why = answer === "no_match" ? "the write was refused" : `the database answered ${JSON.stringify(answer ?? null)}`;
@@ -576,14 +654,14 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   // the source, any carried hold and the lineage back; nothing irreversible
   // has run yet.
   let holdsCarriedBack = 0;
-  await withCompensation(async (register) => {
+  await withRollbackCause(async (register, rollback) => {
     for (const newId of replacementIds) {
       await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register);
     }
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
     // Un-supersede the source — to the status it actually held (REV-12).
-    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason });
+    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });
     // Delete the join rows; the audit log retains the relationship so
     // history is still reconstructable.
     await deleteLineage({ supersededIds: [sourceDocId], replacementIds }, register);
@@ -715,14 +793,14 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   // refusal anywhere (the second source's restore included) un-parks the
   // target and re-supersedes the sources already restored. Never sources
   // and target live at once; nothing irreversible has run yet.
-  await withCompensation(async (register) => {
+  await withRollbackCause(async (register, rollback) => {
     if (targetWasNewlyCreated) {
       await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register);
     }
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
     for (const sId of allSourceIds) {
-      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason });
+      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });
     }
     await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] }, register);
   });

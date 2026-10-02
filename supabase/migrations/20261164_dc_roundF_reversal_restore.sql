@@ -24,15 +24,20 @@
 --               when the caller is Document Control (is_org_controller), the
 --               document is Superseded, the audit row it names is the
 --               recorded DOC_SPLIT / DOC_MERGED of which it is the source (the
---               event's resource, or one of a merge's mergeSiblings) and an
---               active hold stands, it sets the transaction-local flag
---               app.publish_hold_override to the document's id immediately
---               before that write and clears it immediately after, and
---               records the pass in the same transaction — REV_HOLD_OVERRIDDEN
---               (via reversal_restore; the holds, the reversal's reason, the
---               reversed event, the status restored), as publish_revision's
---               and finalize_reviewed_promote's recorded forces do. Anyone
---               else's call is exactly the bare write (no flag, no record);
+--               event's resource, or one of a merge's mergeSiblings) that no
+--               recorded reversal has undone yet (no DOC_SPLIT_REVERSED /
+--               DOC_MERGE_REVERSED names it) and an active hold stands, it
+--               sets the transaction-local flag app.publish_hold_override to
+--               the document's id immediately before that write and clears
+--               it immediately after, and records the pass in the same
+--               transaction — REV_HOLD_OVERRIDDEN (via reversal_restore; the
+--               holds, the reversal's reason, the reversed event, the status
+--               restored), as publish_revision's and
+--               finalize_reviewed_promote's recorded forces do — and answers
+--               restored_over_hold, so the reversal writes the correction
+--               (REV_HOLD_OVERRIDE_UNDONE) if its saga later rolls the
+--               put-back back. Anyone else's call is exactly the bare write
+--               (no flag, no record; it answers restored);
 --           (2) enforce_document_publish_guard binds the unstamped Superseded
 --               exit too: a controller's write taking an unstamped Superseded
 --               document into an issue status, its pointer unmoved, WITHOUT
@@ -74,11 +79,12 @@
 -- paste), and records what passed unrecorded. DEC-30 inventories (aggregate
 -- counts only, captured BEFORE the transaction): the unstamped Superseded
 -- documents with a current revision; those of them under an active hold now;
--- those held ones that are the source of a recorded split / merge (the
--- reversal restores them through the recorded door) and those that are not
--- (their exit into an issue now needs the hold released, Document Control
--- included); the unstamped Superseded split / merge sources in all; whether
--- restore_reversed_source already existed.
+-- those held ones that are the source of a recorded split / merge no
+-- recorded reversal has undone (the reversal restores them through the
+-- recorded door) and those that are not (their exit into an issue now needs
+-- the hold released, Document Control included); the unstamped Superseded
+-- sources of such a split / merge in all; whether restore_reversed_source
+-- already existed.
 -- HOW TO APPLY: AFTER 20261159 (required — this re-creates 20261159's guard,
 -- and the first statement refuses to run, changing nothing, without it; so
 -- after 20261151, 20261144, 20261130 and 20261070 too). 20261159 is itself
@@ -114,18 +120,37 @@ $$;
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 DROP TABLE IF EXISTS dc_round_f_164_before;
 CREATE TEMP TABLE dc_round_f_164_before AS
-WITH unstamped AS (
+WITH recorded AS (
+  -- The sources restore_reversed_source's door can name, computed ONCE — a
+  -- set each document is looked up in (hashed), not a scan of audit_logs per
+  -- document: a DOC_SPLIT's or DOC_MERGED's resource, or one of a
+  -- DOC_MERGED's mergeSiblings, of an event no recorded reversal has undone
+  -- (a DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED — written on the event's own
+  -- resource — naming it as reversedAuditEventId), as the door reads it.
+  SELECT e.org_id, e.source_id
+    FROM (SELECT a.org_id, a.id AS event_id, a.resource_id, a.resource_id AS source_id
+            FROM audit_logs a
+           WHERE a.action IN ('DOC_SPLIT', 'DOC_MERGED')
+          UNION ALL
+          SELECT a.org_id, a.id, a.resource_id, s.sibling
+            FROM audit_logs a
+           CROSS JOIN LATERAL jsonb_array_elements_text(
+                   CASE WHEN jsonb_typeof(a.details->'mergeSiblings') = 'array'
+                        THEN a.details->'mergeSiblings' ELSE '[]'::jsonb END) AS s(sibling)
+           WHERE a.action = 'DOC_MERGED') e
+   WHERE NOT EXISTS (SELECT 1 FROM audit_logs r
+                      WHERE r.org_id = e.org_id
+                        AND r.resource_id = e.resource_id
+                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
+                        AND r.details->>'reversedAuditEventId' = e.event_id::text)
+),
+unstamped AS (
   -- Superseded with no retirement stamp and a current revision: retired
   -- before 20261144, or by the service role
   SELECT d.id,
          EXISTS (SELECT 1 FROM document_holds h
                   WHERE h.document_id = d.id AND h.released_at IS NULL) AS held,
-         EXISTS (SELECT 1 FROM audit_logs a
-                  WHERE a.org_id = d.org_id
-                    AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')
-                    AND (a.resource_id = d.id::text
-                         OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'
-                                     AND (a.details->'mergeSiblings') ? d.id::text, false))) AS recorded_source
+         COALESCE((d.org_id, d.id::text) IN (SELECT c.org_id, c.source_id FROM recorded c), false) AS recorded_source
     FROM documents d
    WHERE d.current_version_id IS NOT NULL
      AND d.status = 'Superseded'
@@ -139,15 +164,15 @@ SELECT 'inventory (before apply): of those, under an active hold now (their exit
        COUNT(*)::text
   FROM unstamped WHERE held
 UNION ALL
-SELECT 'inventory (before apply): of those held ones, the source of a recorded split or merge (a DOC_SPLIT''s resource, a DOC_MERGED''s resource or mergeSiblings — the reversal puts them back over the hold through the recorded door, REV_HOLD_OVERRIDDEN)',
+SELECT 'inventory (before apply): of those held ones, the source of a recorded split or merge no recorded reversal has undone (a DOC_SPLIT''s resource, a DOC_MERGED''s resource or mergeSiblings — the reversal puts them back over the hold through the recorded door, REV_HOLD_OVERRIDDEN)',
        COUNT(*)::text
   FROM unstamped WHERE held AND recorded_source
 UNION ALL
-SELECT 'inventory (before apply): of those held ones, NOT the source of a recorded split or merge (no recorded door: release the hold to bring one back to an issue, or restore it to Draft)',
+SELECT 'inventory (before apply): of those held ones, NOT the source of a recorded split or merge that is still unreversed (no recorded door: release the hold to bring one back to an issue, or restore it to Draft)',
        COUNT(*)::text
   FROM unstamped WHERE held AND NOT recorded_source
 UNION ALL
-SELECT 'inventory (before apply): documents in Superseded with no retirement stamp that are the source of a recorded split or merge (the legacy reversal''s population; each restore now goes through restore_reversed_source)',
+SELECT 'inventory (before apply): documents in Superseded with no retirement stamp that are the source of a recorded split or merge no recorded reversal has undone (the legacy reversal''s population; each restore now goes through restore_reversed_source)',
        COUNT(*)::text
   FROM unstamped WHERE recorded_source
 UNION ALL
@@ -207,7 +232,13 @@ BEGIN
   -- reads it), putting back a Superseded document that is the source of the
   -- recorded split / merge it names, while a hold stands — the legacy
   -- reversal's put-back over the hold HLD-2 carried onto it. Anything else
-  -- is the bare write below, judged by the guard as before.
+  -- is the bare write below, judged by the guard as before. An event a
+  -- recorded reversal has already undone opens nothing: every reversal the
+  -- app has written (DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED) is on the
+  -- event's own resource and names it as reversedAuditEventId, and it is
+  -- written only once that reversal's saga has landed — so the reversal
+  -- being run is never one of them. Both rows are read under the same
+  -- audit_logs policy.
   SELECT a.action INTO v_action
     FROM audit_logs a
    WHERE a.id = p_reversal_of
@@ -216,6 +247,11 @@ BEGIN
      AND (a.resource_id = p_document_id::text
           OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'
                       AND (a.details->'mergeSiblings') ? p_document_id::text, false))
+     AND NOT EXISTS (SELECT 1 FROM audit_logs r
+                      WHERE r.org_id = v_org
+                        AND r.resource_id = a.resource_id
+                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
+                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)
    LIMIT 1;
   IF v_status = 'Superseded'
      AND v_action IS NOT NULL
@@ -272,11 +308,14 @@ BEGIN
             ));
   END IF;
 
-  RETURN 'restored';
+  -- The answer says whether the pass over a hold was recorded: the reversal
+  -- writes the correction (REV_HOLD_OVERRIDE_UNDONE) beside that record if
+  -- its saga then rolls this put-back back.
+  RETURN CASE WHEN v_forced THEN 'restored_over_hold' ELSE 'restored' END;
 END;
 $$;
 COMMENT ON FUNCTION restore_reversed_source(uuid, text, uuid, text) IS
-  'REV-22 (20261164): the legacy reversal''s put-back of a split / merge source (lib/documentLifecycle/reverse.ts restoreStatus). SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control putting back a Superseded source of the recorded DOC_SPLIT / DOC_MERGED named by p_reversal_of while a hold is active, the write runs under the transaction-local flag app.publish_hold_override (the only way the guard admits a controller''s exit of an unstamped Superseded document into an issue over a hold) and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns restored or no_match; refuses a call with no session.';
+  'REV-22 (20261164): the legacy reversal''s put-back of a split / merge source (lib/documentLifecycle/reverse.ts restoreStatus). SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control putting back a Superseded source of the recorded DOC_SPLIT / DOC_MERGED named by p_reversal_of, which no recorded reversal has undone, while a hold is active, the write runs under the transaction-local flag app.publish_hold_override (the only way the guard admits a controller''s exit of an unstamped Superseded document into an issue over a hold) and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns restored_over_hold (that recorded pass), restored (the bare write) or no_match; refuses a call with no session.';
 -- DRLS-16: authenticated only (the app's reversal runs in a signed-in
 -- session); the body refuses a NULL uid as well.
 REVOKE ALL ON FUNCTION restore_reversed_source(uuid, text, uuid, text) FROM PUBLIC, anon, service_role;
@@ -372,20 +411,23 @@ BEGIN
                             AND OLD.retired_issue_status IS NULL
                             AND is_org_controller(NEW.org_id), false);
   -- REV-22 (document-control Round F wave 3, P18): REV-20 (a) for the
-  -- unstamped SUPERSEDED exit too. The comments above that call it spared
-  -- describe this guard before 20261164: the legacy reversal's put-back of a
-  -- source superseded before 20261144 (lib/documentLifecycle/reverse.ts
-  -- restoreStatus, after HLD-2 carries the parked document's hold onto it)
-  -- now goes through restore_reversed_source (20261164), which sets the
-  -- transaction-local flag app.publish_hold_override to the source's id
-  -- around its own status write — for Document Control only, only for a
-  -- source of the recorded split / merge it names, only while a hold is
-  -- active — and records REV_HOLD_OVERRIDDEN in the same transaction. So a
-  -- controller's exit of an UNSTAMPED Superseded document into an issue
-  -- status, its pointer unmoved, without that flag naming the document (a
-  -- bare un-supersede) is judged as a status-only issue: the new door, whose
-  -- hold binds a controller too. Below a controller nothing changes (the
-  -- publisher tier's own hold check still refuses it, in its own words).
+  -- unstamped SUPERSEDED exit too. The comments in this body that call it
+  -- spared (REV-20's above, P17's below) describe this guard before
+  -- 20261164: the legacy reversal's put-back of a source superseded before
+  -- 20261144 (lib/documentLifecycle/reverse.ts restoreStatus, after HLD-2
+  -- carries the parked document's hold onto it) now goes through
+  -- restore_reversed_source (20261164), which sets the transaction-local
+  -- flag app.publish_hold_override to the source's id around its own status
+  -- write — for Document Control only, only for a source of the recorded
+  -- split / merge it names that no recorded reversal has undone, only while
+  -- a hold is active — and records REV_HOLD_OVERRIDDEN in the same
+  -- transaction. So a controller's exit of an UNSTAMPED Superseded document
+  -- into an issue status, its pointer unmoved, without that flag naming the
+  -- document (a bare un-supersede) is judged as a status-only issue: the new
+  -- door, whose hold binds a controller too. Below a controller nothing
+  -- changes (the publisher tier's own hold check still refuses it, in its
+  -- own words). A STAMPED retirement's put-back (v_restoring, below) keeps
+  -- its rule: a controller passes the hold there, unrecorded (OWN-15).
   v_new_door := v_new_door
                 OR COALESCE(v_issuing
                             AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
@@ -832,12 +874,14 @@ SELECT 'REV-22 (P18): restore_reversed_source has one signature (4 arguments), r
                         WHERE p.proname = 'restore_reversed_source' AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'REV-22 (P18): restore_reversed_source refuses a call with no session, sets the flag only for Document Control''s put-back of a held Superseded source of the recorded split / merge it names, around its own write, clears it, and records REV_HOLD_OVERRIDDEN',
+SELECT 'REV-22 (P18): restore_reversed_source refuses a call with no session, sets the flag only for Document Control''s put-back of a held Superseded source of the recorded split / merge it names that no recorded reversal has undone, around its own write, clears it, records REV_HOLD_OVERRIDDEN and answers restored_over_hold',
        (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%RAISE EXCEPTION%'
            AND prosrc LIKE '%AND a.action IN (''DOC_SPLIT'', ''DOC_MERGED'')%'
+           AND prosrc LIKE '%AND NOT EXISTS (SELECT 1 FROM audit_logs r%AND r.resource_id = a.resource_id%AND r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%AND r.details->>''reversedAuditEventId'' = p_reversal_of%'
            AND prosrc LIKE '%IF v_status = ''Superseded''%AND v_action IS NOT NULL%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%v_forced := true;%'
            AND prosrc LIKE '%PERFORM set_config(''app.publish_hold_override'', p_document_id%UPDATE documents%SET status = p_status,%GET DIAGNOSTICS v_n = ROW_COUNT;%PERFORM set_config(''app.publish_hold_override'', '''', true);%'
            AND prosrc LIKE '%VALUES (''REV_HOLD_OVERRIDDEN''%''via'', ''reversal_restore''%'
+           AND prosrc LIKE '%RETURN CASE WHEN v_forced THEN ''restored_over_hold'' ELSE ''restored'' END;%'
           FROM pg_proc WHERE proname = 'restore_reversed_source'),
        NULL
 UNION ALL

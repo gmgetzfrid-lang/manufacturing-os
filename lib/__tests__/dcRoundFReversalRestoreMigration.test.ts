@@ -10,6 +10,10 @@
 //   write restoreStatus made, under the transaction-local flag only for
 //   Document Control's put-back of a held source of the recorded split /
 //   merge it names, recorded as REV_HOLD_OVERRIDDEN in the same transaction.
+//   Review fix: the door opens only for an event no recorded reversal has
+//   undone; the function answers restored_over_hold for a recorded pass (the
+//   app corrects that record if its saga rolls back); the inventory computes
+//   the recorded sources once.
 //
 // Byte fidelity: lineDiff (nothing removed; every new line is an addition)
 // AND an exact cut (the re-created body minus the addition IS the base, byte
@@ -139,11 +143,32 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
     }
   });
 
-  it("the door: Document Control (is_org_controller, the guard's own tier), a Superseded document, the source of the recorded DOC_SPLIT / DOC_MERGED the call names in its own org, an active hold — then, and only then, the flag", () => {
-    expect(R).toContain("  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n   LIMIT 1;");
+  it("the door: Document Control (is_org_controller, the guard's own tier), a Superseded document, the source of the recorded DOC_SPLIT / DOC_MERGED the call names in its own org that no recorded reversal has undone, an active hold — then, and only then, the flag", () => {
+    expect(R).toContain("  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = v_org\n                        AND r.resource_id = a.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)\n   LIMIT 1;");
     expect(R).toContain("  IF v_status = 'Superseded'\n     AND v_action IS NOT NULL\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;");
     expect((R.match(/v_forced := true;/g) ?? []).length).toBe(1);
     expect(R).toContain("  v_forced  boolean := false;");
+  });
+
+  it("review fix — an event a recorded reversal already undid opens nothing: the reversal rows are matched as the app writes them (on the event's own resource, naming it as reversedAuditEventId — both reversals, since they were first written), and only after the saga lands", () => {
+    const door = between(R, "  SELECT a.action INTO v_action", "   LIMIT 1;");
+    expect(door).toContain("     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n");
+    expect(door).toContain("                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n");
+    expect(door).toContain("                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)\n");
+    const reverse = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
+    for (const [type, key] of [["DOC_SPLIT_REVERSED", "input.splitAuditEventId"], ["DOC_MERGE_REVERSED", "input.mergeAuditEventId"]] as const) {
+      const at = reverse.indexOf(`type: "${type}",`);
+      expect(at, type).toBeGreaterThan(0);
+      const call = reverse.slice(reverse.lastIndexOf("await logRevisionEvent({", at), reverse.indexOf("});", at));
+      expect(call, type).toContain("documentId: sourceDocId,");
+      expect(call, type).toContain(`reversedAuditEventId: ${key},`);
+      // sourceDocId is the reversed event's own resource
+      const fn = reverse.slice(reverse.lastIndexOf("export async function reverse", at), at);
+      expect(fn, type).toContain("const sourceDocId = ev.resource_id;");
+      // the reversal's own record is written after its saga (the restore inside it)
+      expect(fn.indexOf("await withRollbackCause(")).toBeGreaterThan(0);
+      expect(fn.indexOf("await restoreStatus(")).toBeGreaterThan(fn.indexOf("await withRollbackCause("));
+    }
   });
 
   it("the flag names this document immediately before its one UPDATE and is cleared immediately after it, before any return", () => {
@@ -163,7 +188,15 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
       expect(rec, k).toContain(k);
     }
     expect(R.indexOf(rec)).toBeGreaterThan(R.indexOf("  IF v_n = 0 THEN\n    RETURN 'no_match';"));
-    expect(R.indexOf("  RETURN 'restored';")).toBeGreaterThan(R.indexOf(rec));
+    expect(R.indexOf("  RETURN CASE WHEN v_forced THEN 'restored_over_hold' ELSE 'restored' END;")).toBeGreaterThan(R.indexOf(rec));
+  });
+
+  it("review fix — the answer says whether the pass was recorded (restored_over_hold) or the write was the bare one (restored), and the app reads both as landed", () => {
+    expect((stripComments(R).match(/RETURN /g) ?? []).length).toBe(3); // no_match (not found), no_match (no row), the answer
+    expect(stripComments(R)).toContain("  RETURN CASE WHEN v_forced THEN 'restored_over_hold' ELSE 'restored' END;\nEND;");
+    const reverse = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
+    expect(reverse).toContain('if (answer === "restored" || answer === "restored_over_hold") {');
+    expect(reverse).toContain('pass.recorded = answer === "restored_over_hold";');
   });
 
   it("the flag in the whole sequence: SET only by 20261151 (publish_revision, finalize_reviewed_promote) and here, by restore_reversed_source alone; every other mention a read", () => {
@@ -202,6 +235,20 @@ describe("20261164 — the one-paste shape", () => {
     for (const w of ["FROM unstamped\n", "FROM unstamped WHERE held\n", "FROM unstamped WHERE held AND recorded_source\n", "FROM unstamped WHERE held AND NOT recorded_source\n", "FROM unstamped WHERE recorded_source\n", "FROM pg_proc WHERE proname = 'restore_reversed_source';"]) {
       expect(inventory, w).toContain(w);
     }
+  });
+
+  it("review fix — the inventory computes the recorded sources ONCE (a set each document is looked up in), with the door's not-yet-reversed filter; no scan of audit_logs per document", () => {
+    const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
+    const recorded = inventory.slice(inventory.indexOf("WITH recorded AS ("), inventory.indexOf("unstamped AS ("));
+    const unstamped = inventory.slice(inventory.indexOf("unstamped AS ("), inventory.indexOf("\nSELECT 'inventory"));
+    expect(recorded).toContain("           WHERE a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n");
+    expect(recorded).toContain("           CROSS JOIN LATERAL jsonb_array_elements_text(\n                   CASE WHEN jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                        THEN a.details->'mergeSiblings' ELSE '[]'::jsonb END) AS s(sibling)\n           WHERE a.action = 'DOC_MERGED') e\n");
+    // the same not-yet-reversed binding the door reads
+    expect(recorded).toContain("   WHERE NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = e.org_id\n                        AND r.resource_id = e.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND r.details->>'reversedAuditEventId' = e.event_id::text)\n");
+    // each document is tested against the set (an uncorrelated IN — a hashed lookup), not by a correlated scan
+    expect(unstamped).toContain("         COALESCE((d.org_id, d.id::text) IN (SELECT c.org_id, c.source_id FROM recorded c), false) AS recorded_source\n");
+    expect(unstamped).not.toMatch(/audit_logs/);
+    expect((inventory.match(/FROM audit_logs/g) ?? []).length).toBe(3);
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
     expect((c.match(/;/g) ?? []).length).toBe(1); // one statement: the final SELECT
     expect(c).toMatch(/AS ok,\n\s+NULL::text AS n/);
@@ -236,7 +283,7 @@ describe("20261164 — the one-paste shape", () => {
         }
       }
     }
-    expect(n).toBe(24);
+    expect(n).toBe(26);
     // and the P18 probe would be FALSE on the base (it pins the new limb, in place)
     const p18Probe = /prosrc LIKE '(%AND OLD\.status IN \(''Archived''[^']*(?:''[^']*)*)'/.exec(tail)![1].replace(/''/g, "'");
     const re = new RegExp("^" + p18Probe.split("%").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/_/g, ".")).join("[\\s\\S]*") + "$");
