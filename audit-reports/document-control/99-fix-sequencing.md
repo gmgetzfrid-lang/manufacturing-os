@@ -416,6 +416,33 @@ one-paste migration:
   controller over a carried hold — `REV-22` limb 2, open. **P16 (`REV-21`)
   re-creates this guard next, from `20261159`'s body.**
 
+⚠ **Paste order — P18 RECORDED REVERSAL RESTORE (2026-10-02).** One
+one-paste migration:
+- `20261164_dc_roundF_reversal_restore.sql` (`REV-22` done-when 2) — **after
+  `20261159` (required)**, so after `20261151`, `20261144`, `20261130` and
+  `20261070` too; its first statement refuses to run, changing nothing,
+  without `20261159`'s guard. **`20261159` is itself held** (its paste
+  precondition above: projects-and-cost `INTK-18` deployed, or the user's
+  ratification of DEC-63's P17 Landed line), so this file waits with it.
+  It re-creates `enforce_document_publish_guard` from `20261159`'s body
+  (every REV-22 limb 1, RG-14, REV-20 and REV-18 rule kept) and adds
+  `restore_reversed_source` (SECURITY INVOKER). **Never re-paste `20261159`,
+  `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard
+  migration after it** — each drops the P18 rule (and an earlier one the
+  REV-22 limb 1, RG-14 and REV-20 rules). **Deploy first:** the app
+  carrying P18 (`lib/documentLifecycle/reverse.ts` `restoreStatus` calls
+  `restore_reversed_source`, and keeps the direct write while the function
+  is absent — PGRST202 / 42883) is deployed BEFORE the paste. An app
+  before P18 restores a reversed source with the bare write, which this
+  guard refuses over a carried hold, so its legacy reversal over a held
+  parked document would roll back whole until the deploy. After the paste
+  a controller's bare un-supersede of a held Superseded document retired
+  before `20261144` (or by the service role) into an issue status is
+  refused ("…release the hold before issuing it."); the reversal of a
+  recorded split / merge puts such a source back through the function,
+  recorded as `REV_HOLD_OVERRIDDEN`. **P16 (`REV-21`) re-creates this guard
+  next, from `20261164`'s body** (no longer `20261159`'s).
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
