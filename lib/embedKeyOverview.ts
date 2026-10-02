@@ -5,7 +5,9 @@
 // `key-overview` action:
 //
 //   * GOV-14 — which background builds are running on MY key? One place
-//     lists every one, each with a Stop (the route's `release` action).
+//     lists every one, each with a Stop (the route's `release` action, sent
+//     with `onlyMine`: a row read before another member's build replaced
+//     the consent never stops theirs).
 //   * SEM-1 — what happens to the meaning indexes if I switch my embedding
 //     model or provider? A meaning index lives in ONE model's vector space
 //     (DEC-59 (3)). A question is embedded with each index's own model on
@@ -16,8 +18,12 @@
 //     with the new model can add to them, and the background builds on this
 //     key hold, until each library is rebuilt with the new model. The switch
 //     is confirmed with the libraries named, and each one's Rebuild offered.
+//     A member whose meaning search runs on their OpenAI CHAT key (no
+//     embeddings key saved) loses it when the chat key moves to another
+//     provider or is removed: that change is confirmed the same way
+//     (embeddingLossImpact).
 //
-// The impact function is pure; the fetch is the only side effect here.
+// The impact functions are pure; the fetches are the only side effects here.
 
 import { supabase } from "@/lib/supabase";
 import {
@@ -57,20 +63,37 @@ export interface EmbedKeyOverview {
  *  route instance on an earlier build, a rewritten body): an answer without
  *  the libraries is never read as "no library affected". */
 export async function getEmbedKeyOverview(orgId: string, opts?: { models?: boolean }): Promise<EmbedKeyOverview> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error("Not authenticated");
-  const res = await fetch("/api/knowledge/embed", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify({ orgId, action: "key-overview", models: opts?.models === true }),
-  });
-  const data = (await res.json().catch(() => null)) as (EmbedKeyOverview & { error?: string }) | null;
+  const { res, data } = await postEmbed<EmbedKeyOverview>({ orgId, action: "key-overview", models: opts?.models === true });
   if (!res.ok || !data || !Array.isArray(data.builds)) {
     throw new Error(data?.error || `The background builds on your key couldn't be read (HTTP ${res.status}).`);
   }
   if (opts?.models === true && !Array.isArray(data.indexes)) {
     throw new Error("The answer did not list the libraries' meaning indexes");
   }
+  return data;
+}
+
+/** One authenticated POST to the embed route; the answer as it came. */
+async function postEmbed<T>(body: Record<string, unknown>): Promise<{ res: Response; data: (T & { error?: string }) | null }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Not authenticated");
+  const res = await fetch("/api/knowledge/embed", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}` },
+    body: JSON.stringify(body),
+  });
+  return { res, data: (await res.json().catch(() => null)) as (T & { error?: string }) | null };
+}
+
+/** GOV-14: Stop a build listed under "Background builds on your key" — only
+ *  while its consent still names the caller (`onlyMine`). A row read before
+ *  another member's build replaced the consent is refused (409, nothing
+ *  stopped), so a controller's Stop there never ends someone else's build;
+ *  the library's own panel keeps the plain release. Throws the route's
+ *  sentence on a refusal; `released: false` is "nothing was running". */
+export async function releaseBuildOnMyKey(orgId: string, libraryId: string): Promise<{ released: boolean }> {
+  const { res, data } = await postEmbed<{ released: boolean }>({ orgId, libraryId, action: "release", onlyMine: true });
+  if (!res.ok || !data) throw new Error(data?.error || `The background build couldn't be stopped (HTTP ${res.status}).`);
   return data;
 }
 
@@ -92,6 +115,13 @@ export function effectiveEmbeddingSetting(current: {
   }
   if (current?.provider === "openai") return { provider: "openai", model: defaultEmbeddingModel("openai") };
   return null;
+}
+
+/** The setting in effect runs on the member's OpenAI CHAT key — no
+ *  embeddings key is saved (embeddingConnectionFrom's fallback). Moving the
+ *  chat key to another provider, or removing it, leaves them with none. */
+export function onChatKeyEmbeddings(current: Parameters<typeof effectiveEmbeddingSetting>[0]): boolean {
+  return !!current && !(current.embeddingProvider && isProvider(current.embeddingProvider)) && current.provider === "openai";
 }
 
 /** What `after` would put in an embeddings setting being saved. */
@@ -163,15 +193,49 @@ export function embeddingSwitchImpact(
   return impact;
 }
 
+/** SEM-1: losing the embeddings setting altogether — the OpenAI chat key a
+ *  member's meaning search ran on (no embeddings key saved) moves to
+ *  another provider or is removed. `after` is none: every index the old
+ *  provider built stops answering them, and every background build on
+ *  their key ends (the drain releases a consent whose payer has no
+ *  embeddings key). */
+export interface EmbeddingLossImpact extends Omit<EmbeddingSwitchImpact, "after"> { after: null }
+
+export function embeddingLossImpact(
+  before: EmbeddingSetting, overview: EmbedKeyOverview | null, unreadable: string | null = null,
+): EmbeddingLossImpact {
+  const impact: EmbeddingLossImpact = {
+    before, after: null, providerChanged: true,
+    stopAnswering: [], cannotGrow: [], buildsStop: [], unknown: [],
+    unreadable: overview ? null : (unreadable ?? "the libraries could not be read"),
+  };
+  if (!overview) return impact;
+  const verdicts = new Map<string, ReturnType<typeof resolveCorpusModel> | null>();
+  for (const idx of overview.indexes ?? []) {
+    const lib = { libraryId: idx.libraryId, libraryName: idx.libraryName };
+    if (!idx.models) { verdicts.set(idx.libraryId, null); impact.unknown.push(lib); continue; }
+    const v = resolveCorpusModel(idx.models);
+    verdicts.set(idx.libraryId, v);
+    if (v.state === "single" && v.provider === before.provider) impact.stopAnswering.push({ ...lib, model: v.model });
+  }
+  for (const b of overview.builds) {
+    const v = verdicts.get(b.libraryId);
+    impact.buildsStop.push({
+      libraryId: b.libraryId, libraryName: b.libraryName, model: v && v.state === "single" ? v.model : null, standing: b.standing,
+    });
+  }
+  return impact;
+}
+
 /** Nothing to warn about: no index answers or grows on the old setting, no
  *  build on this key holds, and every library was read. */
-export function switchImpactIsEmpty(i: EmbeddingSwitchImpact): boolean {
+export function switchImpactIsEmpty(i: EmbeddingSwitchImpact | EmbeddingLossImpact): boolean {
   return !i.unreadable && i.stopAnswering.length === 0 && i.cannotGrow.length === 0
     && i.buildsStop.length === 0 && i.unknown.length === 0;
 }
 
 /** The libraries a Rebuild with the new model would bring back, once each. */
-export function librariesToRebuild(i: EmbeddingSwitchImpact): Lib[] {
+export function librariesToRebuild(i: EmbeddingSwitchImpact | EmbeddingLossImpact): Lib[] {
   const seen = new Map<string, Lib>();
   for (const l of [...i.stopAnswering, ...i.cannotGrow, ...i.buildsStop]) {
     if (!seen.has(l.libraryId)) seen.set(l.libraryId, { libraryId: l.libraryId, libraryName: l.libraryName });
@@ -184,7 +248,7 @@ export function librariesToRebuild(i: EmbeddingSwitchImpact): Lib[] {
  *  when the overview itself was unreadable — then no library can be named,
  *  and the confirm says to open each library's panel instead of promising
  *  links. */
-export function librariesLinkedAfterSwitch(i: EmbeddingSwitchImpact): Array<Lib & { unchecked: boolean }> {
+export function librariesLinkedAfterSwitch(i: EmbeddingSwitchImpact | EmbeddingLossImpact): Array<Lib & { unchecked: boolean }> {
   const definite = librariesToRebuild(i);
   const ids = new Set(definite.map((l) => l.libraryId));
   return [

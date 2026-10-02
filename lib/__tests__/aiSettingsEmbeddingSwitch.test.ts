@@ -14,12 +14,21 @@
 //     too, marked so. The confirm promises links only when there will be
 //     some: an overview that could not be read names no library, so it says
 //     to open each library's panel instead.
+//   SEM-1 done-when 2, the chat-key path — a member whose meaning search runs
+//     on their OpenAI CHAT key (no embeddings key saved) loses it when the
+//     chat key moves to another provider or is removed. That save, and that
+//     removal, confirm first in the same way, naming the libraries whose
+//     index stops answering and the builds on the key that end.
 //   GOV-14 done-when 4 — one place lists every background build running on
-//     the member's key, each with a Stop (the route's release action); a list
-//     that cannot be read says so, never "none running".
+//     the member's key, each with a Stop (the route's release action, sent
+//     with onlyMine: a row read before another member's build replaced the
+//     consent stops nothing); a list that cannot be read says so, never
+//     "none running".
 //
 // REGRESSION: saving the same provider and model (a new key, or nothing new)
-// asks nothing and reads nothing first — it saves exactly as before.
+// asks nothing and reads nothing first — it saves exactly as before; and a
+// chat-key change that leaves meaning search where it was (a saved
+// embeddings key, or OpenAI kept) asks nothing and reads nothing.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -28,14 +37,16 @@ import { createRoot, type Root } from "react-dom/client";
 const kn = vi.hoisted(() => ({
   saveEmbeddingKey: vi.fn(async () => ({ ok: true })),
   releaseBackgroundBuild: vi.fn(async () => ({ released: true })),
+  saveAiConnection: vi.fn(async (_o: Record<string, unknown>) => ({ ok: true })),
+  removeAiConnection: vi.fn(async (_o: string, _s: string) => ({ ok: true })),
 }));
-const ov = vi.hoisted(() => ({ getEmbedKeyOverview: vi.fn() }));
+const ov = vi.hoisted(() => ({ getEmbedKeyOverview: vi.fn(), releaseBuildOnMyKey: vi.fn(async (_o: string, _l: string): Promise<{ released: boolean }> => ({ released: true })) }));
 const dialog = vi.hoisted(() => ({ appConfirm: vi.fn(async (_o: { title: string; message: unknown; confirmLabel?: string }) => true) }));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock("@/lib/knowledge", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/knowledge")>();
   return {
-    getAiConnections: vi.fn(), saveAiConnection: vi.fn(), testAiConnection: vi.fn(), removeAiConnection: vi.fn(),
+    getAiConnections: vi.fn(), saveAiConnection: kn.saveAiConnection, testAiConnection: vi.fn(), removeAiConnection: kn.removeAiConnection,
     saveEmbeddingKey: kn.saveEmbeddingKey, removeEmbeddingKey: vi.fn(), testEmbeddingKey: vi.fn(),
     getAiUsage: vi.fn(), setAiCap: vi.fn(),
     releaseBackgroundBuild: kn.releaseBackgroundBuild, releaseOutcome: real.releaseOutcome,
@@ -44,15 +55,17 @@ vi.mock("@/lib/knowledge", async (importOriginal) => {
 vi.mock("@/lib/embedKeyOverview", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/embedKeyOverview")>()),
   getEmbedKeyOverview: ov.getEmbedKeyOverview,
+  releaseBuildOnMyKey: ov.releaseBuildOnMyKey,
 }));
 vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => toast }));
 vi.mock("@/components/providers/DialogProvider", () => dialog);
 vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: {} }));
 
-import { EmbeddingKeyEditor, BuildsOnMyKey } from "@/components/knowledge/AiSettingsModal";
+import { EmbeddingKeyEditor, BuildsOnMyKey, KeyEditor } from "@/components/knowledge/AiSettingsModal";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import {
   embeddingSwitchImpact, effectiveEmbeddingSetting, switchImpactIsEmpty, librariesToRebuild, librariesLinkedAfterSwitch,
+  embeddingLossImpact, onChatKeyEmbeddings,
   type EmbedKeyOverview,
 } from "@/lib/embedKeyOverview";
 
@@ -89,8 +102,12 @@ beforeEach(() => {
   root = createRoot(host);
   kn.saveEmbeddingKey.mockClear();
   kn.releaseBackgroundBuild.mockClear();
+  kn.saveAiConnection.mockClear();
+  kn.removeAiConnection.mockClear();
   ov.getEmbedKeyOverview.mockReset();
   ov.getEmbedKeyOverview.mockResolvedValue(OVERVIEW);
+  ov.releaseBuildOnMyKey.mockReset();
+  ov.releaseBuildOnMyKey.mockResolvedValue({ released: true });
   dialog.appConfirm.mockReset();
   dialog.appConfirm.mockResolvedValue(true);
   toast.showToast.mockReset();
@@ -177,6 +194,28 @@ describe("SEM-1 — the impact of a switch, read from the libraries (pure)", () 
   it("a switch that touches no index and no build is empty — nothing to warn about", () => {
     const i = embeddingSwitchImpact(before, { provider: "voyage", model: VOYAGE[2] }, { builds: [], indexes: [{ libraryId: "L-new", libraryName: "Empty", models: {} }] })!;
     expect(switchImpactIsEmpty(i)).toBe(true);
+  });
+  it("meaning search on the OpenAI chat key: only with no embeddings key saved", () => {
+    expect(onChatKeyEmbeddings({ provider: "openai", embeddingProvider: null })).toBe(true);
+    expect(onChatKeyEmbeddings({ provider: "openai", embeddingProvider: "voyage" })).toBe(false);
+    expect(onChatKeyEmbeddings({ provider: "anthropic", embeddingProvider: null })).toBe(false);
+    expect(onChatKeyEmbeddings(null)).toBe(false);
+  });
+  it("losing the chat-key embeddings altogether: every index OpenAI built stops answering, every build on the key ends; another provider's index and an empty one are untouched", () => {
+    const chat = effectiveEmbeddingSetting({ provider: "openai", embeddingProvider: null })!;
+    const i = embeddingLossImpact(chat, {
+      builds: [build("L-ven", "Vendor manuals"), build("L-std", "Standards", { standing: true })],
+      indexes: [...OVERVIEW.indexes!, { libraryId: "L-x", libraryName: "Big library", models: null }],
+    });
+    expect(i.after).toBeNull();
+    expect(i.stopAnswering.map((l) => l.libraryName)).toEqual(["Vendor manuals"]);
+    expect(i.cannotGrow).toEqual([]);
+    expect(i.buildsStop.map((l) => [l.libraryName, l.standing])).toEqual([["Vendor manuals", false], ["Standards", true]]);
+    expect(i.unknown.map((l) => l.libraryName)).toEqual(["Big library"]);
+    const u = embeddingLossImpact(chat, null, "HTTP 500");
+    expect(u.unreadable).toBe("HTTP 500");
+    expect(switchImpactIsEmpty(u)).toBe(false);
+    expect(switchImpactIsEmpty(embeddingLossImpact(chat, { builds: [], indexes: [{ libraryId: "L-new", libraryName: "Empty", models: {} }] }))).toBe(true);
   });
 });
 
@@ -301,6 +340,115 @@ describe("SEM-1 done-when 2 — switching the embedding model or provider confir
   });
 });
 
+describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenAI chat key off OpenAI, or removing it, confirms first", () => {
+  /** Meaning search on the OpenAI chat key: no embeddings key saved. */
+  const CHAT_ONLY = { provider: "openai", model: "chat-model-b", keyLast4: "abcd", updatedAt: "2026-10-01T00:00:00Z", embeddingProvider: null, embeddingModel: null, embeddingKeyLast4: null };
+  const CHAT_OVERVIEW: EmbedKeyOverview = {
+    builds: [build("L-ven", "Vendor manuals", { standing: true })],
+    indexes: [
+      { libraryId: "L-std", libraryName: "Standards", models: { [VOYAGE[1]]: 900 } },
+      { libraryId: "L-ven", libraryName: "Vendor manuals", models: { [OPENAI[0]]: 12 } },
+      { libraryId: "L-new", libraryName: "Empty", models: {} },
+    ],
+  };
+  async function renderKeyEditor(current: Record<string, unknown>) {
+    await act(async () => { root.render(React.createElement(KeyEditor, { orgId: "o1", current: current as never, onChanged: () => undefined })); });
+    await settle();
+  }
+  async function click(label: RegExp) {
+    const btn = [...host.querySelectorAll("button")].find((b) => label.test(b.textContent ?? ""))!;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle();
+  }
+
+  it("reproduction → fix: switching the chat key to Claude names the indexes that stop answering and the builds that end; declining saves nothing", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue(CHAT_OVERVIEW);
+    await renderKeyEditor(CHAT_ONLY);
+    await choose(0, "anthropic");
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Verify & save/);
+    expect(ov.getEmbedKeyOverview).toHaveBeenCalledWith("o1", { models: true });
+    expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
+    expect(dialog.appConfirm.mock.calls[0][0]).toMatchObject({ title: "Switch your chat key off OpenAI?", confirmLabel: "Switch" });
+    const text = await confirmText();
+    expect(text).toContain(`Your meaning-based search runs on this OpenAI chat key (${OPENAI[0]}) — you have no embeddings key saved.`);
+    expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with OpenAI, and without an OpenAI key you cannot search them:Vendor manuals/);
+    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:Vendor manuals/);
+    expect(text).not.toMatch(/Standards|Empty/);
+    expect(text).toMatch(/To keep them, add an embeddings key under Meaning-based search first: an OpenAI embeddings key searches these indexes as they are; a key for another provider needs each library's index rebuilt with it — Rebuild index/);
+    expect(text).toMatch(/Keyword search is unaffected\./);
+    expect(kn.saveAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("…confirming saves the switch", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue(CHAT_OVERVIEW);
+    await renderKeyEditor(CHAT_ONLY);
+    await choose(0, "anthropic");
+    await click(/Verify & save/);
+    expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
+    expect(kn.saveAiConnection).toHaveBeenCalledWith(expect.objectContaining({ provider: "anthropic" }));
+  });
+
+  it("…an overview that cannot be read still warns, in general terms", async () => {
+    ov.getEmbedKeyOverview.mockRejectedValueOnce(new Error("HTTP 500"));
+    await renderKeyEditor(CHAT_ONLY);
+    await choose(0, "anthropic");
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Verify & save/);
+    expect(await confirmText()).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with OpenAI stops answering your questions, and every background build on your key ends\./);
+    expect(kn.saveAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("removing that chat key: ONE confirm carrying both the removal and the meaning-search warning; declining removes nothing", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue(CHAT_OVERVIEW);
+    await renderKeyEditor(CHAT_ONLY);
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Remove/);
+    expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
+    expect(dialog.appConfirm.mock.calls[0][0]).toMatchObject({ title: "Remove your API key?", confirmLabel: "Remove key" });
+    const text = await confirmText();
+    expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. Nobody else is affected\./);
+    expect(text).toMatch(/These meaning indexes stop answering your questions[\s\S]*Vendor manuals/);
+    expect(kn.removeAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("a switch or removal that touches no index and no build asks only what it asked before", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue({ builds: [], indexes: [{ libraryId: "L-std", libraryName: "Standards", models: { [VOYAGE[1]]: 900 } }] });
+    await renderKeyEditor(CHAT_ONLY);
+    await choose(0, "anthropic");
+    await click(/Verify & save/);
+    expect(dialog.appConfirm).not.toHaveBeenCalled();
+    expect(kn.saveAiConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it("REGRESSION: with an embeddings key saved, switching the chat key reads nothing and asks nothing; removing it asks exactly what it asked before", async () => {
+    await renderKeyEditor(SAVED);
+    await choose(0, "openai");
+    await click(/Verify & save/);
+    expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
+    expect(dialog.appConfirm).not.toHaveBeenCalled();
+    expect(kn.saveAiConnection).toHaveBeenCalledTimes(1);
+    await click(/Remove/);
+    expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
+    expect(dialog.appConfirm.mock.calls[0][0]).toEqual({
+      title: "Remove your API key?",
+      message: "You won't be able to ask AI questions until you add a key again. Nobody else is affected.",
+      confirmLabel: "Remove key",
+    });
+  });
+
+  it("REGRESSION: on the OpenAI chat key, another OpenAI model keeps meaning search where it was — nothing read, nothing asked", async () => {
+    await renderKeyEditor(CHAT_ONLY);
+    const input = host.querySelector('input:not([type="password"])') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(input, "chat-model-c"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await click(/Verify & save/);
+    expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
+    expect(dialog.appConfirm).not.toHaveBeenCalled();
+    expect(kn.saveAiConnection).toHaveBeenCalledWith(expect.objectContaining({ provider: "openai", model: "chat-model-c" }));
+  });
+});
+
 describe("GOV-14 done-when 4 — every background build on my key, in one place, each with a Stop", () => {
   async function renderList() {
     await act(async () => { root.render(React.createElement(BuildsOnMyKey, { orgId: "o1" })); });
@@ -331,7 +479,8 @@ describe("GOV-14 done-when 4 — every background build on my key, in one place,
     const stop = [...host.querySelectorAll("[data-build-library] button")].find((b) => /Stop/.test(b.textContent ?? "")) as HTMLButtonElement;
     await act(async () => { stop.click(); });
     await settle();
-    expect(kn.releaseBackgroundBuild).toHaveBeenCalledWith("o1", "L-pid");
+    expect(ov.releaseBuildOnMyKey).toHaveBeenCalledWith("o1", "L-pid");
+    expect(kn.releaseBackgroundBuild).not.toHaveBeenCalled();
     expect(toast.showToast).toHaveBeenCalledWith({ type: "success", title: "Background build stopped." });
     expect(ov.getEmbedKeyOverview).toHaveBeenCalledTimes(2);
     expect(host.textContent).toMatch(/None running\./);
@@ -339,12 +488,27 @@ describe("GOV-14 done-when 4 — every background build on my key, in one place,
 
   it("a Stop that found nothing running is never 'stopped'", async () => {
     ov.getEmbedKeyOverview.mockResolvedValue({ builds: [build("L-pid", "P&IDs")] });
-    kn.releaseBackgroundBuild.mockResolvedValueOnce({ released: false });
+    ov.releaseBuildOnMyKey.mockResolvedValueOnce({ released: false });
     await renderList();
     const stop = [...host.querySelectorAll("[data-build-library] button")][0] as HTMLButtonElement;
     await act(async () => { stop.click(); });
     await settle();
     expect(toast.showToast).toHaveBeenCalledWith({ type: "info", title: "No background build was running any more — nothing was stopped." });
+  });
+
+  it("reproduction → fix: Stop on a row that is no longer on my key (another member's build replaced it) stops nothing and says so — never 'stopped'", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValueOnce({ builds: [build("L-pid", "P&IDs")] }).mockResolvedValueOnce({ builds: [] });
+    const refusal = "This background build no longer runs on your key — another member's build replaced it after the list was read — so nothing was stopped.";
+    ov.releaseBuildOnMyKey.mockRejectedValueOnce(new Error(refusal));
+    await renderList();
+    const stop = [...host.querySelectorAll("[data-build-library] button")][0] as HTMLButtonElement;
+    await act(async () => { stop.click(); });
+    await settle();
+    expect(ov.releaseBuildOnMyKey).toHaveBeenCalledWith("o1", "L-pid");
+    expect(toast.showToast).toHaveBeenCalledWith({ type: "error", title: refusal });
+    expect(toast.showToast).not.toHaveBeenCalledWith(expect.objectContaining({ title: "Background build stopped." }));
+    expect(ov.getEmbedKeyOverview).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toMatch(/None running\./);
   });
 
   it("a list that cannot be read says so — never 'None running'", async () => {

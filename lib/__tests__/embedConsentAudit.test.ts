@@ -4,21 +4,25 @@
 //     stamped it. A build pass that stamps the caller as the payer where they
 //     were not, and "keep current" switched on, write one
 //     EMBED_BUILD_CONSENT_RECORDED row naming the request (an id generated
-//     by the route; the platform id, address and client as the request
-//     carried them, marked unverified off Vercel) and the instant of the
-//     stamp it recorded. A pass that renews the caller's consent writes
-//     nothing new once a row names that payer on that library; a renewal of
-//     a consent no row names (one stamped before this deploy) writes its
-//     first row. A consent whose row cannot be written is put back —
-//     withdrawn, or restored as the caller's recorded consent was — and a
-//     put-back raced by another pass of the caller's is read again, never
-//     reported as done when it was not.
+//     by the route, which it also logs; the platform id, marked unverified
+//     off Vercel) and the instant of the stamp it recorded — never the
+//     member's address or client string: audit_logs is read by every active
+//     member, and an address is controller-only (DEC-46). A pass that renews
+//     the caller's consent writes nothing new once a row names that payer on
+//     that library; a renewal of a consent no row names (one stamped before
+//     this deploy) writes its first row. A consent whose row cannot be
+//     written is put back — withdrawn, or restored as the caller's earlier
+//     consent was when a row names it or the lookup failed — a withdrawn
+//     standing "keep current" is said to be off, and a put-back raced by
+//     another pass of the caller's is read again, never reported as done
+//     when it was not.
 //   GOV-14 done-when 4 / SEM-1 done-when 2 — `key-overview`: every
 //     background build on the CALLER's key across the workspace (the list AI
 //     settings shows, each with a Stop), and with `models` each library's
 //     vectors per embedding model (what the switch confirm names). It names
 //     no library the caller does not already read, writes nothing and spends
-//     nothing.
+//     nothing. The list's Stop sends `onlyMine`: a consent that no longer
+//     names the caller is not stopped (409).
 //
 // REGRESSION: a build pass answers exactly as before (its response carries
 // no new field when the consent is audited), status / release / reset are
@@ -95,6 +99,7 @@ const REQUEST_HEADERS = { "x-vercel-id": "iad1::abc-123", "x-forwarded-for": "20
 
 describe("GOV-14 done-when 3 — a recorded background consent names the request that stamped it", () => {
   it("reproduction → fix: the first build pass stamps the caller and writes ONE audit row naming the request and the stamp's instant", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const { POST } = await import("@/app/api/knowledge/embed/route");
     const res = await POST(req({}, REQUEST_HEADERS));
     expect(res.status).toBe(200);
@@ -110,7 +115,7 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
         libraryId: LIB, stampedAt: marker()!.at, standing: false, replaced: null,
         request: {
           route: "/api/knowledge/embed", action: "build",
-          platformRequestId: "iad1::abc-123", forwardedFor: "203.0.113.7", headersFrom: "unverified", userAgent: "Mozilla/5.0 test",
+          platformRequestId: "iad1::abc-123", headersFrom: "unverified",
         },
         renewal: null,
       },
@@ -119,6 +124,28 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
     const request = (rows[0].details as { request: Row }).request;
     expect(String(request.requestId)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(request.requestId).not.toBe("iad1::abc-123");
+    // …and it is logged with the library, payer and action, so the row and a log line name the same request
+    expect(info).toHaveBeenCalledWith("[embed] consent recorded", {
+      requestId: request.requestId, platformRequestId: "iad1::abc-123", libraryId: LIB, userId: ME, action: "build",
+    });
+    info.mockRestore();
+  });
+
+  it("reproduction → fix (DEC-46): the row — which every active member can read — carries no address and no client string, whatever the request sent", async () => {
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    for (const vercel of ["", "1"]) {
+      vi.stubEnv("VERCEL", vercel);
+      admin.state.tables.knowledge_libraries[0].ai_features = {};
+      admin.state.tables.audit_logs = [];
+      await POST(req({}, REQUEST_HEADERS));
+      await POST(req({ action: "keep-current", on: true }, REQUEST_HEADERS));
+      expect(consentRows()).toHaveLength(2);
+      for (const row of consentRows()) {
+        expect(Object.keys((row.details as { request: Row }).request).sort()).toEqual(["action", "headersFrom", "platformRequestId", "requestId", "route"]);
+        const text = JSON.stringify(row);
+        expect(text).not.toMatch(/203\.0\.113\.7|10\.0\.0\.1|Mozilla|forwardedFor|userAgent/);
+      }
+    }
   });
 
   it("a pass that only renews the caller's own consent writes nothing new (the build loop calls the route once per batch)", async () => {
@@ -136,22 +163,22 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
     const request = (consentRows()[0].details as { request: Row }).request;
     expect(String(request.requestId)).toMatch(/^[0-9a-f-]{36}$/);
     expect(request.platformRequestId).toBeNull();
-    expect(request.forwardedFor).toBeNull();
+    expect(request).not.toHaveProperty("forwardedFor");
   });
 
-  it("off Vercel the request's headers are recorded as unverified (they pass through from the caller); on Vercel as the platform edge's, and a client's x-request-id is not taken for the platform's id", async () => {
+  it("off Vercel the platform id is recorded as unverified (it passes through from the caller); on Vercel as the platform edge's, and a client's x-request-id is not taken for the platform's id", async () => {
     const { POST } = await import("@/app/api/knowledge/embed/route");
     vi.stubEnv("VERCEL", "");
     await POST(req({}, { "x-request-id": "forged-id", "x-forwarded-for": "198.51.100.1" }));
     let request = (consentRows()[0].details as { request: Row }).request;
-    expect(request).toMatchObject({ platformRequestId: "forged-id", forwardedFor: "198.51.100.1", headersFrom: "unverified" });
+    expect(request).toMatchObject({ platformRequestId: "forged-id", headersFrom: "unverified" });
     expect(request.requestId).not.toBe("forged-id");
     admin.state.tables.knowledge_libraries[0].ai_features = {};
     admin.state.tables.audit_logs = [];
     vi.stubEnv("VERCEL", "1");
     await POST(req({}, { "x-request-id": "forged-id", "x-forwarded-for": "203.0.113.7" }));
     request = (consentRows()[0].details as { request: Row }).request;
-    expect(request).toMatchObject({ platformRequestId: null, forwardedFor: "203.0.113.7", headersFrom: "platform-edge" });
+    expect(request).toMatchObject({ platformRequestId: null, headersFrom: "platform-edge" });
     admin.state.tables.knowledge_libraries[0].ai_features = {};
     admin.state.tables.audit_logs = [];
     await POST(req({}, REQUEST_HEADERS));
@@ -186,12 +213,72 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
     });
   });
 
-  it("…and a consent from before this deploy whose first row cannot be written is withdrawn, not left spending", async () => {
+  it("…and a consent from before this deploy whose first row cannot be written is withdrawn, not left spending — and a standing one is said to be off", async () => {
     admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-30T08:00:00Z", standing: true } };
     admin.state.failWrites.audit_logs = { message: "audit down" };
     const { POST } = await import("@/app/api/knowledge/embed/route");
     const body = await (await POST(req({}))).json();
     expect(body.backgroundNote).toMatch(/could not be recorded \(its audit row could not be written \(audit down\)\) — keep this page open/);
+    // reproduction → fix: the payer is told keep-current was switched off, never left to assume it is on
+    expect(body.backgroundNote).toMatch(/Your "keep current" consent on this library is off now: switch it on again in the meaning-index panel once it can be recorded\./);
+    expect(marker()).toBeUndefined();
+  });
+
+  it("…a plain consent from before this deploy, withdrawn the same way, says nothing about keep current", async () => {
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-30T08:00:00Z" } };
+    admin.state.failWrites.audit_logs = { message: "audit down" };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}))).json();
+    expect(body.backgroundNote).toMatch(/keep this page open until the build finishes\.$/);
+    expect(body.backgroundNote).not.toMatch(/keep current/);
+    expect(marker()).toBeUndefined();
+  });
+
+  it("reproduction → fix: a standing consent whose row lookup AND row write fail is put back exactly as it was — a failed read never withdraws keep current", async () => {
+    const was = { userId: ME, at: "2026-09-20T00:00:00Z", standing: true, lastDrainAt: "2026-09-21T00:00:00Z", blockedUntil: "2999-01-01T00:00:00Z", blockedReason: "cap", lastError: "cap reached" };
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { ...was } };
+    admin.state.failReads.audit_logs = { message: "lookup down" };
+    admin.state.failWrites.audit_logs = { message: "audit down" };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({}));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(marker()).toEqual(was);
+    expect(body.backgroundNote).toBe(
+      "This pass's consent could not be recorded (its audit row could not be written (audit down)), so your earlier consent on "
+      + "this library was put back as it was before this pass (whether an audit row names it could not be checked); the "
+      + "background build continues under it as before.",
+    );
+    expect(body.backgroundNote).not.toMatch(/off now|keep this page open/);
+  });
+
+  it("…and 'keep current' over the caller's standing consent, with the lookup and the write failing, answers that it stands as before", async () => {
+    const was = { userId: ME, at: "2026-09-20T00:00:00Z", standing: true };
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { ...was } };
+    admin.state.failReads.audit_logs = { message: "lookup down" };
+    admin.state.failWrites.audit_logs = { message: "audit down" };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "keep-current", on: true }));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toMatchObject({ standing: null });
+    expect(body.error).toBe(
+      "The standing consent could not be recorded again: its audit row could not be written (audit down). Your \"keep current\" "
+      + "consent on this library stands as it was before (whether an audit row names it could not be checked).",
+    );
+    expect(marker()).toEqual(was);
+  });
+
+  it("…and 'keep current' pressed over the caller's standing consent from before this deploy (no row), unaudited, withdraws it and says keep current is off", async () => {
+    admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-30T08:00:00Z", standing: true } };
+    admin.state.failWrites.audit_logs = { message: "audit down" };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "keep-current", on: true }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe(
+      "The standing consent was not kept: its audit row could not be written (audit down). The \"keep current\" consent you "
+      + "already had on this library is off now — switch it on again once it can be recorded.",
+    );
     expect(marker()).toBeUndefined();
   });
 
@@ -245,6 +332,7 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
     const body = await res.json();
     expect(body.error).toBeNull();
     expect(body.backgroundNote).toMatch(/The background continuation could not be recorded \(its audit row could not be written \(permission denied for table audit_logs\)\) — keep this page open/);
+    expect(body.backgroundNote).not.toMatch(/keep current/);
     expect(marker()).toBeUndefined();
     // the drain has nothing to spend on
     const { drainEmbedBacklog } = await import("@/lib/knowledgeEmbedDrain");
@@ -362,6 +450,51 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
       expect(res.status).toBe(500);
       expect((await res.json()).error).toMatch(/^The standing consent was not kept: its audit row could not be written \(audit down\)\.$/);
       expect(marker()).toEqual({ userId: ME, at: "2026-10-02T09:00:00.000Z" });
+    });
+  });
+
+  describe("GOV-14 done-when 4 — the Stop in AI settings' list stops a build only while it is on the caller's key (onlyMine)", () => {
+    it("reproduction → fix: a controller's Stop on a stale row — another member's build replaced the listed consent — stops nothing (409)", async () => {
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z" } };
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "release", onlyMine: true }));
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body).toMatchObject({ released: false, changed: true });
+      expect(body.error).toBe("This background build no longer runs on your key — another member's build replaced it after the list was read — so nothing was stopped.");
+      expect(marker()).toEqual({ userId: OTHER, at: "2026-10-02T09:00:00Z" });
+    });
+
+    it("…and a non-controller's stale row is told the same (409), not 'only the member whose key pays'", async () => {
+      principal.isController = false;
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z", standing: true } };
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "release", onlyMine: true }));
+      expect(res.status).toBe(409);
+      expect(marker()).toMatchObject({ userId: OTHER, standing: true });
+    });
+
+    it("the caller's own consent is stopped — re-stamped since the list was read or not", async () => {
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-10-02T09:30:00Z", standing: true } };
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "release", onlyMine: true }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ released: true });
+      expect(marker()).toBeUndefined();
+    });
+
+    it("nothing running any more is { released: false }, as before", async () => {
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      expect(await (await POST(req({ action: "release", onlyMine: true }))).json()).toEqual({ released: false });
+    });
+
+    it("REGRESSION: the library panel's release (no onlyMine) still lets a controller stop another member's build", async () => {
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z" } };
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "release" }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ released: true });
+      expect(marker()).toBeUndefined();
     });
   });
 

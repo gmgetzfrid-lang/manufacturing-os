@@ -7,6 +7,10 @@
 //
 // REGRESSION: the builds-only read (no `models`) still needs only `builds`,
 // and a full answer is returned as it came.
+//
+// GOV-14 (I-20 fix pass 2): the Stop in AI settings' list releases through
+// `releaseBuildOnMyKey`, which sends `onlyMine` — the route refuses (409) a
+// consent that no longer names the caller — and throws the route's sentence.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -14,7 +18,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
 }));
 
-import { getEmbedKeyOverview, embeddingSwitchImpact, switchImpactIsEmpty } from "@/lib/embedKeyOverview";
+import { getEmbedKeyOverview, embeddingSwitchImpact, switchImpactIsEmpty, releaseBuildOnMyKey } from "@/lib/embedKeyOverview";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 
 const VOYAGE = EMBEDDING_PROVIDERS.find((p) => p.id === "voyage")!.models;
@@ -57,5 +61,23 @@ describe("SEM-1 — the overview read before a switch fails closed", () => {
     expect(fetch).toHaveBeenLastCalledWith("/api/knowledge/embed", expect.objectContaining({
       body: JSON.stringify({ orgId: "o1", action: "key-overview", models: true }),
     }));
+  });
+});
+
+describe("GOV-14 — the list's Stop releases only a build still on the caller's key", () => {
+  it("sends the release with onlyMine and returns the route's answer", async () => {
+    answer = { status: 200, body: { released: true } };
+    await expect(releaseBuildOnMyKey("o1", "L1")).resolves.toEqual({ released: true });
+    expect(fetch).toHaveBeenLastCalledWith("/api/knowledge/embed", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ orgId: "o1", libraryId: "L1", action: "release", onlyMine: true }),
+    }));
+    answer = { status: 200, body: { released: false } };
+    await expect(releaseBuildOnMyKey("o1", "L1")).resolves.toEqual({ released: false });
+  });
+
+  it("a refusal (the 409 for a build no longer on the caller's key) is thrown with the route's own sentence", async () => {
+    answer = { status: 409, body: { error: "This background build no longer runs on your key — another member's build replaced it after the list was read — so nothing was stopped.", released: false, changed: true } };
+    await expect(releaseBuildOnMyKey("o1", "L1")).rejects.toThrow(/no longer runs on your key/);
   });
 });

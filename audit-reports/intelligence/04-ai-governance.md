@@ -1322,43 +1322,51 @@ Already landed elsewhere, and verified in current code:
 
 **Scope / residual.** OPEN for done-when 3–4 (I-02's files).
 
-**Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 3 and 4. Reproduced first on the base (`3bf3b75`). A build pass and "keep current" stamped the consent with no audit row. No place listed the builds on a member's key: the embed route refused any request without a library (`embedConsentAudit.test.ts`: 26 of 29 cases fail against the base route; the other 3 are the two REGRESSION pins and the control for another member's standing consent).
+**Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 3 and 4. Reproduced first on the base (`3bf3b75`). A build pass and "keep current" stamped the consent with no audit row. No place listed the builds on a member's key: the embed route refused any request without a library (`embedConsentAudit.test.ts`: 33 of its 39 cases fail against the base route; the other 6 are REGRESSION pins and controls — another member's standing consent, a release of the caller's own consent, a release with nothing running).
 
-Done-when 3, `app/api/knowledge/embed/route.ts`. `auditConsent` (`:249`) runs after a consent write.
-- It writes one `EMBED_BUILD_CONSENT_RECORDED` row (`resource_type` `knowledge_library`, `resource_id` the library) when a build pass newly stamps the caller as the payer (`:645`), and when "keep current" turns a consent standing (`:580`).
-- The row's details carry the instant of the stamp it recorded (`stampedAt`, the marker's `at` just after the write), `standing`, and the consent it replaced (another member's plain build). They also carry the request (`requestFacts`, `:193`):
+Done-when 3, `app/api/knowledge/embed/route.ts`. `auditConsent` (`:271`) runs after a consent write.
+- It writes one `EMBED_BUILD_CONSENT_RECORDED` row (`resource_type` `knowledge_library`, `resource_id` the library) when a build pass newly stamps the caller as the payer (`:731`), and when "keep current" turns a consent standing (`:663`).
+- The row's details carry the instant of the stamp it recorded (`stampedAt`, the marker's `at` just after the write), `standing`, and the consent it replaced (another member's plain build). They also carry the request (`requestFacts`, `:206`):
   - the route and action;
-  - a request id the route generates (`randomUUID`), so no caller chooses it;
-  - the platform request id, the first `x-forwarded-for` hop and the client, as the request carried them;
-  - `headersFrom`: `platform-edge` on Vercel, whose edge sets `x-vercel-id` and `x-forwarded-for`; `unverified` anywhere else, because a self-hosted deployment (the repo ships a Dockerfile) passes those headers through from the caller.
-- A pass that renews the caller's own consent writes nothing new once a row names that payer on that library (`consentRows`, `:214`: one `audit_logs` lookup on the resource and action per renewal pass). The same holds for "keep current" over a consent that is already standing.
+  - a request id the route generates (`randomUUID`), so no caller chooses it. When the row lands, the route logs that id with the platform id, the library, the payer and the action (`console.info("[embed] consent recorded", …)`, `:313`), so the row and a server log line name the same request;
+  - the platform request id (`x-vercel-id`; off Vercel, `x-vercel-id` or `x-request-id` as the request carried it);
+  - `headersFrom`: `platform-edge` on Vercel, whose edge sets `x-vercel-id`; `unverified` anywhere else, because a self-hosted deployment (the repo ships a Dockerfile) passes that header through from the caller.
+  - No address and no client string. `audit_logs` is readable by every active member (`audit_logs_org_access`; the restrictive overlay `20261142` covers neither `knowledge_library` nor this action), and an address is controller-only (DEC-46). On Vercel the platform's own request log holds the address and client against the platform id, for the operator only.
+- A pass that renews the caller's own consent writes nothing new once a row names that payer on that library (`consentRows`, `:225`: one `audit_logs` lookup on the resource and action per renewal pass). The same holds for "keep current" over a consent that is already standing.
 - A renewal of a consent no row names yet writes that consent's first row, with `renewal.previousStampedAt`. This covers a consent stamped before this deploy, including a standing "keep current" one, on its next build pass or "keep current" press. A lookup that fails writes the row too (`renewal.earlierRow: "lookup failed"`).
 - Another member's standing consent, which a plain build never replaces, writes nothing.
-- If the row cannot be written, or the stamp cannot be read back to name it, the write is put back (`putBack`, `:308`):
+- If the row cannot be written, or the stamp cannot be read back to name it, the write is put back (`putBack`, `:379`):
   - A consent the write recorded is withdrawn.
-  - When "keep current" turned the caller's own consent standing, and a row already names that consent, it is restored as it was: its instant, standing flag and holds (`restoreOf`).
+  - The caller's own earlier consent is restored as it was (its instant, standing flag and holds; `restoreOf`) when a row already names it, or when the lookup for one failed. In the second case a row may well name it, so a failed read never withdraws a standing "keep current".
   - A put-back whose expectation no longer holds (a second tab's pass re-stamped the consent in between) reads the marker again. A consent that is no longer the caller's is gone. One that a row now names at its current instant stands, because that other pass recorded it. Otherwise the put-back is tried once more against what was read. A consent that keeps moving is reported as still standing ("…and it could not be withdrawn (it kept changing …)"), never as withdrawn.
-  - The build pass says why through the existing `backgroundNote` ("keep this page open"). "Keep current" answers 500 ("The standing consent was not kept: …").
+  - The build pass says what happened through `backgroundNote` (`buildConsentNote`, `:341`): withdrawn, "keep this page open"; restored, "your earlier consent on this library was put back as it was before this pass (whether an audit row names it could not be checked)". When the withdrawn consent was the caller's own standing "keep current" (one stamped before this deploy, with no row), the note adds "Your "keep current" consent on this library is off now: switch it on again …".
+  - "Keep current" answers 500 (`keepCurrentRefusal`, `:354`): "The standing consent was not kept: …", adding that the "keep current" the caller already had is off now when it was withdrawn; or, when the caller's standing consent was restored after a failed lookup, "…could not be recorded again … stands as it was before".
 
 *Corrected (I-20 fix pass, 2026-10-02):* the first version of this block overstated three things:
 - It said the drain "never spends on a consent no row explains". In fact a consent stamped before this deploy was never given a row, because renewals wrote nothing.
 - It named the request by headers a caller can set off Vercel.
 - It said a failed "keep current" put the consent back "as it was". In fact it restored only the standing flag, and a put-back raced by a second tab could be reported as withdrawn.
 
+*Corrected (I-20 fix pass 2, 2026-10-02):*
+- The rows stored the member's address (the first `x-forwarded-for` hop) and user agent in `audit_logs`, which every active member can read. That was contrary to DEC-46's controller-only address. Both are removed (`embedConsentAudit.test.ts`, "reproduction → fix (DEC-46)").
+- The generated `requestId` was presented as what "names the request", yet nothing logged or returned it, so it correlated with nothing. The route now logs it when the row lands.
+- A renewal whose row lookup and row write both failed withdrew the caller's standing "keep current". The note said only "keep this page open", so the payer could assume it was still on. A failed lookup now restores the consent, and a withdrawn standing consent is said to be off.
+
 Done-when 4.
-- The embed route's `key-overview` action (`:392`, `keyOverview` `:340`; no library) lists every library of the workspace whose consent names the caller and parses as valid, never another member's or a forged one.
+- The embed route's `key-overview` action (`:464`, `keyOverview` `:412`; no library) lists every library of the workspace whose consent names the caller and parses as valid, never another member's or a forged one.
   - Each entry has its standing flag, when it was recorded, its last run and any hold.
   - A failed libraries read is a 500, never an empty list.
   - Any member may read their own key's builds. It writes nothing.
 - `lib/embedKeyOverview.ts` `getEmbedKeyOverview` reads it.
-- AI settings (`components/knowledge/AiSettingsModal.tsx`, `BuildsOnMyKey` `:480`, shown under the embeddings key at `:1121`) lists every build on the member's key in one place.
+- AI settings (`components/knowledge/AiSettingsModal.tsx`, `BuildsOnMyKey` `:561`, shown under the embeddings key at `:1204`) lists every build on the member's key in one place.
   - Each entry links its library, says what it is doing and why it waits, and has a Stop.
-  - Stop is the route's existing `release`. Its toast is the route's answer (`releaseOutcome`), and the list is read again.
+  - Stop is the route's `release`, sent with `onlyMine` (`releaseBuildOnMyKey`, `lib/embedKeyOverview.ts:94`). The route refuses (409, nothing stopped) a consent that no longer names the caller (`:529`). A row read before another member's build replaced the consent therefore never stops theirs, even when the caller is a controller. The library's own panel keeps the plain release, which lets a controller stop any build (SEM-11). The binding is on the payer, not the instant: the payer's own build loop re-stamps `at` every batch, so an instant check would refuse the payer's own Stop while a tab builds.
+  - Its toast is the route's answer (`releaseOutcome`, or the refusal's sentence), and the list is read again.
   - A list that cannot be read says so, never "None running".
 
 Tests: `lib/__tests__/embedConsentAudit.test.ts`.
-- The row and its request: a generated id, never a header; headers marked unverified off Vercel and as the platform edge's on Vercel.
-- Renewal writes nothing once a row names the consent. A consent stamped before this deploy gets its first row on its next build pass, or on "keep current" when it is already standing, and only one row. A pre-deploy consent whose first row fails is withdrawn. A renewal whose lookup fails writes the row.
+- The row and its request: a generated id, never a header, logged with the library, payer and action; the platform id marked unverified off Vercel and as the platform edge's on Vercel; no address and no client string in any row, on or off Vercel (DEC-46).
+- Renewal writes nothing once a row names the consent. A consent stamped before this deploy gets its first row on its next build pass, or on "keep current" when it is already standing, and only one row. A pre-deploy consent whose first row fails is withdrawn: a standing one is said to be off, a plain one is not. A renewal whose lookup fails writes the row. When the lookup and the write both fail, the caller's standing consent is put back exactly, and the build note and the "keep current" answer say it stands as before. "Keep current" over a rowless standing consent whose row fails withdraws it and says so.
 - The replaced consent; another member's standing consent; keep current.
 - The put-back on a failed row: for a build; for keep current over a recorded consent, which is restored exactly, instant and holds included; and over an unrecorded one, which is withdrawn.
 - The raced put-back:
@@ -1368,22 +1376,26 @@ Tests: `lib/__tests__/embedConsentAudit.test.ts`.
   - re-stamped again and again: reported as standing;
   - keep current, with the standing flag carried by the other pass: taken off again.
 - The overview's list, its filters, its failure and its membership.
-- REGRESSION: status, release and reset write no row, and any other library-less request is still 400.
+- `onlyMine`: a controller's Stop on a consent another member's build replaced is 409 with the marker untouched, and so is a non-controller's (not the 403); the caller's own consent is stopped; nothing running is `released: false`.
+- REGRESSION: the panel's release without `onlyMine` still lets a controller stop another member's build; status, release and reset write no row; and any other library-less request is still 400.
 
-`lib/__tests__/aiSettingsEmbeddingSwitch.test.ts` ("GOV-14 done-when 4"): the rendered list, Stop, a Stop that stopped nothing, and an unreadable list.
+Against the pre-fix-pass-2 route (`57bf0d8`), 9 of the 39 fail: the request-shape and DEC-46 cases, the four put-back messages and the restore, and the two stale-Stop cases.
+
+`lib/__tests__/aiSettingsEmbeddingSwitch.test.ts` ("GOV-14 done-when 4"): the rendered list; Stop through `releaseBuildOnMyKey`; a Stop that stopped nothing; a Stop on a row no longer on the caller's key, which stops nothing and says so; and an unreadable list. `lib/__tests__/embedKeyOverviewRead.test.ts`: `releaseBuildOnMyKey` sends `onlyMine` and throws the route's refusal.
 
 **Done-when.**
 1. ✓ (2026-10-01, I-02) The drain validates the marker's uuid and an active membership before spending.
 2. ✓ (2026-10-01, I-05) `getCapUsd` binds the user id.
-3. ✓ The stamp is server-written only (`20261121`) and records who and when. A row names the request that recorded each consent: a new consent when it is stamped, and a consent stamped before this deploy on its next build pass or "keep current" press. A consent that no row can record is put back, or the caller is told it still stands. The residual below says what a row does and does not cover.
-4. ✓ A member sees every background build on their key in one place, AI settings, and can stop each one (as well as on each library's panel).
+3. ✓ The stamp is server-written only (`20261121`) and records who and when. A row names the request that recorded each consent: a new consent when it is stamped, and a consent stamped before this deploy on its next build pass or "keep current" press. It does so by an id the route generates and logs with the library, payer and action, and on Vercel by the platform's request id, which the platform's request log also carries. A consent that no row can record is put back, or the caller is told it still stands. A withdrawn standing "keep current" is said to be off. The residual below says what a row does and does not cover.
+4. ✓ A member sees every background build on their key in one place, AI settings, and can stop each one (as well as on each library's panel). The Stop there stops only a build still on their key.
 
 **Scope / residual.** The audit row is written by the service role into `audit_logs` like every other route's row. No migration. What the rows do not cover:
 - A row carries the instant of the stamp it recorded. The build loop re-stamps the consent's `at` every batch, and those renewals write no further row. An auditor therefore finds a consent by library and payer (`resource_id`, `user_id`, the action), not by the live marker's `at`.
 - A row written on a renewal names the renewing request, not the one that first stamped a pre-deploy consent. That request was never recorded.
 - A consent stamped before this deploy, which nobody builds on or presses "keep current" for, is continued by the drain on the stamp alone until it is released. The drain writes no row, and `lib/knowledgeEmbedDrain.ts` is I-18's file. It is listed in AI settings under "Background builds on your key", where its payer can stop it.
 - The renewal lookup is per payer and library, not per consent. A consent stamped without a row by a route instance still on the previous build during a rolling deploy gets no row if an earlier row already names that payer on that library.
-- On a self-hosted deployment, the platform id and address in a row are whatever the caller sent (marked `unverified`). The generated `requestId` is the route's own.
+- On a self-hosted deployment, the platform id in a row is whatever the caller sent (marked `unverified`). The generated `requestId` and its log line are the route's own, and they tie the row to the request only as far as that deployment keeps its server logs.
+- A row holds no address and no client string (DEC-46). Those are in the platform's request log on Vercel, matched by the platform id, and off Vercel in whatever the deployment's proxy logs.
 
 ---
 

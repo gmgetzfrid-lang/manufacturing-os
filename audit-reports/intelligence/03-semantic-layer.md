@@ -95,13 +95,19 @@ What a switch actually does, read from the current code (DEC-29), which the conf
 - The record's premise that "existing vectors become unusable" holds for the provider switch. For the model switch the confirm says "keep answering, but stop growing for you".
 
 What landed.
-- `components/knowledge/AiSettingsModal.tsx` `EmbeddingKeyEditor.save` (`:595`) compares the setting in effect with the one being saved. `effectiveEmbeddingSetting` / `savedEmbeddingSetting` in `lib/embedKeyOverview.ts` resolve them as `embeddingConnectionFrom` does, including the OpenAI chat key's default.
+- `components/knowledge/AiSettingsModal.tsx` `EmbeddingKeyEditor.save` (`:678`) compares the setting in effect with the one being saved. `effectiveEmbeddingSetting` / `savedEmbeddingSetting` in `lib/embedKeyOverview.ts` resolve them as `embeddingConnectionFrom` does, including the OpenAI chat key's default.
 - On a change, it reads the embed route's `key-overview` with `models` (each library's vectors per model through `semantic_coverage_detail`, service role). `embeddingSwitchImpact` then works out the libraries whose index stops answering, those that stop growing, the background builds on this key that stop, and any library whose vectors could not be read.
 - The read fails closed. `getEmbedKeyOverview` throws when `models` was asked for and the answer carries no `indexes` list (`lib/embedKeyOverview.ts:71`), for example from a route instance on an earlier build or a rewritten body. Such an answer is never read as "no library affected", so the general warning shows instead of a silent save.
-- The confirm (`EmbeddingSwitchWarning`, `:409`) names those libraries and says each comes back with a Rebuild of its index with the new model ("Rebuild index, in the library's meaning-index panel", Admin or Doc Control, with the setting of whoever runs it), or by keeping the current setting. Keyword search is unaffected. An overview that cannot be read still warns, in general terms. Declining saves nothing.
-- After the switch, the editor links each library's page, where Rebuild is (`:758`). A library whose index could not be checked is linked too, marked "could not be checked; open it to see whether it needs a Rebuild" (`librariesLinkedAfterSwitch`, `lib/embedKeyOverview.ts:187`).
-- The confirm promises those links ("Once you switch, the libraries are linked here") only when there will be some. When the overview could not be read, no library can be named, so the confirm says "Open each library's meaning-index panel to rebuild it" (`:466`). *Corrected (I-20 fix pass):* the first version promised links in that case and none appeared.
+- The confirm (`EmbeddingSwitchWarning`, `:444`) names those libraries and says each comes back with a Rebuild of its index with the new model ("Rebuild index, in the library's meaning-index panel", Admin or Doc Control, with the setting of whoever runs it), or by keeping the current setting. Keyword search is unaffected. An overview that cannot be read still warns, in general terms. Declining saves nothing.
+- After the switch, the editor links each library's page, where Rebuild is (`:841`). A library whose index could not be checked is linked too, marked "could not be checked; open it to see whether it needs a Rebuild" (`librariesLinkedAfterSwitch`, `lib/embedKeyOverview.ts:251`).
+- The confirm promises those links ("Once you switch, the libraries are linked here") only when there will be some. When the overview could not be read, no library can be named, so the confirm says "Open each library's meaning-index panel to rebuild it" (`:547`). *Corrected (I-20 fix pass):* the first version promised links in that case and none appeared.
 - A switch that touches no index and no build saves without asking.
+- **The chat-key path** (I-20 fix pass 2). A member with no embeddings key saved runs meaning search on their OpenAI CHAT key (`embeddingConnectionFrom`'s fallback, which `effectiveEmbeddingSetting` models). Moving that chat key to another provider, or removing it, leaves them with no embeddings connection at all. *Corrected:* the first version of this block claimed done-when 2 in full while only `EmbeddingKeyEditor.save` asked; `KeyEditor.save` and `KeyEditor.remove` changed the effective embedding setting with no confirm.
+  - `KeyEditor` now reads the same overview first (`embeddingLoss`, `:248`) whenever the setting in effect rides on the chat key (`onChatKeyEmbeddings`, `lib/embedKeyOverview.ts:123`). This happens on a save that moves the chat provider off OpenAI (`:261`) and on a removal (`:330`).
+  - `embeddingLossImpact` (`lib/embedKeyOverview.ts:204`, `after` none) names every index OpenAI built, which stops answering the member, and every background build on their key. Those builds end: the drain releases a consent whose payer has no embeddings key (`lib/knowledgeEmbedDrain.ts`, "no embedding key — stamp cleared").
+  - The same `EmbeddingSwitchWarning` says so ("Switch your chat key off OpenAI?"). Removal shows one confirm, with the removal sentence followed by the warning.
+  - The way back the confirm offers is an embeddings key added first. An OpenAI embeddings key searches the indexes as they are; a key for another provider needs each index rebuilt with it (Rebuild index, in the library's meaning-index panel).
+  - An unreadable overview warns in general terms. A change that touches no index and no build asks only what it asked before. Declining saves or removes nothing.
 
 `SEM-3`'s removal-dialog copy (I-03) is kept as it was (`askRouteUnits.test.ts` pins it).
 
@@ -116,12 +122,21 @@ Tests.
   - every library unknown: the links are promised, then shown marked "could not be checked";
   - the untouched switch;
   - REGRESSION: the same provider and model, a new key only, asks nothing and reads nothing first, and so does a first embeddings key.
+- The chat-key path, pure: `onChatKeyEmbeddings` (only with no embeddings key saved), and `embeddingLossImpact` (OpenAI-built indexes stop answering, every build on the key ends, unread libraries are unknown, an unreadable overview is general).
+- The chat-key path, rendered (`KeyEditor`):
+  - switching the chat key to Claude names the index that stops answering and the build that ends, and saves nothing when declined;
+  - confirming saves;
+  - an unreadable overview warns in general terms;
+  - removal shows one confirm with both texts, and removes nothing when declined;
+  - an untouched change asks nothing new;
+  - REGRESSION: with an embeddings key saved, a chat switch reads and asks nothing, and removal asks exactly the old sentence; another OpenAI chat model reads and asks nothing.
+  - The four chat-key reproduction cases fail against the pre-fix-pass-2 modal (`57bf0d8`).
 - `lib/__tests__/embedKeyOverviewRead.test.ts`: a 200 without `indexes`, or with an `indexes` that is not a list, throws when `models` was asked for; the route's refusal is thrown with its own sentence; REGRESSION: the builds-only read and a full answer.
 - `lib/__tests__/embedConsentAudit.test.ts` ("with models: …"): the route's per-library models, where a read that fails is unknown, never "no vectors".
 
 **Done-when.**
 1. ✓ (2026-09-30) Coverage per model; the panel names a mixed library.
-2. ✓ Saving a different embedding model or provider confirms first. It names the libraries whose vectors stop answering this member (provider switch) or stop growing (model switch), and the builds on the key that stop. It offers the Rebuild and, after the switch, links each library's Rebuild, including the libraries that could not be checked. When no library could be read, it promises no links and says to open each library's panel.
+2. ✓ Saving a different embedding model or provider confirms first. It names the libraries whose vectors stop answering this member (provider switch) or stop growing (model switch), and the builds on the key that stop. It offers the Rebuild and, after the switch, links each library's Rebuild, including the libraries that could not be checked. When no library could be read, it promises no links and says to open each library's panel. A chat-key change that drops the OpenAI chat-key fallback (a switch off OpenAI, or a removal) confirms the same way. It names the indexes that stop answering and the builds that end, and offers an embeddings key or, for another provider, the Rebuild.
 3. ✓ (2026-09-30) A mixed library refuses semantic search until rebuilt; the ask route resolves the model deterministically too (2026-10-01, I-03).
 4. ✓ (2026-09-30) The two-stamp tests.
 

@@ -8,7 +8,9 @@
 //        provider refused another chance
 // POST { orgId, libraryId, action:"keep-current", on } → the standing
 //        consent: the background drain keeps this index current on YOUR key
-// POST { orgId, libraryId, action:"release" } → stop the background build
+// POST { orgId, libraryId, action:"release", onlyMine? } → stop the background
+//        build (`onlyMine`: only while its consent still names the caller —
+//        what AI settings' list of the builds on one's key sends)
 // POST { orgId, action:"key-overview", models? } → no library: every
 //        background build running on the CALLER's key (GOV-14), and with
 //        `models` each library's vectors per embedding model — what AI
@@ -49,19 +51,24 @@
 // A CONSENT HAS AN AUDIT ROW (GOV-14). Recording a background consent — a
 // build that stamps the caller as the payer where they were not, or "keep
 // current" switched on — writes EMBED_BUILD_CONSENT_RECORDED naming the
-// request that stamped it (an id generated here; the platform id, address
-// and client as the request carried them, marked unverified off Vercel) and
-// the instant of the stamp it recorded. A pass that renews the caller's own
-// consent writes nothing new once a row names that payer on that library —
-// the build loop re-stamps the instant every batch, so an auditor finds the
-// consent by library and payer, not by the live instant. A renewal of a
-// consent no row names yet (one stamped before these rows were written)
-// writes its first row. A consent whose row cannot be written is put back:
-// withdrawn, or — when it replaced the caller's own consent that a row
-// already names — restored as that one was (its instant, standing flag and
-// holds). So a consent this route records or renews does not stand without
-// a row, unless the put-back itself fails or keeps being raced (the caller
-// is told). A consent stamped before these rows were written that no pass
+// request that stamped it (an id generated here, which the route also logs
+// with the library, payer and action; the platform's request id, marked
+// unverified off Vercel) and the instant of the stamp it recorded. No
+// address and no client string: audit_logs is read by every active member,
+// and an address is controller-only (DEC-46) — the platform's own request
+// log holds them against the platform id. A pass that renews the caller's
+// own consent writes nothing new once a row names that payer on that
+// library — the build loop re-stamps the instant every batch, so an auditor
+// finds the consent by library and payer, not by the live instant. A
+// renewal of a consent no row names yet (one stamped before these rows were
+// written) writes its first row. A consent whose row cannot be written is
+// put back: withdrawn, or — when it replaced the caller's own consent that
+// a row already names, or whose lookup failed (a row may name it) —
+// restored as that one was (its instant, standing flag and holds). A
+// withdrawal that switches off the caller's own standing "keep current" says
+// so. So a consent this route records or renews does not stand without a
+// row, unless the put-back itself fails or keeps being raced (the caller is
+// told). A consent stamped before these rows were written that no pass
 // renews is continued by the drain on its stamp alone.
 
 import { randomUUID } from "node:crypto";
@@ -185,12 +192,17 @@ async function detailFields(orgId: string, libraryId: string, userId: string, de
 }
 
 /** The request that stamped a consent, as an audit row names it (GOV-14).
- *  `requestId` is generated HERE — the one id no caller can choose. The
- *  headers are recorded as what they are: on Vercel (VERCEL set) the
- *  platform edge sets x-vercel-id and x-forwarded-for, overwriting what a
- *  client sends; anywhere else (a self-hosted deployment — the repo ships a
- *  Dockerfile) they pass through from whatever sent the request, so the row
- *  marks them unverified and names no address as the caller's. */
+ *  `requestId` is generated HERE — the one id no caller can choose — and
+ *  the route logs it when the row lands (auditConsent), so an operator can
+ *  tie the row to that request's log line. The platform id is recorded as
+ *  what it is: on Vercel (VERCEL set) the platform edge sets x-vercel-id,
+ *  overwriting what a client sends, and the platform's request log holds
+ *  the address and client against it; anywhere else (a self-hosted
+ *  deployment — the repo ships a Dockerfile) it passes through from
+ *  whatever sent the request, so the row marks it unverified. No address
+ *  and no user agent: audit_logs is readable by every active member
+ *  (audit_logs_org_access; no restrictive overlay covers this action), and
+ *  an address is controller-only (DEC-46). */
 function requestFacts(req: NextRequest, action: string) {
   const h = req.headers;
   const onPlatformEdge = !!process.env.VERCEL;
@@ -200,9 +212,7 @@ function requestFacts(req: NextRequest, action: string) {
     action,
     requestId: randomUUID(),
     platformRequestId: (platformId ?? "").slice(0, 200) || null,
-    forwardedFor: (h.get("x-forwarded-for") ?? "").split(",")[0].trim().slice(0, 64) || null,
     headersFrom: onPlatformEdge ? "platform-edge" : "unverified",
-    userAgent: (h.get("user-agent") ?? "").slice(0, 200) || null,
   };
 }
 
@@ -236,6 +246,17 @@ const restoreOf = (m: NonNullable<ParsedMarker>): Partial<EmbedBuildMarker> => (
   completedAt: m.completedAt,
 });
 
+/** A consent write whose audit row could not be written, and what the
+ *  put-back left (GOV-14): the consent withdrawn; the caller's earlier
+ *  consent restored as it was (`keptStanding`: that one was a standing
+ *  "keep current"); or the consent still standing, unaudited, because the
+ *  put-back could not land. `standingOff`: a withdrawal that switched off
+ *  the caller's own "keep current", which stood before this request — the
+ *  caller is told to switch it on again, never left to assume it is on. */
+type ConsentUnaudited = {
+  reason: string; outcome: "withdrawn" | "restored" | "stands"; keptStanding: boolean; standingOff: boolean;
+};
+
 /** GOV-14: after a consent write, the audit row naming the request that
  *  stamped it. `before` is the marker read ahead of the write (undefined:
  *  it could not be read). A pass that renews the caller's own consent — or
@@ -244,13 +265,13 @@ const restoreOf = (m: NonNullable<ParsedMarker>): Partial<EmbedBuildMarker> => (
  *  names yet (stamped before these rows were written) writes its first row,
  *  and so does one whose lookup failed (a second row is harmless, a missing
  *  one is not). When the row cannot be written — or the stamp cannot be
- *  read back to name it — the write is put back (putBack) and the reason is
- *  returned for the caller to say; null when audited or nothing new was
- *  recorded. */
+ *  read back to name it — the write is put back (putBack) and what that
+ *  left is returned for the caller to say; null when audited or nothing new
+ *  was recorded. */
 async function auditConsent(req: NextRequest, a: {
   orgId: string; libraryId: string; userId: string; action: "build" | "keep-current";
   before: ParsedMarker | undefined; always?: boolean;
-}): Promise<string | null> {
+}): Promise<ConsentUnaudited | null> {
   const before = a.before;
   const ownBefore = !!before && before.valid && before.userId === a.userId;
   // "Keep current" turning a consent standing is a new consent.
@@ -266,6 +287,7 @@ async function auditConsent(req: NextRequest, a: {
   if (!after.error && !mine) return null;
   let failure: string;
   if (mine) {
+    const request = requestFacts(req, a.action);
     const { error } = await supabaseAdmin.from("audit_logs").insert({
       action: EMBED_CONSENT_AUDIT_ACTION,
       resource_type: "knowledge_library", resource_id: a.libraryId,
@@ -282,46 +304,95 @@ async function auditConsent(req: NextRequest, a: {
         renewal: ownBefore && !newlyStanding
           ? { previousStampedAt: before!.at || null, earlierRow: rowsBefore === null ? "lookup failed" : "none" }
           : null,
-        request: requestFacts(req, a.action),
+        request,
       },
     });
-    if (!error) return null;
+    if (!error) {
+      // The generated id, where an operator finds it: the row and this line
+      // name the same request.
+      console.info("[embed] consent recorded", {
+        requestId: request.requestId, platformRequestId: request.platformRequestId,
+        libraryId: a.libraryId, userId: a.userId, action: a.action,
+      });
+      return null;
+    }
     failure = `its audit row could not be written (${error.message})`;
   } else {
     failure = `it could not be read back to be audited (${after.error})`;
   }
-  return putBack(a.libraryId, a.userId, mine?.at || null, ownBefore && recordedBefore ? before! : null, failure);
+  // The caller's own earlier consent is restored when a row names it — or
+  // when the lookup failed, so whether one does is unknown: withdrawing it
+  // then would end a standing "keep current" over a read that failed.
+  // Otherwise the consent this write recorded is withdrawn.
+  const restorable = ownBefore && (recordedBefore || rowsBefore === null) ? before! : null;
+  // A "keep current" of the caller's that stood before this request (a build
+  // pass carries only the caller's own standing flag over).
+  const wasStanding = (ownBefore && before!.standing === true) || (a.action === "build" && mine?.standing === true);
+  const out = await putBack(a.libraryId, a.userId, mine?.at || null, restorable, failure);
+  if (!out) return null;
+  return {
+    ...out,
+    keptStanding: out.outcome === "restored" && restorable?.standing === true,
+    standingOff: out.outcome === "withdrawn" && wasStanding,
+  };
+}
+
+/** What a build pass says when its consent was not audited (backgroundNote). */
+function buildConsentNote(u: ConsentUnaudited): string {
+  if (u.outcome === "restored") {
+    return `This pass's consent could not be recorded (${u.reason}), so your earlier consent on this library was put back `
+      + "as it was before this pass (whether an audit row names it could not be checked); the background build continues "
+      + "under it as before.";
+  }
+  return `The background continuation could not be recorded (${u.reason}) — keep this page open until the build finishes.`
+    + (u.standingOff
+      ? " Your \"keep current\" consent on this library is off now: switch it on again in the meaning-index panel once it can be recorded."
+      : "");
+}
+
+/** What "keep current" answers when its consent was not audited (500). */
+function keepCurrentRefusal(u: ConsentUnaudited): string {
+  if (u.keptStanding) {
+    return `The standing consent could not be recorded again: ${u.reason}. Your "keep current" consent on this library `
+      + "stands as it was before (whether an audit row names it could not be checked).";
+  }
+  return `The standing consent was not kept: ${u.reason}.`
+    + (u.standingOff
+      ? " The \"keep current\" consent you already had on this library is off now — switch it on again once it can be recorded."
+      : "");
 }
 
 /** No consent without its audit row: put back what the write changed. With
- *  `previous` — the caller's own consent, which a row already names — the
- *  consent is restored as that one was (its instant, standing flag and
- *  holds); without, the consent the write recorded is withdrawn. Both are
- *  conditional on the stamp the write left (`at`). One that no longer
- *  applies means the consent moved in between — a second tab's pass of the
- *  caller's re-stamped it, or it was released or replaced — so it is read
- *  again: a consent no longer the caller's is gone; one a row now names at
- *  its current instant (that other pass recorded it) stands, and this pass
- *  is audited after all (null); otherwise the put-back is tried once more
- *  against what was read — the withdrawal, or for `previous` the standing
- *  flag alone (the other pass's renewal is the caller's own). Returns what
- *  the caller says: the failure, or the failure and why it still stands. */
+ *  `previous` — the caller's own consent, which a row already names or
+ *  whose lookup failed — the consent is restored as that one was (its
+ *  instant, standing flag and holds); without, the consent the write
+ *  recorded is withdrawn. Both are conditional on the stamp the write left
+ *  (`at`). One that no longer applies means the consent moved in between —
+ *  a second tab's pass of the caller's re-stamped it, or it was released or
+ *  replaced — so it is read again: a consent no longer the caller's is gone
+ *  (withdrawn); one a row now names at its current instant (that other pass
+ *  recorded it) stands, and this pass is audited after all (null);
+ *  otherwise the put-back is tried once more against what was read — the
+ *  withdrawal, or for `previous` the standing flag alone (the other pass's
+ *  renewal is the caller's own). Returns the failure and what was left:
+ *  withdrawn, restored, or still standing (and why). */
 async function putBack(
   libraryId: string, userId: string, at: string | null, previous: NonNullable<ParsedMarker> | null, failure: string,
-): Promise<string | null> {
-  const stillStands = (why: string) => `${failure}, and it could not be withdrawn (${why})`;
+): Promise<{ reason: string; outcome: ConsentUnaudited["outcome"] } | null> {
+  const stillStands = (why: string) => ({ reason: `${failure}, and it could not be withdrawn (${why})`, outcome: "stands" as const });
+  const done = { reason: failure, outcome: previous ? "restored" as const : "withdrawn" as const };
   let undo: MarkerWrite = previous
     ? await patchEmbedBuildMarkerIf(libraryId, restoreOf(previous), { userId, at })
     : await clearEmbedBuildMarkerIf(libraryId, { userId, at });
   if (undo.error) return stillStands(undo.error);
-  if (undo.applied) return failure;
+  if (undo.applied) return done;
   const now = await readEmbedBuildMarker(libraryId);
   if (now.error) return stillStands(`it changed meanwhile and could not be read again: ${now.error}`);
   const cur = now.marker && now.marker.userId === userId ? now.marker : null;
-  if (!cur) return failure;
+  if (!cur) return { reason: failure, outcome: "withdrawn" };
   const expectNow = { userId, at: cur.at || null };
   if (previous) {
-    if ((cur.standing === true) === (previous.standing === true)) return failure;
+    if ((cur.standing === true) === (previous.standing === true)) return done;
     undo = await patchEmbedBuildMarkerIf(libraryId, { standing: previous.standing ? true : undefined }, expectNow);
   } else {
     const rows = await consentRows(libraryId, userId);
@@ -330,7 +401,7 @@ async function putBack(
   }
   if (undo.error) return stillStands(undo.error);
   return undo.applied
-    ? failure
+    ? done
     : stillStands("it kept changing — stop it under Background builds on your key in AI settings, or on the library's panel");
 }
 
@@ -380,7 +451,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number; on?: boolean; models?: boolean };
+  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number; on?: boolean; models?: boolean; onlyMine?: boolean };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   // Free-tier providers cap tokens-per-minute hard (Voyage without a card:
   // 10K TPM) — a full 96-passage batch can never fit. The client shrinks the
@@ -450,6 +521,17 @@ export async function POST(req: NextRequest) {
     if (seen.error) return bad(`Couldn't read the background build, so nothing was stopped: ${seen.error}`, 500);
     const marker = seen.marker;
     if (!marker) return NextResponse.json({ released: false });
+    // AI settings lists the builds on the CALLER's key, each with a Stop
+    // (GOV-14), and sends `onlyMine`: a consent that no longer names the
+    // caller (another member's build replaced it after the list was read) is
+    // not theirs to stop from there — a controller's Stop on a stale row
+    // never ends someone else's build.
+    if (body.onlyMine === true && marker.userId !== user.id) {
+      return bad(
+        "This background build no longer runs on your key — another member's build replaced it after the list was "
+        + "read — so nothing was stopped.", 409, { released: false, changed: true },
+      );
+    }
     if (!principal.isController && marker.userId !== user.id) {
       return bad("Only the member whose key pays, or Admin / Doc Control, can stop this background build.", 403);
     }
@@ -582,7 +664,7 @@ export async function POST(req: NextRequest) {
         orgId, libraryId, userId: user.id, action: "keep-current",
         before: prior.error ? undefined : prior.marker, always: true,
       });
-      if (unaudited) return bad(`The standing consent was not kept: ${unaudited}.`, 500, { standing: null });
+      if (unaudited) return bad(keepCurrentRefusal(unaudited), 500, { standing: null });
       return NextResponse.json({ standing: true });
     }
     // As for release: an unreadable marker is never reported withdrawn.
@@ -641,12 +723,16 @@ export async function POST(req: NextRequest) {
   // library is done — the tab is optional from here on. A consent this pass
   // newly records is audited, naming the request (GOV-14).
   const priorMarker = await readEmbedBuildMarker(libraryId);
-  let markerError = await setEmbedBuildMarker(libraryId, user.id);
+  const markerError = await setEmbedBuildMarker(libraryId, user.id);
+  let backgroundNote: string | null = markerError
+    ? `The background continuation could not be recorded (${markerError}) — keep this page open until the build finishes.`
+    : null;
   if (!markerError) {
-    markerError = await auditConsent(req, {
+    const unaudited = await auditConsent(req, {
       orgId, libraryId, userId: user.id, action: "build",
       before: priorMarker.error ? undefined : priorMarker.marker,
     });
+    if (unaudited) backgroundNote = buildConsentNote(unaudited);
   }
 
   const slice = await embedLibrarySlice({
@@ -730,7 +816,7 @@ export async function POST(req: NextRequest) {
     provider: embedding.provider,
     model: embedding.model,
     refused: slice.refused,
-    ...(markerError ? { backgroundNote: `The background continuation could not be recorded (${markerError}) — keep this page open until the build finishes.` } : {}),
+    ...(backgroundNote ? { backgroundNote } : {}),
     ...(await detailFields(orgId, libraryId, user.id, detailAfter, embedding, principal.isController)),
   });
 }
