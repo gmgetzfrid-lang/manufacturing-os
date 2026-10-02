@@ -2205,11 +2205,31 @@ export interface StatusIssueOutcome {
   complianceClockErrors: string[];
   /** The issue record could not be written (the issue itself stands). */
   recordError: string | null;
+  /** REV-19 (P17 integrator fix): set only by changeDocumentStatus, only
+   *  when it wrote a controlled issue status but recorded no issue — the
+   *  basis its pre-write read gave (StatusIssueNotRecorded). Absent on every
+   *  other outcome. */
+  notRecordedBecause?: StatusIssueNotRecorded;
 }
+
+/** REV-19 (P17 integrator fix): why changeDocumentStatus wrote an issue
+ *  status without recording an issue (it started no clock and wrote no
+ *  DOCUMENT_ISSUED either way):
+ *   - 'read_failed': the row's state before the write could not be read —
+ *     whether this write issued it is unknown, so nothing was recorded; the
+ *     editor says to check its history and start its clocks if owed;
+ *   - 'already_issued': the row was already in an issue status — this write
+ *     issued nothing (it was issued by another change, e.g. after the
+ *     editor's page loaded), so nothing is owed for this write;
+ *   - 'no_current_revision': the row has no current revision — there was
+ *     nothing to issue (a register row). */
+export type StatusIssueNotRecorded = "read_failed" | "already_issued" | "no_current_revision";
 
 const NO_STATUS_ISSUE: StatusIssueOutcome = { issued: false, putBack: false, complianceClockErrors: [], recordError: null };
 
-interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null }
+/** `readFailed`: the row could not be read and the other fields are the
+ *  caller's fallback (REV-19, P17 integrator fix). */
+interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null; readFailed?: boolean }
 
 /** P14 review fix (REV-19): is an issue out of this status the put-back of
  *  the issue its retirement took away? Three-state, from the evidence alone
@@ -2242,7 +2262,7 @@ export function putBackFromRetirementStamp(row: {
 async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentRecord, "status" | "currentVersionId" | "rev">): Promise<StatusIssueBasis> {
   const { data, error } = await supabase.from("documents").select("*").eq("id", documentId).maybeSingle();
   if (error || !data) {
-    return { fromStatus: held?.status ?? null, versionId: held?.currentVersionId ?? null, rev: held?.rev ?? null, putBack: null };
+    return { fromStatus: held?.status ?? null, versionId: held?.currentVersionId ?? null, rev: held?.rev ?? null, putBack: null, readFailed: true };
   }
   const row = data as Record<string, unknown>;
   const fromStatus = (row.status as string | null) ?? null;
@@ -2363,7 +2383,8 @@ export async function recordStatusIssue(input: {
  *  made the document a controlled issue, recordStatusIssue. A refusal is
  *  thrown in the database's own words (the publish guard's sentences, which
  *  isIssueRefusal recognises); a write that matched no row is a refusal,
- *  never a silent success. */
+ *  never a silent success. A write to an issue status that recorded no
+ *  issue says why (`notRecordedBecause` — P17 integrator fix). */
 export async function changeDocumentStatus(input: {
   orgId: string; documentId: string; toStatus: string; door: Exclude<StatusIssueDoor, "unarchive">;
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
@@ -2381,7 +2402,16 @@ export async function changeDocumentStatus(input: {
     throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
   }
   if (!isIssueTransition({ fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId })) {
-    return NO_STATUS_ISSUE;
+    // A write that is not to an issue status: exactly as before.
+    if (!isControlledIssueStatus(input.toStatus)) return NO_STATUS_ISSUE;
+    // REV-19 (P17 integrator fix): an issue status written but not recorded
+    // as an issue — say which basis the read gave, so an editor tells a
+    // failed read (unknown: nothing recorded, the history to be checked)
+    // from a row someone else already issued (nothing owed for this write).
+    const notRecordedBecause: StatusIssueNotRecorded = before.readFailed ? "read_failed"
+      : isControlledIssueStatus(before.fromStatus) ? "already_issued"
+      : "no_current_revision";
+    return { ...NO_STATUS_ISSUE, notRecordedBecause };
   }
   return await recordStatusIssue({
     orgId: input.orgId, documentId: input.documentId, fromStatus: before.fromStatus, toStatus: input.toStatus,

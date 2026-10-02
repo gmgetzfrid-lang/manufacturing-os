@@ -228,6 +228,48 @@ describe("REV-19 (P17) — the bulk editor's issuing rows start the clocks and a
     expect(items).toHaveLength(1);
     expect(items[0]).toMatch(/^E1 — The status was changed, but it was not recorded as an issue/);
     expect(items[0]).toContain("no review clock or acknowledgment roster was started and no issue record was written");
+    // P17 integrator fix: a failed read keeps the "start its clocks" advice — nothing was recorded
+    expect(items[0]).toContain("its status before the change could not be read");
+    expect(items[0]).toContain("start its clocks from the document");
+    expect(items[0]).not.toMatch(/already issued/);
+    expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("P17 integrator fix: a row someone else ISSUED between page load and apply is named as already issued — nothing owed, never the 'start its clocks' advice (which would restart a review clock)", async () => {
+    const a = seedDoc("k1");
+    const b = seedDoc("k2");
+    const pageCopies = [asRecord(a), asRecord(b)]; // both Draft on the page
+    docRow("k1").status = "Issued"; // …issued by another door after the page loaded
+    await applyStatus(pageCopies, "Issued");
+    expect(docRow("k1").status).toBe("Issued");
+    expect(docRow("k2").status).toBe("Issued");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    // k1: no record or clock from this change (it issued nothing); k2 recorded as before
+    expect(issuedRecords().map((r) => r.resource_id)).toEqual(["k2"]);
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    // not a follow-up: nothing did "not complete"
+    expect(host.querySelector('[data-testid="bulk-issue-follow-ups"]')).toBeNull();
+    const box = host.querySelector('[data-testid="bulk-not-issued-rows"]')!;
+    expect(box).not.toBeNull();
+    expect(box.textContent).toMatch(/1 row was not issued by this change — nothing more is owed/);
+    const items = Array.from(box.querySelectorAll("li")).map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatch(/^K1 — it was already issued when this change reached it/);
+    expect(items[0]).toContain("nothing more is owed for this change");
+    expect(items[0]).toContain("Do not start its clocks again from here");
+    expect(host.textContent).not.toContain("start its clocks from the document");
+  });
+
+  it("P17 integrator fix: a row whose current revision is gone by the apply is named as having nothing to issue — no follow-up, no clock advice", async () => {
+    const a = seedDoc("z1");
+    const page = asRecord(a); // the page saw a current revision
+    docRow("z1").current_version_id = null;
+    await applyStatus([page], "Issued");
+    expect(docRow("z1").status).toBe("Issued");
+    expect(issuedRecords()).toEqual([]);
+    expect(host.querySelector('[data-testid="bulk-issue-follow-ups"]')).toBeNull();
+    const items = Array.from(host.querySelectorAll('[data-testid="bulk-not-issued-rows"] li')).map((li) => li.textContent ?? "");
+    expect(items).toEqual(["Z1 — it has no current revision, so there was nothing to issue: no clock or issue record is owed for it."]);
   });
 
   it("an unstamped archive restored to Issued in bulk is recorded without resetting the review clock (no evidence of a new issue) — only the roster opens", async () => {

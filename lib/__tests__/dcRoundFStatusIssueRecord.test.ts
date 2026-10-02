@@ -202,11 +202,40 @@ describe("REV-19 — changeDocumentStatus: the status editors' write, the clocks
     seedDoc("b");
     seedDoc("c", { current_version_id: null });
     for (const [id, to] of [["a", "Draft"], ["b", "In Review"], ["c", "Issued"]] as const) {
-      expect(await changeDocumentStatus({ orgId: ORG, documentId: id, toStatus: to, door: "metadata", actorUserId: ME })).toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null });
+      // P17 integrator fix: a write TO an issue status that records no issue says why (c — no current
+      // revision: nothing to issue); a write to a status that is not an issue is exactly as before
+      expect(await changeDocumentStatus({ orgId: ORG, documentId: id, toStatus: to, door: "metadata", actorUserId: ME })).toEqual(
+        id === "c"
+          ? { issued: false, putBack: false, complianceClockErrors: [], recordError: null, notRecordedBecause: "no_current_revision" }
+          : { issued: false, putBack: false, complianceClockErrors: [], recordError: null },
+      );
       expect(docRow(id).status).toBe(to);
     }
     expect(onDocumentIssued).not.toHaveBeenCalled();
     expect(issued()).toEqual([]);
+  });
+
+  it("P17 integrator fix: an issue status written but not recorded says which basis the read gave — a failed read from a row already issued (the editor's advice differs)", async () => {
+    // the read failed: nothing is known, nothing recorded
+    seedDoc("f1");
+    state.failBasisRead = true;
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "f1", toStatus: "Issued", door: "bulk", actorUserId: ME }))
+      .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null, notRecordedBecause: "read_failed" });
+    expect(docRow("f1").status).toBe("Issued");
+    // already issued (another door issued it): this write issued nothing — for IFC → Issued too
+    seedDoc("f2", { status: "Issued" });
+    seedDoc("f3", { status: "IFC" });
+    for (const id of ["f2", "f3"]) {
+      expect(await changeDocumentStatus({ orgId: ORG, documentId: id, toStatus: "Issued", door: "bulk", actorUserId: ME }))
+        .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null, notRecordedBecause: "already_issued" });
+    }
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(issued()).toEqual([]);
+    // a failed read on a write to a status that is not an issue: exactly as before (no basis named)
+    seedDoc("f4", { status: "Issued" });
+    state.failBasisRead = true;
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "f4", toStatus: "Draft", door: "metadata", actorUserId: ME }))
+      .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null });
   });
 
   it("a refusal is thrown in the database's own words (the editors recognise the issue rule), and nothing follows it", async () => {

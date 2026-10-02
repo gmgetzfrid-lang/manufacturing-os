@@ -40,8 +40,14 @@
 // named exactly as before. An issue that landed but whose clocks or record did
 // not follow is named after the apply — the change stands and is not to be
 // repeated — and so is a row written as an issue that changeDocumentStatus did
-// not record as one (its status before the write could not be read, or it was
-// issued already): no clock started and no DOCUMENT_ISSUED was written for it.
+// not record as one because its status before the write could not be read: no
+// clock started and no DOCUMENT_ISSUED was written for it, so Document Control
+// is told to start its clocks from the document. A row changeDocumentStatus
+// found ALREADY issued (issued by another change after this page loaded), or
+// with no current revision, was not issued by this write: it is named as such
+// and nothing more is owed for it — never the "start its clocks" advice, which
+// would restart a review clock the issuing change owns (P17 integrator fix:
+// changeDocumentStatus returns the basis, `notRecordedBecause`).
 // Every other row (a status that issues nothing, a custom field) is written as
 // before.
 
@@ -89,6 +95,9 @@ export default function BulkEditModal({
     failed: Array<{ doc: string; reason: string; issue: boolean }>;
     /** REV-19: issued rows whose clocks or issue record did not follow. */
     followUps: Array<{ doc: string; problems: string[] }>;
+    /** REV-19 (P17 integrator fix): rows this change wrote but did not issue
+     *  (already issued, or no current revision) — nothing is owed for them. */
+    notIssued: Array<{ doc: string; note: string }>;
   } | null>(null);
 
   if (!isOpen) return null;
@@ -111,6 +120,7 @@ export default function BulkEditModal({
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
     const followUps: Array<{ doc: string; problems: string[] }> = [];
+    const notIssued: Array<{ doc: string; note: string }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
@@ -155,16 +165,33 @@ export default function BulkEditModal({
             orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
             actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,
           });
+          const label = doc.documentNumber || doc.title || doc.id;
+          // Written, but not issued by THIS write (P17 integrator fix): the row
+          // was already issued — by another change, after this page loaded —
+          // or has no current revision. Nothing is owed for this write, and
+          // starting its clocks again would restart a review clock the issuing
+          // change owns.
+          if (!outcome.issued && outcome.notRecordedBecause === "already_issued") {
+            notIssued.push({ doc: label, note: "it was already issued when this change reached it (issued by another change after this page loaded), so this change issued nothing: no clock was started and no issue record written for it, and nothing more is owed for this change. Do not start its clocks again from here — they belong to the change that issued it (see its history)." });
+            ok += 1;
+            continue;
+          }
+          if (!outcome.issued && outcome.notRecordedBecause === "no_current_revision") {
+            notIssued.push({ doc: label, note: "it has no current revision, so there was nothing to issue: no clock or issue record is owed for it." });
+            ok += 1;
+            continue;
+          }
           const problems = outcome.issued
             ? [
                 ...outcome.complianceClockErrors,
                 ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
               ]
             // Written, but not recorded as an issue: changeDocumentStatus could not
-            // read the row's status before the write (or found it issued already),
-            // so it started no clock and wrote no DOCUMENT_ISSUED (P17 review fix).
-            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read (or it was already issued), so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."];
-          if (problems.length > 0) followUps.push({ doc: doc.documentNumber || doc.title || doc.id, problems });
+            // read the row's status before the write (notRecordedBecause
+            // 'read_failed'), so it started no clock and wrote no DOCUMENT_ISSUED
+            // (P17 review fix) — whether this write issued it is unknown.
+            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."];
+          if (problems.length > 0) followUps.push({ doc: label, problems });
           ok += 1;
           continue;
         }
@@ -178,7 +205,7 @@ export default function BulkEditModal({
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: issuingIds.has(doc.id) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed, followUps });
+    setResults({ ok, failed, followUps, notIssued });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -299,6 +326,19 @@ export default function BulkEditModal({
                   <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
                     {results.followUps.map((f, i) => (
                       <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {results.notIssued.length > 0 && (
+                // REV-19 (P17 integrator fix): written, but not issued by this change — nothing owed.
+                <div data-testid="bulk-not-issued-rows" className="rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 text-xs text-[var(--color-text)]">
+                  <div className="font-bold mb-1">
+                    {results.notIssued.length} row{results.notIssued.length === 1 ? " was" : "s were"} not issued by this change — nothing more is owed
+                  </div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.notIssued.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
                     ))}
                   </ul>
                 </div>
