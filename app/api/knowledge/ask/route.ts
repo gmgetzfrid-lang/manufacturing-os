@@ -2849,8 +2849,9 @@ export async function POST(req: NextRequest) {
       // A database before 20261153 has no context column: the row is saved
       // without it (and judged by its citations alone, as before). One
       // before 20260912 / 20261008 lacks mode / missing_docs / thread_id: the
-      // core set, keeping the context when the database has it. Each retry
-      // only for the column the error names (insertAnswerRow, ASK-11).
+      // row is saved without the one it lacks, keeping every other column
+      // (the context included). Each retry drops only the column the error
+      // names (insertAnswerRow, ASK-11).
       const r = await insertAnswerRow(
         (values) => supabaseAdmin.from("knowledge_questions").insert(values).select("id").maybeSingle(),
         row,
