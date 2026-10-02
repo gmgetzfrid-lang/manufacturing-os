@@ -7,7 +7,8 @@
 // invites the first one — a controller to teach the AI its house rules, any
 // other member (the page is read-only for them) to see what it is taught.
 // Nothing is shown until the count is read, so the invitation never flashes
-// over a library that has playbooks.
+// over a library that has playbooks — and nothing when the count could not
+// be read (countActiveInstructions answers null, never 0, on a failed read).
 //
 // REGRESSION: with playbooks the header reads "N standing instruction(s)
 // apply" exactly as before.
@@ -19,7 +20,8 @@ import { createRoot, type Root } from "react-dom/client";
 const role = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 const dlg = vi.hoisted(() => ({ appConfirm: vi.fn(), appPrompt: vi.fn(), appAlert: vi.fn() }));
-const instructions = vi.hoisted(() => ({ countActiveInstructions: vi.fn(async () => 0) }));
+const instructions = vi.hoisted(() => ({ countActiveInstructions: vi.fn(async (): Promise<number | null> => 0) }));
+const sb = vi.hoisted(() => ({ from: vi.fn((_t: string): unknown => ({})) }));
 const lib = vi.hoisted(() => ({
   getKnowledgeLibrary: vi.fn(),
   listKnowledgeDocuments: vi.fn(),
@@ -36,7 +38,7 @@ const lib = vi.hoisted(() => ({
   nudgeEmbedDrain: vi.fn(),
 }));
 
-vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}), auth: { getSession: async () => ({ data: { session: null } }) } } }));
+vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => sb.from(t), auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => role.value }));
 vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => toast }));
 vi.mock("@/components/providers/DialogProvider", () => dlg);
@@ -91,6 +93,8 @@ beforeEach(() => {
   root = createRoot(host);
   for (const f of Object.values(lib)) f.mockReset();
   instructions.countActiveInstructions.mockReset();
+  sb.from.mockReset();
+  sb.from.mockImplementation(() => ({}));
   lib.getKnowledgeLibrary.mockResolvedValue(library);
   lib.listKnowledgeDocuments.mockResolvedValue([]);
   lib.listKnowledgeQuestions.mockResolvedValue({ questions: [], withheld: 0 });
@@ -145,11 +149,41 @@ describe("HUB-6 done-when 2 — the library Ask header points at playbooks even 
   it("nothing is shown until the count is read — the invitation never flashes over a library that has playbooks", async () => {
     setRole(true);
     let resolve: (n: number) => void = () => undefined;
-    instructions.countActiveInstructions.mockImplementation(() => new Promise<number>((r) => { resolve = r; }));
+    instructions.countActiveInstructions.mockImplementation(() => new Promise<number | null>((r) => { resolve = r; }));
     await mount();
     expect(playbookLinks()).toHaveLength(0);
     await act(async () => { resolve(2); });
     await flush();
     expect(playbookLinks()[0].textContent).toBe("2 standing instructions apply");
+  });
+});
+
+describe("HUB-6 — a count that could not be read is not 'no playbooks'", () => {
+  it("reproduction → fix: countActiveInstructions answers null on a failed read (it answered 0), and the count when it reads", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    /** The count query's chain, answering `out` when awaited. */
+    const chain = (out: { count: number | null; error: { message: string } | null }) => {
+      const q: Record<string, unknown> = {};
+      for (const m of ["select", "eq", "in"]) q[m] = () => q;
+      q.then = (resolve: (v: unknown) => void) => resolve(out);
+      return q;
+    };
+    sb.from.mockImplementation(() => chain({ count: null, error: { message: "upstream timeout" } }));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBeNull();
+    sb.from.mockImplementation(() => chain({ count: 5, error: null }));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(5);
+    expect(sb.from).toHaveBeenLastCalledWith("org_ai_instructions");
+    sb.from.mockImplementation(() => chain({ count: 0, error: null }));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(0);
+  });
+
+  it("a failed count shows no invitation and no count — the header says nothing it does not know", async () => {
+    setRole(true);
+    instructions.countActiveInstructions.mockResolvedValue(null);
+    await mount();
+    expect(instructions.countActiveInstructions).toHaveBeenCalledWith("o1", "knowledge");
+    expect(playbookLinks()).toHaveLength(0);
+    expect(host.querySelector("[data-playbooks-empty]")).toBeNull();
+    expect(host.textContent).not.toMatch(/No playbooks yet/);
   });
 });

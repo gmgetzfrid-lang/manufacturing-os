@@ -267,13 +267,19 @@ Four differently-shaped searches: `grep -rn "ai-instructions" --include=*.ts --i
 
 **Scope / residual.** OPEN for done-when 2.
 
-**Resolution (2026-10-02, intelligence Round G).** Package I-20. Reproduced first on the base (`3bf3b75`): with no playbook the library Ask header rendered no link to `/admin/ai-instructions` (`instructionCount > 0 && …`), so an org with none had no door there (`hubPlaybooksEmptyState.test.ts`, the two reproduction cases fail against the base page). Now `app/(protected)/knowledge/[id]/page.tsx` (`:1873`) shows an empty state when the count is 0. A controller sees "No playbooks yet — teach the AI your house rules". Any other member sees "No playbooks yet — see what the AI is taught": the page admits every active member read-only (`lib/adminSurfaces.ts`, `entry: "*"`). The count starts as `null`, not 0, so nothing renders until it is read and the invitation never flashes over a library that has playbooks. With playbooks the header reads "N standing instruction(s) apply" as before. Tests: `lib/__tests__/hubPlaybooksEmptyState.test.ts` (rendered: the controller and member invitations, the REGRESSION pin for 1 and 3 instructions, and the no-flash case).
+**Resolution (2026-10-02, intelligence Round G).** Package I-20. Reproduced first on the base (`3bf3b75`): with no playbook the library Ask header rendered no link to `/admin/ai-instructions` (`instructionCount > 0 && …`), so an org with none had no door there (`hubPlaybooksEmptyState.test.ts`, the two reproduction cases fail against the base page). Now `app/(protected)/knowledge/[id]/page.tsx` (`:1873`) shows an empty state when the count is 0. A controller sees "No playbooks yet — teach the AI your house rules". Any other member sees "No playbooks yet — see what the AI is taught": the page admits every active member read-only (`lib/adminSurfaces.ts`, `entry: "*"`). The count starts as `null`, not 0, so nothing renders until it is read and the invitation never flashes over a library that has playbooks. With playbooks the header reads "N standing instruction(s) apply" as before.
+
+A count that could not be read is not "no playbooks". `countActiveInstructions` (`lib/aiInstructions.ts:92`, whose only caller is this page) now answers `null` on a failed read instead of 0, so the header shows neither the invitation nor a count. *Corrected (I-20 fix pass):* the first version recorded this as a residual outside the package. `lib/aiInstructions.ts` is reserved by no other package, so it is fixed here.
+
+Tests: `lib/__tests__/hubPlaybooksEmptyState.test.ts`.
+- Rendered: the controller and member invitations; the REGRESSION pin for 1 and 3 instructions; the no-flash case; and a failed count, which shows no invitation.
+- `countActiveInstructions` answers `null` on a read error (it answered 0) and the count when it reads.
 
 **Done-when.**
 1. ✓ (2026-10-01) The command palette finds it.
 2. ✓ The library Ask header points at playbooks when `instructionCount === 0`, with an empty state that invites the first one.
 
-**Scope / residual.** `countActiveInstructions` (`lib/aiInstructions.ts`, outside this package's files) reads a failed count as 0. The header then shows the invitation, not nothing. Before this change it hid the link. The link still goes to the page, which lists what is really there.
+**Scope / residual.** None.
 
 ---
 

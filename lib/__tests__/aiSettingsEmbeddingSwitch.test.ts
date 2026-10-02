@@ -10,7 +10,10 @@
 //     a MODEL switch within a provider keeps them answering but no build with
 //     the new model can add to them; and the background builds on this key
 //     hold. Declining saves nothing. After the switch each library's Rebuild
-//     is linked.
+//     is linked — and libraries whose index could not be checked are linked
+//     too, marked so. The confirm promises links only when there will be
+//     some: an overview that could not be read names no library, so it says
+//     to open each library's panel instead.
 //   GOV-14 done-when 4 — one place lists every background build running on
 //     the member's key, each with a Stop (the route's release action); a list
 //     that cannot be read says so, never "none running".
@@ -49,7 +52,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: {} }));
 import { EmbeddingKeyEditor, BuildsOnMyKey } from "@/components/knowledge/AiSettingsModal";
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import {
-  embeddingSwitchImpact, effectiveEmbeddingSetting, switchImpactIsEmpty, librariesToRebuild,
+  embeddingSwitchImpact, effectiveEmbeddingSetting, switchImpactIsEmpty, librariesToRebuild, librariesLinkedAfterSwitch,
   type EmbedKeyOverview,
 } from "@/lib/embedKeyOverview";
 
@@ -160,6 +163,17 @@ describe("SEM-1 — the impact of a switch, read from the libraries (pure)", () 
     expect(u.unreadable).toBe("HTTP 500");
     expect(switchImpactIsEmpty(u)).toBe(false);
   });
+  it("what is linked after the switch: the libraries to rebuild, then the unchecked ones (marked); nothing when the overview was unreadable", () => {
+    const i = embeddingSwitchImpact(before, { provider: "openai", model: OPENAI[0] }, {
+      builds: [], indexes: [...OVERVIEW.indexes!, { libraryId: "L-x", libraryName: "Big library", models: null }],
+    })!;
+    expect(librariesLinkedAfterSwitch(i)).toEqual([
+      { libraryId: "L-std", libraryName: "Standards", unchecked: false },
+      { libraryId: "L-pid", libraryName: "P&IDs", unchecked: false },
+      { libraryId: "L-x", libraryName: "Big library", unchecked: true },
+    ]);
+    expect(librariesLinkedAfterSwitch(embeddingSwitchImpact(before, { provider: "openai", model: OPENAI[0] }, null, "HTTP 500")!)).toEqual([]);
+  });
   it("a switch that touches no index and no build is empty — nothing to warn about", () => {
     const i = embeddingSwitchImpact(before, { provider: "voyage", model: VOYAGE[2] }, { builds: [], indexes: [{ libraryId: "L-new", libraryName: "Empty", models: {} }] })!;
     expect(switchImpactIsEmpty(i)).toBe(true);
@@ -181,6 +195,7 @@ describe("SEM-1 done-when 2 — switching the embedding model or provider confir
     expect(text).toMatch(/The background builds on your key stop \(held for a model conflict\) in:P&IDs/);
     expect(text).not.toMatch(/Vendor manuals|Empty/);
     expect(text).toMatch(/Each one comes back with a Rebuild of that library's index with/);
+    expect(text).toMatch(/Once you switch, the libraries are linked here\./);
     expect(text).toMatch(/Keyword search is unaffected\./);
     expect(kn.saveEmbeddingKey).not.toHaveBeenCalled();
     expect(host.querySelector("[data-rebuild-offer]")).toBeNull();
@@ -198,6 +213,7 @@ describe("SEM-1 done-when 2 — switching the embedding model or provider confir
       ["Standards", "/knowledge/L-std"],
       ["P&IDs", "/knowledge/L-pid"],
     ]);
+    expect(offer.querySelector("[data-unchecked]")).toBeNull();
   });
 
   it("another model of the same provider: the confirm says the indexes keep answering but stop growing — never that they stop answering", async () => {
@@ -221,6 +237,38 @@ describe("SEM-1 done-when 2 — switching the embedding model or provider confir
     const text = await confirmText();
     expect(text).toMatch(/Which libraries are affected could not be checked \(Couldn't read this workspace's libraries\)\. Every meaning index built with Voyage AI stops answering your questions\./);
     expect(kn.saveEmbeddingKey).not.toHaveBeenCalled();
+  });
+
+  it("…and that confirm promises no links it cannot show: it says to open each library's panel, and after the switch nothing claims to list them", async () => {
+    ov.getEmbedKeyOverview.mockRejectedValueOnce(new Error("HTTP 500"));
+    await renderEditor();
+    await choose(0, "openai");
+    await save();
+    const text = await confirmText();
+    expect(text).not.toMatch(/linked here/);
+    expect(text).toMatch(/Open each library's meaning-index panel to rebuild it\./);
+    expect(kn.saveEmbeddingKey).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-rebuild-offer]")).toBeNull();
+  });
+
+  it("every library unknown (vectors unreadable): the confirm promises the links, and after the switch each library is linked, marked 'could not be checked'", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValueOnce({
+      builds: [],
+      indexes: [{ libraryId: "L-a", libraryName: "Alpha", models: null }, { libraryId: "L-b", libraryName: "Beta", models: null }],
+    });
+    await renderEditor();
+    await choose(0, "openai");
+    await save();
+    const text = await confirmText();
+    expect(text).toMatch(/could not be read, so they may be affected too:AlphaBeta/);
+    expect(text).toMatch(/Once you switch, the libraries are linked here\./);
+    const offer = host.querySelector("[data-rebuild-offer]")!;
+    expect([...offer.querySelectorAll("a")].map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Alpha", "/knowledge/L-a"],
+      ["Beta", "/knowledge/L-b"],
+    ]);
+    expect(offer.querySelectorAll("[data-unchecked]")).toHaveLength(2);
+    expect(offer.textContent).toMatch(/Alpha — could not be checked; open it to see whether it needs a Rebuild/);
   });
 
   it("a switch no library is touched by saves without asking", async () => {

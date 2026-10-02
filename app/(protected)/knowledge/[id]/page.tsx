@@ -1216,7 +1216,8 @@ export default function KnowledgeLibraryPage() {
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
   }, [thread, threadId, seededTurns, threadStoreKey]);
   // Org Playbooks visibility: how many standing instructions ride on asks.
-  // null until the count is read, so the empty state below never flashes.
+  // null until the count is read, and when it could not be read, so the
+  // empty state below never flashes — nor shows over a failed read.
   const [instructionCount, setInstructionCount] = useState<number | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;

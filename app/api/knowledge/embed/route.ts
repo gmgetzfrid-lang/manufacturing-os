@@ -49,10 +49,20 @@
 // A CONSENT HAS AN AUDIT ROW (GOV-14). Recording a background consent — a
 // build that stamps the caller as the payer where they were not, or "keep
 // current" switched on — writes EMBED_BUILD_CONSENT_RECORDED naming the
-// request that stamped it (its id, address and client) and the stamp's own
-// instant. A pass that only renews the caller's own consent writes nothing
-// new. A consent whose audit row cannot be written is withdrawn again, so
-// the drain never spends on a consent no row explains.
+// request that stamped it (an id generated here; the platform id, address
+// and client as the request carried them, marked unverified off Vercel) and
+// the instant of the stamp it recorded. A pass that renews the caller's own
+// consent writes nothing new once a row names that payer on that library —
+// the build loop re-stamps the instant every batch, so an auditor finds the
+// consent by library and payer, not by the live instant. A renewal of a
+// consent no row names yet (one stamped before these rows were written)
+// writes its first row. A consent whose row cannot be written is put back:
+// withdrawn, or — when it replaced the caller's own consent that a row
+// already names — restored as that one was (its instant, standing flag and
+// holds). So a consent this route records or renews does not stand without
+// a row, unless the put-back itself fails or keeps being raced (the caller
+// is told). A consent stamped before these rows were written that no pass
+// renews is continued by the drain on its stamp alone.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -69,6 +79,7 @@ import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
   loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf,
   readEmbedBuildMarker, clearEmbedBuildMarkerIf, patchEmbedBuildMarkerIf, type EmbedDetail,
+  type EmbedBuildMarker, type MarkerWrite,
 } from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
@@ -173,37 +184,81 @@ async function detailFields(orgId: string, libraryId: string, userId: string, de
   };
 }
 
-/** The request that stamped a consent, as an audit row names it (GOV-14). */
+/** The request that stamped a consent, as an audit row names it (GOV-14).
+ *  `requestId` is generated HERE — the one id no caller can choose. The
+ *  headers are recorded as what they are: on Vercel (VERCEL set) the
+ *  platform edge sets x-vercel-id and x-forwarded-for, overwriting what a
+ *  client sends; anywhere else (a self-hosted deployment — the repo ships a
+ *  Dockerfile) they pass through from whatever sent the request, so the row
+ *  marks them unverified and names no address as the caller's. */
 function requestFacts(req: NextRequest, action: string) {
   const h = req.headers;
+  const onPlatformEdge = !!process.env.VERCEL;
+  const platformId = onPlatformEdge ? h.get("x-vercel-id") : h.get("x-vercel-id") || h.get("x-request-id");
   return {
     route: "/api/knowledge/embed",
     action,
-    requestId: h.get("x-vercel-id") || h.get("x-request-id") || randomUUID(),
-    ip: (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || null,
+    requestId: randomUUID(),
+    platformRequestId: (platformId ?? "").slice(0, 200) || null,
+    forwardedFor: (h.get("x-forwarded-for") ?? "").split(",")[0].trim().slice(0, 64) || null,
+    headersFrom: onPlatformEdge ? "platform-edge" : "unverified",
     userAgent: (h.get("user-agent") ?? "").slice(0, 200) || null,
   };
 }
 
 type ParsedMarker = ReturnType<typeof parseEmbedBuildMarker>;
 
+/** The consent rows naming this payer on this library, newest first (a
+ *  few), each with the instant it recorded; null when the lookup failed.
+ *  Per payer and library, not per consent: the build loop re-stamps a
+ *  consent's instant every batch. */
+async function consentRows(libraryId: string, userId: string): Promise<Array<{ stampedAt: string | null }> | null> {
+  const { data, error } = await supabaseAdmin.from("audit_logs").select("details")
+    .eq("resource_type", "knowledge_library").eq("resource_id", libraryId)
+    .eq("action", EMBED_CONSENT_AUDIT_ACTION).eq("user_id", userId)
+    .order("timestamp", { ascending: false }).limit(5);
+  if (error) return null;
+  return ((data ?? []) as Array<{ details: { stampedAt?: unknown } | null }>).map((r) => ({
+    stampedAt: typeof r.details?.stampedAt === "string" ? r.details.stampedAt : null,
+  }));
+}
+
+/** A consent as it was — its instant, standing flag and holds — to put back
+ *  over a write that replaced it (a patch: an absent field is removed). */
+const restoreOf = (m: NonNullable<ParsedMarker>): Partial<EmbedBuildMarker> => ({
+  at: m.at || undefined,
+  standing: m.standing ? true : undefined,
+  lastDrainAt: m.lastDrainAt,
+  blockedUntil: m.blockedUntil,
+  blockedReason: m.blockedReason,
+  lastError: m.lastError,
+  errorRuns: m.errorRuns || undefined,
+  completedAt: m.completedAt,
+});
+
 /** GOV-14: after a consent write, the audit row naming the request that
  *  stamped it. `before` is the marker read ahead of the write (undefined:
- *  it could not be read). A pass that renews the caller's own consent
- *  records nothing new unless `always` (an explicit "keep current"). When
- *  the row cannot be written — or the stamp cannot be read back to name it —
- *  the caller's consent is put back as it was before the write (cleared, or
- *  its standing flag restored), and the reason is returned for the caller
- *  to say; null when audited or nothing new was recorded. */
+ *  it could not be read). A pass that renews the caller's own consent — or
+ *  "keep current" over one already standing — records nothing new once a
+ *  row names this payer on this library; a renewal of a consent no row
+ *  names yet (stamped before these rows were written) writes its first row,
+ *  and so does one whose lookup failed (a second row is harmless, a missing
+ *  one is not). When the row cannot be written — or the stamp cannot be
+ *  read back to name it — the write is put back (putBack) and the reason is
+ *  returned for the caller to say; null when audited or nothing new was
+ *  recorded. */
 async function auditConsent(req: NextRequest, a: {
   orgId: string; libraryId: string; userId: string; action: "build" | "keep-current";
   before: ParsedMarker | undefined; always?: boolean;
 }): Promise<string | null> {
   const before = a.before;
   const ownBefore = !!before && before.valid && before.userId === a.userId;
-  // Renewing the caller's own consent records nothing new — nor does "keep
-  // current" on a consent that was already standing.
-  if (ownBefore && (!a.always || before!.standing === true)) return null;
+  // "Keep current" turning a consent standing is a new consent.
+  const newlyStanding = a.always === true && !(ownBefore && before!.standing === true);
+  // The caller's own consent before this write: does a row already name it?
+  const rowsBefore = ownBefore ? await consentRows(a.libraryId, a.userId) : [];
+  const recordedBefore = !!rowsBefore && rowsBefore.length > 0;
+  if (ownBefore && !newlyStanding && recordedBefore) return null;
   const after = await readEmbedBuildMarker(a.libraryId);
   const mine = !after.error && after.marker && after.marker.userId === a.userId ? after.marker : null;
   // Another member's standing consent stands (a plain build never replaces
@@ -221,6 +276,12 @@ async function auditConsent(req: NextRequest, a: {
         standing: mine.standing === true,
         replaced: before && before.userId && before.userId !== a.userId
           ? { userId: before.userId, standing: before.standing === true } : null,
+        // A renewal of the caller's own consent: this row is the first to
+        // name it — none was found (it was stamped before these rows were
+        // written) or the lookup failed — with the instant it renewed.
+        renewal: ownBefore && !newlyStanding
+          ? { previousStampedAt: before!.at || null, earlierRow: rowsBefore === null ? "lookup failed" : "none" }
+          : null,
         request: requestFacts(req, a.action),
       },
     });
@@ -229,12 +290,48 @@ async function auditConsent(req: NextRequest, a: {
   } else {
     failure = `it could not be read back to be audited (${after.error})`;
   }
-  // No consent without its audit row: put back what the write changed.
-  const expect = { userId: a.userId, at: mine?.at || null };
-  const undo = ownBefore && before
-    ? await patchEmbedBuildMarkerIf(a.libraryId, { standing: before.standing ? true : undefined }, expect)
-    : await clearEmbedBuildMarkerIf(a.libraryId, expect);
-  return undo.error ? `${failure}, and it could not be withdrawn (${undo.error})` : failure;
+  return putBack(a.libraryId, a.userId, mine?.at || null, ownBefore && recordedBefore ? before! : null, failure);
+}
+
+/** No consent without its audit row: put back what the write changed. With
+ *  `previous` — the caller's own consent, which a row already names — the
+ *  consent is restored as that one was (its instant, standing flag and
+ *  holds); without, the consent the write recorded is withdrawn. Both are
+ *  conditional on the stamp the write left (`at`). One that no longer
+ *  applies means the consent moved in between — a second tab's pass of the
+ *  caller's re-stamped it, or it was released or replaced — so it is read
+ *  again: a consent no longer the caller's is gone; one a row now names at
+ *  its current instant (that other pass recorded it) stands, and this pass
+ *  is audited after all (null); otherwise the put-back is tried once more
+ *  against what was read — the withdrawal, or for `previous` the standing
+ *  flag alone (the other pass's renewal is the caller's own). Returns what
+ *  the caller says: the failure, or the failure and why it still stands. */
+async function putBack(
+  libraryId: string, userId: string, at: string | null, previous: NonNullable<ParsedMarker> | null, failure: string,
+): Promise<string | null> {
+  const stillStands = (why: string) => `${failure}, and it could not be withdrawn (${why})`;
+  let undo: MarkerWrite = previous
+    ? await patchEmbedBuildMarkerIf(libraryId, restoreOf(previous), { userId, at })
+    : await clearEmbedBuildMarkerIf(libraryId, { userId, at });
+  if (undo.error) return stillStands(undo.error);
+  if (undo.applied) return failure;
+  const now = await readEmbedBuildMarker(libraryId);
+  if (now.error) return stillStands(`it changed meanwhile and could not be read again: ${now.error}`);
+  const cur = now.marker && now.marker.userId === userId ? now.marker : null;
+  if (!cur) return failure;
+  const expectNow = { userId, at: cur.at || null };
+  if (previous) {
+    if ((cur.standing === true) === (previous.standing === true)) return failure;
+    undo = await patchEmbedBuildMarkerIf(libraryId, { standing: previous.standing ? true : undefined }, expectNow);
+  } else {
+    const rows = await consentRows(libraryId, userId);
+    if (rows && cur.at && rows.some((r) => r.stampedAt === cur.at)) return null;
+    undo = await clearEmbedBuildMarkerIf(libraryId, expectNow);
+  }
+  if (undo.error) return stillStands(undo.error);
+  return undo.applied
+    ? failure
+    : stillStands("it kept changing — stop it under Background builds on your key in AI settings, or on the library's panel");
 }
 
 /** GOV-14 / SEM-1: the libraries of this org with what the caller's key is

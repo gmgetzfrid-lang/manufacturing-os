@@ -33,7 +33,7 @@ import {
 } from "@/lib/knowledge";
 import {
   getEmbedKeyOverview, effectiveEmbeddingSetting, savedEmbeddingSetting, embeddingSwitchImpact,
-  switchImpactIsEmpty, librariesToRebuild,
+  switchImpactIsEmpty, librariesLinkedAfterSwitch,
   type EmbeddingSwitchImpact, type EmbedKeyOverview, type EmbedKeyBuild,
 } from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
@@ -462,8 +462,11 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
       <p>
         Each one comes back with a <b>Rebuild</b> of that library&apos;s index with {after.model} — Rebuild index,
         in the library&apos;s meaning-index panel (Admin or Doc Control; it re-embeds every passage with the
-        setting of whoever runs it). Once you switch, the libraries are linked here. Or keep your current
-        setting. Keyword search is unaffected.
+        setting of whoever runs it).{" "}
+        {librariesLinkedAfterSwitch(impact).length > 0
+          ? "Once you switch, the libraries are linked here."
+          : "Open each library's meaning-index panel to rebuild it."}{" "}
+        Or keep your current setting. Keyword search is unaffected.
       </p>
     </div>
   );
@@ -634,7 +637,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       });
       showToast({ type: "success", title: hadNewKey ? "Embeddings key verified and saved." : "Settings saved." });
       setApiKey("");
-      setRebuildOffer(impact && librariesToRebuild(impact).length > 0 ? impact : null);
+      setRebuildOffer(impact && librariesLinkedAfterSwitch(impact).length > 0 ? impact : null);
       onChanged();
     } catch (e) {
       setNotice({ tone: "err", text: (e as Error).message });
@@ -760,9 +763,10 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
             setting of whoever runs it).
           </p>
           <ul className="list-disc pl-5">
-            {librariesToRebuild(rebuildOffer).map((l) => (
+            {librariesLinkedAfterSwitch(rebuildOffer).map((l) => (
               <li key={l.libraryId}>
                 <a href={`/knowledge/${l.libraryId}`} className="font-bold underline">{l.libraryName}</a>
+                {l.unchecked && <span data-unchecked="true"> — could not be checked; open it to see whether it needs a Rebuild</span>}
               </li>
             ))}
           </ul>

@@ -52,7 +52,10 @@ export interface EmbedKeyOverview {
 }
 
 /** One read: the builds on the caller's key and, with `models`, every
- *  library's vectors per model. Throws the route's sentence on a refusal. */
+ *  library's vectors per model. Throws the route's sentence on a refusal —
+ *  and when `models` was asked for and the answer carries no `indexes` (a
+ *  route instance on an earlier build, a rewritten body): an answer without
+ *  the libraries is never read as "no library affected". */
 export async function getEmbedKeyOverview(orgId: string, opts?: { models?: boolean }): Promise<EmbedKeyOverview> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not authenticated");
@@ -64,6 +67,9 @@ export async function getEmbedKeyOverview(orgId: string, opts?: { models?: boole
   const data = (await res.json().catch(() => null)) as (EmbedKeyOverview & { error?: string }) | null;
   if (!res.ok || !data || !Array.isArray(data.builds)) {
     throw new Error(data?.error || `The background builds on your key couldn't be read (HTTP ${res.status}).`);
+  }
+  if (opts?.models === true && !Array.isArray(data.indexes)) {
+    throw new Error("The answer did not list the libraries' meaning indexes");
   }
   return data;
 }
@@ -171,4 +177,18 @@ export function librariesToRebuild(i: EmbeddingSwitchImpact): Lib[] {
     if (!seen.has(l.libraryId)) seen.set(l.libraryId, { libraryId: l.libraryId, libraryName: l.libraryName });
   }
   return [...seen.values()];
+}
+
+/** What the editor links once the switch is saved: the libraries to
+ *  rebuild, then those whose index could not be checked (marked so). Empty
+ *  when the overview itself was unreadable — then no library can be named,
+ *  and the confirm says to open each library's panel instead of promising
+ *  links. */
+export function librariesLinkedAfterSwitch(i: EmbeddingSwitchImpact): Array<Lib & { unchecked: boolean }> {
+  const definite = librariesToRebuild(i);
+  const ids = new Set(definite.map((l) => l.libraryId));
+  return [
+    ...definite.map((l) => ({ ...l, unchecked: false })),
+    ...i.unknown.filter((l) => !ids.has(l.libraryId)).map((l) => ({ libraryId: l.libraryId, libraryName: l.libraryName, unchecked: true })),
+  ];
 }

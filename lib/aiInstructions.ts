@@ -85,16 +85,19 @@ export async function deleteAiInstruction(id: string): Promise<void> {
 }
 
 /** Count of instructions active for a scope (its own + global) — the number
- *  behind "N standing instructions apply" chips on AI surfaces. */
+ *  behind "N standing instructions apply" chips on AI surfaces. null when
+ *  the count could not be read: a failed read is never "none", so the
+ *  library Ask header's "No playbooks yet" invitation (HUB-6) is never shown
+ *  over an org that has playbooks. */
 export async function countActiveInstructions(
   orgId: string,
   scope: AiInstructionScope,
-): Promise<number> {
+): Promise<number | null> {
   const { count, error } = await supabase
     .from("org_ai_instructions")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId).eq("enabled", true)
     .in("scope", scope === "global" ? ["global"] : ["global", scope]);
-  if (error) return 0;
-  return count ?? 0;
+  if (error || typeof count !== "number") return null;
+  return count;
 }

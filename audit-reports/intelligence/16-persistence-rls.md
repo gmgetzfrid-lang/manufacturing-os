@@ -594,7 +594,7 @@ Tests: `lib/__tests__/orchestratorSkills.test.ts` (the route returns the packs f
 1. ✓ (2026-10-01, I-03) The skills loader returns the names and ids of the packs it included alongside the block.
 2. ✓ The ask response (2026-10-01, I-03) and now the orchestrator response carry that list, and both answer surfaces name the skills that shaped an answer.
 
-**Scope / residual.** None. `loadAnswerSkillsBlock` remains for its other callers.
+**Scope / residual.** None for this finding. `loadAnswerSkillsBlock` (`lib/answerSkillsServer.ts`) has no production caller left; only tests use it. A later package may remove it.
 
 ---
 
