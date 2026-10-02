@@ -51,6 +51,8 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/components/documents/CheckoutStatusCell", () => ({ default: () => null }));
 vi.mock("@/components/assets/AssetTagChip", () => ({ default: () => null }));
+// REV-19 (P17 review fix): BulkEditModal reads the signed-in user (useRole) for the issue record.
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "me", userEmail: null, activeRole: "DocCtrl" }) }));
 
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import BulkEditModal from "@/components/documents/BulkEditModal";

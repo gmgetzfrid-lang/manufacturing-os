@@ -27,6 +27,10 @@ const s = vi.hoisted(() => ({
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: (table: string) => ({
+      // REV-19 (P17): the bulk editor's issuing rows go through
+      // changeDocumentStatus, which reads the row before its write (no row
+      // here: the outcome is the write's alone).
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
       update: (payload: Record<string, unknown>) => ({
         eq: (_col: string, val: unknown) => ({
           select: () => {
@@ -40,6 +44,8 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/components/documents/CheckoutStatusCell", () => ({ default: () => null }));
 vi.mock("@/components/assets/AssetTagChip", () => ({ default: () => null }));
+// REV-19 (P17 review fix): BulkEditModal reads the signed-in user (useRole) for the issue record.
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "me", userEmail: null, activeRole: "DocCtrl" }) }));
 
 import MetadataEditor from "@/components/documents/MetadataEditor";
 import BulkEditModal from "@/components/documents/BulkEditModal";

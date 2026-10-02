@@ -546,11 +546,12 @@
     "lib/issueStatus.ts, lib/documentStatusOptions.ts (one predicate)"
    ],
    "migrationsLikely": 1,
-   "when": "after the user ratifies DEC-77 / REV-21, and after P14 merges (P14 re-creates the guard in 20261151)",
+   "when": "after the user ratifies DEC-77 / REV-21, and after P14 merges (P14 re-creates the guard in 20261151); after P18 (the guard\u2019s newest body)",
    "dependsOn": [
     "the user's ratification of DEC-77 \u00a74",
     "P14 merged",
-    "P17 merged (P17 re-creates the guard first; start from its body)"
+    "P17 merged (P17 re-creates the guard first; start from its body)",
+    "P18 merged (P18 re-creates the guard after P17; start from P18's body)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder)."
   },
@@ -572,6 +573,24 @@
     "P14 merged (20261151 is the newest guard and publish_revision; finalize_reviewed_promote's recorded force)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 at the P14 merge (DEC-31 remainders). P16 (REV-21) re-creates the same guard after this package: it starts from this package's body."
+  },
+  {
+   "name": "P18 RECORDED REVERSAL RESTORE \u2014 the legacy reversal puts its source back through a recorded door, so the guard can bind a held Superseded exit",
+   "findings": [
+    "REV-22 (remainder re-owned by the integrator 2026-10-02 at the P17 merge: done-when 2 \u2014 the legacy reversal's put-back of a source over a carried hold (lib/documentLifecycle/reverse.ts restoreStatus, after HLD-2 carryParkedHolds) goes through a recorded path the guard honours (e.g. an RPC that restores the status under the transaction-local app.publish_hold_override flag naming the document and writes REV_HOLD_OVERRIDDEN in the same transaction), after which REV-20 limb (a) binds an unstamped Superseded exit too; or the retirement stamp is backfilled for the recorded split / merge sources \u2014 decide with evidence, record the choice)"
+   ],
+   "files": [
+    "lib/documentLifecycle/reverse.ts (restoreStatus through the recorded door; reverseSplit / reverseMerge unchanged otherwise)",
+    "one migration: the recorded restore RPC (SECURITY DEFINER per DRLS-16, or INVOKER under the caller's RLS) and enforce_document_publish_guard re-created from its NEWEST body (20261159 after P17) with limb (a) binding an unstamped Superseded exit unless the flag names the document \u2014 lineDiff test scanning supabase/migrations; DEC-30 counts-only inventory; one paste",
+    "tests: the real reverseSplit / reverseMerge over a carried hold still restore (regression), a bare un-supersede of a held unstamped Superseded document is refused, the recorded restore writes exactly one REV_HOLD_OVERRIDDEN"
+   ],
+   "migrationsLikely": 1,
+   "when": "after P17 (merged 2026-10-02; its 20261159 is the guard's newest body) and BEFORE P16 (P16 re-creates the same guard after the user's DEC-77 ratification and starts from this package's body)",
+   "dependsOn": [
+    "P17 merged (20261159 = the newest enforce_document_publish_guard)",
+    "the paste of this package's migration follows 20261159's, which is itself held until projects-and-cost INTK-18 lands (projects-joint J14) or the user ratifies DEC-63's P17 Landed line"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the P17 merge (DEC-31 remainder of REV-22). Does not wait on any ratification; its paste waits on 20261159's."
   }
  ],
  "crossAreaFileOverlaps": [

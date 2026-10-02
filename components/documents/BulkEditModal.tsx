@@ -27,6 +27,29 @@
 // fail closed) — a held row is refused and named; the publisher tier holds
 // (the Bulk Edit button is Document Control's only). REV-21 is the database
 // limb.
+//
+// REV-19 (P17): a row the status change ISSUES (isIssueTransition, the rows
+// the note above names) is written through lib/revisions.ts
+// changeDocumentStatus — the same one checked UPDATE (the status, the
+// recomputed uniqueness key, updated_at / updated_by), then, when the
+// database admitted it as an issue, the compliance clocks it owes (the
+// review clock and the read-&-understood roster, or only the roster where
+// the retirement stamp gives no evidence of a new issue) and the
+// DOCUMENT_ISSUED record, carrying the signed-in user's email and role
+// (useRole) as the creation and un-archive doors' records do. A refused row is
+// named exactly as before. An issue that landed but whose clocks or record did
+// not follow is named after the apply — the change stands and is not to be
+// repeated — and so is a row written as an issue that changeDocumentStatus did
+// not record as one because its status before the write could not be read: no
+// clock started and no DOCUMENT_ISSUED was written for it, so Document Control
+// is told to start its clocks from the document. A row changeDocumentStatus
+// found ALREADY issued (issued by another change after this page loaded), or
+// with no current revision, was not issued by this write: it is named as such
+// and nothing more is owed for it — never the "start its clocks" advice, which
+// would restart a review clock the issuing change owns (P17 integrator fix:
+// changeDocumentStatus returns the basis, `notRecordedBecause`).
+// Every other row (a status that issues nothing, a custom field) is written as
+// before.
 
 import React, { useState } from "react";
 import {
@@ -38,6 +61,8 @@ import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
+import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
+import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
   isOpen: boolean;
@@ -63,7 +88,17 @@ export default function BulkEditModal({
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
-  const [results, setResults] = useState<{ ok: number; failed: Array<{ doc: string; reason: string; issue: boolean }> } | null>(null);
+  // REV-19 (P17 review fix): the issue record names who issued it — email and role, not a bare uid.
+  const { userEmail, activeRole } = useRole();
+  const [results, setResults] = useState<{
+    ok: number;
+    failed: Array<{ doc: string; reason: string; issue: boolean }>;
+    /** REV-19: issued rows whose clocks or issue record did not follow. */
+    followUps: Array<{ doc: string; problems: string[] }>;
+    /** REV-19 (P17 integrator fix): rows this change wrote but did not issue
+     *  (already issued, or no current revision) — nothing is owed for them. */
+    notIssued: Array<{ doc: string; note: string }>;
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -84,6 +119,8 @@ export default function BulkEditModal({
     setBusy(true);
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
+    const followUps: Array<{ doc: string; problems: string[] }> = [];
+    const notIssued: Array<{ doc: string; note: string }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
@@ -117,6 +154,47 @@ export default function BulkEditModal({
               : (doc.metadata as Record<string, unknown> ?? {}),
           }, library.uniquenessKeys);
         }
+        if (target.kind === "status" && doc.id && issuingIds.has(doc.id)) {
+          // REV-19: an issuing row — the same checked write, then the clocks
+          // and the DOCUMENT_ISSUED record (a refusal throws in the
+          // database's words, as the bare write's did).
+          // changeDocumentStatus writes the status, updated_at and updated_by
+          // itself; the recomputed uniqueness key rides in the same UPDATE.
+          const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
+          const outcome: StatusIssueOutcome = await changeDocumentStatus({
+            orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
+            actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,
+          });
+          const label = doc.documentNumber || doc.title || doc.id;
+          // Written, but not issued by THIS write (P17 integrator fix): the row
+          // was already issued — by another change, after this page loaded —
+          // or has no current revision. Nothing is owed for this write, and
+          // starting its clocks again would restart a review clock the issuing
+          // change owns.
+          if (!outcome.issued && outcome.notRecordedBecause === "already_issued") {
+            notIssued.push({ doc: label, note: "it was already issued when this change reached it (issued by another change after this page loaded), so this change issued nothing: no clock was started and no issue record written for it, and nothing more is owed for this change. Do not start its clocks again from here — they belong to the change that issued it (see its history)." });
+            ok += 1;
+            continue;
+          }
+          if (!outcome.issued && outcome.notRecordedBecause === "no_current_revision") {
+            notIssued.push({ doc: label, note: "it has no current revision, so there was nothing to issue: no clock or issue record is owed for it." });
+            ok += 1;
+            continue;
+          }
+          const problems = outcome.issued
+            ? [
+                ...outcome.complianceClockErrors,
+                ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
+              ]
+            // Written, but not recorded as an issue: changeDocumentStatus could not
+            // read the row's status before the write (notRecordedBecause
+            // 'read_failed'), so it started no clock and wrote no DOCUMENT_ISSUED
+            // (P17 review fix) — whether this write issued it is unknown.
+            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."];
+          if (problems.length > 0) followUps.push({ doc: label, problems });
+          ok += 1;
+          continue;
+        }
         // Checked: an error, or a write the database filtered to no row, is a failure on this row.
         const { data: written, error } = await supabase.from("documents").update(updates).eq("id", doc.id).select("id");
         if (error) throw error;
@@ -127,7 +205,7 @@ export default function BulkEditModal({
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: issuingIds.has(doc.id) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed });
+    setResults({ ok, failed, followUps, notIssued });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -236,6 +314,33 @@ export default function BulkEditModal({
                   {results.ok > 0 && (
                     <div className="mt-1">The other {results.ok} row{results.ok === 1 ? " was" : "s were"} applied — each row is its own write, so nothing was rolled back.</div>
                   )}
+                </div>
+              )}
+              {results.followUps.length > 0 && (
+                // REV-19: an issue that landed without everything it owes.
+                <div data-testid="bulk-issue-follow-ups" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-4 h-4" /> {results.followUps.length} issued row{results.followUps.length === 1 ? "" : "s"} — follow-up steps did not complete
+                  </div>
+                  <div className="mb-1">The status change stands and is not rolled back — do not apply it again. Document Control can set what did not complete from the document.</div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.followUps.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {results.notIssued.length > 0 && (
+                // REV-19 (P17 integrator fix): written, but not issued by this change — nothing owed.
+                <div data-testid="bulk-not-issued-rows" className="rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-3 text-xs text-[var(--color-text)]">
+                  <div className="font-bold mb-1">
+                    {results.notIssued.length} row{results.notIssued.length === 1 ? " was" : "s were"} not issued by this change — nothing more is owed
+                  </div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.notIssued.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </div>
