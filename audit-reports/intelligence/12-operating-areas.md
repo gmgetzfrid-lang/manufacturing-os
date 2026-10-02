@@ -448,9 +448,15 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 **Done-when.**
 1. ✓ (I-13, DEC-67) One unit identity, joined as data.
 2. ✓ One node family per unit (I-13), and Connect refuses a `unit:` endpoint (this package). An unmapped unit whose free-text code equals a codebook code is no longer written as that codebook unit: the code is never read.
-3. ✓ (I-09, `20261155` — Pending) No `process_flows` row can be CREATED whose unit ref resolves to no `codebook_entries` row, once `20261155` is pasted. Existing dangling rows (for example ones the base page's Connect wrote with `units.code` refs) are counted in the paste's inventory and kept, never rewritten — so "no row names such a ref" is not claimed.
+3. ✓ in the migration file, not live (I-09, `20261155` — Pending). Once `20261155` is pasted, no `process_flows` row can be CREATED whose unit ref resolves to no `codebook_entries` row. Existing dangling rows (for example ones the base page's Connect wrote with `units.code` refs) are counted in the paste's inventory and kept, never rewritten — so "no row names such a ref" is not claimed. *(Checked at fix pass 3 against what `20261155` delivers. The wording holds and is not stronger than the file: the BEFORE INSERT OR UPDATE guard checks a `unit` end against `codebook_entries` kind `unit` of the same org, for every writer — the service role and the org restore included — on INSERT and whenever an endpoint changes (`20261155_intel_roundG_process_flows_authority.sql:160-185`, `:265-268`). After creation, a unit ref can stop resolving only if its codebook entry is deleted or re-coded. `20261128`'s CB-5 guard refuses that to a person while a flow names the unit, but lets the service role's org purge and restore cascades through, and `20261128` is Pending too. Neither case is a creation.)*
 
 **Scope / residual.** Pending migrations (never claimed live): `20261138` (unit identity) and `20261155` (process-flow guard) are hand-applied and still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until they are pasted, the app-side refusal holds and the database's does not yet; after the paste, existing dangling rows remain (counted, kept).
+
+**I-14 fix pass 3 (2026-10-02).** Record check only; no code changed for AREA-10. An earlier review had found done-when 3 restated too strongly, and the first I-14 fix pass narrowed it to "cannot be CREATED, once pasted". This pass re-read `20261155` against that wording (the note on done-when 3 above):
+- The claim matches the file. The guard covers INSERT and any endpoint change, for every writer. Rows that already dangle are counted (`:113-116`) and kept.
+- The ✓ stands for the code half only, per DEC-30, with the explicit line DEC-30 asks for, below. AREA-10 is not fully closed until both files are pasted.
+
+**Pending migration:** `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql` (done-when 3) and `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (done-when 1's mapping), both hand-applied.
 
 ---
 

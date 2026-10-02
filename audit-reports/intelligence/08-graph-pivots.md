@@ -113,8 +113,8 @@ Tests: `lib/__tests__/orgGraph.test.ts` GPV-2 block; `lib/__tests__/scope.test.t
 **Resolution (2026-10-02, intelligence Round G).** The remaining limbs (done-when 2 and 4):
 - `GraphSettings.scope: ScopeRef | null` (`lib/graphSettings.ts`) is the scope descriptor, distinct from focus. It lives in the URL as `scope=unit:<code>` (`parseScopeParam` / `formatScopeParam`). It is never stored: `saveSettings` writes null and `migrateSettings` never restores one, so a bare /graph is always the whole org.
 - Three ways set it:
-  - the top bar (`select aria-label="Scope the map to one unit"`, `app/(protected)/graph/page.tsx:836`), listing the Site Codebook's units by their own names (`loadCodebook`);
-  - a Site Codebook unit's peek ("Scope the map to this unit", `components/graph/NodePeek.tsx:232`);
+  - the top bar (`select aria-label="Scope the map to one unit"`, `app/(protected)/graph/page.tsx:882`), listing the Site Codebook's units by their own names (`loadCodebook`);
+  - a Site Codebook unit's peek ("Scope the map to this unit", `components/graph/NodePeek.tsx:239`);
   - the operating area's link (`?scope=`, I-09 AREA-6).
   Its active state is a chip, "Scope: Crude Unit ×", like the Focused chip.
 - The page hands it to `buildOrgGraph(orgId, { scope })`, I-13's scoped ASSEMBLY, not a view filter. A scoped map has its own snapshot.
@@ -177,7 +177,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` — `cbunit:20` reaches the drawing in o
 ## GPV-4 · "Equipment" names three different things on the same screen; "Units" names two disjoint node families
 
 - **Severity:** LOW
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:45-48`, `app/(protected)/graph/page.tsx:431`, `components/graph/GraphControls.tsx:22-26`, `components/graph/GraphControls.tsx:153`, `components/graph/NodePeek.tsx:88-90`, `app/(protected)/graph/page.tsx:864`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substance holds, but "three different things" is an overcount: page.tsx:45-48 (TYPE_LABELS) and NodePeek.tsx:88-90 (`labelFor(node.type)`, fed `TYPE_LABELS[t].replace(/s$/, "")` at page.tsx:864) are the SAME referent — the asset node type — rendered in two places, not two meanings. The real collision is two-way: the type-filter row "Equipment" (hides nodes when unchecked) vs the lens button "Equipment ↔ Docs" (hides four OTHER types). That is a nomenclature/label defect with a stale-count wart and no data consequence, which reads LOW rather than MEDIUM.
@@ -198,7 +198,7 @@ app/(protected)/graph/page.tsx:46 — `document: "Documents", asset: "Equipment"
 - [ ] the two unit families are labelled distinguishably in the Filters list and coloured or shaped differently on the map
 - [ ] the Filters counts state whether they count the whole graph or the current view
 
-**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29):
+**Partial (2026-10-02, intelligence Round G).** *(Corrected at fix pass 3: first recorded as a Resolution with Status RESOLVED. It rested on done-when 1 being "superseded by `DEC-44 (I-14)` item 1", a provisional decision nobody has ratified. DEC-29 rule 3 needs every done-when to hold, and done-when 1 does not, so the finding is OPEN with this Partial. See the I-14 fix pass 3 note below.)* Reproduced first (DEC-29):
 - base `page.tsx:45-48` / `:431` and `GraphControls.tsx:22-26`: the lens "Equipment ↔ Docs" beside the node type "Equipment";
 - one "Units" row and one violet for both unit families;
 - Filters counts that did not say what they counted.
@@ -213,11 +213,21 @@ What landed:
 - **Counts.** The Filters caption reads "Node types · in this view / on the whole map". A row shows "v / c" when the two differ, with a tooltip.
 
 **Done-when.**
-1. Not met as written — **superseded by `DEC-44 (I-14)` item 1** (the plan's decision: the node label "Equipment" is kept and the lens is "Equipment ↔ Documents"). The two vocabularies still share the word "Equipment", so the finding's own scenario ("turn on the Equipment lens" → the "Equipment" checkbox) can still happen. What landed narrows it: a lens is a compound name for the set it shows, in a labelled "Lenses" group; a type is one word under "Node types"; no lens is named by a single node-type word (`graphSettingsUrl.test.ts` "no lens is named by a single node-type word …"). Renaming the lens is one entry in `GRAPH_LENSES` if the decision is reversed.
+1. **Not met.** *(Corrected at fix pass 3: recorded as "not met as written — superseded by `DEC-44 (I-14)` item 1". That item is the fleet plan's stated default: the node label "Equipment" is kept and the lens is "Equipment ↔ Documents". It is provisional and unratified, so it cannot close this criterion.)* The lens names still use node-type words: "Equipment" in "Equipment ↔ Documents"; "units" and "equipment" in "Plant (units & equipment)", whose "Plant" is also a type (Plants); "Documents" and "libraries" in "Documents & libraries". So the finding's own scenario ("turn on the Equipment lens" → the "Equipment" checkbox) can still happen. What landed narrows it: a lens is a compound name for the set it shows, in a labelled "Lenses" group; a type is one word under "Node types"; no lens is named by a single node-type word (`graphSettingsUrl.test.ts` "no lens is named by a single node-type word …"). If the decision is not ratified, renaming the lenses is label-only, one `label` per `GRAPH_LENSES` entry. *(Corrected at fix pass 3: this said "one entry", but three of the four names carry node-type words.)*
 2. ✓ The unit kinds are labelled apart in the Filters list and coloured (and, in 2D, shaped) apart on the map (`graphView.test.ts` "GPV-4 — the unit class's three kinds").
 3. ✓ The Filters counts say whether they count the view or the whole map.
 
-**Scope / residual.** Done-when 1 is met by the plan's decision (`DEC-44 (I-14)` item 1), not as written; reversing it is one entry in `GRAPH_LENSES`. Until `20261138` (Pending), no operational unit is mapped, so every units row is drawn as the ring kind.
+**Scope / residual.** Done-when 1 remains (below). *(Corrected at fix pass 3: this line said done-when 1 "is met by the plan's decision". It is not met, and the decision is provisional.)* Until `20261138` (Pending), no operational unit is mapped, so every units row is drawn as the ring kind.
+
+**I-14 fix pass 3 (2026-10-02).** The final review found GPV-4 set RESOLVED on a done-when its own record called "not met as written". The lenses were not renamed; GPV-4 is set back to OPEN. Why not rename:
+- **Scope of the rename.** Meeting done-when 1 as written means a lens vocabulary apart from the node types. Dropping "Equipment" from one lens is not enough. "Plant (units & equipment)" carries three node-type words and "Documents & libraries" two, so three of the four lens names would change.
+- **Whose call.** Those names are the fleet plan's stated default (`audit-reports/fleet-plans/intelligence.json`, package I-14, decisionsNeeded: "Lens set — default: 'Everything', 'Plant (units & equipment)', 'Equipment ↔ Documents', 'Documents & libraries'; node label 'Equipment' stays, lens labels change"). The rename itself is small and safe: the lens keys (`all`, `plant`, `equipment-docs`, `documents`) are the URL contract, labels are display only, and stored settings and saved views hold hidden types, never a lens label. But choosing the new words would override a product decision the plan made, which is the user's call, not a fix pass's.
+
+What remains: done-when 1 — the lens names and the node-type names in different vocabularies. Done-whens 2 and 3 hold as recorded above.
+
+Owner / decision: the user's ratification of `DEC-44 (I-14)` item 1. The integrator renumbers `DEC-44 (I-14)` at merge and may flag item 1 for that ratification.
+- **If ratified as written** (the plan's lens names stand), GPV-4 closes by that decision, with done-when 1 recorded as superseded, not met.
+- **If not**, the follow-on is label-only: one `label` per entry of `GRAPH_LENSES` in `lib/graphSettings.ts` (for example the finding's own "Governing paper" for `equipment-docs`), plus the label strings pinned in `lib/__tests__/graphSettingsUrl.test.ts` and `lib/__tests__/graphPageRender.test.ts`. Keys, URLs and stored settings do not change. The integrator assigns it to the intelligence package that takes the ratification.
 
 ---
 
@@ -248,8 +258,8 @@ app/(protected)/graph/page.tsx:237 — `}, [focusParam, view]);`. app/(protected
 - [ ] dragging a force slider never moves the camera
 
 **Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `app/(protected)/graph/page.tsx:226-237`. The deep-link effect depended on `[focusParam, view]`, and `view` was a memo over the whole `settings` object (`:151-180`), so every slider tick re-selected and re-flew. `graphPageRender.test.ts` "closing the peek and dragging a force slider never reopens it or re-flies the camera" fails against the base page. What landed:
-- The URL's node is a `pendingSelect`, honoured ONCE (`page.tsx:354-371`), and only against the map the current scope asks for: the page tracks which snapshot key the graph on screen belongs to (`graphKey`) and whose fresh build has landed (`freshKey`), so after a scope change (a unit's peek → "Scope the map to this unit", or an outside link that changes `scope=`) the map being left can neither answer the selection with its own node nor call it "not on this map" (fix pass; `graphPageRender.test.ts` "a unit's peek → Scope: the peek shows the scoped map's node …", "an outside link that changes the scope selects its node once the scoped map lands …"). When the map holds it, it is selected and flown to, then cleared. If the fresh build does not draw it, a note says so once and it is never retried: "… is on the map but hidden by this view — Show it", or "The linked item isn't on this map …".
-- The slice depends only on the settings that filter (`:303`), so a force slider never rebuilds it.
+- The URL's node is a `pendingSelect`, honoured ONCE (`page.tsx:355-372`), and only against the map the current scope asks for: the page tracks which snapshot key the graph on screen belongs to (`graphKey`) and whose fresh build has landed (`freshKey`), so after a scope change (a unit's peek → "Scope the map to this unit", or an outside link that changes `scope=`) the map being left can neither answer the selection with its own node nor call it "not on this map" (fix pass; `graphPageRender.test.ts` "a unit's peek → Scope: the peek shows the scoped map's node …", "an outside link that changes the scope selects its node once the scoped map lands …"). When the map holds it, it is selected and flown to, then cleared. If the fresh build does not draw it, a note says so once and it is never retried: "… is on the map but hidden by this view — Show it", or "The linked item isn't on this map …".
+- The slice depends only on the settings that filter (`:304`), so a force slider never rebuilds it.
 - The view is written back to the URL. `select=` follows the peek, so closing the peek removes it and a refresh does not reopen it.
 
 **Done-when.**
@@ -330,9 +340,9 @@ app/(protected)/graph/page.tsx:319-322 — `const unitCode = (n: GraphNode): str
 *Handoff (2026-10-01, intelligence Round G, I-13): the one unit identity this needs has landed (GAP-305) — a mapped operational unit is the `cbunit:<code>` node, and every unit node carries `GraphNode.unitCode` (the codebook code; null on an operational unit with no mapping). Connect can write `node.unitCode` and refuse a unit node whose `unitCode` is null; the optimistic edge then uses the same node ids the rebuild produces.*
 
 **Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `app/(protected)/graph/page.tsx:319-346`. `unitCode(n)` returned `n.sub` (units.code, e.g. "U100") for a `unit:` node, and the optimistic edge was drawn on the clicked ids. `graphView.test.ts` "an operational unit with no codebook identity is refused …" and `graphPageRender.test.ts`'s GPV-7 cases fail against the base. What landed, in `lib/graphView.ts`:
-- `flowEndpoint` (`:131`) writes a unit end as the node's own codebook code (`GraphNode.unitCode`, DEC-67; a mapped operational unit IS `cbunit:<code>`). An operational unit with no mapping and a system are refused with the reason.
-- `planConnect` (`:172`) keeps the link and tag pairs, refuses a mixed pair with the old sentence, and gives the optimistic flow edge the ids `assembleOrgGraph`'s `flowNodeId` produces (`asset:<id>` / `cbunit:<code>`). The page draws it once (`withEdge`) — a refresh never contradicts the confirmation.
-- `connectOffer` (`:152`): the peek does not offer Connect on a unit whose end cannot be resolved and shows why (`data-testid="connect-blocked"`).
+- `flowEndpoint` (`:132`) writes a unit end as the node's own codebook code (`GraphNode.unitCode`, DEC-67; a mapped operational unit IS `cbunit:<code>`). An operational unit with no mapping and a system are refused with the reason.
+- `planConnect` (`:173`) keeps the link and tag pairs, refuses a mixed pair with the old sentence, and gives the optimistic flow edge the ids `assembleOrgGraph`'s `flowNodeId` produces (`asset:<id>` / `cbunit:<code>`). The page draws it once (`withEdge`) — a refresh never contradicts the confirmation.
+- `connectOffer` (`:153`): the peek does not offer Connect on a unit whose end cannot be resolved and shows why (`data-testid="connect-blocked"`).
 
 **Done-when.**
 1. ✓ Unit ↔ unit Connect is refused with an explicit message naming why ("… is an operational unit that is not mapped to a Site Codebook unit … Map it on Operational scope (/admin/scope) …"); a mapped one is the codebook node and writes its code.
@@ -378,9 +388,9 @@ components/graph/OrgGraph2D.tsx:202 — `if (st.showArrows && (alpha > 0.3) && (
 - `ACCENT.path` `#22d3ee` beside the flow colour `#06b6d4`.
 
 What landed:
-- **2D arrows.** Arrowheads go on `ARROW_EDGE_TYPES` = `DIRECTED_EDGE_TYPES` (flow, supersession) and a traced path. They no longer go on a curated link: an unordered pair, so its arrow was invented. `baseEdgeAlpha` draws a flow at 0.6 and a supersession at 0.4, above `ARROW_MIN_ALPHA` 0.12 (`OrgGraph2D.tsx:55`, `:241`). The head sits at the target node's real radius.
+- **2D arrows.** Arrowheads go on `ARROW_EDGE_TYPES` = `DIRECTED_EDGE_TYPES` (flow, supersession) and a traced path. They no longer go on a curated link: an unordered pair, so its arrow was invented. `baseEdgeAlpha` draws a flow at 0.6 and a supersession at 0.4, above `ARROW_MIN_ALPHA` 0.12 (`OrgGraph2D.tsx:56`, `:245`). The head sits at the target node's real radius.
 - **Default on.** `showArrows` defaults ON (settings version 2; a version-1 blob migrates on — `migrateSettings`).
-- **3D cones.** The 3D view draws an instanced direction cone at the fed / replacing end (`OrgGraph3D.tsx:227`, `:672`). Curved links is disabled in 3D with "2D only".
+- **3D cones.** The 3D view draws an instanced direction cone at the fed / replacing end (`OrgGraph3D.tsx:228`, `:676`). Curved links is disabled in 3D with "2D only".
 - **Legend.** `components/graph/GraphLegend.tsx` builds the key from `EDGE_LEGEND` (`graphTheme.ts`): every edge colour, an arrow where direction is the meaning, the three library statements, the unit kinds.
 - **Path accent.** The path accent is lime (`#84cc16`); the path UI follows.
 
@@ -391,7 +401,9 @@ What landed:
 
 Tests: `graphView.test.ts` "GPV-8 / FLOW-10 …" (the arrow set is the directed set; a flow clears the threshold; the accent; the legend covers every type); `graphSettingsUrl.test.ts` (default and migration); `graphPageRender.test.ts` (a v1 blob loads with arrows on).
 
-**Scope / residual.** The canvas and WebGL passes themselves are not executed in the test environment (no canvas or WebGL); the rules they draw by are.
+**Scope / residual.** The canvas and WebGL passes themselves are not executed in the test environment (no canvas or WebGL); the rules they draw by are. *(Corrected at fix pass 3: the 2D pass is now driven frame by frame on a stub canvas context — `lib/__tests__/graphRendererFrames.test.ts`; WebGL still is not.)*
+
+**I-14 fix pass 3 (2026-10-02).** The final review's minor: with arrows on by default, both renderers built `new Map(ns.map(...))` over every node on every animation frame, just to look up each arrowhead's target radius (`035207c` `OrgGraph2D.tsx:200`, `OrgGraph3D.tsx:640`). Each render loop now holds a `nodeIndexer()` (`lib/graphView.ts:239`) and asks it for the index each frame (`OrgGraph2D.tsx:123`, `:204`; `OrgGraph3D.tsx:523`, `:644`). The indexer rebuilds only when the node array itself changes. The page hands the renderers the same `view.nodes` until the view changes. What is drawn is unchanged. Tests: `graphView.test.ts` "the renderers' node index is built once per node array, not once per frame". `graphRendererFrames.test.ts` drives OrgGraph2D on a stub canvas with a hand-run `requestAnimationFrame`. Six frames call the node array's `map` once, and the flow's arrowhead is still drawn. A re-render with the same array reuses the index, and a new node set builds one more. With arrows off, no index and no arrowhead. Against `035207c`'s renderer, six frames called `map` six times. OrgGraph3D needs WebGL, so a structural pin covers it: no `new Map(ns.map(` in either renderer, and the indexer is created before the frame loop.
 
 ---
 
@@ -422,10 +434,10 @@ lib/graphSim.ts:289-291 — "…but it also reports HOW FAR each node is so the 
 - [ ] the Focused chip's depth is adjustable in place rather than only through the drawer
 
 **Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `page.tsx:168-174` kept only the membership of `neighborhood()`'s distance map, and `GraphControls.tsx:224-238` filed the depth under Forces. What landed:
-- `lib/graphView.ts` `sliceView` keeps the distances (`depthOf`). The page threads them to both renderers (`depthOf` / `depthMax`, `page.tsx:923`, `:942`).
+- `lib/graphView.ts` `sliceView` keeps the distances (`depthOf`). The page threads them to both renderers (`depthOf` / `depthMax`, `page.tsx:969`, `:988`).
 - `lib/graphSim.ts` `depthFade(distance, depth)` draws the root and its direct neighbours at full weight and fades the rim to `FADE_FLOOR` 0.4, at 0.7 of the size. Both renderers fade nodes and links by it.
 - The depth control moved into Filters (`GraphControls.tsx:206`): "Hops shown when you Go in on a node — nearer nodes are drawn stronger".
-- The Focused chip has − / + in place (`page.tsx:867`). The depth is in the URL with the focus (`local=`, `depth=`).
+- The Focused chip has − / + in place (`page.tsx:913`). The depth is in the URL with the focus (`local=`, `depth=`).
 
 **Done-when.**
 1. ✓ The depth map reaches both renderers, which fade and shrink by hop distance.
@@ -516,11 +528,11 @@ app/(protected)/graph/page.tsx:74 `const [focusId, setFocusId] = React.useState<
   - `scope`;
   - `q` and `ask`;
   - `select` (the peeked node).
-  A URL is applied on arrival and on any navigation from outside. Its filter is applied without saving, so the person's stored settings stay theirs until they change something. The page writes its view back with `history.replaceState` (`app/(protected)/graph/page.tsx:462-497`). Forces, colours and 2D/3D stay per-org local.
-- **Within the History API's budget (fix pass).** A browser throws past its limit (WebKit: 100 `replaceState` calls in 30 seconds; Gecko: 200 in 10), and Next.js answers each write with one of its own. `lib/graphView.ts` `rateLimitedWriter` (`:282`) spends a burst of 10 writes, then one a second, coalescing a stream to its latest value; a write that throws is caught, skipped and retried after a back-off, never thrown into the page. The search box reaches the URL when asked (Enter / Ask), when the box is left, or when cleared — never per keystroke (`urlQ`, `page.tsx:786`). The page tracks every write Next.js has not echoed back yet (`written`, `:165`), so a deferred write is never mistaken for an outside navigation. "Copy link" builds the link from the view, not the address bar. Tests: `graphView.test.ts` "GPV-11 — the URL writer spends the History API's budget, never more" (6 cases); `graphPageRender.test.ts` "200 keystrokes never write the URL; leaving the box writes the search once", "a burst of 200 view changes is coalesced, and a replaceState that throws never reaches the page".
-- **The person's stored settings (fix pass).** The page keeps the settings loaded on arrival (`stored`, `:171`) and saves every change onto those (`persist`, `:267`), so a URL's filter, depth or scope is never saved by an unrelated change (a force slider, Arrows, the Orphans tab); changing the filter itself saves the new filter (`DEC-44 (I-14)` item 3). Tests: `graphPageRender.test.ts` "nudging a force or opening Orphans saves only that; a bare /graph opens on the person's own filter", "changing the filter itself is the person's choice, and is saved".
+  A URL is applied on arrival and on any navigation from outside. Its filter is applied without saving, so the person's stored settings stay theirs until they change something. The page writes its view back with `history.replaceState` (`app/(protected)/graph/page.tsx:463-512`). Forces, colours and 2D/3D stay per-org local.
+- **Within the History API's budget (fix pass).** A browser throws past its limit (WebKit: 100 `replaceState` calls in 30 seconds; Gecko: 200 in 10), and Next.js answers each write with one of its own. `lib/graphView.ts` `rateLimitedWriter` (`:321`) spends a burst of 10 writes, then one a second, coalescing a stream to its latest value; a write that throws is caught, skipped and retried after a back-off, never thrown into the page. The search box reaches the URL when asked (Enter / Ask), when the box is left, or when cleared — never per keystroke (`urlQ`, `page.tsx:832`). The page tracks every write Next.js has not echoed back yet (`written`, `:166`), so a deferred write is never mistaken for an outside navigation. *(Corrected at fix pass 3: the writer replaced the current history entry without checking that the browser was still on /graph, and dropped pending writes only on unmount. A write the budget deferred could come due after a client-side navigation away, before the page unmounted, and rewrite the other page's URL. See the fix pass 3 note below.)* "Copy link" builds the link from the view, not the address bar. Tests: `graphView.test.ts` "GPV-11 — the URL writer spends the History API's budget, never more" (6 cases); `graphPageRender.test.ts` "200 keystrokes never write the URL; leaving the box writes the search once", "a burst of 200 view changes is coalesced, and a replaceState that throws never reaches the page".
+- **The person's stored settings (fix pass).** The page keeps the settings loaded on arrival (`stored`, `:172`) and saves every change onto those (`persist`, `:268`), so a URL's filter, depth or scope is never saved by an unrelated change (a force slider, Arrows, the Orphans tab); changing the filter itself saves the new filter (`DEC-44 (I-14)` item 3). Tests: `graphPageRender.test.ts` "nudging a force or opening Orphans saves only that; a bare /graph opens on the person's own filter", "changing the filter itself is the person's choice, and is saved".
 - **`?focus=`.** Read as `select`, with its historical meaning (select and fly), so every existing producer keeps working unchanged: `RelationshipGraph`'s bare document id, the equipment page's `asset:<id>`, the operating area's `cbunit:<code>`. The page writes `?select=`; focus mode is `?local=`.
-- **Back to graph.** `open()` stamps the view as `graphq` beside `from=graph` (`:502`). `components/graph/BackToGraphChip.tsx` returns to `/graph?<sanitizeGraphQuery(graphq)>` — only the graph's keys. A page stamped before `graphq` existed returns to a bare `/graph`, as before.
+- **Back to graph.** `open()` stamps the view as `graphq` beside `from=graph` (`:517`). `components/graph/BackToGraphChip.tsx` returns to `/graph?<sanitizeGraphQuery(graphq)>` — only the graph's keys. A page stamped before `graphq` existed returns to a bare `/graph`, as before.
 - **Saved views.** A person can name and save a view — the filter, the scope and the depth (`GraphSettings.savedViews`, per org, in this browser) — from the "Views" menu (`GraphLensBar.tsx`), and copy its link.
 
 **Done-when.**
@@ -532,6 +544,18 @@ app/(protected)/graph/page.tsx:74 `const [focusId, setFocusId] = React.useState<
 Tests: `graphSettingsUrl.test.ts` (round trip; legacy `?focus=`; malformed values dropped; foreign keys kept / stripped; a URL's filter is not saved); `graphPageRender.test.ts` "writes lens, select and q; the open stamps it as graphq; the chip pushes it back", "regression: a page stamped only from=graph …", "a URL carrying an asked question asks it again, once".
 
 **Scope / residual.** Saved views stay in one browser by the plan's decision; the URL is how a view is shared.
+
+**I-14 fix pass 3 (2026-10-02).** The final review's minor: at `035207c` the writer (`page.tsx:476-491`) called `history.replaceState(null, "", "/graph?…")` without checking where the browser was. Pending writes were cancelled only on unmount (`:492`). During a client-side route change, Back or Forward, the location changes before the graph page unmounts, so a write the budget had deferred could come due and replace the other page's history entry with a /graph URL. What changed, in `app/(protected)/graph/page.tsx`:
+- **The guard.** The write is a noop unless `window.location.pathname` is `/graph` (`lib/graphView.ts` `GRAPH_PATH`, `:289`; the check at `:481`). The `href` is built from `GRAPH_PATH`, and the page pushes nothing while its own pathname is not `/graph` (`:510`).
+- **Dropping pending writes.** A write still waiting for budget is dropped on a route change away (the `usePathname` effect, `:500-502`), on `popstate` and on unmount (`:503-507`). After a popstate, the URL → view effect applies the entry the browser moved to, so an older view never overwrites it.
+
+Tests: `graphPageRender.test.ts` "GPV-11 — a deferred URL write never lands on another page (fix pass 3)" has four cases:
+- "the page's write refuses once the browser has left /graph, and writes while it is on it" calls the page's own write function, wrapped from `rateLimitedWriter`;
+- "control: with the browser still on /graph, the deferred write lands when the budget refills" runs on fake timers: the budget is spent, then a never-written selection is deferred;
+- "a navigation away before unmount: the deferred write never rewrites the other page's URL";
+- "a route change the page renders before it unmounts drops the pending write and pushes none for the new path".
+
+Negative control: against `035207c`'s page, the first, third and fourth cases fail: the URL becomes `/graph?…` over `/documents/L1?doc=d1`. The control passes on both versions, which shows a write really was pending. Line references in this record were remapped to the fix-pass-3 page.
 
 ---
 
@@ -569,7 +593,7 @@ app/api/graph/ask/route.ts:174-176 — `const payload: GraphAskResponse = { mode
 
 **Scope / residual.** Criterion 1 — owner I-14.
 
-**Resolution (2026-10-02, intelligence Round G).** Criterion 1 (the page half). Reproduced first (DEC-29): base `page.tsx:763` printed `answer.nodeIds.length` whatever the lens showed. `graphPageRender.test.ts` "on the Documents lens: one node lit …" fails against the base. What landed: `lib/graphView.ts` `answerVisibility` (`:95`) splits an answer's node ids, and the panel (`app/(protected)/graph/page.tsx:1216`):
+**Resolution (2026-10-02, intelligence Round G).** Criterion 1 (the page half). Reproduced first (DEC-29): base `page.tsx:763` printed `answer.nodeIds.length` whatever the lens showed. `graphPageRender.test.ts` "on the Documents lens: one node lit …" fails against the base. What landed: `lib/graphView.ts` `answerVisibility` (`:96`) splits an answer's node ids, and the panel (`app/(protected)/graph/page.tsx:1274`):
 - counts only what this view can show: "1 passage · 1 node lit up on this map";
 - offers each hidden node type with a button: "1 more in Equipment — show" unhides that type;
 - offers what lies outside the focus or "hide unlinked": "K more outside this neighbourhood — show";
@@ -610,9 +634,9 @@ components/graph/OrgGraph2D.tsx:428-437 — the canvas element carries `ref`, `c
 - [ ] Path and Connect can be entered without a canvas click
 
 **Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `OrgGraph2D.tsx:426-439` and `OrgGraph3D.tsx:436-443` had no focus, role or key handler. The only key handler on the page was the search box's Enter (`page.tsx:453`). What landed, in `app/(protected)/graph/page.tsx`:
-- **The map region** (`:899`) carries `tabIndex=0`, `role="application"`, `aria-roledescription="graph map"` and `aria-label` "Org graph map — N nodes, M links. Arrow keys step through nodes, Enter selects, Escape closes the open panel.", with a polite live region naming the node the keyboard is on.
-- **The walk.** The arrow keys step through `keyboardOrder` (`lib/graphView.ts:198`): the search matches when something is typed, the selected node's neighbours (walking the web), otherwise every node by weight. Home and End jump. Enter or Space selects through `handleSelect`, so Enter also picks a Path end or a Connect target. The node the keyboard is on is lit and flown to. The canvases are `aria-hidden` (presentational).
-- **Escape** (`:672`) closes, one layer per press: Connect, then Path, then the answer, then Insights, then the peek, then focus — never while typing in another field.
+- **The map region** (`:945`) carries `tabIndex=0`, `role="application"`, `aria-roledescription="graph map"` and `aria-label` "Org graph map — N nodes, M links. Arrow keys step through nodes, Enter selects, Escape closes the open panel.", with a polite live region naming the node the keyboard is on.
+- **The walk.** The arrow keys step through `keyboardOrder` (`lib/graphView.ts:217`): the search matches when something is typed, the selected node's neighbours (walking the web), otherwise every node by weight. Home and End jump. Enter or Space selects through `handleSelect`, so Enter also picks a Path end or a Connect target. The node the keyboard is on is lit and flown to. The canvases are `aria-hidden` (presentational).
+- **Escape** (`:708`) closes, one layer per press: Connect, then Path, then the answer, then Insights, then the peek, then focus — never while typing in another field.
 - The panels carry `role="dialog"` with labels.
 
 **Done-when.**
@@ -623,6 +647,10 @@ components/graph/OrgGraph2D.tsx:428-437 — the canvas element carries `ref`, `c
 Tests: `graphPageRender.test.ts` "the map region is focusable and labelled; arrows step, Enter selects, Escape closes", "Escape leaves Connect, then Path, then focus — one layer per press".
 
 **Scope / residual.** The keyboard walks the node list; it does not move spatially (left/right do not mean screen direction).
+
+**I-14 fix pass 3 (2026-10-02).** The final review's minor: the walk was memoised on `[view, rawQuery, selected]` (`035207c` `page.tsx:694-697`). So every keystroke re-ran `keyboardOrder`, including those under two characters, where the query does not change the walk. So did every selection. Each fallback was a full sort of every node with `localeCompare`. Now the walk is memoised on what changes it (`app/(protected)/graph/page.tsx:729-742`): the node set, the edges, `keyboardQuery(rawQuery)` (the normalised query once it has two characters, else "", `lib/graphView.ts:201`) and the selected id. The full sort (`keyboardBaseOrder`, `:209`) is kept per node set, and `keyboardOrder` returns a copy of it as its fallback. The list is the same in every case. One difference shows: a keystroke that cannot change the walk no longer resets the keyboard's place in it, because the list is the same list. Tests:
+- `graphView.test.ts` "GPV-13 — the memoised walk is the same walk (fix pass 3)": the same list with or without the full sort, in every case; a query under two characters walks as if nothing were typed.
+- `graphPageRender.test.ts` "GPV-13 — the keyboard's walk is memoised on what changes it (fix pass 3)": a one-character keystroke recomputes nothing and keeps the walk's place; a selection runs `keyboardOrder` once and never redoes the full sort; the neighbour walk is unchanged. The first case fails against `035207c`'s page.
 
 ---
 

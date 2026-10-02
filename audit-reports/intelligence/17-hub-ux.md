@@ -474,7 +474,7 @@ Fix pass 2, after the second review (*corrected:* the first fix pass's "never sa
 
 **Scope / residual.** Handed to I-14: `title="Intelligence"` on the graph page's strip.
 
-**Resolution (2026-10-02, intelligence Round G).** The remaining limb: `/graph` renders `<ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />` (`app/(protected)/graph/page.tsx:775`). Test: `graphPageRender.test.ts` "the Intelligence strip is titled".
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb: `/graph` renders `<ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />` (`app/(protected)/graph/page.tsx:821`). Test: `graphPageRender.test.ts` "the Intelligence strip is titled".
 
 **Done-when.**
 1. ✓ (2026-09-30) `/knowledge/[id]` renders the strip.
