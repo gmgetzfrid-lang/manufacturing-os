@@ -384,7 +384,7 @@ describe("REV-23 (P19 review fix) — Document Control's restore over an active 
     expect(host.textContent).toContain(`${DRAFT_HINT} (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released.`);
   });
 
-  it("only the restore of the archived issue (the stamp names the current revision) is asked about: an unrecorded or not-issued archive reads no holds and asks no one — any restore of it to Issued over a hold is refused for everyone (but Document Control's exit of an archive whose stamp names another revision — REV-24, open), and the dialog answers after", async () => {
+  it("only the restore of the archived issue (the stamp names the current revision) is asked about: an unrecorded or not-issued archive reads no holds and asks no one — any restore of it to Issued over a hold is refused (Document Control's exit of an archive whose stamp names another revision included, since 20261174 — REV-24), and the dialog answers after", async () => {
     for (const basis of ["unknown", "not-issued"] as const) {
       act(() => root.unmount());
       root = createRoot(host);

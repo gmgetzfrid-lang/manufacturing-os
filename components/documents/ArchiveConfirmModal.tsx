@@ -153,11 +153,14 @@ export default function ArchiveConfirmModal({
       // REV-23 (P19 review fix): only the restore that puts the archived issue
       // back (the stamp names the current revision — basis "issued") can pass
       // a hold, as Document Control's recorded override; any other restore to
-      // Issued over a hold is refused for everyone (the new door), which the
-      // dialog answers after the refusal — except Document Control's exit of an
-      // archive whose stamp names ANOTHER revision (basis "unknown" after a
-      // pointer move while archived): the guard still admits that one
-      // unrecorded (REV-24, open; integrator, at the P19 merge).
+      // Issued over a hold is refused (the new door, or below Document Control
+      // the publisher tier's hold), which the dialog answers after the refusal.
+      // That includes Document Control's exit of an archive whose stamp names
+      // ANOTHER revision (basis "unknown" after a pointer move while archived):
+      // since 20261174 (REV-24, P20) the guard judges it as the new door,
+      // refused over a hold for everyone with no override, and a pointer move
+      // on a held archive needs a recorded force. Before that paste the guard
+      // admitted that exit unrecorded.
       const held: HeldRestore = d.basis === "issued" && doc.id
         ? await heldRestoreFor(doc.id, { orgId, actorUserId, actorRole })
         : { kind: "none" };
