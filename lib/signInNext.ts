@@ -11,11 +11,21 @@
 //   * it starts with a single "/" — not "//" or "/\" (protocol-relative: a
 //     browser reads both as another host);
 //   * no layer of it, decoded byte by byte as often as it decodes, contains a
-//     backslash, a control character (a browser strips tab / CR / LF, so
-//     "/<TAB>/evil" would become "//evil") or a scheme ("javascript:",
-//     "https:", …), and every layer still starts with a single "/";
-//   * the URL parser agrees it stays on this origin, and it does not point
-//     back at the sign-in page itself ("/", "/?…", "/#…", "/%2e", …).
+//     backslash or a control character (a browser strips tab / CR / LF, so
+//     "/<TAB>/evil" would become "//evil"), every layer still starts with a
+//     single "/", and no layer's first segment is scheme-shaped
+//     ("/javascript:…", "/https://…" once decoded). A bare "javascript:" or
+//     "https:…" never starts with "/" at all. A colon further along — a tag
+//     "P:101" at "/assets/P%3A101", a hash "#x:y" — is a path character, not
+//     a scheme, and is kept;
+//   * the URL parser agrees it stays on this origin — and so does the form the
+//     router actually keeps. Next builds its canonical href from the parsed
+//     URL (pathname + search + hash, dot segments already removed) and hands
+//     that to history / location, so "/..//evil.example", "/.//evil.example"
+//     or "/%2e%2e//evil.example" — each parsed to the pathname
+//     "//evil.example", another host — are refused as "//" is;
+//   * it does not point back at the sign-in page itself ("/", "/?…", "/#…",
+//     "/%2e", …).
 //
 // Anything else — absent, empty, hostile — falls back to exactly today's
 // destination, SIGN_IN_DEFAULT_DESTINATION.
@@ -26,8 +36,9 @@
 // trip in sessionStorage — per tab, same origin — written just before the
 // page navigates away, consumed (read once, always removed) by the next load
 // of the sign-in page in that tab, validated again on read and honoured only
-// for SIGN_IN_NEXT_STASH_TTL_MS, so an abandoned round trip cannot steer a
-// later, unrelated sign-in.
+// for SIGN_IN_NEXT_STASH_TTL_MS; and every successful sign-in on the page
+// clears it (app/page.tsx), so an abandoned round trip cannot steer a later,
+// unrelated sign-in.
 
 /** Where a successful sign-in lands when no safe `next` was carried —
  *  the page's destination before PHYS-14. */
@@ -40,10 +51,14 @@ export const SIGN_IN_NEXT_STASH_KEY = "manufacturingos.signInNext";
  *  in seconds; an older stash is an abandoned attempt. */
 export const SIGN_IN_NEXT_STASH_TTL_MS = 10 * 60 * 1000;
 
-// A scheme anywhere in a decoded layer: letter, then letters / digits / + . -,
-// then a colon ("javascript:", "https:", "data:"). A same-origin path has no
-// use for one; a value carrying one is refused rather than reasoned about.
-const SCHEME = /[a-z][a-z0-9+.-]*:/i;
+// A scheme-shaped FIRST path segment: "/", then a letter, then letters /
+// digits / + . -, then a colon ("/javascript:", "/https:", "/x:"). No route of
+// this app starts that way, so a value that does is refused rather than
+// reasoned about. Anchored to the first segment on purpose: every layer has
+// already been required to start with "/", which a URL parser never reads a
+// scheme from, so a colon later in the path ("/assets/P:101") or in the query
+// or hash is a character of a same-origin path.
+const SCHEME_FIRST_SEGMENT = /^\/[a-z][a-z0-9+.-]*:/i;
 // C0 controls and DEL — including the tab / CR / LF a browser strips from a URL.
 function hasControlChar(s: string): boolean {
   for (let i = 0; i < s.length; i++) {
@@ -80,7 +95,9 @@ function decodedLayers(raw: string): string[] | null {
   return decodeBytes(cur) === cur ? layers : null;
 }
 
-/** Same origin by the URL parser's own reading, and not the sign-in page. */
+/** Same origin by the URL parser's own reading — the value AND the
+ *  normalised href the router keeps after parsing it — and not the sign-in
+ *  page. */
 function staysOnOriginOffSignIn(layer: string): boolean {
   let u: URL;
   try {
@@ -88,7 +105,22 @@ function staysOnOriginOffSignIn(layer: string): boolean {
   } catch {
     return false;
   }
-  return u.origin === PROBE_ORIGIN && u.pathname !== SIGN_IN_PATH;
+  if (u.origin !== PROBE_ORIGIN) return false;
+  // Dot segments are removed while parsing: "/..//evil.example" has the
+  // pathname "//evil.example". Next's app router keeps exactly
+  // pathname + search + hash (createHrefFromUrl) as its canonical href and
+  // passes it to history.pushState / replaceState and, on its full-page
+  // branches, to location.assign / replace — where "//host" is another host.
+  const href = u.pathname + u.search + u.hash;
+  if (/^\/[/\\]/.test(u.pathname) || /^\/[/\\]/.test(href)) return false;
+  let again: URL;
+  try {
+    again = new URL(href, `${PROBE_ORIGIN}/`);
+  } catch {
+    return false;
+  }
+  if (again.origin !== PROBE_ORIGIN) return false;
+  return u.pathname !== SIGN_IN_PATH;
 }
 
 /**
@@ -107,7 +139,7 @@ export function safeNextPath(raw: unknown): string | null {
     if (layer.startsWith("//") || layer.startsWith("/\\")) return null;
     if (layer.includes("\\")) return null;
     if (hasControlChar(layer)) return null;
-    if (SCHEME.test(layer)) return null;
+    if (SCHEME_FIRST_SEGMENT.test(layer)) return null;
     if (!staysOnOriginOffSignIn(layer)) return null;
   }
   return raw;

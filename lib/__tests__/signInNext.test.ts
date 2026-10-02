@@ -3,8 +3,10 @@
 // decision (lib/signInNext.ts), pinned value by value: the equipment label's
 // tag path is honoured end to end (assetSignInHref → URLSearchParams →
 // safeNextPath), and every open-redirect shape — absolute URLs,
-// protocol-relative, backslash tricks, encoded and double-encoded forms,
-// control characters, javascript: — falls back to /dashboard. The carry
+// protocol-relative (literal, or reached by dot-segment normalisation:
+// "/..//evil.example" parses to the pathname "//evil.example"), backslash
+// tricks, encoded and double-encoded forms, control characters,
+// javascript: — falls back to /dashboard. The carry
 // across the Microsoft round trip (sessionStorage) is honoured once, within
 // its TTL, and re-validated on read. The rendered page is driven in
 // signInNextRendered.test.ts.
@@ -46,9 +48,24 @@ describe("PHYS-14 — safeNextPath accepts a same-origin relative path, unchange
     ["/dashboard"],
     ["/documents/lib-1?doc=abc"],
     ["/projects/p1#tasks"],
+    // a colon past the first segment is a path character, not a scheme
+    ["/assets/P%3A101"],
+    ["/assets/P:101"],
+    ["/projects/p1#x:y"],
+    // a same-origin path whose query carries a URL is still that path
+    ["/x?u=https://evil.example"],
+    // dot segments and an inner "//" that stay on the origin
+    ["/assets/../dashboard"],
+    ["/assets//FE-201"],
   ])("%s", (p) => {
     expect(safeNextPath(p)).toBe(p);
     expect(signInDestination(p)).toBe(p);
+  });
+
+  it("a tag with a colon returns to its tag (assetSignInHref -> URLSearchParams -> safeNextPath)", () => {
+    const p = safeNextPath(nextOf(assetSignInHref("P:101")));
+    expect(p).toBe("/assets/P%3A101");
+    expect(decodeURIComponent(p!.slice("/assets/".length))).toBe("P:101");
   });
 
   it("the equipment label's sign-in URL round-trips: name `next`, encoding, decoded value", () => {
@@ -80,6 +97,18 @@ describe("PHYS-14 — safeNextPath refuses every open-redirect shape (→ /dashb
     ["//", "//evil.example"],
     ["///", "///evil.example"],
     ["//// with path", "////evil.example/x"],
+    // protocol-relative after the URL parser removes dot segments: each
+    // parses to the pathname "//evil.example", the href the router keeps
+    ["/..//", "/..//evil.example"],
+    ["/.//", "/.//evil.example"],
+    ["/assets/..//", "/assets/..//evil.example"],
+    ["/a/b/../..//", "/a/b/../..//evil.example"],
+    ["/%2e%2e//", "/%2e%2e//evil.example"],
+    ["/%2E// with path", "/%2E//evil.example/x"],
+    ["/%2e%2E// mixed case", "/%2e%2E//evil.example"],
+    ["double-encoded dot segment", "/%252e%252e//evil.example"],
+    ["dot segment then encoded slash", "/..%2F%2Fevil.example"],
+    ["dot segment then backslash", "/..//\\evil.example"],
     // backslash tricks
     ["/\\", "/\\evil.example"],
     ["\\/", "\\/evil.example"],
@@ -111,9 +140,9 @@ describe("PHYS-14 — safeNextPath refuses every open-redirect shape (→ /dashb
     ["JaVaScRiPt:", "JaVaScRiPt:alert(1)"],
     ["javascript: behind a slash", "/javascript:alert(1)"],
     ["encoded javascript:", "/%6Aavascript:alert(1)"],
+    ["https: behind a slash", "/https://evil.example"],
     ["data:", "data:text/html,<script>alert(1)</script>"],
     ["vbscript:", "vbscript:msgbox(1)"],
-    ["a scheme in the query", "/x?u=https://evil.example"],
     // the sign-in page itself
     ["/", "/"],
     ["/ with a query", "/?next=%2Fassets%2FFE-201"],
@@ -141,6 +170,43 @@ describe("PHYS-14 — safeNextPath refuses every open-redirect shape (→ /dashb
     // un-encoded in the link: URLSearchParams decodes %2F%2F → // before the check
     expect(signInDestination(nextOf("/?next=%2F%2Fevil.example"))).toBe("/dashboard");
     expect(signInDestination(nextOf("/?next=/%5Cevil.example"))).toBe("/dashboard");
+    // the dot-segment form, crafted into a label or link
+    expect(signInDestination(nextOf("/?next=%2F..%2F%2Fevil.example"))).toBe("/dashboard");
+  });
+
+  it("whatever is accepted, the href the router keeps after parsing it stays on the origin", () => {
+    // Next's app router resolves the value against the page and keeps
+    // pathname + search + hash (createHrefFromUrl) for history / location.
+    const ORIGIN = "https://plant.example";
+    const routerHref = (v: string) => {
+      const u = new URL(v, `${ORIGIN}/`);
+      return u.pathname + u.search + u.hash;
+    };
+    const tokens = ["", ".", "..", "%2e", "%2E%2e", "%252e", "evil.example", "assets", "%2F", "%5C", "x:y", "?q", "#h"];
+    let accepted = 0;
+    let refused = 0;
+    const walk = (prefix: string, depth: number) => {
+      if (depth === 0) return;
+      for (const t of tokens) {
+        const v = `${prefix}/${t}`;
+        const p = safeNextPath(v);
+        if (p === null) refused++;
+        else {
+          accepted++;
+          const href = routerHref(p);
+          expect(href.startsWith("//"), v).toBe(false);
+          expect(href.startsWith("/\\"), v).toBe(false);
+          expect(new URL(href, `${ORIGIN}/`).origin, v).toBe(ORIGIN);
+          expect(new URL(href, `${ORIGIN}/`).pathname, v).not.toBe("/");
+        }
+        walk(v, depth - 1);
+      }
+    };
+    walk("", 4);
+    // 30,940 paths (6,333 accepted and 24,607 refused when this landed)
+    expect(accepted + refused).toBe(30940);
+    expect(accepted).toBeGreaterThan(6000);
+    expect(refused).toBeGreaterThan(24000);
   });
 });
 
@@ -232,6 +298,12 @@ describe("PHYS-14 — app/page.tsx routes every success path through the decisio
     // read once per page load; carried across the Microsoft round trip
     expect(page).toContain("if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params);");
     expect(page).toContain("stashSignInNext(nextRef.current);");
+  });
+  it("the carry is cleared on every way out: a flow that could not start, routeAuthedUser, a password success", () => {
+    expect(page.match(/stashSignInNext\(null\);/g)).toHaveLength(3);
+    const route = page.slice(page.indexOf("const routeAuthedUser = useCallback("), page.indexOf("router.replace(signInDestination(nextRef.current));"));
+    expect(route).toContain("stashSignInNext(null);");
+    expect(page).toMatch(/\} else \{\s*stashSignInNext\(null\);\s*router\.push\(signInDestination\(nextRef\.current\)\);/);
   });
   it("the Microsoft redirectTo is unchanged (the provider allow-list sees the same URL)", () => {
     expect(page).toContain("redirectTo: `${window.location.origin}/`,");

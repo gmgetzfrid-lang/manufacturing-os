@@ -58,6 +58,7 @@ vi.mock("@/lib/supabase", () => ({
 
 import LoginPage from "@/app/page";
 import { assetSignInHref } from "@/lib/assetSignIn";
+import { stashSignInNext, SIGN_IN_NEXT_STASH_KEY } from "@/lib/signInNext";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -122,6 +123,7 @@ async function returnFromMicrosoft(response = "/#access_token=tok&refresh_token=
 
 const landed = () => s.replace.mock.calls.map((c) => c[0]);
 const pushed = () => s.push.mock.calls.map((c) => c[0]);
+const carried = () => window.sessionStorage.getItem(SIGN_IN_NEXT_STASH_KEY);
 
 beforeEach(() => {
   s.replace.mockReset();
@@ -164,6 +166,12 @@ describe("PHYS-14 (rendered) — an already-signed-in visitor", () => {
     expect(landed()).toEqual(["/assets/P%20101%2FA"]);
   });
 
+  it("a tag with a colon (P:101) returns to its tag", async () => {
+    s.session = USER;
+    await open(assetSignInHref("P:101"));
+    expect(landed()).toEqual(["/assets/P%3A101"]);
+  });
+
   it.each([
     ["absolute https", "https://evil.example/assets/FE-201"],
     ["absolute http", "http://evil.example"],
@@ -172,6 +180,9 @@ describe("PHYS-14 (rendered) — an already-signed-in visitor", () => {
     ["slash-backslash", "/\\evil.example"],
     ["encoded backslash", "/%5Cevil.example"],
     ["encoded double slash", "/%2F%2Fevil.example"],
+    ["dot segment to //", "/..//evil.example"],
+    ["dot segment after a path to //", "/assets/..//evil.example"],
+    ["encoded dot segment to //", "/%2e%2e//evil.example"],
     ["tab trick", "/\t/evil.example"],
     ["javascript:", "javascript:alert(document.cookie)"],
     ["no leading slash", "dashboard"],
@@ -205,6 +216,7 @@ describe("PHYS-14 (rendered) — email / password", () => {
     ["protocol-relative", "//evil.example"],
     ["absolute", "https://evil.example"],
     ["slash-backslash", "/\\evil.example"],
+    ["dot segment to //", "/.//evil.example"],
   ])("a hostile `next` (%s) → /dashboard", async (_label, next) => {
     await open(withNext(next));
     await signInWithPassword();
@@ -299,6 +311,42 @@ describe("PHYS-14 (rendered) — Microsoft: `next` survives the OAuth round trip
     expect(arg.options.redirectTo).toBe(`${window.location.origin}/`);
     await returnFromMicrosoft();
     expect(landed()).toEqual([TAG_PATH]);
+  });
+
+  it("a successful sign-in clears a carry the tab still holds, so it cannot steer the next person", async () => {
+    // Operator A starts Microsoft (the carry is written), comes back with Back
+    // (the same page — nothing consumed it) and the sign-in completes another
+    // way (SIGNED_IN: a password, or another tab).
+    await open(assetSignInHref("P-101"));
+    await clickMicrosoft();
+    expect(carried()).not.toBeNull();
+    s.session = USER;
+    await act(async () => { for (const l of [...s.listeners]) l("SIGNED_IN", USER); });
+    await flush();
+    expect(landed()).toEqual(["/assets/P-101"]);
+    expect(carried()).toBeNull();
+    // A signs out (RoleContext: location.replace("/")); B signs in on the same tab
+    s.replace.mockReset();
+    s.session = null;
+    await open("/");
+    await signInWithPassword();
+    expect(pushed()).toEqual(["/dashboard"]);
+    expect(landed()).toEqual(["/dashboard"]);
+  });
+
+  it("a password success clears a live carry itself, before SIGNED_IN; a later load goes to /dashboard", async () => {
+    await open("/");
+    stashSignInNext("/assets/P-101"); // a carry left in this tab, never consumed
+    // a sign-in whose SIGNED_IN has not been dispatched yet
+    s.signInWithPassword.mockReset().mockImplementation(async () => {
+      s.session = USER;
+      return { data: { session: USER }, error: null };
+    });
+    await signInWithPassword();
+    expect(pushed()).toEqual(["/dashboard"]);
+    expect(carried()).toBeNull();
+    await open("/");
+    expect(landed()).toEqual(["/dashboard"]);
   });
 
   it("a silent attempt that needs interaction keeps `next` for the form (and in the address)", async () => {

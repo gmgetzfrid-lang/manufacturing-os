@@ -71,6 +71,9 @@ export default function LoginPage() {
   // you" hard stop (ORGSEL-2/SESS-4). Now the provider resolves once, with
   // retries and honest screens for every outcome.
   const routeAuthedUser = useCallback(async (user: User) => {
+    // Signed in: a Microsoft carry still in this tab (a round trip abandoned
+    // with Back, then another way in) must not steer a later sign-in.
+    stashSignInNext(null);
     const uid = user.id;
     const userEmail = user.email ?? null;
 
@@ -231,6 +234,7 @@ export default function LoginPage() {
       setError(msg);
       setLoading(false);
     } else {
+      stashSignInNext(null);
       router.push(signInDestination(nextRef.current));
     }
   };
