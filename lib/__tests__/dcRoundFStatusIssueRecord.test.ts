@@ -39,6 +39,8 @@ vi.mock("@/lib/supabase", () => ({
     const real = makeFakeSupabase(state.db);
     return {
       ...real,
+      // REV-23 (P19): a database before 20261165 has no put_back_retired_issue — the un-archive is then the direct write these tests pin (the recorded door is driven in dcRoundFStampedPutBack.test.ts).
+      rpc: async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
       from: (t: string) => {
         const b = real.from(t) as unknown as { select: (c: string) => unknown; update: (p: Row) => unknown };
         if (t === "document_review_signoffs" && state.failSignoffsRead) {

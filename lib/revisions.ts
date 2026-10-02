@@ -2078,6 +2078,90 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
   });
 }
 
+// ─── REV-23 (P19): the stamped put-back's recorded door ─────────────────────
+// 20261165 binds a controller's bare put-back of a held, stamped retirement
+// (the revision a Superseded / Archived / Void retirement took away, put back
+// into an issue status — the guard's v_restoring) as REV-20 / REV-22 bound
+// every other controller write that issues over a hold: it passes only under
+// the transaction-local flag a recording function sets. The app's put-backs
+// therefore go through put_back_retired_issue (SECURITY INVOKER: the same
+// write, run as the caller under their row-level policies and the guard),
+// which — for Document Control putting back a held stamped retirement into
+// an issue status, and only then — sets the flag around its own write and
+// records REV_HOLD_OVERRIDDEN in the same transaction. Anyone else's call is
+// exactly the bare write. Each caller keeps its own direct write for a
+// database without the function (PGRST202 / 42883), byte for byte as before.
+
+/** Which put-back is being made — put_back_retired_issue's p_via, and the
+ *  write it makes: the un-archive's (the archive fields cleared) or a
+ *  rollback's (the supersession fields put back as they were). */
+export type RetiredIssuePutBackDoor = "unarchive" | "supersede_rollback" | "lifecycle_rollback" | "reversal_rollback";
+
+/** The supersession fields a rollback puts back (as read before the
+ *  retirement; absent = NULL). */
+export interface PutBackSupersessionFields {
+  superseded_at?: unknown;
+  superseded_by_user?: unknown;
+  supersession_reason?: unknown;
+  supersession_moc?: unknown;
+}
+
+/** What put_back_retired_issue answered: `landed` (restored — `recorded`
+ *  when it was Document Control's recorded pass over a hold,
+ *  restored_over_hold), `refused` (the guard's or the policies' refusal, an
+ *  unknown answer, or — `noRow` — a write that matched no row the caller may
+ *  change: the caller's refusal, no direct write is tried), or `absent` (the
+ *  database predates 20261165: the caller makes its own direct write, as
+ *  before). */
+export type RetiredIssuePutBack =
+  | { kind: "landed"; recorded: boolean }
+  | { kind: "refused"; reason: string; noRow?: boolean }
+  | { kind: "absent" };
+
+/** REV-23 (P19): PostgREST's answer for a function that does not exist yet
+ *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
+ *  database predates 20261165, so the put-back takes the direct write. */
+export function isMissingPutBackRpc(e: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!e) return false;
+  const code = String(e.code ?? "");
+  return code === "PGRST202" || code === "42883"
+    || /could not find the function|function .*put_back_retired_issue.* does not exist/i.test(e.message ?? "");
+}
+
+/** REV-23 (P19): put a retired document back through put_back_retired_issue
+ *  — the write the caller would make (the un-archive's, or a rollback's with
+ *  the supersession fields it names), recorded when Document Control puts a
+ *  held, stamped retirement back into an issue status. Never throws: the
+ *  caller turns `refused` into its own refusal and makes its direct write on
+ *  `absent`. */
+export async function putBackRetiredIssue(input: {
+  documentId: string;
+  status: string;
+  door: RetiredIssuePutBackDoor;
+  reason?: string | null;
+  supersession?: PutBackSupersessionFields;
+}): Promise<RetiredIssuePutBack> {
+  const s = input.supersession;
+  const { data, error } = await supabase.rpc("put_back_retired_issue", {
+    p_document_id: input.documentId,
+    p_status: input.status,
+    p_via: input.door,
+    p_reason: input.reason?.trim() || null,
+    ...(input.door === "unarchive" ? {} : {
+      p_superseded_at: s?.superseded_at ?? null,
+      p_superseded_by_user: s?.superseded_by_user ?? null,
+      p_supersession_reason: s?.supersession_reason ?? null,
+      p_supersession_moc: s?.supersession_moc ?? null,
+    }),
+  });
+  if (error) {
+    return isMissingPutBackRpc(error) ? { kind: "absent" } : { kind: "refused", reason: error.message || "the put-back was refused" };
+  }
+  if (data === "restored" || data === "restored_over_hold") return { kind: "landed", recorded: data === "restored_over_hold" };
+  if (data === "no_match") return { kind: "refused", reason: "the write was refused", noRow: true };
+  return { kind: "refused", reason: `the database answered ${JSON.stringify(data ?? null)}` };
+}
+
 /** OWN-15: the statuses an unarchive may restore to — never an arbitrary
  *  string (documents.status has no CHECK constraint). */
 export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
@@ -2128,25 +2212,37 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
   // put-back of the issue the archive took away.
   const before = isControlledIssueStatus(restoredStatus) ? await readStatusIssueBasis(doc.id, doc) : null;
   const now = new Date().toISOString();
-  // P13 third review fix: a checked write, as archiveDocument's — a restore
-  // the database filtered to zero rows (no edit access to the row) is a
-  // refusal, never a silent success, and writes no un-archive event.
-  const { data: restored, error } = await supabase
-    .from("documents")
-    .update({
-      status: restoredStatus,
-      archived_at: null,
-      archived_by: null,
-      archive_reason: null,
-      updated_at: now,
-      updated_by: actorUserId,
-    })
-    .eq("id", doc.id)
-    .select("id");
+  const notRestored = "The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.";
+  // REV-23 (P19): through put_back_retired_issue (20261165) — the same write,
+  // run as the caller, recorded (REV_HOLD_OVERRIDDEN) when Document Control
+  // un-archives a held, stamped document into an issue status, which the
+  // guard no longer admits bare. Its refusal is this restore's refusal; the
+  // direct write below only while the function is absent.
+  const door = await putBackRetiredIssue({ documentId: doc.id, status: restoredStatus, door: "unarchive", reason: reason?.trim() || "Restored from archive" });
+  if (door.kind === "refused") {
+    throw new Error(door.noRow ? notRestored : `The document was NOT restored (${door.reason}) — nothing was changed.`);
+  }
+  if (door.kind === "absent") {
+    // P13 third review fix: a checked write, as archiveDocument's — a restore
+    // the database filtered to zero rows (no edit access to the row) is a
+    // refusal, never a silent success, and writes no un-archive event.
+    const { data: restored, error } = await supabase
+      .from("documents")
+      .update({
+        status: restoredStatus,
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+        updated_at: now,
+        updated_by: actorUserId,
+      })
+      .eq("id", doc.id)
+      .select("id");
 
-  if (error) throw new Error(`The document was NOT restored (${error.message}) — nothing was changed.`);
-  if (((restored as unknown[] | null) ?? []).length === 0) {
-    throw new Error("The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.");
+    if (error) throw new Error(`The document was NOT restored (${error.message}) — nothing was changed.`);
+    if (((restored as unknown[] | null) ?? []).length === 0) {
+      throw new Error(notRestored);
+    }
   }
 
   await logRevisionEvent({
@@ -2157,7 +2253,11 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
     userEmail: actorEmail ?? "",
     userRole: actorRole ?? "",
     type: "ARCHIVE_DOC",
-    details: { reason: reason?.trim() || "Restored from archive", action: "unarchive", restoredStatus },
+    details: {
+      reason: reason?.trim() || "Restored from archive", action: "unarchive", restoredStatus,
+      // REV-23 (P19): the restore passed an active hold, recorded beside it
+      ...(door.kind === "landed" && door.recorded ? { holdOverridden: "REV_HOLD_OVERRIDDEN" } : {}),
+    },
   });
 
   // REV-19: an un-archive into an issue status is an issue — its clocks and
@@ -2519,7 +2619,13 @@ export async function writeSupersessionLineage(
  *  Supersede only on a live document, can run it again). Checked: what could
  *  not be undone is named in the thrown error. Nothing irreversible has
  *  happened yet: the in-review draft is voided and the share links revoked
- *  only after the lineage confirms (REV-6 / REV-10). */
+ *  only after the lineage confirms (REV-6 / REV-10).
+ *
+ *  REV-23 (P19): the put-back goes through put_back_retired_issue (20261165)
+ *  — the same write, run as the caller, recorded (REV_HOLD_OVERRIDDEN) when
+ *  Document Control puts a held document back into the issue the supersede
+ *  stamped, which the guard no longer admits bare — and the direct write
+ *  only while the function is absent. */
 async function undoFailedSupersede(opts: {
   docId: string;
   prior: Record<string, unknown>;
@@ -2529,23 +2635,34 @@ async function undoFailedSupersede(opts: {
 }): Promise<never> {
   const { docId, prior, failure } = opts;
   const priorStatus = String(prior.status ?? "Issued");
-  const { data: restored, error: restoreErr } = await supabase
-    .from("documents")
-    .update({
-      status: priorStatus,
-      superseded_at: prior.superseded_at ?? null,
-      superseded_by_user: prior.superseded_by_user ?? null,
-      supersession_reason: prior.supersession_reason ?? null,
-      supersession_moc: prior.supersession_moc ?? null,
-      updated_at: new Date().toISOString(),
-      updated_by: opts.actorUserId,
-    })
-    .eq("id", docId)
-    .select("id");
-  if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
+  let restoreProblem: string | null = null;
+  const door = await putBackRetiredIssue({
+    documentId: docId, status: priorStatus, door: "supersede_rollback",
+    reason: `The supersede was rolled back: ${failure.message}`, supersession: prior,
+  });
+  if (door.kind === "refused") restoreProblem = door.reason;
+  if (door.kind === "absent") {
+    const { data: restored, error: restoreErr } = await supabase
+      .from("documents")
+      .update({
+        status: priorStatus,
+        superseded_at: prior.superseded_at ?? null,
+        superseded_by_user: prior.superseded_by_user ?? null,
+        supersession_reason: prior.supersession_reason ?? null,
+        supersession_moc: prior.supersession_moc ?? null,
+        updated_at: new Date().toISOString(),
+        updated_by: opts.actorUserId,
+      })
+      .eq("id", docId)
+      .select("id");
+    if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
+      restoreProblem = restoreErr?.message ?? "the write was refused";
+    }
+  }
+  if (restoreProblem !== null) {
     throw new Error(
       `${failure.message} The document is now Superseded and its previous status could not be restored ` +
-      `(${restoreErr?.message ?? "the write was refused"}) — ask Doc Control to restore it to ${priorStatus} or record the replacement links.`,
+      `(${restoreProblem}) — ask Doc Control to restore it to ${priorStatus} or record the replacement links.`,
     );
   }
   let leftover = 0;

@@ -220,7 +220,9 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
       .split("current_setting('app.publish_hold_override', true)").join("")
       .split("current_setting(''app.publish_hold_override'', true)").join("");
     const setters = files.filter((f) => /publish_hold_override/.test(withoutFlagReads(stripComments(mig(f)))));
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE]);
+    // REV-23 (P19): 20261165's put_back_retired_issue is the one later setter (the stamped put-back's
+    // recorded door) — dcRoundFStampedPutBackMigration.test.ts pins it as this test pins restore_reversed_source.
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql"]);
     // in this file: the restore's two set_config calls, the COMMENT ON FUNCTION's description,
     // and the probes that quote them — nothing in the guard but its reads
     const here = stripComments(M);

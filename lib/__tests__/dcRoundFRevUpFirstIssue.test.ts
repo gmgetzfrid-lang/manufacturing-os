@@ -73,7 +73,10 @@ vi.mock("@/lib/supabase", () => ({
       return base.from(t);
     };
     // RG-12 (P14): a database before 20261151 has no finalize_reviewed_promote — PostgREST answers PGRST202 and the app keeps its three checked writes, which these tests pin.
-    return { ...base, from, rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } }) : state.rpc(...a)) };
+    // REV-23 (P19): nor, before 20261165, put_back_retired_issue — the un-archive and the compensations' put-backs are then the direct writes these tests pin against 20261144's guard (the recorded door is driven in dcRoundFStampedPutBack.test.ts).
+    return { ...base, from, rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } })
+      : a[0] === "put_back_retired_issue" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.put_back_retired_issue" } })
+      : state.rpc(...a)) };
   },
 }));
 vi.mock("@/lib/storage", () => ({

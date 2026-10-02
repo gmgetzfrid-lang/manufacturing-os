@@ -203,6 +203,9 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // REV-22 (P18): 20261164's restore_reversed_source is the one other setter (the legacy
       // reversal's recorded put-back) — pinned in dcRoundFReversalRestore.test.ts.
       if (f === "20261164_dc_roundF_reversal_restore.sql") continue;
+      // REV-23 (P19): and 20261165's put_back_retired_issue (the stamped put-back's recorded
+      // door) — pinned in dcRoundFStampedPutBackMigration.test.ts.
+      if (f === "20261165_dc_roundF_stamped_put_back.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
