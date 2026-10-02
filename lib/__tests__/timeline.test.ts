@@ -138,6 +138,12 @@ describe("SAF-6 — the controls program reaches the project's Activity tab", ()
     expect(hiddenProjectActions()).toContain("PROJECT_COMPLETED");
     // The MILESTONE_* summarizers the reader carried for years now execute.
     expect(summarizeAudit({ action: "MILESTONE_MISSED", details: { name: "Hydrotest" } })).toBe("Milestone missed: Hydrotest");
+    // J12 review fix 8: the bid tab's letterhead acknowledgement is shown (it is the record of a do-not-use
+    // stop at an award) and names what it acknowledged; its abandonment, like the override's, is noise.
+    expect(PROJECT_EVENT_VOCABULARY.COST_DOC_AWARD_LETTERHEAD_ACK).toBe("milestone");
+    expect(PROJECT_EVENT_VOCABULARY.COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED).toBe("noise");
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use letterhead acknowledged at an award — "Apex Industrial, Inc." could be Apex Industrial');
     // The map lives in lib/timeline.ts and nowhere else.
     const src = readFileSync(join(process.cwd(), "lib/timeline.ts"), "utf8");
     expect(src.match(/PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass>> = \{/g)).toHaveLength(1);

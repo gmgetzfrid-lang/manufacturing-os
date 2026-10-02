@@ -1514,7 +1514,7 @@ describe("COST-3 — uploadCostDoc never links a bid to a Known Company by machi
     const lookAlike = { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" };
     registry.push(lookAlike);
     db.tables.companies.push(lookAlike);
-    // The bid tab's gate (registryFor / barredNow) reads the row's link — none
+    // The bid tab's gate (registryFor / awardGateFor) reads the row's link — none
     // — so it reads the name's candidates and the look-alike flags the bid;
     // Award then asks for the typed, audited override.
     expect(barredCompanyFor("Gulf Mechanical", (stored.company_id as string | null) ?? null, registry)?.id).toBe("dnu");

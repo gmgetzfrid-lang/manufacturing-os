@@ -87,7 +87,7 @@ export function closedProjectReadMessage(status: string): string {
  *
  * NOT used to store a link (projects Round G J12 review fix 2; DEC-48's
  * J12 line): a stored link is a person's. The gates (the bid tab's
- * registryFor / barredNow, awardQuote's companyBehind, 20261157's
+ * registryFor / awardGateFor, awardQuote's companyBehind, 20261157's
  * cost_doc_company_behind) read a stored link and only that row, so a
  * machine's link — even a unique one today — would clear the flag of a
  * do-not-use look-alike added to the registry later. Kept for a SUGGESTION

@@ -22,7 +22,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import { SCOPE_STAMP_ACTIONS } from "@/lib/timeline";
+import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 
 interface ActivityRow {
   id: string;
@@ -101,8 +101,12 @@ export default function ActivityFeedPage() {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
     try {
+      // SEC-21: the database's scope stamp is left out IN the query, before
+      // the row limit, so a window of `limit` rows holds `limit` events (the
+      // memos below still skip it — the same set, re-applied).
       const { data, error: qErr } = await supabase.from("audit_logs")
         .select("*").eq("org_id", activeOrgId)
+        .not("action", "in", SCOPE_STAMPS_NOT_IN)
         .order("timestamp", { ascending: false }).limit(limit);
       if (qErr) throw qErr;
       const list: ActivityRow[] = ((data || []) as Array<Record<string, unknown>>).map((r) => ({

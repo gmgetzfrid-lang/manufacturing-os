@@ -22,15 +22,29 @@
 // another currency or voided — through a status-guarded write, so a stale
 // tab cannot touch a document someone has since awarded (BID-9); the
 // registry match is normalised, visible and overridable by an explicit
-// company link (BID-12); Award waits for the registry and re-reads the
-// company at the click, and a do-not-use company cannot be awarded — or
-// re-linked away from — without a typed, audited override (MON-12 UI
-// half). The do-not-use check reads the org's barred rows in full (never
-// the name list, which is capped) and fails toward the flag: a bidder
-// whose name could be ANY barred row — two rows normalising alike
-// included — is flagged until a human links it. A truncated read is said
-// out loud and the award total must be typed back from the paper
-// (COST-13).
+// company link (BID-12). What gates what (MON-12 UI half):
+//  · the row's chip is a DISPLAY — the linked company, else any do-not-use
+//    row the stored vendor name could be, else one only the letterhead the
+//    AI read could be (labelled so);
+//  · Award waits for the registry and the links to load, then asks at the
+//    click (`awardGateFor`, re-asked after its dialogs) the award's own
+//    question: the database's gate once 20261157 is applied (the row's own
+//    link to a company of its org, else its contractor's company when
+//    flagged, else any do-not-use row the STORED vendor name normalises to,
+//    else the company it binds to on its own flag; before it, the client
+//    sequence's order) — an answer needs a typed override, recorded as
+//    intent and passed to the award, which records it;
+//  · a do-not-use row only the LETTERHEAD could be (no link of the org
+//    decides, the database's answer is another row or none) stops the award
+//    for a typed acknowledgement recorded under its own action — no gate in
+//    the lib or the database reads the letterhead, so it is never the
+//    override;
+//  · re-linking a bid away from a do-not-use company (its link, or a name —
+//    stored or letterhead — it could be) needs a typed, audited reason.
+// The barred rows are read in full (never the name list, which is capped)
+// and flagging fails toward the flag: two rows normalising alike both
+// flag. A truncated read is said out loud and the award total must be
+// typed back from the paper (COST-13).
 
 import React, { useMemo, useState } from "react";
 import {
@@ -43,7 +57,7 @@ import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/l
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { saveAccount } from "@/lib/costs";
 import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink } from "@/lib/intakeLinks";
-import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
+import { listCompanies, listBarredCompanies, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
 import {
@@ -53,7 +67,7 @@ import {
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
-  withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
+  withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling, normalizeCompanyName,
   companyCandidatesByName, barredCompanyFor,
   quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
   type ParsedQuote, type BidEconomics,
@@ -112,15 +126,47 @@ export async function guardedCostDocWrite(input: {
  *  prompt names and the intent row records. */
 export interface AwardFlag { id: string; name: string; status: string }
 
+/** A do-not-use registry row only the LETTERHEAD the AI read could be (the
+ *  parsed vendor name of the row as re-read at the click): the bid's own link
+ *  does not decide it, and the database's question — asked over the STORED
+ *  vendor name — does not already name it. Neither the lib nor `award_quote`
+ *  reads the letterhead, so it is no override: the bid tab stops on it for a
+ *  typed acknowledgement recorded under its own action
+ *  (`COST_DOC_AWARD_LETTERHEAD_ACK`) — never the override intent, never
+ *  `award_quote`'s override reason (J12 review fix pass 8). */
+export interface LetterheadFlag { letterhead: string; company: AwardFlag; vendorOnFile: string | null }
+
+/** What an award of a bid must answer for, asked at the click. */
+export interface AwardGate { override: AwardFlag | null; letterhead: LetterheadFlag | null }
+
 const FLAGGED_COMPANY_STATUSES: readonly string[] = ["do_not_use", "inactive"];
 
+const flagOf = (v: unknown): AwardFlag | null => {
+  const c = (v ?? null) as { id?: unknown; name?: unknown; status?: unknown } | null;
+  return c && typeof c.id === "string" && typeof c.name === "string" && typeof c.status === "string"
+    ? { id: c.id, name: c.name, status: c.status } : null;
+};
+
+/** A company OF THE ORG `orgId`, by id — lib/costDocs.ts companyBehind's
+ *  org-bound `byId`. Null means no such company in this org (another org's,
+ *  whether RLS hides it or not, or gone): the link does not count and the
+ *  question falls through, as the lib's and the database's do. A failed
+ *  read throws. */
+async function orgCompany(id: string, orgId: string): Promise<AwardFlag | null> {
+  const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).eq("org_id", orgId).maybeSingle();
+  if (error) throw new Error(userFacingReadError(error));
+  return flagOf(data);
+}
+
+/** The bid's row as re-read at the click — the fields an award is judged by. */
+interface BidAtClick { orgId: string; companyId: string | null; partyId: string | null; vendorName: string | null }
+
 /**
- * MON-12 / COST-3 — the flagged company an award of `doc` must answer for,
- * asked AT THE CLICK (never from the lists the table rendered from) of the
- * row as it stands: its own registry link, its contractor and its STORED
- * vendor name (`cost_documents.vendor_name` — the AI's reading of the
- * letterhead is never the question; the read route fills the column from
- * the letterhead only when the row has none).
+ * MON-12 / COST-3 — the flagged company an award of the bid must answer for:
+ * the OVERRIDE the award records. Asked of the row as re-read at the click
+ * (its own registry link, its contractor and its STORED vendor name,
+ * `cost_documents.vendor_name` — the read route fills that column from the
+ * letterhead only when the row has none).
  * - With 20261157 applied: the database's own gate, `cost_doc_company_barred`
  *   (SECURITY INVOKER, EXECUTE granted to authenticated) — the function
  *   `award_quote` calls under its lock with the same four arguments, as the
@@ -130,15 +176,60 @@ const FLAGGED_COMPANY_STATUSES: readonly string[] = ["do_not_use", "inactive"];
  * - Before it (the function is absent — `isMissingRpc`, PGRST202 / 42883:
  *   the same test that sends the lib's award down its client sequence): the
  *   client sequence's own order (lib/costDocs.ts `companyBehind`) — the
- *   explicit link to a company of the document's org decides; else the
- *   contractor's company when it is flagged;
- *   else ANY do-not-use row the stored vendor name normalises to
- *   (`barredCompanyFor` over the org's barred rows, read in full). A flag
- *   beyond that (the bound company's own `inactive`, an `inactive` explicit
- *   link) is the lib's `needsOverride`, which names its own row's company.
+ *   explicit link to a company of the document's org decides (a link to no
+ *   company of the org is skipped, as the lib's org-bound read skips it);
+ *   else the contractor's company of the org when it is flagged; else ANY
+ *   do-not-use row the stored vendor name normalises to (`barredCompanyFor`
+ *   over the org's barred rows, read in full). A flag beyond that (the
+ *   bound company's own `inactive`, an `inactive` explicit link) is the
+ *   lib's `needsOverride`, which names its own row's company.
  * Null: no override needed. A failed read throws — the award stops.
  */
-export async function companyAwardAnswersFor(doc: CostDocument): Promise<AwardFlag | null> {
+export async function companyAwardAnswersFor(
+  bid: BidAtClick, linkedCompany: () => Promise<AwardFlag | null>, barredRows: () => Promise<Company[]>,
+): Promise<AwardFlag | null> {
+  const { data, error: rpcErr } = await supabase.rpc("cost_doc_company_barred", {
+    p_org: bid.orgId, p_company: bid.companyId, p_party: bid.partyId, p_vendor: bid.vendorName,
+  });
+  if (!rpcErr) {
+    const c = flagOf(data);
+    return c && FLAGGED_COMPANY_STATUSES.includes(c.status) ? c : null;
+  }
+  if (!isMissingRpc(rpcErr)) throw new Error(userFacingReadError(rpcErr));
+
+  if (bid.companyId) {
+    const bound = await linkedCompany();
+    if (bound) return bound.status === "do_not_use" ? bound : null;
+  }
+  if (bid.partyId) {
+    const { data: party, error: partyErr } = await supabase.from("project_parties").select("company_id").eq("id", bid.partyId).maybeSingle();
+    if (partyErr) throw new Error(userFacingReadError(partyErr));
+    const partyCompanyId = (party as { company_id?: unknown } | null)?.company_id;
+    const contractor = typeof partyCompanyId === "string" && partyCompanyId !== "" ? await orgCompany(partyCompanyId, bid.orgId) : null;
+    if (contractor && FLAGGED_COMPANY_STATUSES.includes(contractor.status)) return contractor;
+  }
+  const hit = barredCompanyFor(bid.vendorName, null, await barredRows());
+  return hit ? { id: hit.id, name: hit.name, status: hit.status } : null;
+}
+
+/**
+ * Everything an award of `doc` must answer for, asked AT THE CLICK of the
+ * row as it stands (never the lists the table rendered from); the bid tab
+ * asks it again just before `awardQuote`, after its dialogs, and asks again
+ * for a reason when the answer moved meanwhile.
+ * - `override`: `companyAwardAnswersFor` — the database's question over the
+ *   stored vendor name and the row's links; what the award records.
+ * - `letterhead`: the do-not-use row the re-read row's PARSED vendor name
+ *   (the letterhead the AI read — the name the bid table shows and the field
+ *   the bid tab's gate read through J12 review fix pass 6) could be, when the
+ *   row has no link to a company of its org (a person's link decides —
+ *   DEC-48), the letterhead normalises unlike the stored vendor name (that
+ *   name's look-alikes are the database's question already), and the
+ *   database's answer is not that row. A STOP for a typed acknowledgement,
+ *   not an override (`LetterheadFlag`).
+ * A failed read throws — the award stops.
+ */
+export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   const { data: row, error } = await supabase.from("cost_documents").select("*").eq("id", doc.id).maybeSingle();
   if (error) throw new Error(userFacingReadError(error));
   const raw = (row ?? null) as Record<string, unknown> | null;
@@ -147,31 +238,26 @@ export async function companyAwardAnswersFor(doc: CostDocument): Promise<AwardFl
   const companyId = text(raw?.company_id);          // absent before 20261096: no link can exist
   const partyId = raw ? text(raw.party_id) : doc.partyId;
   const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;
+  const letterhead = (raw ? parsedQuoteFrom({ ...doc, parsed: raw.parsed ?? null, vendorName }) : parsedQuoteFrom(doc))?.vendorName ?? null;
 
-  const { data, error: rpcErr } = await supabase.rpc("cost_doc_company_barred", {
-    p_org: orgId, p_company: companyId, p_party: partyId, p_vendor: vendorName,
-  });
-  if (!rpcErr) {
-    const c = (data ?? null) as { id?: unknown; name?: unknown; status?: unknown } | null;
-    return c && typeof c.id === "string" && typeof c.name === "string" && typeof c.status === "string"
-      && FLAGGED_COMPANY_STATUSES.includes(c.status) ? { id: c.id, name: c.name, status: c.status } : null;
-  }
-  if (!isMissingRpc(rpcErr)) throw new Error(userFacingReadError(rpcErr));
+  // One read of the linked company and one of the org's barred rows, shared by both questions.
+  let linked: Promise<AwardFlag | null> | null = null;
+  const linkedCompany = () => (linked ??= companyId ? orgCompany(companyId, orgId) : Promise.resolve(null));
+  let barred: Promise<Company[]> | null = null;
+  const barredRows = () => (barred ??= listBarredCompanies(orgId));
 
-  if (companyId) {
-    const bound = await getCompany(companyId);
-    if (!bound) throw new Error("the linked company record couldn't be read");
-    // a link counts only to a company of the document's own org (companyBehind's org-bound read)
-    if (bound.orgId === orgId) return bound.status === "do_not_use" ? bound : null;
-  }
-  if (partyId) {
-    const { data: party, error: partyErr } = await supabase.from("project_parties").select("company_id").eq("id", partyId).maybeSingle();
-    if (partyErr) throw new Error(userFacingReadError(partyErr));
-    const partyCompanyId = text((party as { company_id?: unknown } | null)?.company_id);
-    const contractor = partyCompanyId ? await getCompany(partyCompanyId) : null;
-    if (contractor && contractor.orgId === orgId && FLAGGED_COMPANY_STATUSES.includes(contractor.status)) return contractor;
-  }
-  return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));
+  const override = await companyAwardAnswersFor({ orgId, companyId, partyId, vendorName }, linkedCompany, barredRows);
+
+  const key = letterhead ? normalizeCompanyName(letterhead) : "";
+  if (!letterhead || !key || key === normalizeCompanyName(vendorName ?? "")) return { override, letterhead: null };
+  if (companyId && (await linkedCompany())) return { override, letterhead: null };
+  const hit = barredCompanyFor(letterhead, null, await barredRows());
+  return {
+    override,
+    letterhead: hit && hit.id !== override?.id
+      ? { letterhead, company: { id: hit.id, name: hit.name, status: hit.status }, vendorOnFile: vendorName }
+      : null,
+  };
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -626,14 +712,18 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
 
   /** The registry row for a bid: the explicit link wins; otherwise a
    *  name match (exact, else unique normalised), shown as a suggestion the
-   *  human can change. BINDING refuses ambiguity; GATING does not: `barred`
-   *  is the do-not-use row the bid answers for — the linked company, or
-   *  ANY row the vendor name ON FILE could be (two rows normalising alike
-   *  included; `doc.vendorName`, the name an award is checked against —
-   *  never the letterhead the AI read, so the chip names the row the
-   *  award's prompt names) — read from the org's full barred list, never
-   *  the capped name list. A do-not-use row only the letterhead could be
-   *  stays on the row as a hint (`letterheadOnly`), never as the gate. */
+   *  human can change. BINDING refuses ambiguity; flagging does not:
+   *  `barred` is the do-not-use row the row's CHIP shows — the linked
+   *  company, or ANY row the vendor name ON FILE could be (two rows
+   *  normalising alike included; `doc.vendorName`, the name the database's
+   *  gate reads), else a row only the letterhead the AI read could be
+   *  (`letterheadOnly`) — read from the org's full barred list, never the
+   *  capped name list. The chip is a display, not the award's gate, and it
+   *  does not always name the company the award's prompt names: the award
+   *  asks `awardGateFor` at the click, whose override also answers for the
+   *  contractor's flagged company and for an inactive one (this chip reads
+   *  neither), and whose letterhead stop asks for a recorded
+   *  acknowledgement, never an override. */
   const registryFor = (doc: CostDocument, e: BidEconomics): { known: Company | null; bound: boolean; barred: Company | null; letterheadOnly: boolean; candidates: Company[] } => {
     const boundId = extras.get(doc.id)?.companyId ?? null;
     const flags = [...barredList, ...companies];
@@ -675,30 +765,70 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       return;
     }
 
-    // MON-12 / COST-3: the barred-company check asks, at the click (never
-    // the list this table rendered from), the question the award will ask
-    // (companyAwardAnswersFor: the database's own gate once 20261157 is
-    // applied, over the stored vendor name and the row's links) — and a
-    // failed read stops the award.
-    let barred: AwardFlag | null;
-    try {
-      barred = await companyAwardAnswersFor(doc);
-    } catch (err) {
-      setErr(`Award stopped — the Known Companies registry couldn't be checked (${userFacingCaughtError(err, { action: "read", context: "QuotesPanel registry" }).replace(/\.$/, "")}). Reload and try again.`);
-      return;
-    }
+    // MON-12 / COST-3: what the award must answer for is asked at the click
+    // (awardGateFor — never the lists this table rendered from): the
+    // OVERRIDE the award records (the database's own gate once 20261157 is
+    // applied, over the stored vendor name and the row's links) and a
+    // do-not-use row only the letterhead could be (a STOP for a recorded
+    // acknowledgement — no award gate reads the letterhead, so it is never
+    // the override). A failed read stops the award.
+    const ask = async (): Promise<AwardGate | null> => {
+      try {
+        return await awardGateFor(doc);
+      } catch (err) {
+        setErr(`Award stopped — the Known Companies registry couldn't be checked (${userFacingCaughtError(err, { action: "read", context: "QuotesPanel registry" }).replace(/\.$/, "")}). Reload and try again.`);
+        return null;
+      }
+    };
+    const sameFlag = (a: AwardFlag | null, b: AwardFlag | null) => (a?.id ?? null) === (b?.id ?? null) && (a?.status ?? null) === (b?.status ?? null);
+    const sameLetterhead = (a: LetterheadFlag | null, b: LetterheadFlag | null) =>
+      (a?.company.id ?? null) === (b?.company.id ?? null) && (a?.letterhead ?? null) === (b?.letterhead ?? null) && (a?.vendorOnFile ?? null) === (b?.vendorOnFile ?? null);
+    // The answer the reasons in hand were typed for, and those reasons.
+    let held: AwardGate = { override: null, letterhead: null };
     let overrideReason: string | null = null;
-    if (barred) {
-      const inactive = barred.status === "inactive";
-      overrideReason = (await appPrompt({
-        title: `${barred.name} is ${inactive ? "marked INACTIVE" : "flagged DO NOT USE"}`,
-        message: "The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.",
-        placeholder: "Override reason (required)",
-      }))?.trim() || null;
-      if (!overrideReason) { setErr(`Award stopped — ${barred.name} is ${inactive ? "marked inactive" : "flagged do-not-use"} and no override reason was given.`); return; }
-    }
+    let ackReason: string | null = null;
+    /** Ask for a reason for every part of `gate` that has none yet; false
+     *  when one was refused (the award stops). `moved`: the answer changed
+     *  while the dialogs were open — the prompt says so. */
+    const answer = async (gate: AwardGate, moved: boolean): Promise<boolean> => {
+      const was = held;
+      if (!gate.override) overrideReason = null;
+      else if (!sameFlag(gate.override, was.override)) {
+        const flag = gate.override;
+        const inactive = flag.status === "inactive";
+        const movedNote = !moved ? "" : was.override
+          ? `This bid's company link, contractor or vendor name changed while the award was being confirmed — it answered for ${was.override.name}; the award now answers for ${flag.name}. `
+          : `This bid's company link, contractor or vendor name changed while the award was being confirmed; the award now answers for ${flag.name}. `;
+        overrideReason = (await appPrompt({
+          title: `${flag.name} is ${inactive ? "marked INACTIVE" : "flagged DO NOT USE"}`,
+          message: `${movedNote}The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.`,
+          placeholder: "Override reason (required)",
+        }))?.trim() || null;
+        if (!overrideReason) { setErr(`Award stopped — ${flag.name} is ${inactive ? "marked inactive" : "flagged do-not-use"} and no override reason was given.`); return false; }
+      }
+      if (!gate.letterhead) ackReason = null;
+      else if (!sameLetterhead(gate.letterhead, was.letterhead)) {
+        const lh = gate.letterhead;
+        const onFile = lh.vendorOnFile ? `"${lh.vendorOnFile}"` : "not set";
+        ackReason = (await appPrompt({
+          title: `The letterhead could be ${lh.company.name} — flagged DO NOT USE`,
+          message: `${moved ? "This bid's letterhead, link or vendor name changed while the award was being confirmed. " : ""}The AI read the letterhead as "${lh.letterhead}", which could be ${lh.company.name}, flagged DO NOT USE in the registry. The vendor on file is ${onFile}; the award is checked against that name and this bid's links, so no override for ${lh.company.name} is recorded. If ${lh.company.name} sent this bid, cancel and link the bidder to it; if the vendor on file did, cancel and link the bidder to that company. To award it as it stands, state why — the acknowledgement is recorded against this award.`,
+          placeholder: "Acknowledgement reason (required)",
+          tone: "danger",
+          required: true,
+        }))?.trim() || null;
+        if (!ackReason) { setErr(`Award stopped — the letterhead "${lh.letterhead}" could be ${lh.company.name} (flagged do-not-use) and no acknowledgement was given.`); return false; }
+      }
+      held = gate;
+      return true;
+    };
+    const first = await ask();
+    if (!first || !(await answer(first, false))) return;
 
+    const lh = held.letterhead;
+    const lhOnFile = lh?.vendorOnFile ? `"${lh.vendorOnFile}"` : "not set";
     const warnings = [
+      lh ? `The letterhead the AI read ("${lh.letterhead}") could be ${lh.company.name}, flagged DO NOT USE — the vendor on file is ${lhOnFile}, and your acknowledgement is recorded with this award.` : null,
       expired ? `This quote's validity date (${quote?.validUntil}) has PASSED — confirm the price with the bidder.` : null,
       extent.truncated ? `The AI ${extent.label} — the total may come from an incomplete read.` : null,
       !extent.known && quote && !quote.priceOnly ? "The read extent of this document is unknown — the total may come from an incomplete read." : null,
@@ -718,22 +848,70 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
-    // The override's INTENT is recorded once every confirmation has passed
-    // and BEFORE money moves (fail-closed); an award that then fails closes
-    // it with an explicit abandonment row. The lib records the completed
-    // override (COST_DOC_AWARD_OVERRIDE) after the commitment posts, so the
-    // trail reads intent → completed, or intent → abandoned.
-    const recordIntent = async (who: { id: string; name: string }, reason: string, status: string): Promise<boolean> => {
+    // The row's link, contractor, vendor name or letterhead may have moved
+    // while the dialogs were open: ask again just before the award, and ask
+    // for a reason for whatever the answer now names (a reason typed for X
+    // never goes with an award that answers for Y). What can still move
+    // between this read and award_quote's lock is J14's (MON-12).
+    for (let tries = 0; ; tries++) {
+      const again = await ask();
+      if (!again) return;
+      if (sameFlag(again.override, held.override) && sameLetterhead(again.letterhead, held.letterhead)) break;
+      if (tries === 2) { setErr("Award stopped — this bid's company link, contractor or vendor name kept changing while the award was being confirmed. Reload and try again."); return; }
+      if (!(await answer(again, true))) return;
+    }
+
+    // The letterhead's acknowledgement, and the override's INTENT, are
+    // recorded once every confirmation has passed and BEFORE money moves
+    // (fail-closed); an award that then fails closes each with an explicit
+    // abandonment row. The lib records the completed override
+    // (COST_DOC_AWARD_OVERRIDE) after the commitment posts, so the trail
+    // reads intent → completed, or intent → abandoned; an acknowledgement
+    // is followed by the award's own COST_DOC_AWARDED, or by its
+    // abandonment. The acknowledgement is never the override.
+    const recordIntent = async (who: { id: string; name: string }, reason: string, status: string): Promise<string | null> => {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
         details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
       });
-      if (error) { setErr(`The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.`); return false; }
-      return true;
+      return error ? `The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.` : null;
     };
-    let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;
-    if (barred && overrideReason && !(await recordIntent(overridden!, overrideReason, barred.status))) return;
+    let acked: LetterheadFlag | null = null;
+    /** Close a recorded acknowledgement whose award did not happen; the
+     *  sentence to add when the closing row could not be written. */
+    const closeAck = async (why: string): Promise<string | null> => {
+      if (!acked) return null;
+      const { error } = await supabase.from("audit_logs").insert({
+        action: "COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED", resource_type: "cost", resource_id: doc.id,
+        org_id: orgId, user_id: actor.uid, user_email: actor.email,
+        details: { letterhead: acked.letterhead, companyId: acked.company.id, company: acked.company.name, why },
+      });
+      return error ? `The letterhead acknowledgement was recorded but could not be closed: ${userFacingError(error, { embed: true })}` : null;
+    };
+    if (held.letterhead && ackReason) {
+      const ack = held.letterhead;
+      const { error } = await supabase.from("audit_logs").insert({
+        action: "COST_DOC_AWARD_LETTERHEAD_ACK", resource_type: "cost", resource_id: doc.id,
+        org_id: orgId, user_id: actor.uid, user_email: actor.email,
+        details: {
+          letterhead: ack.letterhead, companyId: ack.company.id, company: ack.company.name, companyStatus: ack.company.status,
+          vendorOnFile: ack.vendorOnFile, reason: ackReason, total, currency: cur, rfqGroup: group, costAccountId: accountId,
+        },
+      });
+      if (error) { setErr(`The letterhead acknowledgement could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.`); return; }
+      acked = ack;
+    }
+    let overridden: { id: string; name: string } | null = null;
+    if (held.override && overrideReason) {
+      const failed = await recordIntent(held.override, overrideReason, held.override.status);
+      if (failed) {
+        const unclosed = await closeAck(failed);
+        setErr(unclosed ? `${failed} (${unclosed})` : failed);
+        return;
+      }
+      overridden = { id: held.override.id, name: held.override.name };
+    }
 
     // BID-10: every spelling of this merged field is one field, so its
     // rivals are handed to the award under one spelling and all decline.
@@ -742,10 +920,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     setBusy(doc.id);
     let failure: string | null = null;
     try {
+      // overrideReason only — the letterhead's acknowledgement is never an override reason.
       let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal });
       // The lib found a flag this table did not (an inactive company, or a
       // registry link read differently): ask for the reason, record the
-      // intent, and try once more with it.
+      // intent, and try once more with it. A refusal here stops the award
+      // as a failed result, so a recorded acknowledgement is closed.
       if (!res.ok && res.needsOverride && !overrideReason) {
         const flag = res.needsOverride;
         setBusy(null);
@@ -754,11 +934,14 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
           message: "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
           placeholder: "Override reason (required)",
         }))?.trim() || null;
-        if (!reason) { setErr(`Award stopped — ${flag.companyName} is flagged and no override reason was given.`); return; }
-        overridden = { id: flag.companyId, name: flag.companyName };
-        if (!(await recordIntent(overridden, reason, flag.status))) return;
-        setBusy(doc.id);
-        res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
+        const failed = reason ? await recordIntent({ id: flag.companyId, name: flag.companyName }, reason, flag.status) : null;
+        if (!reason) res = { ok: false, error: `Award stopped — ${flag.companyName} is flagged and no override reason was given.` };
+        else if (failed) res = { ok: false, error: failed };
+        else {
+          overridden = { id: flag.companyId, name: flag.companyName };
+          setBusy(doc.id);
+          res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
+        }
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
     } catch (err) {
@@ -773,6 +956,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       });
       if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error, { embed: true })})`;
     }
+    const unclosed = await closeAck(failure);
+    if (unclosed) failure = `${failure} (${unclosed})`;
     setErr(failure);
   };
 
@@ -863,7 +1048,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             {barred && (
                               <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
                                 title={letterheadOnly
-                                  ? `The letterhead the AI read ("${e.vendorName}") could be "${barred.name}", flagged DO NOT USE in the registry — but an award is checked against the vendor name on file${doc?.vendorName ? ` ("${doc.vendorName}")` : " (none yet)"}, which no barred record matches. If ${barred.name} sent this bid, link the bidder to it.`
+                                  ? `The letterhead the AI read ("${e.vendorName}") could be "${barred.name}", flagged DO NOT USE in the registry. The award's override is checked against the vendor name on file${doc?.vendorName ? ` ("${doc.vendorName}")` : " (none yet)"}, which no barred record matches — so Award stops for a typed acknowledgement, recorded with the award. If ${barred.name} sent this bid, link the bidder to it; if the vendor on file did, link the bidder to that company.`
                                   : barred.id === known?.id
                                   ? "Flagged in the registry — an award needs a typed, recorded override"
                                   : `This bidder's name could be "${barred.name}", flagged DO NOT USE in the registry — link the bidder to the right record; until then an award needs a typed, recorded override`}>

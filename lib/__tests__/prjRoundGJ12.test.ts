@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { milestonePctIndex, computeCostRollup, type CostAccount, type CostEntry } from "@/lib/costs";
 import { computeProjectHealth, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { intakeOutcomeEmail } from "@/lib/intakeOutcomeNotice";
-import { SCOPE_STAMP_ACTIONS } from "@/lib/timeline";
+import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 import ts from "typescript";
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
@@ -216,7 +216,14 @@ describe("SEC-21 — the Activity feed shows and counts one milestone delete onc
     expect(grouped.flatMap((g) => g.rows.map((r) => r.action))).toEqual(["MILESTONE_DELETED", "MILESTONE_COMPLETED"]);
   });
   it("the page reads the one set lib/timeline.ts keeps, and the load-more test still reads every loaded row", () => {
-    expect(page).toContain('import { SCOPE_STAMP_ACTIONS } from "@/lib/timeline";');
+    expect(page).toContain('import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";');
     expect(page).toContain("{rows.length >= limit && (");
+  });
+  it("J12 review fix 8: the feed's query leaves the stamp out BEFORE its row limit, so a window of `limit` rows is `limit` events", () => {
+    const read = page.slice(page.indexOf('await supabase.from("audit_logs")'), page.indexOf("if (qErr) throw qErr;"));
+    expect(read).toContain('.not("action", "in", SCOPE_STAMPS_NOT_IN)');
+    expect(read.indexOf('.not("action", "in", SCOPE_STAMPS_NOT_IN)')).toBeLessThan(read.indexOf(".limit(limit)"));
+    // the PostgREST list names exactly the stamp set the memos skip
+    expect(SCOPE_STAMPS_NOT_IN).toBe(`(${[...SCOPE_STAMP_ACTIONS].map((a) => `"${a}"`).join(",")})`);
   });
 });

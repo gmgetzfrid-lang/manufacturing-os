@@ -255,7 +255,7 @@ describe("MON-12 — the registry rail on an award", () => {
     // before 20261157 the same look-alike gate over the stored name
     const panel = readFileSync(join(root, "components/projects/cost/QuotesPanel.tsx"), "utf8");
     expect(panel).toContain("const onFile = barredCompanyFor(doc.vendorName, null, flags);");
-    expect(panel).toContain("return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));");
+    expect(panel).toContain("const hit = barredCompanyFor(bid.vendorName, null, await barredRows());");
     expect(between(panel, "const registryFor = (", "\n  };")).not.toMatch(/partyId|project_parties/);
     // and the intake door picks that contractor by name, with nobody choosing (review fix 5's case)
     const door = readFileSync(join(root, "app/api/intake/upload/route.ts"), "utf8");
@@ -272,20 +272,30 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(fn("cost_doc_company_barred")).toMatch(/LANGUAGE plpgsql STABLE\s*\n\s*SECURITY INVOKER/);
     expect(fn("award_quote")).toContain("v_barred := cost_doc_company_barred(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);");
     const panel = readFileSync(join(root, "components/projects/cost/QuotesPanel.tsx"), "utf8");
+    // the row as re-read at the click (awardGateFor) — its stored fields are the database question's arguments
+    const gate = between(panel, "export async function awardGateFor(", "\n}\n");
+    expect(gate).toContain('await supabase.from("cost_documents").select("*").eq("id", doc.id).maybeSingle();');
+    expect(gate).toContain("const orgId = text(raw?.org_id) ?? doc.orgId;");
+    expect(gate).toContain("const companyId = text(raw?.company_id);");
+    expect(gate).toContain("const partyId = raw ? text(raw.party_id) : doc.partyId;");
+    expect(gate).toContain("const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;");
+    expect(gate).toContain("const override = await companyAwardAnswersFor({ orgId, companyId, partyId, vendorName }, linkedCompany, barredRows);");
     const ask = between(panel, "export async function companyAwardAnswersFor(", "\n}\n");
-    expect(ask).toContain('await supabase.from("cost_documents").select("*").eq("id", doc.id).maybeSingle();');
-    expect(ask).toContain("const orgId = text(raw?.org_id) ?? doc.orgId;");
-    expect(ask).toContain("const companyId = text(raw?.company_id);");
-    expect(ask).toContain("const partyId = raw ? text(raw.party_id) : doc.partyId;");
-    expect(ask).toContain("const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;");
-    expect(ask).toContain('supabase.rpc("cost_doc_company_barred", {\n    p_org: orgId, p_company: companyId, p_party: partyId, p_vendor: vendorName,\n  });');
-    expect(ask).not.toMatch(/parsedQuoteFrom|\.parsed\b|e\??\.vendorName/);
+    expect(ask).toContain('supabase.rpc("cost_doc_company_barred", {\n    p_org: bid.orgId, p_company: bid.companyId, p_party: bid.partyId, p_vendor: bid.vendorName,\n  });');
+    // the database's question never reads the letterhead (J12 review fix pass 8 keeps fix 7's rule) ...
+    expect(ask).not.toMatch(/parsedQuoteFrom|\.parsed\b|e\??\.vendorName|letterhead/);
     // only an absent function falls back (the lib's own test for its client sequence); any other error stops the award
     expect(ask).toContain("if (!isMissingRpc(rpcErr)) throw new Error(userFacingReadError(rpcErr));");
     const award = between(panel, "const award = async (", "\n  };\n");
-    expect(award).toContain("barred = await companyAwardAnswersFor(doc);");
+    expect(award).toContain("return await awardGateFor(doc);");
     expect(award).not.toContain("e?.vendorName ?? doc.vendorName");
-    expect(award).toContain("!(await recordIntent(overridden!, overrideReason, barred.status))");
+    expect(award).toContain("const failed = await recordIntent(held.override, overrideReason, held.override.status);");
+    // ... and the letterhead's stop (fix pass 8) is its own audit action, never the override's reason
+    expect(award).toContain('action: "COST_DOC_AWARD_LETTERHEAD_ACK", resource_type: "cost", resource_id: doc.id,');
+    expect(award.match(/await awardQuote\(\{[^}]*\}\)/g)).toEqual([
+      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal })",
+      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal })",
+    ]);
   });
   it("two non-exact do-not-use look-alikes: the lib and the database break the tie the same way — the exact name first, then the id in byte order, no collation in either (review fix 5 minor)", () => {
     const gate = fn("cost_doc_company_barred");

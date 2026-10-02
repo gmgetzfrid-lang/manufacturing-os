@@ -671,7 +671,10 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
  *  tab's award prompt and intent row ask `cost_doc_company_barred` itself
  *  once 20261157 is applied (QuotesPanel `companyAwardAnswersFor`) and
  *  call this over the stored name before it; the row's chip calls it over
- *  the stored name too.
+ *  the stored name too. The bid tab also calls it over the letterhead the
+ *  AI read — the chip's labelled hint, and the award's acknowledgement stop
+ *  (QuotesPanel `awardGateFor`, J12 review fix pass 8), which records a
+ *  typed acknowledgement and is never the override.
  *  ASCII names only: JavaScript's `toLowerCase` and Postgres `lower()`
  *  disagree on a few non-ASCII letters (a final sigma, a dotted capital
  *  İ — and Postgres' answer depends on the database's collation), in the

@@ -409,6 +409,9 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   // Money & commercial (resource_type 'cost', resource_id = the cost row)
   COST_DOC_AWARDED: "milestone",
   COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "milestone",
+  // J12 review fix pass 8: the bid tab's acknowledgement of a do-not-use row
+  // only the letterhead the AI read could be — never an override.
+  COST_DOC_AWARD_LETTERHEAD_ACK: "milestone",
   COST_DOC_UPLOADED: "noise",
   COST_DOC_PARSED: "noise",
   COST_DOC_MANUAL_TOTAL: "noise",
@@ -416,6 +419,7 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   COST_DOC_VOIDED: "noise",
   COST_DOC_COMPANY_LINKED: "noise",
   COST_DOC_AWARD_OVERRIDE_ABANDONED: "noise",
+  COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED: "noise",
   COST_ENTRY_POSTED: "noise",
   COST_ENTRY_VOIDED: "noise",
   COST_ACCOUNT_CREATED: "noise",
@@ -556,6 +560,7 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     // SAF-6: the controls program's milestone vocabulary (PROJECT_EVENT_VOCABULARY).
     case "COST_DOC_AWARDED":    return `Quote awarded${d.vendor ? ` — ${d.vendor}` : ""}${money(d.total) ? ` (${money(d.total)})` : ""}`;
     case "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE": return `Award made over a do-not-use flag${d.vendor ? ` — ${d.vendor}` : ""}`;
+    case "COST_DOC_AWARD_LETTERHEAD_ACK": return `Do-not-use letterhead acknowledged at an award${typeof d.letterhead === "string" && typeof d.company === "string" ? ` — "${d.letterhead}" could be ${d.company}` : ""}`;
     case "CHANGE_ORDER_PROPOSED": return `Change order proposed${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_APPROVED": return `Change order approved${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_REJECTED": return `Change order rejected${d.coNumber ? ` ${d.coNumber}` : ""}`;
