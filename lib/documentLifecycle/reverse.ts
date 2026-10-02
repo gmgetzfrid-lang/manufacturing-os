@@ -47,6 +47,17 @@
 //   explicitly proceeds over them (`force`); the saga then carries each such
 //   hold onto every restored document BEFORE it is restored.
 //
+//   REV-22 (P18): that put-back is a recorded act. Each restore goes through
+//   restore_reversed_source (20261164), which writes the same status fields
+//   as the caller and — for Document Control putting back a held source of
+//   the split / merge being reversed — runs the write under the transaction-
+//   local flag the publish guard honours and records REV_HOLD_OVERRIDDEN in
+//   the same transaction. That is what lets the guard refuse a BARE
+//   un-supersede of a held source retired before 20261144 (no retirement
+//   stamp) while this reversal still brings it back over the carried hold.
+//   On a database without the function (PGRST202 / 42883) the restore is the
+//   direct write it always was, which the guard there still admits.
+//
 //   A split or merge recorded before Round F carries no prior status: the
 //   reversal REFUSES rather than guess one (it used to write 'Issued', which
 //   resurrected Void and Draft sources as controlled copies) unless the caller
@@ -322,15 +333,51 @@ async function finishParking(docId: string, actorUserId: string): Promise<{ revo
   return { revokedShareLinks: shares.revoked, liveShareLinksLeft: shares.liveLeft, shareRevokeError: shareProblem, voidedDraft: draftVoid.voidedVersionId, voidProblem: draftVoid.problem };
 }
 
+/** REV-22 (P18): the reversal being run, which restore_reversed_source binds
+ *  its recorded door to (the source must be that DOC_SPLIT / DOC_MERGED's
+ *  resource or merge sibling) and puts on its REV_HOLD_OVERRIDDEN record. */
+interface RestoreDoor { reversalOf: string; reason: string }
+
+/** REV-22 (P18): PostgREST's answer for a function that does not exist yet
+ *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
+ *  database predates 20261164, so the restore takes the direct write. */
+export function isMissingRestoreRpc(e: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!e) return false;
+  const code = String(e.code ?? "");
+  return code === "PGRST202" || code === "42883"
+    || /could not find the function|function .*restore_reversed_source.* does not exist/i.test(e.message ?? "");
+}
+
 /** Un-supersede one document to the status it held (checked). Its put-back
  *  (Superseded again, with its own supersession fields) is registered
  *  before the write and runs if the restore landed — or may have (review
- *  fix 4: an unconfirmed outcome is re-read, putBackIfChanged). */
-async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register): Promise<void> {
+ *  fix 4: an unconfirmed outcome is re-read, putBackIfChanged). REV-22
+ *  (P18): through restore_reversed_source (20261164) — the same write, run
+ *  as the caller, recorded when Document Control brings a held source back
+ *  over its hold — and the direct write below only while that function is
+ *  absent. Any other answer from it is the restore's refusal. */
+async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register, door: RestoreDoor): Promise<void> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
   register({ describe: `put ${docId} back to ${snap.status}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
+  const { data: answer, error: rpcErr } = await supabase.rpc("restore_reversed_source", {
+    p_document_id: docId,
+    p_status: status,
+    p_reversal_of: door.reversalOf,
+    p_reason: door.reason.trim() || null,
+  });
+  if (!rpcErr) {
+    if (answer === "restored") {
+      outcome.landed = true;
+      return;
+    }
+    const why = answer === "no_match" ? "the write was refused" : `the database answered ${JSON.stringify(answer ?? null)}`;
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${why}).`);
+  }
+  if (!isMissingRestoreRpc(rpcErr)) {
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${rpcErr.message || "the restore was refused"}).`);
+  }
   const { data, error } = await supabase.from("documents").update({
     status,
     superseded_at: null,
@@ -536,7 +583,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
     // Un-supersede the source — to the status it actually held (REV-12).
-    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register);
+    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason });
     // Delete the join rows; the audit log retains the relationship so
     // history is still reconstructable.
     await deleteLineage({ supersededIds: [sourceDocId], replacementIds }, register);
@@ -675,7 +722,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
     for (const sId of allSourceIds) {
-      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register);
+      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason });
     }
     await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] }, register);
   });

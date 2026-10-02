@@ -195,11 +195,14 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
     expect(panel).toContain("if (!forceHold && isController && isFinalizeHoldRefusal(res.reason)) {");
   });
 
-  it("the flag is still SET only by publish_revision and finalize_reviewed_promote (20261151); this guard only reads it", () => {
+  it("the flag is still SET only by publish_revision and finalize_reviewed_promote (20261151) — and, since P18, the reversal's restore_reversed_source (20261164); this guard only reads it", () => {
     // every other migration may only READ it — the exact read current_setting('app.publish_hold_override', true);
     // with those reads stripped, no mention of the flag may remain (no SET LOCAL, no set_config in any spelling)
     for (const f of files) {
       if (f === "20261151_dc_roundF_promote_transaction_and_hold_override.sql") continue;
+      // REV-22 (P18): 20261164's restore_reversed_source is the one other setter (the legacy
+      // reversal's recorded put-back) — pinned in dcRoundFReversalRestore.test.ts.
+      if (f === "20261164_dc_roundF_reversal_restore.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);

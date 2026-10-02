@@ -604,7 +604,7 @@ describe("REV-18 — the census of every app write of documents.status (each cla
       "lib/documentLifecycle/common.ts update",                  // markSupersededAndLink: entry into Superseded — not an issue
       "lib/documentLifecycle/reverse.ts update",                 // put-back of a reversal (controller-only flow): passes
       "lib/documentLifecycle/reverse.ts update",                 // park: entry into Superseded — not an issue
-      "lib/documentLifecycle/reverse.ts update",                 // restoreStatus (controller-only flow): passes
+      "lib/documentLifecycle/reverse.ts update",                 // restoreStatus (controller-only flow): passes — since P18 (REV-22) the direct write only while restore_reversed_source (20261164) is absent; the function's own write is pinned in dcRoundFReversalRestore.test.ts
       "lib/retention.ts update",                                 // disposition: entry into Archived — not an issue
       "lib/reviewControl.ts update",                             // finalizeReviewedRevision: pointer + Issued — a complete roster, a controller, or a non-require library (intake: SEC-13 already)
       "lib/revisions.ts insert",                                 // createDocumentWithFile: INSERT; first pointer REV-17's
