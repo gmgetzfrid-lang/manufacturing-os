@@ -52,7 +52,7 @@ vi.mock("@/lib/supabase", () => ({
   get supabase() { return makeFakeSupabase(state.db); },
 }));
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn(async () => {}) }));
-vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ error: null })) }));
+vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => ({ error: null })), logRevisionEvent: vi.fn(async () => {}) }));
 vi.mock("@/lib/eSignatures", () => ({ recordSignature: vi.fn() }));
 vi.mock("@/lib/effectiveDate", () => ({ applyEffectiveDate: vi.fn(async () => undefined) }));
 vi.mock("@/lib/ownership", async (importOriginal) => {
@@ -64,13 +64,27 @@ vi.mock("@/lib/ownership", async (importOriginal) => {
     effectiveOwnerForDocument: vi.fn(async () => ({ userId: null, name: null, source: null })),
     getOrgControllers: vi.fn(async () => ["ctl1"]),
     teamSupervisorMap: vi.fn(async () => new Map()),
+    // section 3 (submitForReview's authority — the library grant below decides)
+    isEffectiveOwnerOfDocument: vi.fn(async () => false),
   };
+});
+// section 3: the real submitForReview — its upload and authority stubbed, its reads and writes the in-memory PostgREST's
+vi.mock("@/lib/storage", () => ({
+  uploadToPath: vi.fn(async (_f: File, path: string) => ({ url: `r2://${path}`, size: 3 })),
+  makeLibraryStoragePath: (o: { filename: string }) => `org/lib/${o.filename}`,
+  uniqueUploadName: (name: string) => `u_${name}`,
+}));
+vi.mock("@/lib/principal", () => ({ resolveActorPrincipal: vi.fn(async (i: { uid: string; orgId?: string }) => ({ uid: i.uid, orgId: i.orgId, role: "Engineer", roles: ["Engineer"] })) }));
+vi.mock("@/lib/documentGuards", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/documentGuards")>();
+  return { ...real, resolveCanControlLibrary: vi.fn(async () => true) };
 });
 
 import { openReviewRoster, placeOwnerSlot, resolveReviewControlChain } from "@/lib/reviewControl";
+import { submitForReview } from "@/lib/revisions";
 import { resolveEffectiveOwner } from "@/lib/ownership";
 import { folderChainFromMap } from "@/lib/containerChain";
-import type { ReviewControl } from "@/types/schema";
+import type { DocumentRecord, ReviewControl } from "@/types/schema";
 
 const M = readFileSync(join(process.cwd(), "supabase/migrations/20261159_dc_roundF_guard_owner_and_held_pointer.sql"), "utf8");
 const body = (head: string) => { const a = M.indexOf(head); return M.slice(a, M.indexOf("\n$$;", a)); };
@@ -470,7 +484,78 @@ describe("2. the real openReviewRoster under the stamp — a legitimate roster c
     seed();
     const row = { org_id: "o1", document_id: "d1", document_version_id: "v2A", reviewer_user_id: "rev1", slot: "primary", slot_group: "person:rev1", status: "pending", opened_owner_slot: "none" };
     expect(sqlStamp(state.db, row, "pub1", [])).toBe("owner:own1");
-    // the service role (a restore) is trusted with the stamp it exported
+    // the service role is trusted with what it sends, as enforce_review_signoff_guard trusts it
+    // (no service-role door writes roster rows today; the restore never imports them)
     expect(sqlStamp(state.db, row, null, [])).toBe("none");
+  });
+});
+
+// ─── 3. submitForReview opens the roster under the policy STORED now ──────
+// RG-14 (P17 integrator fix): the stamp reads documents.review_control fresh
+// at the roster's first row; submitForReview used to resolve the policy from
+// the page's cached DocumentRecord. A document-level policy changed after the
+// page loaded therefore opened a roster the stamp disagreed with — after the
+// paste, a publish refused once every reviewer had signed. Driven through the
+// REAL submitForReview → effectiveReviewControlForDocument → openReviewRoster
+// with the transcribed stamp bound as the roster's trigger.
+describe("3. submitForReview resolves the policy from the stored document, not the page's cached copy (RG-14, P17 integrator fix)", () => {
+  const DOC_PLAIN: ReviewControl = { mode: "require", reviewerIds: ["rev1"] };
+  const DOC_OWNER: ReviewControl = { mode: "require", reviewerIds: ["rev1"], ownerMustApprove: true };
+  /** The document as stored, and the copy the submitter's page loaded. */
+  function seedSubmit(stored: ReviewControl, cached: ReviewControl): DocumentRecord {
+    T("org_members").push(member("rev1"), member("own1"), member("pub1"), member("ctl1"));
+    T("document_versions").push({ id: "v1", org_id: "o1", record_id: "d1", revision_label: "1", superseded_at: null });
+    T("documents").push({ id: "d1", org_id: "o1", library_id: "lib1", collection_id: null, document_number: "D-1", title: "Pump P&ID",
+      rev: "1", status: "Issued", current_version_id: "v1", pending_version_id: null, checked_out_by: null, checked_out_by_name: null,
+      owner_user_id: "own1", owner_name: null, review_control: stored });
+    T("libraries").push({ id: "lib1", org_id: "o1", review_control: null, owner_user_id: null, owner_name: null, owner_team_id: null });
+    return { id: "d1", orgId: "o1", libraryId: "lib1", documentNumber: "D-1", title: "Pump P&ID", rev: "1", status: "Issued",
+      currentVersionId: "v1", collectionId: null, reviewControl: cached } as unknown as DocumentRecord;
+  }
+  const submit = (doc: DocumentRecord) => submitForReview({
+    doc, libraryId: "lib1", file: new File([new Uint8Array([1, 2, 3])], "p.pdf", { type: "application/pdf" }),
+    revisionLabel: "2", changeLog: "re-routed the bypass", changeType: "Major" as never, orgId: "o1", actorUserId: "pub1", actorEmail: "pub1@x",
+  });
+  const roster = () => T("document_review_signoffs").map((r) => [r.reviewer_user_id, r.slot_group, r.opened_owner_slot]);
+
+  it("the document's own policy set to ownerMustApprove after the page loaded: the roster carries the owner's slot the stamp names, and signed it passes the gate", async () => {
+    const cached = seedSubmit(DOC_OWNER, DOC_PLAIN);
+    state.uid = "pub1";
+    const out = await submit(cached);
+    expect(out.revisionLabel).toBe("2A");
+    // every rostered reviewer signs: the publish passes the owner gate (the cached copy — no owner rule —
+    // opened [rev1] alone under an owner:own1 stamp, and this was refused)
+    signAll(T("document_review_signoffs"));
+    expect(sqlOwnerGateRefuses(T("document_review_signoffs"), T("e_signatures"))).toBe(false);
+    expect(roster()).toEqual([
+      ["own1", "owner:own1", "owner:own1"],
+      ["rev1", "person:rev1", "owner:own1"],
+    ]);
+  });
+
+  it("the rule removed after the page loaded: the roster is the stored policy's (no owner slot, stamp none) and completes on the reviewer alone", async () => {
+    const cached = seedSubmit(DOC_PLAIN, DOC_OWNER);
+    state.uid = "pub1";
+    await submit(cached);
+    expect(roster()).toEqual([["rev1", "person:rev1", "none"]]);
+    signAll(T("document_review_signoffs"));
+    expect(sqlOwnerGateRefuses(T("document_review_signoffs"), T("e_signatures"))).toBe(false);
+  });
+
+  it("regression: an unchanged policy opens the same roster as before — the page's copy and the stored one agree, with and without the owner rule", async () => {
+    for (const ctl of [DOC_PLAIN, DOC_OWNER]) {
+      state.db = newFakeDb(); state.db.unique.document_review_signoffs = [["document_version_id", "reviewer_user_id"]]; bindStamp();
+      state.uid = "pub1";
+      await submit(seedSubmit(ctl, ctl));
+      const viaSubmit = roster();
+      // the roster openReviewRoster opens from that same control directly (what submitForReview did before the fix)
+      const pending = String(T("documents")[0].pending_version_id);
+      state.db.tables.document_review_signoffs = [];
+      await openReviewRoster({ orgId: "o1", documentId: "d1", libraryId: "lib1", versionId: pending, revisionLabel: "2A", contentHash: "h", control: ctl, actorId: "pub1", actorName: "pub1@x" });
+      expect(viaSubmit).toEqual(roster());
+      expect(viaSubmit).toEqual(ctl.ownerMustApprove
+        ? [["own1", "owner:own1", "owner:own1"], ["rev1", "person:rev1", "owner:own1"]]
+        : [["rev1", "person:rev1", "none"]]);
+    }
   });
 });

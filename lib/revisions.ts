@@ -1491,8 +1491,10 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   await authorizePublish({ documentId: doc.id, libraryId, orgId, actorUserId, actorRole, overrideReason: input.overrideReason, operation: "submit for review" });
 
   // Base numeric target + letter label. If a draft is already in review, bump its
-  // letter (2A -> 2B).
-  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id, status").eq("id", doc.id).maybeSingle();
+  // letter (2A -> 2B). RG-14 (P17 integrator fix): the same read carries the
+  // document's own review policy and folder — the roster below opens under
+  // the policy stored NOW, not the page's cached copy (see the resolution).
+  const { data: docRow } = await supabase.from("documents").select("pending_version_id, rev, current_version_id, status, review_control, collection_id").eq("id", doc.id).maybeSingle();
   // REV-18 (P13 second review fix): a review of a RETIRED document could
   // never be published (finalizeReviewedRevision refuses it, REV-5) — the
   // draft would be stranded. Refused before anything is uploaded.
@@ -1569,7 +1571,22 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
     details: { draftLabel, baseRev, narrative: changeLog.trim(), fileHash, resubmit: !!existingPendingId },
   });
 
-  const control = await effectiveReviewControlForDocument({ reviewControl: doc.reviewControl ?? null, collectionId: doc.collectionId ?? null, libraryId });
+  // RG-14 (P17 integrator fix): the policy the roster opens under is the
+  // document's own review_control and folder as STORED — read above, in this
+  // request — not the page's cached DocumentRecord. 20261159's stamp
+  // (trg_review_signoff_owner_stamp) reads documents.review_control and
+  // collection_id fresh at the roster's first row; a policy changed after the
+  // page loaded (say to ownerMustApprove) would otherwise open a roster with
+  // no owner slot under an owner:<uid> stamp, and the publish would be
+  // refused after every reviewer signed. The folders and the library are
+  // read fresh by effectiveReviewControlForDocument itself. A row the read
+  // could not return falls back to the page's values, as the status check
+  // above does. Unchanged policy → the same control as before.
+  const control = await effectiveReviewControlForDocument({
+    reviewControl: docRow ? ((docRow.review_control as ReviewControl | null | undefined) ?? null) : (doc.reviewControl ?? null),
+    collectionId: docRow ? ((docRow.collection_id as string | null | undefined) ?? null) : (doc.collectionId ?? null),
+    libraryId,
+  });
   await openReviewRoster({
     orgId, documentId: doc.id, libraryId, versionId: insertedRow.id as string,
     revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,
