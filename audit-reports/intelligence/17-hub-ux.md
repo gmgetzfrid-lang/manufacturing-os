@@ -444,7 +444,7 @@ Fix pass 2, after the second review (*corrected:* the first fix pass's "never sa
 ## HUB-11 · The hub's most-used page drops the hub — /knowledge/[id] is the only Intelligence surface with no ViewTabs strip
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/knowledge/[id]/page.tsx:1600-1616`, `app/(protected)/knowledge/page.tsx:72`, `app/(protected)/assistant/page.tsx:131`, `app/(protected)/graph/page.tsx:444`, `app/(protected)/admin/proposed-links/page.tsx:155`
@@ -473,6 +473,14 @@ Fix pass 2, after the second review (*corrected:* the first fix pass's "never sa
 2. ✗ `/graph` still renders `<ViewTabs tabs={INTELLIGENCE_VIEWS} />` without `title` (`app/(protected)/graph/page.tsx:444`) — I-14 owns that file (its lenses rewrite the same header); handed to I-14 as a one-attribute change.
 
 **Scope / residual.** Handed to I-14: `title="Intelligence"` on the graph page's strip.
+
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb: `/graph` renders `<ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />` (`app/(protected)/graph/page.tsx:706`). Test: `graphPageRender.test.ts` "the Intelligence strip is titled".
+
+**Done-when.**
+1. ✓ (2026-09-30) `/knowledge/[id]` renders the strip.
+2. ✓ `/graph` passes `title="Intelligence"`.
+
+**Scope / residual.** None.
 
 ---
 

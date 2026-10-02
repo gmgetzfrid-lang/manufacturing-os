@@ -397,7 +397,7 @@ lib/assets.ts:123-133 — `let q = supabase.from("assets").select("*").eq("org_i
 ## AREA-10 · Two independent, simultaneously live 'unit' models — and the columns the graph reads for one of them are never written by any code path
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 (GPV-7: Connect writes node.unitCode) and I-09 (WIRE-10: the endpoint-existence trigger) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:52-70`, `supabase/migrations/20260606_operational_entity_graph.sql:106-116`, `app/(protected)/admin/scope/page.tsx:126`, `lib/orgGraph.ts:190-201`, `lib/orgGraph.ts:253-259`, `app/(protected)/graph/page.tsx:318-324`
@@ -442,6 +442,15 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 3. ✓ No `process_flows` row can be created whose unit ref resolves to no `codebook_entries` row (`20261155`).
 
 **Scope / residual.** Pending migrations `20261138` and `20261155`. Remaining limb: I-14 GPV-7.
+
+**Resolution (2026-10-02, intelligence Round G).** The last limb, done-when 2's Connect half (I-14 `GPV-7`). The graph's Connect writes a unit end as the node's own codebook code (`GraphNode.unitCode`). It refuses a `unit:` endpoint, an operational unit with no codebook mapping, with the reason, and does not offer Connect on one (`lib/graphView.ts` `flowEndpoint` / `planConnect` / `connectOffer`). It never writes a units-table code into `process_flows.from_ref`. Tests: `graphView.test.ts` "an operational unit with no codebook identity is refused with the reason — never written as its own code"; `graphPageRender.test.ts` GPV-7 cases.
+
+**Done-when.**
+1. ✓ (I-13, DEC-67) One unit identity, joined as data.
+2. ✓ One node family per unit (I-13), and Connect refuses a `unit:` endpoint (this package). An unmapped unit whose free-text code equals a codebook code is no longer written as that codebook unit: the code is never read.
+3. ✓ (I-09, `20261155`) No `process_flows` row names a unit ref with no `codebook_entries` row.
+
+**Scope / residual.** Pending migrations (never claimed live): `20261138` (unit identity) and `20261155` (process-flow guard) are hand-applied and still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until they are pasted, the app-side refusal holds and the database's does not yet.
 
 ---
 

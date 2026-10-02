@@ -33,7 +33,7 @@ Every edge, every cap, and what the graph does not model. **Your comprehensivene
 ## GM-1 · All four Insights lenses are computed on the FILTERED view, so orphan/hub/bridge counts change every time you tap a lens — and the orphan copy is false under three of the four
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:239-242`, `app/(protected)/graph/page.tsx:151-180`, `app/(protected)/graph/page.tsx:428-433`, `lib/graphInsights.ts:43`, `lib/graphInsights.ts:67-69`, `app/(protected)/graph/page.tsx:614-616`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanism confirmed exactly, including the badge at page.tsx:581-585 rendering `insights.orphans.length` unqualified. Downgraded from HIGH because view-scoped analysis is a defensible design (the empty-state copy at page.tsx:610 already says 'everything SHOWN is tied into the web') — the actual defect is the non-empty branch's copy asserting a plant-wide fact and an unlabelled count, i.e. misleading UI rather than broken analysis.
@@ -66,6 +66,18 @@ page.tsx:240 passes `view.nodes, view.edges`. page.tsx:153-155: `const typeOk = 
 - [ ] computeInsights runs on the full assembled graph (graph.nodes/graph.edges) and the panel filters the RESULT for display, or the panel labels every count with the lens it was computed under
 - [ ] The orphan copy states the real predicate ("no visible link in this view") whenever hiddenTypes is non-empty
 - [ ] A test asserts that hiding node types does not change the orphan count for a node that still has a hidden-type edge
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): on the base `d6335b1`, `app/(protected)/graph/page.tsx:239-242` fed `computeInsights(view.nodes, view.edges)` — the lens-filtered slice. `lib/__tests__/graphView.test.ts` "GM-1 …" shows that computation orphaning P-102 (tied only to its unit and a plot plan) under the Equipment ↔ Documents lens, and `lib/__tests__/graphPageRender.test.ts` "the orphan badge does not move …" fails against the base page. What landed, in `app/(protected)/graph/page.tsx`:
+- `insights` is `computeInsights(graph.nodes, graph.edges, { access: graph.access })` over the whole assembled map (`:339`). Only the map's region names follow the view (`:344`), because they label what is drawn.
+- The panel filters the RESULT for display: an orphan or hub the current view hides is listed faded, and the orphan copy says how many ("N of these are hidden by the current view (faded)").
+- The copy states the real predicate: "No equipment, unit, project or link anywhere on the map — not just in this view — so no context yet." Above the lists: "Counted on the whole map, whatever this view shows." The red badge is the whole map's count, so it no longer moves with the lens.
+
+**Done-when.**
+1. ✓ `computeInsights` runs on the full assembled graph and the panel filters the result for display (faded rows, the hidden count).
+2. ✓ The orphan copy states the real predicate. Computed on the whole map, the predicate no longer depends on `hiddenTypes`, and the panel says so.
+3. ✓ `graphView.test.ts` "hiding the unit and plot types does not orphan equipment whose only tie is a hidden-type edge"; `graphPageRender.test.ts` "the orphan badge does not move when a lens hides the types an item is tied by".
+
+**Scope / residual.** Hubs and bridges are the whole map's too. A scoped map is a different assembled graph (I-13's scoped assembly), so its insights are the scope's, and the basis note says so (`GM-6`).
 
 ---
 
@@ -316,7 +328,7 @@ Tests: `lib/__tests__/graphInsights.test.ts` — the PID-4402 / E-2201 tag+menti
 ## GM-6 · Insights are ACL-dependent but presented as facts about the plant: the same map yields different orphan, hub and bridge answers for a controller and a viewer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:41-86`, `lib/orgGraph.ts:109-117`, `supabase/migrations/20260605_rls_policies_new_tables.sql:26-27`, `app/(protected)/graph/page.tsx:581-586`
@@ -359,6 +371,15 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a grante
 
 **Scope / residual.** One read widens and is declared in the migration header: an active member learns how many documents the org holds (never which). Before 20261138 is applied the graph makes no access claim (`access` null). Remaining limb: I-14 passes `graph.access` to `computeInsights` and places `basis.note` in the Insights panel. Corrected 2026-10-01 at review: first recorded RESOLVED, with a scoped `outsideAccess` that under-counted and a basis note that could say "every document in the org".
 
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb. The page passes `graph.access` to `computeInsights` (`app/(protected)/graph/page.tsx:339`). It renders `GraphInsights.basis.note` under the Insights tabs (`data-testid="insights-basis"`, `:929`), after "Counted on the whole map, whatever this view shows." Test: `lib/__tests__/graphPageRender.test.ts` "the orphan badge does not move …" asserts the note carries "3 more are outside your access" for a graph whose `access.outsideAccess` is 3; it fails against the base page, which displayed no basis.
+
+**Done-when.**
+1. ✓ (I-13) The org-wide graph reports the count the reader's ACL removed.
+2. ✓ Insights counts are labelled viewer-scoped where a user sees them: `basis.note` sits beside the counts.
+3. ✓ (I-13) `orgGraph.test.ts` compares the two readers.
+
+**Scope / residual.** `documents_total_for_org` is `20261138`'s, still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until it is pasted, `access` is null and the note says only "Computed on the documents you can see." — no count is claimed. A scoped map's note says it was computed on the scope's documents the reader can see.
+
 ---
 
 <a id="gm-7"></a>
@@ -366,7 +387,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a grante
 ## GM-7 · Link proposals are drawn as document↔document unconditionally and swallow their own errors, so a failed or capped proposal read is indistinguishable from "no proposals"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:125-130`, `lib/linkProposals.ts:196-206`, `app/(protected)/graph/page.tsx:744-750`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The truncation/error half is real: 4000 is a hard silent cap, an error resolves to an empty array indistinguishable from 'no proposals', and the on-map chip reports the drawn count as if it were the queue. The 'drawn as document↔document unconditionally' half is REFUTED — both endpoint columns are NOT NULL FKs to `documents`, so the `doc:` prefix at page.tsx:128 is correct by schema, not an unchecked assumption. Impact is a misleading count on a map that links straight to the authoritative /admin/proposed-links queue, so LOW.
@@ -404,6 +425,23 @@ lib/linkProposals.ts:200-204 quoted above (`.limit(4000)`, `if (error) return []
 - [ ] listPendingPairs distinguishes error, capped and empty, and the page surfaces the first two
 - [ ] The proposals count shown on the chip is the true pending count, not the drawn count
 - [ ] Proposal endpoints carry their entity kind rather than assuming document
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `lib/linkProposals.ts:252-261` `listPendingPairs` answered `[]` on any error and read one `.limit(4000)`, which PostgREST cuts at db-max-rows (1,000) with no error. `app/(protected)/graph/page.tsx:125-130` swallowed the rejection too. The chip counted `view.ghosts.length`. `lib/__tests__/graphPendingProposals.test.ts` pins the new reader; `graphPageRender.test.ts`'s GM-7 cases fail against the base page. What landed:
+- `lib/linkProposals.ts` `readPendingProposalPairs(orgId)` → `{ pairs, total, capped, error }` (`:291`):
+  - reads in windows of at most 1,000 rows (`range`), ordered by confidence desc then id, so "the first 4,000" is a rule;
+  - counts the reader's pending queue (`count: "exact"`; proposed_links RLS shows only pairs whose documents the reader can read — LNK-4);
+  - tells a failed read (`error`, keeping what it read) and a capped one (`total` above what was read, or a server cutting shorter than a window) from an empty queue;
+  - treats a missing table (42P01, before `20260807`) as empty, not as an error;
+  - carries each pair's graph node ids (`nodeA` / `nodeB` = `doc:<id>`; both ends are NOT NULL document references by schema).
+  `listPendingPairs` keeps its old contract as a wrapper (`:256`).
+- The page reads it (`app/(protected)/graph/page.tsx:212`). A failed read is said on the map: "Proposed connections couldn't be loaded (…) — none are drawn; the review queue still has them." A capped one is said too: "Drawing the N most confident of M proposed connections." The chip counts the queue: "9,000 connections awaiting review · 1 drawn here" (`:1126`).
+
+**Done-when.**
+1. ✓ The reader distinguishes error, capped and empty; the page surfaces the first two.
+2. ✓ The chip shows the true pending count (the reader's queue), not the drawn count.
+3. ✓ The endpoints carry their kind as data (node ids from the reader); the kind is the schema's.
+
+**Scope / residual.** `lib/linkProposals.ts` is I-08's (merged) file. The change is additive: a new reader and a wrapper that keeps the old contract.
 
 ---
 
@@ -521,7 +559,7 @@ Tests: `graphInsights.test.ts` — a component holding a plot plan and a unit is
 ## GM-10 · The graph does not model an entire level of the plant hierarchy (systems) and never reads documents.plant_id or documents.system_id, despite both being persisted FK columns
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23`, `lib/orgGraph.ts:109-113`, `lib/operationalGraph.ts:172-208`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
@@ -565,6 +603,15 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 
 **Scope / residual.** Remaining limb: I-14's lens rename. No migration is needed for this finding's half (the columns exist since 20260606); a system's unit is a codebook node only once 20261138's mapping is set.
 
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb: the lens presets are renamed to what they show. `lib/graphSettings.ts` `GRAPH_LENSES` holds the plan's lens set — 'Everything', 'Plant (units & equipment)', 'Equipment ↔ Documents', 'Documents & libraries' (`DEC-44 (I-14)`). Each title is true of its hidden list (`GPV-10`). Test: `lib/__tests__/graphSettingsUrl.test.ts` "each lens's hidden list produces exactly the node types its title names" and "no lens is named by a single node-type word, and none is named for what it hides".
+
+**Done-when.**
+1. ✓ (I-13) documents.plant_id / system_id are drawn.
+2. ✓ (I-13) Systems are folded into units, documented.
+3. ✓ The lens presets are renamed to what they show. The scope (one unit's world) is a separate control, the scope picker (`GPV-2`), not a lens.
+
+**Scope / residual.** None in this package.
+
 ---
 
 <a id="gm-11"></a>
@@ -572,7 +619,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 ## GM-11 · The same node shows two contradictory connection counts on one screen: NodePeek prints the full-graph degree, the Hubs list prints the filtered context degree
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:173-181`, `components/graph/NodePeek.tsx:89`, `lib/graphInsights.ts:39`, `lib/graphInsights.ts:60-65`, `app/(protected)/graph/page.tsx:645`, `app/(protected)/graph/page.tsx:408-418`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed: the peek header's number comes from the unfiltered full graph, while both the row list beneath it and the Hubs number come from the filtered context web, so the same node can show 3 in the header and 2 rows / 2 in Hubs on one screen. Genuine but cosmetic — no data is lost or wrong, only inconsistently labelled — so LOW.
@@ -600,6 +647,18 @@ lib/orgGraph.ts:179-180 increments GraphNode.degree unconditionally inside addEd
 - [ ] One degree is authoritative for display; the peek, the hubs list and the connections list agree
 - [ ] If both a total and a contextual degree are worth showing, they are labelled distinctly ("3 links · 2 in this view")
 - [ ] Node radius/mass and the displayed count derive from the same number
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `components/graph/NodePeek.tsx:89` printed `node.degree` (the whole map, library filing included). Beneath it the list (`page.tsx:408-418`) and the Hubs number (`page.tsx:645`) counted the filtered context web. `graphPageRender.test.ts` "the peek labels …" fails against the base. What landed:
+- The peek's header reads "Document · 3 links on the map (1 library filing) · 1 in this view" (`components/graph/NodePeek.tsx:119`, props `viewDegree` / `libraryLinks`; the page computes both in `peekCounts`, `app/(protected)/graph/page.tsx:554`).
+- The list header reads "Connected in this view · K (the 12 most connected)".
+- The Hubs panel says "The number is its links, not counting library filing", with the same tooltip on each count.
+
+**Done-when.**
+1. ✓ by its stated alternative (done-when 2): the numbers are not forced equal, they are labelled.
+2. ✓ The whole map, its library-filing part and this view are labelled distinctly. A hub's number is the whole map less filing, and the peek shows both parts.
+3. ✓ Node radius and mass (`Math.sqrt(n.degree)` in both renderers, the page's sim mass) and the peek's "links on the map" are the same number, `GraphNode.degree`.
+
+**Scope / residual.** None.
 
 ---
 
