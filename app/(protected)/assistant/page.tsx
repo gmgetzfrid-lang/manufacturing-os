@@ -295,6 +295,16 @@ function ExchangeView({
             </div>
           )}
 
+          {/* IRLS-13: the Reasoning Skills that shaped this answer, as the
+              library Ask surface names them. */}
+          {(reply.skills ?? []).length > 0 && (
+            <p data-answer-skills="true"
+              title="Reasoning Skills this workspace (or you) switched on rode along with this question."
+              className="inline-flex items-center gap-1 rounded-lg border border-violet-300 px-2 py-1 text-[10px] font-black text-violet-700">
+              Shaped by: {(reply.skills ?? []).map((k) => k.name).join(", ")}
+            </p>
+          )}
+
           <p className="text-[11px] text-slate-400">
             {reply.model} · ${reply.budget.spentUsd.toFixed(2)}
             {reply.budget.capUsd > 0 ? ` of $${reply.budget.capUsd.toFixed(2)} this month` : " this month"}

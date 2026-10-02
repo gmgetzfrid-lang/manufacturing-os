@@ -1215,8 +1215,15 @@ export default function KnowledgeLibraryPage() {
       );
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
   }, [thread, threadId, seededTurns, threadStoreKey]);
-  // Org Playbooks visibility: how many standing instructions ride on asks.
-  const [instructionCount, setInstructionCount] = useState(0);
+  // Org Playbooks visibility: how many standing instructions apply to asks —
+  // the org's enabled playbooks scoped to library asks or everywhere, the
+  // set the ask route draws from (loadOrgInstructionsBlock). A 0 is exact:
+  // the route sends none. Above 0 the route may send fewer than counted —
+  // it reads at most 50 of them, and stops at the first that would take its
+  // block past 4,000 characters (HUB-6, I-20 fix pass 5). null until the
+  // count is read, and when it could not be read, so the empty state below
+  // never flashes — nor shows over a failed read.
+  const [instructionCount, setInstructionCount] = useState<number | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     void import("@/lib/aiInstructions").then((m) =>
@@ -1862,9 +1869,23 @@ export default function KnowledgeLibraryPage() {
                 {mode === "library"
                   ? "Answers come ONLY from the indexed documents, cited to the page."
                   : "Answers come from the internet / general knowledge — NOT your controlled documents."}
-                {instructionCount > 0 && (
+                {instructionCount !== null && instructionCount > 0 && (
                   <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-violet-700 hover:underline">
                     {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
+                  </Link>
+                )}
+                {/* HUB-6: with no playbook applying here the door is still
+                    shown — an invitation, never a hidden page. It claims
+                    only what the count read: none enabled for library asks
+                    (or everywhere). The org may still hold disabled ones, or
+                    ones for codebook imports or drawing reading, so it never
+                    says the org has none. */}
+                {instructionCount === 0 && (
+                  <Link href="/admin/ai-instructions" data-playbooks-empty="true"
+                    className="ml-1.5 font-bold text-violet-700 hover:underline">
+                    {isController
+                      ? "No playbook applies to this library's asks — teach the AI your house rules"
+                      : "No playbook applies to this library's asks — see what the AI is taught"}
                   </Link>
                 )}
               </div>

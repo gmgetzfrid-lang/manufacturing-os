@@ -9,8 +9,23 @@
 // 4, so this modal can prove a key exists without ever holding one.
 // Claude and OpenAI are the ONLY providers — nothing that can train on
 // submitted data is offered, and the server refuses it anyway.
+//
+// Intelligence Round G, I-20: saving a different embedding model or provider
+// first says which meaning indexes stop answering (or stop growing) and which
+// background builds on this key are affected — and what the drain does to
+// each kind of build (a run under way, one with passages left, a "keep
+// current" on a library already fully embedded: buildFates, fix pass 4) —
+// names the libraries, and after the
+// switch links each one's Rebuild (SEM-1). A member whose meaning search runs
+// on their OpenAI chat key (no embeddings key) is told the same before the
+// chat key moves to another provider or is removed; removing the chat key
+// deletes the whole connection, so a saved embeddings key goes with it and
+// the confirm says so; removing the embeddings key names what that stops
+// too. Every background build running on this member's key is listed in one
+// place, each with a Stop that stops it only while it is still on their key
+// (GOV-14). Saving the same model and provider asks nothing, exactly as before.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
 } from "lucide-react";
@@ -21,9 +36,15 @@ import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
-  getAiUsage, setAiCap,
+  getAiUsage, setAiCap, releaseOutcome,
   type AiConnectionInfo, type AiUsageSummary, type AiCapSetResult,
 } from "@/lib/knowledge";
+import {
+  getEmbedKeyOverview, effectiveEmbeddingSetting, savedEmbeddingSetting, embeddingSwitchImpact,
+  switchImpactIsEmpty, librariesLinkedAfterSwitch, onChatKeyEmbeddings, embeddingLossImpact, releaseBuildOnMyKey,
+  isSwitchImpact, buildFates,
+  type EmbeddingSwitchImpact, type EmbeddingLossImpact, type EmbedKeyOverview, type EmbedKeyBuild,
+} from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
 
@@ -225,9 +246,42 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
   const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
 
+  /** SEM-1: what this change leaves of the member's embeddings connection,
+   *  read from the libraries. Moving the chat key off OpenAI ends the
+   *  meaning search that rode on it (no embeddings key saved); a saved
+   *  embeddings key is untouched by a save, which writes the chat fields
+   *  only. Removing the chat key deletes the member's whole connection
+   *  (DELETE /api/ai/connection), so it ends meaning search either way: the
+   *  chat-key fallback, or the saved embeddings key with it — that one is
+   *  said even when no index and no build is touched. Null when nothing is
+   *  lost, or when a lost chat-key fallback touches no index and no build. */
+  const embeddingLoss = async (busyAs: "save" | "remove"): Promise<EmbeddingLossImpact | null> => {
+    const before = effectiveEmbeddingSetting(current);
+    if (!before) return null;
+    const onChatKey = onChatKeyEmbeddings(current);
+    if (busyAs === "save" && !onChatKey) return null;
+    setBusy(busyAs);
+    let overview: EmbedKeyOverview | null = null;
+    let unreadable: string | null = null;
+    try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
+    catch (e) { unreadable = (e as Error).message; }
+    setBusy(null);
+    const impact = embeddingLossImpact(before, overview, unreadable, onChatKey ? "chatKey" : "connectionRemoved");
+    return switchImpactIsEmpty(impact) && impact.cause === "chatKey" ? null : impact;
+  };
+
   const save = async () => {
     if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
+    // SEM-1: a chat key moving off OpenAI ends the meaning search it carried.
+    if (provider !== "openai") {
+      const loss = await embeddingLoss("save");
+      if (loss && !(await appConfirm({
+        title: "Switch your chat key off OpenAI?",
+        message: <EmbeddingSwitchWarning impact={loss} />,
+        confirmLabel: "Switch",
+      }))) return;
+    }
     // Before a NEW key goes live: whatever this key sends, the provider
     // receives — questions AND excerpts of indexed documents. (The recorded
     // acceptable-use agreement is signed at first question.)
@@ -286,9 +340,20 @@ export function KeyEditor({ orgId, current, onChanged }: {
   };
 
   const remove = async () => {
+    // SEM-1: removing the chat key ends the meaning search it carried, or
+    // deletes the saved embeddings key with it — the confirm names what stops.
+    const loss = await embeddingLoss("remove");
+    // A background build on this key that ends stops filling a library's
+    // index for everyone, so "nobody else" is said only when none can end.
+    const removal = "You won't be able to ask AI questions until you add a key again. "
+      + (loss && (loss.buildsStop.length > 0 || loss.unreadable)
+        ? "No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone."
+        : "Nobody else is affected.");
     const ok = await appConfirm({
       title: "Remove your API key?",
-      message: "You won't be able to ask AI questions until you add a key again. Nobody else is affected.",
+      message: loss
+        ? <div className="space-y-2 text-left"><p>{removal}</p><EmbeddingSwitchWarning impact={loss} /></div>
+        : removal,
       confirmLabel: "Remove key",
     });
     if (!ok) return;
@@ -390,6 +455,277 @@ export function KeyEditor({ orgId, current, onChanged }: {
 // the two are unrelated services and nothing stops you holding one key for
 // answers and another for vectors. Anthropic's own guidance points Claude
 // users at Voyage AI, which is why it's first in the list and the default.
+const embeddingProviderLabel = (id: string) => EMBEDDING_PROVIDERS.find((p) => p.id === id)?.label ?? id;
+
+/** SEM-1 (I-20 fix pass 4): what the drain does to each kind of background
+ *  build on the key after the change — said per kind, because it is not the
+ *  same for every build (buildFates, lib/embedKeyOverview.ts). */
+function BuildFates({ kind, afterModel }: { kind: "switch" | "loss"; afterModel?: string }) {
+  const f = buildFates(kind, afterModel);
+  return (
+    <ul data-build-fates={kind} className="list-disc pl-5">
+      <li data-build-fate="running">{f.running}</li>
+      <li data-build-fate="embedding">{f.embedding}</li>
+      <li data-build-fate="embedded">{f.embedded}</li>
+    </ul>
+  );
+}
+
+/** SEM-1: the confirm's body when a member switches embedding model or
+ *  provider — what stops, in which libraries, and the way back. */
+export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpact | EmbeddingLossImpact }) {
+  const { before, after } = impact;
+  const names = (libs: Array<{ libraryId: string; libraryName: string }>) => (
+    <ul className="list-disc pl-5">
+      {libs.map((l) => <li key={l.libraryId}>{l.libraryName}</li>)}
+    </ul>
+  );
+  if (!after) {
+    // No embeddings connection is left: the OpenAI chat key meaning search
+    // ran on is moving to another provider or going (`chatKey`); the chat
+    // key's removal deletes the saved embeddings key with it
+    // (`connectionRemoved`); or the embeddings key goes with no OpenAI chat
+    // key to fall back on (`embeddingsKeyRemoved`).
+    const label = embeddingProviderLabel(before.provider);
+    const { cause } = impact;
+    return (
+      <div data-embedding-switch-warning="true" data-embedding-loss="true" data-loss-cause={cause} className="space-y-2 text-left">
+        {cause === "connectionRemoved" ? (
+          <p>
+            <b>This also removes your embeddings key</b> ({label}, {before.model}): it is saved with your chat key, and
+            removing the chat key deletes both. After this you have no embeddings connection at all.
+          </p>
+        ) : cause === "embeddingsKeyRemoved" ? (
+          <p>
+            Your meaning-based search runs on this {label} embeddings key ({before.model}), and you have no OpenAI chat
+            key for it to fall back on. After this you have no embeddings connection at all.
+          </p>
+        ) : (
+          <p>
+            Your meaning-based search runs on this {label} chat key ({before.model}) — you have no embeddings key
+            saved. After this change you have no embeddings connection at all.
+          </p>
+        )}
+        {impact.stopAnswering.length > 0 && (
+          <div data-switch-stops-answering="true">
+            <p>
+              <b>These meaning indexes stop answering your questions.</b> They were built with {label}, and without{" "}
+              {/^[aeiou]/i.test(label) ? "an" : "a"} {label} key you cannot search them:
+            </p>
+            {names(impact.stopAnswering)}
+          </div>
+        )}
+        {impact.buildsStop.length > 0 && (
+          <div data-switch-builds-stop="true">
+            <p><b>Background builds on your key</b> in:</p>
+            {names(impact.buildsStop)}
+            <p>With no embeddings key:</p>
+            <BuildFates kind="loss" />
+          </div>
+        )}
+        {impact.unknown.length > 0 && (
+          <div>
+            <p>The meaning index of these libraries could not be read, so they may be affected too:</p>
+            {names(impact.unknown)}
+          </div>
+        )}
+        {impact.unreadable && (
+          <div data-switch-unreadable="true">
+            <p>
+              Which libraries are affected could not be checked ({impact.unreadable}). Every meaning index built with{" "}
+              {label} stops answering your questions. A background build on your key, with no embeddings key:
+            </p>
+            <BuildFates kind="loss" />
+          </div>
+        )}
+        {cause === "connectionRemoved" ? (
+          <p>
+            To change your chat key and keep your embeddings key, paste the new key above and press{" "}
+            <b>Verify &amp; save</b> instead — saving replaces only the chat key. Or keep your current setting.
+            Keyword search is unaffected.
+          </p>
+        ) : cause === "embeddingsKeyRemoved" ? (
+          <p>
+            To change this key instead, paste the new key and press <b>Verify &amp; save</b> rather than Remove:{" "}
+            {/^[aeiou]/i.test(label) ? "an" : "a"} {label} key searches these indexes as they are; a key for
+            another provider needs each library&apos;s index rebuilt with it — Rebuild index, in the library&apos;s
+            meaning-index panel (Admin or Doc Control). Or keep your current setting.
+          </p>
+        ) : (
+          <p>
+            To keep them, add an embeddings key under <b>Meaning-based search</b> first: {/^[aeiou]/i.test(label) ? "an" : "a"}{" "}
+            {label} embeddings key searches these indexes as they are; a key for another provider needs each
+            library&apos;s index rebuilt with it — Rebuild index, in the library&apos;s meaning-index panel (Admin or
+            Doc Control). Or keep your current setting. Keyword search is unaffected.
+          </p>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div data-embedding-switch-warning="true" className="space-y-2 text-left">
+      <p>
+        You are switching from {before.model} ({embeddingProviderLabel(before.provider)}) to {after.model}{" "}
+        ({embeddingProviderLabel(after.provider)}). A meaning index lives in one model&apos;s vector space —
+        vectors are never reused across models.
+      </p>
+      {impact.stopAnswering.length > 0 && (
+        <div data-switch-stops-answering="true">
+          <p>
+            <b>These meaning indexes stop answering your questions.</b> They were built with{" "}
+            {embeddingProviderLabel(before.provider)}, and {/^[aeiou]/i.test(embeddingProviderLabel(after.provider)) ? "an" : "a"}{" "}
+            {embeddingProviderLabel(after.provider)} key cannot search them:
+          </p>
+          {names(impact.stopAnswering)}
+        </div>
+      )}
+      {impact.cannotGrow.length > 0 && (
+        <div data-switch-cannot-grow="true">
+          <p>
+            <b>These keep answering, but stop growing for you.</b> They were built with {before.model}; a build
+            with {after.model} cannot add to them:
+          </p>
+          {names(impact.cannotGrow)}
+        </div>
+      )}
+      {impact.buildsStop.length > 0 && (
+        <div data-switch-builds-stop="true">
+          <p><b>Background builds on your key</b> in libraries a build with {after.model} cannot add to:</p>
+          {names(impact.buildsStop)}
+          <BuildFates kind="switch" afterModel={after.model} />
+        </div>
+      )}
+      {impact.unknown.length > 0 && (
+        <div>
+          <p>The meaning index of these libraries could not be read, so they may be affected too:</p>
+          {names(impact.unknown)}
+        </div>
+      )}
+      {impact.unreadable && (
+        <div data-switch-unreadable="true">
+          <p>
+            Which libraries are affected could not be checked ({impact.unreadable}).{" "}
+            {impact.providerChanged
+              ? `Every meaning index built with ${embeddingProviderLabel(before.provider)} stops answering your questions.`
+              : `Every meaning index built with ${before.model} keeps answering, but a build with ${after.model} cannot add to it.`}{" "}
+            A background build on your key in such a library:
+          </p>
+          <BuildFates kind="switch" afterModel={after.model} />
+        </div>
+      )}
+      <p>
+        Each one comes back with a <b>Rebuild</b> of that library&apos;s index with {after.model} — Rebuild index,
+        in the library&apos;s meaning-index panel (Admin or Doc Control; it re-embeds every passage with the
+        setting of whoever runs it).{" "}
+        {librariesLinkedAfterSwitch(impact).length > 0
+          ? "Once you switch, the libraries are linked here."
+          : "Open each library's meaning-index panel to rebuild it."}{" "}
+        Or keep your current setting. Keyword search is unaffected.
+      </p>
+    </div>
+  );
+}
+
+const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : null);
+
+/** GOV-14: every background build running on this member's key, in one
+ *  place, each with a Stop. A list that cannot be read says so — never
+ *  "none running". */
+export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refreshKey?: number }) {
+  const { showToast } = useToast();
+  const [state, setState] = useState<{ builds: EmbedKeyBuild[] } | { error: string } | null>(null);
+  const [stopping, setStopping] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const out = await getEmbedKeyOverview(orgId);
+      setState({ builds: out.builds });
+    } catch (e) {
+      setState({ error: (e as Error).message });
+    }
+  }, [orgId]);
+  useEffect(() => { void load(); }, [load, refreshKey]);
+
+  const stop = async (b: EmbedKeyBuild) => {
+    setStopping(b.libraryId);
+    try {
+      // Only while the consent still names this member: a row read before
+      // another member's build replaced it stops nothing (the route's 409).
+      showToast(releaseOutcome(await releaseBuildOnMyKey(orgId, b.libraryId)));
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      setStopping(null);
+      void load();
+    }
+  };
+
+  return (
+    <div data-builds-on-my-key="true" className="rounded-xl border border-[var(--color-border)] p-4 space-y-2">
+      <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <Sparkles className="w-3.5 h-3.5" /> Background builds on your key
+      </div>
+      {state === null ? (
+        <p className="text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin inline" /> Checking…</p>
+      ) : "error" in state ? (
+        <p role="alert" className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+          <span>Couldn&apos;t list the background builds on your key: {state.error}</span>
+        </p>
+      ) : state.builds.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          None running. A meaning-index build you start keeps going on your key in the background until it finishes;
+          it is listed here while it runs.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {state.builds.map((b) => {
+            const waiting = b.blockedUntil && new Date(b.blockedUntil).getTime() > Date.now();
+            return (
+              <li key={b.libraryId} data-build-library={b.libraryId}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a href={`/knowledge/${b.libraryId}`} className="font-black text-[var(--color-text)] hover:underline">{b.libraryName}</a>
+                  <span>— {b.standing ? "kept current as documents arrive" : "finishing a build you started"}</span>
+                  <Button size="sm" variant="secondary" className="ml-auto" disabled={stopping !== null}
+                    onClick={() => void stop(b)}>
+                    {stopping === b.libraryId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Stop
+                  </Button>
+                </div>
+                <div className="mt-0.5" data-build-confirmed="true">
+                  {/* I-20 fix pass 4: the marker's instant is re-stamped by every
+                      build pass and "keep current" press — the last confirmation,
+                      not when the consent was first given. Fix pass 5: switching
+                      "keep current" off re-stamps it too (the build it leaves
+                      still runs on this key), so the footer names that case. */}
+                  {fmtWhen(b.startedAt) ? `Consent last confirmed ${fmtWhen(b.startedAt)}` : "Consent recorded"}
+                  {fmtWhen(b.lastDrainAt) ? `; last ran ${fmtWhen(b.lastDrainAt)}` : "; not run in the background yet"}.
+                </div>
+                {waiting && (
+                  <div className="mt-0.5 font-bold text-amber-800 dark:text-amber-300">
+                    Waiting until {fmtWhen(b.blockedUntil)} —{" "}
+                    {b.blockedReason === "cap" ? "your monthly AI budget is reached"
+                      : b.blockedReason === "model_conflict" ? "your embedding model no longer matches this index"
+                      : b.blockedReason === "agreement" ? "you have not accepted the current AI agreement"
+                      : "the last runs failed"}
+                    {b.lastError ? `: ${b.lastError.slice(0, 200)}` : "."}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        Each runs on your embeddings key and counts against your monthly cap. Stop ends it; what it already
+        embedded stays. &ldquo;Last confirmed&rdquo; is the last time the consent was stamped again — by a build
+        pass, or by &ldquo;keep current&rdquo; being switched on or off on that library (switching it off leaves the
+        build to finish on your key) — not when it was first given.
+      </p>
+    </div>
+  );
+}
+
 export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   orgId: string;
   current: AiConnectionInfo | null;
@@ -404,6 +740,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  // SEM-1: after a switch, the libraries whose index needs a Rebuild.
+  const [rebuildOffer, setRebuildOffer] = useState<EmbeddingSwitchImpact | null>(null);
 
   useEffect(() => {
     const p = current?.embeddingProvider ?? "voyage";
@@ -422,6 +760,29 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({ tone: "err", text: "Paste your embeddings key first." });
       return;
     }
+    // SEM-1: switching model or provider says first what stops answering and
+    // which builds stop, naming the libraries. The same setting asks nothing.
+    const before = effectiveEmbeddingSetting(current);
+    const after = savedEmbeddingSetting(provider, model);
+    let impact: EmbeddingSwitchImpact | null = null;
+    if (before && after && (before.provider !== after.provider || before.model !== after.model)) {
+      setBusy("save"); setNotice(null);
+      let overview: EmbedKeyOverview | null = null;
+      let unreadable: string | null = null;
+      try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
+      catch (e) { unreadable = (e as Error).message; }
+      setBusy(null);
+      impact = embeddingSwitchImpact(before, after, overview, unreadable);
+      if (impact && switchImpactIsEmpty(impact)) impact = null;
+      if (impact) {
+        const ok = await appConfirm({
+          title: impact.providerChanged ? "Switch your embeddings provider?" : "Switch your embedding model?",
+          message: <EmbeddingSwitchWarning impact={impact} />,
+          confirmLabel: "Switch",
+        });
+        if (!ok) return;
+      }
+    }
     setBusy("save"); setNotice(null);
     const hadNewKey = !!apiKey.trim();
     const last4 = apiKey.trim().slice(-4);
@@ -439,6 +800,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       });
       showToast({ type: "success", title: hadNewKey ? "Embeddings key verified and saved." : "Settings saved." });
       setApiKey("");
+      setRebuildOffer(impact && librariesLinkedAfterSwitch(impact).length > 0 ? impact : null);
       onChanged();
     } catch (e) {
       setNotice({ tone: "err", text: (e as Error).message });
@@ -465,12 +827,37 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   };
 
   const remove = async () => {
+    // SEM-1: removing the key changes the setting in effect — to the OpenAI
+    // chat key's default embeddings model when the chat key is OpenAI
+    // (embeddingConnectionFrom's fallback), otherwise to none. What that
+    // stops is read from the libraries and named in the same confirm, as a
+    // switch of model or provider is; with nothing touched, the confirm is
+    // the one it always was (the chat-key fallback's first sentence aside).
+    const before = effectiveEmbeddingSetting(current);
+    const after = effectiveEmbeddingSetting(current ? { provider: current.provider } : null);
+    let impact: EmbeddingSwitchImpact | EmbeddingLossImpact | null = null;
+    if (before && !(after && after.provider === before.provider && after.model === before.model)) {
+      setBusy("remove"); setNotice(null);
+      let overview: EmbedKeyOverview | null = null;
+      let unreadable: string | null = null;
+      try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
+      catch (e) { unreadable = (e as Error).message; }
+      setBusy(null);
+      impact = after
+        ? embeddingSwitchImpact(before, after, overview, unreadable)
+        : embeddingLossImpact(before, overview, unreadable, "embeddingsKeyRemoved");
+      if (impact && switchImpactIsEmpty(impact)) impact = null;
+    }
+    const removal = (after
+      ? `Meaning-based search moves to your OpenAI chat key (${after.model}); keyword search is unaffected. `
+      : "Meaning-based search stops for you; keyword search is unaffected. ")
+      + "Vectors already built stay in place, but they work again only with a key for the provider that built them — "
+      + "a key for another provider cannot search them until the library's index is rebuilt with it.";
     const ok = await appConfirm({
       title: "Remove your embeddings key?",
-      message:
-        "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
-        + "stay in place, but they work again only with a key for the provider that built them — "
-        + "a key for another provider cannot search them until the library's index is rebuilt with it.",
+      message: impact
+        ? <div className="space-y-2 text-left"><p>{removal}</p><EmbeddingSwitchWarning impact={impact} /></div>
+        : removal,
       confirmLabel: "Remove key",
     });
     if (!ok) return;
@@ -478,6 +865,9 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
     try {
       await removeEmbeddingKey(orgId);
       showToast({ type: "success", title: "Embeddings key removed." });
+      // Meaning search moved to the chat key's model: each library to
+      // rebuild is linked, as after a switch (the confirm promised it).
+      setRebuildOffer(impact && isSwitchImpact(impact) && librariesLinkedAfterSwitch(impact).length > 0 ? impact : null);
       onChanged();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -555,6 +945,24 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
+      {rebuildOffer && (
+        <div data-rebuild-offer="true"
+          className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 space-y-1">
+          <p>
+            <b>Rebuild to search and grow these with {rebuildOffer.after.model}:</b> open each library and use
+            Rebuild index in its meaning-index panel (Admin or Doc Control — it re-embeds every passage with the
+            setting of whoever runs it).
+          </p>
+          <ul className="list-disc pl-5">
+            {librariesLinkedAfterSwitch(rebuildOffer).map((l) => (
+              <li key={l.libraryId}>
+                <a href={`/knowledge/${l.libraryId}`} className="font-bold underline">{l.libraryName}</a>
+                {l.unchecked && <span data-unchecked="true"> — could not be checked; open it to see whether it needs a Rebuild</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="text-[10px] text-[var(--color-text-muted)]">
         <b>Verify &amp; save</b> makes a real embed call with the key first — a key that saves is a key
         that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
@@ -901,6 +1309,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 onChanged={() => setReloadTick((t) => t + 1)} />
               <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
+              <BuildsOnMyKey orgId={orgId} refreshKey={reloadTick} />
               <KeyStorageNotice storage={(data as { keyStorage?: KeyStorageInfo }).keyStorage} />
             </>
           )}

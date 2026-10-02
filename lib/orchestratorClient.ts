@@ -55,6 +55,9 @@ export interface OrchestratorReply {
   provider: string;
   model: string;
   budget: { spentUsd: number; capUsd: number };
+  /** IRLS-13: the Reasoning Skills that rode this run's prompt, in the order
+   *  they rode. Absent when none did. */
+  skills?: Array<{ id: string | null; name: string; builtinKey: string | null }>;
 }
 
 /**

@@ -558,7 +558,7 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 ## IRLS-13 · An answer does not say which Reasoning Skills shaped it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 2's orchestrator half: `app/api/orchestrator/route.ts` on `loadAnswerSkills`, `skills` returned and named on its answer surface) — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
@@ -581,6 +581,20 @@ Tests: `askRouteUnits.test.ts` "IRLS-13 — buildAnswerSkills names the packs th
 2. Partly. ✓ The ask response carries the list and the answer UI names them. ✗ The orchestrator (`app/api/orchestrator/route.ts`, which still calls `loadAnswerSkillsBlock`) and its answer surface are the orchestrator's owner's; switching it to `loadAnswerSkills` and returning `skills` is a two-line change there.
 
 **Scope / residual.** OPEN on the orchestrator half.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-20, the orchestrator half of done-when 2. Reproduced first on the base (`3bf3b75`): `/api/orchestrator` called `loadAnswerSkillsBlock` and returned no skills, and the assistant's answer named none (`orchestratorSkills.test.ts` and `assistantSkillsSurface.test.ts`: each reproduction case fails against the base sources).
+
+- `app/api/orchestrator/route.ts` (`:123`) reads the packs through `loadAnswerSkills` (`lib/answerSkillsServer.ts`), which makes the same reads, seeding and author rule as the block. The model's prompt is the same (instructions + skills block + atlas, in that order). The response carries `skills` (`{ id, name, builtinKey }`, in the order they rode, `:243`) only when a pack rode, which is the ask route's shape. No pack means no field.
+- `lib/orchestratorClient.ts`: `OrchestratorReply.skills?`.
+- The assistant's answer surface (`app/(protected)/assistant/page.tsx`, `:301`) says "Shaped by: …" with each pack's name, as the library Ask surface does.
+
+Tests: `lib/__tests__/orchestratorSkills.test.ts` (the route returns the packs from `loadAnswerSkills`, and the block the model was given is theirs; REGRESSION: the prompt's playbook is unchanged, and a run with no pack answers with exactly the keys it answered with before), `lib/__tests__/assistantSkillsSurface.test.ts` (rendered: "Shaped by: …"; no chip without skills). `orchestratorTaint.test.ts` and `orchestratorExecute.test.ts` mock `loadAnswerSkills` beside `loadAnswerSkillsBlock`.
+
+**Done-when.**
+1. ✓ (2026-10-01, I-03) The skills loader returns the names and ids of the packs it included alongside the block.
+2. ✓ The ask response (2026-10-01, I-03) and now the orchestrator response carry that list, and both answer surfaces name the skills that shaped an answer.
+
+**Scope / residual.** None for this finding. `loadAnswerSkillsBlock` (`lib/answerSkillsServer.ts`) has no production caller left; only tests use it. A later package may remove it.
 
 ---
 
