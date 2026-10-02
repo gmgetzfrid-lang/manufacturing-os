@@ -369,9 +369,9 @@ const RESET_ROW = {
  *  yet. A reset writes them on the row (vision_owed_pages), so a batch with
  *  no vision context — a keyless controller's tab, the cron without a
  *  sponsor — holds them for a key instead of committing them text-only as
- *  complete. Null when the chunks cannot be read: a reset that cannot say
- *  what it would throw away does not throw it away. A database without
- *  chunk provenance (pre-20261122) has nothing to read: none. */
+ *  complete. An error when the chunks cannot be read: a reset that cannot
+ *  say what it would throw away does not throw it away. A database without
+ *  chunk provenance (pre-20261122) has nothing to read there. */
 async function visionOwedPages(documentId: string, row: Record<string, unknown>): Promise<{ pages: number[] } | { error: string }> {
   const owed = new Set<number>(pageQueue(row.vision_failed_pages));
   const reached = Number(row.pages_indexed ?? 0);
