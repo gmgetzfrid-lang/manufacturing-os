@@ -310,6 +310,8 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 
 **Chain reaction.** Because there is no DELETE path on the notifications table anywhere in the app (a full census of `from("notifications")` returns only insert/select/update, and a second case-insensitive delete-shaped search returns nothing), the leaked title is permanent. The only removal is /api/admin/purge, which is manual, Admin-gated and restricted to `read_at IS NOT NULL` — an unread leaked title is unreachable by any cleanup.
 
+*Cross-note (2026-10-02, notifications Round G, N3 SURFACES review fix): one more producer on the notify path checks no ACL — `lib/activityThread.ts` `notifyCheckoutActivity` (:113-176). It addresses every checkout-thread post to the episode's participants, the active session holders and the document's watchers (`subscriptions`), and puts the post's text in the body (a 140-character snippet). Since `TAX-4` / `RT-2` removed the org-wide toast channel, that row is the toast too. A watcher later removed from the document's ACL is still notified and toasted "Alice posted to P-4412 — <snippet>". `TAX-4` done-when 3 ("no toast is shown for a resource the viewer lacks ACL on") is met only for the toast surface and leaves this producer-side check here. It is named so the check has an owner: this finding's third done-when, applied to that producer as well.*
+
 **Done when.**
 
 - [ ] emit() takes a redaction policy: role-broadcast audiences receive a generic title ('A document you administer was placed on hold') and the identifying label/reason only in the bell body for recipients who pass an ACL check, or behind the link
