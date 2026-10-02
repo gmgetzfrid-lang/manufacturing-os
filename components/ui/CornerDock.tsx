@@ -322,9 +322,10 @@ export interface DockAllowanceOptions {
  * They differ only while a phone folds the stack into its summary pill —
  * nothing renders, but the cards the stack would show still expire on time.
  * `raised`: the dock is over a modal that started an upload (STACK-10) — a
- * raisable widget then runs every finished card's clock, placed or not, so
- * a failed run's cards leave that modal's body in one window instead of
- * draining four places at a time.
+ * raisable widget then runs the clock of every failure that arrives while
+ * it is raised, placed or not, so a failed run's cards leave that modal's
+ * body in one window instead of draining four places at a time (a failure
+ * already waiting behind the cap at rest keeps waiting until it shows).
  */
 export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null, options?: DockAllowanceOptions): { shown: number; timed: number; raised: boolean } {
   const id = useId();

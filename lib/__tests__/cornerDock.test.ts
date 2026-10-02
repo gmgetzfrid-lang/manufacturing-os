@@ -828,6 +828,57 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     expect(jobsSlot().querySelectorAll(".rounded-xl")).toHaveLength(0);
   });
 
+  it("raised, only a failure that arrives while raised counts as seen: one hidden behind the cap at rest still waits until it shows and gets its full 7s (N7 final review)", async () => {
+    // Before: raised, every failure's clock started at once — including the
+    // ones already waiting behind the cap at rest. Those started their 7s at
+    // the raise and, behind the raised run's newer failures, cleared without
+    // ever being shown.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+    const tree = (raising: boolean) => shell(raising ? React.createElement(RaisingModalProbe, { key: "m" }) : null);
+    const cards = () => [...jobsSlot().querySelectorAll(".rounded-xl")].map((c) => /^([A-Z]\d+)\.pdf/.exec(c.textContent ?? "")?.[1] ?? "?").sort();
+    await mount(tree(false));
+    // At rest: six failures from an upload no modal started. Four show and
+    // run their 7s; two wait behind the cap.
+    await act(async () => { for (let i = 0; i < 6; i++) upload(`R${i}`, "error", { error: "Network error" }); });
+    await flush();
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    const shownAtRest = cards();
+    expect(shownAtRest).toHaveLength(4);
+    const hiddenAtRest = ["R0", "R1", "R2", "R3", "R4", "R5"].filter((n) => !shownAtRest.includes(n));
+    expect(hiddenAtRest).toHaveLength(2);
+    // A second later a modal starts six transfers: the dock rises.
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await mount(tree(true));
+    await act(async () => { for (let i = 0; i < 6; i++) upload(`N${i}`); });
+    await flush();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // Two seconds on, the run fails while raised: its newer failures take the places.
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    await act(async () => { for (let i = 0; i < 6; i++) upload(`N${i}`, "error", { error: "Network error" }); });
+    await flush();
+    expect(cards()).toHaveLength(4);
+    expect(cards().every((n) => n.startsWith("N"))).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(6500); });
+    await flush();
+    expect(cards().every((n) => n.startsWith("N"))).toBe(true);
+    // 7.6s after the run failed: every one of its six failures has cleared,
+    // the two never placed included — they arrived raised, so the raise saw
+    // them. The two that waited at rest show now, the dock still raised.
+    await act(async () => { vi.advanceTimersByTime(1100); });
+    await flush();
+    expect(cards()).toEqual(hiddenAtRest);
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // ...and they get their full 7s from when they showed.
+    await act(async () => { vi.advanceTimersByTime(5800); });
+    await flush();
+    expect(cards()).toEqual(hiddenAtRest);
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await flush();
+    expect(cards()).toHaveLength(0);
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+  });
+
   it("the photo uploader: staged photos and a backup card leave the dock under it; Upload raises it with the upload card only", async () => {
     const created: string[] = [];
     Object.defineProperty(URL, "createObjectURL", { value: (f: File) => { created.push(f.name); return `blob:${f.name}`; }, configurable: true });

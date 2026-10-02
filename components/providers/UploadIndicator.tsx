@@ -24,14 +24,16 @@
 // These are the dock's `raisable` cards: while a modal that started an
 // upload is open, they lift the dock above it, and only they hold places
 // there — and the dock is raised only while one of them shows (STACK-10).
-// Raised, every failure counts as seen: its clock starts at its event, as
-// it did before the cap, whether or not it holds one of the four places.
-// The raising modal reports the run's outcome itself (the staging wizard
-// keeps the failed rows, with "Uploaded n of m"), and the raised cards sit
-// on that modal's body — waiting four at a time would keep a 40-failure
-// run's cards over the failed rows' Remove and Status for ten 7s windows
-// (N7 fourth review). Raised, a whole run's failures clear 7s after the
-// last one, and the dock drops back under the modal.
+// Raised, a failure that arrives counts as seen: its clock starts at its
+// event, as it did before the cap, whether or not it holds one of the four
+// places. The raising modal reports the run's outcome itself (the staging
+// wizard keeps the failed rows, with "Uploaded n of m"), and the raised
+// cards sit on that modal's body — waiting four at a time would keep a
+// 40-failure run's cards over the failed rows' Remove and Status for ten 7s
+// windows (N7 fourth review). Raised, a whole run's failures clear 7s after
+// the last one, and the dock drops back under the modal. A failure that
+// arrived at rest and was hidden behind the cap is not the raised run's: it
+// keeps waiting until it is seen (N7 final review).
 
 import React, { useEffect, useRef, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
@@ -59,6 +61,8 @@ export function pickVisibleUploads<T extends { id: string; status: UploadActivit
 export default function UploadIndicator() {
   const [items, setItems] = useState<Record<string, Tracked>>({});
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  /** Failures that arrived at rest and are still hidden behind the cap. */
+  const waitingAtRest = useRef(new Set<string>());
 
   useEffect(() => {
     return subscribeUploads((e) => {
@@ -86,17 +90,26 @@ export default function UploadIndicator() {
   const shown = pickVisibleUploads(list, allowance);
 
   // A finished card clears UPLOAD_CLEAR_MS after it finished — a failure
-  // after it is first VISIBLE (or stood for by the phone's pill; while the
-  // dock is raised, at once) — and only if no newer event superseded it. A
-  // started clock is not paused when the card later leaves the stack.
+  // after it is first VISIBLE (or stood for by the phone's pill; one that
+  // arrives while the dock is raised, at once) — and only if no newer event
+  // superseded it. A started clock is not paused when the card later leaves
+  // the stack. A failure that arrived at rest hidden behind the cap is in
+  // `waitingAtRest` and keeps waiting until seen, raised or not: starting
+  // its 7s at the raise could show it for a second, or never, once the
+  // raised run's cards took the places (N7 final review).
   useEffect(() => {
     const sorted = Object.values(items).sort((a, b) => a._t - b._t);
-    const seen = raised ? null : new Set(pickVisibleUploads(sorted, timed).map((u) => u.id));
+    const seen = new Set(pickVisibleUploads(sorted, timed).map((u) => u.id));
+    const waiting = waitingAtRest.current;
+    for (const id of waiting) if (items[id]?.status !== "error") waiting.delete(id);
     for (const u of sorted) {
       if (u.status === "uploading") continue;
-      if (u.status === "error" && seen && !seen.has(u.id)) continue;
       const tk = `${u.id}:${u.status}`;
       if (timers.current.has(tk)) continue;
+      if (u.status === "error" && !seen.has(u.id)) {
+        if (!raised || waiting.has(u.id)) { waiting.add(u.id); continue; }
+      }
+      waiting.delete(u.id);
       const status = u.status;
       timers.current.set(tk, setTimeout(() => {
         timers.current.delete(tk);
