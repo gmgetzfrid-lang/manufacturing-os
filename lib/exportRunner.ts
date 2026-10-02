@@ -604,13 +604,18 @@ async function buildAndDeliver(
 
 // ─── S3 helpers ──────────────────────────────────────────────────
 
+/** The region a bucket push uses when its destination stores none (and the
+ *  edit form's default), so a destination saved with no region and one saved
+ *  with this region push to the same store. */
+export const S3_DEFAULT_REGION = "us-east-1";
+
 export function buildS3ClientFromDestination(dest: ExportDestination): S3Client {
   const accessKeyId = dest.access_key_id_encrypted ? decryptSecret(dest.access_key_id_encrypted) : "";
   const secretAccessKey = dest.secret_access_key_encrypted ? decryptSecret(dest.secret_access_key_encrypted) : "";
   if (!accessKeyId || !secretAccessKey) throw new Error("Destination credentials are missing");
   return new S3Client({
     endpoint: dest.endpoint || undefined,
-    region: dest.region || "us-east-1",
+    region: dest.region || S3_DEFAULT_REGION,
     credentials: { accessKeyId, secretAccessKey },
     forcePathStyle: true,
   });

@@ -17,11 +17,16 @@
 //   - BILL-3 Done-when 3: a bucket row is the Growth feature, so enabling one
 //     passes the same plan gate as creating one (the scheduled runner
 //     disables a bucket destination whose plan lapsed), as does adding a
-//     bucket or changing it (XEDGE-8). Re-saving a bucket destination with
-//     its bucket unchanged is not gated: it is how an Admin confirms a
+//     bucket or changing it (XEDGE-8) — or, on a row that pushes to a bucket
+//     (s3 / r2 with a bucket), changing the store it pushes to: its type,
+//     endpoint or region (sixth review fix pass: the gate compared the
+//     bucket's name alone, so an off-plan workspace could point an enabled
+//     destination at another store under the same name). Re-saving a bucket
+//     destination unchanged is not gated: it is how an Admin confirms a
 //     scheduled destination a Manager or DocCtrl last saved (DEC-44 (A&O P3)
-//     §1 — the edit form always sends the bucket), and the fifth review fix
-//     pass found that save refused 402 on a workspace off Growth with
+//     §1 — the edit form always sends the type, the bucket and a region, the
+//     runner's default when none is stored), and the fifth review fix pass
+//     found that save refused 402 on a workspace off Growth with
 //     SUBSCRIPTION_ENFORCE off, where the push itself still runs — so the
 //     nightly request to confirm it could never be met;
 //   - BKP-13 Done-when 3: every other controller is told, as they are when an
@@ -36,7 +41,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret } from "@/lib/serverCrypto";
-import { computeNextRunAt, destinationCredentialGap } from "@/lib/exportRunner";
+import { computeNextRunAt, destinationCredentialGap, S3_DEFAULT_REGION } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
@@ -47,6 +52,7 @@ interface CurrentDestination {
   destination_type?: string | null;
   schedule_kind?: string | null;
   endpoint?: string | null;
+  region?: string | null;
   bucket?: string | null;
   prefix?: string | null;
   webhook_url?: string | null;
@@ -56,13 +62,21 @@ interface CurrentDestination {
   webhook_secret_encrypted?: string | null;
 }
 const CURRENT_COLUMNS =
-  "enabled, name, destination_type, schedule_kind, endpoint, bucket, prefix, webhook_url, retention_days, " +
+  "enabled, name, destination_type, schedule_kind, endpoint, region, bucket, prefix, webhook_url, retention_days, " +
   "access_key_id_encrypted, secret_access_key_encrypted, webhook_secret_encrypted";
 /** Where a destination sends the workspace: changing one of these on an enabled destination re-points the channel. */
 const TARGET_FIELDS = ["destination_type", "endpoint", "bucket", "prefix", "webhook_url"] as const;
+/** The store a bucket push lands in (lib/exportRunner.ts buildS3ClientFromDestination and s3Put):
+ *  changing one of these on a row that pushes to a bucket is the plan-gated act (XEDGE-8). */
+const BUCKET_STORE_FIELDS = ["destination_type", "endpoint", "region", "bucket"] as const;
+/** The destination types that push to a bucket (lib/exportRunner.ts). */
+const BUCKET_TYPES: ReadonlySet<string> = new Set(["s3", "r2"]);
 
 const given = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
 const norm = (v: unknown): string => String(v ?? "").trim();
+/** A store field as the push uses it: no region stored is the runner's default region. */
+const storeValue = (field: (typeof BUCKET_STORE_FIELDS)[number], v: unknown): string =>
+  field === "region" ? norm(v) || S3_DEFAULT_REGION : norm(v);
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -116,11 +130,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // XEDGE-8: the Growth gate that create applies must hold on edit too —
   // adding a bucket to an existing (webhook / bucket-less) destination, or
   // pointing it at another bucket, is the same act as creating one with a
-  // bucket. The same bucket sent back (the edit form always sends it) is
-  // not: that save is the Admin confirming the destination (DEC-44 (A&O P3)
-  // §1). Enabling is gated below.
+  // bucket. So is pointing a row that pushes to a bucket at another store
+  // under the same bucket name: a new type (r2 -> s3), endpoint or region
+  // (sixth review fix pass). The same row sent back (the edit form always
+  // sends the type, the bucket and a region) is not: that save is the Admin
+  // confirming the destination (DEC-44 (A&O P3) §1). Enabling is gated below.
+  const nextType = norm("destination_type" in body ? body.destination_type : current.destination_type);
+  const nextBucket = norm("bucket" in body ? body.bucket : current.bucket);
   const bucketChanged = "bucket" in body && !!norm(body.bucket) && norm(body.bucket) !== norm(current.bucket);
-  if (bucketChanged) {
+  const storeMoved = BUCKET_STORE_FIELDS.some((f) => f in body && storeValue(f, body[f]) !== storeValue(f, current[f]));
+  const bucketGated = bucketChanged || (storeMoved && BUCKET_TYPES.has(nextType) && !!nextBucket);
+  if (bucketGated) {
     const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
     if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
@@ -144,8 +164,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   if (enabling) {
     // BILL-3 Done-when 3: enabling a bucket destination is the act the plan
-    // gate guards (a body that adds or changes the bucket was gated above).
-    if (norm("bucket" in body ? body.bucket : current.bucket) && !bucketChanged) {
+    // gate guards (a body that adds or changes the bucket, or moves its
+    // store, was gated above).
+    if (nextBucket && !bucketGated) {
       const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
       if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
     }

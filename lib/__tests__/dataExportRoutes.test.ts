@@ -1740,6 +1740,78 @@ describe("fifth review fix — an Admin's save confirms an unconfirmed bucket de
   });
 });
 
+// ─── Sixth review fix: the store a bucket push lands in is the gated act ────
+//
+// The fifth pass judged the bucket's NAME against the stored row, so an
+// off-plan workspace could keep the name and change the endpoint, the region
+// or the type (r2 -> s3) of an enabled destination, and the next push ran
+// against a different store. XEDGE-8: pointing a bucket push anywhere new is
+// the act creating one is; the unchanged save that confirms it is not.
+
+describe("sixth review fix — moving a bucket push to another store (type, endpoint or region) is the Growth act; the unchanged save still confirms (XEDGE-8; DEC-44 (A&O P3) §1)", () => {
+  const bucketDest = (extra: Row = {}): Row => dueDestination({
+    name: "Nightly bucket", destination_type: "r2", webhook_url: null, endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto",
+    bucket: "plant-backups", prefix: "mos", access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"),
+    created_by: "u-dc", updated_by: "u-dc", ...extra,
+  });
+  const save = (body: Row) => destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body }), params("dest-1"));
+  const offPlan = () => Object.assign(db.rows.orgs[0], { subscribed_plan: "starter", subscription_status: "active" });
+
+  it("off plan: an endpoint-only change is 402 and nothing changes — the bucket's name kept (was: 200, the push then ran against another store)", async () => {
+    offPlan();
+    db.rows.export_destinations = [bucketDest()];
+    const res = await save({ orgId: ORG, endpoint: "https://elsewhere.example.net" });
+    expect(res.status).toBe(402);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ endpoint: "https://acct.r2.cloudflarestorage.com", updated_by: "u-dc" });
+    // the same through the edit form's whole body
+    expect((await save({ ...editFormBody(db.rows.export_destinations[0]), endpoint: "https://elsewhere.example.net" })).status).toBe(402);
+    expect(audits("EXPORT_DESTINATION_UPDATED")).toEqual([]);
+  });
+
+  it("off plan: a type change (r2 -> s3) or a region change, the bucket kept, is 402 and nothing changes", async () => {
+    offPlan();
+    db.rows.export_destinations = [bucketDest()];
+    const retyped = await save({ ...editFormBody(db.rows.export_destinations[0]), destination_type: "s3", endpoint: undefined });
+    expect(retyped.status).toBe(402);
+    expect((await save({ orgId: ORG, region: "eu-west-1" })).status).toBe(402);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "r2", region: "auto", updated_by: "u-dc" });
+    expect(audits("EXPORT_DESTINATION_UPDATED")).toEqual([]);
+  });
+
+  it("off plan, SUBSCRIPTION_ENFORCE off: the unchanged save is 200 and confirms it — a stored region, and none stored (the form sends the runner's default)", async () => {
+    delete process.env.SUBSCRIPTION_ENFORCE;
+    offPlan();
+    db.rows.export_destinations = [bucketDest()];
+    expect((await save(editFormBody(db.rows.export_destinations[0]))).status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ updated_by: "u-admin", region: "auto", endpoint: "https://acct.r2.cloudflarestorage.com" });
+    db.rows.export_destinations = [bucketDest({ destination_type: "s3", endpoint: null, region: null })];
+    const body = editFormBody(db.rows.export_destinations[0]);
+    expect(body).toMatchObject({ region: "us-east-1" });
+    expect(body).not.toHaveProperty("endpoint");
+    expect((await save(body)).status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ updated_by: "u-admin" });
+  });
+
+  it("off plan: moving it to a webhook (no bucket push) is not refused for the plan — the bucket's name left in the form", async () => {
+    offPlan();
+    db.rows.export_destinations = [bucketDest()];
+    const res = await save({
+      ...editFormBody(db.rows.export_destinations[0]), destination_type: "webhook",
+      webhook_url: "https://hooks.example.com/in", webhook_secret: "whsec",
+    });
+    expect(res.status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", updated_by: "u-admin" });
+  });
+
+  it("on plan: an endpoint, region or type change is 200, as before", async () => {
+    db.rows.export_destinations = [bucketDest()];
+    expect((await save({ ...editFormBody(db.rows.export_destinations[0]), endpoint: "https://elsewhere.example.net" })).status).toBe(200);
+    expect((await save({ orgId: ORG, region: "eu-west-1" })).status).toBe(200);
+    expect((await save({ orgId: ORG, destination_type: "s3" })).status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ endpoint: "https://elsewhere.example.net", region: "eu-west-1", destination_type: "s3" });
+  });
+});
+
 // ─── Fifth review fix: the request to confirm survives a failure and a Run Now ─
 
 describe("fifth review fix — an unconfirmed destination's request to confirm survives a failed push and a Run Now (DEC-44 (A&O P3) §1)", () => {
