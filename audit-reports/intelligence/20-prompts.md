@@ -308,20 +308,28 @@ Fix pass 2, after the second review (*corrected:* "nothing paid is discarded" he
 **Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 3, in the review step only: there is no server refusal, so a legitimately optional AI field is never blocked. Reproduced first on the base (`3bf3b75`). A drafted document whose AI field came back "" (or whitespace) rendered with no mark on its collapsed row, and Download and File sent it as it was (`generateModalEmptyAi.test.ts`: 6 of 8 cases fail against the base modal; the other 2 are the REGRESSION pin and its pair).
 
 `components/templates/GenerateModal.tsx`:
-- `emptyAiFields` (`:38`) reads a document's AI-written fields that are missing or blank. `documentsBlockedByEmptyAi` (`:44`) lists the documents with such a field that nobody explicitly left blank.
+- `emptyAiFields` (`:41`) reads a document's AI-written fields that are missing or blank. `documentsBlockedByEmptyAi` (`:47`) lists the documents with such a field that nobody explicitly left blank.
 - Each collapsed review row shows "N empty AI field(s)" without being expanded, and "left blank on purpose" once every one is overridden.
 - In the expanded document, an empty AI field says "The AI wrote nothing here." and offers a per-field checkbox, "Leave it blank in the document". That checkbox is the explicit override, one field at a time. An AI field the draft left out entirely is shown too, so it can be filled in or left blank.
-- While any document is blocked, the Generate step says so (`:467`, "Nothing is made until each one is filled in, or ticked 'Leave it blank'") and offers "Show the first one". Download and "File into library" are disabled. `render()` and `fileIntoControl()` refuse through `refuseEmptyAi` (`:212`) before any request.
+- While any document is blocked, the Generate step says so (`:523`, "Nothing is made until each one is filled in, or ticked 'Leave it blank'") and offers "Show the first one". Download and "File into library" are disabled. `render()` and `fileIntoControl()` refuse through `refuseEmptyAi` (`:241`) before any request.
 - Filling the field in releases the document with no override. A new draft from the first row clears the overrides.
 
 Tests: `lib/__tests__/generateModalEmptyAi.test.ts` (rendered): the pure reading, the per-field override, the refusal of Download and File, "Show the first one", that filling in releases the document, the omitted AI field, and the REGRESSION pin (every AI field written: no mark, no refusal, Download sends the reviewed values unchanged).
 
+**I-20 fix pass 4 (2026-10-02).** The final review found the override was per document and field (`${docIndex}|${tag}`), so a batch whose optional AI field is legitimately empty in every row needed one expand-and-tick per document. Now the Generate step lists each AI field the AI left empty in two or more documents (`emptyAiFieldsAcrossBatch`, `:58`), each with its own tick: "Leave {field} blank in all N documents where the AI wrote nothing" (`:496`).
+- It is still explicit and still per field. There is one tick per field and none that releases every field. Ticking writes that field's per-document overrides on exactly the documents where it is empty (`setKeepBlankAcrossBatch`, `:71`), and no other field's.
+- It reaches the documents drafted when it is ticked. A later batch's empty field is refused again, and the tick reads unticked (it is checked only while every document where the field is empty is overridden) until it is ticked again. Unticking takes the overrides back.
+- The per-document tick keeps working and reads the same overrides. A field empty in one document has no batch tick, since the per-document tick is the same.
+- Download and File stay refused until every empty AI field is filled in or overridden.
+
+Tests (`generateModalEmptyAi.test.ts`, "PR-6 (I-20 fix pass 4) — …", 6 cases): the pure helpers; one tick leaves an optional field blank in all three documents with none expanded, and the blanks go through as written; the negative control (two fields empty in both documents: ticking one field's box leaves the other blocking, and Download and File refused, until that field's own tick); a later batch's empty field is refused again until ticked again; unticking refuses again while a document's own tick still releases it alone, and a field empty in one document has no batch tick; REGRESSION: every AI field written, no batch tick. Against fix pass 3's modal (`d788d53`), 5 of the 6 fail: the helpers are new, and the four rendered cases need the tick. The negative control fails there only because the control is absent. The REGRESSION case passes on both, and so do the 8 earlier cases.
+
 **Done-when.**
 1. ✓ (2026-10-01) A parse failure marks that row as failed (`skippedRows`), and no document is made for it.
 2. ✓ (2026-10-01) A failed draft is distinguishable from a genuinely empty field.
-3. ✓ A document with an empty AI field cannot be rendered or filed without an explicit per-field override in the review step.
+3. ✓ A document with an empty AI field cannot be rendered or filed without an explicit per-field override in the review step: per document, or for one field across the documents drafted when it is ticked (fix pass 4).
 
-**Scope / residual.** None for this finding. The override lives in the dialog's state. A reviewer who closes the dialog drafts again and decides again.
+**Scope / residual.** None for this finding. The overrides live in the dialog's state. A reviewer who closes the dialog drafts again and decides again.
 
 ---
 
