@@ -112,6 +112,13 @@ either name while the flag is false, and the reverse (`RT-10`).*
   `` coalesceKey: `${row.kind}:${row.resource_id}` `` for a notification row, so
   that differently worded rows about one event coalesce too. `RT-11` and `OS-4`
   stay OPEN (Partial) on done-when 2 until that line lands; N3 closes them.*
+- *`RT-11` done-when 1 (2026-10-02, N7 final review): while the corner dock is
+  raised over a modal that started an upload, its "+N more" card offers no
+  "Notifications" doorway. The center (`NotificationCenter.tsx`, 240 / 241, N3's)
+  would open under that modal, invisible. N3 lets the center open above an open
+  upload modal when it is opened from the dock; then the `!raised` guard on the
+  doorway in `components/ui/CornerDock.tsx` comes off. `RT-11` stays OPEN on that
+  too; N3 closes it.*
 - *The corner dock rests under every overlay (`Z.dock` = 290, the old dock's
   place). It rises above every modal (`Z.dockRaised` = 750) only while a modal
   that has started an upload is open and the dock reports an upload. The modal
@@ -119,8 +126,10 @@ either name while the flag is false, and the reverse (`RT-10`).*
   `components/ui/CornerDock.tsx`; a scan test refuses `useDockRaise(open)`. The
   dock also needs a `raisable` card: `UploadIndicator`'s. Raised, only the upload
   cards hold places; the backup, indexing and toast cards wait behind "+N more",
-  which offers no "Notifications" doorway; every upload failure's clock runs from
-  its event; and the dock ignores right rails (N7 fourth review).
+  which offers no "Notifications" doorway; every upload failure that arrives
+  while raised runs its clock from its event (one that was waiting behind the cap
+  at rest still waits until it shows); and the dock ignores right rails (N7
+  fourth review, final review).
   Such a modal must also declare its action row with `useDockAvoid(ref, open)`;
   a scan test refuses one that does not. The three upload-starting modals do
   both. The shared `ModalFooter` declares its row for any dialog opened over
@@ -128,9 +137,11 @@ either name while the flag is false, and the reverse (`RT-10`).*
   A package that adds a modal that starts an upload raises the dock that way and
   declares its row. Other overlays declare nothing, because at rest the dock is
   under them. While raised, the upload cards still cover the right end of the
-  raising modal's body above its row until the run's cards clear. `STACK-14`
-  stays OPEN (Partial) on that, and on its done-when as written, pending
-  ratification of `DEC-44 (N7)` item 4.*
+  raising modal's body above its row until the run's cards clear. The integrator
+  ratified `DEC-44 (N7)` item 4 on 2026-10-02 as meeting `STACK-10` done-when 1.
+  `STACK-14` stays OPEN (Partial) on that, and on its done-when as written, which
+  the ratification does not meet. Its owner is for the integrator to assign: no
+  package in this plan owns those overlays.*
 - *The corner dock is `role="region"` / `aria-live="polite"` /
   `aria-relevant="additions"`. The toast list is `role="status"`, an error toast
   is `role="alert"`, and every toast's X has `aria-label="Dismiss"`. That is
