@@ -1419,6 +1419,27 @@ export interface KnowledgeSource {
   createdByName: string | null;
   createdAt: string;
   documentCount: number;
+  /** When the sync last reconciled this source (ILIFE-13); null = never, or
+   *  due first. Absent from a route that predates it. */
+  lastSyncedAt?: string | null;
+}
+
+/** "Last synced …" for a knowledge library's Sources strip (ILIFE-13): how
+ *  long ago the sync last reconciled it, or that it has not yet — the
+ *  nightly run reaches a never-synced library first. */
+export function lastSyncedLabel(at: string | null | undefined, nowMs: number = Date.now()): string {
+  const t = at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(t)) {
+    return "Not synced with Document Control yet — the nightly run reaches it first, or Sync now reconciles it at once.";
+  }
+  const mins = Math.max(0, Math.round((nowMs - t) / 60_000));
+  const hours = Math.round(mins / 60);
+  const days = Math.round(mins / 1440);
+  const ago = mins < 1 ? "just now"
+    : mins < 60 ? `${mins} minute${mins === 1 ? "" : "s"} ago`
+      : mins < 48 * 60 ? `${hours} hour${hours === 1 ? "" : "s"} ago`
+        : `${days} days ago`;
+  return `Last synced with Document Control ${ago}.`;
 }
 
 export interface SourceBrowseResult {
@@ -1447,6 +1468,11 @@ async function apiGet<T>(url: string): Promise<T> {
 
 export async function listKnowledgeSources(orgId: string, libraryId: string): Promise<{
   sources: KnowledgeSource[]; canManage: boolean;
+  /** The library's last sync: its oldest source stamp, null when any source
+   *  never synced (ILIFE-13). */
+  lastSyncedAt?: string | null;
+  /** False on a database that does not record it (pre-20261122). */
+  syncTracked?: boolean;
 }> {
   return apiGet(`/api/knowledge/sources?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
 }

@@ -2,7 +2,9 @@
 // libraries. The knowledge tab stops owning uploads; it subscribes to the
 // controlled library instead.
 //
-//   GET  ?orgId&libraryId              → this library's sources (+doc counts)
+//   GET  ?orgId&libraryId              → this library's sources (+doc counts,
+//                                        and when each — and the library —
+//                                        last synced, ILIFE-13)
 //   GET  ?orgId&action=browse          → DC libraries + folders the CALLER
 //                                        can read (ACL-filtered server-side;
 //                                        the picker shows only these)
@@ -27,6 +29,7 @@ import {
   loadPrincipal, loadDcLandscape, containerReadable,
 } from "@/lib/knowledgeAccess";
 import { syncKnowledgeLibrarySources } from "@/lib/knowledgeSourceSync";
+import { isMissingColumn } from "@/lib/knowledgeIngest";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -78,11 +81,20 @@ export async function GET(req: NextRequest) {
   // ── List this knowledge library's sources ──────────────────────────────
   const libraryId = (req.nextUrl.searchParams.get("libraryId") ?? "").trim();
   if (!libraryId) return bad("libraryId is required");
-  const { data: sources, error } = await supabaseAdmin
+  // ILIFE-13: when each source last synced (knowledge_sources.last_synced_at,
+  // 20261122 — the cron's rotation cursor). A database without the column
+  // still lists its sources, and says the time is not tracked.
+  const listSources = (withCursor: boolean) => supabaseAdmin
     .from("knowledge_sources")
-    .select("id, source_type, source_id, source_name, created_by_name, created_at")
+    .select(`id, source_type, source_id, source_name, created_by_name, created_at${withCursor ? ", last_synced_at" : ""}`)
     .eq("org_id", orgId).eq("library_id", libraryId)
     .order("created_at", { ascending: true });
+  let syncTracked = true;
+  let { data: sources, error } = await listSources(true);
+  if (error && isMissingColumn(error)) {
+    syncTracked = false;
+    ({ data: sources, error } = await listSources(false));
+  }
   if (error) {
     if (missingTable(error.message, error.code)) {
       return bad("The knowledge_sources table doesn't exist yet — run migration 20260917 in Supabase.", 424);
@@ -97,8 +109,16 @@ export async function GET(req: NextRequest) {
     const sid = d.source_id as string;
     countBySource.set(sid, (countBySource.get(sid) ?? 0) + 1);
   }
+  const rows = (sources ?? []) as unknown as Array<Record<string, unknown>>;
+  // The library's last sync is its OLDEST source stamp: a reconcile stamps
+  // every source of the library at once, and a source never synced (or one
+  // a rev-up left due first) makes the library never synced — as the cron
+  // orders it (syncAllKnowledgeSources).
+  const stamps = rows.map((s) => (typeof s.last_synced_at === "string" ? s.last_synced_at : null));
+  const lastSyncedAt = syncTracked && stamps.length > 0 && stamps.every((t) => t !== null)
+    ? [...(stamps as string[])].sort()[0] : null;
   return NextResponse.json({
-    sources: (sources ?? []).map((s) => ({
+    sources: rows.map((s, i) => ({
       id: s.id,
       sourceType: s.source_type,
       sourceId: s.source_id,
@@ -106,8 +126,11 @@ export async function GET(req: NextRequest) {
       createdByName: s.created_by_name,
       createdAt: s.created_at,
       documentCount: countBySource.get(s.id as string) ?? 0,
+      lastSyncedAt: stamps[i],
     })),
     canManage: principal.isController,
+    lastSyncedAt,
+    syncTracked,
   });
 }
 

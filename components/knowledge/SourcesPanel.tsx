@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import {
   listKnowledgeSources, browseKnowledgeContainers, addKnowledgeSources,
-  removeKnowledgeSource, syncKnowledgeSources,
+  removeKnowledgeSource, syncKnowledgeSources, lastSyncedLabel,
   type KnowledgeSource, type SourceBrowseResult,
 } from "@/lib/knowledge";
 
@@ -317,6 +317,9 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
 }) {
   const { showToast } = useToast();
   const [sources, setSources] = useState<KnowledgeSource[] | null>(null);
+  // ILIFE-13: when the library last synced — shown only where the database
+  // records it (a route or database that predates it shows nothing).
+  const [synced, setSynced] = useState<{ at: string | null; tracked: boolean } | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // sourceId or "sync"
@@ -326,7 +329,12 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
   useEffect(() => {
     let cancelled = false;
     listKnowledgeSources(orgId, libraryId)
-      .then((r) => { if (!cancelled) { setSources(r.sources); setUnavailable(false); } })
+      .then((r) => {
+        if (cancelled) return;
+        setSources(r.sources);
+        setSynced({ at: r.lastSyncedAt ?? null, tracked: r.syncTracked === true });
+        setUnavailable(false);
+      })
       .catch(() => { if (!cancelled) setUnavailable(true); }); // pre-migration DB
     return () => { cancelled = true; };
   }, [orgId, libraryId, tick]);
@@ -408,6 +416,12 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
           </span>
         )}
       </div>
+      {(sources?.length ?? 0) > 0 && synced?.tracked && (
+        <p className="mt-1.5 text-[10px] font-bold text-[var(--color-text-muted)]" data-testid="sources-last-synced"
+          title={synced.at ? new Date(synced.at).toLocaleString() : undefined}>
+          {lastSyncedLabel(synced.at)}
+        </p>
+      )}
       {(sources?.length ?? 0) > 0 && (
         <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
           Live from Document Control: new documents index automatically, published revisions re-index,
