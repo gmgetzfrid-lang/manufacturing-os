@@ -27,6 +27,8 @@ const db = vi.hoisted(() => ({
   maxRows: Infinity,
   /** Simulate a response without `count` (the read must still page to the end). */
   noCount: false,
+  /** Runs before each statement (a test changes the ledger between two pages). */
+  beforeExec: null as null | ((table: string, action: string) => void),
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
@@ -71,13 +73,17 @@ vi.mock("@/lib/supabaseAdmin", () => {
       eq: (c: string, v: unknown) => { db.calls.push({ table, op: "eq", args: [c, v] }); filters.push((r) => r[c] === v); return b; },
       is: (c: string, v: unknown) => { db.calls.push({ table, op: "is", args: [c, v] }); filters.push((r) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
+      gt: (c: string, v: string) => { db.calls.push({ table, op: "gt", args: [c, v] }); filters.push((r) => String(r[c]) > v); return b; },
       or: (...args: unknown[]) => { db.calls.push({ table, op: "or", args }); return b; },
       order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return b; },
       range: (a: number, z: number) => { range = [a, z]; return b; },
       limit: (n: number) => { limit = n; return b; },
       single: () => { single = true; return b; },
       maybeSingle: () => { single = true; return b; },
-      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
+      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve().then(() => {
+        db.beforeExec?.(table, action);
+        return exec();
+      }).then(res, rej),
     };
     return b;
   }
@@ -105,6 +111,7 @@ beforeEach(() => {
   db.clock = 0;
   db.maxRows = Infinity;
   db.noCount = false;
+  db.beforeExec = null;
 });
 
 describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", () => {
@@ -177,10 +184,56 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     const m = await getMonthUsage("o1", "u1");
     expect(m.calls).toBe(800);
     expect(m.spentUsd).toBe(8);
-    // the read asks for the exact count, and stops once it holds it
+    // the read asks for the exact count, and stops once a read's count says
+    // it holds every row that read matched — paged by key (GOV-15): the 500
+    // rows at the last row's instant first, then the rows after that
+    // instant (none; every row here shares one instant)
     const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select");
     expect(selects.every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
-    expect(selects).toHaveLength(2);
+    expect(selects).toHaveLength(3);
+  });
+
+  it("GOV-15: paged by key, not offset — a reservation released or inserted between two pages never skips a row or counts one twice", async () => {
+    // 1,500 rows, each at its own instant; PostgREST's max-rows is 1,000.
+    const base = Date.parse(monthStartIso()) + 60_000;
+    const seed = () => {
+      db.calls = [];
+      db.tables.ai_usage_events = Array.from({ length: 1500 }, (_, i) => row({
+        id: `k${String(i).padStart(5, "0")}`, created_at: new Date(base + i * 1000).toISOString(), est_cost_usd: 0.01,
+      }));
+    };
+    /** Change the ledger between the first page and the next. */
+    const betweenPages = (change: () => void) => {
+      let selects = 0;
+      db.beforeExec = (table, action) => {
+        if (table === "ai_usage_events" && action === "select" && ++selects === 2) change();
+      };
+    };
+    db.maxRows = 1000;
+
+    // An early reservation is released after page 1: an offset page would
+    // then start one row late and skip k01000.
+    seed();
+    betweenPages(() => { db.tables.ai_usage_events = db.tables.ai_usage_events.filter((r) => r.id !== "k00005"); });
+    let month = (await getMonthUsageByUser("o1")).get("u1")!;
+    expect(month.calls).toBe(1500);          // k00005 was read before it went; k01000 is not skipped
+    expect(month.spentUsd).toBe(15);
+
+    // A row from a transaction that began before the cursor lands after
+    // page 1: an offset page would start one row early and read k00999
+    // twice. By key it sorts before the cursor and is read once at most.
+    seed();
+    betweenPages(() => {
+      db.tables.ai_usage_events.push(row({ id: "late", created_at: new Date(base + 10_500).toISOString(), est_cost_usd: 0.01 }));
+    });
+    month = (await getMonthUsageByUser("o1")).get("u1")!;
+    expect(month.calls).toBe(1500);
+    expect(month.spentUsd).toBe(15);
+
+    // the keyset reads: the cursor instant's later ids, then the rows after it
+    const keysetReads = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "gt");
+    expect(keysetReads.map((c) => c.args[0])).toEqual(["id", "created_at"]);
+    expect(db.calls.some((c) => c.table === "ai_usage_events" && c.op === "or")).toBe(false);
   });
 
   it("without a count it still reads until a page comes back empty", async () => {

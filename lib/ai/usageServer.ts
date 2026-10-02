@@ -190,31 +190,50 @@ const PAGE = 1000;
  *  ledger that size is reported as unreadable rather than summed partially. */
 const MAX_PAGES = 100;
 
-/** Every current-month row matching the filter, paged past PostgREST's row
- *  cap (a partial sum would read as headroom that does not exist). A page
- *  shorter than asked for is NOT taken as the last one — the project's
- *  max-rows setting may be below PAGE — so the read continues from where the
- *  rows end until it holds the exact count PostgREST reports, or a page
- *  comes back empty. */
+/** Every current-month row matching the filter, read past PostgREST's row
+ *  cap (a partial sum would read as headroom that does not exist).
+ *
+ *  Paged by KEY, never by offset (GOV-15): rows come in (created_at, id)
+ *  order and each page starts after the last row read — first the rows at
+ *  that row's instant with a later id, then the rows after that instant.
+ *  An offset page shifted under a reservation inserted or released between
+ *  two reads (a row skipped, or one counted twice); a key does not move. A
+ *  page shorter than asked for is NOT taken as the last one — the
+ *  project's max-rows setting may be below PAGE — so a read is finished
+ *  only when PostgREST's exact count for that read says it holds every row
+ *  the read matched, or a page past the last instant comes back empty. */
 async function readMonthRows(orgId: string, userId: string | null): Promise<UsageRow[]> {
   const rows: UsageRow[] = [];
+  /** The last row read: the next page starts after it. */
+  let after: { at: string; id: string } | null = null;
+  /** Reading the rows at `after.at` with a later id (else: after that instant). */
+  let sameInstant = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     let q = supabaseAdmin
       .from("ai_usage_events")
       .select(USAGE_COLUMNS, { count: "exact" })
       .eq("org_id", orgId);
     if (userId !== null) q = q.eq("user_id", userId);
-    const from = rows.length;
+    if (!after) q = q.gte("created_at", monthStartIso());
+    else if (sameInstant) q = q.eq("created_at", after.at).gt("id", after.id);
+    else q = q.gt("created_at", after.at);
     const { data, error, count } = await q
-      .gte("created_at", monthStartIso())
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, from + PAGE - 1);
+      .range(0, PAGE - 1);
     if (error) throw new AiUsageUnavailableError(`couldn't read the usage ledger: ${error.message}`);
     const batch = (data ?? []) as UsageRow[];
     rows.push(...batch);
-    if (batch.length === 0) return rows;
-    if (typeof count === "number" && rows.length >= count) return rows;
+    const whole = typeof count === "number" && batch.length >= count;
+    if (batch.length === 0 || whole) {
+      // Done with the instant's later ids: on to the rows after it. Done
+      // with the month (the first read, or the rows after an instant).
+      if (sameInstant) { sameInstant = false; continue; }
+      return rows;
+    }
+    const last = batch[batch.length - 1];
+    after = { at: String(last.created_at ?? ""), id: String(last.id ?? "") };
+    sameInstant = true;
   }
   throw new AiUsageUnavailableError(`the usage ledger holds more than ${PAGE * MAX_PAGES} rows this month`);
 }
