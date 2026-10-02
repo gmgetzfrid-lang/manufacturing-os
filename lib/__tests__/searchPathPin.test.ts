@@ -20,8 +20,15 @@
 // definition that already existed when it ran. A function on its list that a
 // LATER migration re-creates without the clause is unpinned live, and fails
 // here. (Before this rule the exemption ignored the order, and such a
-// re-creation passed.) A static `ALTER FUNCTION … SET search_path` pins;
-// `SET search_path TO DEFAULT`, `RESET search_path` and `RESET ALL` unpin.
+// re-creation passed.) `SET search_path TO DEFAULT`, `RESET search_path` and
+// `RESET ALL` unpin, wherever they appear.
+//
+// One rule can pass a function the earlier lint failed: a static, TOP-LEVEL
+// `ALTER FUNCTION … SET search_path` pins whatever definition is live when it
+// runs. An ALTER inside a single-quoted string or a dollar-quoted block (an
+// `EXECUTE '…'` string, a conditional `DO` block, a function body) does not
+// count as a pin, because it may never run. (No migration has a static one
+// today; 20261020 pins through EXECUTE format(…), handled by alterPinned.)
 //
 // What no replay can see: a file pasted OUT of filename order. The lint
 // knows the files, not the order they reached the live database. The known
@@ -82,6 +89,44 @@ type FnState = {
 // `= DEFAULT` sets nothing: it is the same as RESET.
 const setsSearchPath = /SET\s+search_path\s*(?:(?:=|\bTO\b)\s*(?!\s|DEFAULT\b)|FROM\s+CURRENT\b)/i;
 
+/** `txt` with every single-quoted string and dollar-quoted block blanked to
+ *  spaces. Newlines and length are kept, so an offset in the result is the
+ *  same offset in `txt`. Used to tell a top-level statement from one inside a
+ *  string or a body. An unterminated quote blanks to the end, which can only
+ *  hide a pin (the lint then fails loudly), never an unpin. */
+function topLevelOnly(txt: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const blank = (from: number, to: number) => out.push(txt.slice(from, to).replace(/[^\n]/g, " "));
+  while (i < txt.length) {
+    const next = txt.slice(i).search(/['$]/);
+    if (next < 0) { out.push(txt.slice(i)); break; }
+    const at = i + next;
+    out.push(txt.slice(i, at));
+    if (txt[at] === "'") {
+      let j = at + 1;
+      while (j < txt.length && !(txt[j] === "'" && txt[j + 1] !== "'")) j += txt[j] === "'" ? 2 : 1;
+      const end = Math.min(j + 1, txt.length);
+      blank(at, end);
+      i = end;
+      continue;
+    }
+    // `$` opens a dollar quote only as `$$` or `$tag$`, and not inside an
+    // identifier (`a$b`) or as a positional parameter (`$1`).
+    const tag = /^\$(?:[A-Za-z_]\w*)?\$/.exec(txt.slice(at, at + 64));
+    if (tag && !/\w/.test(txt[at - 1] ?? "")) {
+      const close = txt.indexOf(tag[0], at + tag[0].length);
+      const end = close < 0 ? txt.length : close + tag[0].length;
+      blank(at, end);
+      i = end;
+      continue;
+    }
+    out.push("$");
+    i = at + 1;
+  }
+  return out.join("");
+}
+
 /** `extra` appends synthetic migration text after the real sequence — the
  *  self-checks below use it to prove the rules catch what they claim. */
 function census(extra: Array<{ file: string; sql: string }> = []): Map<string, FnState> {
@@ -92,14 +137,16 @@ function census(extra: Array<{ file: string; sql: string }> = []): Map<string, F
   const createRe =
     /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)([\s\S]*?)\$\w*\$/gi;
   const dropRe = /DROP\s+FUNCTION\s+IF\s+EXISTS\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)/gi;
-  // A static `ALTER FUNCTION f(...) SET search_path ...` pins whatever
-  // definition is live when it runs (20261020's dynamic list is alterPinned);
-  // `SET search_path TO DEFAULT`, `RESET search_path` and `RESET ALL` unpin it.
+  // A static, top-level `ALTER FUNCTION f(...) SET search_path ...` pins
+  // whatever definition is live when it runs (20261020's dynamic list is
+  // alterPinned); `SET search_path TO DEFAULT`, `RESET search_path` and
+  // `RESET ALL` unpin it, wherever they appear.
   const alterRe =
     /ALTER\s+FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s+(SET\s+search_path\b[^;]*|RESET\s+(?:search_path|ALL)\b)/gi;
   const sources = [...migrationFiles().map((file) => ({ file, sql: readFileSync(file, "utf8") })), ...extra];
   sources.forEach(({ file, sql }, order) => {
     const txt = stripSqlComments(sql);
+    const top = topLevelOnly(txt);
     // CREATE and DROP statements are applied in their TEXTUAL order within
     // the file — SQL executes top to bottom, so the standard
     // `DROP FUNCTION IF EXISTS f(...); CREATE FUNCTION f(...)` re-creation
@@ -116,7 +163,13 @@ function census(extra: Array<{ file: string; sql: string }> = []): Map<string, F
       events.push({ at: d.index ?? 0, kind: "drop", key: `${d[1]}/${arityOf(d[2])}` });
     }
     for (const a of txt.matchAll(alterRe)) {
-      events.push({ at: a.index ?? 0, kind: "alter", key: `${a[1]}/${arityOf(a[2])}`, pin: setsSearchPath.test(a[3]) });
+      const at = a.index ?? 0;
+      const pin = setsSearchPath.test(a[3]);
+      // A pin counts only as a top-level statement (blanked in `top` when it
+      // sits in a string or a dollar-quoted block, where it may never run).
+      // An unpin counts anywhere: the safe direction.
+      if (pin && top[at] !== txt[at]) continue;
+      events.push({ at, kind: "alter", key: `${a[1]}/${arityOf(a[2])}`, pin });
     }
     events.sort((a, b) => a.at - b.at);
     for (const ev of events) {
@@ -264,6 +317,28 @@ $$;`,
     // a CREATE whose clause sets the default pins nothing either
     const toDefault = [{ file: "zz_synthetic_default.sql", sql: recreate(true)[0].sql.replace("SET search_path = public", "SET search_path TO DEFAULT") }];
     expect(unpinnedDefiners(census(toDefault)).some((v) => v.startsWith("is_org_controller/1 "))).toBe(true);
+  });
+
+  it("an ALTER inside an EXECUTE string or a conditional DO block is not a pin; an unpin there still unpins", () => {
+    for (const quoted of [
+      "DO $$ BEGIN EXECUTE 'ALTER FUNCTION is_org_controller(uuid) SET search_path = public'; END $$;",
+      "DO $do$ BEGIN\n  IF to_regprocedure('is_org_controller(uuid)') IS NOT NULL THEN\n    ALTER FUNCTION is_org_controller(uuid) SET search_path = public;\n  END IF;\nEND $do$;",
+    ]) {
+      const notPinned = [...recreate(false), { file: "zz_synthetic_quoted_alter.sql", sql: quoted }];
+      expect(unpinnedDefiners(census(notPinned)).some((v) => v.startsWith("is_org_controller/1 ")), quoted).toBe(true);
+    }
+    const quotedReset = { file: "zz_synthetic_quoted_reset.sql", sql: "DO $$ BEGIN ALTER FUNCTION is_org_controller(uuid) RESET search_path; END $$;" };
+    expect(unpinnedDefiners(census([...recreate(true), quotedReset])).some((v) => v.startsWith("is_org_controller/1 "))).toBe(true);
+  });
+
+  it("topLevelOnly blanks strings and dollar-quoted blocks in place, and leaves positional parameters and identifiers alone", () => {
+    const src = "SELECT 'it''s', $1, a$b; DO $x$ ALTER $x$; ALTER FUNCTION f() SET search_path = public;";
+    const top = topLevelOnly(src);
+    expect(top.length).toBe(src.length);
+    expect(top).not.toContain("it''s");
+    expect(top).toContain("$1, a$b;");
+    expect(top.indexOf("ALTER")).toBe(src.lastIndexOf("ALTER"));
+    expect(topLevelOnly("a\n'b\nc'\nd").split("\n").length).toBe(4);
   });
 });
 

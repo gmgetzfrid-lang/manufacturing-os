@@ -156,7 +156,7 @@ describe("ALOG-1 done-when 1 — the capability policy round-trips through the o
 });
 
 describe("ALOG-12 done-when 2 / 3 — the route's audit `before` and the grant path", () => {
-  it("`before` is the row the compare-and-set write replaced, not what this process had cached", async () => {
+  it("`before` is read fresh at write time: another admin's route write, not what this process had cached", async () => {
     db.tables.org_configurations = [{ org_id: "o1", key: "capability_policy", data: { caps: { "ticket.assign": ["Admin"] }, grants: [] }, updated_at: "2026-10-01T00:00:00Z" }];
     await loadCapabilityPolicyEntry("o1", supabaseAdmin); // primes the server cache with the old row
     // Another admin's write lands after that read.

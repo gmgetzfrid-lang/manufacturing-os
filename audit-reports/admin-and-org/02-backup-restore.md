@@ -434,26 +434,15 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 - [ ] a non-empty prefix is required before retention_days can be set, and the UI states plainly that objects under that prefix will be deleted
 - [ ] retention failures and deletion counts are surfaced on the run row instead of only in diagnostics
 
-**Partial (2026-10-02, admin-and-org Round G, P0).** Verified against base `f1ac550` (DEC-29). The status stays OPEN.
-- Done-when 1 closes by pointer to document-control `XEDGE-4` (Phase 6, commit `d82254a`).
-- Done-when 2 holds at the server but not in the UI.
-- Done-when 3 does not hold.
+**Verification on `f1ac550` (2026-10-02, admin-and-org Round G, P0; superseded by P3's resolution).** A dated record of what base `f1ac550` showed (DEC-29), not a status. admin-and-org P3 owns this finding's residual ("BKP-6 residual") and ran in parallel, so its branch may already have changed the page and the run row. Where P3's resolution of this finding is present, it is the finding's status; this block only records the base it started from.
 
-admin-and-org P3 owns the residual ("BKP-6 residual") and runs in parallel, so its branch may already have changed the page and the run row. This block records base `f1ac550` only. Once P3's resolution of this finding is merged, it supersedes this block, its OPEN status and its ✗ lines.
+- **Done-when 1, on `f1ac550`: met, by document-control `XEDGE-4`** (Phase 6, commit `d82254a`). `s3PurgeOlderThan` refuses an empty or slashes-only prefix before any bucket call (`lib/exportRunner.ts:501-507`) and lists only under `prefix + "/"` (`:516`). A key becomes a deletion candidate only when it is older than the cutoff AND matches `EXPORT_ARCHIVE_RE = /(^|\/)manufacturing-os-export-[\w.\-]+\.zip$/` (`:489`, `:521-522`). A customer's `vendor-drawings-2019.zip` is never a candidate, whatever its age. Pinned by `lib/__tests__/destructiveDeletes.test.ts` "s3PurgeOlderThan (XEDGE-4)": zero bucket calls on `""` and on `"///"`, and the pattern matches only this app's archives.
+- **Done-when 2, on `f1ac550`: the server half was in place.** Both destination routes refused `retention_days > 0` with an empty prefix: create at `app/api/data-export/destinations/route.ts:101-109`, and PATCH, checked against the resulting row, at `[id]/route.ts:66-82`.
+  - The page at that commit: `app/(protected)/admin/data-export/page.tsx:606` labelled Prefix "Optional folder inside the bucket", and `:665` hinted Retention as "Delete older exports in your bucket". The page did not require the prefix before retention could be set, and did not say that this app's export archives under that prefix would be deleted; an admin learned it from a 400.
+  - admin-and-org P3's file list names "app/(protected)/admin/data-export/page.tsx (prefix required before retention_days)".
+- **Done-when 3, on `f1ac550`: counts and failures were in diagnostics.** The runner wrote `step("s3:retention:done", "scanned N, deleted M app archive(s)")`, or `step("s3:retention:err", …)` on a refusal or failure, into diagnostics only (`lib/exportRunner.ts:364-375`). The run recorded success either way, and `export_runs` had no retention column. admin-and-org P3's file list names "lib/exportRunner.ts (retention deleted/failed counts on export_runs)".
 
-- **Done-when 1 holds.** `s3PurgeOlderThan` refuses an empty or slashes-only prefix before any bucket call (`lib/exportRunner.ts:501-507`) and lists only under `prefix + "/"` (`:516`). A key becomes a deletion candidate only when it is older than the cutoff AND matches `EXPORT_ARCHIVE_RE = /(^|\/)manufacturing-os-export-[\w.\-]+\.zip$/` (`:489`, `:521-522`). A customer's `vendor-drawings-2019.zip` is never a candidate, whatever its age. Pinned by `lib/__tests__/destructiveDeletes.test.ts` "s3PurgeOlderThan (XEDGE-4)": zero bucket calls on `""` and on `"///"`, and the pattern matches only this app's archives.
-- **Done-when 2 holds only at the server.** Both destination routes refuse `retention_days > 0` with an empty prefix: create at `app/api/data-export/destinations/route.ts:101-109`, and PATCH, checked against the resulting row, at `[id]/route.ts:66-82`.
-  - The UI half does not hold. `app/(protected)/admin/data-export/page.tsx:606` still labels Prefix "Optional folder inside the bucket". `:665` hints Retention as "Delete older exports in your bucket".
-  - Nothing requires the prefix before retention can be set. Nothing states that this app's export archives under that prefix will be deleted; an admin learns it from a 400.
-  - **Owner: admin-and-org P3.** Its file list names "app/(protected)/admin/data-export/page.tsx (prefix required before retention_days)".
-- **Done-when 3 does not hold.** The runner writes `step("s3:retention:done", "scanned N, deleted M app archive(s)")`, or `step("s3:retention:err", …)` on a refusal or failure, into diagnostics only (`lib/exportRunner.ts:364-375`). The run still records success, and `export_runs` has no retention column. The criterion asks for both "on the run row instead of only in diagnostics". **Owner: admin-and-org P3.** Its file list names "lib/exportRunner.ts (retention deleted/failed counts on export_runs)".
-
-**Done-when.**
-1. ✓ only this app's archives, under a non-empty prefix (`XEDGE-4`).
-2. Half. ✓ server: retention without a prefix is refused at create and PATCH. ✗ UI: the page does not require the prefix or state what will be deleted (owner P3).
-3. ✗ counts and failures are in diagnostics only (owner P3).
-
-**Scope / residual.** Done-when 2 (UI) and done-when 3, both P3's. No code changed in this package.
+No code changed in this package. What remained on `f1ac550` (the page's prefix requirement and copy, and the counts on the run row) is P3's, and P3's resolution records what landed.
 
 ---
 
