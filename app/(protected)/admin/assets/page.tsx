@@ -44,6 +44,7 @@ import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import { CategorizeBanner, FlowPanel, FlowReviewQueue } from "@/components/assets/UnitOpsPanels";
 import { countAssetFlows, assetDeleteFlowNote } from "@/lib/processFlows";
 import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
+import CoverageReport from "@/components/assets/CoverageReport";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -104,6 +105,8 @@ function AssetsPageInner() {
   // a person to vouch for it. The equipment sweep links here with
   // ?discovered=1, landing with the filter on.
   const [discoveredOnly, setDiscoveredOnly] = useState(() => searchParams.get("discovered") === "1");
+  // GAP-308: the unit's coverage report, opened on demand.
+  const [showCoverage, setShowCoverage] = useState(false);
   // IRLS-5: archive is reversible — the archived equipment has a list of its
   // own (it is not in the grid), where the writer tier restores it.
   const [showArchived, setShowArchived] = useState(false);
@@ -471,6 +474,24 @@ function AssetsPageInner() {
             unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
             unitAssetIds={areaAssetIds}
           />
+        )}
+
+        {/* GAP-308: this unit's coverage — what its drawings and the equipment
+            list agree on, and the to-do lists where they do not. Opened on
+            demand (it reads every relation and sheet tag of the org). */}
+        {currentUnit && !loading && uid && activeOrgId && isAdmin && (
+          <div className="mb-4">
+            <button type="button" onClick={() => setShowCoverage((v) => !v)}
+              className="text-[11px] font-black text-violet-700 hover:text-violet-600 underline">
+              {showCoverage ? "Hide coverage" : "Coverage — drawings vs. the equipment list"}
+            </button>
+            {showCoverage && (
+              <div className="mt-2">
+                <CoverageReport orgId={activeOrgId} units={book.units.map((u) => ({ code: u.code, label: u.label }))}
+                  initialUnitCode={currentUnit.code} />
+              </div>
+            )}
+          </div>
         )}
 
         {/* The Site Codebook already knows the taxonomy — put it to work. */}

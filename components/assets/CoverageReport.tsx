@@ -7,7 +7,8 @@
 // report holds honestly; each list is the to-do list for it. Tags read off a
 // P&ID uploaded straight into a knowledge library (no controlled document)
 // can be discovered from here (GAP-307's knowledge door) — created unit-less
-// and reported, never guessed.
+// and reported, never guessed. Mounted org-wide from the equipment sweep and,
+// scoped to the unit, from an operating unit's page (/admin/assets?unit=).
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -37,11 +38,14 @@ function WhereLink({ w }: { w: CoverageWhere }) {
   return <span>{whereText(w)}</span>;
 }
 
-export default function CoverageReport({ orgId, units }: {
+export default function CoverageReport({ orgId, units, initialUnitCode }: {
   orgId: string;
   units: Array<{ code: string; label: string }>;
+  /** Opened from an operating unit's page: start scoped to that unit (the
+   *  selector still widens it to org-wide). */
+  initialUnitCode?: string | null;
 }) {
-  const [unitCode, setUnitCode] = useState<string>("");
+  const [unitCode, setUnitCode] = useState<string>(initialUnitCode ?? "");
   const [report, setReport] = useState<Report | null>(null);
   const [tab, setTab] = useState<Tab>("sheetOnly");
   const [loading, setLoading] = useState(false);
