@@ -192,6 +192,10 @@ type KnowledgeDocRow = {
   vision_retry_tried?: number[] | null;
   /** Failed batches in a row (ING-8); only a batch that did work zeroes it. */
   ingest_failures?: number | null;
+  /** 20261162: pages the last index generation read with AI vision, recorded
+   *  by the reset — a batch with no vision context holds them rather than
+   *  consume them text-only (ING-13). */
+  vision_owed_pages?: number[] | null;
   /** The controlled document a mirror reflects (for the mention pass). */
   source_document_id?: string | null;
   error?: string | null;
@@ -276,8 +280,21 @@ const INGEST_COLUMNS_20261122 = [
   "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried",
   "ingest_failures",
 ];
+/** …and the one 20261162 adds (ING-13). */
+const INGEST_COLUMNS_20261162 = ["vision_owed_pages"];
 
 // ── The shared reset (ING-3 / DWG-1 / ING-12) ─────────────────────────────
+
+/** A document the reset queued whose old index it could not fully delete
+ *  (ING-13): reset (it is in `reset`, out of Ask, queued) — the next index
+ *  generation's first batch clears what is left. `message` is the same
+ *  sentence `errors` carries for it. */
+export interface ResetLeftover {
+  documentId: string;
+  /** The steps that failed, each with its error ("chunks: …"). */
+  left: string[];
+  message: string;
+}
 
 export interface KnowledgeIndexReset {
   /** Documents whose derived index is gone and that are queued ('stale'). */
@@ -288,6 +305,9 @@ export interface KnowledgeIndexReset {
    *  caller's view is stale and a later pass reconciles from the row). */
   busy: string[];
   errors: string[];
+  /** Present when a document was reset with part of its old index left —
+   *  the same reports `errors` carries for them, by id (ING-13). */
+  leftovers?: ResetLeftover[];
 }
 
 /** Everything the index derives from a file, zeroed: the row says "nothing
@@ -297,7 +317,38 @@ const RESET_ROW = {
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [] as number[],
   vision_partial_accepted: false, chunk_version: null, vision_retry_after: null,
   vision_retry_tried: [] as number[], ingest_failures: 0,
+  vision_owed_pages: [] as number[],
 };
+
+/** The pages a document's index owes AI vision once it is reset (ING-13):
+ *  every page its current generation read with AI vision (its chunks say
+ *  so — GOV-9), every page still waiting on AI vision (vision_failed_pages:
+ *  a failed read, a held page, an accepted partial index's unread pages),
+ *  and the pages an earlier reset owed that this generation has not reached
+ *  yet. A reset writes them on the row (vision_owed_pages), so a batch with
+ *  no vision context — a keyless controller's tab, the cron without a
+ *  sponsor — holds them for a key instead of committing them text-only as
+ *  complete. Null when the chunks cannot be read: a reset that cannot say
+ *  what it would throw away does not throw it away. A database without
+ *  chunk provenance (pre-20261122) has nothing to read: none. */
+async function visionOwedPages(documentId: string, row: Record<string, unknown>): Promise<{ pages: number[] } | { error: string }> {
+  const owed = new Set<number>(pageQueue(row.vision_failed_pages));
+  const reached = Number(row.pages_indexed ?? 0);
+  for (const p of pageQueue(row.vision_owed_pages)) if (p > reached) owed.add(p);
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin.from("knowledge_chunks")
+      .select("page").eq("document_id", documentId).eq("source", "vision")
+      .order("page", { ascending: true }).range(from, from + 999);
+    if (error) {
+      if (isMissingColumn(error)) break;
+      return { error: error.message };
+    }
+    const rows = (data ?? []) as Array<{ page: number }>;
+    for (const r of rows) owed.add(Number(r.page));
+    if (rows.length < 1000) break;
+  }
+  return { pages: pageList([...owed]) };
+}
 
 /** THE reset of a knowledge document's derived index — the one the rev-up
  *  refresh (lib/knowledgeSourceSync.ts) and the library re-index call, and
@@ -414,8 +465,20 @@ export async function resetKnowledgeIndex(
 
     // 2. The row: queued and zeroed (and re-pointed) FIRST. Under our own
     //    claim the claim is kept through the deletes; under someone else's
-    //    (supersedeBusy) theirs is left exactly as it is.
+    //    (supersedeBusy) theirs is left exactly as it is. With 20261162 it
+    //    records the pages the index being reset owes AI vision (ING-13) —
+    //    read before anything is deleted; a reset that cannot read them
+    //    changes nothing.
     const full: Record<string, unknown> = { ...RESET_ROW, ...(opts.rowUpdate?.(id) ?? {}) };
+    if (seen && "vision_owed_pages" in seen) {
+      const owed = await visionOwedPages(id, seen);
+      if ("error" in owed) {
+        out.errors.push(`${id}: the pages AI vision read could not be listed, so nothing was reset: ${owed.error}`);
+        await release();
+        continue;
+      }
+      full.vision_owed_pages = owed.pages;
+    }
     let updErr: DbError = null;
     let wrote = 0;
     if (seen) {
@@ -441,9 +504,10 @@ export async function resetKnowledgeIndex(
       // does not have yet, newest first.
       const ladder = [
         full,
-        Object.fromEntries(Object.entries(full).filter(([k]) => !INGEST_COLUMNS_20261122.includes(k))),
         Object.fromEntries(Object.entries(full).filter(([k]) =>
-          !INGEST_COLUMNS_20261122.includes(k) && k !== "vision_pages" && k !== "last_section")),
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k))),
+        Object.fromEntries(Object.entries(full).filter(([k]) =>
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && k !== "vision_pages" && k !== "last_section")),
       ];
       for (const update of ladder) {
         const { data, error } = await expectOn(supabaseAdmin.from("knowledge_documents")
@@ -478,6 +542,9 @@ export async function resetKnowledgeIndex(
     out.reset.push(id);
     if (left.length > 0) {
       out.errors.push(`${id}: ${left.join("; ")} (the row is queued; the re-index's first batch clears what is left)`);
+      // ING-13: the same report, structured — by id, with what is left — so
+      // a caller never has to parse the sentence.
+      (out.leftovers ??= []).push({ documentId: id, left, message: out.errors[out.errors.length - 1] });
     }
   }
   return out;
@@ -789,6 +856,10 @@ export interface LibraryReindex extends KnowledgeIndexReset {
   /** Documents still to reset after this call — not reached before the
    *  deadline, busy, or failed. Run the action again to continue. */
   remaining: number;
+  /** Dry run only: this database records the pages a reset owes AI vision
+   *  (20261162), so a driver with no usable key holds them rather than
+   *  indexing them text-only (ING-13) — the confirmation says which. */
+  keylessHolds?: boolean;
 }
 
 /** The explicit per-library switch between chunkers. Never run
@@ -824,6 +895,11 @@ export async function reindexLibraryChunks(
   if (opts.dryRun) {
     const { error } = await supabaseAdmin.from("knowledge_libraries").select("chunk_version").eq("id", libraryId).maybeSingle();
     if (error) throw new Error(isMissingColumn(error) ? needsMigration : `library: ${error.message}`);
+    // ING-13: can a reset here record what AI vision read (20261162)? A
+    // probe that fails for any reason says no — the worse outcome is said.
+    const { error: owedErr } = await supabaseAdmin.from("knowledge_documents")
+      .select("vision_owed_pages").eq("library_id", libraryId).limit(1);
+    out.keylessHolds = !owedErr;
     return out;
   }
 
@@ -837,6 +913,7 @@ export async function reindexLibraryChunks(
     out.reset.push(...res.reset);
     out.busy.push(...res.busy);
     out.errors.push(...res.errors);
+    if (res.leftovers) (out.leftovers ??= []).push(...res.leftovers);
   }
   out.remaining = todo.length - out.reset.length;
   return out;
@@ -1233,6 +1310,12 @@ export async function ingestKnowledgeDocBatch(
     const tried = new Set<number>(genStart ? [] : pageQueue(cur.vision_retry_tried).filter((p) => failed.has(p)));
     const accepted = !genStart && cur.vision_partial_accepted === true;
     const retryMode = from >= pageCount && queueBefore.length > 0 && !accepted;
+    // ING-13: pages the last index generation read with AI vision (recorded
+    // by the reset, 20261162). Only a batch with NO vision context reads
+    // this: it holds such a page for a key, as it holds one for a reason
+    // someone can fix — a batch with a key reads exactly the pages it
+    // always did.
+    const owedVision = vision ? new Set<number>() : new Set<number>(pageQueue(cur.vision_owed_pages));
     const baseVisionPages = genStart ? 0 : Number(cur.vision_pages ?? 0);
     const baseEmptyPages = genStart ? 0 : Number(cur.empty_pages ?? 0);
 
@@ -1319,7 +1402,8 @@ export async function ingestKnowledgeDocBatch(
       let visionHeld = false;
       const rawPageText = lines.join("\n");
       const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
-      if (forceVision || vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
+      const owedHere = owedVision.has(p);
+      if (forceVision || vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText) || owedHere) {
         // Don't START a vision page we can't finish — a page begun at t=50s on
         // a 60s function is pure waste, and worse, it takes the whole batch's
         // committed progress down with it.
@@ -1373,12 +1457,15 @@ export async function ingestKnowledgeDocBatch(
           // the last finished page so the caller's next call resumes exactly
           // here with a fresh invocation's worth of time.
           return { stop: timeForVision ? "budget" : "time" };
-        } else if (opts.noVisionReason) {
+        } else if (opts.noVisionReason || owedHere) {
           // GOV-11 / GOV-4: no vision for a reason someone can fix (the
           // agreement, the ledger). The page keeps its text layer for now and
           // waits for AI vision on the row, like a provider failure (ING-6):
           // consumed text-only, the document would reach 'ready' and the page
-          // would never be read once the reason is gone.
+          // would never be read once the reason is gone. ING-13: so does a
+          // page the last index generation read with AI vision, whatever the
+          // reason this batch has none (no key, no budget) — a regenerated
+          // document never throws away what AI vision read in it.
           visionHeld = true;
         }
       }

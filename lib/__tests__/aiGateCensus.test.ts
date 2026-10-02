@@ -118,7 +118,9 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
   it("the interactive ingest route's vision context carries all five gates — the agreement included (GOV-11 limb, no longer PENDING)", () => {
     const f = "app/api/knowledge/ingest/route.ts";
     expect(PENDING[f]).toBeUndefined();
-    expect(usesGates(src(f))).toBe(false);
+    // Since ING-13 (I-06b) the route imports aiGates for the table-aware
+    // re-index's vision test; its own VisionContext is still the INLINE
+    // stack, checked gate by gate here.
     expect(missingGates(src(f))).toEqual([]);
     // the agreement is read for the requester, at the current version, before the VisionContext is built
     const s = src(f);
@@ -126,6 +128,18 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     expect(agreementAt).toBeGreaterThan(0);
     expect(s.slice(agreementAt, agreementAt + 300)).toMatch(/\.eq\("user_id", user\.id\)[\s\S]*\.eq\("agreement_version", AGREEMENT_VERSION\)/);
     expect(agreementAt).toBeLessThan(s.indexOf("vision = {"));
+  });
+
+  it("the table-aware re-index runs THE vision test — assertAiGates — before it audits or resets anything (ING-13, I-06b)", () => {
+    const s = src("app/api/knowledge/ingest/route.ts");
+    expect(usesGates(s)).toBe(true);
+    const fn = s.slice(s.indexOf("async function reindex("));
+    const gate = fn.indexOf('await assertAiGates({ orgId: lib.org_id as string, userId, op: "knowledgeVision" })');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(fn.indexOf('action: "KNOWLEDGE_LIBRARY_REINDEXED"'));
+    expect(gate).toBeLessThan(fn.indexOf("reindexLibraryChunks(libraryId, chunker, { deadlineMs })"));
+    // No parallel copy of the test: the re-index reads no key or agreement itself.
+    expect(fn.slice(0, fn.indexOf('action: "KNOWLEDGE_LIBRARY_REINDEXED"'))).not.toMatch(/ai_connections|ai_key_agreements|getCapUsd|getMonthUsage/);
   });
 
   it("flows/read is GATED (I-09, GOV-11 / PR-12): the gates before the render, governedAiCall with the images, no direct provider call", () => {

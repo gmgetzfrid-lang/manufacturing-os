@@ -52,6 +52,7 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import { assertAiGates, GovernedCallError } from "@/lib/ai/aiGates";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
@@ -475,7 +476,19 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
  *      document already on the chosen chunker (or not yet indexed) is
  *      skipped, so a re-run never resets — or re-bills — one twice, and a
  *      document being indexed at that moment is reported busy and picked up
- *      by the next run. */
+ *      by the next run.
+ *    - A run that would re-read AI-vision pages (the dry run counts them),
+ *      or resets documents in a library that reads every page with AI
+ *      vision, first puts the CALLER through the vision test — the gate
+ *      stack in lib/ai/aiGates.ts: their own key on an allowed provider, the
+ *      signed agreement, under the monthly cap (ING-13). One who fails it is
+ *      refused with 409 before anything is audited or reset: the library
+ *      page checks the clicking person's key too, but a direct call or any
+ *      other client never meets that check. The refusal carries the gate's
+ *      status and details (the agreement to sign, the cap figures).
+ *    - A document reset with part of its old index left is reported by id in
+ *      `leftovers` ({ documentId, left, message }); `errors` keeps its
+ *      message too, for a client that predates the field (ING-13). */
 async function reindex(libraryId: string, chunker: unknown, userId: string, dryRun: boolean, deadlineMs: number) {
   if (!libraryId) return bad("libraryId is required");
   if (chunker !== 1 && chunker !== 2) return bad("chunker must be 1 or 2");
@@ -501,7 +514,35 @@ async function reindex(libraryId: string, chunker: unknown, userId: string, dryR
     return NextResponse.json({
       ok: true, dryRun: true, chunker,
       documents: plan.documents, toReset: plan.toReset, visionPagesToReread: plan.visionPagesToReread,
+      keylessHolds: plan.keylessHolds === true,
     });
+  }
+
+  // ── The vision test, before anything is audited or reset (ING-13) ──────
+  //    The documents a run resets are indexed again on the key of whoever
+  //    indexes them; a run that would throw away pages AI vision read (or
+  //    that resets a read-every-page library) is the caller's to make only
+  //    with a key that can read them back.
+  if (plan.toReset > 0) {
+    const { data: libAi, error: libAiErr } = await supabaseAdmin
+      .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+    if (libAiErr) return bad(`The library's AI settings could not be read, so nothing was changed: ${libAiErr.message}`, 500);
+    const visionAllPages = ((libAi?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
+    if (plan.visionPagesToReread > 0 || visionAllPages) {
+      try {
+        await assertAiGates({ orgId: lib.org_id as string, userId, op: "knowledgeVision" });
+      } catch (e) {
+        if (!(e instanceof GovernedCallError)) throw e;
+        const n = plan.visionPagesToReread;
+        const lead = visionAllPages ? "This library reads every page with AI vision"
+          : `This re-index reads ${n} page${n === 1 ? "" : "s"} AI vision read before again`;
+        return NextResponse.json({
+          error: `Nothing was reset. ${lead}, and your AI key cannot read ${visionAllPages ? "its pages" : "them"} right now: ${e.message}`,
+          visionRequired: true, gateStatus: e.status, ...(e.details ?? {}),
+          chunker, toReset: plan.toReset, visionPagesToReread: n,
+        }, { status: 409 });
+      }
+    }
   }
 
   // The intent, recorded before anything is reset.
@@ -523,6 +564,7 @@ async function reindex(libraryId: string, chunker: unknown, userId: string, dryR
   return NextResponse.json({
     ok: out.errors.length === 0, chunker,
     reset: out.reset.length, busy: out.busy.length, errors: out.errors.slice(0, 20),
+    leftovers: (out.leftovers ?? []).slice(0, 20),
     toReset: out.toReset, visionPagesToReread: out.visionPagesToReread, remaining: out.remaining,
   }, { status: out.errors.length === 0 ? 200 : 207 });
 }
