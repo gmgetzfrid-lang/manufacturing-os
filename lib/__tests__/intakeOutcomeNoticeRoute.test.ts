@@ -68,7 +68,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 
-import { POST } from "@/app/api/intake/outcome-notice/route";
+import { POST, maxDuration } from "@/app/api/intake/outcome-notice/route";
+import { OUTCOME_SEND_TIMEOUT_MS as SEND_TIMEOUT_MS, OUTCOME_STALE_CLAIM_MS as STALE_CLAIM_MS } from "@/lib/intakeOutcomeNotice";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const VER = "22222222-2222-4222-8222-222222222222";
@@ -260,5 +261,53 @@ describe("POST /api/intake/outcome-notice — one email, however many calls (rev
     });
     await post({ orgId: ORG, versionId: VER });
     expect(claimedBeforeSend).toBe(true);
+  });
+});
+
+describe("POST /api/intake/outcome-notice — a provider hang, and a send that died (review minor: no claim left open forever)", () => {
+  it("the provider gets SEND_TIMEOUT_MS: a hang is a failed send (502, recorded), and the next call claims attempt 2 and sends", async () => {
+    expect(SEND_TIMEOUT_MS).toBe(15_000);
+    expect(maxDuration).toBe(30);
+    sent.mockImplementation(async (_url: string, init: { signal?: AbortSignal }) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    });
+    const res = await post({ orgId: ORG, versionId: VER });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ sent: false, reason: "send_failed" });
+    const [claim, failed] = audits();
+    expect(claim.action).toBe("INTAKE_OUTCOME_NOTICE_CLAIMED");
+    expect(failed).toMatchObject({ action: "INTAKE_OUTCOME_NOTICE_FAILED", details: { attempt: 1, error: "Resend did not answer within 15 s — the send was abandoned." } });
+    sent.mockImplementation(async () => new Response("{}", { status: 200 }));
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: true, outcome: "rejected" });
+    expect(audits().slice(2).map((x) => [x.action, (x.details as Row).attempt])).toEqual([
+      ["INTAKE_OUTCOME_NOTICE_CLAIMED", 2], ["INTAKE_OUTCOME_NOTIFIED", 2],
+    ]);
+  });
+  it("a claim with no outcome older than STALE_CLAIM_MS is closed as failed ('never finished') and the next attempt sends; a fresh one is still in progress", async () => {
+    const fresh = new Date(Date.now() - 60_000).toISOString();
+    state.rows.audit_logs.push({ org_id: ORG, action: "INTAKE_OUTCOME_NOTICE_CLAIMED", resource_id: DOC, details: { versionId: VER, attempt: 1 }, timestamp: fresh });
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: false, reason: "in_progress" });
+    expect(sent).not.toHaveBeenCalled();
+
+    const old = new Date(Date.now() - STALE_CLAIM_MS - 1_000).toISOString();
+    state.rows.audit_logs[0].timestamp = old;
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: true, outcome: "rejected" });
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(audits().map((x) => [x.action, (x.details as Row).attempt, (x.details as Row).stale ?? null])).toEqual([
+      ["INTAKE_OUTCOME_NOTICE_FAILED", 1, true],
+      ["INTAKE_OUTCOME_NOTICE_CLAIMED", 2, null],
+      ["INTAKE_OUTCOME_NOTIFIED", 2, null],
+    ]);
+    expect((audits()[0].details as Row).error).toMatch(/never finished \(no outcome after 10 minutes\) — treated as failed/);
+    // and the trail now reads "already"
+    expect(await (await post({ orgId: ORG, versionId: VER })).json()).toEqual({ sent: false, reason: "already" });
+  });
+  it("a stale claim that cannot be closed on the record sends nothing (503)", async () => {
+    state.rows.audit_logs.push({ org_id: ORG, action: "INTAKE_OUTCOME_NOTICE_CLAIMED", resource_id: DOC, details: { versionId: VER, attempt: 1 },
+      timestamp: new Date(Date.now() - STALE_CLAIM_MS - 1_000).toISOString() });
+    state.insertErrors.audit_logs = { code: "42501", message: "permission denied" };
+    expect((await post({ orgId: ORG, versionId: VER })).status).toBe(503);
+    expect(sent).not.toHaveBeenCalled();
   });
 });

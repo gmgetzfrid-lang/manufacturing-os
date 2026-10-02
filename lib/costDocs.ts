@@ -33,7 +33,6 @@ import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
-import { registryLinkFor } from "@/lib/costDocParse";
 import { emit } from "@/lib/notify/dispatch";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
@@ -169,55 +168,13 @@ export async function uploadCostDoc(input: {
   }
 
   const doc = mapDoc(data as Record<string, unknown>);
-  // COST-3 done-when 2: a bid whose vendor name could be only ONE Known
-  // Company is linked on its row now — the do-not-use gates then read a
-  // stored link.
-  const linked = input.kind === "quote" ? await linkBidToRegistry(input.orgId, data as Record<string, unknown>) : null;
+  // COST-3 (DEC-48, J12 line): the upload never links the bid to a Known
+  // Company — a stored link is a person's (the bid-row picker); a machine's
+  // would clear a do-not-use look-alike added later (lib/costDocParse).
   await audit("COST_DOC_UPLOADED", input.orgId, doc.id, input.actor, {
     kind: input.kind, fileName: input.file.name, rfqGroup: input.rfqGroup ?? null, vendor: input.vendorName ?? null,
-    ...(linked ? { companyLinked: { id: linked.id, name: linked.name, by: "vendor name" } } : {}),
   });
   return { ok: true, doc };
-}
-
-/** The registry is read in pages of this many rows when a bid's vendor is
- *  matched to it — never a capped first page. */
-const REGISTRY_PAGE = 1000;
-
-/**
- * COST-3 done-when 2 (projects Round G J12): link a new bid to the Known
- * Company its vendor name could ONLY be — lib/costDocParse registryLinkFor:
- * exactly one normalised candidate, and it is the name's binding (an
- * exact-name hit with a look-alike beside it is NOT linked: every gate reads
- * a stored link as a person's choice, so it would clear the look-alike's
- * do-not-use flag) — so the do-not-use gates (the bid tab, awardQuote,
- * 20261157's rail) read a stored link rather than re-deriving a match from a
- * name on every render. Only where the row carries the column (20261096)
- * and has no link, and only for a bid that names no contractor: a
- * contractor's link is a person's (set once — MON-13), may still be made,
- * and must not be outranked by a machine's link on the document
- * (companyBehind reads the document's link first). Best effort: the upload
- * stands whatever happens here, and the write is guarded on the row still
- * having no link.
- */
-async function linkBidToRegistry(orgId: string, row: Record<string, unknown>): Promise<{ id: string; name: string } | null> {
-  const vendor = String(row.vendor_name ?? "").trim();
-  if (!vendor || !("company_id" in row) || row.company_id != null || row.party_id != null) return null;
-  const registry: Array<{ id: string; name: string }> = [];
-  for (let from = 0; ; from += REGISTRY_PAGE) {
-    const { data, error } = await supabase.from("companies").select("id, name")
-      .eq("org_id", orgId).order("id").range(from, from + REGISTRY_PAGE - 1);
-    if (error) return null;
-    const page = (data ?? []) as Array<{ id: string; name: string }>;
-    registry.push(...page);
-    if (page.length < REGISTRY_PAGE) break;
-  }
-  const hit = registryLinkFor(vendor, registry);
-  if (!hit) return null;
-  const { data: written, error } = await supabase.from("cost_documents").update({ company_id: hit.id })
-    .eq("id", String(row.id)).is("company_id", null).select("id");
-  if (error || !written || (written as unknown[]).length === 0) return null;
-  return { id: hit.id, name: hit.name };
 }
 
 /** The AI's extraction as a renderable ParsedQuote, or null when the doc

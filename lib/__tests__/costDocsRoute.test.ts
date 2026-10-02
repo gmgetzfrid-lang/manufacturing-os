@@ -69,6 +69,7 @@ import { governedAiCall } from "@/lib/ai/governedCall";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { tooLargeToReadMessage } from "@/lib/routeDeadline";
 import { validateParsedInvoice, closedProjectReadMessage, INVOICE_MAX_LINES } from "@/lib/costDocParse";
+import { barredCompanyFor } from "@/lib/bidTab";
 import { POST as evaluateManual } from "@/app/api/companies/quality-manual/route";
 
 const post = (fn: (req: NextRequest) => Promise<Response>, url: string, body: unknown) => fn(new NextRequest(url, {
@@ -454,81 +455,38 @@ describe("PR-2 criterion 3 — the invoice's extraction is validated before it i
   });
 });
 
-describe("COST-3 done-when 2 — a read links the quote to the ONE Known Company its vendor name could be", () => {
+describe("COST-3 done-when 2 (DEC-48, J12 line) — a read never links the quote to a Known Company (review fix 2)", () => {
   const linkWrites = () => updatePatch().filter((p) => "company_id" in p);
   beforeEach(() => { Object.assign(state.rows.cost_documents[0], { company_id: null, vendor_name: "Gulf Mechanical", party_id: null }); });
 
-  it("an exact (or uniquely normalised) name is linked by its own guarded write; the response and the audit row say so", async () => {
+  it("a name that could be only ONE Known Company is not linked, and the registry is not read; a look-alike added later still flags the bid", async () => {
     const res = await read();
     expect(res.status).toBe(200);
-    expect((await res.json()).companyLinked).toEqual({ id: "c1", name: "Gulf Mechanical" });
-    expect(linkWrites()).toEqual([{ company_id: "c1" }]);
-    // the read's own save never carries the link; the link write is guarded on "still unlinked"
-    expect(updatePatch()[0]).not.toHaveProperty("company_id");
-    const i = state.calls.findIndex((c) => c.table === "cost_documents" && c.method === "update" && "company_id" in (c.args[0] as object));
-    expect(state.calls.slice(i, i + 6).map((c) => [c.method, ...c.args])).toContainEqual(["is", "company_id", null]);
-    expect(auditDetails().companyLinked).toEqual({ id: "c1", name: "Gulf Mechanical", by: "vendor name" });
-    // "Gulf Mechanical, Inc." normalises to the same single row
-    state.calls = []; Object.assign(state.rows.cost_documents[0], { vendor_name: "Gulf Mechanical, Inc." });
-    await read();
-    expect(linkWrites()).toEqual([{ company_id: "c1" }]);
-  });
-  it("ambiguity never binds: two rows the name could be → no link", async () => {
-    state.rows.companies.push({ id: "c2", org_id: "o1", name: "GULF MECHANICAL" });
-    const res = await read();
-    expect(res.status).toBe(200);
-    expect((await res.json()).companyLinked).toBeUndefined();
+    expect(await res.json()).not.toHaveProperty("companyLinked");
     expect(linkWrites()).toHaveLength(0);
-  });
-  it("an EXACT name with a do-not-use look-alike beside it is not linked — the look-alike keeps its flag (review blocker, Gulf Mechanical)", async () => {
-    // "Gulf Mechanical" (active) is the exact hit; "Gulf Mechanical, Inc."
-    // (do_not_use) normalises alike. A machine link to the active row would
-    // be read by every gate as a person's choice and clear the flag.
-    state.rows.companies = [
-      { id: "a", org_id: "o1", name: "Gulf Mechanical", status: "active" },
-      { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
-    ];
-    const res = await read();
-    expect(res.status).toBe(200);
-    expect((await res.json()).companyLinked).toBeUndefined();
-    expect(linkWrites()).toHaveLength(0);
-    expect(state.rows.cost_documents[0].company_id).toBeNull();
+    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
     expect(auditDetails()).not.toHaveProperty("companyLinked");
-    // the barred row's own letterhead is not linked either
-    state.calls = []; state.rows.cost_documents[0].vendor_name = "Gulf Mechanical, Inc.";
-    await read();
-    expect(linkWrites()).toHaveLength(0);
+    expect(state.rows.cost_documents[0].company_id).toBeNull();
+    // The do-not-use look-alike an admin adds afterwards: the bid tab's gate
+    // reads the row's link (none), so the name's candidates flag the bid.
+    const registry = [
+      { id: "c1", name: "Gulf Mechanical", status: "active" },
+      { id: "dnu", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    ];
+    expect(barredCompanyFor("Gulf Mechanical", (state.rows.cost_documents[0].company_id as string | null) ?? null, registry)?.id).toBe("dnu");
   });
-  it("a row already linked, a bid that names a contractor (linked or not), or a row without the column is left alone — no registry read", async () => {
-    state.rows.cost_documents[0].company_id = "c-human";
-    await read();
-    expect(linkWrites()).toHaveLength(0);
-
-    state.calls = []; state.rows.cost_documents[0].company_id = null; state.rows.cost_documents[0].party_id = "pp1";
-    state.rows.project_parties = [{ id: "pp1", company_id: "c9" }];
-    await read();
-    expect(linkWrites()).toHaveLength(0);
-    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
-
-    // A contractor with no link yet: a person may still link it (set once,
-    // MON-13), and a machine's link on the document would outrank theirs.
-    state.calls = []; state.rows.project_parties = [{ id: "pp1", company_id: null }];
-    await read();
-    expect(linkWrites()).toHaveLength(0);
-    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
-
-    state.calls = []; delete state.rows.cost_documents[0].company_id; state.rows.cost_documents[0].party_id = null;
-    await read();
-    expect(linkWrites()).toHaveLength(0);
-    expect(state.calls.some((c) => c.table === "companies")).toBe(false);
-  });
-  it("an unknown vendor links nothing; an invoice is never linked by this read", async () => {
-    state.rows.cost_documents[0].vendor_name = "Nobody Known";
-    await read();
-    expect(linkWrites()).toHaveLength(0);
-    state.calls = []; Object.assign(state.rows.cost_documents[0], { kind: "invoice", vendor_name: "Gulf Mechanical" });
-    state.aiText = JSON.stringify({ vendorName: "Gulf Mechanical", total: 10 });
-    await read();
-    expect(linkWrites()).toHaveLength(0);
+  it("no letterhead, row or contractor shape links: normalised, the model's own name, a contractor named or not", async () => {
+    for (const over of [
+      { vendor_name: "Gulf Mechanical, Inc." },
+      { vendor_name: null },                                // the model's "Gulf Mechanical, Inc." fills vendor_name
+      { vendor_name: "Gulf Mechanical", party_id: "pp1" },
+    ]) {
+      state.calls = []; Object.assign(state.rows.cost_documents[0], over);
+      state.rows.project_parties = [{ id: "pp1", company_id: null }];
+      const res = await read();
+      expect(res.status).toBe(200);
+      expect(linkWrites()).toHaveLength(0);
+      expect(state.calls.some((c) => c.table === "companies")).toBe(false);
+    }
   });
 });

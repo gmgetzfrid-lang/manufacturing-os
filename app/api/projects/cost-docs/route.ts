@@ -18,9 +18,9 @@
 // through, so the refusal is the route's own); the read answers inside its
 // own time limit with a readable 504 (PERF-6, lib/routeDeadline); an
 // invoice's extraction is validated before it is stored (PR-2,
-// lib/costDocParse); and a quote that names no contractor and whose vendor
-// name could be only one Known Company is linked to it on the row (COST-3
-// done-when 2, lib/costDocParse registryLinkFor).
+// lib/costDocParse). The read never links a quote to a Known Company: a
+// stored link is a person's (COST-3, DEC-48 — a machine's link would clear a
+// do-not-use look-alike added later, because the gates read only the link).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -29,7 +29,7 @@ import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { countPdfPages } from "@/lib/pdfPageCount";
 import { validateParsedQuote, isoCurrency } from "@/lib/bidTab";
-import { validateParsedInvoice, closedProjectReadMessage, registryLinkFor } from "@/lib/costDocParse";
+import { validateParsedInvoice, closedProjectReadMessage } from "@/lib/costDocParse";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { CLOSED_PROJECT_STATUSES } from "@/lib/intakeLinks";
 import { isTimeoutError } from "@/lib/ai/providerCall";
@@ -48,9 +48,6 @@ const bad = (error: string, status: number) => NextResponse.json({ error }, { st
 // 1–8 of N" before anyone awards on the number.
 const MAX_PAGES = 8;
 const AI_TIMEOUT_MS = 90_000;
-/** The registry is read in pages of this many rows when a quote's vendor
- *  is matched to it (COST-3) — never a capped first page. */
-const REGISTRY_PAGE = 1000;
 /** The page count is a detail of the answer, not a reason to wait: it gets
  *  this long (inside the deadline) and is unknown after it. */
 const PAGE_COUNT_BUDGET_MS = 10_000;
@@ -72,29 +69,6 @@ const INVOICE_SYSTEM =
   "- lineItems: each billed line with its amount when printed.\n" +
   "- Numbers must be numbers, not strings.\n" +
   'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","total":41250,"currency":"USD","lineItems":[{"description":"…","total":41250}]}';
-
-/** COST-3 done-when 2: the Known Company a quote's vendor name could ONLY
- *  be — exactly one normalised candidate, and it is the name's binding
- *  (lib/costDocParse registryLinkFor: an exact-name hit with a look-alike
- *  beside it never links, so a do-not-use look-alike keeps its flag). Null
- *  when the registry cannot be read: linking is an improvement, never a
- *  reason to refuse a read. */
-async function registryMatch(orgId: string, vendorName: string): Promise<{ id: string; name: string } | null> {
-  const rows: Array<{ id: string; name: string }> = [];
-  for (let from = 0; ; from += REGISTRY_PAGE) {
-    const { data, error } = await supabaseAdmin.from("companies").select("id, name")
-      .eq("org_id", orgId).order("id").range(from, from + REGISTRY_PAGE - 1);
-    if (error) {
-      console.warn(`[cost-docs] registry read for the company link failed: ${error.message}`);
-      return null;
-    }
-    const page = (data ?? []) as Array<{ id: string; name: string }>;
-    rows.push(...page);
-    if (page.length < REGISTRY_PAGE) break;
-  }
-  const hit = registryLinkFor(vendorName, rows);
-  return hit ? { id: hit.id, name: hit.name } : null;
-}
 
 export async function POST(req: NextRequest) {
   // PERF-6: the answer must land before the function's own limit.
@@ -216,8 +190,6 @@ export async function POST(req: NextRequest) {
   };
   /** The total the model read (audited beside a typed total it did not replace). */
   let extractedTotal: number | null = null;
-  /** COST-3: the Known Company this read linked the quote to. */
-  let companyLinked: { id: string; name: string } | null = null;
   if (isQuote) {
     let quote;
     try { quote = validateParsedQuote(raw, costDocId); } catch (e) { return bad((e as Error).message, 422); }
@@ -232,19 +204,6 @@ export async function POST(req: NextRequest) {
     // The submission channel's identity outranks the model's reading of a
     // letterhead — only fill vendor_name when the row has none.
     if (!doc.vendor_name && quote.vendorName !== "Unknown vendor") patch.vendor_name = quote.vendorName;
-    // COST-3 done-when 2: a bid nobody has linked is linked here when its
-    // vendor name could be only one Known Company — so the do-not-use gates
-    // read a stored link, not an AI-read name, on every render. Only where
-    // the row carries the column (20261096) and has no link of its own, and
-    // only for a bid that names no contractor: a contractor's link is a
-    // person's (set once — MON-13), may still be made, and must not be
-    // outranked by a machine's link on the document (the award reads the
-    // document's link first).
-    const docRaw = docRow as Record<string, unknown>;
-    const vendorForLink = (doc.vendor_name ?? (patch.vendor_name as string | undefined) ?? "").trim();
-    if ("company_id" in docRaw && docRaw.company_id == null && docRaw.party_id == null && vendorForLink) {
-      companyLinked = await registryMatch(orgId, vendorForLink);
-    }
   } else {
     // PR-2 criterion 3: the invoice's extraction is validated against its
     // schema (lib/costDocParse) and the validated record is what is stored —
@@ -302,19 +261,6 @@ export async function POST(req: NextRequest) {
       : "This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);
   }
 
-  // COST-3: the link is its own write, guarded on the row still having no
-  // link — a company a person linked while the read ran is never replaced,
-  // and a link that cannot be written leaves the read itself standing.
-  if (companyLinked) {
-    const { data: linked, error: linkErr } = await supabaseAdmin.from("cost_documents")
-      .update({ company_id: companyLinked.id })
-      .eq("id", costDocId).eq("org_id", orgId).is("company_id", null).select("id");
-    if (linkErr || !linked || (linked as unknown[]).length === 0) {
-      if (linkErr) console.warn(`[cost-docs] company link for ${costDocId} not written: ${linkErr.message}`);
-      companyLinked = null;
-    }
-  }
-
   await supabaseAdmin.from("audit_logs").insert({
     action: "COST_DOC_PARSED",
     resource_type: "cost", resource_id: costDocId,
@@ -325,13 +271,11 @@ export async function POST(req: NextRequest) {
       currency: patch.currency ?? null,
       ...(besideTypedTotal ? { besideTypedTotal: true, extractedTotal, totalKept: startedTotal } : {}),
       pagesRead, pagesTotal, truncated: pagesTotal != null ? pagesRead.length < pagesTotal : null,
-      ...(companyLinked ? { companyLinked: { id: companyLinked.id, name: companyLinked.name, by: "vendor name" } } : {}),
     },
   }).then(() => undefined, () => undefined);
 
   return NextResponse.json({
     parsed: patch.parsed, pagesRead, pagesTotal,
     ...(besideTypedTotal ? { totalKept: startedTotal, extractedTotal } : {}),
-    ...(companyLinked ? { companyLinked } : {}),
   });
 }

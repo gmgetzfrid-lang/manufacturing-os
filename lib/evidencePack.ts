@@ -238,13 +238,18 @@ export async function gatherProjectQualityEvidence(projectId: string): Promise<P
   };
 }
 
+/** A person decided the item but the row kept no name (a legacy or restored
+ *  row): the pack is handed to an auditor, so it says so in words — never an
+ *  opaque user id. */
+export const DECIDER_NAME_NOT_RECORDED = "a person (name not recorded)";
+
 /** Who decided a checklist item, as the pack prints it: the automated sweep
  *  and the AI assessment are named as automated (updated_by NULL + their
- *  sentinel name, DEC-35); anyone else is the person on the row. */
+ *  sentinel name, DEC-35); anyone else is the person named on the row. */
 export function checklistItemDecider(it: Record<string, unknown>): { who: string; automated: boolean } {
-  const name = (it.updated_by_name as string | null) ?? null;
+  const name = ((it.updated_by_name as string | null) ?? "").trim() || null;
   if (!it.updated_by && isMachineActorName(name)) return { who: `${name} (automated)`, automated: true };
-  return { who: name || (it.updated_by ? String(it.updated_by) : "—"), automated: false };
+  return { who: name || (it.updated_by ? DECIDER_NAME_NOT_RECORDED : "—"), automated: false };
 }
 
 function renderQualitySections(q: ProjectQualityEvidence): string {

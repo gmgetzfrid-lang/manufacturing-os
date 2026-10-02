@@ -1254,67 +1254,64 @@ describe("BID-10 — quoteGroups keys groups case- and space-insensitively", () 
   });
 });
 
-// ── COST-3 done-when 2: a new bid is linked to the ONE company its vendor binds to ──
-describe("COST-3 — uploadCostDoc links a bid whose vendor name could be only one Known Company", () => {
+// ── COST-3 done-when 2 (DEC-48, J12 line): a stored link is a person's ──
+describe("COST-3 — uploadCostDoc never links a bid to a Known Company by machine (review fix 2)", () => {
   const file = { name: "q.pdf", type: "application/pdf" } as unknown as File;
   beforeEach(() => { db.defaults.cost_documents = { company_id: null }; });
 
-  it("a unique normalised match is written on the row (guarded on 'still unlinked') and named in the upload's audit row", async () => {
-    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c2", org_id: "o1", name: "Bayline Piping" });
-    const res = await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical, Inc.", actor });
-    expect(res.ok).toBe(true);
-    expect(db.tables.cost_documents[0].company_id).toBe("c1");
-    expect(auditRows("COST_DOC_UPLOADED")[0].details).toMatchObject({ companyLinked: { id: "c1", name: "Gulf Mechanical", by: "vendor name" } });
-  });
-
-  it("ambiguity, an unknown vendor, an invoice, a linked contractor or a database without the column links nothing — and the upload stands", async () => {
-    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c2", org_id: "o1", name: "GULF MECHANICAL LLC" });
-    // "Gulf Mechanical, Inc." is no row's exact name and normalises to both
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical, Inc.", actor })).ok).toBe(true);
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Nobody Known", actor })).ok).toBe(true);
-    db.tables.companies.push({ id: "c3", org_id: "o1", name: "Bayline Piping" });
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "invoice", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
-    db.tables.project_parties.push({ id: "pp1", company_id: "c9" });
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp1", actor })).ok).toBe(true);
-    // a contractor with no link yet: a person may still link it (set once —
-    // MON-13), so the machine never links the document over it
-    db.tables.project_parties.push({ id: "pp2", company_id: null });
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp2", actor })).ok).toBe(true);
-    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null, null]);
-    db.defaults = {}; // before 20261096: no company_id column on the row
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
-    expect(db.tables.cost_documents[5]).not.toHaveProperty("company_id");
-  });
-
-  it("an EXACT name with a do-not-use look-alike beside it is not linked, so every gate still flags the bid (review blocker, Gulf Mechanical)", async () => {
-    const registry = [
+  it("a link at upload, then a do-not-use look-alike added: the bid is still flagged, because no link was stored (review blocker)", async () => {
+    // The registry holds only "Gulf Mechanical" (active): the name's ONE
+    // candidate and its binding — the case the first landing linked.
+    const registry: Array<{ id: string; org_id: string; name: string; status: string }> = [
       { id: "a", org_id: "o1", name: "Gulf Mechanical", status: "active" },
-      { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
     ];
     db.tables.companies.push(...registry);
-    // before: the bid tab's gate flags the bid by its name (any row it could be)
-    expect(barredCompanyFor("Gulf Mechanical", null, registry)?.id).toBe("dnu");
+    expect(registryLinkFor("Gulf Mechanical", registry)?.id).toBe("a");
+    // A registry read would fail loudly here: the upload must not make one.
+    db.fail["companies:select"] = [{ message: "the upload read the registry" }];
     const res = await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor });
     expect(res.ok).toBe(true);
-    const boundId = (db.tables.cost_documents[0].company_id as string | null) ?? null;
-    expect(boundId).toBeNull();
+    expect(db.fail["companies:select"]).toHaveLength(1);
+    const stored = db.tables.cost_documents[0];
+    expect(stored.company_id).toBeNull();
     expect(auditRows("COST_DOC_UPLOADED")[0].details).not.toHaveProperty("companyLinked");
-    // after: with no stored link the gate still reads the name — still flagged
-    expect(barredCompanyFor("Gulf Mechanical", boundId, registry)?.id).toBe("dnu");
-    // the shared rule, directly: one normalised candidate AND it is the binding
+
+    // A week later an admin adds the barred look-alike.
+    const lookAlike = { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" };
+    registry.push(lookAlike);
+    db.tables.companies.push(lookAlike);
+    // The bid tab's gate (registryFor / barredNow) reads the row's link — none
+    // — so it reads the name's candidates and the look-alike flags the bid;
+    // Award then asks for the typed, audited override.
+    expect(barredCompanyFor("Gulf Mechanical", (stored.company_id as string | null) ?? null, registry)?.id).toBe("dnu");
+    // Why nothing is stored: had the machine written "a", the gate would read
+    // only that row and the flag would be gone.
+    expect(barredCompanyFor("Gulf Mechanical", "a", registry)).toBeNull();
+  });
+
+  it("no quote, of any shape, is linked at upload — unique, normalised, ambiguous, with or without a contractor", async () => {
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c3", org_id: "o1", name: "Bayline Piping" });
+    db.fail["companies:select"] = [{ message: "the upload read the registry" }];
+    for (const vendorName of ["Gulf Mechanical", "Gulf Mechanical, Inc.", "GULF MECHANICAL LLC", "Bayline Piping", "Nobody Known"]) {
+      expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName, actor })).ok).toBe(true);
+    }
+    db.tables.project_parties.push({ id: "pp2", company_id: null });
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp2", actor })).ok).toBe(true);
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "invoice", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null, null, null, null]);
+    expect(db.fail["companies:select"]).toHaveLength(1);
+    expect(auditRows("COST_DOC_UPLOADED").some((a) => "companyLinked" in (a.details as Row))).toBe(false);
+  });
+
+  it("registryLinkFor (kept for a suggestion a person confirms): one normalised candidate AND it is the binding", () => {
+    const registry = [
+      { id: "a", name: "Gulf Mechanical", status: "active" },
+      { id: "dnu", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    ];
     expect(registryLinkFor("Gulf Mechanical", registry)).toBeNull();
     expect(registryLinkFor("Gulf Mechanical, Inc.", registry)).toBeNull();
     expect(registryLinkFor("GULF MECHANICAL LLC", [registry[0]])?.id).toBe("a");
-    expect(registryLinkFor("Gulf Mechanical", [registry[1]])?.id).toBe("dnu"); // a lone barred row links — and flags through its link
-  });
-
-  it("a failed registry read or a refused link write never fails the upload", async () => {
-    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" });
-    db.fail["companies:select"] = [{ message: "network" }];
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor })).ok).toBe(true);
-    db.denyUpdate.add("cost_documents");
-    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor })).ok).toBe(true);
-    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null]);
-    expect(auditRows("COST_DOC_UPLOADED").map((a) => (a.details as Row).companyLinked)).toEqual([undefined, undefined]);
+    expect(registryLinkFor("Gulf Mechanical", [registry[1]])?.id).toBe("dnu");
+    expect(registryLinkFor("", registry)).toBeNull();
   });
 });

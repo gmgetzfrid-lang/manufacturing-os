@@ -18,10 +18,17 @@
 // version and the attempt number, unique per (org, version, attempt) by
 // 20261157's index — so two concurrent calls (a double-click, a decision in
 // two tabs) send ONE email: the second claim is refused and answers
-// `in_progress`. A failed send frees the next attempt; a claim with no
-// outcome row after it (the process died mid-send, or the outcome row could
-// not be written) keeps answering `in_progress` — the system never risks
-// a second email, and the portal shows the outcome whatever happens.
+// `in_progress`. A failed send frees the next attempt. The provider is given
+// SEND_TIMEOUT_MS to answer (a hang is a failed send, recorded, never a
+// claim left open by a function killed at its limit). A claim with no
+// outcome row after it is a send under way — `in_progress` — until it is
+// STALE_CLAIM_MS old: by then the function that made it is long dead
+// (maxDuration), so the attempt is recorded as failed ("never finished")
+// and the next one goes. The one case that can mean a second email: the
+// provider accepted the send and the function died before writing the
+// outcome row — rarer than a contractor never told, which is the failure
+// this route exists to prevent. The portal shows the outcome whatever
+// happens.
 //
 // Delivery: the app's server email path — Resend, through the same
 // RESEND_API_KEY / RESEND_FROM_EMAIL the queue drain
@@ -36,9 +43,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { memberHoldsAny } from "@/lib/roleHeld";
-import { intakeOutcomeEmail, type IntakeOutcome } from "@/lib/intakeOutcomeNotice";
+import {
+  intakeOutcomeEmail, OUTCOME_SEND_TIMEOUT_MS as SEND_TIMEOUT_MS, OUTCOME_STALE_CLAIM_MS as STALE_CLAIM_MS, type IntakeOutcome,
+} from "@/lib/intakeOutcomeNotice";
 
 export const runtime = "nodejs";
+/** The reads, one claim, one provider call (at most SEND_TIMEOUT_MS) and one
+ *  outcome row fit well inside this. */
+export const maxDuration = 30;
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";
@@ -97,15 +109,26 @@ export async function POST(req: NextRequest) {
   if (!to) return NextResponse.json({ sent: false, reason: "no_contact" });
 
   // One notice per submission: what this version's notice has done so far.
-  const { data: prior, error: priorErr } = await supabaseAdmin.from("audit_logs").select("action")
+  const { data: prior, error: priorErr } = await supabaseAdmin.from("audit_logs").select("action, details, timestamp")
     .eq("org_id", orgId).in("action", [NOTIFIED, CLAIMED, FAILED]).eq("resource_id", v.record_id ?? versionId)
     .contains("details", { versionId }).limit(1000);
   if (priorErr) return bad("Whether the contractor was already told could not be checked — nothing was sent; try again.", 503);
-  const done = ((prior ?? []) as Array<{ action?: string }>).map((r) => r.action);
-  if (done.includes(NOTIFIED)) return NextResponse.json({ sent: false, reason: "already" });
-  const claims = done.filter((a) => a === CLAIMED).length;
-  // A claim with no outcome after it: a send is under way (or died mid-way) — never a second email.
-  if (claims > done.filter((a) => a === FAILED).length) return NextResponse.json({ sent: false, reason: "in_progress" });
+  const done = (prior ?? []) as Array<{ action?: string; details?: { attempt?: unknown } | null; timestamp?: string | null }>;
+  if (done.some((r) => r.action === NOTIFIED)) return NextResponse.json({ sent: false, reason: "already" });
+  const attemptOf = (r: (typeof done)[number]) => {
+    const n = Number(r.details?.attempt);
+    return Number.isInteger(n) && n > 0 ? n : 0;
+  };
+  const settled = new Set(done.filter((r) => r.action === FAILED).map(attemptOf));
+  const claimRows = done.filter((r) => r.action === CLAIMED);
+  const open = claimRows.filter((r) => !settled.has(attemptOf(r)));
+  const claimedAt = (r: (typeof done)[number]) => Date.parse(r.timestamp ?? "");
+  // A claim with no outcome after it: a send under way — never a second
+  // email — unless it is stale (its function is long dead; see above). A
+  // claim whose time cannot be read counts as under way.
+  if (open.some((r) => !(Date.now() - claimedAt(r) >= STALE_CLAIM_MS))) {
+    return NextResponse.json({ sent: false, reason: "in_progress" });
+  }
 
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey) return NextResponse.json({ sent: false, reason: "not_configured" });
@@ -124,9 +147,24 @@ export async function POST(req: NextRequest) {
     document: docLabel, revision: v.revision_label ?? null, reason: v.review_note ?? null,
   });
 
+  // A stale claim's attempt is recorded as failed — the send died — so the
+  // trail says what happened to it, and it never counts as under way again.
+  for (const r of open) {
+    const { error: staleErr } = await supabaseAdmin.from("audit_logs").insert({
+      action: FAILED, resource_type: "document", resource_id: v.record_id ?? versionId,
+      org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
+      details: {
+        versionId, attempt: attemptOf(r), projectId: l.project_id, linkId: l.id, company: l.company_name ?? null, outcome,
+        error: `The send claimed at ${r.timestamp} never finished (no outcome after ${STALE_CLAIM_MS / 60_000} minutes) — treated as failed.`,
+        stale: true,
+      },
+    });
+    if (staleErr) return bad("A stalled earlier notice could not be closed on the record — nothing was sent; try again.", 503);
+  }
+
   // The claim, before the send: one caller per attempt (20261157's unique
   // index); the loser sends nothing.
-  const attempt = claims + 1;
+  const attempt = Math.max(0, ...claimRows.map(attemptOf)) + 1;
   const { error: claimErr } = await supabaseAdmin.from("audit_logs").insert({
     action: CLAIMED, resource_type: "document", resource_id: v.record_id ?? versionId,
     org_id: orgId, user_id: userId, user_email: userData.user.email ?? null,
@@ -143,10 +181,16 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${resendKey}` },
       body: JSON.stringify({ from: fromEmail, to, subject: mail.subject, text: mail.text }),
+      // A hang is a failed send — recorded below, freeing the next attempt —
+      // never a claim left open by a function killed at its limit.
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     if (!resp.ok) sendError = `Resend ${resp.status}: ${(await resp.text()).slice(0, 300)}`;
   } catch (e) {
-    sendError = (e as Error)?.message ?? String(e);
+    const name = (e as { name?: string } | null)?.name;
+    sendError = name === "TimeoutError" || name === "AbortError"
+      ? `Resend did not answer within ${SEND_TIMEOUT_MS / 1000} s — the send was abandoned.`
+      : (e as Error)?.message ?? String(e);
   }
 
   const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({

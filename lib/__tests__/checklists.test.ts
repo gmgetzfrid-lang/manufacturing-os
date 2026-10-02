@@ -48,7 +48,7 @@ vi.mock("@/lib/eSignatures", () => ({
 
 import {
   applyAssessment, createChecklist, gatherProjectEvidenceState, listChecklistItems, listChecklists,
-  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH, APPLY_CHUNK,
+  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH, APPLY_CHUNK, PER_ROW_CHUNK,
   type Checklist, type ChecklistItem,
 } from "@/lib/checklists";
 import { MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP } from "@/lib/checklistEngine";
@@ -316,6 +316,44 @@ describe("the machine's writes in ONE request (20261157 apply_checklist_item_wri
     const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
     expect(out).toMatchObject({ applied: 1_200, refused: 0, failed: 0 });
     expect(itemWrites()).toHaveLength(200);
+  });
+
+  /** Plays 20261157 as written: the whole call in one statement; when a rail
+   *  refuses a row of a call larger than PER_ROW_CHUNK it applies nothing and
+   *  answers {split: 50}; a smaller call is judged row by row. */
+  const like20261157 = (rail: Record<string, { code: string; message: string }>) => (args: Record<string, unknown>) => {
+    const writes = args.p_writes as Array<Record<string, unknown>>;
+    if (writes.length > 2000) return { data: null, error: { code: "22023", message: "at most 2000" } };
+    if (!writes.some((w) => rail[String(w.id)])) return play()(args);
+    if (writes.length > 50) return { data: { landed: [], refused: [], failed: [], split: 50 }, error: null };
+    return play(rail)(args);
+  };
+
+  it("a call whose one statement a rail refuses is re-sent in calls of PER_ROW_CHUNK; only the refused row fails, nothing is written twice (review minor: subtransaction cache)", async () => {
+    state.tables.checklist_items = Array.from({ length: 300 }, (_, i) => row({ id: `z${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    state.rpc = { apply_checklist_item_writes: like20261157({ z137: { code: "23514", message: "A person decided this item — the machine may not overwrite it." } }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 299, refused: 0, failed: 1 });
+    expect(PER_ROW_CHUNK).toBeLessThanOrEqual(64);
+    const sizes = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length);
+    expect(sizes).toEqual([300, 50, 50, 50, 50, 50, 50]);
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.filter((r) => r.status === "na")).toHaveLength(299);
+    expect(state.tables.checklist_items.find((r) => r.id === "z137")?.status).toBe("open");
+    // the writes went in order, each exactly once after the split
+    const after = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").slice(1)
+      .flatMap((c) => (c.args[0] as { p_writes: Array<{ id: string }> }).p_writes.map((w) => w.id));
+    expect(after).toEqual(many.map((p) => p.itemId));
+  });
+
+  it("a one-write call still answering split is handed, with everything after it, to the single-row writes — never a loop", async () => {
+    state.rpc = { apply_checklist_item_writes: () => ({ data: { landed: [], refused: [], failed: [], split: 50 }, error: null }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 3, refused: 0, failed: 0 });
+    const sizes = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length);
+    expect(sizes).toEqual([3, 2, 1]);
+    expect(itemWrites()).toHaveLength(3);
   });
 
   it("the evidence sweep goes through the same one request: the citation lands, the machine actor is the function's to stamp", async () => {

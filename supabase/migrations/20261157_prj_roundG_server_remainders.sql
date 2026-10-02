@@ -1,10 +1,12 @@
 -- 20261157_prj_roundG_server_remainders.sql
 --
 -- projects Round G — J12 SERVER REMAINDERS. Six database halves that the
--- merged packages left in the browser, in one paste:
+-- merged packages left in the browser, in one paste. The numbers below are
+-- the body's section numbers (the `-- ── n.` headings), which the records cite.
 --
 -- WHAT:
---   1. MON-12 — the registry rail on an award. `enforce_cost_document_award_registry`
+--   1–2. MON-12 — the registry rail on an award (§1 the company behind a
+--      document, §2 the rail). `enforce_cost_document_award_registry`
 --      (BEFORE INSERT OR UPDATE OF status ON cost_documents, SECURITY DEFINER,
 --      search_path pinned): a signed-in write that moves a quote to
 --      `awarded` is refused when the company behind it is flagged
@@ -27,7 +29,7 @@
 --      asks a reason for moving a bid off a do-not-use company only in the
 --      browser. The service role (auth.uid() NULL — restores, server routes,
 --      the SQL editor) keeps its pass, as every Round G rail does.
---   2. GAP-406 — the award as ONE transaction. `award_quote(p_doc,
+--   3. GAP-406 — the award as ONE transaction. `award_quote(p_doc,
 --      p_cost_account, p_expected_total, p_override_reason,
 --      p_confirmed_total)` (SECURITY INVOKER: every read and write is the
 --      caller's own, under the same RLS and the same 20261093 / 20261103
@@ -45,15 +47,22 @@
 --      nothing. A NULL auth.uid() is refused (DRLS-16); EXECUTE is revoked
 --      from PUBLIC and anon. lib/costDocs.ts awardQuote calls it and falls
 --      back to the client sequence while it is missing (42883 / PGRST202).
---   3. PERF-7 / DEC-52 item 10 — the assessment and the sweep apply in ONE
+--   4. PERF-7 / DEC-52 item 10 — the assessment and the sweep apply in ONE
 --      request. `apply_checklist_item_writes(p_checklist, p_writes)`
 --      (SECURITY INVOKER) applies a list of machine writes to one
---      checklist's items, each guarded on the row's `updated_at` AS READ
---      (`IS NOT DISTINCT FROM` — the same optimistic guard as the client's
---      `.eq("updated_at", …)` / `.is("updated_at", null)`), each in its own
---      sub-transaction so one refused row never undoes the rest; it returns
---      the ids that landed, the ids the guard refused (changed by someone
---      else, or filtered by RLS) and the failures (id, SQLSTATE, message).
+--      checklist's items in ONE statement, each row guarded on its
+--      `updated_at` AS READ (`IS NOT DISTINCT FROM` — the same optimistic
+--      guard as the client's `.eq("updated_at", …)` / `.is("updated_at",
+--      null)`). Only when that statement is refused (a rail judged one row)
+--      is the call judged row by row, each row in its own sub-transaction so
+--      one refusal never undoes the rest — and only for a call of at most 50
+--      writes (each landed row's sub-transaction holds a transaction id until
+--      the call commits; PostgreSQL caches 64 per session before every other
+--      session's snapshot must read pg_subtrans). A larger refused call
+--      applies nothing and answers {split: 50}; the lib re-sends its writes
+--      in calls of 50. It returns the ids that landed, the ids the guard
+--      refused (changed by someone else, or filtered by RLS) and the
+--      failures (id, SQLSTATE, message).
 --      Only the machine actor's columns are written (status, applicability,
 --      ai_rationale, evidence) and `updated_by_name` must be one of the two
 --      machine names — every 20261091 rail still fires per row
@@ -61,7 +70,7 @@
 --      A NULL auth.uid() is refused; EXECUTE revoked from PUBLIC and anon.
 --      lib/checklists.ts writeItemPatches calls it and falls back to the
 --      batched single-row writes while it is missing.
---   4. MON-13 / DEC-76 item 3 — the contractor-link and item-contractor rules.
+--   5. MON-13 / DEC-76 item 3 — the contractor-link and item-contractor rules.
 --        * `enforce_project_party_company_link` (BEFORE UPDATE OF company_id
 --          ON project_parties): a contractor's Known Company link is set once
 --          — a signed-in caller never re-points or clears a link that is set.
@@ -76,7 +85,7 @@
 --          one trigger level down) passes. The do-not-use REASON on a
 --          look-alike link stays an app-level confirmation (lib/costs.ts),
 --          as DEC-76 item 3 says.
---   5. SEC-21 — project audit rows written under another resource type
+--   6–7. SEC-21 — project audit rows written under another resource type
 --      follow the project. `audit_row_project_ref_visible(action, type,
 --      resource, details)` (SECURITY INVOKER, no SET clause, names
 --      schema-qualified — 20261142's shape): a row that names its project in
@@ -87,11 +96,13 @@
 --      milestone row whose milestone is gone or unreadable stays readable
 --      when it is typed `milestone` (written for an org-level milestone);
 --      any other such row (typed `document` — its project can no longer be
---      traced) is the audit roles' only. `audit_logs_admin_trail` is re-created from its NEWEST
+--      traced) is the audit roles' only — §9 stamps the project on every
+--      milestone row written from now on, so that is pre-migration history
+--      only. `audit_logs_admin_trail` is re-created from its NEWEST
 --      definition (20261142) byte for byte with ONE added clause — the type /
 --      action test inline, so a row of any other kind never calls the
 --      function.
---   6. SAF-9 — the contractor's outcome notice is CLAIMED before it is
+--   8. SAF-9 — the contractor's outcome notice is CLAIMED before it is
 --      sent. A partial UNIQUE index on audit_logs (org, details.versionId,
 --      details.attempt) WHERE action = 'INTAKE_OUTCOME_NOTICE_CLAIMED':
 --      /api/intake/outcome-notice writes that claim row before it calls the
@@ -99,6 +110,20 @@
 --      two tabs) send ONE email; a failed send frees the next attempt. The
 --      index matches no existing row; building it reads audit_logs once
 --      (a short pause for audit writes on a large trail).
+--   9. SEC-21 — a milestone's audit row carries its project.
+--      `stamp_milestone_audit_project` (BEFORE INSERT ON audit_logs, only for
+--      a MILESTONE_* row — the trigger's WHEN clause; SECURITY DEFINER,
+--      search_path pinned, revoked from PUBLIC, anon and authenticated)
+--      writes `details.projectId` (and `projectIdFrom: 'milestone'`) from
+--      the milestone's own project, so §6's first branch decides the row even
+--      after the milestone is deleted. MILESTONE_DELETED is written once the
+--      milestone is gone: it takes the project this trigger stamped on the
+--      milestone's earlier rows (same org, same resource, read through the
+--      resource_id index). A projectId the writer put on the row is replaced
+--      — never trusted, here or for a later row. A milestone on no project
+--      names none (an org-level row). The service role (auth.uid() NULL — a
+--      restore re-inserting rows) keeps its rows as written.
+--      lib/milestones.ts is not changed.
 --
 -- NOT a widening: every rule here refuses or narrows. The DEC-30 inventory
 -- (aggregate counts only, never rows) is captured BEFORE the transaction and
@@ -109,29 +134,53 @@
 -- rows must read ok = true; inventory rows carry ok NULL and a count in n.
 -- Requires 20261013 (the registry and the quality tables), 20261091 (the
 -- checklist rails), 20261093 (the money rails) and 20261142 (SEC-20's
--- overlay, which section 5 re-creates).
+-- overlay, which section 7 re-creates).
 
 DO $$
 BEGIN
   IF to_regprocedure('public.audit_row_project_visible(text,text)') IS NULL THEN
-    RAISE EXCEPTION 'Apply 20261142_prj_roundG_project_audit_rows.sql first — section 5 re-creates its audit_logs_admin_trail. Nothing was changed.';
+    RAISE EXCEPTION 'Apply 20261142_prj_roundG_project_audit_rows.sql first — section 7 re-creates its audit_logs_admin_trail. Nothing was changed.';
   END IF;
 END $$;
 
 -- ── DEC-30 inventory, captured BEFORE the transaction ───────────────────
 DROP TABLE IF EXISTS pg_temp.prj_g_j12_inventory;
 CREATE TEMP TABLE prj_g_j12_inventory AS
-SELECT 'inventory (MON-12): open quotes (draft / parsed) whose contractor is linked to a do-not-use or inactive company (an award now needs the typed override, through award_quote)' AS inventory, COUNT(*)::text AS n
+SELECT 'inventory (MON-12): open quotes (draft / parsed) whose company — the document''s own link, else its contractor''s, else one exact name — is do-not-use or inactive (an award now needs the typed override, through award_quote; a direct status write is refused)' AS inventory, COUNT(*)::text AS n
   FROM cost_documents d
-  JOIN project_parties pp ON pp.id = d.party_id
-  JOIN companies c ON c.id = pp.company_id
- WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed') AND c.status IN ('do_not_use', 'inactive')
+  CROSS JOIN LATERAL (
+    -- As the award judges it (section 1): the document's own link (read
+    -- through to_jsonb — a database without 20261096's column still runs),
+    -- then its contractor's, then ONE exact case-insensitive name; a link
+    -- counts only to a company of the document's org.
+    SELECT COALESCE(
+      (SELECT c.status FROM companies c WHERE c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id),
+      (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
+        WHERE pp.id = d.party_id),
+      (SELECT min(c.status) FROM companies c
+        WHERE c.org_id = d.org_id AND NULLIF(btrim(COALESCE(d.vendor_name, '')), '') IS NOT NULL
+          AND lower(c.name) = lower(btrim(d.vendor_name))
+       HAVING COUNT(*) = 1)) AS status
+  ) b
+ WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed') AND b.status IN ('do_not_use', 'inactive')
 UNION ALL
-SELECT 'inventory (MON-12): awarded quotes whose contractor is linked to a do-not-use or inactive company (kept as they are — the rail binds the next award)', COUNT(*)::text
+SELECT 'inventory (MON-12): awarded quotes whose company (judged the same way) is do-not-use or inactive (kept as they are — the rail binds the next award)', COUNT(*)::text
   FROM cost_documents d
-  JOIN project_parties pp ON pp.id = d.party_id
-  JOIN companies c ON c.id = pp.company_id
- WHERE d.kind = 'quote' AND d.status = 'awarded' AND c.status IN ('do_not_use', 'inactive')
+  CROSS JOIN LATERAL (
+    -- As the award judges it (section 1): the document's own link (read
+    -- through to_jsonb — a database without 20261096's column still runs),
+    -- then its contractor's, then ONE exact case-insensitive name; a link
+    -- counts only to a company of the document's org.
+    SELECT COALESCE(
+      (SELECT c.status FROM companies c WHERE c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id),
+      (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
+        WHERE pp.id = d.party_id),
+      (SELECT min(c.status) FROM companies c
+        WHERE c.org_id = d.org_id AND NULLIF(btrim(COALESCE(d.vendor_name, '')), '') IS NOT NULL
+          AND lower(c.name) = lower(btrim(d.vendor_name))
+       HAVING COUNT(*) = 1)) AS status
+  ) b
+ WHERE d.kind = 'quote' AND d.status = 'awarded' AND b.status IN ('do_not_use', 'inactive')
 UNION ALL
 SELECT 'inventory (GAP-406): awarded / posted documents with no linked cost entry (the repair backlog — Repair on the Costs tab; this migration prevents new ones)', COUNT(*)::text
   FROM cost_documents d
@@ -174,11 +223,42 @@ SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed milestone (org-level) w
  WHERE left(a.action, 10) = 'MILESTONE_' AND a.resource_type = 'milestone'
    AND NOT EXISTS (SELECT 1 FROM milestones m WHERE m.id::text = a.details ->> 'milestoneId')
 UNION ALL
+SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId whose milestone is on a NON-private project (readable as now; if that milestone is later deleted they become the audit roles'' only — rows written from now on carry the project, section 9)', COUNT(*)::text
+  FROM audit_logs a
+  JOIN milestones m ON m.id::text = a.details ->> 'milestoneId'
+  JOIN projects p ON p.id = m.project_id
+ WHERE left(a.action, 10) = 'MILESTONE_' AND COALESCE(a.resource_type, '') NOT IN ('project', 'milestone')
+   AND COALESCE(a.details ->> 'projectId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+   AND p.visibility IS DISTINCT FROM 'private'
+UNION ALL
 SELECT 'inventory (SEC-21): intake-link audit rows (project_intake_link) and INTAKE_* rows naming a PRIVATE project (now readable only by those who can see it, and the audit roles)', COUNT(*)::text
   FROM audit_logs a
   JOIN projects p ON p.id::text = COALESCE(a.details ->> 'projectId',
                                            (SELECT l.project_id::text FROM project_intake_links l WHERE l.id::text = a.resource_id))
- WHERE (a.resource_type = 'project_intake_link' OR left(a.action, 7) = 'INTAKE_') AND p.visibility = 'private';
+ WHERE (a.resource_type = 'project_intake_link' OR left(a.action, 7) = 'INTAKE_') AND p.visibility = 'private'
+UNION ALL
+SELECT 'inventory (SEC-21): intake-link audit rows (project_intake_link) with no details.projectId (now readable only by those who may read the link — controllers and the project owner — and the audit roles)', COUNT(*)::text
+  FROM audit_logs a
+ WHERE a.resource_type = 'project_intake_link'
+   AND COALESCE(a.details ->> 'projectId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+UNION ALL
+SELECT 'inventory (SEC-21): intake-link and INTAKE_* audit rows whose named project no longer exists, or link rows with no project named whose link no longer exists (now readable only by the audit roles)', COUNT(*)::text
+  FROM audit_logs a
+ WHERE (a.resource_type = 'project_intake_link' OR left(a.action, 7) = 'INTAKE_')
+   AND CASE
+         WHEN COALESCE(a.details ->> 'projectId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           THEN NOT EXISTS (SELECT 1 FROM projects p WHERE p.id::text = lower(a.details ->> 'projectId'))
+         WHEN a.resource_type = 'project_intake_link'
+           THEN NOT EXISTS (SELECT 1 FROM project_intake_links l WHERE l.id::text = lower(a.resource_id))
+         ELSE false
+       END
+UNION ALL
+SELECT 'inventory (SEC-21): other BEFORE INSERT row triggers on audit_logs (they run beside the section 9 stamp)', COUNT(*)::text
+  FROM pg_trigger t
+ WHERE NOT t.tgisinternal
+   AND t.tgrelid = 'public.audit_logs'::regclass
+   AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 4) = 4
+   AND t.tgname <> 'trg_audit_logs_milestone_project';
 
 BEGIN;
 
@@ -446,6 +526,16 @@ REVOKE ALL ON FUNCTION public.award_quote(uuid, uuid, numeric, text, numeric) FR
 GRANT EXECUTE ON FUNCTION public.award_quote(uuid, uuid, numeric, text, numeric) TO authenticated;
 
 -- ── 4. PERF-7: the machine writes to a checklist's items in one request ──
+-- ONE guarded statement for the whole call — one sub-transaction, so one
+-- transaction id however many rows land. Only when that statement is refused
+-- (a 20261091 rail judged one row, or a malformed timestamp) is the call
+-- judged row by row, each row in its own sub-transaction so one refusal never
+-- undoes the rest — and only for a call of at most 50 writes: every landed
+-- row's sub-transaction keeps its transaction id until the call commits, and
+-- past PostgreSQL's 64-entry per-session cache every other session's
+-- snapshot would have to consult pg_subtrans while the call runs. A larger
+-- refused call answers {split: 50} having applied nothing, and the lib
+-- (lib/checklists.ts writeItemPatches) re-sends its writes in calls of 50.
 CREATE OR REPLACE FUNCTION public.apply_checklist_item_writes(p_checklist uuid, p_writes jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -457,6 +547,8 @@ DECLARE
   v_id uuid;
   v_hit uuid;
   v_name text;
+  v_valid jsonb;
+  v_dupes boolean;
   v_landed jsonb := '[]'::jsonb;
   v_refused jsonb := '[]'::jsonb;
   v_failed jsonb := '[]'::jsonb;
@@ -469,16 +561,66 @@ BEGIN
     RAISE EXCEPTION 'apply_checklist_item_writes takes an array of at most 2000 item writes; nothing was changed.'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  FOR v_write IN SELECT value FROM jsonb_array_elements(p_writes) LOOP
+  -- Every write is checked up front: an item id, and one of the two machine
+  -- names. One that fails is answered as failed and never written.
+  SELECT COALESCE(jsonb_agg(e.value ORDER BY e.n) FILTER (
+           WHERE COALESCE(e.value ->> 'id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+             AND COALESCE(e.value ->> 'updated_by_name', '') IN ('evidence sweep', 'AI assessment')), '[]'::jsonb),
+         COALESCE(jsonb_agg(CASE
+           WHEN COALESCE(e.value ->> 'id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+             THEN jsonb_build_object('id', e.value ->> 'id', 'code', '22P02',
+                    'message', 'Not a checklist item id; nothing was changed.')
+           ELSE jsonb_build_object('id', e.value ->> 'id', 'code', '23514',
+                    'message', 'Only the evidence sweep and the AI assessment write through this call — a person''s decision is its own write; nothing was changed.')
+           END ORDER BY e.n) FILTER (
+           WHERE NOT (COALESCE(e.value ->> 'id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                      AND COALESCE(e.value ->> 'updated_by_name', '') IN ('evidence sweep', 'AI assessment'))), '[]'::jsonb)
+    INTO v_valid, v_failed
+    FROM jsonb_array_elements(p_writes) WITH ORDINALITY AS e(value, n);
+  SELECT COUNT(*) <> COUNT(DISTINCT lower(e.value ->> 'id')) INTO v_dupes FROM jsonb_array_elements(v_valid) e;
+
+  -- 1. The whole call in ONE guarded statement (two writes to one item are
+  --    judged row by row: the first lands, the second meets its guard).
+  IF NOT v_dupes AND jsonb_array_length(v_valid) > 0 THEN
+    BEGIN
+      WITH w AS (
+        SELECT (e.value ->> 'id')::uuid AS id, e.value AS v FROM jsonb_array_elements(v_valid) e
+      ), hit AS (
+        UPDATE checklist_items ci SET
+          status = CASE WHEN w.v ? 'status' THEN w.v ->> 'status' ELSE ci.status END,
+          applicability = CASE WHEN w.v ? 'applicability' THEN w.v ->> 'applicability' ELSE ci.applicability END,
+          ai_rationale = CASE WHEN w.v ? 'ai_rationale' THEN w.v ->> 'ai_rationale' ELSE ci.ai_rationale END,
+          evidence = CASE WHEN w.v ? 'evidence' THEN w.v -> 'evidence' ELSE ci.evidence END,
+          updated_at = now(),
+          updated_by = NULL,
+          updated_by_name = w.v ->> 'updated_by_name'
+          FROM w
+         WHERE ci.id = w.id
+           AND ci.checklist_id = p_checklist
+           AND ci.updated_at IS NOT DISTINCT FROM NULLIF(w.v ->> 'expected_updated_at', '')::timestamptz
+        RETURNING ci.id
+      )
+      SELECT COALESCE(jsonb_agg(w.v ->> 'id') FILTER (WHERE hit.id IS NOT NULL), '[]'::jsonb),
+             COALESCE(jsonb_agg(w.v ->> 'id') FILTER (WHERE hit.id IS NULL), '[]'::jsonb)
+        INTO v_landed, v_refused
+        FROM w LEFT JOIN hit ON hit.id = w.id;
+      RETURN jsonb_build_object('landed', v_landed, 'refused', v_refused, 'failed', v_failed);
+    EXCEPTION WHEN OTHERS THEN
+      v_landed := '[]'::jsonb;                                -- refused whole: nothing of it stands
+      v_refused := '[]'::jsonb;
+    END;
+  END IF;
+
+  -- 2. Row by row — at most 50 writes in one call (see above).
+  IF jsonb_array_length(v_valid) > 50 THEN
+    RETURN jsonb_build_object('landed', '[]'::jsonb, 'refused', '[]'::jsonb, 'failed', '[]'::jsonb, 'split', 50);
+  END IF;
+  FOR v_write IN SELECT value FROM jsonb_array_elements(v_valid) LOOP
     v_id := NULL;
     v_hit := NULL;
     BEGIN
       v_id := (v_write ->> 'id')::uuid;
       v_name := v_write ->> 'updated_by_name';
-      IF v_name IS NULL OR v_name NOT IN ('evidence sweep', 'AI assessment') THEN
-        RAISE EXCEPTION 'Only the evidence sweep and the AI assessment write through this call — a person''s decision is its own write; nothing was changed.'
-          USING ERRCODE = 'check_violation';
-      END IF;
       UPDATE checklist_items ci SET
         status = CASE WHEN v_write ? 'status' THEN v_write ->> 'status' ELSE ci.status END,
         applicability = CASE WHEN v_write ? 'applicability' THEN v_write ->> 'applicability' ELSE ci.applicability END,
@@ -492,13 +634,13 @@ BEGIN
          AND ci.updated_at IS NOT DISTINCT FROM NULLIF(v_write ->> 'expected_updated_at', '')::timestamptz
       RETURNING ci.id INTO v_hit;
       IF v_hit IS NULL THEN
-        v_refused := v_refused || jsonb_build_array(v_id::text);
+        v_refused := v_refused || jsonb_build_array(v_write ->> 'id');
       ELSE
-        v_landed := v_landed || jsonb_build_array(v_id::text);
+        v_landed := v_landed || jsonb_build_array(v_write ->> 'id');
       END IF;
     EXCEPTION WHEN OTHERS THEN
       v_failed := v_failed || jsonb_build_array(jsonb_build_object(
-        'id', COALESCE(v_id::text, v_write ->> 'id'), 'code', SQLSTATE, 'message', SQLERRM));
+        'id', v_write ->> 'id', 'code', SQLSTATE, 'message', SQLERRM));
     END;
   END LOOP;
   RETURN jsonb_build_object('landed', v_landed, 'refused', v_refused, 'failed', v_failed);
@@ -506,7 +648,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.apply_checklist_item_writes(uuid, jsonb) IS
-  'PERF-7 / DEC-52 item 10 (20261157): the evidence sweep''s and the AI assessment''s writes to one checklist''s items in ONE request, each guarded on updated_at as read (IS NOT DISTINCT FROM) and in its own sub-transaction; returns {landed, refused, failed}. SECURITY INVOKER — RLS and every 20261091 rail apply per row. NULL auth.uid() refused.';
+  'PERF-7 / DEC-52 item 10 (20261157): the evidence sweep''s and the AI assessment''s writes to one checklist''s items in ONE request — one guarded statement (updated_at as read, IS NOT DISTINCT FROM); a refused statement is judged row by row in sub-transactions for a call of at most 50 writes, else answered {split: 50} with nothing applied; returns {landed, refused, failed}. SECURITY INVOKER — RLS and every 20261091 rail apply per row. NULL auth.uid() refused.';
 
 REVOKE ALL ON FUNCTION public.apply_checklist_item_writes(uuid, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.apply_checklist_item_writes(uuid, jsonb) FROM anon;
@@ -609,7 +751,9 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
     -- row written as resource_type 'milestone' was written for a milestone
     -- on no project and no document (lib/milestones.ts pickResource) — an
     -- org-level row, readable as it was; any other names no project it can
-    -- still be traced to, and is the audit roles' only.
+    -- still be traced to, and is the audit roles' only. (A row written after
+    -- 20261157 names its project — section 9 — and the first branch decides
+    -- it, the milestone deleted or not.)
     WHEN left(COALESCE(p_action, ''), 10) = 'MILESTONE_' THEN
       CASE WHEN p_type = 'project' THEN true
            WHEN COALESCE(p_details ->> 'milestoneId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -668,6 +812,75 @@ CREATE UNIQUE INDEX IF NOT EXISTS audit_logs_intake_outcome_notice_claim_uniq
   ON audit_logs (org_id, (details ->> 'versionId'), (details ->> 'attempt'))
   WHERE action = 'INTAKE_OUTCOME_NOTICE_CLAIMED';
 
+-- ── 9. SEC-21: a milestone's audit row carries its project ─────────────────
+-- lib/milestones.ts logMilestoneEvent writes details.milestoneId but not the
+-- project; once the milestone is deleted, section 6 could no longer trace a
+-- document-typed row to it. This decides the project as the row is written:
+-- the milestone's own project, or — for MILESTONE_DELETED, written once the
+-- milestone is gone — the project its earlier rows recorded (same org, same
+-- resource: the resource_id index). Only rows this trigger stamped
+-- (details.projectIdFrom = 'milestone') are trusted for that, and a project
+-- the writer put on the row is replaced — section 6's first branch trusts
+-- details.projectId, so a forged one on an earlier row must never decide who
+-- reads a later row about a private project's milestone. SECURITY DEFINER so
+-- the stamp is the milestone's true project whatever the writer may read;
+-- nobody may call it.
+CREATE OR REPLACE FUNCTION public.stamp_milestone_audit_project()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_project uuid;
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;              -- the service pass: a restore keeps its rows as written
+  IF left(COALESCE(NEW.action, ''), 10) <> 'MILESTONE_' THEN RETURN NEW; END IF;
+  IF NEW.details IS NULL OR jsonb_typeof(NEW.details) <> 'object' THEN RETURN NEW; END IF;
+  IF COALESCE(NEW.details ->> 'milestoneId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    RETURN NEW;
+  END IF;
+  SELECT m.project_id INTO v_project
+    FROM milestones m
+   WHERE m.id = (NEW.details ->> 'milestoneId')::uuid AND m.org_id = NEW.org_id;
+  IF NOT FOUND THEN
+    -- The milestone is gone (MILESTONE_DELETED): the project its rows recorded
+    -- — only a project this trigger stamped.
+    SELECT (a.details ->> 'projectId')::uuid INTO v_project
+      FROM audit_logs a
+     WHERE a.resource_id = NEW.resource_id
+       AND a.org_id = NEW.org_id
+       AND left(a.action, 10) = 'MILESTONE_'
+       AND a.details ->> 'milestoneId' = NEW.details ->> 'milestoneId'
+       AND a.details ->> 'projectIdFrom' = 'milestone'
+       AND COALESCE(a.details ->> 'projectId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     ORDER BY a."timestamp" DESC NULLS LAST
+     LIMIT 1;
+  END IF;
+  -- The writer's own projectId never stands; a milestone on no project (or
+  -- one whose project cannot be traced) names none.
+  NEW.details := (NEW.details - 'projectId' - 'projectIdFrom')
+    || CASE WHEN v_project IS NOT NULL
+            THEN jsonb_build_object('projectId', v_project::text, 'projectIdFrom', 'milestone')
+            ELSE '{}'::jsonb END;
+  RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION public.stamp_milestone_audit_project() IS
+  'SEC-21 (20261157): a signed-in MILESTONE_* audit row gets details.projectId from the milestone''s project (or, once the milestone is gone, the project this trigger stamped on its earlier rows in the same org and resource), replacing any the writer gave, so audit_row_project_ref_visible still traces it after the milestone is deleted. A milestone on no project names none; the service role passes.';
+
+REVOKE ALL ON FUNCTION public.stamp_milestone_audit_project() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.stamp_milestone_audit_project() FROM anon;
+REVOKE ALL ON FUNCTION public.stamp_milestone_audit_project() FROM authenticated;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_milestone_project ON audit_logs;
+CREATE TRIGGER trg_audit_logs_milestone_project
+  BEFORE INSERT ON audit_logs
+  FOR EACH ROW
+  WHEN (left(NEW.action, 10) = 'MILESTONE_')
+  EXECUTE FUNCTION public.stamp_milestone_audit_project();
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
@@ -716,11 +929,14 @@ SELECT 'GAP-406: anon cannot execute award_quote; authenticated can (DRLS-16)',
        AND has_function_privilege('authenticated', 'public.award_quote(uuid,uuid,numeric,text,numeric)', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'PERF-7: apply_checklist_item_writes is SECURITY INVOKER with search_path pinned, refuses a NULL auth.uid(), keeps the per-row updated_at guard and writes only the machine actor''s rows',
+SELECT 'PERF-7: apply_checklist_item_writes is SECURITY INVOKER with search_path pinned, refuses a NULL auth.uid(), applies the call in one statement keeping the per-row updated_at guard, judges row by row only a call of at most 50, and writes only the machine actor''s rows',
        (SELECT NOT prosecdef AND proconfig::text LIKE '%search_path=public%'
                AND prosrc LIKE '%IF auth.uid() IS NULL THEN%'
+               AND prosrc LIKE '%ci.updated_at IS NOT DISTINCT FROM NULLIF(w.v ->> ''expected_updated_at'', '''')::timestamptz%'
                AND prosrc LIKE '%ci.updated_at IS NOT DISTINCT FROM NULLIF(v_write ->> ''expected_updated_at'', '''')::timestamptz%'
-               AND prosrc LIKE '%NOT IN (''evidence sweep'', ''AI assessment'')%'
+               AND prosrc LIKE '%IN (''evidence sweep'', ''AI assessment'')%'
+               AND prosrc LIKE '%IF jsonb_array_length(v_valid) > 50 THEN%'
+               AND prosrc LIKE '%''split'', 50%'
                AND prosrc LIKE '%EXCEPTION WHEN OTHERS THEN%'
           FROM pg_proc WHERE proname = 'apply_checklist_item_writes' AND pronargs = 2)
        AND NOT has_function_privilege('anon', 'public.apply_checklist_item_writes(uuid,jsonb)', 'EXECUTE')
@@ -790,6 +1006,23 @@ SELECT 'SAF-9: a contractor outcome notice is claimed once per submission attemp
                   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
                   AND indexdef LIKE '%versionId%' AND indexdef LIKE '%attempt%'
                   AND indexdef LIKE '%INTAKE_OUTCOME_NOTICE_CLAIMED%'),
+       NULL::text
+UNION ALL
+SELECT 'SEC-21: trg_audit_logs_milestone_project fires BEFORE INSERT on audit_logs for MILESTONE_* rows only; its function is SECURITY DEFINER with search_path pinned, keeps the service pass, decides the project itself (a writer''s projectId never stands; only its own stamps are trusted), and nobody may call it',
+       EXISTS (SELECT 1 FROM pg_trigger t
+                WHERE t.tgrelid = 'public.audit_logs'::regclass AND t.tgname = 'trg_audit_logs_milestone_project'
+                  AND NOT t.tgisinternal AND t.tgenabled <> 'D'
+                  AND pg_get_triggerdef(t.oid) LIKE '%BEFORE INSERT ON public.audit_logs%'
+                  AND pg_get_triggerdef(t.oid) LIKE '%MILESTONE_%')
+       AND (SELECT prosecdef AND proconfig::text LIKE '%search_path=public%'
+                   AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
+                   AND prosrc LIKE '%NEW.details := (NEW.details - ''projectId'' - ''projectIdFrom'')%'
+                   AND prosrc LIKE '%AND a.details ->> ''projectIdFrom'' = ''milestone''%'
+                   AND prosrc LIKE '%AND m.org_id = NEW.org_id;%'
+                   AND prosrc LIKE '%AND a.org_id = NEW.org_id%'
+              FROM pg_proc WHERE proname = 'stamp_milestone_audit_project' AND pronargs = 0)
+       AND NOT has_function_privilege('anon', 'public.stamp_milestone_audit_project()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'public.stamp_milestone_audit_project()', 'EXECUTE'),
        NULL::text
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM prj_g_j12_inventory;

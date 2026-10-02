@@ -19,6 +19,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT } from "@/lib/checklistEngine";
 import { normalizeCurrency } from "@/lib/costDocs";
+import { PER_ROW_CHUNK } from "@/lib/checklists";
 
 const root = process.cwd();
 const migDir = join(root, "supabase", "migrations");
@@ -66,13 +67,36 @@ describe("the one-paste protocol (DEC-30)", () => {
   it("is named in the package's reserved number and the sequence holds no other 20261157", () => {
     expect(numbered().filter((f) => f.startsWith("20261157"))).toEqual([FILE]);
   });
+  it("the header's WHAT list uses the body's section numbers, 1 to 9, and the records cite those numbers (review minor)", () => {
+    const body = [...M.matchAll(/^-- ── (\d+)\. /gm)].map((m) => Number(m[1]));
+    expect(body).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const what = between(M, "-- WHAT:", "-- NOT a widening:");
+    const labels = [...what.matchAll(/^--   (\d+)(?:–(\d+))?\. /gm)].flatMap((m) => {
+      const a = Number(m[1]); const b = m[2] ? Number(m[2]) : a;
+      return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+    });
+    expect(labels).toEqual(body);
+    const heading = (n: number) => M.match(new RegExp(`^-- ── ${n}\\. (.*)$`, "m"))![1];
+    expect(heading(3)).toMatch(/GAP-406/);
+    expect(heading(4)).toMatch(/PERF-7/);
+    expect(heading(5)).toMatch(/MON-13/);
+    const rec = (f: string) => readFileSync(join(root, "audit-reports", f), "utf8");
+    expect(rec("projects-tab/90-gap-register.md")).toContain("`supabase/migrations/20261157_prj_roundG_server_remainders.sql` §3 `award_quote(");
+    expect(rec("projects-tab/09-performance-scale.md")).toContain("`supabase/migrations/20261157_prj_roundG_server_remainders.sql` §4: `apply_checklist_item_writes(");
+    expect(rec("projects-tab/03-money-ledger.md")).toContain("`supabase/migrations/20261157_prj_roundG_server_remainders.sql` §5 enforces DEC-76 item 3");
+    expect(rec("projects-tab/03-money-ledger.md")).toContain("`supabase/migrations/20261157_prj_roundG_server_remainders.sql` §2: `enforce_cost_document_award_registry`");
+    expect(rec("projects-tab/01-security-access.md")).toContain("`supabase/migrations/20261157_prj_roundG_server_remainders.sql` §6–7: `audit_row_project_ref_visible(");
+    for (const f of ["projects-tab/90-gap-register.md", "projects-tab/09-performance-scale.md", "projects-tab/03-money-ledger.md"]) {
+      expect(rec(f)).not.toMatch(/20261157_prj_roundG_server_remainders\.sql` §2 `award_quote|server_remainders\.sql` §3: `apply_checklist|server_remainders\.sql` §4 enforces/);
+    }
+  });
 });
 
 describe("DRLS-16 — every function this migration adds", () => {
   const added = [
     "cost_doc_company_behind", "enforce_cost_document_award_registry", "award_quote",
     "apply_checklist_item_writes", "enforce_project_party_company_link", "enforce_quality_item_contractor",
-    "audit_row_project_ref_visible",
+    "audit_row_project_ref_visible", "stamp_milestone_audit_project",
   ];
   it("each is NEW — no earlier migration defines it (so there is no older body to start from)", () => {
     for (const f of numbered().filter((x) => x < FILE)) {
@@ -80,12 +104,15 @@ describe("DRLS-16 — every function this migration adds", () => {
       for (const name of added) expect(sql, `${f} defines ${name}`).not.toMatch(new RegExp(`FUNCTION\\s+(public\\.)?${name}\\s*\\(`));
     }
   });
-  it("the one SECURITY DEFINER (the registry rail) pins search_path and is revoked from PUBLIC, anon and authenticated", () => {
+  it("the two SECURITY DEFINERs (the registry rail, the milestone row's project stamp) are trigger functions, pin search_path and are revoked from PUBLIC, anon and authenticated", () => {
     const definers = [...C.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\([^)]*\)[\s\S]*?AS \$\$/g)].filter((m) => /SECURITY DEFINER/.test(m[0]));
-    expect(definers.map((m) => m[1])).toEqual(["enforce_cost_document_award_registry"]);
-    expect(definers[0][0]).toMatch(/SECURITY DEFINER\s*\n\s*SET search_path = public/);
-    for (const role of ["PUBLIC", "anon", "authenticated"]) {
-      expect(C).toContain(`REVOKE ALL ON FUNCTION public.enforce_cost_document_award_registry() FROM ${role};`);
+    expect(definers.map((m) => m[1])).toEqual(["enforce_cost_document_award_registry", "stamp_milestone_audit_project"]);
+    for (const d of definers) {
+      expect(d[0]).toMatch(/RETURNS trigger/);
+      expect(d[0]).toMatch(/SECURITY DEFINER\s*\n\s*SET search_path = public/);
+      for (const role of ["PUBLIC", "anon", "authenticated"]) {
+        expect(C).toContain(`REVOKE ALL ON FUNCTION public.${d[1]}() FROM ${role};`);
+      }
     }
   });
   it("the two RPCs a person calls refuse a NULL auth.uid(), are revoked from PUBLIC and anon, and granted to authenticated", () => {
@@ -99,7 +126,7 @@ describe("DRLS-16 — every function this migration adds", () => {
     }
   });
   it("the trigger functions keep the service pass (auth.uid() NULL) the Round G rails keep, and nobody may call them", () => {
-    for (const name of ["enforce_cost_document_award_registry", "enforce_project_party_company_link", "enforce_quality_item_contractor"]) {
+    for (const name of ["enforce_cost_document_award_registry", "enforce_project_party_company_link", "enforce_quality_item_contractor", "stamp_milestone_audit_project"]) {
       expect(fn(name)).toMatch(/RETURNS trigger/);
       expect(fn(name)).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
       expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}() FROM anon;`);
@@ -203,16 +230,43 @@ describe("GAP-406 — the award as one transaction", () => {
 
 describe("PERF-7 — the machine's writes in one request, the per-row updated_at guard kept", () => {
   const rpc = fn("apply_checklist_item_writes");
-  it("guards each row on updated_at AS READ and the checklist, one sub-transaction per row", () => {
-    expect(rpc).toContain("AND ci.checklist_id = p_checklist");
+  it("applies the whole call in ONE guarded statement first — one sub-transaction, the guard on every row (review minor: subtransaction cache)", () => {
+    const set = rpc.indexOf("UPDATE checklist_items ci SET");
+    const loop = rpc.indexOf("FOR v_write IN SELECT value FROM jsonb_array_elements(v_valid) LOOP");
+    expect(set).toBeGreaterThan(0);
+    expect(set).toBeLessThan(loop);
+    const stmt = rpc.slice(set, rpc.indexOf("RETURNING ci.id", set));
+    expect(stmt).toContain("FROM w");
+    expect(stmt).toContain("AND ci.checklist_id = p_checklist");
+    expect(stmt).toContain("AND ci.updated_at IS NOT DISTINCT FROM NULLIF(w.v ->> 'expected_updated_at', '')::timestamptz");
+    // a refused statement leaves nothing standing, and is re-judged — never returned as an outcome
+    expect(rpc).toMatch(/EXCEPTION WHEN OTHERS THEN\s*\n\s*v_landed := '\[\]'::jsonb;[^\n]*\n\s*v_refused := '\[\]'::jsonb;\s*\n\s*END;/);
+    // two writes to one item go row by row (the first lands, the second meets its guard)
+    expect(rpc).toContain("IF NOT v_dupes AND jsonb_array_length(v_valid) > 0 THEN");
+  });
+  it("judges row by row only a call of at most PER_ROW_CHUNK; a larger refused call applies nothing and answers split", () => {
+    expect(PER_ROW_CHUNK).toBe(50);
+    expect(PER_ROW_CHUNK).toBeLessThanOrEqual(64);
+    const cap = rpc.indexOf(`IF jsonb_array_length(v_valid) > ${PER_ROW_CHUNK} THEN`);
+    expect(cap).toBeGreaterThan(rpc.indexOf("EXCEPTION WHEN OTHERS THEN"));
+    expect(cap).toBeLessThan(rpc.indexOf("FOR v_write IN SELECT value FROM jsonb_array_elements(v_valid) LOOP"));
+    expect(rpc).toContain(`RETURN jsonb_build_object('landed', '[]'::jsonb, 'refused', '[]'::jsonb, 'failed', '[]'::jsonb, 'split', ${PER_ROW_CHUNK});`);
+    const lib = readFileSync(join(root, "lib/checklists.ts"), "utf8");
+    expect(lib).toContain("if (part?.split && call.length > 1) {");
+  });
+  it("the row-by-row path keeps the per-row guard and one sub-transaction per row", () => {
     expect(rpc).toContain("AND ci.updated_at IS NOT DISTINCT FROM NULLIF(v_write ->> 'expected_updated_at', '')::timestamptz");
     expect(rpc).toMatch(/BEGIN\s*\n\s*v_id := \(v_write ->> 'id'\)::uuid;[\s\S]*EXCEPTION WHEN OTHERS THEN/);
     expect(rpc).toContain("RETURN jsonb_build_object('landed', v_landed, 'refused', v_refused, 'failed', v_failed);");
   });
-  it("writes only the machine actor's columns, stamps updated_by NULL itself, and accepts only the two machine names lib/checklistEngine uses", () => {
-    expect(rpc).toContain(`NOT IN ('${MACHINE_ACTOR_SWEEP}', '${MACHINE_ACTOR_ASSESSMENT}')`);
-    for (const col of ["status", "applicability", "ai_rationale", "evidence"]) expect(rpc).toContain(`${col} = CASE WHEN v_write ? '${col}'`);
-    expect(rpc).toContain("updated_by = NULL,");
+  it("checks every write up front (an item id, a machine name), writes only the machine actor's columns, stamps updated_by NULL itself", () => {
+    expect(rpc.split(`IN ('${MACHINE_ACTOR_SWEEP}', '${MACHINE_ACTOR_ASSESSMENT}')`).length - 1).toBeGreaterThanOrEqual(2);
+    expect(rpc).toContain("'message', 'Only the evidence sweep and the AI assessment write through this call — a person''s decision is its own write; nothing was changed.')");
+    for (const col of ["status", "applicability", "ai_rationale", "evidence"]) {
+      expect(rpc).toContain(`${col} = CASE WHEN w.v ? '${col}'`);
+      expect(rpc).toContain(`${col} = CASE WHEN v_write ? '${col}'`);
+    }
+    expect(rpc.match(/updated_by = NULL,/g)).toHaveLength(2);
     expect(rpc).not.toMatch(/manual_note\s*=/);
   });
 });
@@ -287,8 +341,67 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     expect(ms).toMatch(/function pickResource\(/);
     expect(C).toContain("audit_row_project_ref_visible('MILESTONE_DELETED', 'milestone', '00000000-0000-0000-0000-000000000000', '{\"milestoneId\":\"00000000-0000-0000-0000-000000000000\"}'::jsonb)");
   });
+  it("section 9: a milestone row is stamped with its project as it is written, so the first branch decides it after the milestone is deleted (review minor)", () => {
+    const f = fn("stamp_milestone_audit_project");
+    expect(C).toMatch(/CREATE TRIGGER trg_audit_logs_milestone_project\s*\n\s*BEFORE INSERT ON audit_logs\s*\n\s*FOR EACH ROW\s*\n\s*WHEN \(left\(NEW\.action, 10\) = 'MILESTONE_'\)\s*\n\s*EXECUTE FUNCTION public\.stamp_milestone_audit_project\(\);/);
+    const idx = C.indexOf("CREATE TRIGGER trg_audit_logs_milestone_project");
+    expect(idx).toBeGreaterThan(C.indexOf("\nBEGIN;"));
+    expect(idx).toBeLessThan(C.indexOf("\nCOMMIT;"));
+    // the service pass first (a restore keeps its rows as written)
+    expect(f.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(f.indexOf("SELECT m.project_id INTO v_project"));
+    // the writer's projectId never stands: the trigger decides it, and marks its own
+    expect(f).not.toContain("IF NEW.details ? 'projectId' THEN RETURN NEW;");
+    expect(f).toContain("NEW.details := (NEW.details - 'projectId' - 'projectIdFrom')");
+    expect(f).toContain("THEN jsonb_build_object('projectId', v_project::text, 'projectIdFrom', 'milestone')");
+    // the milestone's own project, in the row's org; once it is gone, the
+    // project its earlier rows in the same org and resource recorded
+    expect(f).toContain("WHERE m.id = (NEW.details ->> 'milestoneId')::uuid AND m.org_id = NEW.org_id;");
+    const gone = f.slice(f.indexOf("IF NOT FOUND THEN"));
+    expect(gone).toContain("WHERE a.resource_id = NEW.resource_id");
+    expect(gone).toContain("AND a.org_id = NEW.org_id");
+    expect(gone).toContain("AND a.details ->> 'milestoneId' = NEW.details ->> 'milestoneId'");
+    // only the trigger's own stamps are trusted for a gone milestone
+    expect(gone).toContain("AND a.details ->> 'projectIdFrom' = 'milestone'");
+    // a milestone on no project names none (an org-level row stays one)
+    expect(f).toContain("ELSE '{}'::jsonb END;");
+    // why the stamp is needed: the lib names the milestone, not the project,
+    // and writes MILESTONE_DELETED once the row is gone
+    const audit = readFileSync(join(root, "lib/audit.ts"), "utf8");
+    expect(between(audit, "export async function logMilestoneEvent(", "\n}\n")).not.toMatch(/projectId/);
+    const ms = readFileSync(join(root, "lib/milestones.ts"), "utf8");
+    expect(ms).toContain("The MILESTONE_DELETED audit row is written only once the row is gone");
+    // section 6's first branch is the projectId one
+    const ref = fn("audit_row_project_ref_visible");
+    expect(ref.indexOf("COALESCE(p_details ->> 'projectId', '')")).toBeLessThan(ref.indexOf("WHEN left(COALESCE(p_action, ''), 10) = 'MILESTONE_' THEN"));
+  });
   it("leaves the other audit_logs policies alone", () => {
     expect(C).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
+  });
+});
+
+describe("the DEC-30 inventory counts everything the migration narrows (review minor)", () => {
+  const inv = between(C, "CREATE TEMP TABLE prj_g_j12_inventory AS", "\nBEGIN;");
+  it("MON-12: quotes are judged as the award judges them — the document's own link (through to_jsonb), then the contractor's, then ONE exact name", () => {
+    const rows = inv.split(/UNION ALL/).filter((r) => /inventory \(MON-12\)/.test(r));
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      const own = r.indexOf("c.id::text = to_jsonb(d) ->> 'company_id' AND c.org_id = d.org_id");
+      const party = r.indexOf("FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id");
+      const name = r.indexOf("lower(c.name) = lower(btrim(d.vendor_name))");
+      expect(own).toBeGreaterThan(0);
+      expect(own).toBeLessThan(party);
+      expect(party).toBeLessThan(name);
+      expect(r).toContain("HAVING COUNT(*) = 1");
+      expect(r).not.toMatch(/\bd\.company_id\b/); // a database without 20261096 still runs
+    }
+  });
+  it("SEC-21: link rows with no project named, rows whose project or link is gone, and the milestone rows a later delete would hide", () => {
+    expect(inv).toContain("inventory (SEC-21): intake-link audit rows (project_intake_link) with no details.projectId");
+    expect(inv).toContain("inventory (SEC-21): intake-link and INTAKE_* audit rows whose named project no longer exists, or link rows with no project named whose link no longer exists");
+    expect(inv).toContain("NOT EXISTS (SELECT 1 FROM projects p WHERE p.id::text = lower(a.details ->> 'projectId'))");
+    expect(inv).toContain("NOT EXISTS (SELECT 1 FROM project_intake_links l WHERE l.id::text = lower(a.resource_id))");
+    expect(inv).toContain("inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId whose milestone is on a NON-private project");
+    expect(inv).toContain("inventory (SEC-21): other BEFORE INSERT row triggers on audit_logs");
   });
 });
 

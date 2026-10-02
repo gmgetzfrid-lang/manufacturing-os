@@ -395,6 +395,9 @@ export async function createChecklist(input: {
 
 interface ItemWrite { item: ChecklistItem; patch: Record<string, unknown> }
 type ItemWriteOutcome = { landed: string[]; refused: string[]; failed: Array<{ id: string; error: string }> };
+/** One call's answer: an outcome, or the function's request to re-send the
+ *  call's writes in smaller calls (nothing of the call was applied). */
+type ApplyAnswer = ItemWriteOutcome & { split?: number };
 
 /** The columns a machine write sends through the one-request apply
  *  (20261157 apply_checklist_item_writes); the function stamps updated_at
@@ -406,6 +409,16 @@ const MACHINE_WRITE_COLUMNS = ["status", "applicability", "ai_rationale", "evide
  *  this size and their outcomes are merged. */
 export const APPLY_CHUNK = 1000;
 
+/** The most writes one call may judge row by row. The function applies a
+ *  call in ONE guarded statement; only when that statement is refused (a
+ *  rail judged one row) does it fall back to one sub-transaction per row —
+ *  and for a call larger than this it answers `{ split: n }` instead, so the
+ *  lib re-sends those writes in calls of n. Each landed row's
+ *  sub-transaction holds a transaction id until the call commits; kept under
+ *  PostgreSQL's 64-entry per-session subtransaction cache, a call never
+ *  pushes every other session's snapshot onto pg_subtrans. */
+export const PER_ROW_CHUNK = 50;
+
 /** A function the database does not have yet: Postgres 42883, or PostgREST's
  *  schema-cache miss (PGRST202). */
 function isMissingRpc(err: { code?: string | null; message?: string | null }): boolean {
@@ -414,14 +427,15 @@ function isMissingRpc(err: { code?: string | null; message?: string | null }): b
 
 /**
  * PERF-7 / DEC-52 item 10: the machine's writes to ONE checklist's items in
- * ONE request — 20261157 `apply_checklist_item_writes` applies each write
- * guarded on the row's updated_at AS READ (the same optimistic guard as the
- * single-row path), each in its own sub-transaction, and returns what
- * landed, what the guard refused and what failed (every 20261091 rail still
- * judges each row). `null` while the migration is not applied — the caller
+ * ONE request — 20261157 `apply_checklist_item_writes` applies the writes in
+ * one statement, each guarded on the row's updated_at AS READ (the same
+ * optimistic guard as the single-row path), and returns what landed, what
+ * the guard refused and what failed (every 20261091 rail still judges each
+ * row; a refused statement is re-judged row by row, or answered `split` —
+ * PER_ROW_CHUNK). `null` while the migration is not applied — the caller
  * falls back to the single-row writes.
  */
-async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrite[]): Promise<ItemWriteOutcome | null> {
+async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrite[]): Promise<ApplyAnswer | null> {
   const payload = writes.map((w) => {
     const out: Record<string, unknown> = { id: w.item.id, expected_updated_at: w.item.updatedAt };
     for (const k of MACHINE_WRITE_COLUMNS) if (k in w.patch) out[k] = w.patch[k];
@@ -439,7 +453,7 @@ async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrit
     const error = describeWriteError(res.error);
     return { landed: [], refused: [], failed: writes.map((w) => ({ id: w.item.id, error })) };
   }
-  const out = (res.data ?? {}) as { landed?: unknown; refused?: unknown; failed?: unknown };
+  const out = (res.data ?? {}) as { landed?: unknown; refused?: unknown; failed?: unknown; split?: unknown };
   // An answer without the function's shape is not an outcome: the single-row
   // writes run instead (their updated_at guard refuses any row the function
   // did write, so nothing lands twice).
@@ -449,7 +463,8 @@ async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrit
     const r = (f ?? {}) as { id?: unknown; code?: unknown; message?: unknown };
     return { id: String(r.id ?? ""), error: describeWriteError({ code: typeof r.code === "string" ? r.code : null, message: String(r.message ?? "") }) };
   });
-  return { landed: ids(out.landed), refused: ids(out.refused), failed };
+  const split = typeof out.split === "number" && Number.isInteger(out.split) && out.split > 0 ? out.split : undefined;
+  return { landed: ids(out.landed), refused: ids(out.refused), failed, ...(split ? { split } : {}) };
 }
 
 /** Write each patch as a checked UPDATE guarded on the row's updated_at as
@@ -462,17 +477,32 @@ async function writeItemPatches(writes: ItemWrite[]): Promise<ItemWriteOutcome> 
   let rest = writes;
   const checklistId = writes[0]?.item.checklistId;
   if (checklistId && writes.every((w) => w.item.checklistId === checklistId)) {
-    // In calls of at most APPLY_CHUNK (the function's own cap is 2,000). A
-    // call answering "not here" (the migration is missing, or a shapeless
-    // answer) hands what is left to the single-row writes; what earlier
-    // calls landed stands.
-    let i = 0;
-    for (; i < writes.length; i += APPLY_CHUNK) {
-      const part = await applyItemWritesInOneRequest(checklistId, writes.slice(i, i + APPLY_CHUNK));
-      if (!part) break;
+    // In calls of at most APPLY_CHUNK (the function's own cap is 2,000),
+    // in order. A call answering `split` applied nothing: its writes go
+    // again, first, in calls of at most PER_ROW_CHUNK (always smaller than
+    // the call that asked). A call answering "not here" (the migration is
+    // missing, a shapeless answer, or a one-write call still asking to be
+    // split) hands that call and everything after it to the single-row
+    // writes; what earlier calls landed stands.
+    const queue: ItemWrite[][] = [];
+    for (let i = 0; i < writes.length; i += APPLY_CHUNK) queue.push(writes.slice(i, i + APPLY_CHUNK));
+    rest = [];
+    while (queue.length > 0) {
+      const call = queue.shift()!;
+      const part = await applyItemWritesInOneRequest(checklistId, call);
+      if (part?.split && call.length > 1) {
+        const size = Math.max(1, Math.min(part.split, PER_ROW_CHUNK, call.length - 1));
+        const smaller: ItemWrite[][] = [];
+        for (let i = 0; i < call.length; i += size) smaller.push(call.slice(i, i + size));
+        queue.unshift(...smaller);
+        continue;
+      }
+      if (!part || part.split) {
+        rest = [call, ...queue].flat();
+        break;
+      }
       landed.push(...part.landed); refused.push(...part.refused); failed.push(...part.failed);
     }
-    rest = writes.slice(i);
   }
   for (let i = 0; i < rest.length; i += WRITE_BATCH) {
     const batch = rest.slice(i, i + WRITE_BATCH);

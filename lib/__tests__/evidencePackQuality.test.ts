@@ -52,7 +52,7 @@ vi.mock("@/lib/supabase", () => {
 });
 
 import {
-  gatherProjectQualityEvidence, gatherProjectEvidence, renderProjectEvidenceHtml, checklistItemDecider, PROJECT_PACK_COVERAGE,
+  gatherProjectQualityEvidence, gatherProjectEvidence, renderProjectEvidenceHtml, checklistItemDecider, DECIDER_NAME_NOT_RECORDED, PROJECT_PACK_COVERAGE,
   PACK_ROW_CEILING,
 } from "@/lib/evidencePack";
 import { MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT } from "@/lib/checklistEngine";
@@ -138,6 +138,19 @@ describe("QUAL-10 — the quality program in the project evidence pack", () => {
     expect(checklistItemDecider({ updated_by: "u-b", updated_by_name: "jchen" })).toEqual({ who: "jchen", automated: false });
     // a person's id with a machine-looking name is still the person
     expect(checklistItemDecider({ updated_by: "u-b", updated_by_name: MACHINE_ACTOR_SWEEP }).automated).toBe(false);
+  });
+
+  it("a person's decision with no name on the row prints in words, never the raw user id (review minor)", async () => {
+    const uid = "3f2a9c1e-0000-4000-8000-00000000abcd";
+    expect(checklistItemDecider({ updated_by: uid, updated_by_name: null })).toEqual({ who: DECIDER_NAME_NOT_RECORDED, automated: false });
+    expect(checklistItemDecider({ updated_by: uid, updated_by_name: "   " }).who).toBe("a person (name not recorded)");
+    expect(checklistItemDecider({ updated_by: null, updated_by_name: null }).who).toBe("—");
+    const pack = await gatherProjectEvidence("p1");
+    const item = pack.quality!.checklists[0].items[0] as Record<string, unknown>;
+    Object.assign(item, { updated_by: uid, updated_by_name: null });
+    const html = renderProjectEvidenceHtml(pack);
+    expect(html).toContain("a person (name not recorded)");
+    expect(html).not.toContain(uid);
   });
 
   it("renders the three sections before the audit trail: the sweep's green marked [automated] with its citation, the person's N/A with their reason", async () => {

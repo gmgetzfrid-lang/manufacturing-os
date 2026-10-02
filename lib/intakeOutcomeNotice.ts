@@ -9,6 +9,14 @@
 
 export type IntakeOutcome = "approved" | "rejected";
 
+/** How long the mail provider gets to answer the route before the send is
+ *  abandoned (and recorded as failed, freeing the next attempt). */
+export const OUTCOME_SEND_TIMEOUT_MS = 15_000;
+/** A claim with no outcome row this old belongs to a function that died
+ *  (the route's maxDuration is 30 s): the attempt is recorded as failed and
+ *  the next one may go. */
+export const OUTCOME_STALE_CLAIM_MS = 10 * 60_000;
+
 export function intakeOutcomeEmail(input: {
   outcome: IntakeOutcome;
   company: string | null;
