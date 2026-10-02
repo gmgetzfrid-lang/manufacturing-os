@@ -43,14 +43,14 @@ and the data-export envelope) was opened by package J9 on 2026-09-30.
 J1 on 2026-09-30.
 `SEC-20` (audit rows about a private project stay readable org-wide) was opened
 by package J8 on 2026-09-30.
+`SAF-18` (outside the quality and money paths, update / delete sites still
+discard a zero-row result) was opened by package J12 on 2026-10-01, as
+`GAP-402`'s remainder.
 `CHART-6` (two consumers paint the score band's colour as text; the 70–84 band
 is the white-label accent) was opened by package J5 on 2026-09-30.
 `SEC-21` (project audit rows written under another resource type, such as a
 milestone anchored to a document, stay readable by every org member) was
 opened by package J11's review on 2026-10-01.
-`SAF-18` (outside the quality and money paths, update / delete sites still
-discard a zero-row result) was opened by package J12 on 2026-10-01, as
-`GAP-402`'s remainder.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
