@@ -492,7 +492,7 @@ hazard, and the next agent should not have to re-derive it.
 **Done when.** Every `SECURITY DEFINER` function in the migration set pins
 `search_path`, and a lint or test asserts it for new ones.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`PERS-8`](../drafting-flow/07-persistence-and-rls.md) closes on this record with a recorded deviation (`my_org_ids()` pinned by `20261020` to the house style `public`, not the finding's `public, pg_temp`; `pg_temp` is still searched first for relations, an accepted risk while the PostgREST surface cannot create temporary relations — recorded there, with what would reopen it).*
+*Cross-area note (2026-10-02, drafting-flow Round G; corrected by the records fix the same day): drafting-flow [`PERS-8`](../drafting-flow/07-persistence-and-rls.md) records this pin and is `WONTFIX`, not closed on it: `my_org_ids()` is pinned by `20261020` to the house style `public`, while `PERS-8`'s done-when asks for `public, pg_temp` — with `pg_temp` left out, the session's temporary schema is still searched first for relations. Deliberately not changed (the cost, the rejected alternative and what would reopen it are recorded there); this record's own done-when — every definer function pins `search_path` — is unaffected.*
 
 ---
 

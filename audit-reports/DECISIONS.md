@@ -115,7 +115,7 @@ about the system.
 | [DEC-79](#dec-79) | Deleting a document is refused while it carries evidence of a person's act (a confirmed distribution acknowledgment, an acknowledged or waived read-&-understood acknowledgment, a signed review sign-off), by the database for every caller (`20261149`, BEFORE DELETE on `documents`), in one plain sentence saying to archive it instead; unanswered asks and void rows are not evidence; an org delete is not bound. **Awaiting the user's ratification** — it removes a capability that worked before, and nothing is enforced until `20261149` is pasted | medium | `DRLS-14` |
 | [DEC-80](#dec-80) | The plant's process topology: the controller tier asserts a flow (anyone else's lands `proposed`, decided by a controller; the database decides, `20261155`); confirmed flows are not yet a reasoning input (`GAP-315`); endpoints are validated, not foreign-keyed, and deleting an asset removes its flows; a dismissal binds the revision it was read from; plus the PFD reader's offer and gate calls (items 4–7) | low | `FLOW-2`, `FLOW-14`, `WIRE-10`, `FLOW-6`, `IEDGE-8`, `PR-12`, `GAP-315` |
 | [DEC-81](#dec-81) | The notification kind registry: one table (`lib/notificationKinds.ts` `KIND_META`) classifies every kind, a build error for an unclassified one; sections are exactly the Sidebar's badged rows (requests / documents / projects), nine kinds deliberately bell-only; what counts as action-required (§2, the PSM obligations deferred); producer-less kinds leave the vocabulary, written-outside-the-union kinds join it; counts computed once in the hook. **§2 and §3 (the bell-only list, the `review_requested` overload) await the user's ratification** | low | `PROD-1`, `TRAIL-2`, `OS-12`, `RT-6`, `TRAIL-5`, `TAX-7`, `NEDGE-13` |
-| [DEC-82](#dec-82) | A canceled request is terminal: `CANCELED` offers no action to anyone (no reopen, force close, reassignment or attachment); a withdrawn request wanted again is filed as a new request, never resurrected (drafting-flow `SM-8`; the call `DEC-14`'s text did not make) |
+| [DEC-44 (DF-P0)](#dec-44-df-p0) | A canceled request is terminal: `CANCELED` offers no action to anyone (no reopen, force close, reassignment or attachment); a withdrawn request wanted again is filed as a new request, never resurrected (the call `DEC-14`'s text did not make) — *provisional label; the integrator renumbers it at merge* | low | `SM-8`, `EDGE-2`, `WF-17` |
 
 ---
 
@@ -615,7 +615,7 @@ cheaper to reintroduce than to keep half-alive.
 **Risk:** medium.
 
 *Landed 2026-09-17 (roles-and-permissions Round E): `cancel_request` from `PENDING_ASSIGNMENT` and `DRAFTING` for the requester identity and `ticket.manage`, comment required, audited, terminal — and terminal everywhere: the `LIFE-6` / `DEC-25` hold gate, the intent bridge and every live-work filter treat `CANCELED` exactly as `CLOSED` (fix pass); `NEW` and `PENDING_ENG_INITIAL` removed from every code path; migration `20261053` inventories (temp table, aggregate counts) and moves existing rows to `PENDING_ASSIGNMENT` with a history line, and sets the column default. See `WF-17`.*
-*Landed 2026-10-02 (drafting-flow Round G): drafting-flow `SM-8` closes on this decision together with [`DEC-82`](#dec-82), which records the call this decision's text did not make — a canceled request is not reopened (fix pass: that reasoning used to sit in this note). Drafting-flow `SM-10` is recorded `INVALID` on this decision.*
+*Landed 2026-10-02 (drafting-flow Round G): drafting-flow `SM-8` closes on this decision together with [`DEC-44 (DF-P0)`](#dec-44-df-p0) (provisional label, renumbered at merge), which records the call this decision's text did not make — a canceled request is not reopened (fix pass: that reasoning used to sit in this note). Drafting-flow `SM-10` is recorded `INVALID` on this decision.*
 
 <a id="dec-15"></a>
 ## DEC-15 · Does a reopen start a new revision cycle?
@@ -5073,10 +5073,10 @@ dialog to close on one Escape closes its own stack in its handler.
 
 *Revised 2026-10-01 (notifications Round G, N2 final-review fix `9950e29`): §2 no longer says the registry's rule keeps escalation copies FYI; Risk records that the conflict class's controller copies are actions that are never cleared, handed to `TRAIL-9`'s owner (N4); §3 names all three intake producers of `review_requested` — the quote and submission notices of `app/api/intake/upload/route.ts` beside the folded digest — and states that they now raise the Documents badge.*
 
-<a id="dec-82"></a>
-## DEC-82 · A canceled request is terminal: it is refiled, not reopened
+<a id="dec-44-df-p0"></a>
+## DEC-44 (DF-P0) · A canceled request is terminal: it is refiled, not reopened
 
-*Minted by drafting-flow Round G, package DF-P0 RECORD (2026-10-02, review fix pass), as a provisional "DEC-82" — the next free number on `f1ac550`; if another package takes DEC-82 first, the integrator renumbers. References: drafting-flow `SM-8` (done-whens 2 and 3), `EDGE-2`; roles-and-permissions `WF-17`; `DEC-14`.*
+*Minted by drafting-flow Round G, package DF-P0 RECORD (2026-10-02, review fix pass) under the provisional label "DEC-44 (DF-P0)", anchor `dec-44-df-p0` — the corpus's branch convention for a decision minted off the integration branch (as J6b's `dec-44-j6b` and I-05's `dec-44-i05` were). It first took "DEC-82", the next free number on `f1ac550`; DEC-82 and DEC-83 have since been taken on the integration branch (P17, I-03), so the records fix moved it to this label. **The integrator renumbers it to the next free `DEC-` number at merge** and rewrites every reference to it (this heading and anchor, the Lookup row, the `DEC-14` landed note, drafting-flow `SM-8`, roles-and-permissions `WF-17`). References: drafting-flow `SM-8` (done-whens 2 and 3), `EDGE-2`; roles-and-permissions `WF-17`; `DEC-14`.*
 
 **Decision. `CANCELED` offers no action to anyone — no `reopen_ticket`, no force close, no reassignment, no attachment. A withdrawn request that is wanted again is filed as a new request, which may cite the canceled one; the canceled ticket is never resurrected.**
 

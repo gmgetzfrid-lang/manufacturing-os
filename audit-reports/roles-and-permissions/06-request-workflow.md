@@ -134,7 +134,7 @@ clock, and the document-intent bridge.
 2. Every legitimate client write that exists today still succeeds.
 3. A test attempts the raw PATCH above and asserts refusal.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus items found on re-verification and review: the FOR ALL policy is not split (`PERS-1`); `request_type` **and `unit`** — the whole `DEC-13` resource every scoped capability rule reads — are unguarded on UPDATE (`LEAK-3`); `last_modified`, the route's compare-and-set token, is nullable and unguarded, so nulling it reduces the CAS to status-only (found on `EDGE-11`; requested as a new id, proposed `EDGE-15`); and, by the full census on `SM-2`, every other column outside the guard — `title` / `description` (the approved scope) and the SLA clocks among them. Owner: drafting-flow DF-P1.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus items found on re-verification and review: the FOR ALL policy is not split (`PERS-1`); `request_type` **and `unit`** — the whole `DEC-13` resource every scoped capability rule reads — are unguarded on UPDATE (`LEAK-3`, and [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) for the scoped-gate escape); `last_modified`, the route's compare-and-set token, is nullable and unguarded, so nulling it reduces the CAS to status-only (found on `EDGE-11`; requested as a new id, proposed `EDGE-15`); and, by the full census on `SM-2`, every other column outside the guard — `title` / `description` (the approved scope) and the SLA clocks among them. Owner: drafting-flow DF-P1.*
 
 ---
 
@@ -466,7 +466,7 @@ touches only `lib/workflow.ts:74-75`.** It is also the prerequisite for `WF-7`.
    ticket assigned to someone else.
 3. The queue-claim behaviour for unassigned tickets is unchanged.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-6`](../drafting-flow/09-authority-surfaces.md) records this scoping and stays OPEN on the `CAPABILITY_DEFS` descriptions, which do not yet tell an admin the narrowed reach — owner DF-P6; its resource done-when is ticked in code only, because the `request_type` / `unit` a scoped rule is evaluated against are client-writable until DF-P1 (`LEAK-3`). Drafting-flow `LEAK-3`'s done-when 3 rests on this record.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-6`](../drafting-flow/09-authority-surfaces.md) records this scoping and stays OPEN on the `CAPABILITY_DEFS` descriptions, which do not yet tell an admin the narrowed reach — owner DF-P6; its resource done-when is ticked in code only, because the `request_type` / `unit` a scoped rule is evaluated against are client-writable until DF-P1 (drafting-flow [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10)). Drafting-flow `LEAK-3`'s done-when 3 rests on this record.*
 
 ---
 
@@ -1074,7 +1074,7 @@ constant.
 org's configured list, and the close-without-review behaviour is a property of
 the configured type rather than a hardcoded string comparison.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — and, with `unit`, rewrite the resource every `DEC-13` scoped rule reads (a Manager can re-type a request out of a type-scoped engineer-gate rule and issue for construction with no engineer — CRITICAL-class wherever such a rule exists; the integrator raises `LEAK-3` or opens it as a new id, proposed `LEAK-10`) — owner DF-P1 (`ticket_update_guard` re-creation). This record's own done-when (creation) holds.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — owner DF-P1 (`ticket_update_guard` re-creation). With `unit`, the same unguarded columns let a member rewrite the resource every `DEC-13` scoped rule reads (a Manager can re-type a request out of a type-scoped engineer-gate rule and issue for construction with no engineer): opened at the DF-P0 merge as its own finding, drafting-flow [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) (HIGH — CRITICAL if any org's policy carries such a rule; the inventory query is there), same owner. This record's own done-when (creation) holds.*
 
 ---
 
@@ -1217,7 +1217,7 @@ decorative** — precisely the failure mode that
 
 **Scope / residual.** `supabase/schema.sql` still declares `status … DEFAULT 'NEW'` as the pre-migration baseline of record — the live default is changed by the migration, not by editing the baseline. A restore of a pre-Round-E backup could re-insert a `NEW`/`PENDING_ENG_INITIAL` row through the service role; re-running `20261053`'s `UPDATE` (idempotent) moves it. `ticket.eng_review` / `ticket.final_approve` are dormant as BASE lists only: a request-type override on either row still governs who may be picked as the reviewer (`DEC-13` stage 2) — said in their `dormantNote`. The portal's "closed" slot counts (requester / DocCtrl) and the analytics "closed" count still count `CLOSED` alone — a canceled request is not a completed one — deliberate.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-8`](../drafting-flow/06-state-machine.md) closes on this record, `DEC-14` and `DEC-82` (a canceled request is refiled, not reopened — the call `DEC-14`'s text did not make; status-reachability test added in `lib/__tests__/dfRoundG_P0.test.ts`); [`SM-10`](../drafting-flow/06-state-machine.md) is recorded INVALID on it.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-8`](../drafting-flow/06-state-machine.md) closes on this record, `DEC-14` and [`DEC-44 (DF-P0)`](../DECISIONS.md#dec-44-df-p0) (provisional label, renumbered by the integrator at merge; a canceled request is refiled, not reopened — the call `DEC-14`'s text did not make; status-reachability test added in `lib/__tests__/dfRoundG_P0.test.ts`); [`SM-10`](../drafting-flow/06-state-machine.md) is recorded INVALID on it.*
 
 ---
 
