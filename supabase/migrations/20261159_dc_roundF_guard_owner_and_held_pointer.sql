@@ -28,8 +28,9 @@
 --               yet, so this takes away a flow that works today — a
 --               controller's intake approve of a submission revising a held
 --               Issued document (the only way through: release the hold,
---               approve, re-place it by hand) — until the integrator's J10b
---               follow-up gives it the force; hence the PASTE PRECONDITION
+--               approve, re-place it by hand) — until projects-and-cost
+--               INTK-18 (owned by projects-joint J14; J10b merged without it)
+--               gives it the force; hence the PASTE PRECONDITION
 --               below (or the user's ratification of the interim loss,
 --               recorded on DEC-63's P17 line). A first pointer write (no
 --               current revision) is a creation's (REV-17) and is not this;
@@ -86,8 +87,11 @@
 --             already open takes that roster's stamp (NULL for one opened
 --             before this paste), so a policy or owner change mid-review
 --             never reaches it. A signed-in UPDATE keeps the stamp. The
---             service role is trusted, as the sign-off guard trusts it (a
---             restore replays the stamp it exported).
+--             service role is trusted only as enforce_review_signoff_guard
+--             (20261070) trusts it: no service-role door writes roster rows
+--             today, and the data restore never imports
+--             document_review_signoffs (lib/dataRestore.ts IMMUTABLE_TABLES,
+--             :162, its entry :168); RLS gives anon no roster row.
 --           * review_control_owner_must_approve_for (new): the effective
 --             ownerMustApprove along the container chain — the twin of
 --             review_control_mode_for (20261070), the nearest DEFINED level
@@ -135,13 +139,16 @@
 -- ⚠ PASTE PRECONDITION (REV-22, P17 review fix): paste this only once the app
 -- deployed offers the intake approve's recorded force (IntakePanel calling
 -- finalizeReviewedRevision with forceHold for Document Control on the hold
--- refusal, as the inspector does — the integrator's J10b follow-up), OR once
+-- refusal, as the inspector does — projects-and-cost INTK-18, owned by
+-- projects-joint J14), OR once
 -- the user has ratified the interim loss (DEC-63's P17 Landed line, awaiting
 -- ratification). Until then a controller's intake approve of a submission
 -- revising a held Issued document is refused with no way through but
 -- releasing the hold. Deploy otherwise: the app carrying P14 offers the
 -- review promote's recorded force in the inspector when the hold refuses it,
--- and openReviewRoster already writes the owner's slot.
+-- and openReviewRoster already writes the owner's slot (submitForReview
+-- opens it under the policy stored at the submit, not the page's copy, since
+-- P17's integrator fix — RG-14).
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -285,9 +292,11 @@ DECLARE
   v_owner       uuid;
   v_independent boolean;
 BEGIN
-  -- Service-role / cron / restore writes carry no JWT and are trusted, as
-  -- the sign-off guard trusts them: a restore replays the stamp it exported.
-  -- (RLS gives anon no roster row to insert or update.)
+  -- A write with no JWT (the service role) is trusted only as
+  -- enforce_review_signoff_guard (20261070) trusts it: no service-role door
+  -- writes roster rows today, and the data restore never imports
+  -- document_review_signoffs (lib/dataRestore.ts IMMUTABLE_TABLES, :162,
+  -- its entry :168). (RLS gives anon no roster row to insert or update.)
   IF auth.uid() IS NULL THEN
     RETURN NEW;
   END IF;

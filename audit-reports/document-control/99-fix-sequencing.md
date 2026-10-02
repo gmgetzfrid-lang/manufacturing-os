@@ -389,16 +389,21 @@ one-paste migration:
   approve's recorded force — `components/projects/IntakePanel.tsx` calling
   `finalizeReviewedRevision` with `forceHold` (and a reason) for Document
   Control on the hold refusal, as the inspector's `ReviewGateSection` does —
-  the integrator's J10b follow-up; **or** until the user has ratified the
+  projects-and-cost `INTK-18`, opened at the J10b merge and owned by
+  projects-joint J14 (J10b merged without it; repointed at the integrator
+  fix, 2026-10-02); **or** until the user has ratified the
   interim loss recorded on DEC-63's P17 Landed line (awaiting ratification).
   Before either, the paste takes away a flow that works today: a controller's
   intake approve of a submission revising a held, already-issued document is
   refused, and the only way through is to release the stop-work hold,
   approve, and re-place the hold by hand (`REV-22`; P14's `20261151` already
-  took the same flow away for a held Draft, the same J10b follow-up). The
-  rest of the app needs nothing: the app carrying P14 already offers a
+  took the same flow away for a held Draft, the same force, `INTK-18`). The
+  rest of the app needs nothing more: the app carrying P14 already offers a
   controller the review promote's recorded force in the inspector when the
-  hold refuses it, and `openReviewRoster` already writes the owner's slot.
+  hold refuses it, and `openReviewRoster` already writes the owner's slot —
+  deploy with P17's integrator fix (2026-10-02), so `submitForReview` opens
+  the roster under the policy stored at the submit, not the page's cached
+  copy (`RG-14`).
   After the paste a controller moves the pointer of a held, already-issued
   document only through a recorded force (`publish_revision`'s, or the
   inspector's review-promote force). A roster opened under an

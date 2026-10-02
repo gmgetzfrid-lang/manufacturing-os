@@ -24,8 +24,8 @@
       "LOW": 18
     },
     "by_status": {
-      "RESOLVED": 146,
-      "OPEN": 16
+      "RESOLVED": 147,
+      "OPEN": 15
     }
   },
   "status_vocabulary": [
@@ -4279,7 +4279,7 @@
       "id": "RG-14",
       "title": "The database completion gate does not know an owner-must-approve policy — a roster opened without the owner's row completes without the owner",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from `20261151`'s `enforce_document_publish_guard` — the completion count reads the roster's rows only — and `20261070`'s `doc_review_signoff_insert` policy)",
       "blast_radius": null,
