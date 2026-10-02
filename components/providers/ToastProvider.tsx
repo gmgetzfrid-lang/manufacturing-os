@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react";
 import { X, CheckCircle, AlertCircle, Info, Bell } from "lucide-react";
-import { CornerPortal, useDockAllowance, DOCK_PRIORITY } from "@/components/ui/CornerDock";
+import { CornerPortal, useDockAllowances, DOCK_PRIORITY } from "@/components/ui/CornerDock";
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
@@ -56,8 +56,10 @@ export function visibleToasts<T>(toasts: T[], allowance: number): T[] {
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Shown[]>([]);
   // Auto-dismiss timers, by toast id. A timer runs only while its card is
-  // within the visible stack (RT-11): a card collapsed into "+N more" — or
-  // into the phone's summary pill — keeps its full time for when it shows.
+  // within the visible stack (RT-11): a card collapsed into "+N more" keeps
+  // its full time for when it shows. A phone's folded pill is not "+N more":
+  // the cards it stands for still run their time (the dock's `timed`), so a
+  // toast expires on a phone as it always did.
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
   // Declared before showToast so it can be referenced from the timeout without
@@ -85,14 +87,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const newest = toasts[toasts.length - 1];
-  const allowance = useDockAllowance(
+  const { shown: allowance, timed } = useDockAllowances(
     "transient", DOCK_PRIORITY.toast, toasts.length,
     newest ? { label: newest.title, tone: newest.type === "error" || newest.type === "warning" ? "error" : newest.type === "success" ? "ok" : "info" } : null,
   );
   const shown = visibleToasts(toasts, allowance);
 
   useEffect(() => {
-    const now = visibleToasts(toasts, allowance);
+    const now = visibleToasts(toasts, timed);
     const visible = new Set(now.map((t) => t.id));
     // Leaving the visible stack pauses (clears) a card's timer…
     for (const [id, t] of timers.current) {
@@ -105,7 +107,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         timers.current.set(id, setTimeout(() => removeToast(id), t.duration));
       }
     }
-  }, [toasts, allowance, removeToast]);
+  }, [toasts, timed, removeToast]);
 
   useEffect(() => {
     const map = timers.current;

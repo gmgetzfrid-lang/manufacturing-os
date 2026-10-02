@@ -310,16 +310,17 @@ components/documents/EditOverlapBanner.tsx:41-42 -- `const [dismissed, setDismis
 - [ ] "Heads-up sent" survives a remount (derived from the notification rows, not local state)
 
 **Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc` (KnowledgeIndexIndicator `setHidden(false)` at :164; EditOverlapBanner `dismissed` / `nudged` component state at :41-42). New `hooks/useDismissed.ts` (`useDismissed`, `useDismissedSet`, `clearDismissals`) generalises FirstRunHint's substrate. It keys `dismissed:<uid>:<orgId>:<key>`, reads through `useSyncExternalStore` with a "dismissed" server snapshot (hydration-safe, as FirstRunHint), wraps every storage access (an in-memory copy holds when storage throws), and clears every key on sign-out. KnowledgeIndexIndicator uses it (see STACK-6). In `components/documents/EditOverlapBanner.tsx`:
-- **Dismiss** persists per overlap: the document plus the set of people in it (`overlapKey`). A new person joining makes a new overlap, and the banner shows again.
-- **"Heads-up sent ✓" from the rows.** It is derived from the `overlap_advisory` rows the viewer can read: addressed to the viewer, about the document, from someone in the overlap, within 14 days (`OVERLAP_HEADSUP_WINDOW_DAYS`).
-- **The viewer's own send** is remembered for the overlap on the same substrate. `notifyMany` skips the actor, and `notifications_own_select` (`20260723_notifications_unify.sql:37`) shows only rows addressed to the reader, so a heads-up the viewer sent cannot be read back from the client.
+- **An overlap** is the document, the set of people in it (`overlapKey`) and when it formed: the moment its last person joined, i.e. each person's earliest live edit intent and the latest of those (`overlapFormedAt`, from `DocumentIntent.createdAt`). Anything the banner remembers counts only if it happened after the overlap formed, so a new person joining is a new overlap, and so is the same people overlapping again after it dissolved.
+- **Dismiss** persists per overlap, stamped with when it was dismissed (`overlapMark`).
+- **"Heads-up sent ✓" from the rows.** It is derived from the `overlap_advisory` rows the viewer can read: addressed to the viewer, about the document, from someone in the overlap, within 14 days (`OVERLAP_HEADSUP_WINDOW_DAYS`) — and, since the review fix, sent after the overlap formed. A heads-up sent before the newest person joined never reached them, so the button is offered again. (The first version matched any advisory from anyone in the overlap in the window: when Sam joined after Pat's heads-up, the banner said "Heads-up sent" and hid the button although Sam was never told.)
+- **The viewer's own send** is remembered for the overlap on the same substrate, stamped with when it was sent, under the same rule. `notifyMany` skips the actor, and `notifications_own_select` (`20260723_notifications_unify.sql:37`) shows only rows addressed to the reader, so a heads-up the viewer sent cannot be read back from the client.
 
-The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "TAX-8 — EditOverlapBanner…" ("Heads-up sent" from a received row, with the query's filters asserted; the viewer's send and the dismissal survive a remount; a new person shows it again) and the `useDismissed` suite.
+The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "TAX-8 — EditOverlapBanner…" ("Heads-up sent" from a received row, with the query's filters asserted; the viewer's send and the dismissal survive a remount; a new person shows it again), "TAX-8 (review fix) — 'Heads-up sent' counts only a heads-up sent after the overlap formed" (`overlapFormedAt`; an advisory from Pat dated before Sam's intent leaves the button offered; one dated after shows "Heads-up sent"; a send and a dismissal from an earlier overlap of the same two people do not carry over to the one live now) and the `useDismissed` suite.
 
 **Done-when.**
 - ✓ Every dismissible surface the finding names persists its dismissal on a shared `useDismissed` hook, FirstRunHint's substrate. The other dismissible banners found (StaleCheckoutBanner, SetupChecklist) already persist on their own keys; toasts and upload cards are transient by design.
 - ✓ `setHidden(false)` is removed from the drain loop.
-- ✓ "Heads-up sent" survives a remount: derived from the notification rows wherever the viewer can read them. The viewer's own send is per-browser, because RLS keeps sent rows from the sender — the cross-device remainder is opened as `TAX-16`.
+- ✓ "Heads-up sent" survives a remount: derived from the notification rows wherever the viewer can read them, for the overlap as it stands now (sent after its newest person joined). The viewer's own send is per-browser, because RLS keeps sent rows from the sender — the cross-device remainder is opened as `TAX-16`.
 
 **Scope / residual.** `TAX-16` (a sender's own heads-up from another device; it needs a server read of rows one sent, after N5's server-side notification route). No migration.
 
@@ -509,7 +510,7 @@ app/api/cron/maintenance/route.ts:370-372 -- `// Manual distribution-ack request
 ## TAX-14 · Three floating-signal corners and four z-layers; BackupIndicator (z-300) covers the offline/update pills (z-200) in the same bottom-left corner, and two separate surfaces both announce "a new version is available" in different words
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:3-13`, `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:74-88`, `components/projects/UndoToastHost.tsx:21`, `components/system/UpdatePill.tsx:41-48`, `app/(protected)/layout.tsx`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed including simultaneous mounting: app/(protected)/layout.tsx:61-65 mounts UpdatePill, CornerDock, BackupIndicator and KnowledgeIndexIndicator; app/layout.tsx:93 mounts ServiceWorkerManager; UndoToastHost is mounted by components/projects/ExecutionView.tsx:926 — so the Projects → Execution scenario has all of them live at once, and the two different 'new version' wordings come from two independent detectors (a waiting service worker vs. a polled /api/version build id).
@@ -541,20 +542,20 @@ components/projects/UndoToastHost.tsx:21 -- `<div className="fixed bottom-4 left
 - [ ] One component owns "a newer build exists", fed by both the version poll and the SW waiting-worker signal - one wording, one placement, one prompt at a time
 - [ ] A single `Z` constant module owns every overlay layer number
 
-**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With a backup running and the browser offline, the base backup card (bottom-left, z-300) covered the offline pill (8,160 px²). Now:
+**Partial (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With a backup running and the browser offline, the base backup card (bottom-left, z-300) covered the offline pill (8,160 px²). Now:
 - **Two docks, documented.** The bottom-right `CornerDock` holds background jobs pinned nearest the corner, with transient messages above; the bottom-centre `CentreDock` holds in-page action feedback (the undo stack) above the return chip. Both are described in `components/ui/CornerDock.tsx`'s header and in `lib/zLayers.ts`.
 - **The backup in the dock.** `BackupIndicator` renders through `CornerPortal` (STACK-8).
 - **One layer module.** `lib/zLayers.ts` owns the layer numbers, enforced by a scan test (STACK-10).
 
-No two globally-mounted surfaces share a corner now: bottom-right holds the dock alone, bottom-left ServiceWorkerManager's pills alone, bottom-centre the graph chip (the undo host is ExecutionView's, not global), top-centre UpdatePill. After: the backup card is in the dock and the offline pill is on top (overlap 0). Tests: `lib/__tests__/cornerDock.test.ts` (z scale, old fixed corners gone, the centre dock), `lib/__tests__/cornerJobs.test.ts` (backup in the jobs slot).
+Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's pills alone, top-centre UpdatePill. Bottom-centre holds the `CentreDock`, whose two slots keep the layers their surfaces had (the graph chip at 40, the undo stack at 280; the undo host itself is ExecutionView's, not global). After: the backup card is in the dock and the offline pill is on top (overlap 0). Tests: `lib/__tests__/cornerDock.test.ts` (z scale, old fixed corners gone, the centre dock), `lib/__tests__/cornerJobs.test.ts` (backup in the jobs slot).
 
 **Done-when.**
-- ✓ Exactly two docks exist and are documented, and no two globally-mounted surfaces share a corner with different z-index values. Reading note: the plan's design meets "one for transient/action feedback, one for long-running background jobs" as the corner dock's two slots plus the centre dock for in-page action feedback (`DEC-44 (N7)`).
+- Partial, NOT met as written. Two docks exist and are documented, but not in the shape the item names: the bottom-right corner dock holds both kinds (background jobs pinned nearest the corner, transient messages above them, in two slots of one dock), and the bottom-centre `CentreDock` holds two globally-mounted slots in one corner at different z values (the chip at 40, the undo stack at 280). The two layers are deliberate: one stacking box would have moved one of them against the drawers and modals between 40 and 280. Remaining step: the integrator ratifies `DEC-44 (N7)` item 1 as this item's reading (one corner dock with two slots, one centre dock with two layers), or a later package splits the corner into a transient dock and a jobs dock and gives the centre dock one layer.
 - ✓ `BackupIndicator` moves into `CornerPortal`.
 - dw3 (one component owns "a newer build exists") — NOT done here. Per the plan and DEC-31 it needs `components/pwa/ServiceWorkerManager.tsx`, which is public-surfaces PKG-1's, so it is opened as `TAX-15`, to be worked after PKG-1 merges.
-- ✓ A single `Z` constant module owns every overlay layer number (`lib/zLayers.ts`, with a scan test that refuses an unlisted value).
+- ✓ A single `Z` constant module owns every overlay layer number (`lib/zLayers.ts`, with a scan test that refuses an unlisted value — classes, inline styles and, since the review fix, a stylesheet's `z-index:`).
 
-**Scope / residual.** `TAX-15`. No migration.
+**Scope / residual.** Stays OPEN on dw1 (the ratification or the split above) and dw3 (`TAX-15`). No migration.
 
 ---
 

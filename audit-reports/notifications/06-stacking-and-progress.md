@@ -1,6 +1,6 @@
 # 06 · Background jobs & the bottom-right corner
 
-**13 findings** — 13 MEDIUM.
+**14 findings** — 13 MEDIUM · 1 LOW. `STACK-14` opened by notifications Round G N7 CORNER, 2026-10-01 (the DEC-31 remainder of `STACK-10`'s review fix).
 
 Progress and completion messaging: how many things render in that corner, whether they stack, and whether a failure is ever seen.
 
@@ -167,12 +167,14 @@ app/api/knowledge/ingest/route.ts:179-184
 
 After the fix the same harness shows the rose card, the reason and the link `/knowledge/lib1`. Tests: `lib/__tests__/cornerJobs.test.ts` "STACK-3 — ingestFailureOf" (park, held retry, busy, failure, stall) and "…the rose 'could not be indexed' branch…" / "a document that failed before any progress is still reported"; the I-02b suite (`lib/__tests__/knowledgeIndexIndicator.test.ts`) still passes — a park and a busy claim show no card.
 
+Review fix: a failure now outlives the drain pass that found it. The first version kept `failed` per pass, and the engine marks a failed row `error`, so no later pass reads it again: the next pass that indexed another document replaced the list with its own empty one and the card went back to the emerald "caught up" while the document was still in error. Failures now live in `failedRef` (a `Map` by document id) that every state the drain writes carries in full. An entry is dropped only when that document later indexes in a drain pass (someone resumed it, or a reset put it back in the queue), or when the person dismisses the finished card with its X; a workspace switch clears it. Tests: `lib/__tests__/cornerJobs.test.ts` "a failure outlives the drain pass that found it…" (pass 1 fails document A; pass 2 indexes document B; the card still names A with its reason, says "1 document indexed." and has no `.text-emerald-600`; a later pass that indexes A turns it green) and "dismissing the finished failure card drops the failures with it…". Both fail on the first version of the file.
+
 **Done-when.**
 - ✓ `DriveState` carries a `failed[]` list (docName + message) and the card renders a rose "N document(s) could not be indexed" branch with the per-doc reason and a link to `/knowledge/[libraryId]`.
 - ✓ The empty catch binds the error and records it.
 - ✓ The done branch never renders a green checkmark when `failed.length > 0`.
 
-**Scope / residual.** The busy test is a match on lib/knowledge's sentence (that file is intelligence I-03's this round); a structured `busy` flag on that throw would be cleaner and is I-03's to add. No migration.
+**Scope / residual.** The busy test is a match on lib/knowledge's sentence (that file is intelligence I-03's this round); a structured `busy` flag on that throw would be cleaner and is I-03's to add. A failed document that someone resumes from the library page indexes in that page's own loop, which the indicator skips (one driver per document); the card keeps naming it until it is dismissed, because the indicator does not re-read errored rows. That errs toward saying a failure that has since been fixed, never the reverse. No migration.
 
 ---
 
@@ -357,15 +359,17 @@ components/documents/StagingTray.tsx:20
 - **Widths.** Cards clamp to the viewport: toasts `w-[min(20rem,calc(100vw-2rem))]`, upload cards `w-[min(18rem,…)]`, the indexing card `w-[min(330px,…)]`, the backup card `w-[min(340px,…)]`.
 - **The tray.** `StagingTray` declares its height in `--dock-bottom` (`useDockBottomInset`: measured, kept current by a ResizeObserver, removed on unmount). Both docks sit above it.
 - **Phones.** Below the `sm` breakpoint the dock collapses to one summary pill. It shows the most urgent card's label — an error first, then a running job, then the newest — and the count. A tap expands it (the cap still applies) and "Hide" folds it.
+- **Folded cards keep their time (review fix).** The first version stopped every clock while the pill was folded, so on a phone no toast and no finished upload card ever expired: a 2-second "Saved" toast was still a pill after 4 seconds (Chromium, 360×740; on `b9cdfdc` it was gone), above every modal, for the rest of the session. Now the dock tells a widget two numbers (`useDockAllowances`): `shown`, the cards it renders, and `timed`, the cards whose clocks run. Folded, `shown` is 0 and `timed` is what the stack would show — the newest four, as on a desktop — so a toast or a finished upload card expires on its own time and the pill goes with it. Cards past the cap still wait, as they do behind "+N more".
+- **The pill says what it shows (review fix).** Its accessible name is its summary and the count ("1 upload failed — 2 updates, show", `pillLabel`), not a bare count. While it is folded no card — and so no error toast's `role="alert"` — is in the page, so the newest summary is mirrored into a visually hidden node in the dock's live region, re-keyed when it changes and `role="alert"` for a failure.
 
-After: no tray button is covered and the pill reads "Uploading 1 file · 2". Expanded, the toast is 320px inside 360 (left 24) and no card is over the tray. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-7 — …" (the tray sets and clears the variable; every card clamps; the phone pill, tap and Hide).
+After: no tray button is covered and the pill reads "Uploading 1 file · 2". Expanded, the toast is 320px inside 360 (left 24) and no card is over the tray. After the review fix, the same 360×740 probe shows the 2-second toast and its pill gone at 4 seconds. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-7 — …" (the tray sets and clears the variable; every card clamps; the phone pill, tap and Hide; "on a phone a folded toast still expires on its own time…" — a 2 s toast gone at 2.1 s and a "Done" upload card at 2.6 s; "on a phone the cap still holds the clocks…"; "the pill's accessible name carries what it shows…"). The two clock tests fail on the first version of the widgets.
 
 **Done-when.**
 - ✓ Cards use `w-[min(…,calc(100vw-2rem))]`.
 - ✓ The dock lifts above a page-declared bottom bar: the tray sets `--dock-bottom` and the dock uses it as its bottom offset.
 - ✓ On mobile the dock collapses to a single summary pill that expands on tap.
 
-**Scope / residual.** While the pill is collapsed no card is "within the visible stack", so toast timers wait (RT-11): on a phone a toast is read when the pill is opened, then expires. No migration.
+**Scope / residual.** On a phone a toast is read in the pill (its title is the summary while it is the newest or most urgent), not as a card; that is the pill's design. No migration.
 
 ---
 
@@ -516,22 +520,30 @@ app/(protected)/documents/[libraryId]/page.tsx:2543-2547
 - **One layer module.** New `lib/zLayers.ts`: `Z` (pageChip 40, undoToast 280, metadataStagingModal 300, customizeNodeModal 400, assetPhotoUploader 510, dialog 700, dock 750, hoverPreview 800, print 9999) and `Z_SCALE`, every z-index value in use (the 2026-10-01 inventory plus the dock's band).
 - **The dock's band.** The dock is portaled to `document.body` at `Z.dock`: above every modal, backdrop and dialog band, below only the pointer-following hover preview (800, as before) and the print cover (9999).
 - **The three modals.** `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal` read their layer from `Z` as `style={{ zIndex }}`, with the same values; Tailwind cannot generate a class from a runtime number.
+- **The cards never sit on a modal's action row (review fix).** The dock's box ignores the pointer, but its cards, its "+N more" and its phone pill take clicks, and above every modal they landed on the modal's own controls. Chromium, the real `MetadataStagingModal` with 40 staged files, "Upload All" pressed and 6 uploads reported (the reviewer's harness, rebuilt against this branch): `elementFromPoint` at the centre / right / left of the primary button hit it at none of the three points at 1280×800, 1366×768 and 1440×900, and "Stop upload" was partly covered; on phones (360, 390, 414 wide) the summary pill sat on "Upload All". Now a modal declares its action row with `useDockAvoid(ref, open)` (`components/ui/CornerDock.tsx`). The dock measures its own cards, and whenever they would overlap a declared row where they sit, it sits above the row instead (`dockAvoidOffset`: the lowest card 8px above the row; a row the cards would not touch — a centred dialog's footer left of them, a phone dialog's mid-screen footer — moves nothing; a row with no room above it leaves the dock where it is). The row is re-measured on resize, on any scroll, when it or its panel changes size and when an entrance animation ends. Declared: the footers of `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal`, and the shared `ModalFooter` (`components/ui/Modal.tsx`), so every `appConfirm` / `appAlert` / `appPrompt` too. After, the same probe: all three points hit both buttons at 1280×800, 1366×768, 1440×900 and 1920×1080, and at 360×740, 390×844 and 414×896; at 1366×768 the four cards sit at 446–662 above the footer at 670, on top of the modal and in view; at 390×844 the pill sits at 746–776 above the footer at 784.
 
-Inventory of what was replaced: the dock's 300 (dock and fallback); BackupIndicator's 300 (it now lives in the dock); UndoToastHost's 280 and BackToGraphChip's 40 (now the centre slots' layers, same values); and the three modals' 300 / 400 / 510 (same values). No overlay moved relative to another, except the dock, which moved above the modals by design.
+Inventory of what was replaced: the dock's 300 (dock and fallback); BackupIndicator's 300 (it now lives in the dock); UndoToastHost's 280 and BackToGraphChip's 40 (now the centre slots' layers, same values); and the three modals' 300 / 400 / 510 (same values). What moved, in full: only the dock, but it moved past every overlay from the 300 band to 700. It used to be z-300 and first in `<main>`, so it painted under every overlay at 300 or above (a z-300 overlay later in the document won the tie). At 750 it now paints over all of them:
+- the modals and panels — BulkEditModal, CollectionModal, ShareLinkModal and WorkflowDiagramModal (300), LibraryOrderModal (320), the shared `Modal`'s default (400), CsvImportModal, CreateColumnWizard, AssetCsvImportModal, RelationshipGraph and the admin pages' dialogs (400), FileReferenceModal (500), the policy and review modals and DocumentLinkPicker (520), AreaKnowledgePanel, UnitOpsPanels and the app dialog host (700);
+- the dropdowns, menus and tooltips in that band — ThemeMenu, StatusControl and ProgressControl (300 / 310), HelpTooltip, MentionableTextarea's list, ScheduleCalendarTileView and ExecutionGuide (300), ViewSelector and AssetPhotoPopover (400);
+- GlobalCommandPalette (600), SignatureCeremony (500) and AssetPhotoCarousel (500).
+
+No other overlay's number changed, and no two of them changed order.
 
 After: the upload card is on top under all three modals. Tests: `lib/__tests__/cornerDock.test.ts` "lib/zLayers — the scale":
-- every z literal in app/, components/, hooks/ and lib/ is listed in `Z_SCALE`, so a new layer is decided in the module;
+- every z literal in app/, components/, hooks/ and lib/ is listed in `Z_SCALE`, so a new layer is decided in the module (the scan reads a stylesheet's `z-index:` too, since the review fix);
 - the dock is strictly above everything but 800 and 9999;
 - the old values and the relative order are pinned;
 - the modals read from the module;
 - the old fixed corners are gone.
 
+And "STACK-10 — the dock keeps clear of an open modal's action row": `dockAvoidOffset` (the laptop footer, the phone sheet, rows it must not move for, the bottom bar as the floor, two rows); the shared `ModalFooter` lifting the dock while six upload cards would cover it and releasing it on close; a phone sheet's footer under the pill; and the four declarations, pinned in the source.
+
 **Done-when.**
 - ✓ A documented z-index scale exists, and the dock is portaled to document.body and given the top band.
 - ✓ MetadataStagingModal, AssetPhotoUploader (510) and CustomizeNodeModal (400) are each verified to render below the dock while an upload card shows.
-- ✓ Manual pass in Chromium: the failed card's name, "Failed" and its reason read clearly over the blurred staging overlay (harness screenshot).
+- ✓ Manual pass in Chromium: the failed card's name, "Failed" and its reason read clearly over the blurred staging overlay (harness screenshot); after the review fix the cards read over the wizard while its "Upload All" and "Stop upload" stay reachable at laptop and phone widths.
 
-**Scope / residual.** Only the layers this contract touches read from the module. The scan test makes `Z_SCALE` the owner of every other number without converting ~150 call sites (DEC-31). No migration.
+**Scope / residual.** Only the layers this contract touches read from the module. The scan test makes `Z_SCALE` the owner of every other number without converting ~150 call sites (DEC-31). Above the action row the cards still cover the right-hand end of a tall modal's body (on the wizard, the status column and row icons of the rows beside them) — they report over the modal by design, and each is dismissible. An overlay that does not declare its action row — the hand-rolled ones, and the shared `Modal` without `ModalFooter` — can still have a card over its bottom-right corner while one shows: opened as `STACK-14`. `components/ui/Modal.tsx` is outside the plan's file list (four lines in `ModalFooter`). No migration.
 
 ---
 
@@ -665,5 +677,29 @@ Only `inFlight` parks indexing, as before. `hasUploadsInFlight()` (no cooldown) 
 - ✓ UpdatePill's reload is warned while an upload is in flight.
 
 **Scope / residual.** The service worker's own "Update available — tap to refresh" button (ServiceWorkerManager, PKG-1's) is covered by the beforeunload guard itself, not by a dialog of its own. No migration.
+
+---
+
+<a id="stack-14"></a>
+
+## STACK-14 · An overlay that does not declare its action row can still have a dock card over its bottom-right corner
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications, a later package — or each overlay's owning package the next time it touches the file. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `STACK-10`'s review fix.
+- **Verification:** CONFIRMED (read on the N7 branch)
+- **Locations:** `components/ui/CornerDock.tsx` (`useDockAvoid`, `dockAvoidOffset`); `components/ui/Modal.tsx` (`ModalFooter` declares its row; `Modal` without it does not); the overlays from the 300 band to 700 listed in `STACK-10`'s resolution that neither compose `ModalFooter` nor call `useDockAvoid` — about 30 hand-rolled `fixed inset-0` overlays (e.g. `components/documents/BulkEditModal.tsx`, `ShareLinkModal.tsx`, `ReviewControlModal.tsx`, `CsvImportModal.tsx`) and the pages that compose `Modal` with their own footer (`app/(protected)/companies/page.tsx`, `companies/[id]/page.tsx`, `projects/[id]/page.tsx`, `components/projects/ProjectWizard.tsx`).
+- **Independently verified:** — opened 2026-10-01 by N7; not yet challenged by a second party.
+
+**Mechanism.** `STACK-10` put the corner dock above every overlay (`Z.dock` = 750), and its cards take clicks. The dock keeps clear of an overlay's action row only when the overlay declares it. The three upload-starting modals and the shared `ModalFooter` (and so the app's confirm, alert and prompt dialogs) do. The rest do not: when a toast or an upload card shows while one of them is open and its action row reaches the dock's lane (the right-most ~360px), the card sits over the row until it expires or is dismissed. Before `STACK-10` the dock sat under all of them.
+
+**Failure scenario.** On a 1280px laptop a controller has BulkEditModal open. An upload they started elsewhere finishes, and its "Done" card sits over the right end of the modal's footer for 2.5 seconds; an error toast would sit there for 5, until its X is pressed.
+
+**Done when.**
+
+- [ ] Every overlay from the 300 band to 700 whose action row can reach the dock's lane declares it: `useDockAvoid` on its footer, or `ModalFooter`.
+- [ ] A scan test refuses a new full-screen overlay at z ≥ 300 that does neither, with an explicit list for overlays that have no action row (a carousel, a palette).
+
+**Closer:** notifications in a later round, or each owning package as it next edits the overlay.
 
 ---

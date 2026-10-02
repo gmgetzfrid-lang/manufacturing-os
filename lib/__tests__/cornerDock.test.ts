@@ -26,8 +26,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
-  CornerDock, CornerPortal, CentreDock, CentrePortal, allocateDock, rightRailOffset, pickSummary,
-  __resetDockForTests, DOCK_VISIBLE_CAP, DOCK_MIN_ROOM_PX, NOTIFICATION_CENTER_RAIL_PX,
+  CornerDock, CornerPortal, CentreDock, CentrePortal, allocateDock, rightRailOffset, pickSummary, pillLabel,
+  dockAvoidOffset, __resetDockForTests, DOCK_VISIBLE_CAP, DOCK_MIN_ROOM_PX, NOTIFICATION_CENTER_RAIL_PX,
 } from "@/components/ui/CornerDock";
 import { ToastProvider, useToast, toastCoalesceKey, visibleToasts, COALESCE_WINDOW_MS } from "@/components/providers/ToastProvider";
 import UploadIndicator, { pickVisibleUploads } from "@/components/providers/UploadIndicator";
@@ -35,7 +35,7 @@ import UndoToastHost from "@/components/projects/UndoToastHost";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import StagingTray from "@/components/documents/StagingTray";
 import { Z, Z_SCALE } from "@/lib/zLayers";
-import RailProbe from "./cornerDockRailProbe";
+import RailProbe, { AvoidProbe, ModalProbe } from "./cornerDockRailProbe";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -68,6 +68,19 @@ const shell = (...children: React.ReactNode[]) =>
     React.createElement(UploadIndicator),
     ...children);
 const openCenter = vi.fn();
+
+/** Run `fn` with the phone breakpoint matching. */
+async function onPhone(fn: () => Promise<void>) {
+  const mm = vi.fn((q: string) => ({ matches: q.includes("max-width: 639px"), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  Object.defineProperty(window, "matchMedia", { value: mm, configurable: true, writable: true });
+  try { await fn(); } finally { delete (window as { matchMedia?: unknown }).matchMedia; }
+}
+const viewport = (w: number, h: number) => {
+  Object.defineProperty(window, "innerWidth", { value: w, configurable: true });
+  Object.defineProperty(window, "innerHeight", { value: h, configurable: true });
+};
+const rect = (left: number, top: number, right: number, bottom: number) =>
+  ({ left, top, right, bottom, width: right - left, height: bottom - top, x: left, y: top, toJSON() { return {}; } }) as DOMRect;
 
 beforeEach(() => {
   __resetDockForTests();
@@ -149,6 +162,9 @@ describe("the dock renders the cap, the expander and the center doorway", () => 
     const center = [...dock()!.querySelectorAll("button")].find((b) => /Notifications/.test(b.textContent ?? ""))!;
     await act(async () => { center.click(); });
     expect(openCenter).toHaveBeenCalledTimes(1);
+    // With no argument: the center's open(filter?) must not get the click
+    // event as its filter (the segmented control would show nothing chosen).
+    expect(openCenter).toHaveBeenCalledWith();
   });
 
   it("the dock is a labelled live region portaled to document.body at Z.dock (STACK-10, NEDGE-5 for N3)", async () => {
@@ -377,6 +393,165 @@ describe("STACK-7 — the page's bottom bar, card widths, and the phone pill", (
       delete (window as { matchMedia?: unknown }).matchMedia;
     }
   });
+
+  it("on a phone a folded toast still expires on its own time, and the pill goes with it — as a toast always did", async () => {
+    // Before the review fix the folded pill stopped every clock: a 2s
+    // "Saved" toast was still a pill after 4s (Chromium, 360x740), for good.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await onPhone(async () => {
+      await mount(shell());
+      await act(async () => { toastApi({ type: "success", title: "Saved the register", duration: 2000 }); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-summary]")?.textContent).toContain("Saved the register");
+      await act(async () => { vi.advanceTimersByTime(2100); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-summary]")).toBeNull();
+      // A finished upload card clears on its "Done" timing too.
+      await act(async () => { upload("PH1", "done"); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-summary]")?.textContent).toContain("Uploads finished");
+      await act(async () => { vi.advanceTimersByTime(2600); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-summary]")).toBeNull();
+    });
+  });
+
+  it("on a phone the cap still holds the clocks: cards past the four the stack would show keep their full time", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await onPhone(async () => {
+      await mount(shell());
+      await act(async () => { for (let i = 0; i < 6; i++) toastApi({ type: "info", title: `P${i}`, duration: 2000 }); });
+      await flush();
+      await act(async () => { vi.advanceTimersByTime(2100); });
+      await flush();
+      // The newest four expired; P0 and P1 have not started their time yet.
+      const pill = dock()!.querySelector("[data-dock-summary]") as HTMLElement;
+      expect(pill).not.toBeNull();
+      expect(pill.getAttribute("aria-label")).toBe("P1 — 2 updates, show");
+      await act(async () => { vi.advanceTimersByTime(2100); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-summary]")).toBeNull();
+    });
+  });
+
+  it("the pill's accessible name carries what it shows, and a folded failure is said (role=alert)", async () => {
+    await onPhone(async () => {
+      await mount(shell());
+      await act(async () => { upload("PHF", "error", { error: "connection reset" }); toastApi({ type: "info", title: "Doc revised", duration: 0 }); });
+      await flush();
+      const pill = dock()!.querySelector("[data-dock-summary]") as HTMLElement;
+      expect(pill.getAttribute("aria-label")).toBe("1 upload failed — 2 updates, show");
+      const said = dock()!.querySelector("[data-dock-announce]") as HTMLElement;
+      expect(said.getAttribute("role")).toBe("alert");
+      expect(said.textContent).toBe("1 upload failed");
+      expect(said.className).toContain("sr-only");
+      expect(pillLabel(null, 1)).toBe("Updates — 1 update, show");
+      // Opened, the cards (and the error's own text) are in the page; the
+      // mirror goes.
+      await act(async () => { pill.click(); });
+      await flush();
+      expect(dock()!.querySelector("[data-dock-announce]")).toBeNull();
+      expect(text()).toContain("connection reset");
+    });
+  });
+});
+
+// ── STACK-10 (review fix): the dock never sits on a modal's action row ──────
+
+describe("STACK-10 — the dock keeps clear of an open modal's action row", () => {
+  // Chromium before this fix (bulk-upload wizard, 40 files, 6 uploads):
+  // "Upload All" covered at 1280x800 / 1366x768 / 1440x900, "Stop upload"
+  // partly covered, and on a phone the pill sat on "Upload All".
+  const desk = { viewportW: 1366, viewportH: 768, rail: 0, bottomBar: 0, contentW: 288, contentH: 286 };
+  const footer = { left: 107, right: 1259, top: 670, bottom: 730 };
+
+  it("dockAvoidOffset lifts the cards above a row they would cover — just above it, never onto it", () => {
+    const off = dockAvoidOffset(desk, [footer]);
+    expect(off).toBe(768 - 670 + 8 - 16);
+    // The lowest card's bottom edge is 8px above the row.
+    expect(desk.viewportH - off - 16).toBe(footer.top - 8);
+    // Phone bottom sheet (390x844): the 180x31 pill over its footer.
+    expect(dockAvoidOffset({ viewportW: 390, viewportH: 844, rail: 0, bottomBar: 0, contentW: 180, contentH: 31 },
+      [{ left: 0, right: 390, top: 790, bottom: 844 }])).toBe(844 - 790 + 8 - 16);
+  });
+
+  it("a row the cards would not touch moves nothing: a centred dialog left of them, a row above them, no cards at all", () => {
+    expect(dockAvoidOffset(desk, [{ left: 459, right: 907, top: 420, bottom: 480 }])).toBe(0);
+    expect(dockAvoidOffset(desk, [{ left: 0, right: 1366, top: 100, bottom: 160 }])).toBe(0);
+    expect(dockAvoidOffset({ ...desk, contentW: 0, contentH: 0 }, [footer])).toBe(0);
+    // A phone's centred dialog: its footer is mid-screen, the pill at the bottom.
+    expect(dockAvoidOffset({ viewportW: 390, viewportH: 844, rail: 0, bottomBar: 0, contentW: 180, contentH: 31 },
+      [{ left: 16, right: 374, top: 450, bottom: 510 }])).toBe(0);
+    // A row with no room above it for a card: the dock stays (never a sliver).
+    expect(dockAvoidOffset({ ...desk, contentH: 760 }, [{ left: 0, right: 1366, top: 40, bottom: 90 }])).toBe(0);
+  });
+
+  it("the page bottom bar is the floor, and a lift that lands on a second row settles above both", () => {
+    expect(dockAvoidOffset({ ...desk, bottomBar: 120 }, [footer])).toBe(0); // already above it
+    const two = [footer, { left: 900, right: 1366, top: 560, bottom: 650 }];
+    expect(dockAvoidOffset({ ...desk, contentH: 100 }, two)).toBe(768 - 560 + 8 - 16);
+  });
+
+  function mockLayout(footerRect: DOMRect, cards: DOMRect) {
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.matches("[data-dock-slot]") && this.children.length > 0) return cards;
+      if (this.matches("[data-dock-summary]")) return cards;
+      if (this.matches("[data-test-row]") || this.className.includes("rounded-b-2xl")) return footerRect;
+      return rect(0, 0, 0, 0);
+    });
+  }
+
+  it("the shared ModalFooter declares its row: six upload cards lift the dock above it while the modal is open, and it comes back when it closes", async () => {
+    viewport(1366, 768);
+    const spy = mockLayout(rect(107, 670, 1259, 730), rect(1062, 466, 1350, 752));
+    const modal = (open: boolean) => open
+      ? React.createElement(ModalProbe, { key: "m" })
+      : null;
+    try {
+      await mount(shell(modal(true)));
+      expect(dock()!.style.bottom).toBe("calc(var(--dock-bottom, 0px) - 1.5rem)"); // nothing to cover yet
+      await act(async () => { for (let i = 0; i < 6; i++) upload(`F${i}`); });
+      await flush();
+      expect(dock()!.getAttribute("data-dock-avoiding")).toBe("1");
+      expect(dock()!.style.bottom).toBe("calc(90px - 1.5rem)");
+      expect(dock()!.style.maxHeight).toBe("calc(100dvh - 90px + 3rem)");
+      expect(Number(dock()!.style.zIndex)).toBe(Z.dock); // still above the modal
+      await mount(shell(modal(false)));
+      expect(dock()!.getAttribute("data-dock-avoiding")).toBeNull();
+      expect(dock()!.style.bottom).toBe("calc(var(--dock-bottom, 0px) - 1.5rem)");
+    } finally { spy.mockRestore(); }
+  });
+
+  it("on a phone the folded pill sits above a bottom sheet's footer instead of on it", async () => {
+    viewport(390, 844);
+    const spy = mockLayout(rect(0, 790, 390, 844), rect(194, 797, 374, 828));
+    try {
+      await onPhone(async () => {
+        await mount(shell(React.createElement(AvoidProbe)));
+        await act(async () => { upload("S1"); upload("S2"); });
+        await flush();
+        expect(dock()!.querySelector("[data-dock-summary]")).not.toBeNull();
+        expect(dock()!.style.bottom).toBe(`calc(${844 - 790 + 8 - 16}px - 1.5rem)`);
+      });
+    } finally { spy.mockRestore(); }
+  });
+
+  it("the three upload-starting modals declare their action rows, and so does the shared ModalFooter", () => {
+    const src = (p: string) => readFileSync(resolve(p), "utf8");
+    const staging = src("components/documents/MetadataStagingModal.tsx");
+    expect(staging).toContain("useDockAvoid(footerRef, isOpen);");
+    expect(staging).toMatch(/<div ref=\{footerRef\}[^>]*>\s*<div className="text-\[11px\][^"]*">\s*\{items\.length\} file/);
+    const asset = src("components/assets/AssetPhotoUploader.tsx");
+    expect(asset).toContain("useDockAvoid(footerRef, isOpen);");
+    expect(asset).toContain("<div ref={footerRef}");
+    const cover = src("components/documents/CustomizeNodeModal.tsx");
+    expect(cover).toContain("useDockAvoid(footerRef, open);");
+    expect(cover).toContain("<div ref={footerRef}");
+    const modal = src("components/ui/Modal.tsx");
+    const foot = modal.slice(modal.indexOf("export function ModalFooter"));
+    expect(foot).toContain("useDockAvoid(ref, true);");
+    expect(foot).toContain("ref={ref}");
+  });
 });
 
 describe("STACK-4 — one bottom-centre dock: the undo stack sits above the graph chip, each on its own layer", () => {
@@ -452,7 +627,7 @@ describe("lib/zLayers — the scale", () => {
   const found = new Map<number, string[]>();
   for (const f of files) {
     const src = readFileSync(f, "utf8");
-    const patterns = [/(?<![\w-])z-\[(\d+)\]/g, /(?<![\w[-])z-(\d+)(?![\w\]])/g, /zIndex\s*[=:]\s*\{?\s*(\d+)/g, /zIndex:\s*\w+\s*\?\s*(\d+)\s*:\s*(\d+)/g];
+    const patterns = [/(?<![\w-])z-\[(\d+)\]/g, /(?<![\w[-])z-(\d+)(?![\w\]])/g, /zIndex\s*[=:]\s*\{?\s*(\d+)/g, /zIndex:\s*\w+\s*\?\s*(\d+)\s*:\s*(\d+)/g, /z-index:\s*(\d+)/g];
     for (const re of patterns) {
       for (const m of src.matchAll(re)) {
         for (const g of m.slice(1)) {
@@ -467,6 +642,8 @@ describe("lib/zLayers — the scale", () => {
   it("every z-index value in app/, components/, hooks/ and lib/ is one lib/zLayers.ts lists — a new layer is decided there", () => {
     const unlisted = [...found.keys()].filter((n) => !Z_SCALE.includes(n));
     expect(unlisted.map((n) => `${n} (${found.get(n)!.slice(0, 3).join(", ")}) — add it to Z_SCALE in lib/zLayers.ts`)).toEqual([]);
+    // A stylesheet's `z-index:` is read too (the print cover in globals.css).
+    expect(found.get(9999) ?? []).toContain("app/globals.css");
   });
 
   it("the dock is strictly above every modal, backdrop and dialog band, and below only the hover preview and print", () => {

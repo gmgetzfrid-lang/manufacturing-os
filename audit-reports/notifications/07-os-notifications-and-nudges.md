@@ -170,7 +170,7 @@ Repo-wide, `grep -rni "requestPermission|Notification.permission|showNotificatio
 ## OS-4 · NotificationListener toasts on every incoming notification row with no batching or cap — a nudge burst becomes a toast burst
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:78-96`, `components/providers/ToastProvider.tsx:39-49`, `components/ui/CornerDock.tsx:22-27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: N inserts within 6s produce N simultaneously-mounted toast cards. The 6-second figure in the claim is exact (duration: 6000 at NotificationListener.tsx:96).
@@ -209,14 +209,14 @@ components/ui/CornerDock.tsx:24 (no max-height / overflow) —
 - [ ] Bursts from the same actor/resource within a short window coalesce into one toast
 - [ ] The CornerDock has a max-height and does not grow past the viewport
 
-**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). Ten identical nudges rendered ten simultaneous cards on the base tree, in a dock with no height bound (see STACK-9). Now ToastProvider caps the visible toasts within the dock's shared cap of 4, collapsing the rest into the dock's "+N more" card (with the notification center's doorway). A burst of the same message within 10 seconds coalesces into one card with a count (the "×10" card in Chromium and in jsdom). The dock is height-bounded and scrolls (details under RT-11 and STACK-9). Tests: `lib/__tests__/cornerDock.test.ts` "ten identical toasts within the window are one card with a count", "40 upload events…", "hidden messages offer the notification center…".
+**Partial (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). Ten identical nudges rendered ten simultaneous cards on the base tree, in a dock with no height bound (see STACK-9). Now ToastProvider caps the visible toasts within the dock's shared cap of 4, collapsing the rest into the dock's "+N more" card (with the notification center's doorway). A burst of the same message within 10 seconds coalesces into one card with a count (the "×10" card in Chromium and in jsdom). The dock is height-bounded and scrolls (details under RT-11 and STACK-9). Tests: `lib/__tests__/cornerDock.test.ts` "ten identical toasts within the window are one card with a count", "40 upload events…", "hidden messages offer the notification center…".
 
 **Done-when.**
 - ✓ ToastProvider caps concurrent toasts: the excess collapses into a "+N more" summary card.
-- ✓ Bursts from the same actor and resource within a short window coalesce into one toast. The content key covers a repeat; `coalesceKey` lets NotificationListener key by kind + resource (N3's hand-off).
+- Partial, NOT met as written. A burst of the same message (same type, title and body) within 10 seconds coalesces into one card with a count; a burst from the same actor and resource worded differently does not yet, because `components/providers/NotificationListener.tsx` (N3's file this round) passes no `coalesceKey`. Remaining step: N3 passes `` coalesceKey: `${row.kind}:${row.resource_id}` `` (hand-off in `99-fix-sequencing.md`).
 - ✓ The CornerDock has a max-height and does not grow past the viewport.
 
-**Scope / residual.** The rate of nudges itself (OS-1 / GAP-206) is not this finding's. No migration.
+**Scope / residual.** Stays OPEN on dw2 until N3's one line lands. The rate of nudges itself (OS-1 / GAP-206) is not this finding's. No migration.
 
 ---
 

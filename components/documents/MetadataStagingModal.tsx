@@ -22,6 +22,7 @@ import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filen
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 import { Z } from "@/lib/zLayers";
+import { useDockAvoid } from "@/components/ui/CornerDock";
 
 export interface CustomColumnDef {
   key: string;
@@ -90,6 +91,11 @@ export default function MetadataStagingModal({
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
+  // The corner dock sits above this modal and reports its uploads; it keeps
+  // clear of this action row, so "Upload All" and "Stop upload" stay
+  // reachable however many cards it holds (STACK-10).
+  const footerRef = React.useRef<HTMLDivElement>(null);
+  useDockAvoid(footerRef, isOpen);
 
   // Detect when the user has defined library columns that map to the
   // canonical document fields (number / title / rev). When they exist,
@@ -760,7 +766,7 @@ export default function MetadataStagingModal({
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
+        <div ref={footerRef} className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
           </div>

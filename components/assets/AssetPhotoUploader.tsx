@@ -4,7 +4,7 @@
 // Auto-detects capture date from filename (e.g., IMG_20240815_*.jpg).
 // Each photo can have an optional caption + manual date override.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   Upload, X, Camera, Calendar, Loader2, CheckCircle2,
@@ -16,6 +16,7 @@ import {
 } from "@/lib/assets";
 import { uploadToPath } from "@/lib/storage";
 import { Z } from "@/lib/zLayers";
+import { useDockAvoid } from "@/components/ui/CornerDock";
 
 interface PendingPhoto {
   id: string;
@@ -42,6 +43,9 @@ export default function AssetPhotoUploader({
   const [isDragOver, setIsDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The corner dock (above this modal) keeps clear of Upload / Cancel (STACK-10).
+  const footerRef = useRef<HTMLDivElement>(null);
+  useDockAvoid(footerRef, isOpen);
 
   const stagePendingFiles = useCallback((files: FileList | File[] | null) => {
     if (!files) return;
@@ -280,7 +284,7 @@ export default function AssetPhotoUploader({
         )}
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div ref={footerRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {pending.length === 0 ? (
               "Drop or click above to start."

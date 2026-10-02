@@ -14,12 +14,14 @@
 // first, then running transfers, then finished ones — a failure's reason is
 // never the card that gets collapsed into "+N more" while a progress bar
 // shows. A finished card's clear-timer starts only once it is visible, so a
-// failure collapsed behind the cap is still there when it surfaces.
+// failure collapsed behind the cap is still there when it surfaces. (On a
+// phone, a card the folded summary pill stands for counts as visible: it
+// clears on its own time, as on a desktop — STACK-7.)
 
 import React, { useEffect, useRef, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
 import { Loader2, CheckCircle2, AlertCircle, X, Square } from "lucide-react";
-import { CornerPortal, useDockAllowance, DOCK_PRIORITY } from "@/components/ui/CornerDock";
+import { CornerPortal, useDockAllowances, DOCK_PRIORITY } from "@/components/ui/CornerDock";
 
 type Tracked = UploadActivity & { _t: number };
 
@@ -59,16 +61,17 @@ export default function UploadIndicator() {
   const list = Object.values(items).sort((a, b) => a._t - b._t);
   const uploading = list.filter((u) => u.status === "uploading").length;
   const failed = list.filter((u) => u.status === "error").length;
-  const allowance = useDockAllowance("jobs", DOCK_PRIORITY.upload, list.length, list.length === 0 ? null
+  const { shown: allowance, timed } = useDockAllowances("jobs", DOCK_PRIORITY.upload, list.length, list.length === 0 ? null
     : failed > 0 ? { label: `${failed} upload${failed === 1 ? "" : "s"} failed`, tone: "error" }
     : uploading > 0 ? { label: `Uploading ${uploading} file${uploading === 1 ? "" : "s"}`, tone: "busy" }
     : { label: "Uploads finished", tone: "ok" });
   const shown = pickVisibleUploads(list, allowance);
 
-  // A finished card clears UPLOAD_CLEAR_MS after it is first VISIBLE — and
-  // only if no newer event superseded it.
+  // A finished card clears UPLOAD_CLEAR_MS after it is first VISIBLE (or
+  // stood for by the phone's pill) — and only if no newer event superseded
+  // it. A started clock is not paused when the card later leaves the stack.
   useEffect(() => {
-    for (const u of pickVisibleUploads(Object.values(items).sort((a, b) => a._t - b._t), allowance)) {
+    for (const u of pickVisibleUploads(Object.values(items).sort((a, b) => a._t - b._t), timed)) {
       if (u.status === "uploading") continue;
       const tk = `${u.id}:${u.status}`;
       if (timers.current.has(tk)) continue;
@@ -84,7 +87,7 @@ export default function UploadIndicator() {
         });
       }, UPLOAD_CLEAR_MS[status]));
     }
-  }, [items, allowance]);
+  }, [items, timed]);
 
   useEffect(() => {
     const map = timers.current;

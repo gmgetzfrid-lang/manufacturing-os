@@ -120,6 +120,10 @@ export function useDismissedSet(key: string, scope: string | null): {
   has: (id: string) => boolean;
   add: (id: string) => void;
   remove: (id: string) => void;
+  /** The stored ids, oldest first (empty until `ready`). */
+  values: readonly string[];
+  /** Replace the stored ids with `fn(current)` in one write. */
+  update: (fn: (ids: string[]) => string[]) => void;
   /** False until the client snapshot is read (server render / hydration). */
   ready: boolean;
 } {
@@ -142,7 +146,8 @@ export function useDismissedSet(key: string, scope: string | null): {
     if (!ids.includes(id)) return;
     put(ids.filter((x) => x !== id));
   }, [ids, put]);
-  return { has, add, remove, ready: raw !== null };
+  const update = useCallback((fn: (ids: string[]) => string[]) => put(fn([...ids])), [ids, put]);
+  return { has, add, remove, values: ids, update, ready: raw !== null };
 }
 
 export function parseSet(raw: string): string[] {

@@ -44,7 +44,9 @@ import { uploadToPath, subscribeUploads, UploadCancelledError, type UploadActivi
 import { confirmReloadDuringUploads } from "@/components/system/UpdatePill";
 import { confirmCancelBackup } from "@/components/providers/BackupIndicator";
 import { ingestFailureOf } from "@/components/providers/KnowledgeIndexIndicator";
-import { overlapKey, OVERLAP_HEADSUP_WINDOW_DAYS } from "@/components/documents/EditOverlapBanner";
+import {
+  overlapKey, overlapFormedAt, overlapMark, latestOverlapMark, OVERLAP_HEADSUP_WINDOW_DAYS,
+} from "@/components/documents/EditOverlapBanner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -337,6 +339,83 @@ describe("STACK-3 / STACK-6 / TAX-8 — the indexing card says failures and keep
     vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
   });
 
+  it("a failure outlives the drain pass that found it: a later pass that indexes another document never turns the card green", async () => {
+    // Before the review fix each pass replaced `failed` with its own list: pass
+    // 2 indexing doc B wiped pass 1's failure of doc A (whose row is now
+    // `error`, so no pass reads it again) and the card went emerald.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const { KII, CornerDock, ing } = await mountIndicator();
+      db.rows = [{ id: "kA", name: "API-650.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+      ing.ingestKnowledgeDocument.mockRejectedValueOnce(new Error("Indexing stalled at page 5 of 40"));
+      await act(async () => { root.render(React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(KII))); });
+      await flush(8);
+      const d = () => document.getElementById("corner-dock")!;
+      expect(d().textContent).toContain("1 document could not be indexed");
+      // Pass 2 (the 2-minute poll): A is `error` now and not read; B indexes.
+      db.rows = [{ id: "kB", name: "B31.3.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+      let release!: () => void;
+      ing.ingestKnowledgeDocument.mockImplementationOnce(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => {
+        cb?.(10, 10, { visionPages: 0 });
+        await new Promise<void>((r) => { release = r; });
+      });
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      await flush(8);
+      // Working on B, the card still says A failed.
+      expect(d().textContent).toContain("Indexing knowledge in the background");
+      expect(d().textContent).toContain("1 document could not be indexed so far");
+      await act(async () => { release(); });
+      await flush(8);
+      expect(d().textContent).toContain("1 document could not be indexed");
+      expect(d().textContent).toContain("API-650.pdf");
+      expect(d().textContent).toContain("Indexing stalled at page 5 of 40");
+      expect(d().textContent).toContain("1 document indexed.");
+      expect(d().textContent).not.toContain("caught up");
+      expect(d().querySelector(".text-emerald-600")).toBeNull();
+      // A indexes after all (someone resumed it): no longer a failure.
+      db.rows = [{ id: "kA", name: "API-650.pdf", library_id: "lib1", status: "pending", pages_indexed: 5, error: null, vision_retry_after: null }];
+      ing.ingestKnowledgeDocument.mockImplementationOnce(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => { cb?.(40, 40, { visionPages: 0 }); });
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      await flush(8);
+      expect(d().textContent).toContain("Knowledge indexing caught up");
+      expect(d().textContent).not.toContain("could not be indexed");
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
+    }
+  });
+
+  it("dismissing the finished failure card drops the failures with it; a new failure brings the rose pill back", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const { KII, CornerDock, ing } = await mountIndicator();
+      db.rows = [{ id: "kC", name: "C.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+      ing.ingestKnowledgeDocument.mockRejectedValueOnce(new Error("Indexing failed: connection reset"));
+      await act(async () => { root.render(React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(KII))); });
+      await flush(8);
+      const d = () => document.getElementById("corner-dock")!;
+      await act(async () => { (d().querySelector('button[title="Dismiss"]') as HTMLElement).click(); });
+      await flush();
+      expect(d().textContent ?? "").toBe("");
+      // A clean pass after the dismissal shows nothing — the dropped failure
+      // does not come back.
+      db.rows = [{ id: "kD", name: "D.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+      ing.ingestKnowledgeDocument.mockImplementationOnce(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => { cb?.(3, 3, { visionPages: 0 }); });
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      await flush(8);
+      expect(d().textContent ?? "").toBe("");
+      // A new failure: the rose pill (the person dismissed the card before).
+      db.rows = [{ id: "kE", name: "E.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+      ing.ingestKnowledgeDocument.mockRejectedValueOnce(new Error("Indexing failed: the file is not a PDF"));
+      await act(async () => { vi.advanceTimersByTime(120_000); });
+      await flush(8);
+      expect(d().textContent).toContain("1 not indexed");
+    } finally {
+      vi.useRealTimers();
+      vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
+    }
+  });
+
   it("the drain never re-opens the card: `setHidden(false)` is gone from the loop", () => {
     const src = readFileSync(resolve("components/providers/KnowledgeIndexIndicator.tsx"), "utf8");
     const drain = src.slice(src.indexOf("const drain = async"), src.indexOf("void drain();"));
@@ -432,7 +511,7 @@ describe("useDismissed — localStorage keyed by account+workspace, hydration-sa
 // ── TAX-8: the overlap banner remembers ─────────────────────────────────────
 
 describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a remount", () => {
-  async function loadBanner(overlaps: Array<{ documentId: string; libraryId: string | null; intents: Array<{ userId: string; userName: string; source: string }> }>) {
+  async function loadBanner(overlaps: Array<{ documentId: string; libraryId: string | null; intents: Array<{ userId: string; userName: string; source: string; createdAt?: string }> }>) {
     const notify = vi.fn(async () => undefined);
     vi.doMock("@/lib/intents", () => ({ listOrgEditOverlaps: async () => overlaps }));
     vi.doMock("@/lib/inAppNotifications", () => ({ notifyMany: notify }));
@@ -440,13 +519,15 @@ describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a
     const { default: Banner } = await import("@/components/documents/EditOverlapBanner");
     return { Banner, notify };
   }
+  const DAY = 86_400_000;
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
   const two = [{ documentId: "d1", libraryId: "L1", intents: [
-    { userId: "me", userName: "Me", source: "checkout" }, { userId: "pat", userName: "Pat", source: "download" },
+    { userId: "me", userName: "Me", source: "checkout", createdAt: ago(6) }, { userId: "pat", userName: "Pat", source: "download", createdAt: ago(5) },
   ] }];
 
   it("'Heads-up sent' is derived from an overlap_advisory row this person received from someone in the overlap", async () => {
     const { Banner } = await loadBanner(two);
-    db.rows = [{ id: "d1", document_number: "P-101", resource_id: "d1", actor_user_id: "pat", actor_name: "Pat" }];
+    db.rows = [{ id: "d1", document_number: "P-101", resource_id: "d1", actor_user_id: "pat", actor_name: "Pat", created_at: ago(4) }];
     await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
     await flush(6);
     expect(host.textContent).toContain("Heads-up sent ✓");
@@ -455,6 +536,7 @@ describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a
     expect(adv).toContainEqual({ m: "eq", a: ["kind", "overlap_advisory"] });
     expect(adv).toContainEqual({ m: "eq", a: ["user_id", "me"] });
     expect(adv.find((c) => c.m === "gte")?.a[0]).toBe("created_at");
+    expect(String(adv.find((c) => c.m === "select")?.a[0])).toContain("created_at");
     expect(OVERLAP_HEADSUP_WINDOW_DAYS).toBe(14);
     vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
   });
@@ -487,7 +569,7 @@ describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a
     expect(overlapKey("d1", two[0].intents)).toBe("d1:me,pat");
     vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
     // Someone new joins: a different overlap, shown again.
-    const three = [{ ...two[0], intents: [...two[0].intents, { userId: "sam", userName: "Sam", source: "ticket" }] }];
+    const three = [{ ...two[0], intents: [...two[0].intents, { userId: "sam", userName: "Sam", source: "ticket", createdAt: ago(1) }] }];
     const again = await loadBanner(three);
     await act(async () => root.unmount());
     root = createRoot(host);
@@ -495,6 +577,88 @@ describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a
     await flush(6);
     expect(host.textContent).toContain("you and Pat, Sam both have active edit work");
     expect([...host.querySelectorAll("button")].some((b) => /Send heads-up/.test(b.textContent ?? ""))).toBe(true);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+});
+
+describe("TAX-8 (review fix) — 'Heads-up sent' counts only a heads-up sent after the overlap formed", () => {
+  async function loadBanner(overlaps: Array<{ documentId: string; libraryId: string | null; intents: Array<{ userId: string; userName: string; source: string; createdAt?: string }> }>) {
+    const notify = vi.fn(async () => undefined);
+    vi.doMock("@/lib/intents", () => ({ listOrgEditOverlaps: async () => overlaps }));
+    vi.doMock("@/lib/inAppNotifications", () => ({ notifyMany: notify }));
+    vi.resetModules();
+    const { default: Banner } = await import("@/components/documents/EditOverlapBanner");
+    return { Banner, notify };
+  }
+  const DAY = 86_400_000;
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
+  const offered = () => [...host.querySelectorAll("button")].some((b) => /Send heads-up/.test(b.textContent ?? ""));
+  const withSam = (samJoined: string) => [{ documentId: "d1", libraryId: "L1", intents: [
+    { userId: "me", userName: "Me", source: "checkout", createdAt: ago(6) },
+    { userId: "pat", userName: "Pat", source: "download", createdAt: ago(5) },
+    { userId: "sam", userName: "Sam", source: "ticket", createdAt: samJoined },
+  ] }];
+
+  it("overlapFormedAt is when the last person joined (each person's earliest live intent); an unreadable date claims nothing", () => {
+    const t = (d: string) => Date.parse(d);
+    expect(overlapFormedAt([
+      { userId: "me", createdAt: "2026-09-01T00:00:00Z" },
+      { userId: "pat", createdAt: "2026-09-03T00:00:00Z" },
+      { userId: "pat", createdAt: "2026-09-05T00:00:00Z" }, // a second intent of someone already in it
+    ])).toBe(t("2026-09-03T00:00:00Z"));
+    expect(overlapFormedAt([{ userId: "me", createdAt: "2026-09-01T00:00:00Z" }, { userId: "pat", createdAt: "garbage" }])).toBe(Infinity);
+    expect(latestOverlapMark([overlapMark("d1:me,pat", 5), overlapMark("d1:me,pat", 9), overlapMark("d1:me,pat,sam", 20), "d1:me,pat"], "d1:me,pat")).toBe(9);
+    expect(latestOverlapMark([], "d1:me,pat")).toBe(-Infinity);
+  });
+
+  it("a heads-up from Pat sent BEFORE Sam joined leaves the button offered — Sam never got it", async () => {
+    const { Banner } = await loadBanner(withSam(ago(3)));
+    db.rows = [{ id: "d1", document_number: "P-101", resource_id: "d1", actor_user_id: "pat", actor_name: "Pat", created_at: ago(4) }];
+    await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(host.textContent).toContain("you and Pat, Sam both have active edit work");
+    expect(host.textContent).not.toContain("Heads-up sent");
+    expect(offered()).toBe(true);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+
+  it("one sent AFTER Sam joined reached everyone in the overlap now: 'Heads-up sent'", async () => {
+    const { Banner } = await loadBanner(withSam(ago(3)));
+    db.rows = [{ id: "d1", document_number: "P-101", resource_id: "d1", actor_user_id: "pat", actor_name: "Pat", created_at: ago(2) }];
+    await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    expect(offered()).toBe(false);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+
+  it("this person's own send and dismissal are stamped: the same people overlapping again later is a new overlap", async () => {
+    const key = "d1:me,pat";
+    // Sent and dismissed 20 days ago, for an overlap of the same two people
+    // that has since dissolved; the one live now formed 5 days ago.
+    window.localStorage.setItem(`${DISMISSED_PREFIX}me:o1:overlap-headsup-sent`, JSON.stringify([overlapMark(key, Date.now() - 20 * DAY)]));
+    const { Banner } = await loadBanner([{ documentId: "d1", libraryId: "L1", intents: [
+      { userId: "me", userName: "Me", source: "checkout", createdAt: ago(6) }, { userId: "pat", userName: "Pat", source: "download", createdAt: ago(5) },
+    ] }]);
+    db.rows = [];
+    await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(offered()).toBe(true);
+    // A dismissal from that old overlap does not hide this one either.
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    window.localStorage.setItem(`${DISMISSED_PREFIX}me:o1:overlap-banner`, JSON.stringify([overlapMark(key, Date.now() - 20 * DAY)]));
+    await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(host.textContent).toContain("you and Pat both have active edit work");
+    // Sending now marks it once (an earlier mark for the overlap is replaced).
+    const send = [...host.querySelectorAll("button")].find((b) => /Send heads-up/.test(b.textContent ?? ""))!;
+    await act(async () => { send.click(); });
+    await flush();
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    const marks = parseSet(window.localStorage.getItem(`${DISMISSED_PREFIX}me:o1:overlap-headsup-sent`)!);
+    expect(marks).toHaveLength(1);
+    expect(latestOverlapMark(marks, key)).toBeGreaterThan(Date.now() - DAY);
     vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
   });
 });

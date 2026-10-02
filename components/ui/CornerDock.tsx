@@ -28,9 +28,16 @@
 //   - It moves out of the way. A page's bottom bar declares its height in
 //     `--dock-bottom` and the dock sits above it; a full-height right-edge
 //     drawer declares its width with `useOccupyRightRail` and the dock moves
-//     left of it when there is room (STACK-7, STACK-11).
+//     left of it when there is room (STACK-7, STACK-11). Because the dock
+//     sits above every modal and its cards take clicks, a modal declares its
+//     action row with `useDockAvoid`, and while the dock's cards would cover
+//     that row the dock sits above it — the modal that starts an upload keeps
+//     its own "Upload All" / "Stop upload" reachable (STACK-10).
 //   - On a phone it is one pill. Below the `sm` breakpoint the dock collapses
-//     to a single summary pill that expands on tap (STACK-7).
+//     to a single summary pill that expands on tap (STACK-7). The pill names
+//     the most urgent card (and says it to a screen reader); while it is
+//     folded, toasts and finished upload cards still expire on their own
+//     time, so a "Saved" toast does not become a pill that never leaves.
 //   - No duplicate corner. A widget finds the dock through this module's
 //     store, so a widget that mounted before the dock (the toast provider
 //     sits outside the auth gate) moves into it the moment it appears; the
@@ -137,7 +144,13 @@ let version = 0;
 let docks = 0;
 let expanded = false;
 let mobileOpen = false;
-let cache: { version: number; mobile: boolean; alloc: DockAllocation } | null = null;
+let cache: { version: number; mobile: boolean; alloc: DockAllocation; timed: DockAllocation } | null = null;
+/** Declared modal action rows the dock keeps clear of, by registration. */
+const avoids = new Map<string, DockAvoidRect>();
+/** The dock's own cards, measured: their union's width and natural height. */
+let dockContent = { w: 0, h: 0 };
+/** The page bottom bar's height (`useDockBottomInset`), in px. */
+let bottomBarPx = 0;
 
 function emit() {
   version++;
@@ -155,26 +168,33 @@ function isMobile(): boolean {
   catch { return false; }
 }
 
-function allocation(): DockAllocation {
+function allocations(): { alloc: DockAllocation; timed: DockAllocation } {
   const mobile = isMobile();
-  if (cache && cache.version === version && cache.mobile === mobile) return cache.alloc;
+  if (cache && cache.version === version && cache.mobile === mobile) return cache;
   const list: DockEntryInput[] = [...entries].map(([id, e]) => ({ id, slot: e.slot, priority: e.priority, count: e.count, seq: e.seq }));
   let alloc = allocateDock(list, DOCK_VISIBLE_CAP);
   if (expanded) {
     alloc = { ...alloc, visible: Object.fromEntries(list.map((e) => [e.id, e.count])), hidden: 0, hiddenTransient: 0 };
-  } else if (mobile && !mobileOpen) {
-    // Collapsed to the summary pill: nothing is "within the visible stack".
+  }
+  // The places whose cards run their auto-dismiss clocks: the visible stack —
+  // and, while a phone folds the stack into its pill, the places the stack
+  // WOULD show. A folded card is not collapsed behind "+N more"; it is shown
+  // in summary, and it expires on its own time as it would on a desktop.
+  const timed = alloc;
+  if (!expanded && mobile && !mobileOpen) {
+    // Collapsed to the summary pill: no card renders.
     alloc = { visible: Object.fromEntries(list.map((e) => [e.id, 0])), hidden: alloc.total, hiddenTransient: 0, total: alloc.total };
   }
-  cache = { version, mobile, alloc };
-  return alloc;
+  cache = { version, mobile, alloc, timed };
+  return cache;
 }
+function allocation(): DockAllocation { return allocations().alloc; }
 
-function allowanceFor(id: string, count: number): number {
+function allowanceFor(id: string, count: number, which: "alloc" | "timed" = "alloc"): number {
   if (docks === 0) return count; // no dock (public page): the old behaviour
   const e = entries.get(id);
   if (!e) return Math.min(count, DOCK_VISIBLE_CAP);
-  return allocation().visible[id] ?? 0;
+  return allocations()[which].visible[id] ?? 0;
 }
 
 function setExpanded(v: boolean) { expanded = v; emit(); }
@@ -189,10 +209,11 @@ const setCentreToastsTarget = (el: HTMLElement | null) => { if (centreTargets.to
 
 /** Test seam: forget every registration (jsdom tests share the module). */
 export function __resetDockForTests() {
-  entries.clear(); rails.clear(); centreCounts.clear();
+  entries.clear(); rails.clear(); centreCounts.clear(); avoids.clear();
   targets.jobs = targets.transient = null;
   centreTargets.chip = centreTargets.toasts = null;
   docks = 0; expanded = false; mobileOpen = false; cache = null;
+  dockContent = { w: 0, h: 0 }; bottomBarPx = 0;
   emit();
 }
 
@@ -203,6 +224,16 @@ export function __resetDockForTests() {
  * mounted it is always `count`.
  */
 export function useDockAllowance(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null): number {
+  return useDockAllowances(slot, priority, count, summary).shown;
+}
+
+/**
+ * `useDockAllowance` for a widget whose cards expire on a timer: `shown` is
+ * how many cards render; `timed` is how many run their auto-dismiss clocks.
+ * They differ only while a phone folds the stack into its summary pill —
+ * nothing renders, but the cards the stack would show still expire on time.
+ */
+export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null): { shown: number; timed: number } {
   const id = useId();
   const label = summary?.label ?? null;
   const tone = summary?.tone ?? null;
@@ -219,7 +250,9 @@ export function useDockAllowance(slot: DockSlot, priority: number, count: number
     if (!prev || prev.slot !== slot || prev.priority !== priority || changed) emit();
   }, [id, slot, priority, count, label, tone]);
   useLayoutEffect(() => () => { entries.delete(id); emit(); }, [id]);
-  return useSyncExternalStore(subscribe, () => allowanceFor(id, count), () => count);
+  const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, count), () => count);
+  const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, count, "timed"), () => count);
+  return { shown, timed };
 }
 
 /** Render children into the dock's slot (stacked by `priority`), or fall
@@ -268,15 +301,151 @@ export function useDockBottomInset(ref: React.RefObject<HTMLElement | null>, act
     const el = ref.current;
     if (!el) return;
     const root = document.documentElement;
-    const apply = () => root.style.setProperty(DOCK_BOTTOM_VAR, `${Math.round(el.getBoundingClientRect().height)}px`);
+    const apply = () => {
+      const h = Math.round(el.getBoundingClientRect().height);
+      root.style.setProperty(DOCK_BOTTOM_VAR, `${h}px`);
+      // The dock's modal-row check needs the same number (useDockAvoid).
+      if (bottomBarPx !== h) { bottomBarPx = h; emit(); }
+    };
     apply();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(apply) : null;
     ro?.observe(el);
     return () => {
       ro?.disconnect();
       root.style.removeProperty(DOCK_BOTTOM_VAR);
+      if (bottomBarPx !== 0) { bottomBarPx = 0; emit(); }
     };
   }, [ref, active]);
+}
+
+// ── A modal's action row (STACK-10) ─────────────────────────────────────────
+// The dock sits above every modal (Z.dock), and its cards, its "+N more" and
+// its phone pill take clicks. On a modal whose action row reaches the
+// bottom-right corner — the bulk-upload wizard's footer on a laptop, any
+// bottom sheet on a phone — they would sit on the very controls that run the
+// upload they report ("Upload All", "Stop upload"). A modal declares its
+// action row; whenever the dock's cards, where they sit now, would overlap
+// it, the dock sits above the row instead. The rest of the modal stays as
+// before: the cards report over it, readable, and every card is dismissible.
+
+/** A declared row, in viewport px. */
+export interface DockAvoidRect { top: number; bottom: number; left: number; right: number }
+/** What the dock's position depends on, in px. */
+export interface DockGeometry {
+  viewportW: number;
+  viewportH: number;
+  /** The right rail the dock already moves left of (STACK-11). */
+  rail: number;
+  /** The page bottom bar's height (STACK-7). */
+  bottomBar: number;
+  /** The dock's cards: the width and the natural height of their union. */
+  contentW: number;
+  contentH: number;
+}
+/** The cards' inset from the viewport's (or the rail's) edge: bottom-4 / right-4. */
+export const DOCK_INSET_PX = 16;
+/** The gap kept between a declared row and the dock's lowest card. */
+export const DOCK_AVOID_GAP_PX = 8;
+/** With less room than this above a row the dock cannot sit there; it stays. */
+export const DOCK_AVOID_MIN_ROOM_PX = 72;
+
+/**
+ * The dock's bottom offset (what `--dock-bottom` would be) so its cards clear
+ * every declared row they would otherwise overlap — or 0 when none is in the
+ * way and the dock stays where it is. A row elsewhere on the screen (a
+ * centred dialog's footer on a desktop, left of the cards) moves nothing.
+ * Pure — pinned by tests.
+ */
+export function dockAvoidOffset(g: DockGeometry, rows: DockAvoidRect[]): number {
+  if (g.contentW <= 0 || g.contentH <= 0) return 0;
+  const right = g.viewportW - g.rail - DOCK_INSET_PX;
+  const left = right - g.contentW;
+  let offset = g.bottomBar;
+  let moved = false;
+  // A lift can bring the cards onto another row higher up: settle, bounded.
+  for (let pass = 0; pass <= rows.length; pass++) {
+    const bottom = g.viewportH - offset - DOCK_INSET_PX;
+    const top = bottom - g.contentH;
+    let need = offset;
+    for (const r of rows) {
+      if (r.right - r.left <= 0 || r.bottom - r.top <= 0) continue;
+      if (!(r.left < right && r.right > left && r.top < bottom && r.bottom > top)) continue;
+      if (r.top - DOCK_AVOID_GAP_PX < DOCK_AVOID_MIN_ROOM_PX) continue;
+      need = Math.max(need, Math.ceil(g.viewportH - r.top + DOCK_AVOID_GAP_PX - DOCK_INSET_PX));
+    }
+    if (need === offset) break;
+    offset = need;
+    moved = true;
+  }
+  return moved ? offset : 0;
+}
+
+/**
+ * While `active`, declare `ref`'s element as a modal action row the dock's
+ * cards must not cover (STACK-10). Its rect is kept current: on resize, on
+ * any scroll (a scrolling overlay moves its modal), when the row or its
+ * panel changes size, and when an entrance animation settles.
+ */
+export function useDockAvoid(ref: React.RefObject<HTMLElement | null>, active: boolean) {
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!active) return;
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const next = { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) };
+      const prev = avoids.get(id);
+      if (!prev || prev.top !== next.top || prev.bottom !== next.bottom || prev.left !== next.left || prev.right !== next.right) {
+        avoids.set(id, next);
+        emit();
+      }
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    if (el.parentElement) ro?.observe(el.parentElement);
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    document.addEventListener("animationend", measure, true);
+    document.addEventListener("transitionend", measure, true);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+      document.removeEventListener("animationend", measure, true);
+      document.removeEventListener("transitionend", measure, true);
+      avoids.delete(id);
+      emit();
+    };
+  }, [id, active, ref]);
+}
+
+function avoidSnapshot(): number {
+  if (avoids.size === 0 || typeof window === "undefined") return 0;
+  return dockAvoidOffset({
+    viewportW: window.innerWidth,
+    viewportH: window.innerHeight,
+    rail: railSnapshot(),
+    bottomBar: bottomBarPx,
+    contentW: dockContent.w,
+    contentH: dockContent.h,
+  }, [...avoids.values()]);
+}
+
+/** Measure the dock's cards (the union of its children's rects) — their
+ *  natural size: a clamped, scrolling column still reports every card. */
+function measureDockContent(box: HTMLElement) {
+  let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+  for (const c of Array.from(box.children)) {
+    if (c.hasAttribute("data-dock-announce")) continue; // visually hidden
+    const rect = c.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    l = Math.min(l, rect.left); r = Math.max(r, rect.right);
+    t = Math.min(t, rect.top); b = Math.max(b, rect.bottom);
+  }
+  const next = r > l && b > t ? { w: Math.round(r - l), h: Math.round(b - t) } : { w: 0, h: 0 };
+  if (next.w !== dockContent.w || next.h !== dockContent.h) { dockContent = next; emit(); }
 }
 
 // ── Right rail (STACK-11) ───────────────────────────────────────────────────
@@ -332,12 +501,21 @@ function subscribeClient() { return () => {}; }
 /** The pill a phone shows instead of the stack: the most urgent card's
  *  summary — an error first, then a running job, then the newest. */
 export function pickSummary(list: Array<{ summary: DockSummary | null; touched: number; count: number }>): DockSummary | null {
+  return pickSummaryEntry(list)?.summary ?? null;
+}
+function pickSummaryEntry<T extends { summary: DockSummary | null; touched: number; count: number }>(list: T[]): T | null {
   const live = list.filter((e) => e.count > 0 && e.summary);
   const byNewest = (a: { touched: number }, b: { touched: number }) => b.touched - a.touched;
-  return live.filter((e) => e.summary!.tone === "error").sort(byNewest)[0]?.summary
-    ?? live.filter((e) => e.summary!.tone === "busy").sort(byNewest)[0]?.summary
-    ?? live.sort(byNewest)[0]?.summary
+  return live.filter((e) => e.summary!.tone === "error").sort(byNewest)[0]
+    ?? live.filter((e) => e.summary!.tone === "busy").sort(byNewest)[0]
+    ?? live.sort(byNewest)[0]
     ?? null;
+}
+
+/** The phone pill's accessible name: what the pill shows, then the count.
+ *  The visible summary (an error first) is never replaced by a bare count. */
+export function pillLabel(summary: DockSummary | null, total: number): string {
+  return `${summary?.label ?? "Updates"} — ${total} update${total === 1 ? "" : "s"}, show`;
 }
 
 /** The shared target. Mount ONCE, in the protected layout. `onOpenCenter`
@@ -348,6 +526,9 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   const client = useSyncExternalStore(subscribeClient, () => true, () => false);
   const alloc = useSyncExternalStore(subscribe, allocation, allocation);
   const rail = useSyncExternalStore(subscribe, railSnapshot, () => 0);
+  // Above a declared modal action row when the cards would cover it.
+  const avoidOffset = useSyncExternalStore(subscribe, avoidSnapshot, () => 0);
+  const boxRef = React.useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
     docks++;
@@ -357,12 +538,29 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
     try { mql = window.matchMedia?.(DOCK_MOBILE_QUERY) ?? null; } catch { mql = null; }
     const onChange = () => emit();
     mql?.addEventListener?.("change", onChange);
+    // The viewport's size moves the modal-row check (and the rail's room).
+    window.addEventListener("resize", onChange);
     return () => {
       mql?.removeEventListener?.("change", onChange);
+      window.removeEventListener("resize", onChange);
       docks--;
       emit();
     };
   }, []);
+  // The cards' size, for the modal-row check: after every render of the dock
+  // (cards come and go through the store) and whenever a slot's content
+  // changes size on its own (a toast's text wrapping, a card expanding).
+  useLayoutEffect(() => {
+    if (boxRef.current) measureDockContent(boxRef.current);
+  });
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measureDockContent(box));
+    ro.observe(box);
+    for (const c of Array.from(box.children)) ro.observe(c);
+    return () => ro.disconnect();
+  }, [client]);
   useLayoutEffect(() => {
     if (occupiedRightPx > 0) rails.set(PROP_RAIL_ID, occupiedRightPx);
     else rails.delete(PROP_RAIL_ID);
@@ -382,12 +580,16 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   // allocation re-renders the dock.
   const mobile = isMobile();
   const collapsed = mobile && !mobileOpen && alloc.total > 0;
-  const summary = collapsed ? pickSummary([...entries.values()]) : null;
+  const summaryEntry = collapsed ? pickSummaryEntry([...entries.values()]) : null;
+  const summary = summaryEntry?.summary ?? null;
   const showMore = !collapsed && (alloc.hidden > 0 || (expanded && alloc.total > DOCK_VISIBLE_CAP));
+  const lifted = avoidOffset > 0;
 
   return createPortal(
     <div
+      ref={boxRef}
       id={DOCK_ID}
+      data-dock-avoiding={lifted ? "1" : undefined}
       role="region"
       aria-label="Background activity and messages"
       aria-live="polite"
@@ -399,10 +601,12 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
         // the viewport edges and carries 2.5rem of padding: the cards still
         // sit at the old bottom-4 / right-4 inset, and their shadows fall
         // inside the box instead of being cut off at its edge.
+        // Lifted above a modal's action row, the offset takes the place of
+        // the page bottom bar's (it is never lower than it).
         zIndex: Z.dock,
         right: `calc(${rail}px - 1.5rem)`,
-        bottom: "calc(var(--dock-bottom, 0px) - 1.5rem)",
-        maxHeight: "calc(100dvh - var(--dock-bottom, 0px) + 3rem)",
+        bottom: lifted ? `calc(${avoidOffset}px - 1.5rem)` : "calc(var(--dock-bottom, 0px) - 1.5rem)",
+        maxHeight: lifted ? `calc(100dvh - ${avoidOffset}px + 3rem)` : "calc(100dvh - var(--dock-bottom, 0px) + 3rem)",
         maxWidth: "calc(100vw + 3rem)",
       }}
     >
@@ -437,7 +641,9 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
           {!expanded && alloc.hiddenTransient > 0 && onOpenCenter && (
             <button
               type="button"
-              onClick={onOpenCenter}
+              // No argument: the center's open(filter?) must never receive
+              // the click event as its filter.
+              onClick={() => onOpenCenter()}
               className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
             >
               <Bell className="w-3 h-3" /> Notifications
@@ -460,7 +666,7 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
           data-dock-summary
           onClick={() => setMobileOpen(true)}
           className="pointer-events-auto inline-flex items-center gap-1.5 max-w-[calc(100vw-2rem)] rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-lg px-3 py-1.5 text-[11px] font-black"
-          aria-label={`${alloc.total} update${alloc.total === 1 ? "" : "s"} — show`}
+          aria-label={pillLabel(summary, alloc.total)}
         >
           {summary?.tone === "busy"
             ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)] shrink-0" />
@@ -475,6 +681,19 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
           )}
           <ChevronUp className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
         </button>
+      )}
+      {/* Folded, no card (and no error toast's role=alert) is in the page.
+          The newest summary is said here instead: re-keyed when it changes,
+          so the live region hears it as new — and an error assertively. */}
+      {collapsed && summary && (
+        <span
+          key={`${summaryEntry?.touched ?? 0}:${summary.tone}:${summary.label}`}
+          data-dock-announce
+          className="sr-only"
+          role={summary.tone === "error" ? "alert" : undefined}
+        >
+          {summary.label}
+        </span>
       )}
     </div>,
     document.body,

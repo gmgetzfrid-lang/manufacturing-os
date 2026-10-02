@@ -49,7 +49,11 @@
 //     anything failed. A park (the engine's 409: a back-off in force, a
 //     vision retry held for a reason) and a busy claim (another session is
 //     indexing it) are not failures: nothing failed now, the reason is on
-//     the row, and the card stays as it was.
+//     the row, and the card stays as it was. A failure outlives the drain
+//     pass that found it: the engine marks the row `error`, so no later pass
+//     reads it again, and a later pass that indexes something else must not
+//     turn the card back to green. It is dropped only when that document
+//     indexes after all, or when the person dismisses the finished card.
 //   - Dismissals stick (STACK-6 / TAX-8). Minimize and Dismiss persist for
 //     this account in this workspace (hooks/useDismissed — cleared on sign-
 //     out). New work after a dismissal comes back as the minimized pill at
@@ -139,10 +143,16 @@ export default function KnowledgeIndexIndicator() {
   const runningRef = useRef(false);
   // Parked rows this tab already tried, by the state it tried them in.
   const parkedTriedRef = useRef(new Map<string, string>());
+  // Documents that could not be indexed, by id — across drain passes (see
+  // the header). Every state the drain writes carries this whole list.
+  const failedRef = useRef(new Map<string, FailedDoc>());
 
   useEffect(() => {
     if (!activeOrgId || !isController) return;
     let alive = true;
+    // Another workspace's failures are not this one's.
+    failedRef.current.clear();
+    const failedNow = () => [...failedRef.current.values()];
 
     // A back-off in force (a future stamp WITH its reason) is left out by the
     // query itself, and work with no stamp comes first (as the cron drain
@@ -179,9 +189,10 @@ export default function KnowledgeIndexIndicator() {
       runningRef.current = true;
       try {
         const attempted = new Set<string>();
-        const failed: FailedDoc[] = [];
         let finished = 0;
         let sawProgress = false;
+        // A failure recorded or cleared this pass (the card must say so).
+        let failuresMoved = false;
         for (;;) {
           if (!alive) return;
           // Re-checked between documents, not just at the top: a batch that
@@ -215,18 +226,22 @@ export default function KnowledgeIndexIndicator() {
                 visionPages,
                 visionSkipReason: progress?.visionSkipReason ?? null,
                 finished,
-                failed: [...failed],
+                failed: failedNow(),
               });
             });
             if (shown) finished++;
+            // It indexed after all (someone resumed it, or a reset put it
+            // back in the queue): no longer a failure.
+            if (failedRef.current.delete(next.id)) failuresMoved = true;
           } catch (e) {
             // STACK-3: the reason is on the row AND said here. A park or a
             // busy claim is not a failure (ingestFailureOf); anything else
             // is recorded with the engine's own words.
             const message = ingestFailureOf(e);
             if (message && alive) {
-              failed.push({ id: next.id, name: next.name, libraryId: next.library_id ?? null, message });
-              const snapshot = [...failed];
+              failedRef.current.set(next.id, { id: next.id, name: next.name, libraryId: next.library_id ?? null, message });
+              failuresMoved = true;
+              const snapshot = failedNow();
               setState((s) => s
                 ? { ...s, failed: snapshot }
                 : {
@@ -236,8 +251,8 @@ export default function KnowledgeIndexIndicator() {
             }
           }
         }
-        if (alive && (sawProgress || failed.length > 0)) {
-          const snapshot = [...failed];
+        if (alive && (sawProgress || failuresMoved)) {
+          const snapshot = failedNow();
           setState((s) => s ? { ...s, phase: "done", finished, failed: snapshot } : null);
         }
       } finally {
@@ -267,6 +282,13 @@ export default function KnowledgeIndexIndicator() {
 
   if (!state || !showsAnything || allowance === 0) return null;
   const expand = () => { setMinimized(false); setHidden(false); };
+  // Dismissing the finished card is the person taking the failures in hand:
+  // they are dropped with it (a new failure brings the rose pill back).
+  const dismiss = () => {
+    failedRef.current.clear();
+    setState((s) => (s && s.failed.length > 0 ? { ...s, failed: [] } : s));
+    setHidden(true);
+  };
   const libraryHref = (() => {
     const libs = [...new Set(state.failed.map((f) => f.libraryId).filter(Boolean))] as string[];
     return libs.length === 1 ? `/knowledge/${libs[0]}` : "/knowledge";
@@ -320,7 +342,7 @@ export default function KnowledgeIndexIndicator() {
         {working
           ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)] shrink-0" />
           : (
-            <button onClick={() => setHidden(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Dismiss" aria-label="Dismiss">
+            <button onClick={dismiss} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Dismiss" aria-label="Dismiss">
               <X className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
             </button>
           )}
