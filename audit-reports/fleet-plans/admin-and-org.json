@@ -189,7 +189,8 @@
     "ORG-9 (enforcement half)",
     "BILL-14",
     "ORG-12",
-    "ORG-8 residual"
+    "ORG-8 residual",
+    "roles-and-permissions SURF-19 (stripe limb only, assigned by the integrator 2026-10-02 at the A&O P4/P6 launch: app/api/stripe/{checkout,portal}/route.ts call authorizeAdminSurface on the billing surface's writes set instead of their own ADMIN_ROLES constant)"
    ],
    "files": [
     "components/subscription/SubscriptionGate.tsx",
@@ -200,12 +201,14 @@
     "supabase/migrations/20261010_signup_rate_limit.sql retention window vs 1-hour limiter (comment or new migration)",
     "lib/__tests__/signupRoute.test.ts",
     "lib/__tests__/requestAccessRoute.test.ts",
-    "lib/__tests__/sweepRoundA3.test.ts"
+    "lib/__tests__/sweepRoundA3.test.ts",
+    "app/api/stripe/checkout/route.ts and app/api/stripe/portal/route.ts (gate lines only: SURF-19's stripe limb)"
    ],
    "migrationsLikely": 1,
    "dependsOn": [
     "DEC-18 (enforcement off, env-gated); R&P SURF-15 wired one caller",
-    "cron/maintenance shared with DC P5 HOLDS and PS-VERIFY \u2014 one step, after those merge"
+    "cron/maintenance shared with DC P5 HOLDS and PS-VERIFY \u2014 one step, after those merge",
+    "After A&O P4 (owns the stripe routes) and A&O P6 (adds the writes-level intent to lib/adminGate.ts for SURF-19) merge \u2014 the stripe limb builds on both"
    ],
    "sequencingNotes": "ORG-12/BILL-14 = one cron step; ORG-8 residual = neutral acknowledgement on request-access / signup org-exists.",
    "decisionsNeeded": [
@@ -227,7 +230,7 @@
     "BILL-12",
     "BILL-13",
     "ORG-5",
-    "roles-and-permissions SURF-19 (remainder re-owned by the integrator 2026-10-01, orphan sweep: The whole finding (no Partial). SURF-9's Scope/residual (09-non-document-surfaces.md:508) split it off: \"the eighteen API route files behind the surfaces still call authorizeOrgRole with their own role constants ... converting \u2026)"
+    "roles-and-permissions SURF-19 (re-owned by the integrator 2026-10-01, orphan sweep; narrowed 2026-10-02 at launch: every route SURF-19 lists EXCEPT app/api/stripe/{checkout,portal} (A&O P5, after P4) and app/api/admin/{purge,archive-cancel} (A&O P7) \u2014 P6 adds the writes-level intent to lib/adminGate.ts and records those two limbs as an explicit Partial with their owners)"
    ],
    "files": [
     "app/api/admin/storage-stats/route.ts (POST lets Admin/DocCtrl of ANY org upsert the global platform_settings row; convert to lib/adminGate.ts \u2014 closes R&P SURF-19's named case)",
@@ -265,7 +268,8 @@
     "ALOG-8 (purge, archive-cancel, PermissionDrawer sites)",
     "ALOG-6",
     "ALOG-11",
-    "ALOG-5 residual"
+    "ALOG-5 residual",
+    "roles-and-permissions SURF-19 (purge / archive-cancel limb only, assigned by the integrator 2026-10-02 at the A&O P6 launch: app/api/admin/purge/route.ts and app/api/admin/archive-cancel/route.ts call authorizeAdminSurface instead of PURGE_ROLES / SHED_ROLES, using the writes-level intent A&O P6 adds)"
    ],
    "files": [
     "lib/audit.ts (internals only; keep the exported signature)",
@@ -284,7 +288,8 @@
     "After DC P5 HOLDS (HLD-5 cites lib/audit.ts:129-150) and P3 LIFECYCLE (REV-12 cites :16-31) merge",
     "ALOG-8's shed/ticket-shed/orphans sites \u2192 DC P9 RECORDS (RET-6/12/14/7); restore/apply site \u2192 A&O P1",
     "DC DCK-9 cites activity/page.tsx:195 \u2014 keep to header copy",
-    "A&O P3 merged (2026-10-02): ALOG-11's registry names P3's three actions (DATA_EXPORT, DATA_EXPORT_FILES, DATA_EXPORT_UNDELIVERED); the viewer's 'who took which drawing' is lib/dataExport.ts rebuildExportList \u2014 check undelivered (null = no failure recorded, never 'delivered') and show exporter.userId's current member, not the stored email; ALOG-7's trigger must leave a service-role insert's user_id NULL so both export ledgers hold (DEC-87 \u00a73). 99-fix-sequencing.md Integrator notes, P3 handoff 2 and fix-pass-8 item 2. BKP-6 is NOT P7's (closed by P3)."
+    "A&O P3 merged (2026-10-02): ALOG-11's registry names P3's three actions (DATA_EXPORT, DATA_EXPORT_FILES, DATA_EXPORT_UNDELIVERED); the viewer's 'who took which drawing' is lib/dataExport.ts rebuildExportList \u2014 check undelivered (null = no failure recorded, never 'delivered') and show exporter.userId's current member, not the stored email; ALOG-7's trigger must leave a service-role insert's user_id NULL so both export ledgers hold (DEC-87 \u00a73). 99-fix-sequencing.md Integrator notes, P3 handoff 2 and fix-pass-8 item 2. BKP-6 is NOT P7's (closed by P3).",
+    "After drafting-flow DF-P1 merges (it edits lib/audit.ts internals, as P7 does) and after A&O P6 merges (SURF-19's writes-level gate intent)"
    ],
    "sequencingNotes": "ALOG-7 and ALOG-10 first, then ALOG-8, then ALOG-11/ALOG-6; ALOG-5 residual = /activity states its rule (pointer to SURF-9/ROLE-5/DEC-17).",
    "decisionsNeeded": [

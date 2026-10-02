@@ -849,6 +849,10 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** admin-and-org P6 — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** split by the integrator, 2026-10-02, when A&O P4 and P6 were launched side by side (fleet plan `audit-reports/fleet-plans/admin-and-org.json`):
+  - admin-and-org P6 takes every route listed below except two pairs. It also adds the writes-level intent to `lib/adminGate.ts`.
+  - admin-and-org P7 takes `app/api/admin/purge` and `archive-cancel` (P7's files).
+  - admin-and-org P5 takes `app/api/stripe/{checkout,portal}`, after P4, which owns those routes, and P6 merge.
 - **Verification:** CONFIRMED
 - **Blast radius:** access-control / consistency
 - **Locations:**
