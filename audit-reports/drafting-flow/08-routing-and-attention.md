@@ -73,7 +73,7 @@ lib/ticketAttention.ts:67-70 (the only REVISION_REQ clause) —
 ## ROUTE-2 · Attention badges tell DraftingSupervisors and DocCtrl to act on statuses where the workflow engine gives them no action at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketAttention.ts:84`, `lib/ticketAttention.ts:106`, `lib/ticketAttention.ts:103` (re-pointed: roles-and-permissions Round E rewrote the file, `WF-24`), `lib/workflow.ts:301`, `lib/workflow.ts:319`, `lib/capabilityPolicy.ts:70`, `hooks/useTicketNotifications.ts:265`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the mismatch is wider than stated: DraftingSupervisor is in MANAGEMENT_ROLES for attention purposes but is NOT in ticket.manage's default roles, so it also gets action-required badges at PENDING_ENG_INITIAL, PENDING_REVIEW and PENDING_FINAL_APPROVAL with no matching action. The rows are recomputed from isActionRequired on every render (useTicketNotifications.ts:253-273) with no dismissal path, so the badge persists until someone else moves the ticket.
@@ -123,6 +123,15 @@ lib/capabilityPolicy.ts:70-71 —
 - [ ] `isActionRequired` is derived from, or cross-checked against, `WorkflowEngine.getActions(ticket, role, uid, policy).length > 0` — a role is flagged action-required for a status only if the state machine will actually offer it an action there.
 - [ ] A test enumerates every (Role × TicketStatus) pair and asserts `isActionRequired === true` implies `getActions(...).length > 0` under the default capability policy.
 - [ ] DocCtrl's FINAL_DRAFT / PENDING_IFC flags are either backed by real actions in lib/workflow.ts or removed from lib/ticketAttention.ts:106-108.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-24`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`), re-verified against `f1ac550`; evidence as on [`FRIC-7`](./02-friction-latency.md). `lib/ticketAttention.ts` holds no `MANAGEMENT_ROLES` table any more (`isActionRequired` at `:79-91` is the engine); DraftingSupervisor is not management (`lib/managementRoles.ts:25`) and is flagged only where the engine offers it an action — the assignment queue. The verifier's wider mismatch (management at `PENDING_IFC`) is gone for the same reason.
+
+**Done-when.**
+- ✓ `isActionRequired` is derived from `WorkflowEngine.getActions(...)` (`lib/ticketAttention.ts:84-90`), not cross-checked against it.
+- ✓ A test enumerates every (Role × TicketStatus) pair under the default policy and asserts the badge equals the engine's live-action set — `lib/__tests__/dfRoundG_P0.test.ts:325` (every role in `ALL_ROLES`, every value of the `TicketStatus` union parsed from `types/schema.ts`, four identities; equality is stronger than the implication asked for). Same inputs on both sides: the one input the badge cannot take, a departed requester's empty collection, is documented separately at `lib/__tests__/dfRoundG_P0.test.ts:344` — an under-count, which keeps `FRIC-7` OPEN (DF-P9). The implication this done-when asks for (flagged ⇒ an action is offered) holds for that input too: the badge is false there.
+- ✓ DocCtrl's `FINAL_DRAFT` / `PENDING_IFC` flags are removed — no role table remains (`lib/ticketAttention.ts:1-27` records why).
+
+**Scope / residual.** `attentionLabel` (`lib/ticketAttention.ts:95-107`) still renders "Issue the IFC package" — but only on rows the engine-derived rule flags, i.e. for the drafter. `PENDING_IFC` routing to the supervisor pool ("told", not "must act") is `ROUTE-5`'s residual (DF-P3).
 
 ---
 
@@ -276,6 +285,15 @@ lib/ticketRouting.ts:64 (the policy that never runs) —
 - [ ] Every transition whose NEW status has a role pool in `resolveTicketRecipients` (at minimum PENDING_ASSIGNMENT, and PENDING_IFC once its actor set is decided) unions that pool into the fan-out recipients server-side in app/api/tickets/workflow-action/route.ts.
 - [ ] A test drives `approve_team` on a ticket with no assigned drafter and asserts the DraftingSupervisor pool appears in the fan-out recipient list.
 - [ ] Either the `PENDING_IFC → DraftingSupervisor` rule in lib/ticketRouting.ts:64 is actually wired, or it and the claim in lib/ticketAttention.ts:8-12 that routing "ROUTES the 'issue the IFC' alert to exactly that role" are deleted, so the two files stop documenting behaviour that does not exist.
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. Re-entry into the assignment queue now routes (roles-and-permissions [`WF-19`](../roles-and-permissions/06-request-workflow.md), Round E, `e5a203b`): `if (newStatus === "PENDING_ASSIGNMENT" && ticket.status !== "PENDING_ASSIGNMENT") { const pool = (await resolveTicketRecipients(ticket.orgId, "PENDING_ASSIGNMENT", caller.id, supabaseAdmin)).map((m) => m.uid); … }` (`app/api/tickets/workflow-action/route.ts:318-331`), unioned into `unread_by` and the fan-out. `PENDING_IFC` re-entry still never routes.
+
+**Done-when.**
+- ✗ (in part) `PENDING_ASSIGNMENT` ✓ (above). `PENDING_IFC` ✗: `resolveTicketRecipients` has a pool for it (`case "PENDING_ASSIGNMENT": case "PENDING_IFC": pool = supervisorTargeted();`, `lib/ticketRouting.ts:114-117`) but the route only calls it for `PENDING_ASSIGNMENT`.
+- ✓ A test drives `approve_team` on a ticket with no drafter and asserts the DraftingSupervisor pool is in the fan-out (`lib/__tests__/sweepRoundE_A.test.ts:659`, "WF-19").
+- ✗ The two files still document behaviour that does not run: `lib/ticketRouting.ts:82` — ` *  PENDING_IFC         → DraftingSupervisor + originating engineer` (the code returns the supervisor pool only, and no caller passes `PENDING_IFC`), and `lib/ticketAttention.ts:24-27` — "A supervisor is told about a PENDING_IFC package (so they can chase the drafter)".
+
+**Scope / residual.** Handed on, binding (fleet plan): `PENDING_IFC` re-entry never routes → **DF-P3** (under `LEAK-1`: route on every entry into a routed status, add the originating engineer, correct the two comments).
 
 ---
 
@@ -488,7 +506,7 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 ## ROUTE-10 · Ticket routing matches only the headline role column, so a person who holds DraftingSupervisor in their additive roles[] is never routed to — and the fallback then spams every Admin
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketRouting.ts:33`, `lib/ticketRouting.ts:79`, `lib/ticketRouting.ts:90`, `lib/notify/recipients.ts:48`, `supabase/migrations/20260722_member_roles_collection.sql:12`, `app/(protected)/admin/users/page.tsx:136`
 - **Same root cause as** `ROUTE-8`, `EDGE-6` — Also owned as `LEAK-2` in [`04-flow-leaks.md`](./04-flow-leaks.md). Settled by `DEC-1` — do that first and these collapse. Fix once; close the rest citing this one.
@@ -531,6 +549,15 @@ contrast lib/notify/recipients.ts:57-60 —
 - [ ] `listActiveMembers` selects `roles` and exposes the effective collection; `byRole` matches against the union of headline + additive roles (or resolveTicketRecipients delegates to `resolveRoleRecipients`, which already does this correctly).
 - [ ] `resolveTicketRecipients` distinguishes "no DraftingSupervisor is configured in this org" from "a DraftingSupervisor exists but their headline role outranks the token" — only the former should fall back to Admins.
 - [ ] A test seeds a member with `role: 'Manager', roles: ['Manager','DraftingSupervisor']` and asserts resolveTicketRecipients(org, 'PENDING_ASSIGNMENT') returns that member and NOT the Admin fallback list.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`ADD-1`](../roles-and-permissions/04-additive-roles.md) (`bcb959d`) with the evidence on [`LEAK-2`](./04-flow-leaks.md), re-verified against `f1ac550`: `lib/ticketRouting.ts:53` selects `roles`, `:58` maps `roles: heldRoles(m)`, `:99` matches the held collection.
+
+**Done-when.**
+- ✓ `listActiveMembers` selects `roles` and exposes the effective collection; `byRole` matches headline ∪ additive (`heldRoles`, `lib/roleHeld.ts`).
+- ✓ "No DraftingSupervisor configured" and "one exists under a higher headline" are now distinct by construction — the second is found by the collection match, so only the first reaches the Admin fallback (`lib/ticketRouting.ts:106-110`).
+- ✓ A test seeds `role: 'Manager', roles: ['Manager','DraftingSupervisor']` and asserts `resolveTicketRecipients(org, 'PENDING_ASSIGNMENT')` returns that member, not the Admin list (`lib/__tests__/ticketRouting.test.ts:96`).
+
+**Scope / residual.** The drafter *picker* on the ticket page still filters `.eq('role','Drafter')` — that is `ROUTE-8` / `EDGE-6`, DF-P9.
 
 ---
 

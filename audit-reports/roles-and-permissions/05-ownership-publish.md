@@ -364,6 +364,8 @@ silently confers publish authority into a document library.
 3. The library owner is consulted before a project can name their library as an
    intake target.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`HAND-5`](../drafting-flow/11-document-handoff.md) closes on this record as rebuilt by projects Round G J1 (the review-policy check calls `review_control_mode_for` from `20261070`, not yet pasted — until it is, every trusted auto-publish demotes to review).*
+
 ---
 
 ## OWN-5 · `publish_revision` trusts a client-supplied actor, and its branch path bypasses the guard entirely

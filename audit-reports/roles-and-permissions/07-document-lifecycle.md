@@ -118,6 +118,8 @@ guard and the MOC gate in one move.
 3. `runPostPublishSideEffects` fires for it — verified by a fresh ack roster and
    a supersede notification.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-11`](../drafting-flow/06-state-machine.md#sm-11) closes on this record's `rowToTicket` fix (route test added in `lib/__tests__/dfRoundG_P0.test.ts`); the bridge it made live reads the source document with no org filter, keyed on client-writable `metadata` — requested as a new drafting-flow id (proposed `SM-14`, DF-P1); [`PERS-5`](../drafting-flow/07-persistence-and-rls.md) stays OPEN on the `as Ticket` cast (DF-P4). [`HAND-3`](../drafting-flow/11-document-handoff.md) (stamp / QR wording → DF-P10; a captured base version id → DF-P2), [`PROJ-1`](../drafting-flow/12-projects-boundary.md) (source-less promotion → DF-P4; the project reference → DF-P8) and [`DCW-4`](../drafting-flow/03-doc-control-wiring.md) (tickets with no source document → DF-P4) record the hand-back and keep those residuals. Corrected by the records fix the same day: `DCW-4` and `HAND-3` also record that the close-time "not in the register" state and the recorded version both live in client-writable `tickets.metadata` — the close skips the note when `metadata.deliverable.state` already reads `published` (`app/api/tickets/workflow-action/route.ts:400`), so a member who pre-writes that state closes with no note and a false "Published" chip, and any member can erase the state afterwards — so their done-when 1 is ✗ in part, owner drafting-flow DF-P1. This record's done-when 1 is the same sentence; its status is this area's to settle.*
+
 ---
 
 ## LIFE-2 · `related_ticket_id` is a review-gate waiver that no code path writes — a loaded gun
@@ -198,6 +200,8 @@ waive review is not.
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `WIRE-9` is recorded `INVALID` on `DEC-23` (this deletion), with the contradicting code quoted there.*
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`PROJ-11`](../drafting-flow/12-projects-boundary.md) closes on this record.*
+
 ---
 
 ## LIFE-3 · Viewer markup is never persisted — the redline exists only in React state
@@ -264,6 +268,8 @@ the human to launder it through their filesystem. Persisting markup unblocks
    attached marked-up file.
 3. A markup that exists is discoverable from the document without the user
    having downloaded anything.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`HAND-8`](../drafting-flow/11-document-handoff.md) records the markup store and stays OPEN on Send to Drafting's silent clean-original fallback — the `sendToDrafting` handler (`components/viewers/FullScreenViewer.tsx:912-990`: the bake `catch` at `:950-958` and the empty-`ensureBytes()` branch at `:949-950`), not PS-STAMP's `downloadWithMarkup` region (`:1000` onward), so the plan's PS-STAMP hand-off does not apply; owner drafting-flow DF-P9 (`drafting-flow/99-fix-sequencing.md`, "Hand-offs from DF-P0").*
 
 ---
 
@@ -416,6 +422,8 @@ fix with no dependencies.
    silently acquire an MOC number.
 3. `document_versions.moc_reference` for ticket-originated revisions is
    reconcilable to `tickets.metadata.moc`.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`TIER-6`](../drafting-flow/01-review-tiering.md) records this and stays OPEN only on its "additionally" clause — MOC applicability through the work-class mechanism — owner DF-P6.*
 
 ---
 
@@ -945,6 +953,8 @@ recovery, and neither reconciles the orphaned tickets.
    instance, links to the existing ticket rather than creating a second.
 2. No path leaves a committed ticket with a NULL `outcome` on its originating
    session.
+
+*Cross-area note (2026-10-02, drafting-flow Round G; corrected by the records fix the same day): drafting-flow [`LEAK-6`](../drafting-flow/04-flow-leaks.md) first closed on this record and is back to OPEN — done-when (1) does not hold on HEAD: `CheckInPanel`'s resume lookup never reads its `{error}` (`components/documents/CheckInPanel.tsx:167-171`) and runs un-awaited in an effect, so a remounted check-in whose lookup failed or has not returned falls through `done.ticket ?? resumedTicketRef.current ?? await createDraftingTicket(selected)` (`:402`) to a second ticket. This record's done-when (1) is the same sentence; its status is this area's to settle. Owner of the fix: drafting-flow DF-P2 (the `CheckInPanel` → create-route hunk). Done-when (2) holds as recorded.*
 
 ---
 

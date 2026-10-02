@@ -339,6 +339,14 @@ so it stops calling a mandatory field optional.
 the same work-class mechanism as every other review requirement, rather than as
 its own parallel rule.
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The `LIFE-5` half is closed (roles-and-permissions [`LIFE-5`](../roles-and-permissions/07-document-lifecycle.md), Round C2, `a84f712`): the hand-back reads the check-in's MOC position — `mocOriginOf(metadata)` (`lib/ticketHandback.ts:45-52`) — and carries it into `RevUpModal` as `presetMocOrigin` (`app/(protected)/requests/[id]/page.tsx:1656`); a captured number prefills the reference (`components/documents/RevUpModal.tsx:188`) and says where it came from, and a recorded "no MOC" cannot silently acquire one (`:318-325`, an explicit acknowledgement logged into the change log). `related_ticket_id` (`20261049`) makes `moc_reference` reconcilable to `tickets.metadata.moc`.
+
+**Done-when.**
+- ✓ See `LIFE-5` (its three done-whens are checked on that record).
+- ✗ "Additionally: MOC applicability is expressed through the same work-class mechanism as every other review requirement" — no work-class mechanism exists yet. MOC applicability is still its own rule: `mocRequirementFor` at check-in (`lib/checkinOutcomes.ts`) and `mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike` at publish (`RevUpModal`).
+
+**Scope / residual.** Express MOC applicability through the work-class mechanism → **DF-P6** (`GAP-101` work class, then the review model keyed off it). The fleet plan expected this to close by pointer to LIFE-5; its "additionally" clause cannot hold before `GAP-101` lands.
+
 ---
 
 ## TIER-7 · "Approve with Minor Correction" is the only tiering the system actually has, and it bypasses the gate
@@ -373,6 +381,13 @@ to the reduced reviewer set, rather than a button that skips the reviewer set.
 **Done when.** A minor correction is a work class with its own reviewer
 requirement, not an unconditional button that bypasses whatever requirement
 applied.
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The *bypass* half is closed by roles-and-permissions [`WF-3`](../roles-and-permissions/06-request-workflow.md) + `WF-14` (`087a39c`) — see [`AUTHZ-1`](./09-authority-surfaces.md#authz-1): `approve_minor_correction` is offered only to actors who could approve directly (`lib/workflow.ts:390-410`, `:415-443`, `:455-480`), the engineer-routed requester gets only `request_final_engineer_approval` (`:376-389`), and at `PENDING_FINAL_APPROVAL` the fast path stamps `engineer_approved_at` (`lib/ticketTransitions.ts:298`). What this finding asks for is not built: a minor correction is still a button, not a declared class — `lib/ticketTransitions.ts:292-297` gives it the same terminal effect as `approve_draft_ifc` (`PENDING_IFC`, `issuedRevLabel(...)`), and no work-class field exists on `Ticket` to hang a reduced reviewer set on.
+
+**Done-when.**
+- ✗ A minor correction is a work class with its own reviewer requirement — not done. The precondition (`GAP-101` work class, set at triage, and `GAP-111`'s binding engineering flag) is DF-P6's.
+
+**Scope / residual.** Handed on, binding (fleet plan): the "declared minor-correction class inside the delivery gate" → **DF-P6** (Phase 4 item 7, after `GAP-101`/`GAP-111`/`TIER-1`). Per 99-fix-sequencing "Do not do these": do not delete the fast path — convert it.
 
 ---
 

@@ -590,7 +590,7 @@ lib/clientBackup.ts:184-187 (finalize runs regardless; phase is set after)
 ## EDGE-11 · SOUND — the load-bearing invariants of this flow that a fix must not disturb
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:66-131`, `app/api/tickets/workflow-action/route.ts:155-166`, `lib/ticketTransitions.ts:145`, `app/api/tickets/comment/route.ts:103-121`, `app/api/tickets/comment/route.ts:275-292`, `lib/ticketAttention.ts:66-110`, `supabase/migrations/20260724_ticket_numbering.sql:33-56`, `app/api/admin/ticket-shed/route.ts:180-200`, `app/api/admin/ticket-shed/commit/route.ts:145-190`, `supabase/schema.sql:408`, `supabase/schema.sql:776`
 - **Re-verified:** Re-read in the hardening pass. **This entry documents what is SOUND rather than a defect**, so there is nothing to refute — its value is as a do-not-break list. The invariant it names is real: `workflow-action/route.ts:66-77` loads the ticket server-side and refuses an archived one before any transition.
@@ -644,6 +644,22 @@ app/api/admin/ticket-shed/route.ts:186-189
 
 - [ ] Any change to the ticket flow preserves: server-side action validation against WorkflowEngine + capability policy, the (status, last_modified) CAS with last_modified always stamped, the narrow PGRST202-only RPC fallback, service-role preference reads, isActionRequired as the sole attention rule, RPC-based number allocation, and all-or-nothing archive capture
 - [ ] Regression tests exist for the CAS (two concurrent save_progress actions → one 409) and for the RPC fallback narrowness (a non-PGRST202 error must not fall back)
+
+**Resolution (2026-10-02, drafting-flow Round G).** Not a defect: this entry is the area's **Verified sound — do not break** list, recorded as such. Each invariant re-verified on `f1ac550`: six of the seven hold as written (several strengthened since the audit), and invariant 2 holds only while the row carries a `last_modified` token — not unconditionally (below; the gap is a new defect, not folded in here). The two regression tests the done-when asks for written, and the list made the standing DEC-29 item-5 diff-check for every later drafting-flow package (`99-fix-sequencing.md`, "Verified sound — the EDGE-11 diff-check", and a note under `DEC-29`).
+1. **Server-enforced transitions** — `app/api/tickets/workflow-action/route.ts:74-88` loads the ticket with the service role and refuses an archived stub (`"This ticket is archived; restore it from its archive before acting on it."`); `:90-99` active membership; `:160-170` the action must be one `WorkflowEngine.getActions` offers under the org's own policy (`loadCapabilityPolicyEntry`, `:142`), now with the caller's full collection (`:105-107`, WF-7) and the requester's current one (`:146-152`, DEC-16); `:226-290` referenced engineer / drafter must be active and qualified.
+2. **Compare-and-set** — `.update(updates).eq("id", body.ticketId).eq("status", ticket.status)` (`:427-431`), 409 on no row (`:457-462`); `computeTransition` always stamps `last_modified: now` (`lib/ticketTransitions.ts:164`). **The `last_modified` leg is conditional** (fix-pass correction): `baseQuery = ticket.lastModified ? baseQuery.eq("last_modified", String(ticket.lastModified)) : baseQuery;` (`:432-434`, and the tolerant retry repeats it). `tickets.last_modified` is `TIMESTAMPTZ DEFAULT NOW()`, nullable (`supabase/schema.sql:480`), and not in `ticket_update_guard` (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-205`), so a member can PATCH it to `NULL`; from then on every transition on that ticket runs a status-only CAS, and two concurrent same-status actions (`attach_file` + `save_progress`, two `attach_file`s) both land — the second overwriting `attachments` / `watchers` / `unread_by` from a stale read. So invariant 2 does **not** hold unconditionally: the CAS is `(status, last_modified)` only for a row whose token is set, and status-only for a row whose token is `NULL`. (It was already conditional when audited — the evidence above quotes the same ternary.) The null-token gap is a defect of its own, requested as a new id below.
+3. **Narrow RPC fallback** — `const missing = (rpcErr as { code?: string }).code === "PGRST202" || /could not find the function|does not exist in the schema cache/i.test(…); if (!missing) return … 500` (`app/api/tickets/comment/route.ts:109-116`).
+4. **Service-role preference reads** — `supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients)` in both routes (`app/api/tickets/comment/route.ts:326`, `app/api/tickets/workflow-action/route.ts:693`).
+5. **One attention rule** — `isActionRequired` (`lib/ticketAttention.ts:79-91`), now derived from the engine itself (WF-24), consumed by the badge hook, bell, `/inbox` and the portal.
+6. **Atomic numbering** — `next_ticket_number` is `SECURITY DEFINER SET search_path = public`, active-member guarded, `ON CONFLICT (org_id, year) DO UPDATE SET next_seq = ticket_number_counters.next_seq + 1 RETURNING` (`supabase/migrations/20260724_ticket_numbering.sql:33-56`).
+7. **All-or-nothing archive capture** — produce reads every binary of a ticket first and skips the whole ticket on the first unreadable one, before anything of it is written to the zip — `if (incomplete) { skippedIncomplete++; continue; }` (`app/api/admin/ticket-shed/route.ts:192-210`, ahead of `:212`); the skipped ticket is un-claimed (`:227-231`) and an all-skipped produce archives nothing (`:232-235`); commit stamps `.is("archived_at", null)` and re-verifies before deleting (`app/api/admin/ticket-shed/commit/route.ts:171-194`). Supporting: denormalised `requester_name` / `assigned_drafter_name` on the row, and `audit_logs.org_id` without a foreign key.
+- Tests: `lib/__tests__/dfRoundG_P0.test.ts:471` (new — a `save_progress` applies on `(id, status, last_modified)` and stamps a fresh `last_modified`; the second of two concurrent saves is a 409 with no audit row), `lib/__tests__/dfRoundG_P0.test.ts:491` (new — an error raised inside `post_ticket_comment` is a 500 with nothing written; a genuinely absent function falls back to the legacy write), `lib/__tests__/dfRoundG_P0.test.ts:510` (new — source pins on code for numbering, the archive-capture skip (ordered before the zip write), both routes' service-role preference reads, the archived gate; the fix pass replaced a pin that matched a code comment); `lib/__tests__/dfRoundG_P0_shed.test.ts:109` and `:137` (new, fix pass — the real produce handler: a ticket with one unreadable binary is skipped whole, un-claimed and counted while a readable one is captured; nothing readable → 502, claims released, catalog row removed; mutation-checked: dropping the `continue` fails both and the pin); `lib/__tests__/sweepRoundE_A.test.ts:187` (the CAS under `attach_file`). Mutation-checked: dropping the `last_modified` leg fails `lib/__tests__/dfRoundG_P0.test.ts:471`; widening the fallback fails `lib/__tests__/dfRoundG_P0.test.ts:491`.
+
+**Done-when.**
+- ✓ as a preservation rule: nothing since the audit has removed or weakened any of the seven, and the list is now the named diff-check every later package cites (99-fix-sequencing); as a standing rule it cannot be "done" once. It does not claim more than the code does: invariants 1 and 3–7 hold as written; invariant 2 holds only while `last_modified` is non-null, and preserving it does not make it unconditional — the null-token leg is the new defect requested in Scope, which later packages must close, never widen.
+- ✓ Regression tests exist for the CAS (two concurrent `save_progress` → one 409, `lib/__tests__/dfRoundG_P0.test.ts:471`) and for the fallback's narrowness (a non-PGRST202 error does not fall back, `lib/__tests__/dfRoundG_P0.test.ts:491`).
+
+**Scope / residual.** One gap in invariant 2, found by the DF-P0 review, is a defect of its own and is **not** folded into this entry: the CAS's `last_modified` leg drops out on a row whose token is `NULL`, and the column is nullable and client-writable. The integrator opens it as a new id at merge — proposed `EDGE-15`, MEDIUM, with the README severity count updated then (`99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open") — owner **DF-P1** (with the guard re-creation): either the route treats a null token as its own leg (`.is("last_modified", null)`, so the first writer stamps it and the second 409s) or refuses a null read as a conflict, and/or the guard refuses a client write that sets `last_modified` to `NULL` (`NOT NULL` would need the browser priority writes — `app/(protected)/requests/page.tsx:655`, `:674`, which stamp it — moved first, DF-P9). Not in DF-P1's brief; the integrator must add it (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). Packages that touch these surfaces next: DF-P1 (route audit write, comment RPC identity), DF-P2 (the create route reuses `next_ticket_number` server-side), DF-P11 (ticket-shed commit) — each diff-checks against this list.
 
 ---
 
@@ -789,6 +805,33 @@ export async function notify(input: NotificationInput): Promise<void> {
 **Done when.**
 
 - [ ] Either emit()'s in-app leg gates on inapp_enabled (read server-side) and the settings page exposes it, or both columns are dropped and the dispatcher docblock stops claiming per-channel preferences
+
+---
+
+## EDGE-15 · A ticket whose `last_modified` is `NULL` gets a status-only compare-and-set, so two concurrent writes both land
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P1 RAILS (the route's null-token leg and the guard re-creation that refuses a client write nulling the column) — by the integrator, 2026-10-02 (opened at the DF-P0 merge from DF-P0's proposal in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open at merge"; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** data integrity
+- **Locations:**
+  - `app/api/tickets/workflow-action/route.ts:432-434` — `baseQuery = ticket.lastModified ? baseQuery.eq("last_modified", String(ticket.lastModified)) : baseQuery;` (repeated in the tolerant retry)
+  - `supabase/schema.sql:480` — `last_modified` is nullable
+  - `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-205` — `ticket_update_guard` does not list `last_modified`, so a member may write it
+- **Related:** `EDGE-11` (invariant 2, the compare-and-set this weakens), `SM-2` (the unguarded columns)
+- **Independently verified:** — (`author`: opened by the integrator on 2026-10-02 at the drafting-flow DF-P0 merge, from DF-P0's proposal; the integrator re-read the cited lines on HEAD; not yet challenged)
+
+**Mechanism.** The workflow route's compare-and-set has two legs: the status the route read, and the `last_modified` token. The token leg is added only when the read row carries a token. The column is nullable and no rail stops a member from writing it, so a member can null it and leave every later write on that ticket with the status leg alone.
+
+**Failure scenario.** A member PATCHes `{"last_modified": null}` on a ticket. Two concurrent `attach_file` calls (or `attach_file` and `save_progress`) on that ticket then both pass the status-only check, and the second overwrites `attachments`, `watchers` and `unread_by` from a stale read. An attachment is lost with no error.
+
+**Remediation.** Treat a null token as its own leg (`.is("last_modified", null)`, so the first writer stamps it and the second gets 409) or as a conflict; and refuse a client write that nulls the column in the guard re-creation (or make the column `NOT NULL` once DF-P9 has moved the browser writers that stamp it).
+
+**Done when.**
+- The route treats a null token as its own leg or refuses it as a conflict.
+- The guard refuses a client write that nulls `last_modified` (or the column is `NOT NULL`).
+- A route test: two concurrent writes on a null-token row give one 409.
 
 ---
 

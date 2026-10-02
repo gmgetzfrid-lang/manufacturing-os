@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**139 findings** — 9 CRITICAL, 46 HIGH, 61 MEDIUM, 23 LOW — plus **14 gap specs**, all
+**143 findings** — 9 CRITICAL, 47 HIGH, 63 MEDIUM, 24 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -40,16 +40,16 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 01 | [Review tiering](./01-review-tiering.md) | 8 | Like-in-kind vs new design vs QA/QC vs code-governed — and why none of it can be expressed |
 | 02 | [Friction & latency](./02-friction-latency.md) | 9 | The hop model: who waits, how long, and which waits are load-bearing |
 | 03 | [Document control wiring](./03-doc-control-wiring.md) | 7 | Routing drawings to the library's document controller for review and release |
-| 04 | [Flow leaks](./04-flow-leaks.md) | 9 | Where work, state and attention escape without saying so |
+| 04 | [Flow leaks](./04-flow-leaks.md) | 10 | Where work, state and attention escape without saying so |
 | 05 | [Discoverability](./05-ui-discoverability.md) | 7 | Can a first-time user work this without studying it? |
-| 06 | [State machine](./06-state-machine.md) | 13 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates |
+| 06 | [State machine](./06-state-machine.md) | 14 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates |
 | 07 | [Persistence & RLS](./07-persistence-and-rls.md) | 8 | What the database actually permits, and which writes fail silently |
 | 08 | [Routing & attention](./08-routing-and-attention.md) | 11 | Who is told what, and what goes quiet |
-| 09 | [Authority surfaces](./09-authority-surfaces.md) | 13 | Every door into a ticket, including the public verify endpoint |
+| 09 | [Authority surfaces](./09-authority-surfaces.md) | 14 | Every door into a ticket, including the public verify endpoint |
 | 10 | [Audit & evidence](./10-audit-evidence.md) | 14 | What this system could prove to a PSM auditor, and what it could not |
 | 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
 | 12 | [Projects boundary](./12-projects-boundary.md) | 13 | The bidirectional-portal question, answered from the schema up |
-| 13 | [Edges & invariants](./13-edges-and-invariants.md) | 14 | The completeness critic, plus what is sound and must not break. **Verified by hand** — record at the top of the file |
+| 13 | [Edges & invariants](./13-edges-and-invariants.md) | 15 | The completeness critic, plus what is sound and must not break. **Verified by hand** — record at the top of the file |
 | 90 | [**Gap register**](./90-gap-register.md) | 14 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming any file |
 
@@ -63,8 +63,9 @@ findings were corrected (`EDGE-2` retitled to its general case, `EDGE-6`
 scoped away from code that is already correct), one was lowered (`EDGE-1`
 `CRITICAL` → `HIGH`).
 
-**Everything in this area has since been challenged by an independent agent.**
-No finding is `unverified` any more — see `verified_by` in
+**Everything in this area has since been challenged by an independent agent** —
+except `LEAK-10`, opened at the DF-P0 merge, which grades `author` until one
+challenges it. No finding is `unverified` any more — see `verified_by` in
 [`findings.json`](./findings.json). That pass refuted two findings (`FRIC-6`,
 `UI-5`, both marked `Status: REFUTED` in place — **do not queue them**) and
 lowered a number of severities, which is why the totals above differ from what
@@ -344,7 +345,7 @@ status — so libraries that need controlled release get it and nobody else pays
 
 ### "Are there leaks in the flow?"
 
-Nine, in [`04`](./04-flow-leaks.md). The three that matter most:
+Ten, in [`04`](./04-flow-leaks.md) (`LEAK-10` opened at the DF-P0 merge). The three that matter most:
 
 - **Any RFI-typed ticket can be closed from `DRAFTING` in one click** by any
   drafter in the org, skipping every approval stage. It is gated on an

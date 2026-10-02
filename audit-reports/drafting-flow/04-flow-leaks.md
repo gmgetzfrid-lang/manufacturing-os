@@ -4,7 +4,7 @@ A leak is anywhere the process loses something without saying so: a ticket
 nobody is told about, a state nobody is waiting on, work that leaves the app and
 does not come back.
 
-**9 findings** — 2 CRITICAL, 4 HIGH, 3 MEDIUM.
+**10 findings** — 6 HIGH, 4 MEDIUM. (The independent pass lowered `LEAK-1` and `LEAK-3` from CRITICAL and `LEAK-6` from HIGH; `LEAK-10` was opened at the DF-P0 merge.)
 
 > See [`../README.md`](../README.md) for the resolution protocol. Code in
 > `Remediation` blocks is **illustrative, untested, and not a patch.**
@@ -64,7 +64,7 @@ in, it covers two live states of twelve.
 ## LEAK-2 · Routing matches the headline role, so a multi-role supervisor is never notified
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -103,6 +103,12 @@ own request notifies nobody at all.
 **Done when.** A member holding `DraftingSupervisor` as any of their roles
 receives the queue notifications for it.
 
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`ADD-1`](../roles-and-permissions/04-additive-roles.md) (Round C1b, `bcb959d`, 2026-09-03; pinned again by `WF-19`, Round E), re-verified against `f1ac550`. Routing reads the held collection: `listActiveMembers` selects `"uid, role, roles, display_name, email"` and maps `roles: heldRoles(m)` (`lib/ticketRouting.ts:50-59`); `const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));` (`:99`). A `['Manager','DraftingSupervisor']` member is in the supervisor pool, so `supervisorTargeted()` (`:106-110`) no longer falls back to Admins while a supervisor exists. Test: `lib/__tests__/ticketRouting.test.ts:96` ("WF-19 done-when 2: the supervisor pool matches the FULL role collection, not the headline").
+
+**Done-when.** ✓ A member holding `DraftingSupervisor` as any of their roles receives the queue notifications for it (creation-time routing, and since WF-19 every re-entry into `PENDING_ASSIGNMENT` — `app/api/tickets/workflow-action/route.ts:318-331`).
+
+**Scope / residual.** The second-order effect the finding notes — a sole supervisor filing their own request is filtered out as the actor (`lib/ticketRouting.ts:122-129`) and nobody else is told — is unchanged; it is a pool-size question for the creation route (DF-P2's single server-side creator, `ROUTE-11`/`ROUTE-4`), not a headline-role defect.
+
 ---
 
 ## LEAK-3 · Any RFI-typed ticket can be closed from `DRAFTING` in one click, skipping every gate
@@ -116,7 +122,7 @@ receives the queue notifications for it.
   - `lib/ticketTransitions.ts:285-287` — `close_rfi` sets `CLOSED`
   - `types/schema.ts:1019` — `RequestType = string`, unvalidated at insert
   - `lib/capabilityPolicy.ts:70-71` — `ticket.draft_work` defaults to `["Drafter"]`, and per `WF-8` it is **org-wide, not ticket-scoped**
-- **Related:** `WF-15`, `WF-8`, `TIER-2`
+- **Related:** `WF-15`, `WF-8`, `TIER-2`, `LEAK-10`
 - **Re-verified:** hardening pass — **SURVIVES**. The `Answer & Close RFI` action is pushed on `requestType === 'RFI'` (`workflow.ts:185-192`) and `close_rfi` sets `status = "CLOSED"` outright (`ticketTransitions.ts:285-287`). Compounded by `TIER-2`: `RequestType` is an unconstrained `string`, so the value that unlocks the one-click close is client-set.
 - **Independently verified:** ✓ **SURVIVES, corrected** — independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The mechanism is exactly as described and no guard exists anywhere (the server route re-derives the same getActions, so it enforces the same hole). Severity should be HIGH, not CRITICAL: close_rfi publishes nothing to the document register, stamps no deliverable_rev, requires a comment, writes a TICKET_CLOSE_RFI audit row (route.ts:214-223), and is recoverable via `reopen_ticket` (workflow.ts:331-341). The harm is a prematurely terminated ticket, not an unreviewed drawing issued for construction.
 
@@ -147,6 +153,20 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
 2. The close-without-review behaviour is a declared property of a configured
    type, not a hardcoded comparison to the literal `'RFI'`.
 3. It is not available to every drafter on every ticket (`WF-8`).
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The insert path and the engine half are closed by roles-and-permissions [`WF-15`](../roles-and-permissions/06-request-workflow.md) and [`WF-8`](../roles-and-permissions/06-request-workflow.md) (`087a39c`; migration `20261038` **applied & verified live 2026-09-01**), but the one-click close still reproduces through the UPDATE path, which the fleet plan did not anticipate — so this stays OPEN with an owner (`DEC-31`).
+- Closed: `ticket_insert_integrity` refuses a client-created ticket whose `request_type` is outside the org's configured list ∪ {Revision, ASBUILT, RFI} (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:152-164`). Close-without-review is a property of the configured type: `const closeTypes = ctx?.closeWithoutReviewTypes ?? ['RFI']; if (closeTypes.includes(ticket.requestType)) { … action: 'close_rfi' … }` (`lib/workflow.ts:360-368`), the route reading the per-type flag from the org's drafting configuration (`app/api/tickets/workflow-action/route.ts:118-133`). `close_rfi` sits inside `if (canActAsDrafter) {` (`lib/workflow.ts:340`), which since WF-8 is the assigned drafter by identity, or the pool only while unassigned (`:210-211`).
+- Reproduces: `request_type` is not among the columns `ticket_update_guard` refuses (`20261038:184-205` has no `request_type` line), and `tickets_org_access` is `FOR ALL USING (org_id IN (SELECT my_org_ids()))` (`supabase/schema.sql:1118-1119`). So the assigned drafter can `PATCH /rest/v1/tickets?id=eq.<their ticket>` with `{"request_type":"RFI"}` (or any configured close-without-review type), then post `close_rfi` with a comment: `DRAFTING → CLOSED`, no review, no issued revision. The route still writes `TICKET_CLOSE_RFI`, but the type change itself leaves no history line and no audit row.
+- Further reach — now its own finding, [`LEAK-10`](#leak-10). The DF-P0 fix pass found that the same unguarded columns reach past this finding: `request_type` **and `unit`** are the whole `DEC-13` resource (`ticketResource()`, `lib/workflow.ts:60-61`), neither is in `ticket_update_guard`, so every type- or unit-scoped rule — the engineer gate (`ticket.engineer_gate_exempt`), the requester's direct approval (`ticket.direct_approve`), the reviewer / drafter pick scoping, `engineeringFirst` — reads a value any member can rewrite, and a re-typed ticket can be issued for construction with no engineer. That fix pass first recorded the reach here as a widening of this finding; the DF-P0 records fix opened it as `LEAK-10` instead, with its own severity, owner and done-whens (`DEC-31`: a remainder is a new id with an owner, and the corpus rule is a new id, never a silent fold-in — `../README.md`, "Rules"). The evidence and the engine-level reproduction (`lib/__tests__/dfRoundG_P0.test.ts:402`, `:420`) are recorded there. **This finding's scope stays its three done-whens:** the `request_type` value set and the close-without-review edge.
+
+**Done-when.**
+- ✗ (in part) A ticket cannot be **created** with a type outside the configured list (✓, trigger); it can still be **updated** to one, or into a close-without-review type (✗). (Re-typing — or re-uniting — out of a type a scoped rule binds is `LEAK-10`'s.)
+- ✓ Close-without-review is a declared property of a configured type, not the literal `'RFI'` (the `['RFI']` default applies only when the org configured none).
+- ✓ It is not available to every drafter on every ticket (WF-8).
+
+**Severity.** This record's HIGH is the verifier's call for the RFI close — lowered from CRITICAL because `close_rfi` "publishes nothing … The harm is a prematurely terminated ticket, not an unreviewed drawing issued for construction" — and it stands for this finding's scope. The re-type / re-unit path that does end in an unreviewed issue is graded on `LEAK-10` (HIGH, with the condition that raises it to CRITICAL and the inventory query that settles it). The DF-P0 review fix pass had asked the integrator either to raise this record or to open the reach as a new id; the records fix took the second, so this record's severity is unchanged.
+
+**Scope / residual.** Make `request_type` workflow-owned in `ticket_update_guard` (a re-type becomes a route action with a history line and an audit row, if the product needs one at all) → **DF-P1**, which re-creates the guard from its newest body (fleet plan, DF-P1 (a)); same root as the `SM-2` residual. The same guard re-creation closes `LEAK-10` with `unit` (same owner). **DF-P1's brief item (a) names neither column; the integrator adds both, with `LEAK-10`, before DF-P1 starts** (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). No code changed here.
 
 ---
 
@@ -183,6 +203,13 @@ which is the part that matters for a PSM audit trail.
 
 **Done when.** Attachment and history writes go through the same
 compare-and-set and audit path as every other ticket mutation.
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The attachment and category / watcher writes are behind server routes with compare-and-set since roles-and-permissions [`WF-9`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`): `attach_file` is an engine action (`lib/workflow.ts:604-612`) applied by the workflow route on the `(status, last_modified)` compare-and-set with a `TICKET_ATTACH_FILE` audit row (`app/api/tickets/workflow-action/route.ts:219-225`, `:427-462`); the page no longer writes `attachments`, `comments` or `watchers` (pinned by `lib/__tests__/sweepRoundE_A.test.ts:323`); a concurrent upload and approval cannot both land (`:187`, 409). Two client writers remain off the route.
+
+**Done-when.**
+- ✗ (in part) Attachment writes go through the route's CAS and audit path (✓). History writes do not, everywhere: `lib/projects.ts:1588-1599` still pushes a "Converted to Project" entry with a browser read-modify-write of the whole `history` array (dormant — `convertTicketToProject` has no caller in `app/` or `components/` — but present). And the queue's two priority writes still bump the CAS token from the browser without the route: `supabase.from('tickets').update({ priority: 1, last_modified: now })` (`app/(protected)/requests/page.tsx:655`, `:674`), as does the page's `unread_by` clear (`app/(protected)/requests/[id]/page.tsx:977`, unchecked).
+
+**Scope / residual.** Handed on, binding (fleet plan): the `requests/page.tsx` priority writes and the page's `unread_by` write → **DF-P9** (under `PERS-3`: a `set_priority` action, or `{error}` + CAS). Found on HEAD and not named in the plan: the `lib/projects.ts` history push → **DF-P8** (the project link becomes a server action, `GAP-114`). The in-place history rewrite risk itself is `SM-2`'s residual (DF-P1).
 
 ---
 
@@ -227,6 +254,7 @@ it asks the human to launder it through their filesystem.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P2 CREATE — by the integrator's records fix at the DF-P0 merge, 2026-10-02. DF-P2 owns the file's one drafting-flow hunk: `components/documents/CheckInPanel.tsx` `createDraftingTicket` → the server create route (fleet plan `audit-reports/fleet-plans/drafting-flow.json`, DF-P2 `files`), deferred until document-control P6 merged — P6 merged before `f1ac550` (`4d755ff`), and no unmerged package in any fleet plan lists the file. The resume lookup sits beside that hunk, and a server create route that resumes by `episodeId` itself closes it. Not yet in DF-P2's brief as a done-when: the integrator adds it (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Re-verified:** hardening pass — **SURVIVES**. `doneRef` is a `useRef` (`CheckInPanel.tsx:155`) — in-memory, per-mount. An interruption between creating the ticket and completing the commit loses the only record that the ticket exists.
@@ -247,12 +275,26 @@ evidence that a discrepancy was reported through that session at all.
 
 **Done when.** See `LIFE-14`.
 
+**Resolution (2026-10-02, drafting-flow Round G) — *Overstated (records fix, 2026-10-02): this closed the finding as RESOLVED; done-when (1) does not hold on HEAD — see the Partial below.*** Closed by pointer to roles-and-permissions [`LIFE-14`](../roles-and-permissions/07-document-lifecycle.md) (Round A2, `6f0c522`, 2026-09-03), whose done-when this finding adopts; re-verified against `f1ac550` after document-control P6 reworked the checkout sweep. The check-in ticket carries a durable key and the panel resumes it on remount: `components/documents/CheckInPanel.tsx:157-175` — "LIFE-14: a check-in interrupted AFTER its ticket was created … must resume that ticket, never create a second one" — looking up `.eq("metadata->checkin->>episodeId", episode.id)` over non-terminal tickets (`:168-170`) before any creation; the 24 h sweep writes `auto_released` only over an empty verdict — `.update({ ...basePayload, outcome: "auto_released" }) … .eq("status", "active") .is("outcome", null);` (`lib/projects.ts:1990-1997`, kept by DC P6 `DCK-7`). Test: `lib/__tests__/lifeSweep2.test.ts:99-108` ("LIFE-14 — resume, never re-create; the sweep never clobbers a verdict").
+
+**Partial (records fix, 2026-10-02).** Re-verified on HEAD (`60fc46a`; `components/documents/CheckInPanel.tsx` is unchanged since `f1ac550`). The resume key exists, but the lookup that reads it can fail silently, and a failed or unfinished lookup creates the second ticket the done-when forbids. Status back to **OPEN**.
+- The lookup ignores its error: `const { data } = await supabase.from("tickets").select("id, ticket_id").eq("org_id", doc.orgId!).eq("metadata->checkin->>episodeId", episode.id).not("status", "in", '("CLOSED","CANCELED")').order("created_at", { ascending: false }).limit(1).maybeSingle();` then `if (!alive || !data) return;` (`components/documents/CheckInPanel.tsx:166-171`). `error` is never read, so a failed read (network, timeout, a 5xx) leaves `resumedTicketRef.current` `null` — indistinguishable from "no ticket for this episode".
+- The commit trusts that `null`: `const ticket = done.ticket ?? resumedTicketRef.current ?? await createDraftingTicket(selected);` (`:402`). In a new component instance `done.ticket` is empty (it is the per-mount `doneRef`, `:156`), so a remounted check-in whose lookup failed creates a second ticket, a second upload set and, for an undocumented change, a second priority-1 alert — the failure scenario above.
+- The lookup is also fire-and-forget: it runs in a `useEffect` (`:162-174`) that nothing awaits, so a commit made before it resolves takes the same `null` and creates a second ticket — the same tablet on marginal signal that caused the first failure is the one most likely to be slow here.
+- `lib/__tests__/lifeSweep2.test.ts:100-104` pins the two source strings (the `.eq("metadata->checkin->>episodeId", …)` filter and the `??` chain); it cannot fail on either path above.
+
+**Done-when.**
+- ✗ (1) A check-in interrupted after ticket creation and resumed in a new component instance links to the existing ticket — only when the resume lookup succeeds before the commit. A lookup that errors, or has not returned, falls through to `createDraftingTicket` and a second ticket. (Was ✓ — *Overstated*, above.) Closing it needs the lookup's `{error}` read and the commit blocked on it — refuse to create (with a message to retry) while the lookup is pending or failed — or the create made idempotent on `episodeId` server-side (DF-P2's create route), and a test that drives a failed and a pending lookup to no second insert.
+- ✓ (2) As `LIFE-14` records it: the sweep writes `auto_released` only over an empty verdict (`lib/projects.ts:1990-1997`), so it can no longer overwrite a human verdict; the one remaining NULL-outcome path (a session close that never completes) shows as an open session until the sweep records `auto_released` — never a false verdict.
+
+**Scope / residual.** Done-when (1) → **DF-P2** (assigned above): when `CheckInPanel` moves behind the server create route, the create resumes by `metadata.checkin.episodeId` (or the panel blocks on a successful lookup) — the hand-off row DF-P0 already wrote for this file, now with the failing done-when. The owning record, roles-and-permissions `LIFE-14`, carries the same gap (cross-area note there); its own status is that area's to settle.
+
 ---
 
 ## LEAK-7 · A reopened ticket re-issues the same revision number, and the public QR says it is current
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** BLOCKED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / field-truth
 - **Re-verified:** hardening pass — **SURVIVES**. `deliverable_rev = issuedRevLabel(ticket.revisionCount)` at three transition sites (`ticketTransitions.ts:223, 232, 250`), so a reopen that does not advance `revisionCount` re-issues the same label — and `EDGE-2` shows the public verify endpoint computes its verdict from `deliverable_rev` with no status term.
@@ -270,12 +312,62 @@ back under review, `/api/verify-ticket` still reports the field copy as
 
 **Done when.** See `WF-21` / `DEC-15`.
 
+**Partial (2026-10-02, drafting-flow Round G).** The code half is closed by pointer to roles-and-permissions [`WF-21`](../roles-and-permissions/06-request-workflow.md) / `DEC-15` (Round E, `e5a203b`), whose contract this finding's done-when adopts. Re-verified against `f1ac550`: `reopen_ticket` starts a new cycle — `updates.revision_count = (ticket.revisionCount || 0) + 1; updates.draft_iteration = 0; updates.deliverable_rev = null;` (`lib/ticketTransitions.ts:354-363`) — so after an issue at Rev 2 the next submission is `3A` and the next approval `3`; and the public endpoint is reopen-aware — `const reopened = !currentRev && !!issuedBefore && !!t.status && !TERMINAL.has(t.status);` (`app/api/verify-ticket/route.ts:120`), the last issue read from the `issued Rev N` history line (`:59-69`), a reopened ticket's last-issue print reading `revision_in_progress` (`:139-140`), never `current`. PS-VERIFY (merged) kept this verdict ladder. Tests: `lib/__tests__/sweepRoundE_A.test.ts:710` ("WF-21 / DEC-15": lifecycle, minor-correction stamp, the verify route end to end).
+
+The failure scenario still reproduces for populations this repository cannot observe — three of them (the DF-P0 review widened this from one: the first query could return 0 while the failure stood). Each starts from a ticket reopened **before** Round E (2026-09-17) under the old three-line `reopen_ticket`, which kept its `revision_count` and its issued, digits-only `deliverable_rev`.
+- (a) **Still under review.** While it stays at `PENDING_REVIEW` / `PENDING_FINAL_APPROVAL`: the verify route treats a row that still carries a label as not reopened — `reopened` requires `!currentRev` (`app/api/verify-ticket/route.ts:120`), `inReview` is false for an issued label (`:121`), so a print of that label verifies `current` (`:142`) while the drawing is back under review; and its next approval writes `issuedRevLabel(ticket.revisionCount)` from the un-bumped count (`lib/ticketTransitions.ts:285`, `:294`, `:316`; `issuedRevLabel` is `revisionCount + 1`, `:119-121`) and issues the same label a second time. A `request_revision` / `reject` from there bumps the cycle (`:339-344`) and ends the hazard for that row. (Since Round E no transition can put a digits-only label on a row in those statuses: `submit_draft` writes a letter rev, `reopen_ticket` nulls it.)
+- (b) **Already re-issued.** Once that second approval has happened — before Round E or after it — the duplicate exists: the row sits at `PENDING_IFC`, `FINAL_DRAFT` or `CLOSED` with `deliverable_rev` = N and two `… issued Rev N` lines in `history`, and the first package's print reads Rev N and verifies `current` (`currentRev` is issued, `latestIssued` is `currentRev`, `printedRev === latestIssued` — `app/api/verify-ticket/route.ts:125-142`). (a)'s status filter cannot see these rows, and no counter repair can tell the two prints apart.
+- (c) **Archived.** The ticket shed clears the row's history — the commit writes `{ comments: [], history: [], metadata: { …, archive_summary: tombstone }, archived_at: now, archive_id }` (`app/api/admin/ticket-shed/commit/route.ts:173`) — so a repeated label on an archived ticket is visible only in its archive bundle, while the stub keeps `deliverable_rev` and verifies exactly as in (b).
+
+**Done-when.**
+- ✓ (code) Two approvals of the same ticket cannot produce the same issued label for any reopen performed since Round E (WF-21 / DEC-15). ✗ (data) For a pre-Round-E reopen still under review they can (a), and where the second approval has already happened they did (b, c) — unknown whether any such row exists.
+- ✓ (code) A ticket reopened since Round E does not verify as current while back under review. ✗ (data) A pre-Round-E reopened row still carrying its issued label does (a), and the first print of a re-issued label verifies `current` at any later status (b, c).
+
+**Blocker (`DEC-27` #4 / `DEC-30`).** Whether any of the three populations exists is production data this repository cannot observe. Unblocking step — paste into the Supabase SQL editor (read-only, one result set of three aggregate rows, no customer data):
+
+```sql
+SELECT 'LEAK-7 / SM-5 (a): tickets under review still carrying an issued label (reopened before Round E)' AS check,
+       NULL::boolean AS ok,
+       COUNT(*)::text AS n
+FROM tickets
+WHERE status IN ('PENDING_REVIEW', 'PENDING_FINAL_APPROVAL')
+  AND deliverable_rev ~ '^[0-9]+$'
+UNION ALL
+SELECT 'LEAK-7 / SM-5 (b): tickets whose history issues the same Rev label twice (any status)',
+       NULL::boolean,
+       COUNT(*)::text
+FROM tickets t
+WHERE EXISTS (
+  SELECT 1
+  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(t.history) = 'array' THEN t.history ELSE '[]'::jsonb END) AS h(entry),
+       LATERAL regexp_matches(h.entry ->> 'action', '[[:<:]]issued Rev ([0-9]+)[[:>:]]') AS m(g)
+  GROUP BY m.g[1]
+  HAVING COUNT(*) > 1
+)
+UNION ALL
+SELECT 'LEAK-7 / SM-5 (c): archived tickets carrying an issued label (history moved to the archive bundle; (b) cannot see it)',
+       NULL::boolean,
+       COUNT(*)::text
+FROM tickets
+WHERE archived_at IS NOT NULL
+  AND deliverable_rev ~ '^[0-9]+$';
+```
+
+- `(a) = 0`, `(b) = 0` **and** `(c) = 0` → nothing to repair and nothing already re-issued: flip this finding to `RESOLVED` on the code half above, recording the three results here. Any other result keeps it open.
+- `(a) > 0` → repair those rows through the service role — bump `revision_count` by one, null `deliverable_rev` and reset `draft_iteration`, with a history line, exactly what today's `reopen_ticket` does — as a `DEC-30` migration (inventory temp table first, aggregate counts only) under **DF-P10**, and record the before/after counts here.
+- `(b) > 0` → the duplicate label is already issued and printed; bumping counters cannot tell the two prints apart, because both read Rev N. LEAK-7 stays **OPEN under DF-P10** until the verify route can answer for a specific print — per-attachment identity, `PHYS-2` / `SM-5` done-when 3 — recording the count here.
+- `(c) > 0` → those archived tickets' histories are in their archive bundles (the shed's restore brings them back), so whether any of them repeated a label is unobservable from the database. (c) counts every archived ticket with an issued label, not only those with a repeat — the fail-safe reading, since the shed leaves nothing on the row to tell them apart. LEAK-7 stays **OPEN under DF-P10** for that remainder until the bundles' histories have been checked for a repeated `issued Rev N` line (each repeat then counts toward (b)), recording the count here.
+
+The query was run in the DF-P0 fix pass on a throwaway Postgres 16 against 12 synthetic rows (each population; a letter rev under review; `NULL`, object and scalar `history`; entries with no `action`; `issued Rev 1` beside `issued Rev 12`) and returned 2 / 1 / 1 as constructed. Two choices in it are deliberate: `regexp_matches` returns no row for a line that does not match (with `regexp_match` in the `LATERAL`, the non-matching lines form a `NULL` group that `HAVING COUNT(*) > 1` counts), and the `CASE` guard keeps `jsonb_array_elements` from raising on a non-array `history`. The word-boundary brackets mirror the verify route's `/\bissued Rev (\d+)\b/` (`app/api/verify-ticket/route.ts:59`) without a backslash in the pasted string.
+
+**Scope / residual.** The explicit history check that would catch an (a) row at its next approval is [`SM-5`](./06-state-machine.md#sm-5)'s done-when 2 — OPEN under **DF-P10**, which also owns the (a) repair above. Rows in (b) and (c), whatever the date of the second approval, carry two issues of one label that cannot be told apart by label alone; that is `SM-5` done-when 3 / `PHYS-2` (per-attachment identity), DF-P10, and this finding stays open on them. The `FINAL_DRAFT → reject_final` window (WF-21's recorded residual) and the canceled / archived verdicts are `EDGE-2` (DF-P10).
+
 ---
 
 ## LEAK-8 · `submit_final` is not required to carry a deliverable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The route validates exactly two preconditions — `requiresComment` and `requiresEngineerPick` (`workflow-action/route.ts:104-109`). `finalAttachment` is an optional body field passed straight through as `body.finalAttachment ?? undefined` (`:38, :145`). Nothing requires `submit_final` to carry anything.
@@ -293,6 +385,12 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
 `ticket-shed` archives the empty state permanently.
 
 **Done when.** See `WF-6`.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`WF-6`](../roles-and-permissions/06-request-workflow.md) (`087a39c`, 2026-09-01), re-verified against `f1ac550`. The route now reads `action.requiresFile`: `app/api/tickets/workflow-action/route.ts:203-205` — `if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) {` → 400 "Issuing the final IFC package requires the deliverable file", before `computeTransition`, so a direct POST can no longer mint a "Final package issued" ticket with no deliverable. WF-6 proved it with a source pin (`lib/__tests__/rpPhase4Migration.test.ts:200`); this round adds the route-harness test the done-when asks for: `lib/__tests__/dfRoundG_P0.test.ts:381` drives the real handler with no `finalAttachment`, with `null`, and with a URL-less record — each 400, with no write of any kind reaching the `tickets` table (no `update` / `upsert` / `insert` / `delete` call — the review fix pass replaced a status assertion the harness could never fail, since its mock does not write payloads back) and no audit row; the Final file → 200 `FINAL_DRAFT`. Mutation-checked: disabling the guard fails it (re-run in the fix pass).
+
+**Done-when.** ✓ `submit_final` is refused server-side when no deliverable attachment exists; ✓ a test covers the direct-POST case (`lib/__tests__/dfRoundG_P0.test.ts:381`).
+
+**Scope / residual.** The stricter contract — the attachment must be typed `Final`, and the client check must test the type — is [`SM-13`](./06-state-machine.md#sm-13)'s, OPEN under DF-P1 / DF-P9. Storage-key validation of `finalAttachment` is `AUTHZ-11` (DF-P1).
 
 ---
 
@@ -336,6 +434,61 @@ worth doing early despite being MEDIUM.
 2. Those outcomes are reportable — a queue's leak rate is a number someone can
    look at.
 3. `CANCELED` is reachable, per `DEC-14`.
+
+---
+
+<a id="leak-10"></a>
+
+## LEAK-10 · A member can re-type or re-unit a ticket to step out of a scoped engineer gate and issue for construction with no engineer
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P1 RAILS — by the integrator's records fix at the DF-P0 merge, 2026-10-02. DF-P1 owns the file the fix lives in: its brief item (a) re-creates `ticket_update_guard` from its newest body (`20261038`), first in the chain DF-P1 → P3 → P4 → P6 → P7 → P8 that re-creates that one trigger (fleet plan `audit-reports/fleet-plans/drafting-flow.json`, DF-P1 `files` (a) and `crossAreaFileOverlaps`), and a re-type action, if one is wanted, lands in `lib/workflow.ts` / `lib/ticketTransitions.ts` / the workflow route, where DF-P1 is also first. Not yet in DF-P1's brief: the integrator adds this id to it (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
+- **Verification:** CONFIRMED (code path traced: the engine's gate follows the two columns, reproduced at engine level by `lib/__tests__/dfRoundG_P0.test.ts:402`; the live guard owns neither column, pinned at `:420`; the direct PATCH was not run against a database — there is none in this session)
+- **Blast radius:** safety / authority
+- **Locations:**
+  - `lib/workflow.ts:60-61` — `ticketResource()`: `return { requestType: ticket.requestType || null, unit: ticket.unit || null };` — the whole `DEC-13` resource a ticket presents (`RESOURCE_KEYS`, `lib/capabilityPolicy.ts:219`)
+  - `lib/workflow.ts:232` — `const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);` — `ticket.engineer_gate_exempt` evaluated against that resource (`DEC-13` stage 3)
+  - `lib/workflow.ts:238` — `const requesterScopedOut = scopedTokensFor(policy, 'ticket.direct_approve', resource) !== null`
+  - `lib/workflow.ts:376` — `if ((needsEngineerApproval && !isEng) || requesterScopedOut) {` — the gated requester gets `request_final_engineer_approval` only; otherwise `approve_draft_ifc` is offered (`:393`)
+  - `lib/ticketTransitions.ts:283-286` — `approve_draft_ifc` → `PENDING_IFC`, `updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);`
+  - `supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-205` — `ticket_update_guard`'s 22 columns, `org_id` … `created_at`: no `request_type` line, no `unit` line (no later migration re-creates it)
+  - `supabase/schema.sql:1118-1119` — `CREATE POLICY "tickets_org_access" ON tickets FOR ALL USING (org_id IN (SELECT my_org_ids()));`
+  - `app/api/tickets/workflow-action/route.ts:75-79` — the route re-reads the row (`select("*")`) on every POST; `:160` evaluates `WorkflowEngine.getActions` on it as it stands; `:163`, `:253` — the reviewer / drafter pick scoping reads the same `ticketResource(ticket)`
+  - `components/permissions/CapabilityPolicyEditor.tsx:70-73`, `:94` — the policy console writes request-type overrides (`when: { requestType: [type] }`) for any capability; a `unit` condition is kept but only settable through the API
+- **Related:** `LEAK-3`, `SM-1`, `AUTHZ-1`, `SM-2`, `AUTHZ-6`, `WF-15`, `DEC-13`
+- **Independently verified:** — (author: opened at the DF-P0 merge by the integrator's records fix, from DF-P0's proposal; not yet challenged)
+
+**Mechanism.** Every `DEC-13` scoped capability rule on a ticket is evaluated against two columns, `request_type` and `unit` (`ticketResource()`), and neither is workflow-owned: `ticket_update_guard` refuses a client change to 22 columns and these two are not among them, and `tickets_org_access` is `FOR ALL` with no `WITH CHECK`, so any authenticated active member of the workspace can `PATCH /rest/v1/tickets?id=eq.<id>` with a new `request_type` or `unit` — to any string, since `request_type` is validated against the org's configured list at INSERT only (`ticket_insert_integrity`, `LEAK-3` done-when 1). The workflow route re-reads the row on every POST and asks the engine what the caller may do on the row as it now stands. So wherever an org scopes `ticket.engineer_gate_exempt` or `ticket.direct_approve` by request type or unit, the gate a ticket faces is whatever its current, client-written type and unit say. The same two columns also drive the reviewer and drafter pick scoping (`route.ts:253`, `:281-282`), the engineering-first types (`DRAFT-2`, `lib/workflow.ts:243`) and close-without-review (`LEAK-3`'s own edge, `:360`). No app path writes either column after insert — the four browser writers write neither (census pinned at `lib/__tests__/dfRoundG_P0.test.ts:420`), and every service-role writer passes the guard (`auth.uid() IS NULL`, `20261038:182`) — so the change is recorded nowhere: no history line, no audit row.
+
+**Failure scenario.** An org's policy console exempts nobody from the engineer gate on `NEW_DESIGN` requests (`ticket.engineer_gate_exempt`, a request-type override with an empty token list). A Manager files a `NEW_DESIGN` request; at `PENDING_REVIEW` the engine offers the Manager only `request_final_engineer_approval`. The Manager PATCHes `{"request_type":"ISO"}` from the browser console; the guard lets it through; the route re-reads the row, the base exempt list covers Manager, `approve_draft_ifc` is offered and accepted, and the ticket reaches `PENDING_IFC` with an issued label and no engineer — the drawing is issued for construction, and the type change that made it possible is in no history line and no audit row (the approval itself is audited, attributed to the Manager, on a ticket that now reads `ISO`). The same works with `unit` against a unit-scoped `ticket.direct_approve` rule: an Engineer-2 requester scoped out on unit U-200 re-units the ticket to U-100 and approves their own draft (both reproduced at engine level, `lib/__tests__/dfRoundG_P0.test.ts:402`).
+
+**Why HIGH, not CRITICAL (the DF-P0 proposal said CRITICAL).** The outcome, where it is reachable, is the one that made `SM-1` / `AUTHZ-1` CRITICAL — an unreviewed drawing issued for construction. Three things keep this below them on the evidence in the repository:
+1. **It needs a configured rule.** The shipped policy has no scoped rule: every default is a bare role list (`DEFAULTS` from `CAPABILITY_DEFS[].defaultRoles`, `lib/capabilityPolicy.ts:265-266`; `ticket.direct_approve` `["Engineer"]`, `:111-112`; `ticket.engineer_gate_exempt` management + Engineer + DocCtrl, `:124-126`). With no type- or unit-scoped rule on either capability, rewriting the two columns changes neither gate. `SM-1` / `AUTHZ-1` were one click in every org.
+2. **No UI does it.** It takes a hand-written PostgREST call; no screen writes `request_type` or `unit` after filing. `SM-1` / `AUTHZ-1` were a button the UI offered.
+3. **It is intra-tenant, by an authenticated active member** — the class the independent pass lowered `PERS-1` from CRITICAL to HIGH for ("intra-org privilege escalation, not unauthenticated or cross-tenant compromise", `07-persistence-and-rls.md`, `PERS-1`).
+
+**What would make it CRITICAL.** Any org whose stored policy carries a type- or unit-conditioned rule on either capability: there the outcome is reachable in production by any member willing to make the call, the same direct-write class as `SM-2` / `AUTHZ-2` / `EVID-1`, which kept CRITICAL. That is production data this repository cannot observe (`DEC-30`). Read-only inventory, one aggregate row — not run here (no database in this session); it can only over-count (a role token spelled `unit`, or a `when` whose lists are empty, also matches), never under-count:
+
+```sql
+SELECT 'LEAK-10: orgs with a type- or unit-scoped engineer_gate_exempt / direct_approve rule' AS check,
+       COUNT(*)::text AS n
+FROM org_configurations
+WHERE key = 'capability_policy'
+  AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', '') ~ '"(requestType|unit)"'
+    OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', '') ~ '"(requestType|unit)"');
+```
+
+`n > 0` → raise this finding to CRITICAL (and the area README count with it) before DF-P1 starts. `n = 0` → HIGH stands, and the done-whens below still bind, because the policy console offers request-type overrides on both capabilities to any Admin at any time.
+
+**Remediation (illustrative, untested — not a patch).** In DF-P1's re-creation of `ticket_update_guard` from its newest body, add `request_type` and `unit` to the workflow-owned list (two `IF NEW.x IS DISTINCT FROM OLD.x` lines, lineDiff-pinned). If the product needs to correct a mis-filed type or unit, make it a route action (management, `PENDING_ASSIGNMENT` only, comment required) that writes a history line and an audit row and is evaluated by the engine like any other — never a client write.
+
+**Chain reaction.** One guard re-creation also closes `LEAK-3` done-when 1's UPDATE half (`request_type` re-typed into a close-without-review type) and `AUTHZ-6` done-when 1's forgeable input; it is a column decision `SM-2`'s census hands to DF-P1. Every later resource dimension inherits the lesson: `DF-P6`'s `work_class` / `code_class` are planned workflow-owned from the start, and `GAP-105`'s `library_id` (DF-P4) likewise — a scoped rule is only as strong as the column it reads.
+
+**Done when.**
+1. A client (non-service) UPDATE of `request_type` or `unit` raises — `ticket_update_guard` re-created from its newest body with both columns workflow-owned, lineDiff-pinned against that body.
+2. A re-type or re-unit, if the product needs one, is a workflow action with a history line and an audit row, and the engine re-evaluates the gate on the new value.
+3. A test shows a type-scoped `ticket.engineer_gate_exempt` and a unit-scoped `ticket.direct_approve` cannot be escaped by a client write (the guard refuses the write; the engine's action set on the row is unchanged).
 
 ---
 

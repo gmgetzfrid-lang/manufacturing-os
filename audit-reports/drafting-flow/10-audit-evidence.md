@@ -53,6 +53,16 @@ lib/projects.ts:832-839 —
 - [ ] Each history entry carries the actor's UUID and, for approve actions, the e_signature id and the approved attachment's id + content hash
 - [ ] A test proves a direct PostgREST update from a member session cannot truncate or rewrite tickets.history
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; same cluster as [`SM-2`](./06-state-machine.md#sm-2) — roles-and-permissions [`WF-2`](../roles-and-permissions/06-request-workflow.md), migration `20261038` (**applied & verified live 2026-09-01**). Stays OPEN.
+
+**Done-when.**
+- ✓ (in part) `status`, `deliverable_rev` and `engineer_approved_at` are not client-updatable (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:186`, `:199`, `:197`). ✗ `history` is append-or-equal only by length (`:213-216`): an existing element can be rewritten, so the approval chain can still be edited in place.
+- ✓ (in part) Every state change flows through the route (`status` is guarded). ✗ `lib/projects.ts:1588-1599` still does a browser read-modify-write of the whole array — `history.push({ action: "Converted to Project", … }); await supabase.from("tickets").update({ history }).eq("id", input.ticketId);` — inside `convertTicketToProject`, which currently has no caller in `app/` or `components/` (grep), so it is dormant, not removed.
+- ✗ History entries carry no actor UUID, signature id or attachment id/hash: the entry built at `lib/ticketTransitions.ts:133-138` is `{ action, user: input.actor.email, role, date }` (`types/schema.ts:1160-1167`).
+- ✓ (truncation only, shape) `lib/__tests__/rpPhase4Migration.test.ts:160` pins the shrink block; nothing refuses an in-place rewrite.
+
+**Scope / residual.** Handed on, binding (fleet plan): history immutability (existing elements equal to OLD, append only) and the client-writable arrays → **DF-P1**, which also makes the route's audit row carry attachment ids and content hashes (`EVID-12`). The ticket-to-project history push belongs with the project link → **DF-P8** (`GAP-114`, the `link_project` action). Binding an approval to an e-signature is the ticket roster's job → **DF-P5** (signatures minted by `/api/signatures/sign` against a ticket resource). None of this changed here.
+
 ---
 
 <a id="evid-2"></a>
@@ -103,6 +113,19 @@ lib/distributionAcks.ts:186-193 —
 - [ ] An `acknowledged_by UUID` (and ideally `acknowledged_via`) column is added and populated, so a row can prove who performed the act
 - [ ] `acknowledge()` filters on the caller's uid as well as the row id, or moves behind a server route that does
 - [ ] Acknowledging writes a corresponding audit_logs row so there are two independent records
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The fleet plan points this at roles-and-permissions [`SURF-12`](../roles-and-permissions/09-non-document-surfaces.md) / `20261047`, but `20261047`'s `trg_document_ack_guard` rails the *sibling* table (`document_acknowledgments` — what DC `DIST-8` closes on). This finding is `distribution_acks`, railed by document-control `DIST-3`: migrations `20261032` (`a96e56f`) and `20261033` (`02ea5ed`), both **applied & verified live 2026-08-24** — the same records `SURF-12` itself cites ("`distribution_acks` was closed by `20261032`"). What holds:
+- `enforce_distribution_ack_guard` (BEFORE UPDATE; newest body `supabase/migrations/20261033_dc_phase7b_guard_patches.sql:20-48`): identity columns immutable (`:29-35`); a change to `acknowledged_at` requires `OLD.recipient_user_id::text = auth.uid()::text` and stamps `NEW.acknowledged_by := auth.uid();` (`:39-45`); `acknowledged_by` is trigger-owned (`NEW.acknowledged_by := OLD.acknowledged_by;`, `:27`). INSERT may not create an acknowledged row (`supabase/migrations/20261032_dc_phase7_ack_and_pin_integrity.sql:29-34`).
+- `acknowledge(ackId, recipientUserId)` pins the write to the caller's own pending row and checks it: `.eq("id", ackId).eq("recipient_user_id", recipientUserId).is("acknowledged_at", null).select("id")`, zero rows throw (`lib/distributionAcks.ts:296-308`).
+- Tests: `lib/__tests__/phase7AckPinMigration.test.ts`, `lib/__tests__/distributionAckPin.test.ts` (DIST-3's).
+
+**Done-when.**
+- ✗ (in part) `acknowledged_at` writes are the recipient's own (✓) and `recipient_user_id` is immutable (✓), but the recipient can still *un*-acknowledge (the guard allows any `acknowledged_at` change by the recipient, including to NULL), and `requested_at` stays writable by any active member — kept on purpose for the requester's re-nudge (DIST-3's record), which also permits backdating.
+- ✓ `acknowledged_by` exists and is populated by the trigger (`20261032:23`, `20261033:27`, `:45`); `acknowledged_via` (the done-when's "ideally") is not added.
+- ✓ `acknowledge()` filters on the caller's uid and checks the write.
+- ✗ Acknowledging writes no `audit_logs` row: `lib/distributionAcks.ts:296-308` has no audit call and `components/documents/DistributionAcks.tsx:119` adds none — the acknowledgment still has no second, independent record.
+
+**Scope / residual.** Refuse un-acknowledging (`acknowledged_at` non-null → NULL) for non-service callers, bound `requested_at` writes to the requester or a controller, and write an `ACK_*` audit row on acknowledgment → **DF-P11**, which edits `lib/distributionAcks.ts` after DC P5 (fleet plan cross-area overlaps) and has the plan's one remaining migration slot. Corrected pointer recorded: the substrate is DC `DIST-3` (`20261032`/`20261033`), not `20261047`.
 
 ---
 

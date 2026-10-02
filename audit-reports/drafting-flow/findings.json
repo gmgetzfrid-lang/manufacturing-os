@@ -17,18 +17,21 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 139,
+    "findings": 143,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
-      "HIGH": 46,
-      "MEDIUM": 61,
-      "LOW": 23
+      "HIGH": 47,
+      "MEDIUM": 63,
+      "LOW": 24
     },
     "by_status": {
-      "OPEN": 133,
-      "RESOLVED": 2,
-      "REFUTED": 4
+      "RESOLVED": 15,
+      "OPEN": 121,
+      "REFUTED": 4,
+      "BLOCKED": 1,
+      "WONTFIX": 1,
+      "INVALID": 1
     }
   },
   "status_vocabulary": [
@@ -44,7 +47,7 @@
       "id": "AUTHZ-1",
       "title": "\"Approve with Minor Correction\" is offered to the exact requester the engineer gate just blocked, and lands on the identical PENDING_IFC / issued-rev outcome",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -208,7 +211,7 @@
       "id": "SM-1",
       "title": "\"Approve with Minor Correction\" is a complete bypass of the engineer sign-off gate — the very requester the gate blocks can issue for construction with it",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1012,7 +1015,7 @@
       "id": "HAND-5",
       "title": "Trusted intake links publish controlled revisions through the service role, skipping the publish guard and the entire post-publish pipeline",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1097,7 +1100,7 @@
       "id": "LEAK-2",
       "title": "Routing matches the headline role, so a multi-role supervisor is never notified",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "friction",
@@ -1134,7 +1137,8 @@
       "related": [
         "WF-15",
         "WF-8",
-        "TIER-2"
+        "TIER-2",
+        "LEAK-10"
       ],
       "locations": [
         "lib/workflow.ts:185-192",
@@ -1205,6 +1209,45 @@
       ],
       "refuted": false,
       "summary": null,
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/04-flow-leaks.md"
+    },
+    {
+      "id": "LEAK-10",
+      "title": "A member can re-type or re-unit a ticket to step out of a scoped engineer gate and issue for construction with no engineer",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (code path traced: the engine's gate follows the two columns, reproduced at engine level by `lib/__tests__/dfRoundG_P0.test.ts:402`; the live guard owns neither column, pinned at `:420`; the direct PATCH was not run against a database — there is none in this session)",
+      "blast_radius": "safety / authority",
+      "related": [
+        "LEAK-3",
+        "SM-1",
+        "AUTHZ-1",
+        "SM-2",
+        "AUTHZ-6",
+        "WF-15",
+        "DEC-13"
+      ],
+      "locations": [
+        "lib/workflow.ts:60-61",
+        "lib/capabilityPolicy.ts:219",
+        "lib/workflow.ts:232",
+        "lib/workflow.ts:238",
+        "lib/workflow.ts:376",
+        "lib/ticketTransitions.ts:283-286",
+        "supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-205",
+        "supabase/schema.sql:1118-1119",
+        "app/api/tickets/workflow-action/route.ts:75-79",
+        "components/permissions/CapabilityPolicyEditor.tsx:70-73"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An org's policy console exempts nobody from the engineer gate on NEWDESIGN requests (ticket.engineergateexempt, a request-type override with an empty token list). A Manager files a NEWDESIGN request; at PENDINGREVIEW the engine offers the Manager only requestfinalengineerapproval. The Manager PATCHes {\"requesttype\":\"ISO\"} from the browser console; the guard lets it through; the route re-reads the ",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/04-flow-leaks.md"
     },
@@ -1512,14 +1555,18 @@
       "id": "UI-3",
       "title": "The attention badge sends Document Control to tickets that offer them nothing",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux / adoption",
       "related": [],
       "locations": [
         "lib/ticketAttention.ts:106-108",
-        "app/(protected)/requests/[id]/page.tsx:1605"
+        "app/(protected)/requests/[id]/page.tsx:1605",
+        "lib/ticketAttention.ts:79-91",
+        "lib/__tests__/dfRoundG_P0.test.ts:325",
+        "lib/__tests__/ticketAttention.test.ts:78",
+        "lib/__tests__/dfRoundG_P0.test.ts:344"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -1811,7 +1858,7 @@
       "id": "EDGE-11",
       "title": "SOUND — the load-bearing invariants of this flow that a fix must not disturb",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1916,6 +1963,33 @@
       ],
       "refuted": false,
       "summary": "An operator asks to stop the bell for drafting-request status changes because he only wants email. An admin finds inappenabled in the schema, flips it in the database, and reports it done. Nothing changes — every ticketstatus row still lands in his bell. Time is spent debugging a column that was never wired, and trust in the settings surface erodes for the toggles that DO work.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
+    },
+    {
+      "id": "EDGE-15",
+      "title": "A ticket whose `last_modified` is `NULL` gets a status-only compare-and-set, so two concurrent writes both land",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "data integrity",
+      "related": [
+        "EDGE-11",
+        "SM-2"
+      ],
+      "locations": [
+        "app/api/tickets/workflow-action/route.ts:432-434",
+        "supabase/schema.sql:480",
+        "supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-205"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member PATCHes {\"lastmodified\": null} on a ticket. Two concurrent attachfile calls (or attachfile and saveprogress) on that ticket then both pass the status-only check, and the second overwrites attachments, watchers and unreadby from a stale read. An attachment is lost with no error.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
     },
@@ -2411,7 +2485,14 @@
       "blast_radius": "data-integrity",
       "related": [],
       "locations": [
-        "components/documents/CheckInPanel.tsx:155-159"
+        "components/documents/CheckInPanel.tsx",
+        "audit-reports/fleet-plans/drafting-flow.json",
+        "components/documents/CheckInPanel.tsx:155-159",
+        "components/documents/CheckInPanel.tsx:157-175",
+        "lib/projects.ts:1990-1997",
+        "lib/__tests__/lifeSweep2.test.ts:99-108",
+        "components/documents/CheckInPanel.tsx:166-171",
+        "lib/__tests__/lifeSweep2.test.ts:100-104"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -2428,12 +2509,20 @@
       "id": "LEAK-7",
       "title": "A reopened ticket re-issues the same revision number, and the public QR says it is current",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "BLOCKED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "safety / field-truth",
       "related": [],
-      "locations": [],
+      "locations": [
+        "lib/ticketTransitions.ts:354-363",
+        "app/api/verify-ticket/route.ts:120",
+        "lib/__tests__/sweepRoundE_A.test.ts:710",
+        "lib/ticketTransitions.ts:285",
+        "app/api/verify-ticket/route.ts:125-142",
+        "app/api/admin/ticket-shed/commit/route.ts:173",
+        "app/api/verify-ticket/route.ts:59"
+      ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
       "challenges": [
@@ -2449,13 +2538,16 @@
       "id": "LEAK-8",
       "title": "`submit_final` is not required to carry a deliverable",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-integrity / compliance",
       "related": [],
       "locations": [
-        "app/api/tickets/workflow-action/route.ts:104-109"
+        "app/api/tickets/workflow-action/route.ts:104-109",
+        "app/api/tickets/workflow-action/route.ts:203-205",
+        "lib/__tests__/rpPhase4Migration.test.ts:200",
+        "lib/__tests__/dfRoundG_P0.test.ts:381"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -2661,7 +2753,7 @@
       "id": "ROUTE-2",
       "title": "Attention badges tell DraftingSupervisors and DocCtrl to act on statuses where the workflow engine gives them no action at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2824,7 +2916,7 @@
       "id": "ROUTE-10",
       "title": "Ticket routing matches only the headline role column, so a person who holds DraftingSupervisor in their additive roles[] is never routed to — and the fallback then spams every Admin",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2934,7 +3026,7 @@
       "id": "SM-11",
       "title": "The ticket⇄document intent bridge is dead code: `rowToTicket` never maps `metadata`, so `ticket.metadata` is always undefined in the workflow route",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2979,6 +3071,34 @@
       ],
       "refuted": false,
       "summary": "A drafter (or anything replaying the endpoint) POSTs {actionType:\"submitfinal\", finalAttachment:null}. The ticket lands in FINALDRAFT — \"The issued package awaiting the requester's acknowledgement\" per the workflow diagram — with no Final file. The requester clicks \"Acknowledge & Close\". The ticket is CLOSED, recorded as an issued IFC package, closedat is stamped, and it becomes archive-eligible. ",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/06-state-machine.md"
+    },
+    {
+      "id": "SM-14",
+      "title": "The ticket ⇄ intent bridge reads the source document with no org filter, keyed on client-writable metadata",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "cross-workspace integrity",
+      "related": [
+        "SM-11",
+        "SM-2"
+      ],
+      "locations": [
+        "app/api/tickets/workflow-action/route.ts:513-514",
+        "app/api/tickets/workflow-action/route.ts:549-553",
+        "app/api/tickets/workflow-action/route.ts:554-569",
+        "app/api/tickets/workflow-action/route.ts:401-402"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member PATCHes their ticket's metadata.sourcedocument.id to a document id from another workspace. Assigning a drafter makes the service role write an intent row in the member's org carrying the foreign document's libraryid and currentversionid. For a drafter who belongs to both workspaces, the upsert can also overwrite that workspace's own ticket-sourced intent row on the document.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/06-state-machine.md"
     },
@@ -3206,7 +3326,7 @@
       "id": "AUTHZ-9",
       "title": "Additive roles buy no ticket authority: `extraRoles` is never passed by any caller, and the admin routes match the headline role by exact string",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3252,6 +3372,33 @@
       ],
       "refuted": false,
       "summary": "A contractor is handed one stamped deliverable for a job in Unit 200. The QR gives them a permanent, login-free poller. They script it weekly and watch ticketStatus walk from PENDINGIFC to REVISIONREQ to PENDINGFINALAPPROVAL — reading the plant's internal engineering churn on that unit long after their contract ends, with the org holding no way to revoke the link and no log that anyone is watching",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
+    },
+    {
+      "id": "AUTHZ-14",
+      "title": "The gated requester's note to the engineer is required only by the browser",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": "workflow / evidence",
+      "related": [
+        "AUTHZ-1",
+        "SM-1"
+      ],
+      "locations": [
+        "components/requests/EngineerPickerModal.tsx:64",
+        "lib/workflow.ts:382-388",
+        "app/api/tickets/workflow-action/route.ts:194"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A direct POST of requestfinalengineerapproval with an engineer and no comment reaches PENDINGFINALAPPROVAL with engineerreviewreason null. The engineer signs off without seeing the correction the requester wanted.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
     },
@@ -3393,7 +3540,7 @@
       "id": "PERS-8",
       "title": "my_org_ids() is SECURITY DEFINER with no SET search_path, and it is the sole gate on every ticket RLS decision",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "WONTFIX",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -3552,7 +3699,7 @@
       "id": "PROJ-11",
       "title": "document_versions.related_ticket_id is never written but IS honoured as a review-gate bypass — wiring the ticket<->document link naively will silently disable required review",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3742,7 +3889,7 @@
       "id": "SM-8",
       "title": "CANCELED is documented to users as a workflow state, is treated as terminal by the archiver, and is reachable by no code path — while a ticket that somehow reaches it has no legal action for anyone but an admin",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3769,7 +3916,7 @@
       "id": "SM-10",
       "title": "The ticket page rewrites `approve_initial` into `assign` before sending, which the server refuses — every ticket at NEW or PENDING_ENG_INITIAL is a hard dead end for its only forward action",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "INVALID",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

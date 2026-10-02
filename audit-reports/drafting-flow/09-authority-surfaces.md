@@ -17,7 +17,7 @@ Every door into a ticket, and what each checks. Includes the public verify surfa
 ## AUTHZ-1 · "Approve with Minor Correction" is offered to the exact requester the engineer gate just blocked, and lands on the identical PENDING_IFC / issued-rev outcome
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:199-234`, `lib/workflow.ts:222-228`, `lib/ticketTransitions.ts:221-235`, `app/api/tickets/workflow-action/route.ts:96-103`
 - **Same root cause as** `SM-1` — Also owned as `TIER-7` in [`01-review-tiering.md`](./01-review-tiering.md), which frames the fix. `GAP-111` requires it inside the delivery gate. Fix once; close the rest citing this one.
@@ -66,6 +66,19 @@ compare lib/ticketTransitions.ts:221-223 —
 - [ ] At PENDING_FINAL_APPROVAL, `approve_minor_correction` stamps `engineer_approved_at` like `engineer_approve_final` does
 - [ ] A test asserts that for a ticket whose `requesterRole` needs engineer approval, no action returned at PENDING_REVIEW produces `newStatus === 'PENDING_IFC'`
 
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-3`](../roles-and-permissions/06-request-workflow.md) (landed in `087a39c`, R&P Phase 4, 2026-09-01, shipped with `WF-14`), re-verified against `f1ac550`. No application code changed in this package. Reproduced by mutation: putting an `approve_minor_correction` push back into the engineer-routed branch of `lib/workflow.ts` makes four of the new tests below fail; on HEAD they pass.
+- `lib/workflow.ts:376-389` — the requester the gate binds (`if ((needsEngineerApproval && !isEng) || requesterScopedOut) {`) is offered exactly one forward action, `request_final_engineer_approval`; `approve_minor_correction` sits only in the `else` branch beside `approve_draft_ifc` (`lib/workflow.ts:390-410`, comment `// who could approve directly anyway (WF-3 done-when 2).` at `:399`), in the co-review branch for direct approvers and management (`:415-443`), and at `PENDING_FINAL_APPROVAL` inside `canActHere` (`:455-480`).
+- `lib/ticketTransitions.ts:292-299` — `case "approve_minor_correction":` … `if (ticket.status === "PENDING_FINAL_APPROVAL") updates.engineer_approved_at = now;` (WF-21 / DEC-15, `e5a203b`).
+- The route refuses anything the engine does not offer: `const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, engineCtx);` → 403 `if (!action)` (`app/api/tickets/workflow-action/route.ts:160-170`).
+- Tests: `lib/__tests__/workflow.test.ts:197-215` (the action-level WF-3 pin); `lib/__tests__/dfRoundG_P0.test.ts:145` (new — for every requester role the gate binds, i.e. `ALL_ROLES` filtered by `requiresEngineerApproval`, no offered action's `computeTransition` lands on `PENDING_IFC`, and the one forward path lands on `PENDING_FINAL_APPROVAL` carrying the note); `lib/__tests__/dfRoundG_P0.test.ts:166` (new — the role × identity × additive-collection matrix at both stages); `lib/__tests__/sweepRoundE_A.test.ts:730` (the sign-off stamp at both stages).
+
+**Done-when.**
+- ✓ `approve_minor_correction` is pushed only where `approve_draft_ifc` is. The engineer-routed requester's "send with a correction note" is the single action they are offered — `request_final_engineer_approval`, whose transition stores the note as `engineer_review_reason` and a thread comment (`lib/ticketTransitions.ts:301-311`) — landing on `PENDING_FINAL_APPROVAL`. It is one action carrying the note rather than a second action name; that is WF-3's chosen shape, and the outcome the done-when asks for. Corrected in the review fix pass: the note is required **in the browser only** — by `EngineerPickerModal`'s `requireComment = true` default (`components/requests/EngineerPickerModal.tsx:64`, checked at `:155`; the page labels it `Note to the engineer *`, `app/(protected)/requests/[id]/page.tsx:1750`). The engine action carries no `requiresComment` (`lib/workflow.ts:382-388`), so the route's comment gate (`app/api/tickets/workflow-action/route.ts:194`) never fires for it, and a direct POST with an engineer and no comment reaches `PENDING_FINAL_APPROVAL` with `engineer_review_reason` `null`. The gate this finding is about still holds — that ticket waits for the engineer — but the engineer signs off without the correction the requester meant to send. That is a defect of its own, not this finding's bypass: the integrator opens it as a new id at merge (proposed `AUTHZ-14`, LOW, `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open") → **DF-P1** (`requiresComment: true` on the action, or a route check).
+- ✓ At `PENDING_FINAL_APPROVAL`, `approve_minor_correction` stamps `engineer_approved_at` (`lib/ticketTransitions.ts:298`).
+- ✓ A test asserts that for a ticket whose `requesterRole` needs engineer approval, no action returned at `PENDING_REVIEW` produces `newStatus === 'PENDING_IFC'` (`lib/__tests__/dfRoundG_P0.test.ts:145`).
+
+**Scope / residual.** None for this finding beyond the browser-only note above (proposed `AUTHZ-14`, DF-P1). Not covered by this close: re-typing or re-uniting a ticket out of a type- or unit-scoped engineer-gate or direct-approve rule reaches the same outcome — an issue for construction with no engineer — through a different door (two client-writable columns the gate reads); that is [`LEAK-10`](./04-flow-leaks.md#leak-10) (HIGH, OPEN, DF-P1), opened at the DF-P0 merge. Two neighbours stay OPEN on purpose: `TIER-7` (the minor correction as a *declared class* inside the delivery gate, DF-P6) and `TIER-1` (the gate still keys on who asked, DF-P6). This close is about the bypass, not about which work needs an engineer.
+
 ---
 
 <a id="authz-2"></a>
@@ -106,6 +119,15 @@ supabase/migrations/20260901_db_hard_enforcement.sql:3-4 — `-- Promotes the la
 - [ ] INSERT is constrained so `requester_id = auth.uid()` and `status` is the engine's initial status
 - [ ] A test proves a member session gets a policy violation for `update({status:'PENDING_IFC'})` on their own ticket and still succeeds for `priority`
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; same cluster as [`SM-2`](./06-state-machine.md#sm-2) — roles-and-permissions [`WF-2`](../roles-and-permissions/06-request-workflow.md), migration `20261038` (**applied & verified live 2026-09-01**). Stays OPEN with the residual handed to **DF-P1**.
+
+**Done-when.**
+- ✓ (in part) The BEFORE UPDATE trigger rejects a client change to `status`, `deliverable_rev`, `revision_count`, `assigned_*`, `archived_at` (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:184-209`) unless `auth.uid() IS NULL` (`:182`). ✗ `history` is only protected against shrinking (`:213-216`) — an existing entry can be rewritten in place — and `attachments` is not guarded at all.
+- ✓ INSERT forces `requester_id = auth.uid()` (`20261038:130`) and the engine's initial status (`:140`; `getInitialStatus: (): TicketStatus => 'PENDING_ASSIGNMENT',` at `lib/workflow.ts:172`).
+- ✓ (shape, not live) `lib/__tests__/rpPhase4Migration.test.ts:153` pins that `status` is guarded and `:174` that `priority` is not; no database in CI for a live member session.
+
+**Scope / residual.** → **DF-P1** (binding, fleet plan): append-only history and service-role-only `attachments` / `comments` / `metadata` in the re-created guard. Until then the verify-ticket chain is safe on its inputs (`status` and `deliverable_rev` are guarded) but the ticket page's history and attachment list can be edited from a browser.
+
 ---
 
 <a id="authz-3"></a>
@@ -143,6 +165,18 @@ lib/workflow.ts:200 — `          if (needsEngineerApproval && !isEng) {`
 - [ ] `requester_role` (and `requester_id`, `requester_name`, `requester_email`) are stamped server-side at insert from the authenticated membership, not accepted from the client
 - [ ] `getActions` re-reads the requester's CURRENT role from org_members rather than trusting the row snapshot, or the gate is keyed on an explicit `engineer_approval_required` boolean written by the server at creation
 - [ ] A test files a request with a forged `requester_role: 'Engineer-4'` and shows the PENDING_REVIEW action set still routes to `request_final_engineer_approval`
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The substrate is closed by roles-and-permissions [`WF-5`](../roles-and-permissions/06-request-workflow.md) (migration `20261038`, `087a39c`, **applied & verified live 2026-09-01**) and the gate's input is fail-closed by `DEC-16` (`WF-12`, Round D1); one stamped field the done-when names is still client-supplied.
+- `ticket_insert_integrity` (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:110-168`), for every client insert: `NEW.requester_id := auth.uid();` (`:130`), `requester_email` := the member's `org_members.email` when present (`:131-133`), `requester_role` kept only if it is a role the caller holds, else their headline (`:136-138`), non-members refused (`:125-127`); and `requester_role` is workflow-owned on UPDATE (`:188`).
+- `DEC-16`: the route reads the requester's CURRENT collection on every action — `requesterRoles = heldRoles(reqMember …)` (`app/api/tickets/workflow-action/route.ts:146-152`) — and the engine requires an engineer if either the snapshot or the current collection says so: `const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);` (`lib/workflow.ts:232`, rule at `:105-118`).
+- Tests (new): `lib/__tests__/dfRoundG_P0.test.ts:197` — the forged `Engineer-4` snapshot alone would waive the gate, the current collection routes to an engineer; `lib/__tests__/dfRoundG_P0.test.ts:206` — through the route, a row stamped `requester_role: 'Engineer-4'` for a member who holds Requester: `approve_draft_ifc` and `approve_minor_correction` are 403 with nothing written, `request_final_engineer_approval` is accepted. Mutation-checked: omitting `requesterRoles` from the engine context fails it (dropping only the route's `org_members` read does **not** — the variable defaults to `[]`, which the engine treats as known-empty, so the gate still binds; fix-pass correction). The read itself is pinned by `lib/__tests__/dfRoundG_P0.test.ts:221` (fix pass): a requester who still holds the exempt role (snapshot Engineer-4, current Engineer-4) approves directly with a 200, and the `role, roles` read by uid, active only, is asserted — mutation-checked: disabling the read turns that 200 into a 403. `lib/__tests__/rpPhase4Migration.test.ts:109` pins the insert trigger.
+
+**Done-when.**
+- ✗ (in part) `requester_id`, `requester_email` and `requester_role` are stamped from the authenticated membership at insert (✓); `requester_name` is not — the trigger never touches it, so the three browser creators' value lands as sent — `requester_name: userEmail?.split('@')[0] || 'Unknown',` (`app/(protected)/requests/new/page.tsx:317`), `requester_name: userName,` (`components/documents/CheckInPanel.tsx:271`), `requester_name: input.actorEmail?.split("@")[0] || "User",` (`lib/transitionIn.ts:702`).
+- ✓ The gate does not trust the row snapshot alone: it re-reads the requester's current collection and requires approval if either says so (`DEC-16`).
+- ✓ A test files a forged `requester_role: 'Engineer-4'` and shows the `PENDING_REVIEW` action set still routes to `request_final_engineer_approval` (`lib/__tests__/dfRoundG_P0.test.ts:197`, `lib/__tests__/dfRoundG_P0.test.ts:206`).
+
+**Scope / residual.** Server-side `requester_name` (from `org_members.display_name`) → **DF-P2**, whose create route inserts under the service role and stamps the requester identity itself (fleet plan DF-P2: "requester = caller … REPLICATING 20261038's ticket_insert_integrity checks"). `requester_name` is display-only and denormalised by design (`EDGE-11`); it carries no authority. Whether the gate should key on who asked at all is `TIER-1` (DF-P6).
 
 ---
 
@@ -282,6 +316,18 @@ export function policyAllows(
 - [ ] The default for `ticket.requester_review` no longer makes a plain Requester an approver on tickets they do not own
 - [ ] The capability descriptions in CAPABILITY_DEFS say plainly 'anyone with this role can do this on ANY ticket', so an admin editing the policy sees the blast radius
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The org-wide substitution is closed by roles-and-permissions [`WF-8`](../roles-and-permissions/06-request-workflow.md) (`087a39c`); the admin-facing wording is not.
+- `lib/workflow.ts:208-211` — `const canActAsRequester = isRequesterIdentity || (!ticket.requesterId && allows('ticket.requester_review'));` and `const canActAsDrafter = isDrafterIdentity || (!ticket.assignedDrafterId && allows('ticket.draft_work'));` — the role substitutes only on a ticket with no requester / no drafter.
+- `policyAllows` takes a resource (`lib/capabilityPolicy.ts:363-370`, `resource?: CapabilityResource | null`; `DEC-13` stage 2) and the engine evaluates every capability against the ticket's (`lib/workflow.ts:192-193`), so an org can scope a token list per request type.
+- Tests: `lib/__tests__/workflow.test.ts:293` (a Requester-role stranger at `PENDING_REVIEW` gets `[]`), `:298` (substitution only with no requester), `:304`/`:309` (the drafter mirror).
+
+**Done-when.**
+- ✓ in code; input forgeable until DF-P1. `policyAllows` takes the resource and a scoped token list is evaluated against it (`DEC-13`); the narrowing that closes this finding's hole is WF-8's ticket scoping of the two substitute-identity capabilities, which keys on identity, not on the resource. But the resource itself — `request_type` and `unit` (`ticketResource()`, `lib/workflow.ts:60-61`) — is not in `ticket_update_guard`, so any member can rewrite the two values a scoped rule is evaluated against (recorded as its own finding, [`LEAK-10`](./04-flow-leaks.md#leak-10), with the `DEC-13` consequences and the engine-level reproduction at `lib/__tests__/dfRoundG_P0.test.ts:402`; the close-without-review half is `LEAK-3`'s).
+- ✓ The default no longer makes a plain Requester an approver on tickets they do not own.
+- ✗ The `CAPABILITY_DEFS` descriptions do not state the reach: `ticket.requester_review` — "Review returned drafts as a requester (the ticket's own requester always can)." (`lib/capabilityPolicy.ts:110`), `ticket.draft_work` — "Save progress, submit drafts, issue IFC (the assigned drafter always can)." (`:108`): neither tells an admin the role now acts only on a ticket with no requester / no assigned drafter; `ticket.direct_approve` — "Approve a draft to IFC without being the requester." (`:112`) does not say it reaches every ticket in review.
+
+**Scope / residual.** The three descriptions → **DF-P6**, which rewrites what the ticket approval capabilities mean (`TIER-1` / `GAP-111`) and so owns their wording (DF-P11 is the other `CAPABILITY_DEFS` editor in the plan). Not in the handed-on list — found on re-verification; DF-P6's brief does not name `CAPABILITY_DEFS`, so the integrator must add it (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). The forgeable resource behind done-when 1 → **DF-P1** (`request_type` / `unit` workflow-owned in the guard re-creation, `LEAK-10` / `LEAK-3`). No code changed here.
+
 ---
 
 <a id="authz-7"></a>
@@ -378,7 +424,7 @@ supabase/schema.sql:560 — `GRANT EXECUTE ON FUNCTION post_ticket_comment(UUID,
 ## AUTHZ-9 · Additive roles buy no ticket authority: `extraRoles` is never passed by any caller, and the admin routes match the headline role by exact string
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:141-150`, `lib/workflow.ts:65`, `app/api/tickets/workflow-action/route.ts:88`, `app/api/tickets/workflow-action/route.ts:124-130`, `lib/serverAuth.ts:50-58`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substance holds for the ticket/admin surfaces — additive roles are ignored there — but "never passed by any caller" is refuted by lib/holds.ts:100 (production hold capability check) and the View-As simulator, and workflow-action/route.ts:124-130 does honor `roles` when validating an engineer pick (after which the assigned-engineer identity path at workflow.ts:115 grants the authority anyway). The residual defect is fail-closed (granted authority is withheld, never widened), so LOW; its worst effect is the simulator showing a capability the real check denies.
@@ -412,6 +458,16 @@ lib/serverAuth.ts:57 — `  if (!allowedRoles.includes(role || "")) return { err
 - [ ] The workflow-action route selects `roles` and passes it as `extraRoles`; `getActions` accepts and forwards it instead of `null`
 - [ ] `authorizeOrgRole` tests the union of `role` and `roles[]`, matching `is_org_controller`
 - [ ] A test gives a member a secondary Engineer role with a non-Engineer headline and asserts they get the engineering-review action
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-7`](../roles-and-permissions/06-request-workflow.md) (`087a39c`) and [`ADD-1`](../roles-and-permissions/04-additive-roles.md) / `SURF-10` (Phase 5, `e925b4a`), re-verified against `f1ac550`. The verifier's correction stands (holds and the simulator already passed the collection); the ticket path that dropped it now carries it end to end.
+- Route: `.select("role, roles, email, display_name")` (`app/api/tickets/workflow-action/route.ts:93`), `const callerRoles: Role[] = Array.isArray(member.roles) && (member.roles as Role[]).length > 0 ? (member.roles as Role[]) : [callerRole];` (`:105-107`), passed as `userRoles: callerRoles` (`:154`).
+- Engine: `const roleCollection = ctx?.userRoles && ctx.userRoles.length > 0 ? ctx.userRoles : null;` and `const allows = (cap…) => policyAllows(policy, cap, userRole, roleCollection, userId, resource);` (`lib/workflow.ts:188-193`); `isEng` reads the collection too (`:194`).
+- `authorizeOrgRole`: `const held: string[] = normalizeRoles((member as { roles?: unknown } | null)?.roles, role); if (!held.some((r) => allowedRoles.includes(r))) return { error: "Insufficient role", status: 403 };` (`lib/serverAuth.ts:62-68`).
+- Tests: `lib/__tests__/dfRoundG_P0.test.ts:240` (new — a DraftingSupervisor whose collection adds Engineer-3 gets `approve_team` at an unassigned `PENDING_ENG_TEAM`, `approve_draft_ifc` as co-reviewer, `engineer_approve_final` at an unassigned `PENDING_FINAL_APPROVAL`; the headline alone gets none; the route admits `approve_team` from `org_members.roles`); `lib/__tests__/workflow.test.ts:275` (an additive Engineer satisfies the engineer gate). Mutation-checked: forcing `roleCollection` to null fails `lib/__tests__/dfRoundG_P0.test.ts:240`.
+
+**Done-when.** ✓ The route selects `roles` and the engine forwards it as `extraRoles`; ✓ `authorizeOrgRole` tests the union of `role` and `roles[]`; ✓ a member with a secondary Engineer role and a non-Engineer headline gets the engineering-review actions (`lib/__tests__/dfRoundG_P0.test.ts:240`).
+
+**Scope / residual.** None. `ticket.eng_review` / `ticket.final_approve` are dormant base lists (`DEC-11`): since WF-22 a review is only requested with a named engineer, so the unassigned stages exist only on legacy rows; the additive role still decides who may be *picked* (`app/api/tickets/workflow-action/route.ts:241-246`).
 
 ---
 
@@ -591,5 +647,32 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
 - [ ] A SELECT policy on `tickets` expresses the same rule the UI does: management/engineer/doc-control roles see the org, drafters see assigned + unassigned, everyone else sees tickets where they are requester, assigned engineer, or a watcher
 - [ ] The queue and detail pages rely on that policy rather than re-implementing the filter
 - [ ] A test signs in as a Contractor and confirms an unscoped `select('*')` returns only their own rows
+
+---
+
+## AUTHZ-14 · The gated requester's note to the engineer is required only by the browser
+
+- **Severity:** LOW
+- **Severity rationale:** The engineer gate itself holds (`AUTHZ-1` / `SM-1` stay RESOLVED on the bypass); only the requester can omit their own note, and only by going around their own UI.
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P1 RAILS (the engine action requires its comment server-side) — by the integrator, 2026-10-02 (opened at the DF-P0 merge from DF-P0's proposal in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open at merge"; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
+- **Verification:** CONFIRMED (by reading)
+- **Blast radius:** workflow / evidence
+- **Locations:**
+  - `components/requests/EngineerPickerModal.tsx:64` — `requireComment = true` default (checked at `:155`)
+  - `lib/workflow.ts:382-388` — `request_final_engineer_approval` carries no `requiresComment`
+  - `app/api/tickets/workflow-action/route.ts:194` — `if (action.requiresComment && !body.comment?.trim())` — the route's comment gate, which therefore never fires for this action
+- **Related:** `AUTHZ-1`, `SM-1`
+- **Independently verified:** — (`author`: opened by the integrator on 2026-10-02 at the drafting-flow DF-P0 merge, from DF-P0's proposal; the integrator re-read the cited lines on HEAD; not yet challenged)
+
+**Mechanism.** The note the gated requester sends with "Send for Engineer Final Approval" is required by the picker dialog's default, not by the engine action. The route's comment gate reads the action's `requiresComment`, which this action does not set.
+
+**Failure scenario.** A direct POST of `request_final_engineer_approval` with an engineer and no comment reaches `PENDING_FINAL_APPROVAL` with `engineer_review_reason` null. The engineer signs off without seeing the correction the requester wanted.
+
+**Remediation.** Set `requiresComment: true` on the engine action (or add a route check), so a direct POST without a note is refused with 400 and nothing written.
+
+**Done when.**
+- The action requires a comment server-side; a direct POST without one is a 400 with nothing written.
+- A route test pins it.
 
 ---

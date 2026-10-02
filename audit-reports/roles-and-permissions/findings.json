@@ -3582,7 +3582,8 @@
         "lib/capabilityPolicy.ts",
         "lib/__tests__/sweepRoundE_A.test.ts",
         "supabase/migrations/20261053_rp_roundE_dead_statuses.sql",
-        "supabase/schema.sql"
+        "supabase/schema.sql",
+        "lib/__tests__/dfRoundG_P0.test.ts"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",

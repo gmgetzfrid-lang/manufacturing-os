@@ -136,6 +136,8 @@ clock, and the document-intent bridge.
 2. Every legitimate client write that exists today still succeeds.
 3. A test attempts the raw PATCH above and asserts refusal.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus items found on re-verification and review: the FOR ALL policy is not split (`PERS-1`); `request_type` **and `unit`** — the whole `DEC-13` resource every scoped capability rule reads — are unguarded on UPDATE (`LEAK-3`, and [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) for the scoped-gate escape); `last_modified`, the route's compare-and-set token, is nullable and unguarded, so nulling it reduces the CAS to status-only (found on `EDGE-11`; requested as a new id, proposed `EDGE-15`); and, by the full census on `SM-2`, every other column outside the guard — `title` / `description` (the approved scope) and the SLA clocks among them. Owner: drafting-flow DF-P1.*
+
 ---
 
 ## WF-3 · "Approve with Minor Correction" is a complete bypass of the engineer sign-off gate
@@ -203,6 +205,8 @@ bypass as correct behaviour.
 2. The minor-correction path still exists for actors who legitimately hold
    direct-approve authority at that state.
 3. The test file asserts the *closed* behaviour.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-1`](../drafting-flow/06-state-machine.md#sm-1) and [`AUTHZ-1`](../drafting-flow/09-authority-surfaces.md#authz-1) close on this record, re-verified on `f1ac550` with an outcome-level test (`lib/__tests__/dfRoundG_P0.test.ts`: no action a gated requester is offered reaches `PENDING_IFC`; every `PENDING_IFC` transition belongs to a gate-exempt actor or the assigned engineer). [`TIER-7`](../drafting-flow/01-review-tiering.md) keeps its "declared minor-correction class" half under DF-P6. The gated requester's note to the engineer is required by the browser modal only (the engine action has no `requiresComment`) — the gate holds, and the server-side requirement is requested as a new drafting-flow id (proposed `AUTHZ-14`, DF-P1).*
 
 ---
 
@@ -323,6 +327,8 @@ insert-time trigger.
    `PENDING_ASSIGNMENT` by a client.
 3. Service-role creation paths still work.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-3`](../drafting-flow/09-authority-surfaces.md#authz-3) records this substrate and `DEC-16`'s current-collection read, with a forged-snapshot route test (`lib/__tests__/dfRoundG_P0.test.ts`); it stays OPEN only on `requester_name`, which `ticket_insert_integrity` does not stamp — owner DF-P2.*
+
 ---
 
 ## WF-6 · Server re-derivation is incomplete — `requiresFile` is never enforced
@@ -363,6 +369,8 @@ that `redlineAttachment` / `finalAttachment` are inserted verbatim
 
 **Done when.** `submit_final` is refused server-side when no deliverable
 attachment exists, and a test covers the direct-POST case.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-8`](../drafting-flow/04-flow-leaks.md) closes on this record, with the route-harness test this record's form note anticipated (`lib/__tests__/dfRoundG_P0.test.ts`); [`SM-13`](../drafting-flow/06-state-machine.md#sm-13) stays OPEN on the stricter type checks (a `Final`-typed attachment in the route → DF-P1; a type-specific client check → DF-P9).*
 
 ---
 
@@ -413,6 +421,8 @@ expansion. Also align the three different definitions of "management"
 headline or an additive one, and the simulator agrees with the ticket page and
 the attention badge for the same person.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-9`](../drafting-flow/09-authority-surfaces.md) closes on this record together with `ADD-1` / `SURF-10` (test added in `lib/__tests__/dfRoundG_P0.test.ts`).*
+
 ---
 
 ## WF-8 · Role-based capabilities are org-wide — they are never scoped to the ticket
@@ -457,6 +467,8 @@ touches only `lib/workflow.ts:74-75`.** It is also the prerequisite for `WF-7`.
 2. Holding `ticket.draft_work` does not let a member submit a deliverable on a
    ticket assigned to someone else.
 3. The queue-claim behaviour for unassigned tickets is unchanged.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`AUTHZ-6`](../drafting-flow/09-authority-surfaces.md) records this scoping and stays OPEN on the `CAPABILITY_DEFS` descriptions, which do not yet tell an admin the narrowed reach — owner DF-P6; its resource done-when is ticked in code only, because the `request_type` / `unit` a scoped rule is evaluated against are client-writable until DF-P1 (drafting-flow [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10)). Drafting-flow `LEAK-3`'s done-when 3 rests on this record.*
 
 ---
 
@@ -522,6 +534,8 @@ intermittent unexplained 409s during approval.
 **Done-when.** 1 ✓ — adding an attachment is `getActions` + the route's compare-and-set; there is no removal path in the app (verified: the page never filters or deletes `attachments`), so nothing to route. 2 ✓ — `canAttach` is derived from the engine's actions, no role list. 3 ✓ — whichever of a concurrent upload and approval lands second fails the `(status, last_modified)` CAS with 409 and re-reads; neither history entry is lost (pinned by the forced-conflict route test).
 
 **Scope / residual.** Deliberate authority shape, recorded: attaching is now also available to the assigned ENGINEER by identity and to `ticket.manage` holders (Manager/Supervisor by default) where the old list said `Admin` — the org-configurable override tier, consistent with every other transition; `Requester`-role members lose the org-wide upload they had on other people's tickets (the finding's hole). Not touched: the bulk "mark urgent" write in `app/(protected)/requests/page.tsx` (the chain-reaction note's second `last_modified` clobberer) and the `unread_by` clear on open — both write unguarded columns and are outside this done-when; the `WF-2` trigger guard is unchanged. Three neighbours noted, not changed: `/api/tickets/comment` still REPLACES `unread_by` with its involved set (requester + drafter + engineer + followers + mentions − poster) rather than adding to it, so a comment drops a queue-pool marker the way an attachment no longer does; `lib/projects.ts` ("Converted to Project") still writes the whole `history` array from the client off the workflow route; and `/api/tickets/watch` bumps `last_modified` (its compare-and-set key), so a follow resets the "stale" clocks (analytics > 7d, portal > 14d) exactly as a comment does — consistent, but new for follows.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-4`](../drafting-flow/04-flow-leaks.md) records this and stays OPEN on the writers this record leaves out — the queue's priority writes and the page's `unread_by` write (DF-P9) and `lib/projects.ts`'s "Converted to Project" history push (DF-P8).*
 
 ---
 
@@ -1016,6 +1030,8 @@ closed. **Fix them together or the `WF-3` remediation is a no-op.**
 3. The mirror rule applies to `assignment.id`, and the assignee must satisfy
    `ticket.draft_work`.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-12`](../drafting-flow/06-state-machine.md#sm-12) records the drafting-authority check on the assignee (route test added in `lib/__tests__/dfRoundG_P0.test.ts`) and stays OPEN on `assigned_drafter_name`, still client-supplied or email-derived — owner DF-P1.*
+
 ---
 
 ## WF-15 · `RequestType` is an open `string`, unvalidated, and gates a terminal transition
@@ -1061,6 +1077,8 @@ constant.
 **Done when.** A ticket cannot be created with a `request_type` outside the
 org's configured list, and the close-without-review behaviour is a property of
 the configured type rather than a hardcoded string comparison.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — owner DF-P1 (`ticket_update_guard` re-creation). With `unit`, the same unguarded columns let a member rewrite the resource every `DEC-13` scoped rule reads (a Manager can re-type a request out of a type-scoped engineer-gate rule and issue for construction with no engineer): opened at the DF-P0 merge as its own finding, drafting-flow [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) (HIGH — CRITICAL if any org's policy carries such a rule; the inventory query is there), same owner. This record's own done-when (creation) holds.*
 
 ---
 
@@ -1203,6 +1221,8 @@ decorative** — precisely the failure mode that
 
 **Scope / residual.** `supabase/schema.sql` still declares `status … DEFAULT 'NEW'` as the pre-migration baseline of record — the live default is changed by the migration, not by editing the baseline. A restore of a pre-Round-E backup could re-insert a `NEW`/`PENDING_ENG_INITIAL` row through the service role; re-running `20261053`'s `UPDATE` (idempotent) moves it. `ticket.eng_review` / `ticket.final_approve` are dormant as BASE lists only: a request-type override on either row still governs who may be picked as the reviewer (`DEC-13` stage 2) — said in their `dormantNote`. The portal's "closed" slot counts (requester / DocCtrl) and the analytics "closed" count still count `CLOSED` alone — a canceled request is not a completed one — deliberate.
 
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-8`](../drafting-flow/06-state-machine.md) closes on this record, `DEC-14` and [`DEC-84`](../DECISIONS.md#dec-84) (provisional label, renumbered by the integrator at merge; a canceled request is refiled, not reopened — the call `DEC-14`'s text did not make; status-reachability test added in `lib/__tests__/dfRoundG_P0.test.ts`); [`SM-10`](../drafting-flow/06-state-machine.md) is recorded INVALID on it.*
+
 ---
 
 ## WF-18 · The "Reassign" button always 403s
@@ -1295,6 +1315,8 @@ with three jobs, so widening recipients also changes the unread UI.
 **Done-when.** 1 ✓ — a ticket entering the queue notifies whoever the routing policy names. 2 ✓ — routing matches the full collection (since `ADD-1`; pinned now). 3 ✓ — the drain authorises with the caller's session when `CRON_SECRET` ships blank.
 
 **Scope / residual.** `lib/notify/dispatch.emit` itself still binds to the browser client, so its server-side callers (the hand-back route) remain best-effort — not this finding. Creation-time routing (`requests/new`, `CheckInPanel`, `transitionIn`) is unchanged and still correct. `PENDING_IFC` routing to the supervisor is a "told" nudge, not an action item (`WF-24`).
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`ROUTE-5`](../drafting-flow/08-routing-and-attention.md) records this and stays OPEN on `PENDING_IFC` re-entry (never routed) and the two comments that still describe it — owner DF-P3.*
 
 ---
 
@@ -1415,6 +1437,8 @@ revision label, and a ticket back under review does not verify as current.
 **Done-when.** ✓ — two approvals of the same ticket cannot produce the same issued revision label; ✓ — a ticket back under review does not verify as current.
 
 **Scope / residual.** The `FINAL_DRAFT → reject_final → REVISION_REQ` path (an issued label still on the row while a new cycle is in draft, until the drafter's next `submit_draft` writes the letter rev) still verifies the old print as `current` for that interval — outside this finding (`drafting-flow/EDGE-2` territory); noted, not fixed here. Likewise the letter-rev path (a `3A` on the row) still infers the last issue as cycle − 1 without consulting the history, so a cycle bumped by a reject before any issue can still name a phantom issue there — the same `EDGE-2` territory, unchanged.
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-7`](../drafting-flow/04-flow-leaks.md) records this record's code half and is `BLOCKED` (`DEC-30`) on the legacy population: a ticket reopened before Round E keeps its old cycle and issued label, so it verifies `current` while under review and its next approval repeats the label — and where that approval already happened (at any later status, or on an archived ticket whose history the shed moved to the bundle) the first print verifies `current` too. The read-only inventory query (three aggregate rows: under review with an issued label; a history that issues the same label twice; archived with an issued label) is its unblocking step, and it closes only when all three are 0; [`SM-5`](../drafting-flow/06-state-machine.md#sm-5) stays OPEN on an explicit history check against re-issuing a label and an attachment-identity verdict — owner DF-P10 for both, including any data repair.*
 
 ---
 
@@ -1537,6 +1561,8 @@ rather than from a parallel table.
 **Done-when.** ✓ — the attention badge and the ticket page agree for every role/status combination, because attention IS the engine (no parallel table) evaluated under the policy, the type-level flags AND the active member count the page passes, pinned by the matrix test under those contexts and by the explicit `DEC-12` page-versus-badge case; the one remaining page input the badge does not take (each requester's current collection) makes the badge under-count only for a ticket whose requester has been deactivated — recorded in Scope, never an unclearable badge.
 
 **Scope / residual.** Routing ("who is told") stays deliberately narrower than the engine ("who can act"): a Manager can assign and is flagged, but only the supervisor pool / Admin fallback is emailed — the routing policy's own product intent, recorded in `lib/ticketRouting.ts` and pinned as a subset relation, not unified. The active member count IS an input that changes the answer (the `DEC-12` pick-up case above) and is now fetched by the badge hook and the portal. The one page input the badge still does not take is each requester's CURRENT role collection (`requesterRoles`, a per-ticket member lookup): for a ticket whose requester has been deactivated, the page and the route (which resolve it as `[]`) flag every co-reviewer, while the badge (unknown = present) does not — so a departed requester's ticket is surfaced on the page and the route only, and the badge under-counts for exactly that identity edge; recorded rather than fetched (it would add a member read per requester to the hook). `lib/__tests__/workflow.test.ts` pins the `requesterRoles: []` rule at both stages (required), against `null` / `undefined` / a held role (optional).
+
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`UI-3`](../drafting-flow/05-ui-discoverability.md) and [`ROUTE-2`](../drafting-flow/08-routing-and-attention.md) close on this record (an every-role × every-status badge test added in `lib/__tests__/dfRoundG_P0.test.ts`). [`FRIC-7`](../drafting-flow/02-friction-latency.md) records it and stays OPEN on the under-count this record accepted: its done-when asks for agreement on every role/status combination, and for a departed requester the page requires the co-review while the badge, which has no `requesterRoles` input, does not flag it — owner DF-P9.*
 
 ---
 

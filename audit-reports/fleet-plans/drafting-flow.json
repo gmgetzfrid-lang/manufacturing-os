@@ -99,7 +99,21 @@
     "PERS-7",
     "SM-9",
     "PERS-4",
-    "EDGE-9"
+    "EDGE-9",
+    "LEAK-10 (opened by the integrator 2026-10-02 at the DF-P0 merge, from DF-P0's proposal: ticket_update_guard (newest body) protects neither request_type nor unit, while ticketResource and the gates read both — two lines in the guard DF-P1 re-creates first; run the record's read-only inventory first: a non-zero count raises it to CRITICAL)",
+    "DCW-4 (remainder re-owned by the integrator 2026-10-02 at the DF-P0 merge: done-when 1's not-in-register state is forgeable while tickets.metadata is client-writable — a member writing deliverable.state 'published' before closing leaves no state, history line or note; the metadata rail is DF-P1's (with DF-P4's own limb))",
+    "HAND-3 (remainder re-owned by the integrator 2026-10-02 at the DF-P0 merge: done-when 1, the same forgeable not-in-register state as DCW-4; the metadata rail is DF-P1's (with DF-P2 / DF-P10's limbs))",
+    "SM-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': the re-created ticket_update_guard decides every client-writable column (19 of 41 on HEAD, `id` included), not only history and the arrays)",
+    "PERS-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': history/arrays rail + done-when 3: split tickets_org_access (FOR ALL) into per-verb policies with written WITH CHECKs)",
+    "AUTHZ-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': the history + arrays rail (plan's binding residual))",
+    "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': the history + arrays rail (plan's binding residual); the project push limb is DF-P8's)",
+    "LEAK-3 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': request_type and unit workflow-owned in the re-created guard, with LEAK-10)",
+    "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': done-when 1: request_type / unit guarded (with LEAK-10); the CAPABILITY_DEFS descriptions are DF-P6's)",
+    "SM-12 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': stamp assigned_drafter_name from org_members.display_name server-side (assign, reassign_drafter, self_assign))",
+    "SM-13 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': server half: refuse a finalAttachment not typed Final (the AUTHZ-11 hunk); the client half is DF-P9's)",
+    "EDGE-15 (opened by the integrator 2026-10-02 at the DF-P0 merge: a null last_modified token gets its own leg or a conflict; the guard refuses a client write nulling it)",
+    "SM-14 (opened by the integrator 2026-10-02 at the DF-P0 merge: the intent bridge's document read scoped to the ticket's org; skip the upsert for a foreign document)",
+    "AUTHZ-14 (opened by the integrator 2026-10-02 at the DF-P0 merge: request_final_engineer_approval requires its comment server-side)"
    ],
    "severityMix": "4 HIGH, 5 MEDIUM, 3 LOW",
    "files": [
@@ -147,7 +161,8 @@
     "FRIC-3",
     "HAND-7",
     "EDGE-12",
-    "roles-and-permissions GAP-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built: no `source_documents` appears anywhere in lib/, components/ or app/. Needs metadata.source_documents (an array beside the singular source_document) and Impact-panel / intent-bridge queries that read both.)"
+    "roles-and-permissions GAP-8 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Not built: no `source_documents` appears anywhere in lib/, components/ or app/. Needs metadata.source_documents (an array beside the singular source_document) and Impact-panel / intent-bridge queries that read both.)",
+    "LEAK-6 (re-opened by the integrator's records fix 2026-10-02 at the DF-P0 merge: CheckInPanel.tsx's resume lookup (:167-171) ignores its error and runs in an effect nothing awaits, so a failed or slow lookup falls through to createDraftingTicket (:402) and files a second ticket — done-when 1 fails)"
    ],
    "severityMix": "2 HIGH, 8 MEDIUM, 1 LOW",
    "files": [
@@ -232,7 +247,8 @@
     "DCW-1",
     "DCW-5",
     "DCW-3",
-    "AUTHZ-10"
+    "AUTHZ-10",
+    "PERS-5 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': remove the `} as Ticket` cast in rowToTicket (map the columns the server path reads, or narrow the return type))"
    ],
    "severityMix": "1 HIGH, 3 MEDIUM",
    "files": [
@@ -318,7 +334,9 @@
     "TIER-3",
     "TIER-4",
     "SM-3",
-    "DCW-2"
+    "DCW-2",
+    "TIER-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': MOC applicability through the work-class mechanism, after GAP-101)",
+    "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': rewrite the CAPABILITY_DEFS descriptions of ticket.requester_review / draft_work / direct_approve to state their reach)"
    ],
    "severityMix": "2 CRITICAL, 4 HIGH",
    "files": [
@@ -404,7 +422,9 @@
     "PROJ-12",
     "PROJ-13",
     "PROJ-3",
-    "PROJ-7"
+    "PROJ-7",
+    "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push: convertTicketToProject's browser history push becomes part of the server-side project link, or is removed)",
+    "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [
@@ -456,7 +476,11 @@
     "PERS-2",
     "EDGE-3",
     "ROUTE-7",
-    "roles-and-permissions GAP-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 1 is not met: the reason list is hardcoded as REVISION_REASONS at app/(protected)/requests/[id]/page.tsx:128 and is revision-flavoured, not an org-configured \"we don't do that\" list. Acceptance 2 is met …)"
+    "roles-and-permissions GAP-13 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Acceptance 1 is not met: the reason list is hardcoded as REVISION_REASONS at app/(protected)/requests/[id]/page.tsx:128 and is revision-flavoured, not an org-configured \"we don't do that\" list. Acceptance 2 is met …)",
+    "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': priority / unread_by browser writes (plan's binding residual))",
+    "HAND-8 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': FullScreenViewer sendToDrafting: both silent fallbacks surface (appAlert + confirm-or-abort) instead of filing the clean original)",
+    "SM-13 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': client half: the request page tests the attachment type the action needs, not attachments.length > 0)",
+    "FRIC-7 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': AttentionContext.requesterRoles fed by the badge hook so a departed requester's co-review is counted by badge, bell and inbox)"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [
@@ -542,7 +566,8 @@
     "EVID-14",
     "EDGE-5",
     "EDGE-10",
-    "EDGE-14"
+    "EDGE-14",
+    "EVID-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': refuse un-acknowledging for non-service callers, bound requested_at writes, write an ACK_* audit row (substrate DC DIST-3))"
    ],
    "severityMix": "9 HIGH, 8 MEDIUM, 2 LOW",
    "files": [
