@@ -11,7 +11,9 @@
 //     ends at registry equipment or a Site Codebook unit, by the node's own
 //     unit identity (GPV-7 / AREA-10);
 //   * the keyboard's walk over the map (GPV-13);
-//   * what the map says when it draws no mention links (IRLS-14).
+//   * what the map says when it draws no mention links (IRLS-14);
+//   * the rate at which the view is written to the URL (GPV-11 — the
+//     History API throws past a browser's budget; clock and timer injected).
 //
 // Nothing here makes an edge. The view only ever REMOVES nodes and edges the
 // assembly drew (99-fix-sequencing "Do not": never infer an edge at render
@@ -242,5 +244,99 @@ export function mentionNotice(cov: MentionCoverage | undefined | null, equipment
   return {
     text: "No “mentioned in the text” links on this map. Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which. Each document is indexed when it finishes reading; an admin, document controller, manager or supervisor can rebuild the whole index from this map.",
     canRebuild: true,
+  };
+}
+
+// ── GPV-11: writing the view to the URL within the History API's budget ──
+
+/** Browsers cap the History API: WebKit throws a SecurityError past 100
+ *  `replaceState` calls in 30 seconds (10 in older builds), Gecko past 200
+ *  in 10. Next.js answers each of the page's writes with a `replaceState` of
+ *  its own (its history sync), so one write costs two calls. The page spends
+ *  a burst of URL_WRITE_BURST writes, then one per URL_WRITE_REFILL_MS: at
+ *  most 40 writes (80 calls) in any 30 seconds and 20 (40 calls) in any 10. */
+export const URL_WRITE_BURST = 10;
+export const URL_WRITE_REFILL_MS = 1000;
+/** After a refused write (the browser's own limit), wait this long. */
+export const URL_WRITE_RETRY_MS = 10_000;
+/** Consecutive refusals of one value before it is dropped; the next push
+ *  tries again. */
+const URL_WRITE_MAX_FAILURES = 3;
+
+/** What one write did: `done` spent a call, `noop` found nothing to change,
+ *  `failed` was refused (it threw). */
+export type UrlWriteResult = "done" | "noop" | "failed";
+
+export interface RateLimitedWriter<T> {
+  /** Write `value` now if the budget allows; otherwise it becomes the
+   *  pending value, written when the budget refills (a newer push replaces
+   *  it — only the latest value is ever written). */
+  push(value: T): void;
+  /** Drop a pending write (unmount). */
+  cancel(): void;
+}
+
+/** A token-bucket writer: bursts land at once, a sustained stream is
+ *  coalesced to its latest value, and a refused write is retried later
+ *  rather than thrown. */
+export function rateLimitedWriter<T>(
+  write: (value: T) => UrlWriteResult,
+  opts: {
+    burst?: number; refillMs?: number; retryMs?: number;
+    now?: () => number;
+    schedule?: (fn: () => void, ms: number) => unknown;
+    unschedule?: (handle: unknown) => void;
+  } = {},
+): RateLimitedWriter<T> {
+  const burst = opts.burst ?? URL_WRITE_BURST;
+  const refillMs = opts.refillMs ?? URL_WRITE_REFILL_MS;
+  const retryMs = opts.retryMs ?? URL_WRITE_RETRY_MS;
+  const now = opts.now ?? (() => Date.now());
+  const schedule = opts.schedule ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const unschedule = opts.unschedule ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  let tokens = burst;
+  let at = now();
+  let pending: { value: T } | null = null;
+  let failures = 0;
+  let timer: unknown = null;
+
+  function refill() {
+    const t = now();
+    tokens = Math.min(burst, tokens + Math.max(0, t - at) / refillMs);
+    at = t;
+  }
+  function arm() {
+    if (timer !== null || !pending) return;
+    timer = schedule(run, Math.max(1, Math.ceil((1 - tokens) * refillMs)));
+  }
+  function run() {
+    timer = null;
+    if (!pending) return;
+    refill();
+    if (tokens < 1) { arm(); return; }
+    const { value } = pending;
+    pending = null;
+    const r = write(value);
+    if (r === "done") { tokens -= 1; failures = 0; return; }
+    if (r === "noop") { failures = 0; return; }
+    // Refused: spend the budget so the retry waits retryMs, keep the value
+    // unless a newer one arrived, and give up on it after a few refusals.
+    failures += 1;
+    tokens = Math.min(tokens, 1 - retryMs / refillMs);
+    if (failures >= URL_WRITE_MAX_FAILURES) { failures = 0; return; }
+    if (!pending) pending = { value };
+    arm();
+  }
+
+  return {
+    push(value) {
+      pending = { value };
+      if (timer === null) run();
+    },
+    cancel() {
+      if (timer !== null) unschedule(timer);
+      timer = null;
+      pending = null;
+    },
   };
 }

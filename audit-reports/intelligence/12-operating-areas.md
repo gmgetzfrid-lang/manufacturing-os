@@ -448,9 +448,9 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 **Done-when.**
 1. ✓ (I-13, DEC-67) One unit identity, joined as data.
 2. ✓ One node family per unit (I-13), and Connect refuses a `unit:` endpoint (this package). An unmapped unit whose free-text code equals a codebook code is no longer written as that codebook unit: the code is never read.
-3. ✓ (I-09, `20261155`) No `process_flows` row names a unit ref with no `codebook_entries` row.
+3. ✓ (I-09, `20261155` — Pending) No `process_flows` row can be CREATED whose unit ref resolves to no `codebook_entries` row, once `20261155` is pasted. Existing dangling rows (for example ones the base page's Connect wrote with `units.code` refs) are counted in the paste's inventory and kept, never rewritten — so "no row names such a ref" is not claimed.
 
-**Scope / residual.** Pending migrations (never claimed live): `20261138` (unit identity) and `20261155` (process-flow guard) are hand-applied and still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until they are pasted, the app-side refusal holds and the database's does not yet.
+**Scope / residual.** Pending migrations (never claimed live): `20261138` (unit identity) and `20261155` (process-flow guard) are hand-applied and still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until they are pasted, the app-side refusal holds and the database's does not yet; after the paste, existing dangling rows remain (counted, kept).
 
 ---
 

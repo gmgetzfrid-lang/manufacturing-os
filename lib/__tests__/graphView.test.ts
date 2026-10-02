@@ -12,11 +12,14 @@
 //   * GPV-13: the keyboard's walk over the map.
 //   * IRLS-14: no mention links — which case, and the next step.
 //   * GPV-8 / FLOW-10 / GPV-14 / GPV-4: the tables both renderers draw by.
+//   * GPV-11: the view → URL writer stays inside the History API's budget
+//     (a browser throws past it), and a refused write is retried, not thrown.
 
 import { describe, it, expect } from "vitest";
 import {
   sliceView, viewDegree, answerVisibility, flowEndpoint, planConnect, connectOffer, keyboardOrder, mentionNotice,
-  CONNECT_PAIR_MESSAGE,
+  CONNECT_PAIR_MESSAGE, rateLimitedWriter, URL_WRITE_BURST, URL_WRITE_REFILL_MS, URL_WRITE_RETRY_MS,
+  type UrlWriteResult,
 } from "@/lib/graphView";
 import { computeInsights } from "@/lib/graphInsights";
 import { lensByKey, DEFAULT_GRAPH_SETTINGS } from "@/lib/graphSettings";
@@ -280,5 +283,98 @@ describe("GPV-4 — the unit class's three kinds", () => {
     expect(nodeColorFor({ id: "cbunit:20", type: "unit" })).toBe(NODE_COLORS.unit);
     expect(new Set(Object.values(UNIT_VARIANT_COLORS)).size).toBe(3);
     expect(nodeColorFor({ id: "asset:a", type: "asset" })).toBe(NODE_COLORS.asset);
+  });
+});
+
+describe("GPV-11 — the URL writer spends the History API's budget, never more", () => {
+  // A hand-driven clock and timer queue, so the budget is exact.
+  function harness(result: (v: string, i: number) => UrlWriteResult = () => "done") {
+    let t = 0;
+    const timers: Array<{ at: number; fn: () => void; id: number }> = [];
+    let nextId = 1;
+    const writes: string[] = [];
+    const w = rateLimitedWriter<string>((v) => { const r = result(v, writes.length); writes.push(v); return r; }, {
+      now: () => t,
+      schedule: (fn, ms) => { const id = nextId++; timers.push({ at: t + ms, fn, id }); return id; },
+      unschedule: (id) => { const i = timers.findIndex((x) => x.id === id); if (i >= 0) timers.splice(i, 1); },
+    });
+    const advance = (ms: number) => {
+      const end = t + ms;
+      for (;;) {
+        timers.sort((a, b) => a.at - b.at);
+        const next = timers[0];
+        if (!next || next.at > end) break;
+        timers.shift();
+        t = next.at;
+        next.fn();
+      }
+      t = end;
+    };
+    return { w, writes, advance, pending: () => timers.length };
+  }
+
+  it("a burst lands at once; a sustained stream is coalesced to its latest value", () => {
+    const h = harness();
+    for (let i = 0; i < URL_WRITE_BURST; i++) h.w.push(`v${i}`);
+    expect(h.writes).toEqual(Array.from({ length: URL_WRITE_BURST }, (_, i) => `v${i}`));
+    // 200 more in the same instant: none written now, the last one pending.
+    for (let i = 0; i < 200; i++) h.w.push(`x${i}`);
+    expect(h.writes).toHaveLength(URL_WRITE_BURST);
+    expect(h.pending()).toBe(1);
+    h.advance(URL_WRITE_REFILL_MS);
+    expect(h.writes).toHaveLength(URL_WRITE_BURST + 1);
+    expect(h.writes[h.writes.length - 1]).toBe("x199");
+  });
+
+  it("a keystroke-rate stream for 30 s stays under WebKit's 100 calls (each write costs two with Next.js's echo)", () => {
+    const h = harness();
+    for (let ms = 0; ms < 30_000; ms += 50) { h.w.push(`k${ms}`); h.advance(50); }
+    h.advance(URL_WRITE_REFILL_MS);
+    expect(h.writes.length * 2).toBeLessThan(100);
+    expect(h.writes[h.writes.length - 1]).toBe("k29950");
+  });
+
+  it("and under Gecko's 200 calls in any 10 s", () => {
+    const h = harness();
+    for (let ms = 0; ms < 10_000; ms += 20) { h.w.push(`k${ms}`); h.advance(20); }
+    expect(h.writes.length * 2).toBeLessThan(200);
+  });
+
+  it("a refused write is not thrown: it is retried after the back-off, and a newer value replaces it", () => {
+    const h = harness((_v, i) => (i === 0 ? "failed" : "done"));
+    h.w.push("a");
+    expect(h.writes).toEqual(["a"]);
+    h.advance(URL_WRITE_RETRY_MS - 1);
+    expect(h.writes).toEqual(["a"]);
+    h.advance(1);
+    expect(h.writes).toEqual(["a", "a"]);
+    const h2 = harness((_v, i) => (i === 0 ? "failed" : "done"));
+    h2.w.push("a");
+    h2.w.push("b");
+    h2.advance(URL_WRITE_RETRY_MS);
+    expect(h2.writes).toEqual(["a", "b"]);
+  });
+
+  it("a value refused three times is dropped; the next push tries again", () => {
+    const h = harness((_v, i) => (i < 3 ? "failed" : "done"));
+    h.w.push("a");
+    h.advance(URL_WRITE_RETRY_MS * 5);
+    expect(h.writes).toEqual(["a", "a", "a"]);
+    expect(h.pending()).toBe(0);
+    h.advance(URL_WRITE_RETRY_MS);
+    h.w.push("b");
+    expect(h.writes).toEqual(["a", "a", "a", "b"]);
+  });
+
+  it("a no-op write spends nothing; cancel drops the pending value", () => {
+    const h = harness((v) => (v === "same" ? "noop" : "done"));
+    for (let i = 0; i < 50; i++) h.w.push("same");
+    h.w.push("real");
+    expect(h.writes[h.writes.length - 1]).toBe("real");
+    for (let i = 0; i < 50; i++) h.w.push(`x${i}`);
+    h.w.cancel();
+    const before = h.writes.length;
+    h.advance(60_000);
+    expect(h.writes).toHaveLength(before);
   });
 });

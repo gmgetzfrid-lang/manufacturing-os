@@ -81,6 +81,18 @@ describe("GM-7 — error, capped and empty are three different answers", () => {
     expect(await readPendingProposalPairs("o1")).toEqual({ pairs: [], total: 0, capped: false, error: null });
   });
 
+  it("PostgREST's own missing-table answer (PGRST205) is also nothing pending — not an error", async () => {
+    db.error = { code: "PGRST205", message: "Could not find the table 'public.proposed_links' in the schema cache" };
+    expect(await readPendingProposalPairs("o1")).toEqual({ pairs: [], total: 0, capped: false, error: null });
+  });
+
+  it("a missing COLUMN is an error, never an empty queue (fails closed)", async () => {
+    db.error = { code: "42703", message: "column proposed_links.confidence does not exist" };
+    const r = await readPendingProposalPairs("o1");
+    expect(r.error).toMatch(/confidence does not exist/);
+    expect(r.total).toBeNull();
+  });
+
   it("past the cap: draws the first 4,000 in order and says how many are pending", async () => {
     db.rows = Array.from({ length: 4300 }, (_, i) => mk(i));
     const r = await readPendingProposalPairs("o1");

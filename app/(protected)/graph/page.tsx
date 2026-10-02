@@ -22,7 +22,9 @@
 // formatGraphUrl): the lens, the focus and its depth, the scope, the search,
 // an asked question and the node in the peek. `?focus=<id>` — every existing
 // link's spelling — still selects and flies to a node, once per link
-// (GPV-5). Forces, colours and 2D/3D stay per-org local.
+// (GPV-5). Forces, colours and 2D/3D stay per-org local. The URL is written
+// within the History API's budget (lib/graphView.ts rateLimitedWriter), and
+// the search box reaches it when asked or left — never per keystroke.
 //
 // The map region is focusable: arrow keys step through nodes, Enter selects
 // (and picks a Path or Connect end), Escape closes the top overlay (GPV-13).
@@ -52,6 +54,7 @@ import {
 import { formatScopeParam, parseScopeParam, type ScopeRef } from "@/lib/scope";
 import {
   sliceView, viewDegree, answerVisibility, planConnect, connectOffer, keyboardOrder, mentionNotice,
+  rateLimitedWriter, type UrlWriteResult,
 } from "@/lib/graphView";
 import { edgeLabelFor, nodeColorFor, unitVariant, type UnitVariant } from "@/components/graph/graphTheme";
 import GraphControls from "@/components/graph/GraphControls";
@@ -86,6 +89,9 @@ function withEdge(g: OrgGraph, e: GraphEdge): OrgGraph {
 
 const plural = (n: number, w: string) => `${n.toLocaleString("en-US")} ${w}${n === 1 ? "" : "s"}`;
 
+/** The sessionStorage snapshot key of a map: the org's, or one scope's. */
+const snapKeyOf = (orgId: string, scopeKey: string) => (scopeKey ? `org-graph-${orgId}-${scopeKey}` : `org-graph-${orgId}`);
+
 function GraphPageInner() {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   const router = useRouter();
@@ -94,9 +100,13 @@ function GraphPageInner() {
   const paramsKey = params.toString();
 
   const [graph, setGraph] = React.useState<OrgGraph | null>(null);
-  // Which snapshot key the graph on screen belongs to (org-wide or a scope).
+  // Which snapshot key the graph on screen belongs to (org-wide or a scope):
+  // the ref for the data effect, the state for the URL's selection, which
+  // must never be honoured against the map a scope change is leaving.
   const graphFor = React.useRef<string | null>(null);
-  const [fresh, setFresh] = React.useState(false);
+  const [graphKey, setGraphKey] = React.useState<string | null>(null);
+  // The snapshot key whose fresh build (or failure) has landed.
+  const [freshKey, setFreshKey] = React.useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = React.useState(0);
   const [proposals, setProposals] = React.useState<GraphEdge[]>([]);
   const [proposalRead, setProposalRead] = React.useState<{ total: number | null; capped: boolean; error: string | null } | null>(null);
@@ -104,6 +114,10 @@ function GraphPageInner() {
   const [settings, setSettings] = React.useState<GraphSettings>(DEFAULT_GRAPH_SETTINGS);
   const [applied, setApplied] = React.useState(false);
   const [rawQuery, setRawQuery] = React.useState("");
+  // The search as the URL carries it: committed when asked (Enter / Ask),
+  // when the box is left, or when cleared — never on every keystroke, which
+  // would spend the History API's budget (GPV-11).
+  const [urlQ, setUrlQ] = React.useState("");
   const [selected, setSelected] = React.useState<GraphNode | null>(null);
   const [insightsOpen, setInsightsOpen] = React.useState(false);
   const [insightTab, setInsightTab] = React.useState<"orphans" | "hubs" | "bridges">("orphans");
@@ -145,18 +159,31 @@ function GraphPageInner() {
 
   // ── The URL → the view (on arrival, and on any navigation from outside) ─
   // The page writes its own view back with history.replaceState; a URL the
-  // page wrote is not re-applied (`lastWritten`).
-  const lastWritten = React.useRef<string | null>(null);
+  // page wrote is not re-applied. `written` holds the writes Next.js has not
+  // echoed back through useSearchParams yet, in order — a write can be
+  // deferred by the budget, so more than one can be in flight.
+  const written = React.useRef<string[]>([]);
   const appliedOrg = React.useRef<string | null>(null);
+  // The person's stored settings as loaded, and as they change them: a
+  // URL's filter is applied over them without being saved, and a later
+  // change of anything else saves onto THESE, never the URL's filter
+  // (DEC-44 (I-14) item 3).
+  const stored = React.useRef<GraphSettings | null>(null);
   React.useEffect(() => {
     if (!activeOrgId) return;
-    if (appliedOrg.current === activeOrgId && paramsKey === lastWritten.current) return;
+    if (appliedOrg.current === activeOrgId) {
+      const i = written.current.indexOf(paramsKey);
+      if (i >= 0) { written.current = written.current.slice(i); return; }
+    }
     appliedOrg.current = activeOrgId;
-    lastWritten.current = paramsKey;
+    written.current = [paramsKey];
     const url = parseGraphUrl(new URLSearchParams(paramsKey));
-    setSettings(applyGraphUrl(loadSettings(activeOrgId), url));
+    const base = loadSettings(activeOrgId);
+    stored.current = base;
+    setSettings(applyGraphUrl(base, url));
     setFocusId(url.local);
     setRawQuery(url.q ?? "");
+    setUrlQ(url.q ?? "");
     setAnswer(null);
     setSelected(null);
     setTrail([]);
@@ -180,8 +207,8 @@ function GraphPageInner() {
     // sessionStorage (the layout starts settling right away), and the fresh
     // build swaps in when it lands. Oversized graphs skip the cache rather
     // than fight the storage quota. A scoped map has its own snapshot.
-    const snapKey = scope ? `org-graph-${activeOrgId}-${scopeKey}` : `org-graph-${activeOrgId}`;
-    setFresh(false);
+    const snapKey = snapKeyOf(activeOrgId, scope ? scopeKey : "");
+    setFreshKey(null);
     setError(null);
     let painted = false;
     try {
@@ -191,17 +218,18 @@ function GraphPageInner() {
     // A different map (another scope) never shows the last one's nodes.
     if (!painted && graphFor.current !== snapKey) setGraph(null);
     graphFor.current = snapKey;
+    setGraphKey(snapKey);
     (scope ? buildOrgGraph(activeOrgId, { scope }) : buildOrgGraph(activeOrgId))
       .then((g) => {
         if (!alive) return;
         setGraph(g);
-        setFresh(true);
+        setFreshKey(snapKey);
         try {
           const s = JSON.stringify(g);
           if (s.length < 2_000_000) window.sessionStorage.setItem(snapKey, s);
         } catch { /* quota — fresh build still rendered */ }
       })
-      .catch((e) => { if (alive) { setError((e as Error).message); setFresh(true); } });
+      .catch((e) => { if (alive) { setError((e as Error).message); setFreshKey(snapKey); } });
     return () => { alive = false; };
   }, [activeOrgId, applied, scopeKey, reloadNonce]);
 
@@ -234,23 +262,26 @@ function GraphPageInner() {
     return () => { alive = false; };
   }, [activeOrgId]);
 
-  const patchSettings = React.useCallback((patch: Partial<GraphSettings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      if (activeOrgId) saveSettings(activeOrgId, next);
-      return next;
-    });
+  // Save what the person changed onto their stored settings — never the
+  // filter, depth or scope a URL applied (DEC-44 (I-14) item 3).
+  const persist = React.useCallback((patch: Partial<GraphSettings>) => {
+    if (!activeOrgId) return;
+    const next = { ...(stored.current ?? loadSettings(activeOrgId)), ...patch };
+    stored.current = next;
+    saveSettings(activeOrgId, next);
   }, [activeOrgId]);
+
+  const patchSettings = React.useCallback((patch: Partial<GraphSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
+    persist(patch);
+  }, [persist]);
 
   const resetSettings = React.useCallback(() => {
     // Saved views are the person's, and the scope is the URL's: a reset of
     // the drawing settings keeps both.
-    setSettings((prev) => {
-      const next = { ...DEFAULT_GRAPH_SETTINGS, scope: prev.scope, savedViews: prev.savedViews };
-      if (activeOrgId) saveSettings(activeOrgId, next);
-      return next;
-    });
-  }, [activeOrgId]);
+    setSettings((prev) => ({ ...DEFAULT_GRAPH_SETTINGS, scope: prev.scope, savedViews: prev.savedViews }));
+    if (activeOrgId) persist({ ...DEFAULT_GRAPH_SETTINGS, savedViews: (stored.current ?? loadSettings(activeOrgId)).savedViews });
+  }, [activeOrgId, persist]);
 
   const setScope = React.useCallback((scope: ScopeRef | null, thenSelect?: string) => {
     setSettings((prev) => ({ ...prev, scope }));
@@ -321,19 +352,23 @@ function GraphPageInner() {
   }, [activeOrgId, sim, posKey]);
 
   // ── A node the URL asked for: selected and flown to, ONCE ─────────────
+  // Only against the map the current scope asks for: after a scope change
+  // the old map is still on screen for one commit, and its node (or its
+  // absence) says nothing about the new one.
+  const snapKeyNow = activeOrgId ? snapKeyOf(activeOrgId, scopeKey) : null;
   React.useEffect(() => {
-    if (!pendingSelect || !view) return;
+    if (!pendingSelect || !view || !snapKeyNow || graphKey !== snapKeyNow) return;
     const node = view.nodes.find((n) => n.id === pendingSelect);
     if (node) {
       setSelected(node);
       setHighlight({ ids: [node.id], nonce: Date.now() });
       setPendingSelect(null);
-    } else if (fresh) {
+    } else if (freshKey === snapKeyNow) {
       // The fresh build does not draw it here — say so once, never retry.
       setSelectMiss(pendingSelect);
       setPendingSelect(null);
     }
-  }, [pendingSelect, view, fresh]);
+  }, [pendingSelect, view, graphKey, freshKey, snapKeyNow]);
 
   // ── Insights: the WHOLE map, labelled (GM-1 / GM-6) ───────────────────
   const insights = React.useMemo(
@@ -410,6 +445,7 @@ function GraphPageInner() {
   }, [activeOrgId]);
 
   const runAsk = React.useCallback(() => {
+    setUrlQ(rawQuery);
     if (asking) return;
     void askQuestion(rawQuery.trim());
   }, [asking, askQuestion, rawQuery]);
@@ -428,20 +464,37 @@ function GraphPageInner() {
     ...urlFilterOf(settings),
     local: focusId,
     depth: focusId ? settings.localDepth : null,
-    q: rawQuery,
-    ask: (!!answer && answer.question === rawQuery.trim()) || pendingAsk === rawQuery.trim(),
+    q: urlQ,
+    ask: (!!answer && answer.question === urlQ.trim()) || pendingAsk === urlQ.trim(),
     select: selected?.id ?? pendingSelect,
-  }, paramsKey), [settings, focusId, rawQuery, answer, pendingAsk, selected, pendingSelect, paramsKey]);
+  }, paramsKey), [settings, focusId, urlQ, answer, pendingAsk, selected, pendingSelect, paramsKey]);
+
+  // Written within the History API's budget (a browser throws past it, and
+  // Next.js answers each write with a replaceState of its own): a burst
+  // lands at once, a stream is coalesced to its latest value, and a refused
+  // write is skipped and retried — never thrown into the page.
+  const [urlWriter] = React.useState(() => rateLimitedWriter<{ qs: string; href: string }>((v): UrlWriteResult => {
+    if (window.location.search.replace(/^\?/, "") === v.qs) {
+      if (!written.current.includes(v.qs)) written.current.push(v.qs);
+      return "noop";
+    }
+    try {
+      // `null` state: Next.js keeps its own history entry and syncs
+      // useSearchParams with the new query.
+      window.history.replaceState(null, "", v.href);
+    } catch {
+      return "failed";
+    }
+    written.current.push(v.qs);
+    if (written.current.length > 64) written.current = written.current.slice(-64);
+    return "done";
+  }));
+  React.useEffect(() => () => urlWriter.cancel(), [urlWriter]);
 
   React.useEffect(() => {
     if (!applied || typeof window === "undefined") return;
-    const current = window.location.search.replace(/^\?/, "");
-    lastWritten.current = urlNow;
-    if (urlNow === current) return;
-    // `null` state: Next.js keeps its own history entry and syncs
-    // useSearchParams with the new query.
-    window.history.replaceState(null, "", urlNow ? `${pathname}?${urlNow}` : pathname);
-  }, [applied, urlNow, pathname]);
+    urlWriter.push({ qs: urlNow, href: urlNow ? `${pathname}?${urlNow}` : pathname });
+  }, [applied, urlNow, pathname, urlWriter]);
 
   // `from=graph` lets the destination page offer a way back; `graphq` is
   // this view, so the way back restores it (BackToGraphChip — GPV-11).
@@ -591,14 +644,30 @@ function GraphPageInner() {
     patchSettings({ savedViews: settings.savedViews.filter((v) => v.id !== id) });
   }, [settings.savedViews, patchSettings]);
 
+  // The link is built from the view, not read off the address bar, which
+  // can trail the view by a deferred write.
   const copyLink = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(`${window.location.origin}${pathname}${urlNow ? `?${urlNow}` : ""}`);
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [pathname, urlNow]);
+
+  // An item the map has but this view hides: show its type (library links
+  // with a library), leave focus, then select it when drawn — the one path
+  // for "hidden by this view — Show it" and a faded Insights row (GM-1).
+  const reveal = React.useCallback((n: GraphNode) => {
+    patchSettings({
+      hiddenTypes: settings.hiddenTypes.filter((t) => t !== n.type),
+      hideUnlinked: false,
+      ...(n.type === "library" ? { showLibraryEdges: true } : {}),
+    });
+    setFocusId(null);
+    setPendingSelect(n.id);
+    setSelectMiss(null);
+  }, [settings.hiddenTypes, patchSettings]);
 
   // ── Escape closes the top overlay (GPV-13) ────────────────────────────
   React.useEffect(() => {
@@ -714,6 +783,7 @@ function GraphPageInner() {
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") runAsk(); }}
+            onBlur={() => setUrlQ(rawQuery)}
             placeholder="Find E-22, or ask a question…"
             title="Type to light up matching nodes. Press Enter to search what your documents SAY."
             aria-label="Find a node, or ask what your documents say"
@@ -730,7 +800,7 @@ function GraphPageInner() {
             </button>
           )}
           {rawQuery && (
-            <button onClick={() => { setRawQuery(""); setAnswer(null); }} aria-label="Clear search"
+            <button onClick={() => { setRawQuery(""); setUrlQ(""); setAnswer(null); }} aria-label="Clear search"
               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
               <X className="w-3 h-3" />
             </button>
@@ -942,8 +1012,8 @@ function GraphPageInner() {
                             {orphansHidden > 0 && ` ${orphansHidden} of these ${orphansHidden === 1 ? "is" : "are"} hidden by the current view (faded).`}
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
-                            <button key={n.id} onClick={() => spotlight([n.id], n)}
-                              title={inView.has(n.id) ? undefined : "Hidden by the current lens or filter"}
+                            <button key={n.id} onClick={() => (inView.has(n.id) ? spotlight([n.id], n) : reveal(n))}
+                              title={inView.has(n.id) ? undefined : "Hidden by the current lens or filter — click to show it"}
                               className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left ${inView.has(n.id) ? "" : "opacity-50"}`}>
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(n) }} />
                               <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{n.label}</span>
@@ -966,7 +1036,8 @@ function GraphPageInner() {
                             The most-referenced nodes on the map. The number is its links, not counting library filing. Touch one and the blast radius is wide.
                           </div>
                           {insights.hubs.map((h) => (
-                            <button key={h.node.id} onClick={() => spotlight([h.node.id], h.node)}
+                            <button key={h.node.id} onClick={() => (inView.has(h.node.id) ? spotlight([h.node.id], h.node) : reveal(h.node))}
+                              title={inView.has(h.node.id) ? undefined : "Hidden by the current lens or filter — click to show it"}
                               className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left ${inView.has(h.node.id) ? "" : "opacity-50"}`}>
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(h.node) }} />
                               <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
@@ -1071,12 +1142,15 @@ function GraphPageInner() {
               {/* GM-7: a failed or capped proposal read is said, never shown as "none". */}
               {proposalRead?.error && (
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="proposals-error">
-                  <Info className="w-3 h-3" /> Proposed connections couldn&apos;t be loaded ({proposalRead.error}) — none are drawn; the review queue still has them.
+                  <Info className="w-3 h-3" />
+                  {proposals.length > 0
+                    ? <>Only the first {plural(proposals.length, "proposed connection")} (the most confident) could be loaded ({proposalRead.error}) — the rest are not drawn; the review queue still has them.</>
+                    : <>Proposed connections couldn&apos;t be loaded ({proposalRead.error}) — none are drawn; the review queue still has them.</>}
                 </div>
               )}
               {proposalRead?.capped && (
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="proposals-capped">
-                  <Info className="w-3 h-3" /> Drawing the {proposals.length.toLocaleString("en-US")} most confident of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `more than ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
+                  <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the most confident) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `more than ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
                 </div>
               )}
               {/* IRLS-14: no mention links, and which case it is. */}
@@ -1104,16 +1178,7 @@ function GraphPageInner() {
                   <Info className="w-3 h-3" />
                   {missNode
                     ? <>{missNode.label} is on the map but hidden by this view.
-                        <button className="font-black underline" onClick={() => {
-                          patchSettings({
-                            hiddenTypes: settings.hiddenTypes.filter((t) => t !== missNode.type),
-                            hideUnlinked: false,
-                            ...(missNode.type === "library" ? { showLibraryEdges: true } : {}),
-                          });
-                          setFocusId(null);
-                          setPendingSelect(missNode.id);
-                          setSelectMiss(null);
-                        }}>Show it</button></>
+                        <button className="font-black underline" onClick={() => reveal(missNode)}>Show it</button></>
                     : <>The linked item isn&apos;t on this map — beyond a cap, outside {scopeLabel ?? "the map"}, or outside your access.</>}
                   <button aria-label="Dismiss" onClick={() => setSelectMiss(null)}><X className="w-3 h-3" /></button>
                 </div>

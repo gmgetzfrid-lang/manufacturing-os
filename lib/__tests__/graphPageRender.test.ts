@@ -25,6 +25,15 @@
 //   GPV-13  the map region is focusable and walkable; Escape closes overlays
 //   HUB-11  the Intelligence strip is titled
 //   IRLS-14 with no mention links the map says which case and offers the rebuild
+//
+// Fix pass (review of the first build):
+//   GPV-11  the URL is written within the History API's budget — typing never
+//           writes it, a burst is coalesced, a throwing replaceState is not
+//           thrown into the page (Safari throws past 100 calls per 30 s)
+//   DEC-44 (I-14) item 3  a URL's filter is never saved by an unrelated change
+//   GPV-5   after a scope change the URL's node is honoured on the NEW map
+//   GM-1    a faded Insights row shows its node before selecting it
+//   GM-7    a read that failed partway says what it drew
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -35,6 +44,7 @@ const nav = vi.hoisted(() => ({ params: new URLSearchParams(""), push: vi.fn(), 
 const role = vi.hoisted(() => ({ roles: ["Admin"] as string[] }));
 const g = vi.hoisted(() => ({
   graph: null as unknown as OrgGraph,
+  scopedGraph: null as OrgGraph | null,
   build: [] as unknown[][],
   renders: [] as Array<Record<string, unknown>>,
   proposals: { pairs: [] as unknown[], total: 0 as number | null, capped: false, error: null as string | null },
@@ -69,7 +79,10 @@ vi.mock("@/components/graph/OrgGraph3D", () => ({
 }));
 vi.mock("@/lib/orgGraph", async (orig) => ({
   ...(await orig<typeof import("@/lib/orgGraph")>()),
-  buildOrgGraph: vi.fn(async (...args: unknown[]) => { g.build.push(args); return structuredClone(g.graph); }),
+  buildOrgGraph: vi.fn(async (...args: unknown[]) => {
+    g.build.push(args);
+    return structuredClone(args[1] && g.scopedGraph ? g.scopedGraph : g.graph);
+  }),
 }));
 vi.mock("@/lib/linkProposals", () => ({
   PENDING_PAIRS_CAP: 4000,
@@ -90,7 +103,8 @@ vi.mock("@/lib/supabase", () => ({
 
 import GraphPage from "@/app/(protected)/graph/page";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
-import { settingsKey } from "@/lib/graphSettings";
+import { settingsKey, lensByKey } from "@/lib/graphSettings";
+import { URL_WRITE_BURST } from "@/lib/graphView";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -160,6 +174,7 @@ const typeInto = async (el: HTMLInputElement, v: string) => setRange(el, v);
 
 beforeEach(() => {
   g.graph = baseGraph();
+  g.scopedGraph = null;
   g.build = []; g.renders = []; g.flows = []; g.fetches = [];
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
   role.roles = ["Admin"];
@@ -180,7 +195,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
 });
-afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
+afterEach(() => { act(() => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("regression pins — every existing way into /graph", () => {
   it("a bare /graph assembles the whole org exactly as before (one argument)", async () => {
@@ -362,8 +377,180 @@ describe("GM-7 — proposals: failed, capped, counted", () => {
     g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 9000, capped: true, error: null };
     window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
     await render(page());
-    expect(host.querySelector('[data-testid="proposals-capped"]')?.textContent).toContain("of 9,000 proposed connections");
+    expect(host.querySelector('[data-testid="proposals-capped"]')?.textContent).toContain("1 read (the most confident) of 9,000 proposed connections");
     expect(host.querySelector('[data-testid="proposals-chip"]')?.textContent).toBe("9,000 connections awaiting review · 1 drawn here");
+  });
+});
+
+describe("GM-7 — a read that failed partway (fix pass)", () => {
+  it("says how many it loaded, never 'none are drawn' over the pairs it drew", async () => {
+    g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 1500, capped: false, error: "connection reset" };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
+    await render(page());
+    const note = host.querySelector('[data-testid="proposals-error"]')?.textContent ?? "";
+    expect(note).toContain("Only the first 1 proposed connection (the most confident) could be loaded (connection reset)");
+    expect(note).not.toContain("none are drawn");
+    expect(last().edges).toContainEqual({ a: "doc:d1", b: "doc:d2", type: "proposed" });
+  });
+});
+
+describe("GPV-11 — the URL is written within the History API's budget (fix pass)", () => {
+  // Safari: "Attempt to use history.replaceState() more than 100 times per
+  // 30 seconds" is a thrown SecurityError. jsdom has no limit, so the limit
+  // is stood in: replaceState throws after `allow` calls.
+  const limitHistory = (allow: number) => {
+    const real = window.history.replaceState.bind(window.history);
+    const state = { calls: 0 };
+    vi.spyOn(window.history, "replaceState").mockImplementation((...args: Parameters<History["replaceState"]>) => {
+      state.calls += 1;
+      if (state.calls > allow) throw new DOMException("Attempt to use history.replaceState() more than 100 times per 30 seconds", "SecurityError");
+      return real(...args);
+    });
+    return state;
+  };
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+
+  it("200 keystrokes never write the URL; leaving the box writes the search once", async () => {
+    await render(page());
+    const before = window.location.search;
+    const history = limitHistory(5);
+    const input = host.querySelector("input[data-graph-search]") as HTMLInputElement;
+    await act(async () => { input.focus(); });
+    let typed = "";
+    // Each keystroke is its own discrete event (React commits and runs its
+    // effects per event); 20 to an act keeps the test fast under load.
+    for (let batch = 0; batch < 10; batch++) {
+      await act(async () => {
+        for (let k = 0; k < 20; k++) {
+          const i = batch * 20 + k;
+          typed = i < 120 ? `${typed}${"pipe supports "[i % 14]}` : typed.slice(0, -1);
+          setter.call(input, typed);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      });
+    }
+    await flush();
+    expect(history.calls).toBe(0);
+    expect(window.location.search).toBe(before);
+    expect(host.querySelector('[data-testid="map2d"]')).toBeTruthy();
+    expect(input.value).toBe(typed);
+    await act(async () => { input.blur(); });
+    await flush();
+    expect(history.calls).toBe(1);
+    expect(new URLSearchParams(window.location.search).get("q")).toBe(typed.trim());
+  }, 20_000);
+
+  it("a burst of 200 view changes is coalesced, and a replaceState that throws never reaches the page", async () => {
+    nav.params = new URLSearchParams("local=asset%3Aa1&depth=1");
+    await render(page());
+    const history = limitHistory(3);
+    for (let batch = 0; batch < 10; batch++) {
+      await act(async () => {
+        for (let k = 0; k < 20; k++) (btn(k % 2 === 0 ? "One hop more" : "One hop fewer") as HTMLElement).click();
+      });
+    }
+    await flush();
+    expect(history.calls).toBeLessThanOrEqual(URL_WRITE_BURST);
+    expect(text()).toContain("Focused: P-101");
+    expect(host.querySelector('[data-testid="map2d"]')).toBeTruthy();
+  }, 20_000);
+});
+
+describe("DEC-44 (I-14) item 3 — a URL's filter is never saved by an unrelated change (fix pass)", () => {
+  it("nudging a force or opening Orphans saves only that; a bare /graph opens on the person's own filter", async () => {
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, hiddenTypes: ["plot"], localDepth: 2 }));
+    nav.params = new URLSearchParams("lens=documents&local=doc%3Ad1&depth=4");
+    await render(page());
+    expect(last().settings.hiddenTypes).toEqual([...lensByKey("documents")!.hidden]);
+    await click(btn("Settings"));
+    await click([...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Forces")));
+    const repel = [...host.querySelectorAll('input[type="range"]')].find((i) =>
+      i.closest("label")?.textContent?.includes("Repel force")) as HTMLInputElement;
+    await setRange(repel, "2.5");
+    await click(btn(/^\s*Insights/));
+    await click(btn(/Orphans/));
+    const stored = JSON.parse(window.localStorage.getItem(settingsKey("o1"))!);
+    expect(stored.repelForce).toBe(2.5);
+    expect(stored.hideUnlinked).toBe(false);
+    expect(stored.hiddenTypes).toEqual(["plot"]);
+    expect(stored.localDepth).toBe(2);
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    nav.params = new URLSearchParams("");
+    window.history.replaceState(null, "", "/graph");
+    await render(page());
+    expect(last().settings.hiddenTypes).toEqual(["plot"]);
+  }, 20_000);
+
+  it("changing the filter itself is the person's choice, and is saved", async () => {
+    nav.params = new URLSearchParams("lens=documents");
+    await render(page());
+    const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
+    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Equipment ↔ Documents"));
+    const stored = JSON.parse(window.localStorage.getItem(settingsKey("o1"))!);
+    expect(stored.hiddenTypes).toEqual([...lensByKey("equipment-docs")!.hidden]);
+  });
+});
+
+describe("GPV-5 / GPV-2 — after a scope change the URL's node is honoured on the new map (fix pass)", () => {
+  const scoped = (extra: GraphNode[] = []): OrgGraph => {
+    const base = baseGraph();
+    return {
+      ...base,
+      nodes: [...base.nodes.map((x) => (x.id === "cbunit:20" ? { ...x, degree: 7 } : x)), ...extra],
+      scope: { ref: { kind: "unit", code: "20" }, label: "Crude Unit", boundary: 0, complete: true },
+    };
+  };
+
+  it("a unit's peek → Scope: the peek shows the scoped map's node, not the whole org's", async () => {
+    g.scopedGraph = scoped();
+    nav.params = new URLSearchParams("select=cbunit%3A20");
+    await render(page());
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("3 links on the map");
+    await click(btn("Scope the map to this unit"));
+    expect(g.build[g.build.length - 1]).toEqual(["o1", { scope: { kind: "unit", code: "20" } }]);
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("7 links on the map");
+  });
+
+  it("an outside link that changes the scope selects its node once the scoped map lands — never a false 'not on this map'", async () => {
+    g.scopedGraph = scoped([node("cbunit:99", "unit", "Hydrotreater", { unitCode: "99", degree: 0 })]);
+    await render(page());
+    expect(g.build).toEqual([["o1"]]);
+    nav.params = new URLSearchParams("scope=unit%3A99&focus=cbunit%3A99");
+    await render(page());
+    expect(g.build[g.build.length - 1]).toEqual(["o1", { scope: { kind: "unit", code: "99" } }]);
+    expect(host.querySelector('[data-testid="select-miss"]')).toBeNull();
+    expect(peek()?.getAttribute("aria-label")).toBe("Unit: Hydrotreater");
+  });
+});
+
+describe("GM-1 — a faded Insights row (fix pass)", () => {
+  it("an orphan the lens hides is shown, then selected — never a selection the map does not draw", async () => {
+    nav.params = new URLSearchParams("lens=plant");
+    await render(page());
+    expect(last().nodes.map((x) => x.id)).not.toContain("doc:d2");
+    await click(btn(/^\s*Insights/));
+    const row = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("LOOSE-2"));
+    expect(row?.className).toContain("opacity-50");
+    await click(row);
+    expect(last().settings.hiddenTypes).not.toContain("document");
+    expect(last().nodes.map((x) => x.id)).toContain("doc:d2");
+    expect(peek()?.getAttribute("aria-label")).toBe("Document: LOOSE-2");
+  });
+
+  it("a hub the lens hides is shown, then selected", async () => {
+    nav.params = new URLSearchParams("lens=documents");
+    await render(page());
+    expect(last().nodes.map((x) => x.id)).not.toContain("asset:a1");
+    await click(btn(/^\s*Insights/));
+    await click(btn(/Hubs/));
+    const row = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("P-101"));
+    expect(row?.className).toContain("opacity-50");
+    await click(row);
+    expect(last().settings.hiddenTypes).not.toContain("asset");
+    expect(last().nodes.map((x) => x.id)).toContain("asset:a1");
+    expect(peek()?.getAttribute("aria-label")).toBe("Equipment: P-101");
   });
 });
 

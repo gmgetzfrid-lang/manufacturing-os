@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { carrierOrder, orderPair, TIER_RANK } from "@/lib/linkProposalLogic";
+import { isMissingRelation } from "@/lib/orgGraph";
 
 /** Built-in keys plus `rule:<id>` for org-authored Connection Skills.
  *  LNK-11: no similarity proposer runs, so none is named. */
@@ -287,7 +288,9 @@ export interface PendingPairsRead {
 /** GM-7 — the pending pairs for the graph, telling a failed read and a
  *  capped one apart from an empty queue. Ordered (most confident first, then
  *  id) so "the first N" is a rule. A database without proposed_links (before
- *  20260807) has none pending, which is not an error. */
+ *  20260807 — Postgres 42P01, PostgREST PGRST205, lib/orgGraph.ts
+ *  isMissingRelation) has none pending, which is not an error; any other
+ *  failure, a missing column included, is. */
 export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIRS_CAP): Promise<PendingPairsRead> {
   type Row = { id: string; document_id: string; target_document_id: string; proposer: ProposerKind };
   const pairs: PendingPairsRead["pairs"] = [];
@@ -304,7 +307,7 @@ export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIR
       .order("confidence", { ascending: false }).order("id", { ascending: true })
       .range(from, to);
     if (error) {
-      if (from === 0 && (error.code === "42P01" || /does not exist/i.test(error.message ?? ""))) {
+      if (from === 0 && isMissingRelation(error)) {
         return { pairs: [], total: 0, capped: false, error: null };
       }
       return { pairs, total, capped: false, error: error.message || "the read failed" };
