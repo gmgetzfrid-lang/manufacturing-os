@@ -84,7 +84,9 @@ function definitionsIn(sources: Array<[string, string]>, name: string): Array<[s
  *  side of a `+`); an identifier is resolved to its declaration in scope — a
  *  `const` / `let` initialiser is judged in turn, a parameter or a
  *  destructured name is a pass-through from a typed caller; a member access
- *  ending in `.link` (input.link, n.link, d.link) is a pass-through too.
+ *  ending in `.link` (input.link, n.link, d.link) is a pass-through too; a
+ *  member of a `const` object literal in scope (`const L = { a: "/x" } as
+ *  const; … L.a`) is that property's initialiser, judged in turn.
  *  Anything else — a call, an unresolved name, another member — is an
  *  offender: the census cannot see what it yields. */
 function linkStarts(src: string, file: string): { seen: number; shorthand: number; offenders: string[] } {
@@ -143,6 +145,15 @@ function linkStarts(src: string, file: string): { seen: number; shorthand: numbe
       const d = resolve(e.text, e);
       if (d && (ts.isParameter(d) || ts.isBindingElement(d))) { acc.push("pass"); return; }
       if (d && ts.isVariableDeclaration(d) && d.initializer) return starts(d.initializer, acc, depth + 1);
+    }
+    if (ts.isPropertyAccessExpression(e) && ts.isIdentifier(e.expression) && depth < 5) {
+      const d = resolve(e.expression.text, e);
+      let init = d && ts.isVariableDeclaration(d) && ts.isVariableDeclarationList(d.parent) && (d.parent.flags & ts.NodeFlags.Const) ? d.initializer : undefined;
+      while (init && (ts.isAsExpression(init) || ts.isParenthesizedExpression(init) || ts.isSatisfiesExpression(init))) init = init.expression;
+      const prop = init && ts.isObjectLiteralExpression(init)
+        ? init.properties.find((q): q is ts.PropertyAssignment => ts.isPropertyAssignment(q) && (ts.isIdentifier(q.name) || ts.isStringLiteral(q.name)) && q.name.text === e.name.text)
+        : undefined;
+      if (prop) return starts(prop.initializer, acc, depth + 1);
     }
     acc.push("?");
   };
@@ -382,6 +393,24 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       "{ link } (shorthand)",
     ]);
     expect(byShorthand.seen).toBe(10);
+    // a member of a `const` object literal is judged by that property (lib/exportAlerts.ts ALERT_LINKS);
+    // a `let` object, a missing property or an unknown object stays unseen
+    const byMember = linkStarts([
+      'const L = { admin: "/admin/data-export", other: "/admin/audit", bad: "https://evil.example" } as const;',
+      'function a(x: boolean) { notify({ link: x ? L.admin : L.other }); }',  // both resolve, both pass
+      'function b() { notify({ link: L.bad }); }',                             // resolves to an off-origin literal
+      'function c() { notify({ link: L.missing }); }',                         // no such property
+      'let M = { a: "/x" };',
+      'function d() { notify({ link: M.a }); }',                               // not a const: unseen
+      'function e() { notify({ link: N.a }); }',                               // names nothing
+    ].join("\n"), "probe3.ts");
+    expect(byMember.offenders).toEqual([
+      "link: L.bad",
+      "link: L.missing (unresolved)",
+      "link: M.a (unresolved)",
+      "link: N.a (unresolved)",
+    ]);
+    expect(byMember.seen).toBe(6);
   });
 
   it("OS-1 dw3 / DELIV-6 dw2: an undeclared kind is refused (22023)", () => {

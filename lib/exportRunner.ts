@@ -18,8 +18,9 @@
 
 import JSZip from "jszip";
 import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
-import { createHash } from "node:crypto";
-import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
+import { createHash, randomUUID } from "node:crypto";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { runOrgExport, recordExportUndelivered, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -27,6 +28,52 @@ import net from "node:net";
 import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
+
+/** The cap on full exports people may start in one workspace in an hour,
+ *  counted on export_runs: the manual run (download or destination) and the
+ *  JSON export (`structured` — the download and the first step of the
+ *  browser-built Full ZIP; it opens a run row of its own so it is counted,
+ *  admin-and-org BKP-8 / DEC-87 Risk). */
+export const MAX_EXPORT_RUNS_PER_HOUR = 12;
+
+/** The export_runs a person's cap counts: the runs people started
+ *  (trigger_type "manual"; "api" is the schema's other person-started
+ *  value), whatever their outcome — a failed attempt still ran the export —
+ *  except a cancelled row. Never the scheduled pushes, nor a scheduled run
+ *  the gate skipped (a cancelled row): the fifth review fix pass found five
+ *  daily destinations at 05:00 plus their gate skips refusing an Admin's
+ *  JSON export or Full ZIP (429), which no cap refused before this
+ *  package. */
+export const RATE_LIMITED_TRIGGERS = ["manual", "api"] as const;
+export const RATE_LIMITED_STATUSES = ["pending", "running", "succeeded", "failed"] as const;
+
+/** A person's export start, held to MAX_EXPORT_RUNS_PER_HOUR (the runs
+ *  RATE_LIMITED_TRIGGERS and RATE_LIMITED_STATUSES name). The count is read
+ *  CHECKED: a count that cannot be read refuses (503) — read as 0, it would
+ *  let a tight loop past the cap. Null when the export may start. */
+export async function exportRateLimitRefusal(
+  admin: Pick<SupabaseClient, "from">,
+  orgId: string,
+): Promise<{ error: string; status: number } | null> {
+  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const { count, error } = await admin
+    .from("export_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .in("trigger_type", [...RATE_LIMITED_TRIGGERS])
+    .in("status", [...RATE_LIMITED_STATUSES])
+    .gte("started_at", oneHourAgo);
+  if (error || typeof count !== "number") {
+    return {
+      error: `Could not check this workspace's export rate limit (${error?.message ?? "no count returned"}) — nothing was run. Try again shortly.`,
+      status: 503,
+    };
+  }
+  if (count >= MAX_EXPORT_RUNS_PER_HOUR) {
+    return { error: `Export rate limit reached (${MAX_EXPORT_RUNS_PER_HOUR}/hour for this workspace). Try again shortly.`, status: 429 };
+  }
+  return null;
+}
 
 // ─── SSRF guard ──────────────────────────────────────────────────
 // Export destinations (webhook URL, custom S3 endpoint) are admin-supplied
@@ -124,7 +171,91 @@ export type ExportRunResult = {
   downloadUrl?: string;
   downloadUrlExpiresAt?: string;
   diagnostics: DiagnosticStep[];
+  /** BKP-6: what a bucket push's retention purge did — set whenever one ran
+   *  (or was refused), so the route puts its counts on the run row
+   *  (closeSucceededRun) and a failure on the run row and the card. */
+  retention?: RetentionOutcome;
 };
+
+/** BKP-6 Done-when 3: a retention purge's outcome. `failed` counts archives
+ *  the purge chose but storage did not delete; `error` is why the purge
+ *  stopped (a refusal, a listing or delete call that threw). */
+export interface RetentionOutcome {
+  keepDays: number;
+  scanned: number;
+  deleted: number;
+  failed: number;
+  error?: string;
+}
+
+/** The run row's line for a purge that did not do all it set out to — null
+ *  when it did. The backup itself was delivered and verified either way. */
+export function retentionProblem(r: RetentionOutcome | undefined): string | null {
+  if (!r || (!r.error && r.failed === 0)) return null;
+  const did = `deleted ${r.deleted} archive(s) older than ${r.keepDays} day(s)`;
+  return `Backup delivered and verified, but the retention purge did not finish: ${did}` +
+    (r.failed > 0 ? `, ${r.failed} could not be deleted` : "") +
+    (r.error ? ` — ${r.error}` : "") + ".";
+}
+
+/** BKP-6 Done-when 3 (A&O P3 fix pass 7): the migration that gives
+ *  export_runs its retention columns. */
+export const RETENTION_COLUMNS_MIGRATION = "20261172_ao_roundG_export_run_retention.sql";
+
+/** BKP-6 Done-when 3: a retention purge's counts as the run row's columns
+ *  (RETENTION_COLUMNS_MIGRATION) — what the purge deleted (`deleted`) and
+ *  what it chose but storage did not delete (`failed`, RetentionOutcome).
+ *  Null when no purge ran: a webhook, a bucket with no retention, a
+ *  download. Those runs, a failed run and every run closed before the paste
+ *  leave both columns NULL; why a purge stopped stays in `error_message`
+ *  (retentionProblem). */
+export function retentionRunColumns(r: RetentionOutcome | undefined): { retention_deleted: number; retention_failed: number } | null {
+  return r ? { retention_deleted: r.deleted, retention_failed: r.failed } : null;
+}
+
+type RunWriteError = { code?: string; message: string } | null;
+
+/** The run row's retention columns are not in the database yet — the app
+ *  deploys before RETENTION_COLUMNS_MIGRATION is pasted: Postgres 42703, or
+ *  PostgREST's schema cache PGRST204. */
+export function isMissingRetentionColumn(e: { code?: string; message?: string } | null | undefined): boolean {
+  if (!e) return false;
+  const msg = e.message ?? "";
+  return e.code === "42703" || e.code === "PGRST204" || (/retention_(deleted|failed)/.test(msg) && /column/i.test(msg));
+}
+
+/** Close a succeeded run's export_runs row: `patch` (the counts, the path,
+ *  the diagnostics — exactly what the run routes wrote before) plus the
+ *  retention purge's counts (retentionRunColumns, BKP-6 Done-when 3). When
+ *  the database does not know those columns yet, the same update is written
+ *  again without them, so a run closes exactly as it did before the paste:
+ *  its counts stay in its diagnostics (the `s3:retention:*` step), where the
+ *  data-export page still reads them. `retention` says which happened:
+ *  "written"; "none" (no purge ran — the update is the patch alone);
+ *  "unrecorded" (the columns are not there yet — the update was written
+ *  again without them, and `error` is that retry's); or "close-failed" (the
+ *  update was refused for another reason — a permission, a timeout — and is
+ *  not retried: the run row is not closed at all, `error` says why; A&O P3
+ *  fix pass 8, was "unrecorded"). `error` is the update's own, for the
+ *  caller's checked write. */
+export async function closeSucceededRun(
+  admin: Pick<SupabaseClient, "from">,
+  runId: string,
+  patch: Record<string, unknown>,
+  outcome: RetentionOutcome | undefined,
+): Promise<{ error: RunWriteError; retention: "written" | "none" | "unrecorded" | "close-failed" }> {
+  const cols = retentionRunColumns(outcome);
+  if (!cols) {
+    const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
+    return { error: error as RunWriteError, retention: "none" };
+  }
+  const first = await admin.from("export_runs").update({ ...patch, ...cols }).eq("id", runId);
+  if (!first.error) return { error: null, retention: "written" };
+  if (!isMissingRetentionColumn(first.error)) return { error: first.error as RunWriteError, retention: "close-failed" };
+  console.warn(`[data-export] run ${runId}: export_runs has no retention columns yet (paste ${RETENTION_COLUMNS_MIGRATION}); its purge counts stay in its diagnostics`);
+  const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
+  return { error: error as RunWriteError, retention: "unrecorded" };
+}
 
 type DeliveryMode =
   | { kind: "inline" }                              // return the ZIP bytes
@@ -146,6 +277,45 @@ export interface ExportDestination {
   retention_days?: number;
 }
 
+/** BILL-3 Done-when 3 (A&O P3 fix pass 8): does this destination push to a
+ *  bucket — the Growth feature the plan gates? Only an s3 / r2 row with a
+ *  bucket: the push switches on `destination_type` (a webhook row never
+ *  touches its `bucket`, which the edit form cannot clear once a row is
+ *  converted), and an s3 / r2 row with no bucket pushes nowhere (the S3
+ *  client refuses an empty bucket before it sends). The one predicate for
+ *  Run Now's plan gate, the scheduled sweep's plan limb and its
+ *  disable-on-lapse, and PATCH's enabling gate. */
+export function pushesToBucket(row: { destination_type?: string | null; bucket?: string | null }): boolean {
+  const type = String(row.destination_type ?? "").trim();
+  return (type === "s3" || type === "r2") && String(row.bucket ?? "").trim() !== "";
+}
+
+/** BKP-11 Done-when 3: what a destination lacks before it may fire, as the
+ *  sentence a 409 carries, or null. An s3 / r2 destination needs both access
+ *  keys (without them the push cannot authenticate at all). A webhook needs
+ *  its signing secret when `requireWebhookSecret`: whenever the act would
+ *  open or move a channel a person has not yet confirmed here — enabling a
+ *  disabled destination, re-pointing an enabled one, or running a disabled
+ *  one by hand (a restored row arrives disabled and with no secret, still
+ *  naming the backup owner's URL). An enabled webhook an Admin created here
+ *  may stay unsigned (the secret is optional at create). `have` says which
+ *  credentials are stored or arrive with the request; `then` ends the
+ *  sentence ("enable it again", "run it again", "save it again"). */
+export function destinationCredentialGap(
+  destinationType: string | null | undefined,
+  have: { accessKey: boolean; secretKey: boolean; webhookSecret: boolean },
+  opts: { requireWebhookSecret: boolean; then: string },
+): string | null {
+  const type = String(destinationType ?? "").trim();
+  if (type === "webhook" && opts.requireWebhookSecret && !have.webhookSecret) {
+    return `This webhook destination has no signing secret. Check its URL is yours, enter a signing secret, and ${opts.then} — a destination restored from a backup arrives without one.`;
+  }
+  if ((type === "s3" || type === "r2") && (!have.accessKey || !have.secretKey)) {
+    return `This destination has no access key and secret. Enter them, and ${opts.then} — a destination restored from a backup arrives without credentials.`;
+  }
+  return null;
+}
+
 /** Held back from a ZIP route's `maxDuration` (app/api/data-export/run and
  *  run-scheduled: 300 s) for what follows the embed loop: compressing the
  *  ZIP, delivering it (the download, the bucket push and its read-back, the
@@ -163,12 +333,16 @@ export function exportEmbedDeadline(routeStart: number, maxDurationSeconds: numb
 const OMITTED_AT_DEADLINE = "not embedded: the export reached its time limit";
 const OMITTED_SIZE_UNKNOWN = "not embedded: storage did not report its size, so it could not be held to the embed cap";
 
-export async function buildAndDeliverExport(params: {
+type BuildAndDeliverParams = {
   supabaseUrl: string;
   serviceRoleKey: string;
   orgId: string;
-  exporterUserId: string;
+  /** null for the scheduled push (no person) — DEC-87. */
+  exporterUserId: string | null;
   exporterEmail: string;
+  /** Recorded on the DATA_EXPORT audit row (lib/dataExport.ts recordExport). */
+  exporterRole?: string | null;
+  auditDetails?: Record<string, unknown>;
   includeFiles: boolean;
   delivery: DeliveryMode;
   /** The route's own deadline (exportEmbedDeadline(routeStart, maxDuration)):
@@ -176,7 +350,52 @@ export async function buildAndDeliverExport(params: {
    *  is always built and delivered. Default: this call's start, as a 300 s
    *  route. */
   deadlineAt?: number;
-}): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
+};
+
+/** Build the export and deliver it. DEC-87 §3: once the export's
+ *  DATA_EXPORT row is written the audit trail says it left, so a failure
+ *  after that — its file list refused, the ZIP not built, the destination
+ *  refusing the delivery (a webhook's 500, a failed bucket put) — writes a
+ *  DATA_EXPORT_UNDELIVERED row against the export's record id
+ *  (recordExportUndelivered) before the error goes back to the route, which
+ *  marks the run failed. A refused UNDELIVERED row is named in that error
+ *  (checked), so the run row says the record is incomplete. The row lands
+ *  when the delivery fails, however long that took: off Vercel nothing
+ *  bounds a delivery (`next start` does not enforce the route's maxDuration;
+ *  the webhook POST has no abort signal, the S3 put and read-back no
+ *  request timeout), and no deadline is added here, since one would fail a
+ *  slow upload that succeeds today — the recall's read allows a day
+ *  (lib/dataExport.ts UNDELIVERED_READ_WINDOW_MS; A&O P3 fix pass 8). A
+ *  function killed mid-delivery (Vercel at 300 s, a container restart)
+ *  writes no row at all, and its run row stays "running". */
+export async function buildAndDeliverExport(params: BuildAndDeliverParams): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
+  const recordId = randomUUID();
+  let recorded = false;
+  try {
+    return await buildAndDeliver(params, recordId, () => { recorded = true; });
+  } catch (e) {
+    if (!recorded) throw e;
+    const err = e instanceof Error ? e : new Error(String(e));
+    const unwritten = await recordExportUndelivered(
+      createClient(params.supabaseUrl, params.serviceRoleKey, { auth: { persistSession: false } }),
+      {
+        orgId: params.orgId, recordId,
+        destinationId: params.delivery.kind === "destination" ? params.delivery.destination.id : null,
+        exporterUserId: params.exporterUserId, exporterEmail: params.exporterEmail, error: err.message,
+      },
+    ).catch((x) => (x as Error).message || String(x));
+    if (unwritten) {
+      err.message = `${err.message} — and the record that this export did not leave could not be written (${unwritten})`;
+    }
+    throw err;
+  }
+}
+
+async function buildAndDeliver(
+  params: BuildAndDeliverParams,
+  recordId: string,
+  onRecorded: () => void,
+): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const diagnostics: DiagnosticStep[] = [];
   const step = (s: string, d?: string) => diagnostics.push({ ts: new Date().toISOString(), step: s, detail: d });
   const deadlineAt = params.deadlineAt ?? exportEmbedDeadline(Date.now(), 300);
@@ -188,6 +407,19 @@ export async function buildAndDeliverExport(params: {
     orgId: params.orgId,
     exporterUserId: params.exporterUserId,
     exporterEmail: params.exporterEmail,
+    exporterRole: params.exporterRole,
+    auditDetails: params.auditDetails,
+    // DEC-87 §3: every file that leaves is named, against a ledger
+    // (what was added or removed since its previous record): a ZIP handed to
+    // a person against the workspace's, a push to a destination — a bucket
+    // or a webhook, scheduled or Run Now — against that destination's. So no
+    // export grows the audit trail (itself exported, and read whole by every
+    // later export) by the whole list.
+    fileRecord: params.delivery.kind === "destination"
+      ? { destinationId: params.delivery.destination.id }
+      : "workspace",
+    recordId,
+    onRecorded,
     deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);
@@ -360,7 +592,11 @@ export async function buildAndDeliverExport(params: {
 
         // Enforce retention if configured. The purge's outcome — including a
         // refusal (no prefix) — lands in diagnostics, so a purge that did
-        // nothing is visible, never a silent "succeeded" (XEDGE-4).
+        // nothing is visible, never a silent "succeeded" (XEDGE-4), and is
+        // returned (BKP-6) so the route puts its deleted and failed counts
+        // on the run row (closeSucceededRun) and a failure on the run row
+        // and the destination card, where the admin looks.
+        let retention: RetentionOutcome | undefined;
         if (dest.retention_days && dest.retention_days > 0) {
           step("s3:retention", `purge older than ${dest.retention_days}d`);
           try {
@@ -369,8 +605,15 @@ export async function buildAndDeliverExport(params: {
               prefix: dest.prefix || "",
               keepDays: dest.retention_days,
             });
-            step("s3:retention:done", `scanned ${purge.scanned}, deleted ${purge.deleted} app archive(s)`);
+            retention = { keepDays: dest.retention_days, scanned: purge.scanned, deleted: purge.deleted, failed: purge.failed, ...(purge.error ? { error: purge.error } : {}) };
+            step(
+              purge.failed > 0 || purge.error ? "s3:retention:err" : "s3:retention:done",
+              `scanned ${purge.scanned}, deleted ${purge.deleted} app archive(s)` +
+                (purge.failed > 0 ? `, ${purge.failed} could not be deleted` : "") +
+                (purge.error ? ` — ${purge.error}` : ""),
+            );
           } catch (e) {
+            retention = { keepDays: dest.retention_days, scanned: 0, deleted: 0, failed: 0, error: (e as Error).message };
             step("s3:retention:err", (e as Error).message);
           }
         }
@@ -382,6 +625,7 @@ export async function buildAndDeliverExport(params: {
           totalRows,
           destinationPath: `${dest.bucket}/${fullKey}`,
           diagnostics,
+          ...(retention ? { retention } : {}),
         };
       }
 
@@ -442,13 +686,18 @@ export async function buildAndDeliverExport(params: {
 
 // ─── S3 helpers ──────────────────────────────────────────────────
 
+/** The region a bucket push uses when its destination stores none (and the
+ *  edit form's default), so a destination saved with no region and one saved
+ *  with this region push to the same store. */
+export const S3_DEFAULT_REGION = "us-east-1";
+
 export function buildS3ClientFromDestination(dest: ExportDestination): S3Client {
   const accessKeyId = dest.access_key_id_encrypted ? decryptSecret(dest.access_key_id_encrypted) : "";
   const secretAccessKey = dest.secret_access_key_encrypted ? decryptSecret(dest.secret_access_key_encrypted) : "";
   if (!accessKeyId || !secretAccessKey) throw new Error("Destination credentials are missing");
   return new S3Client({
     endpoint: dest.endpoint || undefined,
-    region: dest.region || "us-east-1",
+    region: dest.region || S3_DEFAULT_REGION,
     credentials: { accessKeyId, secretAccessKey },
     forcePathStyle: true,
   });
@@ -492,7 +741,7 @@ export async function s3PurgeOlderThan(params: {
   dest: ExportDestination;
   prefix: string;
   keepDays: number;
-}): Promise<{ deleted: number; scanned: number }> {
+}): Promise<{ deleted: number; scanned: number; failed: number; error?: string }> {
   // XEDGE-4: with no prefix, ListObjectsV2 enumerates the WHOLE bucket and an
   // age-only test would delete the customer's own unrelated objects — a
   // shared corporate bucket's entire history, permanently, while the run
@@ -526,16 +775,31 @@ export async function s3PurgeOlderThan(params: {
     token = out.IsTruncated ? out.NextContinuationToken : undefined;
   } while (token);
 
-  const deleted = toDelete.length;
-  // S3 DeleteObjects supports max 1000 keys per call
+  // S3 DeleteObjects supports max 1000 keys per call. BKP-6: what was
+  // DELETED is counted from each call's answer — a key storage reports in
+  // `Errors` was not deleted — and a call that throws stops the purge with
+  // the rest counted as not deleted, never as deleted.
+  let deleted = 0;
+  let failed = 0;
+  let error: string | undefined;
   while (toDelete.length > 0) {
     const batch = toDelete.splice(0, 1000);
-    await client.send(new DeleteObjectsCommand({
-      Bucket: params.dest.bucket || "",
-      Delete: { Objects: batch },
-    }));
+    try {
+      const out = await client.send(new DeleteObjectsCommand({
+        Bucket: params.dest.bucket || "",
+        Delete: { Objects: batch },
+      }));
+      const errs = (out as { Errors?: Array<{ Key?: string; Message?: string }> } | undefined)?.Errors ?? [];
+      failed += errs.length;
+      deleted += batch.length - errs.length;
+      if (errs.length > 0 && !error) error = `storage refused ${errs[0].Key ?? "a key"}: ${errs[0].Message ?? "unknown error"}`;
+    } catch (e) {
+      failed += batch.length + toDelete.length;
+      error = (e as Error).message;
+      break;
+    }
   }
-  return { deleted, scanned };
+  return { deleted, scanned, failed, ...(error ? { error } : {}) };
 }
 
 // ─── Connection test ────────────────────────────────────────────

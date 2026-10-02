@@ -90,7 +90,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
 }));
 
-import { runOrgExport, collectFilePaths, keysetAfter, FILE_CHECK_CONCURRENCY, FILE_CHECK_CEILING_MS, type DataExportEnvelope } from "@/lib/dataExport";
+import { runOrgExport, collectFilePaths, keysetAfter, FILE_CHECK_CONCURRENCY, FILE_CHECK_CEILING_MS, PRIVATE_NOTES_CARRIED, type DataExportEnvelope } from "@/lib/dataExport";
 import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup } from "@/lib/clientBackup";
 import { REDACT_COLUMNS } from "@/lib/exportTables";
@@ -433,6 +433,36 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
     // nothing restored can fire or be presented (DEC-45, P1)
     expect(String(rowsOf("document_shares")[0].token)).toMatch(/^restored-/);
     expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, next_run_at: null, secret_access_key_encrypted: null });
+  });
+
+  it("BKP-8 second review fix — standalone (private) notes go through export, the server ZIP and restore as before: carried, counted, restored", async () => {
+    // n-1 (the fixture's evidence note) is standalone too: every note here is private
+    db.rows.notes.push({ id: "n-private", org_id: SRC, body: "Alice's own scratch", created_by: "u-alice" });
+    const env = await exportEnvelope();
+    expect((env.tables.notes as Row[]).map((n) => n.id).sort()).toEqual(["n-1", "n-private"]);
+    expect(env.manifest.complete).toBe(true);
+    expect(env.manifest.notes[0]).toBe("This document is a complete export of every record this organization owns.");
+    expect(env.manifest.notes).toContain(`2 ${PRIVATE_NOTES_CARRIED}`);
+    expect(env.manifest).not.toHaveProperty("withheld");
+    stubFetch(env);
+    const out = await buildAndDeliverExport({
+      supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+      includeFiles: true, delivery: { kind: "inline" },
+    });
+    const zip = (await JSZip.loadAsync(out.zipBytes!)) as unknown as BackupZipLike & JSZip;
+    expect(await zip.file("README.md")!.async("string")).not.toMatch(/Withheld rows/);
+    expect(JSON.parse(await zip.file("manifest.json")!.async("string"))).toMatchObject({ complete: true });
+    const read = await readBackupArchive([{ name: "manufacturing-os-backup.zip", zip }]);
+    seedTarget();
+    enforceForeignKeys();
+    const plan = planRestore(read.envelope, { orgId: TARGET, orgName: "Acme", members: [{ uid: "t-alice", email: "alice@acme.com" }] });
+    expect(plan.warnings.join(" ")).not.toMatch(/INCOMPLETE|private note/);
+    const result = await restoreInto(read.envelope);
+    expect(result.stoppedAt).toBeNull();
+    expect(result.tables.flatMap((t) => (t.refused ?? []).map((r) => `${t.name}:${r.code}`))).toEqual([]);
+    // the restore brings every member's scratchpad back
+    expect(rowsOf("notes").map((n) => n.id).sort()).toEqual(["n-1", "n-private"]);
+    expect(rowsOf("notes").find((n) => n.id === "n-private")).toMatchObject({ body: "Alice's own scratch" });
   });
 
   it("the browser Full ZIP packs every binary too", async () => {

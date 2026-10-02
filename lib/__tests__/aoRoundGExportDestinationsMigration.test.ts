@@ -97,7 +97,8 @@ describe("20261154 — the narrowing is a privilege, the policy is kept (the rev
   });
 
   it("grants back exactly the card columns: every column of the table but the credentials, the coordinates and the raw run error", () => {
-    const cols = [...(censusSchema().get("export_destinations")?.columns ?? [])];
+    // the table as it stood at this file (a later migration's column is not in this grant — fix pass 7)
+    const cols = [...(censusSchema(undefined, { through: FILE }).get("export_destinations")?.columns ?? [])];
     expect(cols.length).toBeGreaterThan(20);
     expect(cols).toContain("last_run_error");
     const expected = cols.filter((c) => !CREDENTIALS.includes(c) && !COORDINATES.includes(c) && !RAW_ERRORS.includes(c)).sort();
@@ -163,7 +164,9 @@ describe("20261154 — export_runs: the same coordinates, one row per run, narro
   });
 
   it("grants back exactly the card columns: every column of the table but where it went, its trace, its raw error, the archive link and the email", () => {
-    const cols = [...(censusSchema().get("export_runs")?.columns ?? [])];
+    // the table as it stood at this file: 20261172's retention columns came later and are granted to no
+    // member (aoRoundGExportRunRetentionMigration.test.ts) — admin-and-org P3 fix pass 7
+    const cols = [...(censusSchema(undefined, { through: FILE }).get("export_runs")?.columns ?? [])];
     expect(cols.length).toBeGreaterThan(15);
     for (const c of RUN_WITHHELD) expect(cols, c).toContain(c);
     const expected = cols.filter((c) => !RUN_WITHHELD.includes(c)).sort();
@@ -209,7 +212,14 @@ describe("20261154 — export_runs: the same coordinates, one row per run, narro
       .filter((f) => /from\(\s*["']export_runs["']\s*\)/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(root.length + 1).split("\\").join("/"))
       .sort();
-    expect(readers).toEqual(["app/api/data-export/run-scheduled/route.ts", "app/api/data-export/run/route.ts", "app/api/data-export/runs/route.ts"]);
+    // admin-and-org P3 fourth review fix pass: the JSON export opens a run row
+    // of its own, and the hourly-cap count both export routes share lives in
+    // lib/exportRunner.ts (server-only; it is handed the routes' service client)
+    expect(readers).toEqual([
+      "app/api/data-export/run-scheduled/route.ts", "app/api/data-export/run/route.ts", "app/api/data-export/runs/route.ts",
+      "app/api/data-export/structured/route.ts", "lib/exportRunner.ts",
+    ]);
     for (const r of readers) expect(readFileSync(join(root, r), "utf8"), r).not.toMatch(/from\s+["']@\/lib\/supabase["']/);
+    expect(readFileSync(join(root, "lib/exportRunner.ts"), "utf8")).toMatch(/export async function exportRateLimitRefusal\(\s*admin: Pick<SupabaseClient, "from">/);
   });
 });

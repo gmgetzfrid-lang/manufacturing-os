@@ -185,7 +185,6 @@
         "lib/notify/dispatch.ts:135-147",
         "lib/notify/recipients.ts:48-62",
         "app/api/admin/restore/begin/route.ts:68",
-        "app/api/admin/restore/apply/route.ts:64",
         "supabase/schema.sql:42"
       ],
       "has_verifier_correction": false,
@@ -1023,12 +1022,11 @@
       "severity": "MEDIUM",
       "status": "OPEN",
       "verification": "CONFIRMED",
-      "verification_note": "CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110`: a restore's members are created with `status: \"inactive\"`. Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.",
+      "verification_note": "CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110 (deleted by admin-and-org P3, ILIFE-4)`: a restore's members are created with `status: \"inactive\"`. *(Integrator, at the admin-and-org P3 merge, 2026-10-02: P3 deleted the single-shot `/apply` route, which had no caller; `/begin` is now the only place that inserts placeholder members as `inactive`, so this finding runs through it alone.)* Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.",
       "blast_radius": null,
       "related": [],
       "locations": [
         "app/api/admin/restore/begin/route.ts:100",
-        "app/api/admin/restore/apply/route.ts:110",
         "lib/notify/dispatch.ts",
         "supabase/migrations/20261161_notif_roundG_read_scope.sql"
       ],

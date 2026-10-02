@@ -71,7 +71,8 @@ describe("SURF-8 — restore refuses immutable tables, audits chunks, mints no r
     for (const r of ["Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor", "", undefined, null]) expect(restoredMemberRole(r)).toBe("Viewer");
     expect(restoredMemberRole("Engineer-1")).toBe("Engineer-1");
     expect(restoredMemberRole("Requester")).toBe("Requester");
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts"]) {
+    // intelligence ILIFE-4: the single-shot /apply was deleted (admin-and-org P3); /begin is the one placeholder writer.
+    for (const f of ["app/api/admin/restore/begin/route.ts"]) {
       const s = src(f);
       expect(s).toMatch(/role: restoredMemberHeadline\(restoredMemberRoles\(u\.role, u\.roles\)\), roles: restoredMemberRoles\(u\.role, u\.roles\)/ /* ADD-1 Round C1b: the surviving COLLECTION is seeded, headline mirrored */);
       expect(s).not.toMatch(/role: u\.role \|\| "Viewer"/);

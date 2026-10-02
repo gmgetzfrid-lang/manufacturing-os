@@ -88,8 +88,9 @@ export interface TablePlanItem {
   willImport: boolean;
   reason?: string;
   /** ORG-1: the name is not on the backup contract (nor a reconciled /
-   *  append-only table the contract once carried) — never written, and the
-   *  single-shot apply refuses an envelope that carries rows for it. */
+   *  append-only table the contract once carried) — never written, and
+   *  /apply-table refuses it (the single-shot /apply that also refused such
+   *  an envelope was deleted — intelligence ILIFE-4). */
   offContract?: boolean;
 }
 
@@ -629,7 +630,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   }
 
   const matchedUsers = users.filter((u) => u.disposition === "linked").length;
-  // Exactly the placeholders /begin and /apply create (fix pass 5: the
+  // Exactly the placeholders /begin creates (fix pass 5: the
   // page's confirm states this count) — a person with no backup uid of their
   // own names no row, so none is made for them.
   const newUsers = users.filter((u) => u.disposition === "new" && u.oldUid).length;
@@ -682,8 +683,9 @@ export function remapRow(
     }
   }
   // EGR-7 / XEDGE-10: a bearer column never comes back from a backup. Applied
-  // here — the one place BOTH restore paths (single-shot apply and the chunked
-  // apply-table) pass every row through — so no caller can forget it.
+  // here — the one place every restored row passes through (the chunked
+  // apply-table; the single-shot apply was deleted, ILIFE-4) — so no caller
+  // can forget it.
   return scrubRestoredRow(out);
 }
 
@@ -969,8 +971,8 @@ export function mergeNewUserUids(
 
 /** Give a restored placeholder its profile row, if the database lets it.
  *  False when it refuses — always, for a fresh uid that is no sign-in account
- *  (users.id references auth.users) — or the call fails: both restore routes
- *  count and report it (fix pass 2; it was swallowed). */
+ *  (users.id references auth.users) — or the call fails: /begin counts and
+ *  reports it (fix pass 2; it was swallowed). */
 export async function placeholderProfile(sb: Pick<SupabaseClient, "from">, uid: string, email: string, displayName?: string | null): Promise<boolean> {
   try {
     const { error } = await sb.from("users").upsert({ id: uid, email, display_name: displayName ?? null });
@@ -981,10 +983,11 @@ export async function placeholderProfile(sb: Pick<SupabaseClient, "from">, uid: 
 }
 
 // ── The shared restore write (ORG-1 / BKP-3 Done-when 2) ─────────────────
-// ONE function writes a slice of one table for BOTH restore routes — the
-// chunked /apply-table the UI uses and the single-shot /apply — so the two
-// paths cannot diverge again (the single-shot route had lost the org
-// boundary and the table allowlist the chunked one enforces).
+// ONE function writes a slice of one table for the restore — the chunked
+// /apply-table the UI uses. The single-shot /apply that once shared it had no
+// caller and was deleted (intelligence ILIFE-4, admin-and-org P3); it had lost
+// the org boundary and the table allowlist the chunked one enforces before
+// both routes were made to write through here.
 
 type RestoreDb = Pick<SupabaseClient, "from">;
 
@@ -1108,9 +1111,30 @@ export function restoreRowLabel(table: string, row: Record<string, unknown>): st
   return parts.every(isKeyValue) ? parts.join("/") : null;
 }
 
+/** admin-and-org BKP-15: the code a process flow carries when the database
+ *  refuses it because one of its ends names no equipment of the workspace
+ *  (or no Site Codebook unit) — 20261155's process_flows_guard, which binds
+ *  every writer, the restore included. Such a flow was already dangling in
+ *  the backup (a flow kept by DEC-80 item 3 when the guard was pasted), or
+ *  its equipment was not restored here. It is reported as what it is, apart
+ *  from the rows the database refused for a real fault. */
+export const DANGLING_FLOW_CODE = "flow_endpoint_missing";
+
+/** BKP-15: a refusal's restore code — the database's SQLSTATE, except a
+ *  process flow refused by the endpoint check, which is a dangling flow. */
+export function restoreRefusalCode(table: string, code: string, message: string): string {
+  return table === "process_flows" && code === "23503" && /^process_flows_endpoint:/.test(message) ? DANGLING_FLOW_CODE : code;
+}
+
+/** BKP-15: is this refusal a dangling process flow (reported on its own line)? */
+export function isDanglingFlowRefusal(r: Pick<RestoreRowRefusal, "code">): boolean {
+  return r.code === DANGLING_FLOW_CODE;
+}
+
 /** What a refusal code means, for the restore page. */
 export function restoreRefusalLabel(code: string): string {
   switch (code) {
+    case DANGLING_FLOW_CODE: return "a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)";
     case "parent_outside_workspace": return "points at a row that is not in this workspace";
     case "23505": return "a unique key it carries is already in use";
     case "23503": return "references a row that is not there";
@@ -1497,7 +1521,7 @@ export async function applyRestoreChunk(
     const code = String(up.error.code ?? "");
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
     if (rows.length === 1) {
-      refused.push({ id: label(rows[0]), code, message: up.error.message });
+      refused.push({ id: label(rows[0]), code: restoreRefusalCode(table, code, up.error.message), message: up.error.message });
       return null;
     }
     if (bisectLeft < 2) {
@@ -1694,7 +1718,11 @@ export interface ChunkedRestoreResult {
   totalHeldElsewhere: number;
   totalUncounted: number;
   totalFiltered: number;
+  /** Rows the database refused, less the dangling process flows below. */
   totalRefused: number;
+  /** BKP-15: process flows not restored because an end names no equipment or
+   *  unit here (DANGLING_FLOW_CODE) — counted apart from a real refusal. */
+  totalDanglingFlows: number;
   totalCleared: number;
   totalAdvanced: number;
   tables: RestoreTableOutcome[];
@@ -1789,7 +1817,7 @@ export async function runChunkedRestore(params: {
     idRemap, createdUsers: num(begin.body?.createdUsers), linkedUsers: num(begin.body?.linkedUsers),
     placeholdersWithoutProfile: num(begin.body?.placeholdersWithoutProfile),
     unmappedMembers: num(begin.body?.unmappedMembers),
-    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalCleared: 0, totalAdvanced: 0,
+    totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 0, totalUncounted: 0, totalFiltered: 0, totalRefused: 0, totalDanglingFlows: 0, totalCleared: 0, totalAdvanced: 0,
     tables: [], stoppedAt: null, notAttempted: [],
   };
   let rowsDone = 0;
@@ -1826,7 +1854,9 @@ export async function runChunkedRestore(params: {
     result.totalHeldElsewhere += t.heldElsewhere;
     result.totalUncounted += t.uncounted;
     result.totalFiltered += t.filtered;
-    result.totalRefused += t.refused.length;
+    const dangling = t.refused.filter(isDanglingFlowRefusal).length;
+    result.totalRefused += t.refused.length - dangling;
+    result.totalDanglingFlows += dangling;
     result.totalCleared += t.cleared.length;
     result.totalAdvanced += t.advanced;
     if (t.error) {

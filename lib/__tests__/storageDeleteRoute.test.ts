@@ -1001,3 +1001,81 @@ describe("RET-2 (remainder): a key the document's CURRENT revision names is refu
     expect(src).toMatch(/project-costs\/\$\{input\.projectId\}/);
   });
 });
+
+// intelligence ILIFE-14 (admin-and-org Round G, P3): the direct delete is the
+// second door that frees bytes (ILIFE-5 closed the document shed). A key any
+// registered key column OTHER than the revision's own two still names — a
+// knowledge-library mirror above all, which names the SAME object as the
+// revision it mirrors — is refused 409, fail closed (503) when that cannot be
+// read. It is asked after the hold / retention / current-revision refusals
+// (RET-2, P11), which keep their answers.
+describe("ILIFE-14 — a key another record still names is never freed", () => {
+  const COST = `orgs/${ORG}/project-costs/p1/abc-quote.pdf`;
+
+  it("a knowledge-library mirror naming a superseded revision's file: 409, nothing deleted, no custody row", async () => {
+    member("Admin");
+    revision(); // v1 is not the document's current revision (no current_version_id)
+    state.rows.knowledge_documents = [{ id: "kd-1", file_key: RENDERED, status: "ready" }];
+    const res = await del(RENDERED);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("Another record still uses this file (a knowledge-library copy or similar); it cannot be deleted.");
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toEqual([]);
+  });
+
+  it("any other registered column counts too: a vendor quote's row still naming the key is refused", async () => {
+    member("Admin");
+    state.rows.cost_documents = [{ id: "cd-1", file_url: COST }];
+    const res = await del(COST);
+    expect(res.status).toBe(409);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("fails CLOSED: an unreadable column answers 503 and frees nothing", async () => {
+    member("Admin");
+    revision();
+    state.errors.knowledge_documents = { message: "statement timeout" };
+    const res = await del(RENDERED);
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe("Could not verify what still uses this file; deletion refused.");
+    expect(state.r2sends).toBe(0);
+    expect(state.audits).toEqual([]);
+  });
+
+  it("the revision's own two columns are judged above, not here: a clear revision's file and source still delete, as before", async () => {
+    member("Admin");
+    for (const k of [RENDERED, SOURCE]) {
+      revision();
+      state.r2sends = 0; state.audits = [];
+      const res = await del(k);
+      expect(res.status, k).toBe(200);
+      expect(state.r2sends, k).toBe(1);
+      expect(state.audits[0].action, k).toBe("STORAGE_OBJECT_DELETE");
+    }
+  });
+
+  it("the costDocs path (the route's only app caller, cleaning up an upload whose row insert failed): no row names its key, so it deletes", async () => {
+    member("Admin");
+    state.rows.cost_documents = [{ id: "cd-other", file_url: `orgs/${ORG}/project-costs/p1/another.pdf` }];
+    const res = await del(COST);
+    expect(res.status).toBe(200);
+    expect(state.r2sends).toBe(1);
+  });
+
+  it("a hold still answers as a hold (423) before the mirror check", async () => {
+    member("Admin");
+    revision({ legal_hold: true });
+    state.rows.knowledge_documents = [{ id: "kd-1", file_key: RENDERED }];
+    const res = await del(RENDERED);
+    expect(res.status).toBe(423);
+    expect(state.r2sends).toBe(0);
+  });
+
+  it("the route asks keysReferencedOutside, excluding exactly the revision's own two columns", () => {
+    const src = readFileSync(resolve(__dirname, "../../app/api/storage/delete/route.ts"), "utf8");
+    expect(src).toContain('await keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])');
+    // after the hold / retention / current-revision try, before the custody row
+    expect(src.indexOf("keysReferencedOutside(supabaseAdmin")).toBeGreaterThan(src.indexOf("Could not verify hold or retention status; deletion refused."));
+    expect(src.indexOf("keysReferencedOutside(supabaseAdmin")).toBeLessThan(src.indexOf('action: "STORAGE_OBJECT_DELETE"'));
+  });
+});

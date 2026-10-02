@@ -34,8 +34,8 @@
       "LOW": 49
     },
     "by_status": {
-      "RESOLVED": 166,
-      "OPEN": 93,
+      "RESOLVED": 169,
+      "OPEN": 90,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -1191,7 +1191,7 @@
       "id": "ILIFE-4",
       "title": "The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1200,7 +1200,6 @@
         "app/(protected)/admin/restore/page.tsx:190",
         "app/(protected)/admin/restore/page.tsx:202",
         "app/(protected)/admin/restore/page.tsx:207",
-        "app/api/admin/restore/apply/route.ts:115",
         "app/api/admin/restore/apply-table/route.ts:80"
       ],
       "has_verifier_correction": true,
@@ -4352,7 +4351,7 @@
       "id": "ILIFE-6",
       "title": "Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -6536,7 +6535,7 @@
       "id": "ILIFE-14",
       "title": "The direct storage delete frees a key that a knowledge-library mirror still names — the shed's mirror check (ILIFE-5) has a second door",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read at the admin-and-org P2 merge: `app/api/storage/delete/route.ts` `DELETE` refuses a key a held or retained revision names, then frees it without asking `lib/storageKeyRegistry.ts` whether any other registered key column — a `knowledge_documents.file_key` mirror among them — still names it)",
       "blast_radius": null,

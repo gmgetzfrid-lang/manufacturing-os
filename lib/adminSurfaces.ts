@@ -88,8 +88,12 @@ export const ADMIN_SURFACES: readonly AdminSurface[] = [
     denied: "Storage & Backup is limited to Admin, Manager and Document Control." },
   { key: "archive-view", path: "/admin/archive-view", label: "Archive browser", entry: CONTROLLERS, cap: "admin.archive_view",
     denied: `The backup viewer is limited to Admin and Document Control. ${CHANGE}` },
-  { key: "data-export", path: "/admin/data-export", label: "Data export", entry: "*", writes: ["Admin", "Manager", "DocCtrl"],
-    denied: "You must be an active member to view data exports." },
+  // admin-and-org BKP-8: a full-workspace export runs as the service role
+  // (every ACL-restricted document, every file), so it is Admin-only — the
+  // mirror of /admin/restore. Every /api/data-export route is held to this
+  // entry through lib/adminGate.ts authorizeAdminSurface.
+  { key: "data-export", path: "/admin/data-export", label: "Data export", entry: ["Admin"],
+    denied: "Exporting the whole workspace, and its scheduled destinations, is limited to Admins." },
   { key: "restore", path: "/admin/restore", label: "Restore", entry: ["Admin"],
     denied: "Restore is limited to Admins." },
   { key: "billing", path: "/admin/billing", label: "Billing", entry: "*", writes: ["Admin", "Manager"],

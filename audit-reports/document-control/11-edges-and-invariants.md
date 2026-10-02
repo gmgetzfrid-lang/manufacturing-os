@@ -123,7 +123,7 @@ Executed under this repo's Node (v22.22.2): `new Response("x", { headers: { "con
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:130`, `app/api/admin/restore/begin/route.ts:78-85`
+- **Locations:** `app/api/admin/restore/apply-table/route.ts:24,38-43,74-89`, `lib/exportTables.ts:53,67,130`, `lib/dataRestore.ts:86-93,249-251`, `app/api/admin/restore/apply/route.ts:130 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/restore/begin/route.ts:78-85`
 - **Re-verified:** hardening pass — **SURVIVES**. Re-checked: `IMPORTABLE = new Set([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES])` (`apply-table:24`), `ORG_SCOPED_TABLES` lists 104 tables including `audit_logs`, `e_signatures` and `document_acknowledgments`, and `grep -c audit_logs apply-table/route.ts` returns **0**.
 - **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Every leg of the claim checks out, including the absence claim: the whole-directory grep confirms /apply-table is the only restore endpoint with no audit insert, and it is the chunked path the client actually drives (≤500 rows per call per its own header comment). Row content other than org_id is fully client-authored — created_at, user_id, signer identity and details JSONB all pass through remapRow untouched.
 
@@ -402,6 +402,13 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 - [x] a test PATCHes a bucket onto a Starter org's destination and asserts 402 ✓.
 
 **Scope / residual.** None.
+
+*Cross-note (2026-10-01, admin-and-org Round G, P3 fifth review fix pass):*
+- *What changed.* PATCH (`app/api/data-export/destinations/[id]/route.ts`) now judges the bucket against the stored row. It runs the shared gate only when the bucket is added or changed, and still on enabling a bucket destination.
+- *Why.* The edit form always sends the bucket, so the old any-bucket check refused 402 an Admin's unchanged save of a bucket destination on a workspace off Growth. That save is how a scheduled destination a Manager or DocCtrl last saved is confirmed (`BKP-13`, `DEC-87` §1).
+- *This finding's tests.* The test above still answers 402. It now allows the stored-row read and asserts that nothing is written (`lib/__tests__/dcRoundFScheduledExports.test.ts`). The unchanged-save, other-bucket and enabling cases are pinned in `lib/__tests__/dataExportRoutes.test.ts`.
+
+*Cross-note (2026-10-02, admin-and-org Round G, P3 sixth review fix pass):* comparing the bucket's name alone let a workspace off Growth keep the name and point an enabled bucket destination at another store: a new endpoint, region or type (r2 to s3). PATCH now runs the shared gate when any of `destination_type`, `endpoint`, `region` or `bucket` changes on a row that pushes to a bucket (s3 or r2 with a bucket, after the change). A region the row does not store compares as the region the push uses (`lib/exportRunner.ts S3_DEFAULT_REGION`). So the edit form's unchanged save still passes, and enabling is gated as before. The cases are pinned in `lib/__tests__/dataExportRoutes.test.ts`, "sixth review fix — moving a bucket push to another store …" (see `BKP-13`'s sixth-pass block).
 
 ---
 

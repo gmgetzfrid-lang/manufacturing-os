@@ -61,8 +61,12 @@ function splitTop(body: string): string[] {
 const ident = (s: string) => s.replace(/"/g, "").trim().toLowerCase();
 const colList = (s: string) => s.split(",").map(ident);
 
-export function censusSchema(root = join(process.cwd(), "supabase")): Map<string, TableShape> {
-  const files = [join(root, "schema.sql"), ...readdirSync(join(root, "migrations")).filter((n) => /^\d{8}.*\.sql$/.test(n)).sort().map((n) => join(root, "migrations", n))];
+/** `through` (admin-and-org P3 fix pass 7): the census as it stood once that
+ *  migration (a file name) was applied — later files are not read; a
+ *  migration that snapshots a table's columns (a column grant) is checked
+ *  against the table as it was then. Default: every file. */
+export function censusSchema(root = join(process.cwd(), "supabase"), opts: { through?: string } = {}): Map<string, TableShape> {
+  const files = [join(root, "schema.sql"), ...readdirSync(join(root, "migrations")).filter((n) => /^\d{8}.*\.sql$/.test(n) && (!opts.through || n <= opts.through)).sort().map((n) => join(root, "migrations", n))];
   const tables = new Map<string, TableShape>();
   const namedIdx = new Map<string, { table: string; key: string[] }>();
   const get = (t: string) => { if (!tables.has(t)) tables.set(t, { columns: new Set(), keys: [], fks: [], notNull: new Set(), generated: new Set() }); return tables.get(t)!; };

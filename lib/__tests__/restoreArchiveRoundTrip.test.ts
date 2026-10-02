@@ -41,7 +41,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import JSZip from "jszip";
 import { db, type Row } from "./helpers/restoreMemoryDb";
@@ -72,11 +72,11 @@ import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup, BACKUP_ARCHIVE_ENTRIES } from "@/lib/clientBackup";
 import {
   readBackupArchive, planRestore, runChunkedRestore, remapOrgPath, RESTORE_CONTRACT_TABLES, isSkippedTable,
+  DANGLING_FLOW_CODE, restoreRefusalCode, restoreRefusalLabel, isDanglingFlowRefusal,
   type RestorePost, type BackupZipLike, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
-import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
 
 const SRC = "11111111-1111-4111-8111-111111111111";
 const TARGET = "22222222-2222-4222-8222-222222222222";
@@ -330,22 +330,10 @@ describe("BKP-7 — the browser-built Full ZIP is written in the one layout and 
     expectEveryRelationLanded();
   });
 
-  it("the single-shot /apply restores the same envelope too", async () => {
-    const envelope = await exportEnvelope();
-    seedTarget();
-    enforceForeignKeys();
-    const res = await applySingle(new NextRequest(`https://app/api/admin/restore/apply?orgId=${TARGET}`, {
-      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" },
-      body: JSON.stringify({ envelope, confirm: true }),
-    }));
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.failedTables).toEqual([]);
-    expectOnlyPlaceholderOutcomes(body.tables);
-    expect(body.placeholdersWithoutProfile).toBe(1);
-    expect(String(body.note)).toMatch(/1 of them have no sign-in account yet/);
-    expect(rowsOf("document_versions")).toHaveLength(2);
-    expectEveryRelationLanded();
+  it("the single-shot /apply is gone (intelligence ILIFE-4): the page's chunked path is the one restore door", () => {
+    // It had no caller and was deleted by admin-and-org P3 (the reversible, smaller change: the
+    // chunked /begin + /apply-table above carry the same shared write and stop rule).
+    expect(existsSync(join(process.cwd(), "app/api/admin/restore/apply/route.ts"))).toBe(false);
   });
 });
 
@@ -458,5 +446,75 @@ describe("BKP-7 — /admin/restore takes every part of one backup", () => {
     expect(page).toMatch(/idRemapRef\.current = result\.idRemap;/);
     // the old single-layout gate is gone
     expect(page).not.toMatch(/No manifest\.json — this doesn't look like a manufacturing-os backup ZIP/);
+  });
+});
+
+// admin-and-org BKP-15 (P3): 20261155's process_flows_guard checks a flow's
+// endpoints for EVERY writer, the restore included. A flow kept dangling when
+// the guard was pasted (DEC-80 item 3) is in every backup taken since, and is
+// refused on restore. It is reported as what it is — on its own line, apart
+// from a real refusal — and every other flow restores as before. The engine
+// models the guard: an end that names no equipment of the workspace, or no
+// Site Codebook unit, refuses the statement 23503 with the guard's message.
+describe("BKP-15 — a dangling process flow is reported as what it is, on its own line", () => {
+  function guardFlows() {
+    db.writeError = (table, op, rows) => {
+      if (table !== "process_flows" || (op !== "upsert" && op !== "insert")) return null;
+      for (const r of rows) {
+        for (const [kind, ref] of [[r.from_kind, r.from_ref], [r.to_kind, r.to_ref]]) {
+          if (kind === undefined || kind === null) continue;
+          if (kind === "asset" && !rowsOf("assets").some((a) => a.id === ref && a.org_id === r.org_id)) {
+            return { code: "23503", message: `process_flows_endpoint: equipment ${String(ref)} is not in this workspace's registry — a flow ends at registry equipment or a Site Codebook unit` };
+          }
+          if (kind === "unit" && !rowsOf("codebook_entries").some((c) => c.org_id === r.org_id && c.kind === "unit" && c.code === ref)) {
+            return { code: "23503", message: `process_flows_endpoint: unit ${String(ref)} is not a Site Codebook unit — a flow ends at registry equipment or a Site Codebook unit` };
+          }
+        }
+      }
+      return null;
+    };
+  }
+
+  it("the backup's dangling flow is not restored and is counted apart; every other flow restores; nothing stops", async () => {
+    db.rows.codebook_entries = [{ id: "cb-1", org_id: SRC, kind: "unit", code: "U-100" }];
+    db.rows.process_flows = [
+      { id: "pf-1", org_id: SRC, source_document_id: "kd-1" },
+      { id: "pf-ok", org_id: SRC, from_kind: "asset", from_ref: "as-1", to_kind: "unit", to_ref: "U-100", status: "confirmed" },
+      // kept by DEC-80 item 3 when 20261155 was pasted: its pump was deleted long ago
+      { id: "pf-dangling", org_id: SRC, from_kind: "asset", from_ref: "as-deleted", to_kind: "unit", to_ref: "U-100", status: "confirmed" },
+    ];
+    const envelope = await exportEnvelope();
+    expect((envelope.tables.process_flows as Row[]).map((f) => f.id).sort()).toEqual(["pf-1", "pf-dangling", "pf-ok"]); // the backup carries it
+    seedTarget();
+    enforceForeignKeys();
+    guardFlows();
+    const result = await restoreInto(envelope);
+    expect(result.stoppedAt).toBeNull();
+    expect(rowsOf("process_flows").map((f) => f.id).sort()).toEqual(["pf-1", "pf-ok"]);
+    expect(result.totalDanglingFlows).toBe(1);
+    const flows = result.tables.find((t) => t.name === "process_flows")!;
+    expect(flows.refused).toEqual([{ id: "pf-dangling", code: DANGLING_FLOW_CODE, message: expect.stringMatching(/^process_flows_endpoint: equipment as-deleted is not in this workspace's registry/) }]);
+    // a real refusal is still counted as one — and only the placeholder's is
+    expect(result.totalRefused).toBe(1);
+    expect(result.tables.flatMap((t) => t.refused.filter((r) => !isDanglingFlowRefusal(r)).map((r) => `${t.name}:${r.code}`))).toEqual(["team_members:person_not_restored"]);
+    expect(restoreRefusalLabel(DANGLING_FLOW_CODE)).toBe("a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)");
+  });
+
+  it("only the endpoint refusal of a process flow is a dangling flow: any other refusal keeps its own code", () => {
+    expect(restoreRefusalCode("process_flows", "23503", "process_flows_endpoint: unit U-9 is not a Site Codebook unit — …")).toBe(DANGLING_FLOW_CODE);
+    expect(restoreRefusalCode("process_flows", "23503", "process_flows_source: the source document is not a knowledge document of this workspace")).toBe("23503");
+    expect(restoreRefusalCode("process_flows", "23514", "process_flows_endpoint: a flow cannot start and end at the same asset")).toBe("23514");
+    expect(restoreRefusalCode("documents", "23503", "process_flows_endpoint: equipment x")).toBe("23503");
+    expect(restoreRefusalCode("process_flows", "23505", "duplicate key value violates unique constraint")).toBe("23505");
+  });
+
+  it("the guard's message is the one this reporting reads (20261155), and the page gives dangling flows their own line", () => {
+    const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261155_intel_roundG_process_flows_authority.sql"), "utf8");
+    expect(sql).toMatch(/RAISE EXCEPTION 'process_flows_endpoint: equipment % is not in this workspace''s registry[^']*', v_ref\s+USING ERRCODE = '23503';/);
+    expect(sql).toMatch(/RAISE EXCEPTION 'process_flows_endpoint: unit % is not a Site Codebook unit[^']*', v_ref\s+USING ERRCODE = '23503';/);
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page).toMatch(/refused: t\.refused\.filter\(\(r\) => !isDanglingFlowRefusal\(r\)\)/);
+    expect(page).toMatch(/flow\(s\) not restored — \{restoreRefusalLabel\(DANGLING_FLOW_CODE\)\}/);
+    expect(page).toMatch(/dangling process flow\(s\) not restored/);
   });
 });

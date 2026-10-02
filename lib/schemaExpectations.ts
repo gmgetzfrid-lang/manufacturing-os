@@ -244,6 +244,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // notifications N5 (NEDGE-7): until it is pasted a removed member's
   // notifications are not tombstoned and the read scope is the old one.
   { table: "notifications", column: "org_tombstoned_at", migration: "20261161_notif_roundG_read_scope.sql", feature: "Notifications read scope — a removed member's notifications are tombstoned and unreadable (NEDGE-7)" },
+  // admin-and-org P3 (BKP-6): until it is pasted the run row keeps its
+  // purge counts only in the trace (the write retries without the columns).
+  { table: "export_runs", column: "retention_deleted", migration: "20261172_ao_roundG_export_run_retention.sql", feature: "Data export — a bucket push's retention purge records on its run row what it deleted and what storage refused (BKP-6; the app retries without the columns until pasted)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

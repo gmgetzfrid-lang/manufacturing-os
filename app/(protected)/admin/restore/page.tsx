@@ -32,7 +32,7 @@ import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
-  RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel,
+  RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
@@ -540,8 +540,15 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
   const nothingNew = result.totalInserted === 0 && result.totalUncounted === 0;
   const tone = stopped || result.totalHeldElsewhere > 0
     ? "border-red-200 bg-red-50 text-red-900"
-    : result.totalRefused > 0 || result.totalCleared > 0 || result.totalUncounted > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
-  const refusedByTable = result.tables.filter((t) => t.refused.length > 0);
+    : result.totalDanglingFlows > 0 || result.totalRefused > 0 || result.totalCleared > 0 || result.totalUncounted > 0 || nothingNew ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
+  // BKP-15: a process flow whose equipment or unit is gone is said on its own
+  // line — it was dangling in the backup — never counted with real refusals.
+  const refusedByTable = result.tables
+    .map((t) => ({ ...t, refused: t.refused.filter((r) => !isDanglingFlowRefusal(r)) }))
+    .filter((t) => t.refused.length > 0);
+  const danglingByTable = result.tables
+    .map((t) => ({ name: t.name, n: t.refused.filter(isDanglingFlowRefusal).length }))
+    .filter((t) => t.n > 0);
   const clearedByTable = result.tables.filter((t) => t.cleared.length > 0);
   const elsewhereByTable = result.tables.filter((t) => t.heldElsewhere > 0);
   return (
@@ -555,11 +562,13 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
               ? <><AlertTriangle className="w-4 h-4" /> Nothing new was restored</>
               : result.totalRefused > 0
                 ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalRefused)} row(s) refused</>
-                : result.totalUncounted > 0
-                  ? <><AlertTriangle className="w-4 h-4" /> Restored — {fmtNum(result.totalUncounted)} record(s) the server did not count</>
-                  : result.totalCleared > 0
-                    ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalCleared)} pointer(s) cleared</>
-                    : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
+                : result.totalDanglingFlows > 0
+                  ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalDanglingFlows)} dangling process flow(s) not restored</>
+                  : result.totalUncounted > 0
+                    ? <><AlertTriangle className="w-4 h-4" /> Restored — {fmtNum(result.totalUncounted)} record(s) the server did not count</>
+                    : result.totalCleared > 0
+                      ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalCleared)} pointer(s) cleared</>
+                      : <><CheckCircle2 className="w-4 h-4" /> Records restored</>}
       </div>
       <div className="text-[11px] leading-relaxed space-y-1">
         <div>
@@ -588,6 +597,11 @@ function RestoreResultPanel({ result }: { result: ChunkedRestoreResult }) {
           <div key={t.name}>
             <span className="font-mono">{t.name}</span>: {t.refused.length} row(s) refused —{" "}
             {Array.from(new Set(t.refused.map((r) => restoreRefusalLabel(r.code)))).join("; ")} (see the audit log&apos;s RESTORE_CHUNK rows for each id).
+          </div>
+        ))}
+        {danglingByTable.map((t) => (
+          <div key={`dangling-${t.name}`}>
+            <span className="font-mono">{t.name}</span>: {t.n} flow(s) not restored — {restoreRefusalLabel(DANGLING_FLOW_CODE)}. Draw them again once the equipment or unit exists.
           </div>
         ))}
         {clearedByTable.map((t) => (

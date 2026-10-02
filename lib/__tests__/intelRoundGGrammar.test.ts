@@ -122,7 +122,8 @@ describe("20261127 — an org restore carries on past two spellings of one alias
   ];
   const restore = async () => {
     const { supabase } = await import("@/lib/supabase");
-    // app/api/admin/restore/apply/route.ts: upsert(chunk, { onConflict, ignoreDuplicates }), then insert as the fallback.
+    // The restore write as the single-shot app/api/admin/restore/apply/route.ts sent it (deleted, intelligence ILIFE-4):
+    // upsert(chunk, { onConflict, ignoreDuplicates }), then insert as the fallback.
     const up = await supabase.from("asset_aliases").upsert(exported.map((r) => ({ ...r })), { onConflict: "id", ignoreDuplicates: true });
     if (!up.error) return up;
     return supabase.from("asset_aliases").insert(exported.map((r) => ({ ...r })));

@@ -17,8 +17,8 @@
       "LOW": 9
     },
     "by_status": {
-      "OPEN": 46,
-      "RESOLVED": 13
+      "OPEN": 42,
+      "RESOLVED": 17
     }
   },
   "status_vocabulary": [
@@ -129,8 +129,6 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/admin/restore/apply/route.ts:30-31",
-        "app/api/admin/restore/apply/route.ts:75-104",
         "lib/dataRestore.ts:135-138",
         "lib/dataRestore.ts:210-216",
         "lib/dataRestore.ts:352-361",
@@ -433,10 +431,8 @@
       "blast_radius": null,
       "related": [],
       "locations": [
-        "app/api/admin/restore/apply/route.ts:79-111",
         "app/api/admin/restore/apply-table/route.ts:52-58",
-        "lib/dataRestore.ts:200-218",
-        "app/api/admin/restore/apply/route.ts:75"
+        "lib/dataRestore.ts:200-218"
       ],
       "has_verifier_correction": true,
       "verified_by": "adversarial-independent",
@@ -493,7 +489,6 @@
       "related": [],
       "locations": [
         "app/api/admin/restore/apply-table/route.ts:74-87",
-        "app/api/admin/restore/apply/route.ts:98-125",
         "app/(protected)/admin/restore/page.tsx:190-216",
         "app/(protected)/admin/restore/page.tsx:445-453",
         "lib/dataRestore.ts:336-348"
@@ -513,7 +508,7 @@
       "id": "BKP-6",
       "title": "Retention pruning deletes every object older than N days under the prefix — with no prefix set, that is the customer's entire bucket",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -688,7 +683,6 @@
       "related": [],
       "locations": [
         "app/api/admin/purge/route.ts:173-184",
-        "app/api/admin/restore/apply/route.ts:129-139",
         "app/api/admin/shed/commit/route.ts:113-120",
         "app/api/admin/ticket-shed/commit/route.ts:197-204",
         "app/api/admin/ticket-shed/restore/route.ts:210-217",
@@ -1116,7 +1110,7 @@
       "id": "BKP-11",
       "title": "Any active org member can read the encrypted S3 credentials the API refuses to return, and a restore reinstates enabled destinations pointing at the backup owner's bucket",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1173,7 +1167,7 @@
       "id": "BKP-13",
       "title": "Scheduled exports write no audit_logs row and raise no admin alert — a webhook destination is an unlogged daily exfiltration channel that bypasses the plan gate",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1496,7 +1490,7 @@
       "id": "BKP-15",
       "title": "A restore refuses a process flow whose endpoint is gone — the dangling flows a backup carries are reported as failed rows, not restored as what they were",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (verified by intelligence I-09's second review on a throwaway PostgreSQL 16, recorded in intelligence `FLOW-6`'s record, \"Open handoff to admin-and-org (BKP restore fidelity)\")",
       "blast_radius": null,

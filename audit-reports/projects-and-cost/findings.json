@@ -18,8 +18,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 67,
-      "OPEN": 10
+      "RESOLVED": 68,
+      "OPEN": 9
     }
   },
   "status_vocabulary": [
@@ -171,7 +171,7 @@
       "id": "INTK-6",
       "title": "Live contractor portal tokens are dumped in cleartext into every org backup and shipped to external destinations, reachable by a role that cannot even read the table under RLS",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

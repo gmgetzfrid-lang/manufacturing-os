@@ -395,10 +395,10 @@ const census = (): Payload[] => scan().payloads;
 const RAW_SITES: Record<string, number> = {
   "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence
   "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC
-  "app/api/data-export/run/route.ts": 1,          // security_export — admin-and-org
   "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6
   "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6
   "app/api/transmittal/route.ts": 2,              // transmittal_unstampable, ack_complete — document-control, N9
+  "lib/exportAlerts.ts": 1,                       // security_export — admin-and-org (moved here from app/api/data-export/run/route.ts by A&O P3; the service role)
   "lib/intakeRateLimit.ts": 1,                    // doc_superseded / review_requested digest — projects
   "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence
   "lib/projects.ts": 1,                           // checkout_released auto-release — document-control, N9

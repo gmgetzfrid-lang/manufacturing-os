@@ -143,7 +143,7 @@ Tests, all in `lib/__tests__/storageKeyRegistry.test.ts`:
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply/route.ts:79-111`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75`
+- **Locations:** `app/api/admin/restore/apply/route.ts:79-111 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75 (deleted by admin-and-org P3, ILIFE-4)`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified by direct comparison of the two routes; the org-forcing line exists in apply-table and has no counterpart in apply. Admin of org A can write forged rows into org B, and into any table name the envelope invents.
 
 **Mechanism.** apply-table (the chunked path the UI uses) remaps then overwrites: `const m = remapRow(r, idRemap); if ("org_id" in m) m.org_id = orgId;` — with the comment "FORCE the org boundary: whatever the backup (or a hostile client) claims, restored rows belong to the authorized workspace". The single-shot apply route omits that step entirely: it only calls `remapRow`, and remapRow rewrites org_id ONLY when the value is a key of idRemap.orgId, which contains exactly one entry — `{ [manifest.orgId]: targetOrgId }`. A row carrying any other org_id falls through `deepRemapValues` unchanged and is written by the service-role client, which bypasses RLS. apply also has no IMPORTABLE allowlist: `plan.counts.tables` is built from whatever keys the uploaded envelope has, minus SKIP_TABLES, so any table name the poster invents is attempted.
@@ -237,7 +237,7 @@ Fix: `lib/exportTables.ts EXPORT_KEYED_BY` names each such table's own key: `org
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply-table/route.ts:74-87`, `app/api/admin/restore/apply/route.ts:98-125`, `app/(protected)/admin/restore/page.tsx:190-216`, `app/(protected)/admin/restore/page.tsx:445-453`, `lib/dataRestore.ts:336-348`
+- **Locations:** `app/api/admin/restore/apply-table/route.ts:74-87`, `app/api/admin/restore/apply/route.ts:98-125 (deleted by admin-and-org P3, ILIFE-4)`, `app/(protected)/admin/restore/page.tsx:190-216`, `app/(protected)/admin/restore/page.tsx:445-453`, `lib/dataRestore.ts:336-348`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right as stated — restore is insert-only by construction, so corrupted rows that still hold their original ids are never touched and the run reports success. Note the failure can also read WORSE than described: `inserted += up.count ?? chunk.length` (line 81) falls back to the full chunk size if PostgREST returns no count, reporting thousands of 'imported' records that were all discarded.
 
 **Mechanism.** Every table is written with `upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true })` — ON CONFLICT DO NOTHING against ids taken verbatim from the backup. Ids are never regenerated and never remapped (only org_id and uids are). So any row whose id already exists is skipped, whatever its current contents. The UI sums `body.inserted` but shows a green "Records restored" panel regardless, and — unlike apply/route.ts:115-125, which explicitly STOPS after a table fails because "continuing after a parent failure inserts children referencing rows that never landed" — the chunked client path does `tableFailed = true; break;` on the chunk loop and then continues to the next table in FK order.
@@ -404,6 +404,8 @@ app/api/admin/restore/apply-table/route.ts:77 `const up = await sb.from(table).u
 
 **Scope / residual.** No repair mode: recovering a corrupted row means editing it, or restoring into an empty workspace (`DEC-75` §5 reversal). *Corrected at the second review:* the first fix pass said the empty-workspace route "works again". It did not for any org with indexed knowledge (428C9 stopped the run), and it lost every team a placeholder created and all that team owned. Both are fixed in fix pass 2. A fresh-workspace restore still does not bring back a placeholder's team memberships (re-add them after the person accepts), nor the team creator / adder fields that named a placeholder (cleared). A row naming a refused parent through any pointer other than the two cleared ones is refused after it (reported). A row that collides on a SECOND unique key is refused and reported (23505) while the rest lands; it is not merged with the live row it duplicates. Intelligence `ILIFE-10`'s business keys and its `is_explicit` pre-filter are not built (see `BKP-12`). "Put the files back" is still offered after a stopped run: the records that landed may need their files. Intelligence `ILIFE-4` can close by pointer: criteria 1 and 3 here, criterion 2 by `ORG-1` (`/apply` is kept as the small-backup path and shares the write and the stop rule). *Corrected at the third review:* the re-run safety this record and the stop panel claimed ("rows already restored are skipped, not duplicated") held only with a frozen uid map. A re-run through the page minted new placeholder uids and landed every uid-keyed row again. It holds since fix pass 3, because a re-run links the placeholders the first run created. *Corrected at the fourth review:* that held only while the member read and every placeholder insert succeeded, and the residual named here understated the failed insert. An unmapped person's rows did not just wait for a later run. They landed naming the raw backup uid, which may be a live person of another workspace on the deployment, in owner, checkout and notification columns and in a team membership. Both are closed in fix pass 4: a failed read, rename or placeholder insert stops `/begin` and `/apply` before any table is written, and a re-run links the placeholders already made. What the stop leaves behind is the placeholders made before the failure and, if chosen, the backup's workspace name. Both are recorded in the audit row and kept by the re-run. *Corrected at the fifth review:* fix pass 4's records said every person in the backup is mapped before any row is written. A second membership row of one address and a member with no address were never mapped, and rows naming them landed with the raw backup uid; fix pass 5 maps the first and refuses the rows of the second. One restore now changes an existing row: a numbering counter this workspace holds is raised to the backup's value when that is higher, never lowered (`DEC-75` §5). Still open: a uid in no row of the backup's membership list (someone removed before the backup) lands as it is (`ORG-1` residual). A new numbering counter needs a `RESTORE_COUNTER_COLUMNS` entry, and no census finds one. A concurrent write of the same key during a restore can make a reported clear wrong. A `/begin` that stops leaves the drop-time plan's warnings on screen until the Admin applies again. *Corrected at the sixth review:* fix pass 5 said a counter that cannot be raised stops the run before the records numbered from it; that held for tickets only until fix pass 6 placed `library_numbering` before `documents`. Also still open: a restore into a workspace whose ticket or library prefix differs from the backup's skips the numbers the backup issued (a gap, never a duplicate).
 
+*Cross-note (2026-10-01, admin-and-org Round G, P3).* "`/apply` is kept as the small-backup path" above is out of date. The single-shot `app/api/admin/restore/apply/route.ts` had no caller, and admin-and-org P3 deleted it under intelligence `ILIFE-4` (criterion 2). The one restore door is `/api/admin/restore/begin` plus `/api/admin/restore/apply-table`, writing through `lib/dataRestore.ts applyRestoreChunk`. This finding's additive rule, honest counts and stop-on-failure all live in that shared write and the page's driver, so they hold unchanged. The tests above that ran "on `/apply`" now run on the chunked path (`lib/__tests__/restoreApplyRoute.test.ts`).
+
 ---
 
 <a id="bkp-6"></a>
@@ -411,8 +413,10 @@ app/api/admin/restore/apply-table/route.ts:77 `const up = await sb.from(table).u
 ## BKP-6 · Retention pruning deletes every object older than N days under the prefix — with no prefix set, that is the customer's entire bucket
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (done-whens 2 and 3: the UI says the prefix is required for retention and what will be deleted; retention counts and failures reach the run record) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
+- **Assigned:** the user — paste `supabase/migrations/20261172_ao_roundG_export_run_retention.sql` (Done-when 3's run-row columns; `DEC-30`). *(Corrected at fix pass 7: from the sixth review fix pass this line proposed admin-and-org P7 for Done-when 3's remainder. P7's plan entry (`audit-reports/fleet-plans/admin-and-org.json`) names no `export_runs`, run route or data-export page, while P3's own entry lists "BKP-6 residual" and "lib/exportRunner.ts (retention deleted/failed counts on export_runs)". The integrator ruled that P3 closes it, and P3 did at fix pass 7, below.)*
+- **Pending migration:** `supabase/migrations/20261172_ao_roundG_export_run_retention.sql` — **not applied** (`DEC-30`). The app deploys first and works either way.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/(protected)/admin/data-export/page.tsx:664-666`, `app/(protected)/admin/data-export/page.tsx:605`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing constrains the purge to keys this app wrote — not the filename pattern, not a prefix requirement, not a marker object. With Prefix blank, retention deletes unrelated objects in the customer's bucket.
@@ -444,6 +448,86 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 - **Done-when 3, on `f1ac550`: counts and failures were in diagnostics.** The runner wrote `step("s3:retention:done", "scanned N, deleted M app archive(s)")`, or `step("s3:retention:err", …)` on a refusal or failure, into diagnostics only (`lib/exportRunner.ts:364-375`). The run recorded success either way, and `export_runs` had no retention column. admin-and-org P3's file list names "lib/exportRunner.ts (retention deleted/failed counts on export_runs)".
 
 No code changed in this package. What remained on `f1ac550` (the page's prefix requirement and copy, and the counts on the run row) is P3's, and P3's resolution records what landed.
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, the residual of a finding whose core document-control `XEDGE-4` closed. Verified on base `bf6a552`. Already in place from `XEDGE-4`:
+- `lib/exportRunner.ts s3PurgeOlderThan` refuses an empty prefix before any bucket call, and only keys matching `EXPORT_ARCHIVE_RE` (`manufacturing-os-export-…zip`) are ever candidates (Done-when 1);
+- the destination create and PATCH routes refuse a retention without a prefix (Done-when 2, API half).
+
+What was still open, reproduced:
+- the page offered the pair freely. Prefix read "Optional folder inside the bucket" (`app/(protected)/admin/data-export/page.tsx:606`) and Retention read "Delete older exports in your bucket" (`:665`);
+- the purge counted what it CHOSE, not what storage deleted (`lib/exportRunner.ts:529`, `const deleted = toDelete.length`). It never read `DeleteObjects`' per-key `Errors`;
+- its outcome lived only in `diagnostics` (`:372-374`).
+
+Fix:
+- **The purge's count.** `s3PurgeOlderThan` counts each `DeleteObjects` answer: a key storage reports in `Errors` is `failed`, not deleted, and the first refusal is kept as `error`. A call that throws stops the purge, with the rest counted as not deleted. It returns `{ scanned, deleted, failed, error? }`.
+- **On the run row.** `buildAndDeliverExport` returns the purge's outcome (`ExportRunResult.retention`). `retentionProblem` turns a purge that did not finish into one sentence ("Backup delivered and verified, but the retention purge did not finish: deleted N archive(s) older than D day(s), M could not be deleted — …"). Both `app/api/data-export/run` and `run-scheduled` write that sentence to the run's `error_message` and to the destination's `last_run_error`. The run stays `succeeded`: the backup itself was delivered and read back.
+- **On the page.** Each run row shows "Retention: …" from the run's own trace, the clean count included (amber when the purge failed). The Prefix field says it is required for retention. The Retention field is disabled until a prefix is set (and for a webhook), and its hint says exactly what is deleted: this app's `manufacturing-os-export-….zip` archives older than N days under `<prefix>/`, permanently, and nothing else.
+- Files: `lib/exportRunner.ts`, `app/api/data-export/run/route.ts`, `app/api/data-export/run-scheduled/route.ts`, `app/(protected)/admin/data-export/page.tsx`.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`, "BKP-6 — a retention purge's failures and real deletion count reach the run row":
+  - a key storage refuses is counted failed, not deleted;
+  - a throwing delete call stops the purge;
+  - `retentionProblem`'s sentences;
+  - a scheduled run whose purge failed stays succeeded, with the failure on the run row and on the card;
+  - the page's prefix rule and the run row's retention line.
+
+  The purge tests fail against base (`{ deleted, scanned }`, the candidate count).
+
+**Done-when.** *(Done-when 3 corrected at the sixth review fix pass, and again at fix pass 7; see the Partial block and the fix pass 7 block below.)*
+- [x] retention only deletes keys matching the export filename pattern ✓ — `XEDGE-4` (`EXPORT_ARCHIVE_RE`), unchanged.
+- [x] a non-empty prefix is required before retention_days can be set, and the UI states plainly that objects under that prefix will be deleted ✓ — the API since `XEDGE-4`, the page now (field disabled without a prefix, hint names what is deleted).
+- [x] retention failures and deletion counts are surfaced on the run row instead of only in diagnostics ✓ (pending migration `20261172`). A failure is the run's `error_message`, with its deleted and failed counts, and the card's `last_run_error`. Since fix pass 7 the purge's deleted and failed counts, a clean purge's included, are the run row's own columns (`retention_deleted`, `retention_failed`), and the page reads them there. *(This line read ✓ until the sixth review fix pass, then PARTIAL: a clean purge's count was stored only in the run's `diagnostics`. Corrected at fix pass 7.)*
+
+**Scope / residual.** *(Corrected at fix pass 7: this read "No migration: `export_runs` has no retention columns. A clean purge's count is read from the run's own `diagnostics` step, shown on its row, and is not a column." Migration `20261172` adds the columns; a run closed before it is pasted keeps its count in `diagnostics`, and the page still reads it from there.)* A purge refused for a missing prefix (a legacy row that predates `XEDGE-4`'s write-time check) is reported the same way, as "did not finish".
+
+**Partial (2026-10-02, admin-and-org Round G, P3 sixth review fix pass).** The Resolution above marked this finding RESOLVED with Done-when 3 ✓. Read as written, Done-when 3 is not met, so the finding returns to OPEN (`DEC-29` item 3: every Done-when, checked individually).
+- **Done-when 3, as written:** "retention failures and deletion counts are surfaced on the run row instead of only in diagnostics".
+  - *Met for failures.* A purge that did not finish is the run's `error_message`, with its deleted and failed counts, and the destination's `last_run_error` (`retentionProblem`, written by both run routes). The run stays `succeeded`.
+  - *Not met for a clean purge's count.* It is stored only in the run's `diagnostics` (the `s3:retention:done` step). The page reads it from there and shows it on each run row, but the record holds it nowhere else, and `export_runs` has no retention column (`supabase/migrations/20260530_data_export_schedules.sql:67-99`). The fleet plan's wording for P3 asked for "retention deleted/failed counts on export_runs", and P0's assignment for "retention counts and failures reach the run record". A structured count on the run record needs a migration, and P3 ships none. *(Corrected at fix pass 7: P3 ships it, `20261172`.)*
+- **Remainder, and its owner.** Columns on `export_runs` for a purge's deleted and failed counts (for example `retention_deleted INT`, `retention_failed INT`), written by `app/api/data-export/run` and `run-scheduled` from `ExportRunResult.retention`, which already carries `{ scanned, deleted, failed, error? }`. The page would then read the columns instead of the diagnostics step. Proposed owner: admin-and-org P7 (see Assigned). `DEC-30` applies to the migration. When it lands, Done-when 3 is met and this finding closes; Done-whens 1 and 2 stand as recorded. *(Corrected at fix pass 7: the owner is P3, by the integrator's ruling; P7's plan entry names none of these files. The remainder landed at fix pass 7, below.)*
+- No code changed for this finding in the sixth pass. The tests named in the Resolution still pin what landed.
+
+**A&O P3 fix pass 7 (2026-10-02).** The remainder above, closed by P3 (the integrator's ruling: P3's plan entry lists "BKP-6 residual" and the retention counts on `export_runs`; P7's names none of these files).
+- **The migration.** `supabase/migrations/20261172_ao_roundG_export_run_retention.sql` adds `export_runs.retention_deleted` and `export_runs.retention_failed`: nullable integers, no default, each commented. NULL means no purge ran on the run, or the run closed before the paste. Nothing is backfilled: an older run keeps its count in `diagnostics`. Read first: the table's only definition (`20260530_data_export_schedules.sql:67-99`) and every later file touching it (`20260605`, its member policy; `20261154`, its column grant). No policy, grant, function, trigger or index changes, so `DRLS-16` does not apply. No member is granted the new columns: nothing reads `export_runs` with a member's session. Before `20261154` is pasted, the table-level grant covers them (two counts, no coordinate); after it, a member reads only its card columns.
+  - *Shape (`DEC-30`, one paste).* A guard (it needs `20260530`), then a TEMP inventory of counts only, captured before the transaction:
+    - whether the columns already exist (a re-run);
+    - the rows;
+    - the runs whose trace records a finished purge, and those whose purge did not finish;
+    - whether `authenticated` and `anon` held table-level SELECT.
+
+    Then `BEGIN` / `COMMIT` around the two `ADD COLUMN IF NOT EXISTS` and their comments, and ONE final `(check, ok, n)` SELECT. Its seven probes: each column's shape and comment; RLS on; the member policy kept; neither role's table-level SELECT changed; no column grant; and the service role's read and write. After-counts and the inventory follow.
+  - *Paste order.* Either order with the deploy is safe, and either order with `20261154`; the app usually deploys first. Before the paste, the run-row update that names the columns is refused (PGRST204 / 42703) and written again without them, so the run closes exactly as before.
+  - *Rollback.* `ALTER TABLE export_runs DROP COLUMN IF EXISTS retention_deleted, DROP COLUMN IF EXISTS retention_failed;`. The app keeps working.
+- **The write.** `lib/exportRunner.ts:237` `closeSucceededRun(admin, runId, patch, retention)` closes a succeeded run with `patch`, the update both routes wrote before, unchanged, plus `retentionRunColumns(retention)` (`:212`: `{ retention_deleted: deleted, retention_failed: failed }`, or nothing when no purge ran).
+  - *Tolerance.* When the database does not know the columns (`isMissingRetentionColumn`, `:221`: 42703 or PGRST204), it writes `patch` alone and logs a warning naming the migration. The counts stay in `diagnostics` as before.
+  - *Checked.* Any other refusal is returned to the route's checked write as before ("run row not updated: …"), and it is not retried. *(Corrected at fix pass 8: the helper answered that case `retention: "unrecorded"`, the word it uses when the columns are missing and the update was written again without them. It now answers `"close-failed"`: the run row was not closed at all. The routes read only `error`, so nothing they write changed.)*
+  - *Callers.* `app/api/data-export/run/route.ts:196` and `app/api/data-export/run-scheduled/route.ts:284`, the success paths. The failure paths, the gate-skip row and `structured` never name the columns.
+  - *Diagnostics.* Unchanged: the `s3:retention:*` step is written as before. A failure's sentence still goes to `error_message` and the card's `last_run_error`.
+- **The page.** `app/(protected)/admin/data-export/page.tsx:526` `retentionOf` reads the run row's counts ("Retention: deleted N archive(s), M could not be deleted"). It is amber when `retention_failed > 0`, or when the trace says the purge did not finish: a purge refused for a missing prefix is 0 and 0 on the row and still a failure. For a run closed before the paste (columns NULL) it reads the trace step, as before. *(Corrected at fix pass 8: for a run closed after the paste the counts had replaced the trace's detail, so its line no longer said how many objects the purge scanned or why it stopped. They follow the counts again, from the trace step: "deleted 5 archive(s), 2 could not be deleted (scanned 12) — the delete call failed: …".)*
+- **Tests.**
+  - `lib/__tests__/dataExportRoutes.test.ts`, "A&O P3 fix pass 7 — BKP-6 Done-when 3: a retention purge's counts on the run row's own columns (20261172)":
+    - a clean purge's count on the row, from the scheduled push and from Run Now;
+    - a failure surfaced: the failed count beside the sentence, and a refused purge as 0 and 0 with its reason;
+    - before the paste, for PGRST204 and for 42703: the same update without the columns, its other fields identical, no warning, the counts in the trace;
+    - a webhook push, a bucket with no retention and a download never name the columns;
+    - a non-missing-column refusal is named once and not retried.
+  - `lib/__tests__/dataExportPageRetention.test.ts` (jsdom) mounts the page with the runs API answering. It renders the clean count from the row (not the trace), the failure in amber, the refused purge in amber, the pre-paste run from its trace, and no line for a webhook. *(Corrected at fix pass 8: "not the trace" is now the wording: the count is "deleted N archive(s)" from the row, and the trace adds "(scanned N)" and the reason; the test no longer asserts that "scanned" is absent.)*
+  - `lib/__tests__/aoRoundGExportRunRetentionMigration.test.ts`: the one-paste shape, counts-only inventory, additive-only DDL, every probe, the census of files touching `export_runs`, the writer's and the page's column names, and no member grant.
+  - `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts`: the `20261154` card-column census is now taken as of that file (`censusSchema(…, { through })`, `lib/__tests__/helpers/schemaKeys.ts`). Without that, it fails once `20261172` exists.
+  - *Negative controls.* Writing no columns fails six route tests. Dropping the retry fails both pre-paste tests. The page at HEAD (trace only) fails three of the four render tests; the fourth is the pre-paste regression guard and passes either way.
+
+**Done-when (fix pass 7, each checked — `DEC-29`).**
+1. ✓ — only `manufacturing-os-export-…zip` keys under the prefix are candidates (`XEDGE-4`, `EXPORT_ARCHIVE_RE`), unchanged.
+2. ✓ — the API refuses retention without a prefix; the page disables the field without one and says what is deleted. Unchanged.
+3. ✓ (pending migration `20261172`). The purge's failures are on the run row (`error_message`, with the counts) and the card, as before. Its deleted and failed counts, a clean purge's included, are now the run row's own columns, written by both run routes and shown on the page's run list. Until the paste, a clean purge's count stays in `diagnostics` only, as before, and the code half is complete.
+
+**A&O P3 fix pass 8 (2026-10-02).** Two nits from the eighth review; Done-when 3 stands as checked above.
+- **`closeSucceededRun`'s answer (nit).** For an update refused for any reason other than a missing column, it answered `retention: "unrecorded"`, the same word as "the columns are not there yet, written without them". It now answers `"close-failed"` (`lib/exportRunner.ts:254`), and its doc names all four values: `"written"`, `"none"`, `"unrecorded"`, `"close-failed"`. The routes read only `error`, so the run row, the warning and the header are unchanged.
+- **The page's detail (nit, cosmetic).** After the paste, `retentionOf` showed the row's counts alone, so a run's line lost "scanned N" and why the purge stopped, which the trace still holds. The counts still lead; `retentionTrace` (`app/(protected)/admin/data-export/page.tsx:549`) reads the trace step and adds " (scanned N)" and " — <why it stopped>" (for a purge that threw before it scanned, its error alone). A run closed before the paste reads its trace step whole, as before.
+- **Tests.**
+  - `lib/__tests__/dataExportPageRetention.test.ts`: the clean line is exactly "Retention: deleted 3 archive(s) (scanned 9)" (the row's wording, not the trace's "app archive(s)"); the failed one "… 1 could not be deleted (scanned 4)" in amber; the refused one "deleted 0 archive(s) — Retention purge refused" in amber; a new purge stopped part-way, "deleted 5 archive(s), 2 could not be deleted (scanned 12) — the delete call failed: SlowDown"; the pre-paste and webhook rows as before.
+  - `lib/__tests__/dataExportRoutes.test.ts`, "a refused run-row update that is not a missing column…": the helper answers `close-failed`.
+  - *Negative controls.* The page at fix pass 7 fails four of the five render tests (the pre-paste guard passes either way). The old word fails the helper test.
+
+**Status.** RESOLVED for the code (`DEC-30`: a pending paste is stated, not implied). **Pending migration:** `supabase/migrations/20261172_ao_roundG_export_run_retention.sql` — **not applied**; the user pastes it. Paste and deploy notes are in `99-fix-sequencing.md`'s integrator notes.
 
 ---
 
@@ -498,6 +582,7 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** user decision first (`DEC-87` §4) — Done-when 2's private-notes limb waits on it: (a) withhold the notes, with the backup saying it is incomplete; (b) carry them encrypted to their authors; or (c) keep carrying them in the clear to the Admin who exports. Then the package the integrator routes the chosen option to: (a) is the first review fix pass's withholding, ready to restore; (b) is new design work; (c) closes it as it stands. Every other Done-when is met. Recorded by admin-and-org Round G P3 at its sixth review fix pass, 2026-10-02.
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/structured/route.ts:55-57`, `app/api/data-export/run/route.ts:17`, `lib/dataExport.ts:18-20`, `lib/dataExport.ts:143-179`, `supabase/migrations/20260708_acl_rls_enforcement.sql:56-62`, `supabase/migrations/20260708_acl_rls_enforcement.sql:85-91`, `supabase/migrations/20260630_scratchpad_private.sql:59-66`, `lib/downloads.ts:1-9`, `app/data-portability/page.tsx:71-72`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified end to end: role gate admits Manager, the export runs as service role, and neither the ACL restrictive policy nor the private-notes policy nor the stamping/download_audits path applies.
@@ -524,6 +609,237 @@ app/api/data-export/structured/route.ts:55 `if (!["Admin", "Manager", "DocCtrl"]
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `ILIFE-7`, `DACL-7` and `IEDGE-10` (the same Manager / DocCtrl export) close by pointer when this lands. Together they add: destination create / edit Admin-only; the `DATA_EXPORT` row recording the exporter's role and whether presigned URLs were minted or the dump was ACL-filtered; the manifest naming withheld rows; and a test that the export role list and the ACL controller tier cannot drift.*
 
 *Cross-note (2026-10-01, admin-and-org Round G, P2 second review fix pass): two handoffs for P3, which owns the export routes and `lib/exportRunner.ts`. Both are recorded with the hunk under `BKP-9`'s "Second review fix pass". (1) In `buildAndDeliverExport`'s embed loop, a file listed unchecked (it has a URL but size `null`) must be capped by the size storage reports before it is buffered. Today it skips the per-file embed-cap test. (2) The three export routes can pass `deadlineAt` (route start + 240 s) into `runOrgExport`. A third item stands as before: `buildReadme` does not print `manifest.files.unchecked`.*
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3; projects-and-cost `INTK-6`'s role-set limb closes by pointer here. Reproduced on base `bf6a552`:
+- **The role set.** Every export route admitted Manager and DocCtrl:
+  - `app/api/data-export/structured/route.ts:56` (`memberHoldsAny(…, ["Admin", "Manager", "DocCtrl"])`);
+  - `run/route.ts:18`, `runs/route.ts:9`, `destinations/route.ts:14`, `destinations/[id]/route.ts:14` and `destinations/[id]/test/route.ts:11` (`const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"]`);
+  - the page (`app/(protected)/admin/data-export/page.tsx:75`) and the surface (`lib/adminSurfaces.ts:91`, entry `*`).
+- **Private notes.** `lib/dataExport.ts:146` dumped `notes` with no row filter, so every member's standalone (private) notes went out.
+- **The record.** The `DATA_EXPORT` row (`:285-303`) named the event, never the files. Its insert sat in a try/catch that a refused insert, resolved into `{ error }`, never reached.
+
+29 of the 35 tests in the new `lib/__tests__/dataExportRoutes.test.ts` fail against the base sources.
+
+Fix (the plan's rule: `lib/adminGate.ts authorizeAdminSurface`, no new constant, no new capability):
+1. **Admin-only, through the one gate.**
+   - The data-export surface in `lib/adminSurfaces.ts` is now `entry: ["Admin"]`, the restore surface's set: the mirror-image operation.
+   - Every route under `app/api/data-export` calls `authorizeAdminSurface(req, orgId, "data-export")` and keeps no role constant of its own: `structured`, `run`, `runs`, `destinations` GET / POST, `destinations/[id]` PATCH / DELETE and `destinations/[id]/test`.
+   - The page reads `hasAnyRole(["Admin"])`.
+   - An Admin is in the controller tier, so the ACL-restricted documents the service role reads are ones the exporter may read anyway. Done-when 2's second half holds by refusal (`DEC-43`, as the plan states).
+2. **Private notes stay with their author.** *(Undone at the second review fix pass: the notes are carried again. See the Partial block below.)* `lib/dataExport.ts withholdPrivateNotes` takes every note with no document, project or asset out of the dump before the file scan, the rule `notes_standalone_own` (`20260630`) applies in the app. A file only such a note names is not carried either. The withheld notes are counted in `manifest.withheld`, in a manifest note (`PRIVATE_NOTES_WITHHELD`) and in the `DATA_EXPORT` row's `details.withheld`. A scoped note exports as before.
+3. **The chain of custody names the files.** `recordExport` writes the `DATA_EXPORT` row and then `DATA_EXPORT_FILES` rows.
+   - The `DATA_EXPORT` row now carries `user_role` (the exporter's role) and, in `details`, the channel, the role collection, how many download links were minted (`presignedUrls`) and how many file rows follow.
+   - The `DATA_EXPORT_FILES` rows name every file the export hands out, `EXPORT_FILES_PER_AUDIT_ROW` (500) to a row, with the document and revision for a revision's file or native source.
+   - Both writes are CHECKED: a refused record refuses the export before anything is handed out (`BKP-13`).
+   - It is an `audit_logs` bulk record, not `download_audits`: the plan leaves `lib/downloads.ts` and `download_audits` alone.
+4. **The role list** comes from the shared surface registry, read by the one gate, rather than three route constants. It is not a capability token (the plan's rule; `DEC-87` §1).
+- Files: `lib/adminSurfaces.ts`, `lib/dataExport.ts` (outside the plan's file list, recorded under filesOutsidePlan), every route under `app/api/data-export/`, and `app/(protected)/admin/data-export/page.tsx`.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`:
+  - "BKP-8 — every data-export route is Admin-only, through the one gate": Manager, DocCtrl, Manager+DocCtrl and Viewer are refused 403 by all eight handlers, and nothing is exported or written; an Admin is admitted by the collection;
+  - "BKP-8 Done-when 2 — a standalone note is its author's …": the note is withheld, counted and named, its photo is not carried, and a workspace with no private note exports exactly as before; the rule is pinned to `20260630`;
+  - "BKP-8 Done-when 3 / BKP-13 Done-when 1 …": the role and file names, chunking past 1,000 files, the machine row, and refused records.
+- Also: `lib/__tests__/roundE_D_rolesAdmin.test.ts` "every data-export route calls the gate itself" (`SURF-19`'s data-export rows), and the `sweepRoundC1b` census, which accepts the gate.
+- Regression first: `exportContractRoundTrip.test.ts` and `restoreArchiveRoundTrip.test.ts` pass. Their only edit gives the fixture's evidence note a project, so it is no longer a private scratchpad note.
+
+*Review fix pass (admin-and-org Round G, P3).* Two claims above were overstated, and both are fixed.
+- **Item 2: the manifest no longer says complete.** *(Superseded at the second review fix pass: nothing is withheld now, so the backup is complete again. See the Partial block.)* Withholding the notes left `manifest.complete: true` and the note "This document is a complete export of every record this organization owns". A disaster-recovery restore of that backup permanently loses every member's standalone notes, and nothing warned.
+  - A backup that withholds rows is now `complete: false`. Its first note reads "⚠ INCOMPLETE BACKUP — complete except N private note(s) withheld (manifest.withheld): a restore of this backup does not bring them back." (`lib/dataExport.ts`).
+  - The server ZIP's README gains a "Withheld rows — this backup is not complete" section (`lib/exportRunner.ts buildReadme`).
+  - The restore plan says so as its own warning, not as "some tables were not exported" (`lib/dataRestore.ts planRestore`; the envelope type now reads `manifest.tables` and `manifest.withheld`).
+  - The fixture edit above hid the case. `exportContractRoundTrip.test.ts` now carries a standalone note through export, the server ZIP and restore, and asserts the withheld count, the manifest wording, the README, the restore plan's warning and that the note is not restored.
+  - The trade-off is an **open decision for the user**, recorded under `DEC-87` §4: keep withholding (privacy; the backup is honestly incomplete) or carry the notes encrypted to their authors (complete, at a cost in design).
+- **Item 3: the per-file record no longer grows every backup.** *(Replaced at the second review fix pass. A webhook push names every file; a bucket push names them against a baseline. Since the third, every destination push, a webhook included, names them against a baseline. See the Partial block.)* `DATA_EXPORT_FILES` wrote one row per 500 handed-out files on every export, scheduled pushes included. `audit_logs` is itself exported, so a daily destination grew it, and every later backup, without bound.
+  - A push to the workspace's own destination (scheduled, or "Run Now" to a destination) now records ONE `DATA_EXPORT` row with `details.fileRecord = { mode: "digest", count, sha256 }`: the SHA-256 of the sorted, newline-joined paths (`exportFileListDigest`). It writes no per-file rows. The archive carries the list itself, and its own list recomputes the digest.
+  - An export handed to a person (the JSON download, the browser Full ZIP's envelope, the manual ZIP) keeps the per-file list.
+  - The choice is `runOrgExport`'s `fileRecord` option, which `buildAndDeliverExport` sets from the delivery. It is recorded under `DEC-87` §3.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`:
+  - the private-note case now asserts `complete: false` and the wording;
+  - "the restore plan says the backup leaves the private notes out — as itself";
+  - "a push to the workspace's own destination records ONE row …";
+  - "thirty nightly pushes add thirty audit rows";
+  - the delivery pin.
+
+  All fail against the first P3 commit.
+
+**Done-when.** *(Corrected at the second review fix pass; the Partial block below has the detail.)*
+- [x] full-org export is Admin-only, matching /admin/restore ✓ — the data-export surface carries the restore surface's set, enforced on every route by the one gate.
+- [ ] private standalone notes are excluded or author-redacted …, and ACL-restricted documents are … refused for a role that cannot read them all — **PARTIAL.**
+  - The ACL limb ✓: only the controller-tier Admin can export.
+  - The private-notes limb is **not done**. The notes are carried as before this package, because withholding them made every backup lose them on restore. Which way to go is the user's open decision (`DEC-87` §4). Until then the Admin-only gate is the interim mitigation, and the count is recorded.
+- [x] every export writes … an equivalent bulk-distribution record ✓ — `DATA_EXPORT_FILES` names every file that leaves, with its document and revision, each row's list compact:
+  - one by one, on every run, for an export handed to a person; *(Fifth review fix pass: withdrawn — that grew every later backup without bound. A person's export is now named against the workspace's own ledger, the same chained record as a destination's. See the fifth-pass block.)*
+  - for a push to a destination — a bucket or a webhook, scheduled or Run Now — against the destination's ledger: a baseline (a full list), then each night a delta naming only what changed since the previous push (500 entries to a row, none when nothing changed), chained back to the baseline; a new baseline once the chain would pass half the list or 400 rows. The night's list is rebuilt from those rows and checked against its digest (`DEC-87` §3). *(Third review fix pass: a webhook push moved from the line above to this one. Fourth: the delta was cumulative and capped at one row, which re-wrote a busy destination's whole list every few nights; it is now chained. See the Partial block.)*
+- [x] the role list stops being hardcoded in three route files and comes from the shared policy ✓ — the admin-surface registry through `authorizeAdminSurface`, by the plan's rule (no capability token).
+
+**Scope / residual.**
+- `/admin/storage`'s two export buttons (`app/(protected)/admin/storage/page.tsx:744-775`, admin-and-org P6's file) are still shown to Manager and DocCtrl, the storage surface's entry. They now answer 403 with the gate's denial. Hiding them for a non-Admin is proposed: P6. P6's plan entry lists that file for its label region only, so the handoff is recorded for the integrator in `99-fix-sequencing.md` (fourth review fix pass). *(Integrator, at the A&O P3 merge, 2026-10-02: assigned to P6, whose plan entry for that file now names it.)*
+- `DATA_EXPORT_FILES` names every file listed with a link. For a server ZIP that includes files later left out at the cap or the deadline, or a push with `include_files` off, it over-reports, the safe side for a recall. *(Second review fix pass: a destination push is named the same way, see Done-when 3.)*
+- *(Second review fix pass: superseded.)* A backup carries every standalone note again, and a restore brings them back. The withholding in item 2 above is undone. The branch had not merged, so no deployed backup lost notes.
+- A `DATA_EXPORT` row written for an export whose file list was then refused stays. The export itself is refused and the run row says why. *(Fourth review fix pass: a `DATA_EXPORT_UNDELIVERED` row now names its record id, as for any export that was recorded and then did not leave.)*
+- Other own-only tables (bell notifications, per-user markups) stay in the org backup as before. This closes the scratchpad finding only.
+- Intelligence `ILIFE-7`, `DACL-7` and `IEDGE-10` (the cross-note above) can be re-verified for closure by pointer:
+  - destination create and edit are Admin-only;
+  - the `DATA_EXPORT` row records the exporter's role and the links minted;
+  - a test pins the data-export set to the restore set.
+
+  *(Second review fix pass.)* Nothing is withheld now. The `DATA_EXPORT` row records how many private notes were carried (`details.privateNotes.carried`), and the manifest says the archive holds them.
+
+**Partial (2026-10-01, admin-and-org Round G).** The second review fix pass returned this finding to OPEN. Withholding the private notes broke the brief's binding regression rule, and the user has not decided `DEC-87` §4.
+- **Private notes are carried again (blocker).**
+  - *What went wrong.* `withholdPrivateNotes` dropped every note with no document, project or asset from every export, scheduled disaster-recovery pushes included. A restore of any backup taken after the merge would have lost every member's standalone notes for good. The brief's REGRESSION FIRST rule is that every export must still produce a complete, restorable archive. The trade-off was recorded as the user's open decision, yet the data-losing side had been chosen as the default.
+  - *The fix.* `lib/dataExport.ts` carries the notes as before this package: the withholding, the `manifest.withheld` field and the "complete except N private note(s)" wording are gone.
+  - *The count stays.* `countPrivateNotes` counts them. The manifest notes "N private note(s) … are in this backup, so restoring it brings them back. Keep the archive as private as those notes." (`PRIVATE_NOTES_CARRIED`), and the `DATA_EXPORT` row records `details.privateNotes.carried`.
+  - *Reverted with it.* The README's "Withheld rows" section (`lib/exportRunner.ts buildReadme`), and `lib/dataRestore.ts`'s withheld warning and manifest fields, which went past P3's brief for that file.
+  - *Interim mitigation.* The Admin-only gate (Done-when 1) narrows the original exposure: Manager and DocCtrl no longer take everyone's scratchpad.
+- **A destination push names its files (major).**
+  - *What went wrong.* The first review fix recorded a destination push by count and digest only. A digest confirms a list but cannot rebuild one. A webhook's archive sits on someone else's server, and a retention-purged bucket's is gone, so a recall could not name the drawings.
+  - *The fix in `lib/exportRunner.ts`.* `buildAndDeliverExport` now asks for `fileRecord: "list"` on a webhook push: every file, on every run. *(Withdrawn at the third review fix pass: that grew every later backup without bound. Every destination push, a webhook included, now takes the baseline-and-delta record below.)*
+  - *The fix in `lib/dataExport.ts`.* A bucket push asks for `{ destinationId }` (since the third review fix pass, every destination push does), and `recordExport` / `readBucketPushBaseline` (now `readDestinationBaseline`) work as follows:
+    1. read the destination's newest baseline (the `DATA_EXPORT_FILES` rows of kind `baseline`);
+    2. check it is whole and hashes to its own digest;
+    3. write ONE `delta` row naming the files added (document and revision) and the paths removed — none when nothing changed — or a new full baseline when there is no baseline it can vouch for, or when the change would pass one row (500 entries).
+  - *Rebuilding a night's list.* Every `DATA_EXPORT` row carries `fileRecord { mode, count, sha256, recordId }`, plus the baseline it was taken against. The night's list is the baseline plus its delta, and it hashes to that `sha256`.
+  - *Volume.* A quiet workspace's nightly push adds one audit row after the first night, and a busy one at most one more. A baseline read that fails writes a full baseline (the safe side). It never refuses the export.
+- **Tests.**
+  - `lib/__tests__/dataExportRoutes.test.ts`:
+    - "BKP-8 Done-when 2 (open)": every note exported, the backup complete, counted in the manifest and the `DATA_EXPORT` row; the restore plan raises nothing; `lib/dataRestore.ts` has no withheld branch;
+    - "BKP-8 Done-when 3 — a destination push names the files that left": a first-push baseline; a quiet night with no file rows; a delta naming added (with document and revision) and removed files, rebuilt and hashed; thirty quiet nights adding the baseline once; a large change rebaselining; a baseline missing a part, or a failed read, never used; a baseline per destination; the delivery pin.
+  - `lib/__tests__/exportContractRoundTrip.test.ts`: its fixture's evidence note is standalone again, as at base. A second standalone note goes through export, the server ZIP and the restore, and both land.
+
+  28 of these fail against the first review fix pass's library code.
+
+*Third review fix pass (admin-and-org Round G, P3).* Done-when 3 was claimed for webhook pushes by writing the whole per-file list into `audit_logs` on every push. `audit_logs` is itself exported, and every later export reads it whole (`dumpTable`, `select("*")`, 1,000 rows a page), then pretty-prints it in memory (the server ZIP's `tables/audit_logs.json`, `/structured`'s `JSON.stringify(envelope, null, 2)`). So a nightly webhook grew every later backup without bound: about 119 KB per 500 files a night, about 12 MB a night at 50,000 files, until the export would pass the function's memory or V8's longest string. The webhook exemption had no technical reason: a night's list is rebuilt from the audit rows, not from the archive, so where the archive went makes no difference.
+- **Every destination push is a baseline and deltas.** `lib/exportRunner.ts buildAndDeliverExport` asks for `fileRecord: { destinationId }` for every `delivery.kind === "destination"`: a bucket or a webhook, scheduled or Run Now. Only an export handed to a person keeps `"list"`.
+- **Each row's list is compact.** A `DATA_EXPORT_FILES` row carries:
+  - `prefix`: the workspace's `orgs/<id>/`, when every path in the row lies under it;
+  - `paths`: relative to that prefix;
+  - `docs`: each document the row names, once;
+  - `refs`: parallel to the paths, keyed by revision. `[docIndex, versionId]` for a revision's file or native source, null otherwise.
+
+  `lib/dataExport.ts` names the shape `CompactFileList`, and `fileListEntries` / `fileListRemoved` read it back whole. At real key lengths that is about 150 bytes a file; the object per file took about 250. A delta row's `removed` paths share the prefix.
+- **The baseline is found by index.** Baseline and delta rows belong to the destination: `resource_type` `export_destination` (`DESTINATION_FILES_RESOURCE_TYPE`) and `resource_id` the destination's id, the pair the destination routes' own audit rows use. The `DATA_EXPORT` row and a person's list keep `org` and the workspace's id.
+  - `readDestinationBaseline` (renamed from `readBucketPushBaseline`) filters on `resource_type`, `resource_id`, `action` and `org_id`, ordered by `timestamp` descending. That is the `(resource_type, resource_id, timestamp DESC)` index from `20260611`.
+  - The head read takes the first `kind: "baseline"` row and selects only its four small fields (`recordId`, `parts`, `sha256`, `startedAt`). The part read takes exactly `parts` rows of that record, newest first.
+  - It no longer filters every `DATA_EXPORT_FILES` row in the workspace on `details->>destinationId` and sorts on `details->>startedAt`. No migration is needed.
+- **The record names the role that admitted the exporter.** `structured` and `run` record `user_role` as the first of the data-export surface's entry roles the exporter holds (`admittedRole`). An Admin whose headline is Viewer is now recorded as Admin, not Viewer. The collection stays in `details.exporterRoles`.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "BKP-8 Done-when 3 — a webhook push through the real builder …" runs thirty scheduled nights through the sweep and the real `buildAndDeliverExport`, with fetch mocked and the workspace changing most nights. Every night is pushed and recorded. The file rows are one baseline, then at most one delta row a night. Each night's list rebuilds from the audit trail alone and hashes to its `sha256`. The rows are the destination's, and thirty nights add less than three baselines' worth.
+  - A second case: Run Now to a webhook writes a baseline, then a delta. A person's ZIP still writes the per-file list.
+  - Both fail with the second pass's `exportRunner` choice. They replace the source-regex delivery pin.
+  - The baseline reads go by resource, ordered by timestamp, take four small fields and read `parts` rows. A workspace row that merely names the destination in its details is never taken as its baseline.
+  - The compact row at ~120-character keys takes under 160 bytes a file, against over 240 for the object form.
+  - "an Admin whose headline is Viewer is recorded as the Admin the surface admitted" (fails against the second pass's routes).
+- `lib/__tests__/helpers/restoreMemoryDb.ts`: a `select` list naming a JSON path answers only those fields, as PostgREST does, and `defaults` stands in for `audit_logs.timestamp DEFAULT NOW()`.
+
+*Fourth review fix pass (admin-and-org Round G, P3).* Done-when 3's "one baseline, then at most one delta row a night" was overstated twice over.
+- **The delta was cumulative, so a busy destination re-wrote its whole list (major).** Each night's delta was taken against the newest baseline and capped at one 500-entry row. Once the change since the baseline passed 500 entries, a whole new baseline was written; at more than 500 changes a night (a bulk upload, or a shed that drops hundreds of superseded keys), every night. The review's simulation through the real `runOrgExport` (5,000 files, 200 new a night) wrote a full baseline every third night: 8.7 MB of `DATA_EXPORT_FILES` details in 30 nights against a 0.46 MB baseline (about 19x), about 1 GB a year at 50,000 files, all of it in `audit_logs`, which every later export dumps whole.
+  - *The fix, `lib/dataExport.ts`.* The ledger is now a chain. `readDestinationLedger` (replacing `readDestinationBaseline`) reads the newest baseline (its parts by page of 500, ordered by `details->>part`, up to `parts`), then that baseline's delta rows (at most `LEDGER_CHAIN_MAX_ROWS` + 100), walks them from the newest record back along `prev` to the baseline, applies them, and checks the result against the newest record's digest. `recordExport` writes a delta naming only what changed since the PREVIOUS push, over as many rows as it takes (500 entries each), carrying `prev`, `baselineId` and `link`. A quiet night writes nothing and its `fileRecord.prev` points at the chain's head.
+  - *When a new baseline is written.* When there is no ledger it can vouch for (none, a part missing, a digest that does not match), or when the chain since the last baseline, with tonight's change, would name more than `LEDGER_CHAIN_ENTRY_FRACTION` (half) of tonight's list (at least 500 entries) or take more than `LEDGER_CHAIN_MAX_ROWS` (400) rows. That bounds what is written: over any run of nights, the first baseline plus at most 3 entries per changed file (1 + 1/½), plus a baseline per 400 changed nights for a trickle. It bounds what is read: one baseline and at most 400 chain rows. The baseline record carries `rebased` (why) or `baselineProblem`.
+- **A member could force a full list every night (major).** The head read took any `audit_logs` row matching the destination's resource, action and `kind: "baseline"`, newest by `timestamp`. `audit_logs_insert` (`20260813:85-90`) lets any member insert any action, resource and timestamp so long as `user_id` is their own, and destination ids are readable by the audit tier (`DATA_EXPORT` details) and in bell metadata. One forged row dated 2099 was always "newest": five quiet nights wrote five full baselines.
+  - *The fix.* The ledger rows (baseline and delta) are machine rows: `user_id` NULL, `user_email` `system:export-ledger`, `user_role` `system` (`EXPORT_LEDGER_ACTOR`); the person behind a Run Now is on the `DATA_EXPORT` row and in each ledger row's `details.exportedBy`. Every ledger read adds `.is("user_id", null)` and `.lte("timestamp", now + 1 minute)` (a clock allowance). RLS forces a member's insert to carry their own uid, so no member can write a row the ledger reads; a future-dated row is never the newest.
+- **A delivery that failed still read as delivered (minor).** The `DATA_EXPORT` row and the ledger rows are written before the upload or the POST. `lib/exportRunner.ts buildAndDeliverExport` now passes its own record id into `runOrgExport` and, once `onRecorded` has fired, catches any later failure (the file list refused, the ZIP not built, a webhook's 500, a failed bucket put) and writes a `DATA_EXPORT_UNDELIVERED` machine row (`recordExportUndelivered`) naming the record id and the destination before the error reaches the route. A refused UNDELIVERED row is appended to the error, so the run row says so. `/structured` does the same for a file list refused after its `DATA_EXPORT` row. A destination's chain may still run through an undelivered record: its list is what the push carried; the UNDELIVERED row is what says it did not arrive.
+- **The JSON export was uncapped (minor).** `DEC-87` Risk relied on "rate-limited (12 an hour)", but only `/run` counted. `/structured` writes a whole compact list on every call. It now passes the shared `exportRateLimitRefusal` (`lib/exportRunner.ts`, which `/run` uses too) and opens a checked run row of its own (`trigger_type` `manual`, `destination_type` `json`), closed with its outcome; a refused open is 503 with nothing exported, a refused close is named in `X-Export-Unrecorded`. The JSON export now appears in the page's run history.
+- **The destination writes recorded the headline role (minor).** `lib/adminGate.ts` now returns `admittedRole` on the admitted actor (`admittedRoleFor`: the first of the surface's entry roles held, else the headline). `structured` and `run` drop their local copies; `EXPORT_DESTINATION_CREATED`, `_UPDATED`, `_DELETED` and `_TEST` record it too.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "BKP-8 Done-when 3 — fourth review fix: each delta is against the previous push, and only the ledger's own rows are read": the busy workspace (5,000 files, +200 a night, 30 nights: every night rebuilds from the audit trail and hashes; 2 baselines; 20,800 entries against a bound of 5,000 + 3 x 5,800; about 4.2x one baseline's bytes, asserted under 5x); a 700-file night as one two-row delta, then a 300-file removal chained to it, then a quiet night pointing at the head; a delta with a part gone re-based with the problem named; a trickle re-based at the 400-row cap; a member's forged baseline and forged delta (their own uid, dated 2099) never read over five quiet nights; a machine-looking future-dated row never read. All six fail against the third pass's `lib/dataExport.ts`.
+  - The existing ledger tests now also assert the machine actor and `exportedBy`, the chain's `prev`, the `rebased` reason, and the reads' `is("user_id", null)`, `lte("timestamp", …)`, paged part read and chain read.
+  - "fourth review fix — an export recorded as leaving that then did not is recorded as undelivered" (a webhook's 500 on a scheduled push, Run Now, a refused UNDELIVERED row named, nothing written before the `DATA_EXPORT` row; the JSON export and the manual ZIP).
+  - "fourth review fix — the JSON export is held to the hourly cap, with a run row of its own" and "… every data-export writer records the role the surface admitted".
+  - `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts` (P2's census of `export_runs` readers) now lists `structured` and `lib/exportRunner.ts` (the shared count, handed the routes' service client); still no reader on a member's session.
+- Files: `lib/dataExport.ts`, `lib/exportRunner.ts`, `lib/exportAlerts.ts`, `lib/adminGate.ts` (outside the plan's file list: an additive `admittedRole` on the admitted actor), and every route under `app/api/data-export/` but `runs`. No migration.
+
+*Fifth review fix pass (admin-and-org Round G, P3).* Done-when 3 was met for destinations only. A person's export still wrote its whole list on every run.
+- **A person's export grew every later backup without bound (major).**
+  - *What went wrong.* `recordExport`'s `"list"` branch wrote every file, 500 to a row, about 150 bytes a file, on every person's export. That covered the JSON download, the browser Full ZIP (whose first step is `/structured`, the page's main backup button) and the manual ZIP.
+  - *Why it matters.* `audit_logs` is itself exported and read whole by every later export. So an Admin taking a daily Full ZIP of a 20,000-file workspace added about 3 MB a day, about 1.1 GB a year. This is the growth the fourth pass removed for destination pushes, only less frequent, and the cap allowed 12 an hour.
+  - *The fix, `lib/dataExport.ts`.* Every person's export is now named against the workspace's own ledger:
+    - `resource_type` `org_export_ledger` (`WORKSPACE_FILES_RESOURCE_TYPE`), `resource_id` the workspace's id;
+    - the same chained baseline and deltas as a destination's, through the same code. `readDestinationLedger` is now `readExportLedger(sb, orgId, key)` over a ledger key, with `readDestinationLedger` and `readWorkspaceLedger` as its two callers;
+    - `recordExport` takes the key from `fileRecord`. It is `"workspace"` (the default; was `"list"`) or `{ destinationId }`. Its one ledger path writes the delta or the baseline, and marks the owner on the `DATA_EXPORT` row's `fileRecord` and on each ledger row (`ledger: "workspace"` or `destinationId`);
+    - the workspace's ledger rows are machine rows too (`EXPORT_LEDGER_ACTOR`, the exporter in `details.exportedBy`). Its reads take only `user_id` NULL rows dated no later than now, so no member can forge one;
+    - `lib/exportRunner.ts buildAndDeliverExport` asks for `"workspace"` for an inline ZIP.
+  - *What a person's export now writes.* The first writes a baseline, a quiet one writes no file row (its record points at the chain's head), and a busy one writes a delta of what changed since the workspace's previous export. A new baseline comes only at half the list or 400 rows. The bound is the destination ledger's: the first baseline plus at most 3 entries per changed file.
+  - *Who took which drawing.* The `DATA_EXPORT` row keeps the person (`user_id`, `user_email`), the role the surface admitted them by (`user_role`), the channel and the list's `sha256`. That record's list is rebuilt from the ledger (the baseline, then the chain back along `prev`), and it hashes to that digest.
+  - The workspace's ledger and each destination's are separate: neither serves as the other's.
+- **The cap counted runs no person started (minor).**
+  - *What went wrong.* The fourth pass held `/structured` to `exportRateLimitRefusal`, which counted every `export_runs` row in the hour: scheduled pushes, gate-skipped (cancelled) rows and failed runs. A workspace with several daily destinations at 05:00, plus their skips, could reach 12. The page's main backup button then answered 429, which nothing refused before this branch.
+  - *The fix, `lib/exportRunner.ts`.* The count now takes only the runs people started (`RATE_LIMITED_TRIGGERS`: `manual`, plus the schema's `api`), and every status but `cancelled` (`RATE_LIMITED_STATUSES`). A failed attempt still counts: it ran the export.
+  - *Effect.* The cap still holds the JSON export and the manual run together, at 12 an hour. `/run` stops counting scheduled pushes, which it counted at base.
+  - *Tests.* "fifth review fix — a person's hourly cap counts the runs people started …":
+    - 8 scheduled and 6 cancelled rows in the hour block neither `/structured` nor `/run`;
+    - 12 person-started rows (4 of them failed) do, and a cancelled one is not counted;
+    - the query's filters are pinned.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "BKP-8 Done-when 3 — fifth review fix: a person's export names its files against the workspace's ledger, never its whole list every run":
+  - thirty JSON exports of a quiet 1,200-file workspace through `/structured`: one baseline (3 rows), then thirty `DATA_EXPORT` rows naming the person and no file row (was 90 rows);
+  - thirty person exports of a busy workspace (5,000 files, +200 between exports): each rebuilds and hashes; at most 2 baselines; entries ≤ 5,000 + 3 × changes; bytes under 5× the first baseline (was a full list on every run, more than 30×);
+  - who took which drawing: three exports by two Admins, and rebuilding each record's list finds the new drawing in the second and third, with its document and revision and the exporter on the delta row;
+  - the workspace's and a destination's ledgers kept apart (`readWorkspaceLedger`);
+  - a member's forged workspace baseline dated 2099 never read.
+- The person-export assertions in existing tests were updated to the workspace ledger: the `DATA_EXPORT_FILES` row's machine actor and resource, `mode: "baseline"`, and the inline ZIP after Run Now. No migration.
+
+*Sixth review fix pass (admin-and-org Round G, P3).* Two minor findings on Done-when 3.
+- **Each ledger read walked the ledger's whole history (minor).**
+  - *What went wrong.* `readExportLedger`'s parts read and chain read (`lib/dataExport.ts`, then `:668-675` and `:689-693`) were bounded by the ledger's resource and "no later than now" only. The `(resource_type, resource_id, timestamp DESC)` index bounds neither on `details`, so each export walked every historical row of its ledger, every old baseline and chain, and detoasted each row's `details` to test its record id.
+  - *The fix.* The head read now also selects the baseline row's `timestamp`. The parts and chain reads take only rows dated from 15 minutes before it (`LEDGER_WRITE_WINDOW_MS`). The window is there because one export writes a large baseline's parts over several statements, ten rows each, and each statement is dated when it ran, so the head read's newest row is the last part. A bound at that row alone would drop the earlier parts and re-base a workspace of more than 5,000 files on every export. Every delta of the baseline was written after the baseline was read back whole, so it falls after the bound. A baseline row whose `timestamp` cannot be read falls back to the unbounded read. The forged and future-dated row rules, forks, the digest checks and the first export are unchanged.
+- **"Who took which drawing" had no reader outside a test (minor).** `DEC-87` §3 and this finding said the question is answered by rebuilding a record's list, but only a test helper did it.
+  - *The fix.* The parts-and-chain read is now one function, `readLedgerChain`, shared by the next export and a new reader. `rebuildExportList(sb, orgId, recordId)` (`lib/dataExport.ts`) does four things:
+    - finds the export's `DATA_EXPORT` row, which names who took it and the role the surface admitted them by; *(Corrected at fix pass 7: who took it is the row's `user_id`. Its `user_email` and `user_role` are what the inserter wrote, since `audit_logs_insert` checks a member's insert for `user_id = auth.uid()` and an org the member belongs to, never the email or the role, so on a member's row they are display hints until `ALOG-7`'s trigger resolves them. Corrected at fix pass 8: this note read "checks only `user_id = auth.uid()`"; the policy also checks org membership, `20260813:85-90`.)*
+    - rebuilds its list from its ledger's machine rows: the baseline, then the chain up to the record, or, for a record that changed nothing, up to the record it points at;
+    - gives each file with its document and revision;
+    - checks the list against the record's `sha256`.
+
+    An unknown record, one named by two export rows, one recorded before this package and one whose chain lost a part each come back as a problem, never as a wrong list. *(Corrected at fix pass 7: it also says whether a failure to deliver is recorded, `undelivered`; until then it named an exporter for an export recorded as not delivered.)* *(Corrected at fix pass 8: fix pass 7's note read "whether the export arrived"; null is not "arrived". See the fix pass 8 block.)*
+  - *What uses it.* The "who took which drawing" test now uses the lib's reader. The test file's own reading stays as the oracle the reader is checked against. No screen calls it yet: the audit-log viewers are admin-and-org P7's (`ALOG-11`), and the P7 handoff in `99-fix-sequencing.md` names it.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "BKP-8 Done-when 3 — sixth review fix: an export reads its ledger only since its baseline; a recall rebuilds any record's list from the lib":
+    - three baselines over seven nights: the parts and chain reads walk none of the two earlier baselines' or chains' rows, the ledger read is the same, and the next push is the same delta;
+    - an 11-row baseline written a second a row: every part is still read, so the next pushes are deltas;
+    - every record of that history, the old chains' included, rebuilt by `rebuildExportList` to the list it handed out, hashing to its digest, with document and revision;
+    - the quiet-record, unknown, ambiguous, pre-ledger and broken-chain cases.
+  - The reads test pins the `timestamp` in the head read and the bound on the parts and chain reads.
+  - *Negative controls.* Removing the bound fails the history test and the reads test. A zero window fails the multi-statement test and the reads test. Removing the reader fails its two tests and the "who took which drawing" test.
+- The in-memory client (`lib/__tests__/helpers/restoreMemoryDb.ts`) now reads a nested JSON path (`details->fileRecord->>recordId`), as PostgREST does. No migration.
+
+**A&O P3 fix pass 7 (2026-10-02).** Two items on the recall, Done-when 3.
+- **The recall named an exporter for an export that never arrived (minor).**
+  - *What went wrong.* `rebuildExportList` (`lib/dataExport.ts`, then `:834-900`) ignored `DATA_EXPORT_UNDELIVERED`. An export recorded and then not delivered (a webhook's 500, a refused file list, a ZIP not built) came back as a list with its exporter, as though the files had been taken.
+  - *The fix.* `RebuiltExportList.undelivered` is `{ error, at } | null` (`lib/dataExport.ts:836`), from one read (`:920`) of the record's `DATA_EXPORT_UNDELIVERED` row:
+    - action `DATA_EXPORT_UNDELIVERED`, `user_id` IS NULL, `details->>recordId` the record;
+    - on the record's resource: the destination's, or the workspace's `org` row, which is where `recordExportUndelivered` writes it;
+    - dated from the `DATA_EXPORT` row's own time to a day after it (`UNDELIVERED_READ_WINDOW_MS`). The UNDELIVERED row is written by the same export's function, after the `DATA_EXPORT` row and once its delivery has failed, both dated by the database. So the read never walks the resource's history. *(Corrected at fix pass 8: this read "to 15 minutes after it (`LEDGER_WRITE_WINDOW_MS`)", the row being written by a function with a 300 s `maxDuration`. Only Vercel enforces that. The supported Docker self-host runs `next start`, which does not, and the delivery has no time limit of its own, so a large archive to a slow webhook or bucket fails, and writes this row, later than 15 minutes; the failed export then read as delivered. See the fix pass 8 block.)*
+
+    Null means no failure is recorded, not that the export arrived: a delivery killed mid-flight (Vercel ending the function at 300 s, a container restart) records nothing, and a failure recorded past the window is not read. *(Corrected at fix pass 8: this read "Null means nothing says it failed after it was recorded".)* A failed read is a `problem` ("whether the export … was delivered could not be read"), never "delivered". The list is still what the export carried. A member cannot write a row with `user_id` NULL, so no member can unsay a delivered export.
+- **Who took it (nit).** The `exporter` doc (`lib/dataExport.ts:816`) and `rebuildExportList`'s say that `userId` is the authoritative field. `email` and `role` are whatever the inserter wrote, since `audit_logs_insert` checks a member's insert for `user_id = auth.uid()` and an org the member belongs to (`20260813:85-90`), never the email or the role, so on a member's row they are display hints until `ALOG-7`'s trigger resolves them. *(Corrected at fix pass 8: this read "checks only `user_id = auth.uid()`"; the doc says the uid and the org now.)* A machine row's label is the app's own, because only the service role can write `user_id` NULL.
+- The P7 handoff in `99-fix-sequencing.md` now says both: check `undelivered`, and read `userId`.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "A&O P3 fix pass 7 — rebuildExportList says whether the export arrived (DATA_EXPORT_UNDELIVERED); userId is who took it":
+  - a push recorded and then not delivered: `undelivered` carries the row's error and time, and the list is what it carried;
+  - a person's export, on the workspace's resource: the same;
+  - a delivered export between two undelivered ones: null, while its neighbours' are set;
+  - *negative controls*, each leaving `undelivered` null: a member's UNDELIVERED row naming the record, another destination's, a row an hour before the record and one 25 hours after it, and another record's. The machine row itself is then read; *(corrected at fix pass 8: this read "rows an hour before and after the record"; an hour after is inside the read now)*
+  - the read is one statement with the resource, `user_id` IS NULL, the record and the day's window. A failed read is a problem; *(corrected at fix pass 8: this read "the 15-minute window")*
+  - a member's own `DATA_EXPORT` row naming a new record: `exporter.userId` is that member's uid, whatever email and role they wrote.
+  - *Negative controls (code).* Without the read, five of the six fail; the `userId` test does not depend on it. *(Corrected at fix pass 8: this read "all six fail".)* Without `user_id IS NULL`, without the resource filter, or without the window, the controls test and the read test fail.
+
+**A&O P3 fix pass 8 (2026-10-02).** One major on the recall, Done-when 3, and two nits.
+- **A failed slow delivery read as delivered (major).**
+  - *What went wrong.* `rebuildExportList` (`lib/dataExport.ts`, then `:924-926`) read the record's `DATA_EXPORT_UNDELIVERED` row only up to 15 minutes after its `DATA_EXPORT` row (`LEDGER_WRITE_WINDOW_MS`), on the claim that the routes' `maxDuration` (300 s) bounds the delivery. Only Vercel enforces it. The supported Docker self-host runs `next start`, which does not, and the delivery has no limit of its own: the webhook POST (`fetchExternalGuarded`) carries no abort signal, the S3 put and its read-back no request timeout (the client's default is none), and the S3 client retries, three attempts in all. A 1-2 GB archive to a slow webhook or bucket fails, and writes its row (`lib/exportRunner.ts buildAndDeliverExport`'s catch; `app/api/data-export/structured/route.ts:89` for the JSON export, which fails within seconds of its record), more than 15 minutes later. The recall then answered `undelivered: null` with no problem: the unsafe direction. The eighth review's probe failed at 16 and 20 minutes.
+  - *The fix, the reader's end.* The read runs from the record's own time to a day after it (`UNDELIVERED_READ_WINDOW_MS`, `lib/dataExport.ts:583`; the read at `:959`). Its other filters are unchanged (action, `org_id`, `user_id` IS NULL, the record, the record's resource), and it is still one range scan of the record's resource on `audit_logs_resource_timeline_idx (resource_type, resource_id, timestamp)`, `LIMIT 1`: a day of a destination's own ledger and UNDELIVERED rows, or of the workspace's `org` rows (admin actions). Why a day: it covers an archive at the default embed cap (`EXPORT_MAX_EMBED_BYTES`, 1.5 GB) failing after a whole upload at about 17 KB/s, or after the S3 client's three attempts at about 52 KB/s, and a daily destination's next push is due within it. `LEDGER_WRITE_WINDOW_MS` keeps its 15 minutes for the ledger's own parts, which are written one statement after another before the archive is built, and its doc no longer leans on `maxDuration`.
+  - *The writer's end: no deadline.* A deadline on the webhook POST or the S3 sends would make the row land within a bound, but it would fail a slow upload that succeeds today, however generous. So the writers are unchanged, and their doc (`buildAndDeliverExport`) says when the row lands and what the reader allows.
+  - *What null means.* `undelivered: null` means no failure is recorded, never that the export arrived. A delivery killed mid-flight records nothing (Vercel ending the function at 300 s; on a self-host a container restart or an out-of-memory kill), and its run row stays "running". A failure recorded more than a day after its record, on a link slower than the figures above or with a raised embed cap, is not read. The helper's doc (`RebuiltExportList.undelivered`, `UNDELIVERED_READ_WINDOW_MS`), `DEC-87` §3, Acceptance and Risk, and the P7 hand-off in `99-fix-sequencing.md` say so.
+- **The test record (nit).** "Without the read, all six fail" was five of the six (corrected above).
+- **`audit_logs_insert` (nit).** The `exporter` doc said the policy "checks only `user_id = auth.uid()`". It also checks org membership (`20260813:85-90`); the doc (`lib/dataExport.ts:841`) and the records above now say it checks the uid and the org, never the email or the role.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "A&O P3 fix pass 8 — a failure recorded long after its record (a slow delivery off Vercel) is still found":
+  - an UNDELIVERED row written 16 minutes, 6 hours and 23 hours 59 minutes after the record is found, with its error and time;
+  - a person's export on the workspace's resource, 6 hours later: found;
+  - *negative controls* 6 hours on, each leaving `undelivered` null: a member's row naming the record, another destination's, another record's, and the workspace's resource for a destination's record; the machine row is then found;
+  - the bound, the documented residual: a row a day and a minute after the record is outside the read, and the read's upper bound is exactly `UNDELIVERED_READ_WINDOW_MS`;
+  - through the real builder: a scheduled push whose webhook answers 504 after 16 minutes, and after 6 hours, of upload. The run fails, its UNDELIVERED row is dated that much after the record, and the recall says undelivered.
+  - The fix pass 7 tests: the read test pins the day; the hour-after control moved to 25 hours.
+  - *Negative controls (code).* The 15-minute bound fails nine tests: the three delays, the person's export, the 6-hour controls (their real row), the bound, the read test and both real-builder cases. No upper bound fails the bound, the read test and the fix pass 7 controls. Without `user_id IS NULL`, both control tests and the read test fail. The eighth review's probe (14, 16 and 20 minutes) passes.
+
+**Done-when (status).** 1 ✓, 3 ✓ (as corrected above: every export, a person's or a destination push, names its files against a ledger: a baseline, then a chained delta of each export's change; since the sixth review fix pass, `rebuildExportList` rebuilds any record's list, and since fix pass 7 says whether the export arrived; since fix pass 8, whether a failure is recorded up to a day after the record, null being "no failure recorded"), 4 ✓. 2 is PARTIAL: the ACL limb ✓; the private-notes limb waits on the user's decision (`DEC-87` §4).
+
+**Scope / residual.** When the user decides: to withhold, ship the first review fix pass's withholding, with its complete:false, README and restore-plan wording; to carry them encrypted to their authors, that is new design work. Either way, this finding then closes. Projects-and-cost `INTK-6`'s role-set limb (Done-when 1) is unaffected.
 
 ---
 
@@ -676,7 +992,7 @@ lib/clientBackup.ts:135-137 `note: progress.errors.length > 0 ? "Files listed un
 ## BKP-11 · Any active org member can read the encrypted S3 credentials the API refuses to return, and a restore reinstates enabled destinations pointing at the backup owner's bucket
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (done-when 3's remaining limb: `PATCH /api/data-export/destinations/[id]` refuses `enabled: true` on a row with no credentials or no webhook secret) and the user (paste `20261154`, done-when 1) — by the integrator, 2026-10-01 (admin-and-org P2 merge; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:134-144`, `app/api/data-export/destinations/route.ts:55-66`, `lib/exportTables.ts:157`, `lib/dataRestore.ts:313`, `app/api/data-export/run-scheduled/route.ts:60-66`, `lib/exportTables.ts:173-175`
@@ -749,6 +1065,52 @@ Done-when 2 (the export nulls the credentials) holds by document-control `XEDGE-
 
 **Scope / residual.** OPEN until P3 lands Done-when 3's PATCH refusal and `20261154` is pasted.
 
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, the remaining limb of Done-when 3. Reproduced on base `bf6a552`: `app/api/data-export/destinations/[id]/route.ts:64` copied `enabled` into the update with no look at the stored row. A restored destination, which arrives disabled with no credentials (`landRestoredRow`, P1), could be turned on by `{ enabled: true }` alone. A webhook row would then send the org's full export unsigned to the URL the backup named.
+
+Fix (`PATCH`):
+- **The stored row.** PATCH now reads the stored row, checked: a read error is 500 and nothing changes, and a row that is not there is 404 (it was a 500 from the update).
+- **Enabling needs credentials.** Turning a disabled destination on requires its credentials, stored or in the same request:
+  - a webhook needs its signing secret;
+  - an s3 / r2 row needs both its access key and its secret.
+  Otherwise the answer is 409 with a plain sentence ("… Check its URL is yours, enter a signing secret, and enable it again — a destination restored from a backup arrives without one"), and nothing is written, audited or announced.
+- **What is not "enabling".** A destination already enabled and saved with `enabled: true` is not being enabled. The edit form always sends `enabled`, and a webhook's signing secret is optional by design, so an existing secret-less webhook still saves.
+- **Plan and alert.** Enabling a bucket row also passes the plan gate (`BILL-3` Done-when 3), and enabling rings every other controller (`BKP-13`).
+- Files: `app/api/data-export/destinations/[id]/route.ts`.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`, "BKP-11 Done-when 3 — a destination is enabled only with its credentials":
+  - a restored webhook is refused 409 and nothing changes, then is enabled once the secret comes in the same save;
+  - a restored bucket destination needs both keys;
+  - no regression for an enabled secret-less webhook's edit;
+  - a missing destination is 404.
+
+  All but the regression case fail against base.
+
+*Review fix pass (admin-and-org Round G, P3).* The rule above held on one door only, so Done-when 3 was claimed too early.
+- **"Run Now" is held to it too.** `POST /api/data-export/run` with a `destinationId` ran a restored, credential-less webhook, and posted the workspace unsigned to the backup owner's URL.
+  - It now reads the destination checked, before any run row is opened. A read error is 500, and a missing row 404 (that path used to leave a "running" row behind).
+  - It then refuses 409, with nothing sent and no run row, when the destination lacks its credentials: a bucket row without both keys, or a DISABLED webhook without its signing secret.
+  - An enabled webhook an Admin created here may still run unsigned: the secret is optional at create, and the scheduler pushes it nightly.
+- **So is re-pointing an enabled destination.** PATCH checked only the transition to enabled. An enabled s3 row PATCHed to `{ destination_type: "webhook", webhook_url }` with no secret would then push nightly, unsigned. PATCH now applies the check whenever the result is enabled and either the request enables it or a target field (type, endpoint, bucket, prefix, webhook URL) changes. The same URL re-sent is not a change.
+- **One rule, one helper.** `lib/exportRunner.ts destinationCredentialGap` holds the rule and the sentence for both doors.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts` (the BKP-11 block), all failing against the first P3 commit:
+  - Run Now of a restored webhook, and of a key-less bucket row, is 409;
+  - no regression for an enabled secret-less webhook, or a disabled one with its secret;
+  - re-pointing s3 → webhook without a secret is 409, and 200 with one;
+  - a new URL for a secret-less webhook is 409, while the same URL re-sent saves;
+  - the shared helper.
+
+**Done-when.**
+1. ✓ — `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql` (P2). **Pending migration: not applied** (`DEC-30`); the user pastes it.
+2. ✓ — the export nulls the credential columns (document-control `XEDGE-10`, pinned by value by P2).
+3. ✓ — restored destinations land disabled with `next_run_at` NULL and no credentials (P1). Before one can fire, an Admin must re-enter its credentials, and for a webhook look at its URL: enabling it, re-pointing it and running it by hand all ask (P3, with the review fix pass).
+
+**Scope / residual.** Creating a destination (`POST`) still allows an enabled webhook with no signing secret, as before: the secret is optional at create, an Admin typed the URL here, and every other controller is told (`BKP-13`). A webhook that stays enabled and unsigned keeps running, by schedule or by hand. Pending migration `20261154`.
+
+*Second review fix pass (admin-and-org Round G, P3).* PATCH now refuses an `enabled` that is not a JSON boolean, with 400 "enabled must be true or false.":
+- **Why.** The rules above key on `enabled === true`, yet the update copied the value as sent. PostgREST stores `"true"`, `"t"`, `"on"` or `1` as true. So `{ enabled: "true" }` on a restored, secret-less webhook skipped the credential check, the plan gate and the alert, and was still stored enabled.
+- **Test.** `lib/__tests__/dataExportRoutes.test.ts`, "second review fix: `enabled` that is not a JSON boolean is 400". It sends `"true"`, `1`, `"on"` and `"t"`, and checks that nothing changes, nothing is audited and no bell rings. It fails against the first review fix pass.
+
+*Cross-note (2026-10-01, admin-and-org Round G, P3).* P1's Partial block above says its restore test runs "chunked and single-shot". The single-shot route and its half of that test were deleted with `/api/admin/restore/apply` (intelligence `ILIFE-4`). The chunked half stays in `lib/__tests__/restoreApplyRoute.test.ts`, "an export destination lands disabled, with no next run and no credentials — even when the row omits the credential keys". `landRestoredRow` is applied by the shared write (`applyRestoreChunk`) every restored row goes through.
+
 ---
 
 <a id="bkp-12"></a>
@@ -799,7 +1161,7 @@ lib/dataRestore.ts:346-348 `export function conflictTargetFor(table: string): st
 ## BKP-13 · Scheduled exports write no audit_logs row and raise no admin alert — a webhook destination is an unlogged daily exfiltration channel that bypasses the plan gate
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run-scheduled/route.ts:106-115`, `lib/dataExport.ts:182-200`, `supabase/schema.sql:771-783`, `app/api/data-export/run/route.ts:38-68`, `app/api/data-export/run/route.ts:141-144`, `app/api/data-export/destinations/route.ts:81-95`, `app/(protected)/admin/data-export/page.tsx:346-352`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg confirmed, including the subtle one: even the generic DATA_EXPORT audit insert cannot succeed for a cron run because "cron" is not a UUID.
@@ -821,6 +1183,152 @@ app/api/data-export/run-scheduled/route.ts:111 `exporterUserId: "cron",`. lib/da
 - [ ] runOrgExport passes a null user_id (or a real service UUID) for cron runs and CHECKS the insert's `{error}`, failing the run when the audit row cannot be written
 - [ ] alertAdminsOfExport is called from run-scheduled as well as run
 - [ ] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only rather than Manager/DocCtrl
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3. Reproduced on base `bf6a552`:
+- `app/api/data-export/run-scheduled/route.ts:157` passed `exporterUserId: "cron"`. `lib/dataExport.ts:287` wrote it into the uuid column (22P02), inside a try/catch (`:303`) that a resolved `{ error }` never reaches, so every scheduled push left no `DATA_EXPORT` row and reported success.
+- `alertAdminsOfExport` existed only in the manual route (`run/route.ts:40-69`, `:145`).
+- Creating or changing a destination raised no alert.
+
+Fix:
+1. **A machine's record** (`DEC-87` §2, the plan's "one convention with P4").
+   - The scheduled push passes `exporterUserId: null`, `exporterEmail: "system:scheduled-export"` and `exporterRole: "system"`, with `auditDetails` naming the channel, the destination and its last configurer.
+   - `runOrgExport` writes `user_id` NULL, never a string in a uuid column.
+   - `recordExport` CHECKS the insert and throws, so an export whose `DATA_EXPORT` row (or file list, `BKP-8`) is refused is itself refused. The scheduled run is marked `failed` with the message; `/structured` answers 500 and sends nothing; the manual ZIP fails its run.
+2. **The bell.**
+   - `lib/exportAlerts.ts alertAdminsOfExport`, moved out of the manual route and now checked, is called by `run`, which tells every OTHER controller as before, and by `run-scheduled`, which tells EVERY controller (no person ran it) and names the destination and who configured it.
+   - Recipients are the active Admin / DocCtrl holders, by the full collection (`roleFilter`).
+   - A refused alert is logged and recorded on the run (`alert:unsent` in diagnostics), never swallowed. The export stands either way: the bell is detection, not prevention.
+3. **Destinations.**
+   - `alertAdminsOfDestination` tells every other controller when a destination is created (any type, a webhook included), when a disabled one is enabled, and when an enabled one is pointed somewhere new (its type, endpoint, bucket, prefix or webhook URL changes). A refused alert comes back as a `warning` in the answer.
+   - Create and edit are Admin-only through `BKP-8`'s gate.
+- Files: `lib/dataExport.ts`, `lib/exportRunner.ts` (passes the role and details through), `lib/exportAlerts.ts` (new), `app/api/data-export/run/route.ts`, `app/api/data-export/run-scheduled/route.ts`, `app/api/data-export/destinations/route.ts` and `app/api/data-export/destinations/[id]/route.ts`.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`:
+  - "BKP-13 — the scheduled push writes its record as a machine and rings the bell": the builder is asked for a machine run, and the route no longer says `"cron"`; every active controller is told, no Viewer and no inactive member; a refused alert is recorded on a succeeded run; a run whose record is refused fails and rings nothing; the manual run tells every other controller;
+  - "BKP-13 Done-when 3 — creating, enabling or re-pointing a destination tells every other controller";
+  - the machine row and the refused-record cases in the "BKP-8 Done-when 3 / BKP-13 Done-when 1" block.
+
+  `lib/__tests__/sweepRoundC1b.test.ts` now finds the alert's `roleFilter` pool in `lib/exportAlerts.ts`.
+
+*Review fix pass (admin-and-org Round G, P3).* "Every export rings the controllers" was overstated.
+- **The JSON export now alerts too.** `GET /api/data-export/structured` is the JSON download and the first step of the browser Full ZIP, the page's most-used way out, and it alerted no one. It now calls `alertAdminsOfExport` once the export is recorded, telling every other controller. A refused alert is logged and named in the `X-Export-Alert` response header; the download proceeds. An export that could not be recorded rings nothing.
+- **A DocCtrl's bell is one they can act on.** The data-export page is Admin-only (`BKP-8`), but every bell linked there and said "disable it under Admin → Data export". `alertControllers` now reads each recipient's roles (`memberHoldsAny`):
+  - an Admin's bell links `/admin/data-export` and keeps the action;
+  - a DocCtrl-only recipient's says to ask an Admin and links `/admin/audit`, which DocCtrl can read (`ALERT_LINKS`).
+- **The header now says what calls what.** `lib/exportAlerts.ts` claimed every export route and destination write alerted. It now names them: structured, run and run-scheduled for exports; create, enable and re-point for destinations. Delete closes a channel and test sends a probe, so neither alerts.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`, all failing against the first P3 commit:
+  - "the JSON export … tells every OTHER controller too";
+  - a refused alert named in `X-Export-Alert`;
+  - an unrecorded export rings nothing;
+  - the DocCtrl / Admin split for a scheduled push, a person's export and a destination change.
+
+*Second review fix pass (admin-and-org Round G, P3).* The export trail was presented as checked, yet the routes P3 rewrote still dropped results of their own. Each is now checked:
+- **`run`, the rate-limit count.** A count read that errors, or returns no count, is now 503 with nothing run. It used to be read as 0, which let every run through past the 12-per-hour cap.
+- **`run`, the run row.** A refused run row, or one returning no id, is now 503 before anything is exported. The export used to go ahead with no run history and nothing counting toward the cap.
+- **`run-scheduled`, the run row.** A refused run row now stops that destination. Nothing is exported, and the sweep result and the destination card say "not run: the run record could not be opened …". The claim already moved the clock, so this costs one cycle.
+- **`run-scheduled`, the success path.** The closing writes to the run row and the destination are checked. A refused one is logged and named in the sweep result's `warnings`; the run still counts as succeeded.
+- **The destination audit rows.** `EXPORT_DESTINATION_CREATED`, `_UPDATED` and `_DELETED` are checked. A refused row is logged and returned as a `warning`, and the change itself stands.
+- **Tests.** `lib/__tests__/dataExportRoutes.test.ts`, "second review fix — the export routes check their own rate-limit read, run rows and destination audit rows". All but the 429 regression case fail against the first review fix pass.
+
+*Third review fix pass (admin-and-org Round G, P3).* "Each is now checked" above was overstated. Eight sites in the two run routes still dropped their result: `run-scheduled`'s due read, its claim and its two failure-path updates, and `run`'s two success-path updates and two failure-path updates. Each is now checked. One more limb also closes a residual this record did not name.
+- **`run-scheduled`, what is due.** A failed read answers 500 with the message, so the cron run shows as failed. It used to read as nothing due and answer 200 `{ processed: 0 }`: a night with no backup, no run row and no record.
+- **`run-scheduled`, the claim.** A refused claim runs nothing and is named on the sweep result. The destination's clock did not move, so the next sweep picks it up.
+- **`run-scheduled`, the failure path.** The run-row and destination updates after a failed export are checked. A refused one is logged and appended to the result's error.
+- **`run`, both paths.**
+  - On success, the closing run-row and destination updates are checked. A destination run returns them as `warnings`; a download names them in `X-Export-Unrecorded`.
+  - On failure, the 500 carries `warnings`.
+  - The archive catalog insert was best-effort and swallowed. It is now checked and named the same way.
+  - A run row left `running` used to stay stuck on the page and keep counting toward the cap of 12 an hour.
+- **A scheduled push needs an Admin's confirmation.** Admin-only covered creating and editing destinations. A destination a Manager or DocCtrl configured before this branch still fired every night, because `scheduledRunGate`'s configurer limb checks only active membership.
+  - `run-scheduled` now also requires the configurer (`updated_by`, else `created_by`) to hold the data-export surface's entry role. It reads `adminSurface("data-export").entry`, which is `["Admin"]`, against the full collection (`memberHoldsAny`).
+  - On a refusal, or a role read that errors, it skips and records as the configurer limb does: a cancelled run and the card's last-run error, never a disable. This lasts until an Admin opens the destination and saves it; PATCH stamps `updated_by`.
+  - The check lives in the route. `lib/exportEntitlement.ts` is not edited.
+- **Tests.** `lib/__tests__/dataExportRoutes.test.ts`, "third review fix — the run routes check every read and write of their own, and a scheduled push needs an Admin's confirmation", 8 cases. All but the full-collection case fail against the second review fix pass's routes. The stub configurer in `lib/__tests__/dcRoundFScheduledExports.test.ts` now carries the Admin role.
+
+*Fourth review fix pass (admin-and-org Round G, P3).* The third pass's confirmation limb broke the brief's REGRESSION FIRST rule (blocker). A destination last saved by a Manager or DocCtrl — which every route allowed before this branch — was refused every night: a cancelled run and a "failed" card, no bell at all, and the nightly "Scheduled workspace export ran" bell stopped too. A workspace whose nightly bucket or webhook backup its Manager set up would have stopped backing up the night this deployed, and the only sign was a card on an Admin-only page. This finding's Done-when items never asked for existing destinations to be paused.
+- **It runs, and the night's bell asks for the confirmation.** `app/api/data-export/run-scheduled/route.ts configurerConfirmation` (replacing `configurerRoleRefusal`) still reads whether the last configurer holds `adminSurface("data-export").entry` by the full collection, but it no longer refuses. Only `scheduledRunGate`'s own limbs (no configurer, an inactive one, billing under the flag) skip, as before this package.
+  - An unconfirmed destination's push runs. `lib/exportAlerts.ts alertAdminsOfExport` takes `scheduled.unconfirmed { by, holds }`: the bell's title is "Scheduled export needs an Admin to confirm it", and an Admin's body reads '… It was last confirmed by dc@acme.com, who does not hold Admin — which setting up a data export now requires. Open it under Admin → Data export and save it to confirm it, or disable it.' A DocCtrl's asks them to ask an Admin. Metadata carries `unconfirmed`.
+  - The same sentence goes on the run row (`gate:unconfirmed` in diagnostics), the destination card (`last_run_error` on a succeeded run, as a retention note does) and the sweep result's `warnings`. It rings every night until an Admin saves the destination (PATCH stamps `updated_by`); then the bell is the usual one.
+  - A refused bell is recorded on the run (`alert:unsent`) and now also named in the sweep result's `warnings`.
+  - A role lookup that errors cannot tell: the push runs and the run row and the sweep result say the check could not be made (it used to skip).
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`, the "third review fix … fourth: a scheduled push not confirmed by an Admin runs and asks for it" block): a Manager+DocCtrl-confirmed destination is delivered, recorded and carded, each Admin's bell says exactly the sentence above, the DocCtrl's asks an Admin, it asks again the next night, and after an Admin saves it the bell and the card return to normal (fails against the third pass: 0 delivered, 0 bells); a refused bell for it is named on the sweep result; a failed role lookup still runs. The full-collection case stays.
+
+*Fifth review fix pass (admin-and-org Round G, P3).* "It rings every night until an Admin saves the destination" promised a way out that was not always there. The request also went out on a successful push only.
+- **The Admin's save was refused for a bucket destination off Growth (major).**
+  - *Setup.* `SUBSCRIPTION_ENFORCE` is off (`DEC-18`), and the workspace is on Starter or has no plan recorded. The scheduled gate turns the plan limb into a notice, so the bucket push runs and the bell asks for confirmation.
+  - *What went wrong.* The edit modal always sends `bucket`. PATCH ran the `XEDGE-8` gate (`assertCloudBucketEntitlement`) on any non-empty `bucket`, before it read the stored row, so the save answered 402 and `updated_by` was never stamped. The bell repeated forever. The only way out was disabling a DR backup that was running.
+  - *The fix.* `app/api/data-export/destinations/[id]/route.ts PATCH` now runs that gate after the stored-row read, and only when the bucket is added or changed (`bucketChanged`: a non-empty `bucket` that differs from the stored one). Enabling a bucket destination is still gated, now whenever `bucketChanged` did not already gate it, so an unchanged bucket re-sent with `enabled: true` is gated too. `XEDGE-8`'s intent holds: adding a bucket, or pointing at another one, is the same act as creating one. An unchanged save is the confirmation.
+- **The request is not lost on a failed push or a Run Now (minor).**
+  - *Move.* `destinationConfirmation` and the sentence (`unconfirmedNote`) moved from the sweep route into `lib/exportAlerts.ts`, so both run routes read them the same way.
+  - *`run-scheduled`, failure path.* A push that fails now carries the sentence:
+    - in the run row's diagnostics (`gate:unconfirmed`, with any gate notices);
+    - in the sweep result's `error` and `warnings`;
+    - on the card, after the failure message, which is cut to fit so the sentence survives the 500-character card.
+
+    No bell rings for an export that did not leave, as before.
+  - *`run`, Run Now.* Run Now does not confirm a destination: it does not stamp `updated_by`. It makes the same read and keeps the sentence on the card, after the retention note on success or after the failure message on failure, and in the JSON answer's `warnings`. It used to set the card to the retention note or null.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "fifth review fix — an Admin's save confirms an unconfirmed bucket destination on any plan":
+    - on a Starter and on a no-plan workspace with the flag off: the push runs and asks; the Admin's save of the edit form's own body is 200 and stamps `updated_by`; the next night's bell is the usual one and the card is clean;
+    - another bucket, enabling, and a bucket put onto a webhook are still 402, with nothing changed.
+  - The fourth pass's confirm test now saves through `destinationPATCH` with the edit form's body, where it used to assign `updated_by` directly.
+  - "… the request to confirm survives a failed push and a Run Now":
+    - the failure path's run row, card and sweep result;
+    - a long failure cut to fit;
+    - Run Now succeeded and failed, then clean once an Admin has saved.
+  - The save cases and the Run Now case fail against the fourth pass's routes.
+  - `lib/__tests__/dcRoundFScheduledExports.test.ts`'s `XEDGE-8` case now allows the stored-row read and still asserts that nothing is written.
+- **The other converted routes check their own reads and writes (minor).** "Every destination audit row is checked" left out the test route, and three reads still answered as if nothing was there.
+  - *`destinations/[id]/test`.* A failed destination read answers 500 naming it. It used to answer 404 "Destination not found". A refused `EXPORT_DESTINATION_TEST` row is logged and returned as a `warning` beside the probe's result, as create, edit and delete already did.
+  - *`destinations` GET.* A failed read answers 500 naming it. It used to return an empty list, which an Admin would read as no destinations and might set one up again.
+  - *`runs` GET.* A failed history read, or a failed read of the destinations' names, answers 500 naming it. The first used to return an empty history; the second labelled every run's destination "(deleted)".
+  - *The page.* `app/(protected)/admin/data-export/page.tsx refresh` used to keep a list that failed to load silently empty. It now shows "Export destinations could not be loaded: …" or "Export history could not be loaded: …".
+  - *Tests.* "fifth review fix — the destination test, the destination list and the run history check their own reads and writes": one case per route, plus a page pin.
+
+*Sixth review fix pass (admin-and-org Round G, P3).* The fifth pass's bucket gate compared the bucket's name alone.
+- **A bucket push could be moved to another store off plan (minor).**
+  - *What went wrong.* PATCH ran `assertCloudBucketEntitlement` only when the bucket's name was added or changed (`app/api/data-export/destinations/[id]/route.ts:122`). A workspace off Growth could keep the name and change an enabled destination's endpoint, region or type (r2 to s3). The next push then ran against a different store. `XEDGE-8` treats pointing a destination at another bucket as the same act as creating one, so that rule was only partly kept.
+  - *The fix.* The gate also runs when `destination_type`, `endpoint` or `region` changes on a row that pushes to a bucket: s3 or r2 with a bucket, after the change. A region the row does not store compares as the region the push uses (`S3_DEFAULT_REGION`, `us-east-1`, now exported from `lib/exportRunner.ts`). The edit form sends that region when none is stored, so its unchanged save still passes, and it still confirms the destination (`DEC-87` §1). Enabling is gated as before. Moving the row to a webhook is not plan-gated, though the form still sends the old bucket name. *(Corrected at fix pass 7: that held for an enabled row only. Enabling was gated on the bucket's name alone, so a disabled s3 row converted to a webhook and enabled in the same save was refused 402. See the fix pass 7 block.)*
+- **Tests**, "sixth review fix — moving a bucket push to another store (type, endpoint or region) is the Growth act; the unchanged save still confirms":
+  - off plan: an endpoint-only change is 402 with nothing changed, alone and through the edit form's body; a type change (r2 to s3) and a region change are 402;
+  - off plan with the flag off: the unchanged save is 200 and stamps `updated_by`, both for a stored region and for none stored;
+  - off plan: moving to a webhook is 200;
+  - on plan: endpoint, region and type changes are 200.
+  - *Negative controls.* The fifth pass's route fails the two 402 cases. Comparing regions without the default fails the unchanged-save case. Dropping the bucket-type test fails the webhook case.
+
+**A&O P3 fix pass 7 (2026-10-02).** Enabling was plan-gated on the bucket's name alone (nit).
+- **What went wrong.** `app/api/data-export/destinations/[id]/route.ts:169` tested `nextBucket && !bucketGated` when a save enabled a destination. Off plan, a disabled s3 row converted to a webhook and enabled in one save was refused 402, because the edit form still sends the old bucket name. A webhook push never uses a bucket.
+- **The fix.** The enabling gate is now `BUCKET_TYPES.has(nextType) && nextBucket && !bucketGated` (`:172`): only a row that pushes to a bucket after the save, s3 / r2 with a bucket, is gated. Only webhook rows leave the gate, since the table's CHECK allows no other type. Enabling an s3 / r2 row, or a webhook row turned into a bucket push, is gated as before, and so is a bucket added or changed (`bucketChanged`).
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "A&O P3 fix pass 7 — enabling is the Growth act only for a row that pushes to a bucket after the save (BILL-3 Done-when 3)":
+  - off plan, the conversion and enabling in one form save is 200 (was 402). The row is a webhook, enabled, confirmed (`updated_by`), audited, and the controllers' bell rings;
+  - off plan, still 402 with nothing changed: enabling it as a bucket destination as it is, moving it r2 → s3 while enabling, and turning a webhook row with a bucket name into an s3 push while enabling;
+  - on plan: 200, as before.
+  - *Negative control.* The old line fails the first case with 402. Every existing case stays green.
+- **Left open at this pass (P3's own).** Three gates still treated a webhook row carrying a leftover bucket name as a bucket destination under `SUBSCRIPTION_ENFORCE`: Run Now (`app/api/data-export/run/route.ts`, type s3 / r2 or a bucket set) and the sweep's disable-on-lapse (`!!dest.bucket`), both written by P3 on this branch, and the scheduled gate's plan limb (`lib/exportEntitlement.ts scheduledRunGate`, `dest.bucket`, on master). So the conversion this pass allowed was undone that night, the sweep disabling the webhook "for a lapsed plan", and Run Now refused it 402. With the flag off, as today (`DEC-18`), both ran it, and the sweep added a would-be-skip notice. The edit form cannot clear a stored bucket (an empty field is not sent). *(Corrected at fix pass 8: this read "Residual (pre-existing, unchanged)", named only the gate and Run Now, said the flag-off notice was all, and left it to the integrator under `BILL-3` with no owner. P3 closed it at fix pass 8, below.)*
+
+**A&O P3 fix pass 8 (2026-10-02).** The leftover-bucket residual above (minor), closed in P3's own code.
+- **What went wrong.** Three gates decided "bucket destination" on the bucket's name: Run Now's plan gate (`app/api/data-export/run/route.ts:126`, s3 / r2 `|| !!row.bucket`), the sweep's disable-on-lapse (`run-scheduled/route.ts:185`, `!!dest.bucket`) and the gate's plan limb (`lib/exportEntitlement.ts:130`, `dest.bucket`, fed the row as stored). With `SUBSCRIPTION_ENFORCE` on, an off-plan Admin converts a disabled s3 row to a webhook and enables it (PATCH 200 since fix pass 7); that night the sweep refuses it on the plan limb and DISABLES it, "plan no longer includes cloud bucket destinations"; Run Now is 402. With the flag off, as today, every run of it carries a "plan gate would skip" notice.
+- **The fix.** One predicate, `lib/exportRunner.ts:288 pushesToBucket(row)`: s3 / r2 with a bucket. A webhook row never touches its bucket (the push switches on the type), and an s3 / r2 row with no bucket pushes nowhere (the S3 client refuses an empty bucket before it sends).
+  - Run Now's plan gate (`run/route.ts:132`) is `pushesToBucket(row)`.
+  - The sweep hands `scheduledRunGate` the row with its bucket only when `pushesToBucket(dest)` (`run-scheduled/route.ts:179`), so the plan limb neither refuses nor notices a converted webhook. `lib/exportEntitlement.ts` is document-control `XEDGE-7`'s, on master, and its tests (`dcRoundFScheduledExports.test.ts`) call the gate with a bucket on a webhook-typed row, so it is not edited; the subscription and membership limbs still hold every destination.
+  - The disable-on-lapse is `pushesToBucket(dest)` (`:193`): a converted webhook skipped for a lapsed subscription is skipped and never disabled.
+  - PATCH's two tests of the same thing use it too (`destinations/[id]/route.ts:143`), with the same meaning as before.
+  - *Not chosen: clearing the stored bucket when PATCH turns a row into a webhook.* The predicate cannot strand a real bucket destination (an s3 / r2 row with its bucket is gated exactly as before), and the stored name is now inert on a webhook. Turning the webhook back into a bucket push off plan is 402, as the store moving is (sixth review fix pass).
+  - *Not changed, by design.* POST and PATCH gate the act of setting a bucket name whatever the type (`XEDGE-8`; its PATCH test pins it for a webhook-typed row): the refusal direction, never a stored row. One wart follows: the create form sends a bucket typed before its type was switched to webhook, and that create is 402 off plan until the field is cleared. Owner: admin-and-org P4, `BILL-3`'s owner (`04-billing.md`).
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "A&O P3 fix pass 8 — a webhook that still carries a bucket name is not a bucket destination: Run Now, the sweep's plan limb and its disable agree (BILL-3 Done-when 3)":
+  - `pushesToBucket`'s cases;
+  - the reviewer's sequence, flag on: off plan, convert and enable (200, the bucket name kept), that night's sweep pushes it (succeeded, enabled, no plan words), and Run Now is 200;
+  - flag off: no "plan gate would skip" notice on the sweep result, the run row or the log; Run Now 200;
+  - flag on, a lapsed subscription: the converted webhook is skipped and not disabled;
+  - the other direction: a real s3 row, and an r2 row, off plan under the flag are skipped, disabled and 402 at Run Now, as before; flag off, the s3 row runs with its would-be-skip notice; turning the converted webhook back into an s3 push off plan is 402;
+  - the three routes use the one predicate.
+  - *Negative controls (code).* Run Now's old line fails the reviewer's sequence (402). Handing the gate the stored row fails the reviewer's sequence (skipped and disabled) and the flag-off notice test. The old disable-on-lapse fails the lapsed-subscription test. Every existing `BILL-3`, `BKP-13` and `XEDGE-7` / `XEDGE-8` case stays green.
+
+**Done-when.**
+- [x] runOrgExport passes a null user_id … for cron runs and CHECKS the insert's `{error}`, failing the run when the audit row cannot be written ✓.
+- [x] alertAdminsOfExport is called from run-scheduled as well as run ✓.
+- [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included. *(Fourth review fix pass: a destination last confirmed by a non-Admin before this branch keeps running, as before it; every Admin's bell that night asks them to confirm it or disable it. The third pass's pause is withdrawn. Fifth: the Admin's unchanged save confirms it on any plan, because the bucket gate now runs only when the bucket is added or changed. The request also stays on a failed push and after a Run Now. Sixth: the gate also runs when a bucket push's type, endpoint or region changes; the unchanged save still passes. Fix pass 7: enabling is gated only for a row that pushes to a bucket after the save, so a bucket row converted to a webhook and enabled in one save is not refused. Fix pass 8: Run Now and the sweep hold it to the same rule, so that night's sweep does not disable it and Run Now does not refuse it.)*
+
+**Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest of bells would be a notifications decision. (The first review fix pass recorded a destination push by digest only. Since the second, every file is named. Since the third, every destination push, a webhook included, names its files against a baseline; since the fourth, each night's delta names only that night's change, chained back to the baseline (`BKP-8`, `DEC-87` §3).) The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-87` §2: `user_id` NULL, `system:stripe-webhook`). *(Fourth review fix pass, correcting the third.)* A destination a Manager or DocCtrl configured before this branch keeps running; the nightly bell to every Admin is the request to confirm it, so an Admin who ignores it leaves it running on its old confirmation, which is the pre-branch behaviour. A failed bell is recorded on the run and the sweep result, not re-sent. `scheduledRunGate`'s own skips (no configurer, an inactive one, a billing refusal under the flag) predate this package and still ring no bell. The data-export page does not yet show the `warnings` and `X-Export-Unrecorded` lines the routes now return (pre-existing for alert warnings). *(Fifth review fix pass.)* A failed push of an unconfirmed destination puts the request on its run row, card and sweep result, but rings no bell: an export that did not leave is not announced. Since that pass the page does show the error when the destination list or the run history cannot be loaded.
 
 ---
 
@@ -884,7 +1392,7 @@ Fix:
 ## BKP-15 · A restore refuses a process flow whose endpoint is gone — the dangling flows a backup carries are reported as failed rows, not restored as what they were
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (the restore engine's handling of one table; no migration expected) — by the integrator, 2026-10-01 (intelligence I-09 merge; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (verified by intelligence I-09's second review on a throwaway PostgreSQL 16, recorded in intelligence `FLOW-6`'s record, "Open handoff to admin-and-org (BKP restore fidelity)")
 - **Locations:** `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql` (`process_flows_guard()` — the endpoint check binds every writer, the service role included), `lib/dataRestore.ts` (the org restore writes `process_flows` as the service role)
@@ -900,5 +1408,27 @@ Fix:
 - [ ] A restore round-trip test with a dangling flow pins the chosen behaviour, and every other `process_flows` row restores as today.
 
 **Closer:** admin-and-org P3 (assigned at the I-09 merge, 2026-10-01).
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, by the reporting route (the brief's preference; no migration). Reproduced on base `bf6a552`. `20261155`'s `process_flows_guard` raises `process_flows_endpoint: equipment % is not in this workspace's registry …` (or `unit % is not a Site Codebook unit …`) with 23503 for every writer. The restore's bisection reported that row as a plain 23503: `lib/dataRestore.ts:1500` kept the SQLSTATE, `:1116` labelled it "references a row that is not there", and `:1829` counted it with every real refusal.
+
+Fix:
+- **The code.** The shared write (`applyRestoreChunk`) codes a single `process_flows` row refused 23503 by the endpoint check as `DANGLING_FLOW_CODE` (`flow_endpoint_missing`, through `restoreRefusalCode`). Its label reads "a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)".
+- **Not narrowed further.** Any other refusal keeps its own code: a self-loop (23514), a missing source document (`process_flows_source`, 23503), and the same message on another table.
+- **The count.** `runChunkedRestore` counts these rows in a new `totalDanglingFlows`, apart from `totalRefused`.
+- **The page.** `/admin/restore` gives them their own line ("process_flows: N flow(s) not restored — … Draw them again once the equipment or unit exists"). The run header reads "N dangling process flow(s) not restored" when they are the only shortfall, and the refused-rows line leaves them out.
+- **Why not the marker.** A restore-session marker in the guard was not taken: it needs a migration, and it would land a flow the database otherwise refuses.
+- Files: `lib/dataRestore.ts` (`DANGLING_FLOW_CODE`, `restoreRefusalCode`, `isDanglingFlowRefusal`, the label, `totalDanglingFlows`), `app/(protected)/admin/restore/page.tsx` (outside the plan's file list, recorded under filesOutsidePlan: the result panel).
+- Tests in `lib/__tests__/restoreArchiveRoundTrip.test.ts`, "BKP-15 — a dangling process flow is reported as what it is, on its own line". The engine models the guard:
+  - the current export of a workspace with a flow to a deleted pump carries it, and the restore lands every other flow (an AI-read flow, and an asset → unit flow), refuses only the dangling one with `DANGLING_FLOW_CODE`, counts it in `totalDanglingFlows`, leaves `totalRefused` at the placeholder's one refusal, and never stops;
+  - only the endpoint refusal is a dangling flow;
+  - the guard's message is pinned to `20261155`, and the page's own line is pinned.
+
+  Both behaviour tests fail against base.
+
+**Done-when.**
+- [x] The restore reports a refused dangling flow as what it is, counted on its own line, distinct from a real failure ✓. The choice is the reporting route; its reason is above.
+- [x] A restore round-trip test with a dangling flow pins the chosen behaviour, and every other `process_flows` row restores as today ✓.
+
+**Scope / residual.** A flow whose equipment was skipped because another workspace holds its id is reported the same way, as the finding's mechanism notes. The audit trail's `RESTORE_CHUNK` rows carry the new code.
 
 ---

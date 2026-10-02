@@ -103,7 +103,9 @@ describe("census — server routes authorise by the collection", () => {
       const s = src(f);
       // isControllerPrincipal (lib/permissions) reads the same collection —
       // flows/read names the controller tier through it (I-09, DEC-35).
-      expect(s).toMatch(/memberHoldsAny\(|roleFilter\(|isControllerPrincipal\(\{ role: [^}]*roles: normalizeRoles\(/);
+      // authorizeAdminSurface (lib/adminGate.ts) reads the FULL collection (SURF-10) — the data-export
+      // routes are held to their admin surface through it (admin-and-org BKP-8).
+      expect(s).toMatch(/memberHoldsAny\(|roleFilter\(|isControllerPrincipal\(\{ role: [^}]*roles: normalizeRoles\(|authorizeAdminSurface\(req, orgId, "data-export"\)/);
       expect(s).not.toMatch(/\.select\("role"\)/);
       expect(s).not.toMatch(/\.select\("role, status"\)/);
       expect(s).not.toMatch(/\.select\("role, email"\)/);
@@ -117,7 +119,8 @@ describe("census — server routes authorise by the collection", () => {
     const cu = src("app/api/admin/create-user/route.ts");
     expect(cu).not.toMatch(/\(callerMember\.role as string\) !== "Admin"/);
     expect((cu.match(/!callerHeld\.has\("Admin"\)/g) ?? []).length).toBe(2);
-    for (const f of ["app/api/cron/maintenance/route.ts", "app/api/data-export/run/route.ts"]) {
+    // admin-and-org BKP-13: the export alert moved out of the run route into lib/exportAlerts.ts (run and run-scheduled share it).
+    for (const f of ["app/api/cron/maintenance/route.ts", "lib/exportAlerts.ts"]) {
       expect(src(f)).toMatch(/\.or\(roleFilter\(\["Admin", "DocCtrl"\]\)\)/);
       expect(src(f)).not.toMatch(/\.in\("role", \["Admin", "DocCtrl"\]\)/);
     }
@@ -144,8 +147,8 @@ describe("census — pool resolvers find additive holders", () => {
     expect(s).toContain('const supervisors = byRole("DraftingSupervisor");');
     expect(s).not.toMatch(/members\.filter\(\(m\) => m\.role === r\)/);
   });
-  it("restore seeds the surviving collection, both routes", () => {
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts"]) {
+  it("restore seeds the surviving collection (/begin — the single-shot /apply was deleted, intelligence ILIFE-4)", () => {
+    for (const f of ["app/api/admin/restore/begin/route.ts"]) {
       expect(src(f)).toContain("role: restoredMemberHeadline(restoredMemberRoles(u.role, u.roles)), roles: restoredMemberRoles(u.role, u.roles),");
     }
   });

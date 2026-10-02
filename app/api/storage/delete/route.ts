@@ -3,6 +3,7 @@ import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
+import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
 import {
   retentionStatusFor, resolveEffectiveRetentionPolicy, computeRetentionUntil, retentionBasisISO,
 } from "@/lib/retentionPolicy";
@@ -23,8 +24,13 @@ import type { RetentionPolicy } from "@/types/schema";
 //     a later correct read. "Belonging" means named by any document_versions
 //     row as its rendered file (file_url) OR its native source
 //     (source_file_key);
+//   - a key that any OTHER registered key column still names — above all a
+//     knowledge-library mirror (knowledge_documents.file_key names the SAME
+//     object as the controlled revision it mirrors) — is refused 409, FAIL
+//     CLOSED (503 when that cannot be read): the bytes are still in use;
 //   - every deletion writes an audit row.
-// (Audit finding SURF-2 / document-control RET-2 / intelligence DACL-2.)
+// (Audit finding SURF-2 / document-control RET-2 / intelligence DACL-2 /
+// intelligence ILIFE-14.)
 
 const CONTROLLER_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -272,6 +278,27 @@ export async function DELETE(req: NextRequest) {
     }
   } catch {
     return NextResponse.json({ error: "Could not verify hold or retention status; deletion refused." }, { status: 503 });
+  }
+
+  // intelligence ILIFE-14 (the second byte-freeing door of ILIFE-5): never
+  // delete bytes another record still names — a knowledge-library copy of a
+  // revision, a vendor quote, an equipment photo, any registered key column
+  // outside the revision's own two (judged above). Bucket-wide, as the orphan
+  // sweep's reference set is (DEC-57). Fail closed: a read error, or a read a
+  // server row cap cut short, refuses with nothing deleted and no custody row.
+  // The app's one caller (lib/costDocs.ts uploadCostDoc) calls it only to
+  // clean up an upload whose cost_documents row insert failed, so no row ever
+  // named its key and it is named by nothing when it gets here.
+  try {
+    const elsewhere = await keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"]);
+    if (elsewhere.size > 0) {
+      return NextResponse.json(
+        { error: "Another record still uses this file (a knowledge-library copy or similar); it cannot be deleted." },
+        { status: 409 },
+      );
+    }
+  } catch {
+    return NextResponse.json({ error: "Could not verify what still uses this file; deletion refused." }, { status: 503 });
   }
 
   // Chain of custody BEFORE destruction, and FAIL CLOSED on it — the same

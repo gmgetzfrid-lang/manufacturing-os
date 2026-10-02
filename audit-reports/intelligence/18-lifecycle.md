@@ -136,10 +136,10 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 ## ILIFE-4 · The restore path the UI actually uses never aborts on a failed parent table — the abort logic lives in a dead route
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (done-when 2: delete `/api/admin/restore/apply` or wire it as the page's small-backup path) — by the integrator, 2026-10-01 (at the admin-and-org P1 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
-- **Locations:** `app/(protected)/admin/restore/page.tsx:190`, `app/(protected)/admin/restore/page.tsx:202`, `app/(protected)/admin/restore/page.tsx:207`, `app/api/admin/restore/apply/route.ts:115`, `app/api/admin/restore/apply-table/route.ts:80`
+- **Locations:** `app/(protected)/admin/restore/page.tsx:190`, `app/(protected)/admin/restore/page.tsx:202`, `app/(protected)/admin/restore/page.tsx:207`, `app/api/admin/restore/apply/route.ts:115 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/restore/apply-table/route.ts:80`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the dead-route claim: a repo-wide grep for '/api/admin/restore/apply' finds only apply-table call sites (page.tsx:196) and the route's own file — nothing ever POSTs to apply/route.ts. Partial credit to the UI: failedTables IS surfaced at :450, but the advice there ('re-run the restore, it's additive and safe') does not fix an FK-ordering failure, and children of a failed parent are still inserted wherever the column is nullable.
 
 **Mechanism.** /api/admin/restore/apply contains the careful stop-on-failure logic, with the reasoning spelled out at :116-119: "STOP. Tables are FK-ordered parents-before-children: continuing after a parent failure inserts children referencing rows that never landed (orphans) while the response says ok." Two differently-shaped greps (`restore/apply\b|restore/apply"|restore/apply?` and `admin/restore/apply[^-]`) across all .ts/.tsx find NO caller: the only hits are the route file's own header comment and Next's generated .next/types. The live path is the chunked one: restore/page.tsx:190 loops tables, :202 `if (!res.ok) { tableFailed = true; break; }` breaks only the inner chunk loop, then :207-208 `if (tableFailed) failedTables.push(table); tablesDone++;` and the OUTER table loop continues to the next table. apply-table/route.ts:80-82 returns 500 per chunk with no knowledge of ordering.
@@ -165,6 +165,31 @@ app/(protected)/admin/restore/page.tsx:200-209 `const body = await res.json().ca
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: unchanged. The chunked loop records a failed table and moves on (`app/(protected)/admin/restore/page.tsx:190-208` — `if (!res.ok) { tableFailed = true; break; }` breaks the chunk loop only); `/api/admin/restore/apply` still exists with no caller; the result panel lists failed tables without the consequence (`:451`). Owner: admin-and-org **P1** — `BKP-5` criterion 2 is this finding's criterion 1, and `ORG-1` / `BKP-3` decide the fate of `/apply` (criterion 2). Cross-note on `BKP-5`.
 
 **Partial (2026-10-01, intelligence Round G — recorded by the integrator at the admin-and-org P1 merge).** (1) ✓ The page's chunked restore stops at the first table that fails and names the tables it did not attempt (`lib/dataRestore.ts` `runChunkedRestore`, landed by P1 `BKP-5`). (3) ✓ The result panel says "Restore stopped at <table> — N table(s) not attempted" and lists them (`app/(protected)/admin/restore/page.tsx:551`, :583). (2) **Not met:** `/api/admin/restore/apply` is kept — it shares the write path and the stop rule (`applyRestoreChunk`), so its logic is no longer a separate copy — but nothing in the app calls it: neither deleted nor wired as the small-backup path. Remainder → admin-and-org P3.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, Done-when 2. Reproduced on base `bf6a552`. `app/api/admin/restore/apply/route.ts` still existed, and a repo-wide search found no caller outside its own file and its tests. The page restores through `/begin` and the chunked `/apply-table`.
+
+Fix: the route is **deleted**. That is the reversible, smaller change of the two the record allows:
+- it changes no user-facing behaviour, because nothing called it;
+- it removes a second door that writes a whole backup envelope in one request;
+- restoring one file undoes it.
+
+Wiring it as a small-backup path would have been the larger change. It needs a second branch in the page, a mapping of its answer into the panel's shape, and the org map that "Put the files back" needs, which `/apply` never answered. The stop rule and the write it had were already shared (`applyRestoreChunk`, `runChunkedRestore`), so nothing of them is lost.
+
+Tests that ran a case through it now run it through `/apply-table` or the page's driver: the org boundary, the bounded org-less rows, the bearer scrub, prototype names, re-runs, counters, the reconciliation failures and the rest. Its route-only cases (its 400 envelope refusal, its `DATA_RESTORE` audit row, its `note`) went with it. `lib/__tests__/restoreArchiveRoundTrip.test.ts` pins that the file is gone. `lib/dataRestore.ts` changes only comments that named the deleted route, which is all the deletion strictly requires.
+
+*Second review fix pass (admin-and-org Round G, P3): correction.* The first review fix pass made the last sentence untrue. For admin-and-org `BKP-8` it added a withheld-private-notes warning to `planRestore` and two fields (`tables`, `withheld`) to `RestoreEnvelopeLike`. No plan assigned those to P3. They are reverted, and notes are carried again (`BKP-8`, second review fix pass), so nothing needs them. P3's changes to `lib/dataRestore.ts` are now:
+- `BKP-15`'s reporting (`restoreRefusalCode`, `DANGLING_FLOW_CODE`, `totalDanglingFlows`);
+- the comments that named this deleted route.
+
+`lib/__tests__/dataExportRoutes.test.ts` pins that the file has no withheld branch.
+- Files: `app/api/admin/restore/apply/route.ts` (deleted), `lib/dataRestore.ts` (comments), `lib/__tests__/restoreApplyRoute.test.ts`, `lib/__tests__/restoreArchiveRoundTrip.test.ts`, `lib/__tests__/sweepRoundA.test.ts`, `lib/__tests__/sweepRoundC1b.test.ts`, `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
+
+**Done-when.**
+1. ✓ — the chunked restore stops at the first failed table and names the rest (admin-and-org P1, `BKP-5`).
+2. ✓ — `/api/admin/restore/apply` is deleted, so no abort logic is left as dead code.
+3. ✓ — the result panel states the consequence (P1).
+
+**Scope / residual.** Admin-and-org `ALOG-8`'s "restore/apply site" (the single-shot `DATA_RESTORE` row) went with the route. The chunked path's own trail (`RESTORE_BEGIN`, `RESTORE_CHUNK`, `RESTORE_PREVIEW`) is unchanged. `DEC-75` §1 carries a Landed line.
 
 ---
 
@@ -314,7 +339,7 @@ Negative control: with `lib/storageKeyRegistry.ts` as at `45f0c1b`, both fail. `
 ## ILIFE-6 · Every paginated dump uses .range() with no .order() — the backup and the orphan reference set can silently skip rows
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (criterion 3, the purge-side re-check in `lib/storageOrphans.ts` `deleteOrphans`; after document-control P14 merges) — by the integrator, 2026-10-01 (admin-and-org P2 merge: P2 landed the keyset paging of criteria 1–2 and handed the re-check off; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/dataExport.ts:299`, `lib/dataExport.ts:300`, `lib/storageOrphans.ts:97`, `lib/storageOrphans.ts:99`
@@ -422,6 +447,59 @@ Tests in `lib/__tests__/exportContractRoundTrip.test.ts`, "notification_preferen
 - A failed slice, and a failed `org_members` read, fail the table.
 
 Negative control: with `lib/dataExport.ts` as at `45f0c1b`, four of the five fail. The failed-slice case holds both ways and pins the behaviour. Criterion 2's ✓ is unchanged.
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, criterion 3's purge-side re-check, after document-control P14 merged. Reproduced on base `bf6a552`. `lib/storageOrphans.ts deleteOrphans` (`:161-186`) sent every candidate of its own scan to `DeleteObjects` (`:171`) with no second look. The balanced write this record describes, a row already read deleted while a row naming the key lands behind the cursor, therefore still hid a reference from the keyset scan and its counts.
+
+Fix: just before each `DeleteObjects` batch, `deleteOrphans` calls `recheckStillNamed`:
+- **Plain columns.** `keysReferencedOutside` over every plain key column, one `.in()` statement per column and 200 keys. Each column's answer is one snapshot, and a read a row cap cut short refuses (P2's guard).
+- **JSON-embedded columns.** The `JSON_KEY_PROBES` shapes: ticket attachments `[{url}]`, the branding logo `{logoPath}`, template examples `[{key}]` and `[{url}]`, and library and folder backgrounds `{background:{imagePath}}`. Each is sent as a JSON literal (`probeLiteral`). *As corrected at the review fix pass (below)*, they go as ONE statement per column per chunk of keys, OR-ed `cs` terms, re-asked key by key only when that statement matches.
+- **The outcome.** A key named at re-check time is kept and counted (`kept`). A read error stops the purge before that batch, nothing in it deleted, and the error says so. Batches already deleted stay deleted.
+- Files: `lib/storageOrphans.ts` (`JSON_KEY_PROBES`, `recheckStillNamed`, `deleteOrphans`).
+- Tests: `lib/__tests__/storageOrphansRecheck.test.ts`. The stand-in hides a row from the scan's pages and counts (the balanced write) and shows it to every other read:
+  - a plain-column reference the scan missed (a mirror) is kept and the true orphan deleted;
+  - each JSON-embedded kind is kept by its containment read;
+  - a failed plain or containment read stops the purge with nothing in that batch deleted;
+  - a failure in the second batch leaves the first batch's deletions;
+  - no regression for unreferenced keys and the org prefix;
+  - the re-check runs after the scan;
+  - `JSON_KEY_PROBES` covers exactly `JSON_KEY_COLUMNS`, and each probe's shape is a value the registry's own extractor reads the key back from.
+
+  All 15 fail against base. `lib/__tests__/dcRoundFShed.test.ts`'s orphan block passes unchanged.
+
+*Review fix pass (admin-and-org Round G, P3).* Criterion 3 was claimed ✓, but in production the re-check refused every purge.
+- **The defect.** postgrest-js writes an ARRAY handed to `.contains()` as a Postgres array literal. The `[{url}]` and `[{key}]` probes therefore reached PostgREST as `attachments=cs.{[object Object]}`, which a jsonb column refuses (22P02). Every true orphan reaches the JSON probes, so the first one threw and `deleteOrphans` stopped before batch 1: "Reclaimed 0 B". The test stand-in stored the raw JS value and never serialised it, so it could not see this.
+- **The fix: the literal.** Every probe goes as a JSON string (`probeLiteral`), the form `app/api/storage/resolve/route.ts` and `lib/transmittals.ts` already send.
+- **The fix: batching.** Each JSON column is asked in ONE statement per chunk of keys. The `cs` terms are OR-ed, each value double-quoted with `\` and `"` escaped (`orTermValue`, the codebase's logic-tree quoting), and the chunks are sized to keep the URL under 6,000 encoded characters. The statement asks only whether any row matches (`limit(1)`). A chunk nothing matches, every true orphan's, is cleared in that one read. A chunk with a match is re-asked key by key with the exact `.contains(col, JSON literal)` read, so an answer never rests on the batched form alone. The cost per 500-key batch falls from about 3,000 single-key scans to about a dozen statements.
+- **The fix: a deadline.** `deleteOrphans` takes one (default `ORPHAN_PURGE_BUDGET_MS`, 240 s from the call, inside the route's 300 s). It does not start a batch the slowest batch so far says would overrun, and the re-check starts no statement past it. It then returns what it deleted, with "Stopped at the time limit: N orphaned file(s) were not checked or deleted this time. Run the purge again to continue." The function is no longer killed with nothing reported.
+- **Tests.** `lib/__tests__/storageOrphansRecheck.test.ts`:
+  - the stand-in now serialises `.contains()` as postgrest-js does, reads it back as jsonb (22P02 otherwise), and parses `.or()`;
+  - a new block drives the real supabase-js client through a stub fetch that answers like PostgREST. It pins the exact URL of every probe: the batched `or=(attachments.cs."[{\"url\":\"orgs/<org>/x.bin\"}]")`, and the per-key `attachments=cs.[{"url":"orgs/<org>/x.bin"}]` and `example_files=cs.[{"key":"…"}]`. It shows a key with a comma, a parenthesis and a quote survives, and re-runs the "keys nothing names are deleted" case against that real builder;
+  - a negative control shows the old array form is the refused `{[object Object]}`;
+  - the deadline cases.
+
+  27 tests; 22 fail against the first P3 commit.
+
+*Second review fix pass (admin-and-org Round G, P3).* After the first fix, criterion 3's "true orphans are still freed" still failed at real key lengths. The JSON statements were held to the URL budget, but the plain-column re-check was not.
+- **The defect.** `recheckStillNamed` handed a whole delete batch (up to 500 candidates) to `keysReferencedOutside`, which sends 200 keys per `.in()`. A realistic key such as `orgs/<uuid>/documents/<uuid>/<stamp>_<name>.pdf` is about 120 characters. Encoded, 200 of them make a URL of about 26,000 characters, which the gateway refuses (414). So any purge whose first batch held more than a few dozen candidates threw before batch 1 and deleted nothing. The tests used 56-character keys and a stub with no URL limit, so they could not see this.
+- **The fix.** `recheckStillNamed` now cuts its keys into `.in()` lists sized by encoded length (`inListChunks`):
+  - each key is counted as postgrest-js writes it in `in.(…)`, double-quoted when it holds `,`, `(` or `)`, at its form-encoded length (`wireLength`), plus the encoded comma;
+  - each list stays within `RECHECK_IN_URL_BUDGET` (6,000) and never passes 200 keys;
+  - `keysReferencedOutside` is called once per list, up to `RECHECK_CONCURRENCY` lists at once, and the deadline is checked before each list.
+
+  `keysReferencedOutside` (P2's `lib/storageKeyRegistry.ts`) is not edited. The JSON statements' budget uses the same `wireLength`.
+- **Tests.** In `lib/__tests__/storageOrphansRecheck.test.ts`, the PostgREST-like stub fetch now refuses a URL over 8,000 characters with 414, as a gateway does.
+  - New: a 500-candidate batch of 119-character keys through the real supabase-js client. Every request URL is at most 8,000 characters, all 499 true orphans are deleted, and the one key a late knowledge mirror names is kept. The plain columns are asked in several lists.
+  - New negative control: one 200-key `.in()` at that length is over 8,000 characters and refused.
+  - New: `inListChunks` sizes lists by encoded length, counts a quoted key's quotes, caps a list at 200 keys and keeps every key once.
+
+  The first two new tests fail against the first review fix pass's `lib/storageOrphans.ts`.
+
+**Done-when.**
+1. ✓ — every paginated dump has a stable, unique sort key (document-control `XEDGE-13`, A&O P2).
+2. ✓ — the export's count reconciliation (A&O P2).
+3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column just before it is deleted (P3, with both review fix passes). Every re-check statement is one PostgREST accepts, in its value syntax and its URL length, at real key lengths. A missed reference now costs a kept orphan, never a deleted live file, and a true orphan is still freed.
+
+**Scope / residual.** At real key lengths the re-check costs 11 plain reads per list of about 45 candidates (8 lists in flight at once), plus about one JSON statement per column per 20–40 candidates. A purge too large for one request stops at a batch boundary before the route's limit, says how many were left, and is run again; it never deletes unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left. It is milliseconds long, and an upload's object is never a candidate before it is seven days old. The JSON probes are bucket-wide sequential scans (no GIN index on those columns), as the plain reads' columns are.
 
 ---
 
@@ -731,7 +809,7 @@ Tests: `lib/__tests__/knowledgeSourcesSynced.test.ts` (the route's per-source an
 ## ILIFE-14 · The direct storage delete frees a key that a knowledge-library mirror still names — the shed's mirror check (ILIFE-5) has a second door
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P3 (after document-control P14 merges: P14 edits the same route for `RET-2`) — by the integrator, 2026-10-01 (admin-and-org P2 merge; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (read at the admin-and-org P2 merge: `app/api/storage/delete/route.ts` `DELETE` refuses a key a held or retained revision names, then frees it without asking `lib/storageKeyRegistry.ts` whether any other registered key column — a `knowledge_documents.file_key` mirror among them — still names it)
 - **Locations:** `app/api/storage/delete/route.ts` (`DELETE`, between the hold / retention refusal and the `STORAGE_OBJECT_DELETE` custody row), `lib/storageKeyRegistry.ts` (`keysReferencedOutside`), `lib/knowledgeSourceSync.ts` (a mirror's `file_key` is the controlled revision's own key)
@@ -747,3 +825,30 @@ Tests: `lib/__tests__/knowledgeSourcesSynced.test.ts` (the route's per-source an
 - [ ] A route test covers it: a `knowledge_documents` row naming the key is refused; an unreferenced key and today's project-cost deletes still succeed.
 
 **Closer:** admin-and-org P3 (assigned at the P2 merge, 2026-10-01). The exact hunk is in `ILIFE-5`'s record (the "second call site" block).
+
+**Resolution (2026-10-01, admin-and-org Round G).** Package P3, after document-control P14 merged (the route carries `RET-2`'s current-revision refusal). Reproduced on base `bf6a552`. `app/api/storage/delete/route.ts` went from the hold / retention try (`:273-275`) straight to the custody row (`:277`) and the delete. Nothing asked whether a knowledge mirror, or any other registered key column, still named the key.
+
+Fix: `ILIFE-5`'s "second call site" hunk, as recorded. After the hold / retention / current-revision try and before the custody row, the route calls `keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])`:
+- a hit is 409 "Another record still uses this file (a knowledge-library copy or similar); it cannot be deleted.";
+- a read error, or a read a row cap cut short, is 503 "Could not verify what still uses this file; deletion refused.";
+- either way nothing is deleted and no custody row is written.
+
+`RET-2`'s and P11's refusals keep their answers and come first.
+- Files: `app/api/storage/delete/route.ts`.
+- Tests in `lib/__tests__/storageDeleteRoute.test.ts`, "ILIFE-14 — a key another record still names is never freed":
+  - a mirror naming a superseded revision's file is 409, with nothing deleted and no custody row;
+  - a vendor quote's row naming the key is 409;
+  - an unreadable column is 503;
+  - a clear revision's file and source still delete;
+  - the costDocs path still deletes (*corrected at the review fix pass:* `lib/costDocs.ts uploadCostDoc` calls the route only to clean up an upload whose `cost_documents` row insert failed, so no row ever named that key. The first wording said it deleted the row first. The route comment is corrected too);
+  - a hold still answers 423 first;
+  - the call's exclusions and its position are pinned.
+
+  The first three and the pin fail against base. Every existing case, `RET-2`'s and P11's included, passes.
+
+**Done-when.**
+- [x] The route refuses with 409, in plain words, a key that any registered key column other than the revision's own still names, using `keysReferencedOutside` (fail closed: a read error answers 503 and frees nothing) ✓.
+- [x] A route test covers it: a `knowledge_documents` row naming the key is refused; an unreferenced key and today's project-cost deletes still succeed ✓.
+
+**Scope / residual.** Plain columns only, as the predicate and the hunk are. A key named only inside JSON (an attachment, a logo, a template example, a background) is not checked here. The route's one caller deletes project-cost keys, which are plain. The orphan purge checks the JSON columns too (`ILIFE-6` criterion 3).
+

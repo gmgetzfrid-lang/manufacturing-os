@@ -67,12 +67,20 @@ type Run = {
   started_at: string;
   completed_at?: string | null;
   duration_ms?: number | null;
+  diagnostics?: Array<{ step?: string; detail?: string }> | null;
+  /** BKP-6: a retention purge's counts on the run row (20261172) — NULL when
+   *  no purge ran, and on a run closed before that migration was pasted. */
+  retention_deleted?: number | null;
+  retention_failed?: number | null;
 };
 
 export default function DataExportPage() {
   const { activeOrgId, activeRole, hasAnyRole } = useRole();
   // ADD-1: authority by the role COLLECTION, never the headline alone.
-  const isAuthorized = hasAnyRole(["Admin", "Manager", "DocCtrl"]);
+  // admin-and-org BKP-8: the whole-workspace export runs as the service role,
+  // so it is Admin-only (the data-export surface, lib/adminSurfaces.ts — the
+  // routes are held to it by lib/adminGate.ts).
+  const isAuthorized = hasAnyRole(["Admin"]);
 
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -98,8 +106,14 @@ export default function DataExportPage() {
         fetch(`/api/data-export/destinations?orgId=${activeOrgId}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/data-export/runs?orgId=${activeOrgId}&limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
+      // A list that could not be read is said, never shown as an empty one
+      // (an Admin seeing "no destinations" may set one up again).
+      const unread: string[] = [];
       if (destRes.ok) setDestinations((await destRes.json()).destinations || []);
+      else unread.push(`Export destinations could not be loaded: ${await destRes.text()}`);
       if (runRes.ok) setRuns((await runRes.json()).runs || []);
+      else unread.push(`Export history could not be loaded: ${await runRes.text()}`);
+      if (unread.length) setError(unread.join(" "));
     } catch (e) {
       setError((e as Error).message);
     } finally { setLoading(false); }
@@ -195,7 +209,7 @@ export default function DataExportPage() {
         {!isAuthorized && (
           <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only <b>Admin</b>, <b>Manager</b>, or <b>DocCtrl</b> roles can manage data exports. Your role: <b>{activeRole}</b>.</span>
+            <span>Only an <b>Admin</b> can export the whole workspace or manage its scheduled destinations. Your role: <b>{activeRole}</b>.</span>
           </div>
         )}
 
@@ -462,6 +476,7 @@ function DestinationCard({
 
 function RunRow({ run }: { run: Run }) {
   const ago = run.completed_at || run.started_at;
+  const retention = retentionOf(run);
   const dur = run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : null;
   return (
     <div className="px-4 py-3 flex items-start gap-3">
@@ -489,12 +504,53 @@ function RunRow({ run }: { run: Run }) {
           {run.total_bytes != null && <span>{formatBytes(run.total_bytes)}</span>}
           {run.destination_path && <span className="font-mono truncate max-w-[40ch]" title={run.destination_path}>→ {run.destination_path}</span>}
         </div>
+        {retention && (
+          <div className={`mt-1 text-[11px] ${retention.failed ? "text-amber-700" : "text-[var(--color-text-muted)]"}`}>
+            Retention: {retention.detail}
+          </div>
+        )}
         {run.error_message && (
           <div className="mt-1 p-2 bg-red-50 border border-red-200 rounded text-[10px] text-red-700 font-mono">{run.error_message}</div>
         )}
       </div>
     </div>
   );
+}
+
+/** BKP-6: what a run's retention purge did — shown on the run row (a failure
+ *  is also the run's error_message). Read from the run row's own counts
+ *  (retention_deleted / retention_failed, migration 20261172); a run closed
+ *  before that paste has none, and its retention step in the trace is read
+ *  instead, as before. A purge that stopped with nothing failed (refused for
+ *  a missing prefix) is still a failure: its trace step says so. The row's
+ *  counts lead; what only the trace holds follows them — how many objects
+ *  the purge scanned, and why it stopped (A&O P3 fix pass 8: the counts had
+ *  replaced that detail). */
+function retentionOf(run: Run): { detail: string; failed: boolean } | null {
+  const steps = (run.diagnostics ?? []).filter((d) => d?.step === "s3:retention:done" || d?.step === "s3:retention:err");
+  const last = steps[steps.length - 1];
+  if (typeof run.retention_deleted === "number") {
+    const notDeleted = typeof run.retention_failed === "number" ? run.retention_failed : 0;
+    const trace = retentionTrace(last?.detail);
+    return {
+      detail: `deleted ${run.retention_deleted} archive(s)` + (notDeleted > 0 ? `, ${notDeleted} could not be deleted` : "") +
+        (trace.scanned != null ? ` (scanned ${trace.scanned})` : "") + (trace.reason ? ` — ${trace.reason}` : ""),
+      failed: notDeleted > 0 || last?.step === "s3:retention:err",
+    };
+  }
+  if (!last) return null;
+  return { detail: last.detail || (last.step === "s3:retention:err" ? "the purge failed" : "done"), failed: last.step === "s3:retention:err" };
+}
+
+/** The detail a retention trace step holds beyond the row's counts
+ *  (lib/exportRunner.ts writes "scanned N, deleted D app archive(s)[, F
+ *  could not be deleted][ — why it stopped]", or only why, when the purge
+ *  threw before it scanned). */
+function retentionTrace(detail: string | undefined): { scanned: number | null; reason: string | null } {
+  if (!detail) return { scanned: null, reason: null };
+  const m = /^scanned (\d+), deleted \d+ app archive\(s\)(?:, \d+ could not be deleted)?(?: — ([\s\S]+))?$/.exec(detail);
+  if (m) return { scanned: Number(m[1]), reason: m[2] ?? null };
+  return { scanned: null, reason: detail };
 }
 
 // ─── Destination create/edit modal ────────────────────────────────────────
@@ -603,7 +659,7 @@ function DestinationModal({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Bucket *"><Input value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="my-backups" /></Field>
-                <Field label="Prefix" hint="Optional folder inside the bucket"><Input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="manufacturing-os" /></Field>
+                <Field label="Prefix" hint="Folder inside the bucket — required for retention"><Input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="manufacturing-os" /></Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Access Key ID *" hint={mode === "edit" && existing?.has_access_key ? "Already set; leave blank to keep" : ""}>
@@ -662,8 +718,22 @@ function DestinationModal({
             <Field label="Include file binaries">
               <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)} /> Include PDFs/DWGs inline</label>
             </Field>
-            <Field label="Retention (days)" hint="Delete older exports in your bucket">
-              <Input type="number" min={1} value={retentionDays === "" ? "" : retentionDays} onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))} placeholder="(unlimited)" />
+            {/* BKP-6: no prefix, no retention — the API refuses the pair, and the field says so first. */}
+            <Field
+              label="Retention (days)"
+              hint={type === "webhook"
+                ? "Not used for webhooks"
+                : prefix.trim()
+                  ? `Deletes this app's export archives (manufacturing-os-export-….zip) older than this under "${prefix.trim().replace(/^\/+|\/+$/g, "")}/" in your bucket — permanently. Nothing else is touched.`
+                  : "Set a Prefix first: retention deletes old export archives under that folder, and is refused without one."}
+            >
+              <Input
+                type="number" min={1}
+                value={retentionDays === "" ? "" : retentionDays}
+                onChange={(e) => setRetentionDays(e.target.value === "" ? "" : Number(e.target.value))}
+                placeholder="(unlimited)"
+                disabled={(type === "webhook" || !prefix.trim()) && retentionDays === ""}
+              />
             </Field>
           </div>
 

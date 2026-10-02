@@ -170,7 +170,8 @@
    ],
    "migrationsLikely": 2,
    "dependsOn": [
-    "DC P10 EDGES lands XEDGE-14 (=BILL-3 price-derived plan) first \u2014 build on it"
+    "DC P10 EDGES lands XEDGE-14 (=BILL-3 price-derived plan) first \u2014 build on it",
+    "A&O P3 merged (2026-10-02): BILL-3's one remaining export wart is P4's \u2014 the data-export page's create form sends a bucket typed before the type was switched to webhook, and POST /api/data-export/destinations answers that create 402 off plan (XEDGE-8's create gate); 04-billing.md BILL-3 Scope / residual, 99-fix-sequencing.md fix-pass-8 item 1. The Stripe webhook's machine audit rows follow DEC-87 \u00a72 (user_id NULL, user_email system:stripe-webhook, user_role system, checked)."
    ],
    "sequencingNotes": "BILL-9+BILL-4 (observable writes, non-2xx on failure so Stripe retries) \u2192 BILL-1/BILL-3 (status map incl. incomplete; CHECK constraint on subscription_status) \u2192 BILL-2/ORG-9/BILL-6 (migration B, then A after inventory) \u2192 BILL-8.",
    "decisionsNeeded": [
@@ -235,7 +236,7 @@
     "app/api/admin/archive-settings/route.ts",
     "app/api/storage/upload-url/route.ts (branding-area authorization; ContentType allowlist + size cap)",
     "app/api/storage/multipart/route.ts",
-    "app/(protected)/admin/storage/page.tsx (label region only)",
+    "app/(protected)/admin/storage/page.tsx (label region; and, assigned by the integrator at the A&O P3 merge 2026-10-02: show the two export buttons, Download JSON / Download ZIP (:743-775), only to a member holding adminSurface(\"data-export\").entry, with a line pointing others to an Admin \u2014 the data-export routes are Admin-only since P3, DEC-87 \u00a71; 99-fix-sequencing.md Integrator notes, P3 handoff 1)",
     "components/branding/LogoUploadModal.tsx",
     "lib/orgBranding.ts (branding upload audit row)",
     "new migration: per-org storage ceiling / restrict the global row",
@@ -282,7 +283,8 @@
    "dependsOn": [
     "After DC P5 HOLDS (HLD-5 cites lib/audit.ts:129-150) and P3 LIFECYCLE (REV-12 cites :16-31) merge",
     "ALOG-8's shed/ticket-shed/orphans sites \u2192 DC P9 RECORDS (RET-6/12/14/7); restore/apply site \u2192 A&O P1",
-    "DC DCK-9 cites activity/page.tsx:195 \u2014 keep to header copy"
+    "DC DCK-9 cites activity/page.tsx:195 \u2014 keep to header copy",
+    "A&O P3 merged (2026-10-02): ALOG-11's registry names P3's three actions (DATA_EXPORT, DATA_EXPORT_FILES, DATA_EXPORT_UNDELIVERED); the viewer's 'who took which drawing' is lib/dataExport.ts rebuildExportList \u2014 check undelivered (null = no failure recorded, never 'delivered') and show exporter.userId's current member, not the stored email; ALOG-7's trigger must leave a service-role insert's user_id NULL so both export ledgers hold (DEC-87 \u00a73). 99-fix-sequencing.md Integrator notes, P3 handoff 2 and fix-pass-8 item 2. BKP-6 is NOT P7's (closed by P3)."
    ],
    "sequencingNotes": "ALOG-7 and ALOG-10 first, then ALOG-8, then ALOG-11/ALOG-6; ALOG-5 residual = /activity states its rule (pointer to SURF-9/ROLE-5/DEC-17).",
    "decisionsNeeded": [

@@ -4,14 +4,23 @@
 // Credentials are encrypted at rest before insert via lib/serverCrypto.
 // Sensitive fields are NEVER returned to the client after creation —
 // API responses include only a masked preview.
+//
+// Admin-only (admin-and-org BKP-8 / BKP-13): a destination is an unattended
+// channel for the whole workspace, so it is held to the data-export admin
+// surface by the one gate (lib/adminGate.ts), and creating one rings every
+// other controller's bell (lib/exportAlerts.ts). Its audit row's user_role
+// is the role the surface admitted the caller by (the gate's admittedRole —
+// an Admin whose headline is Viewer is recorded as Admin), as the export
+// rows' are (DEC-87 §3). GET's read is CHECKED: a failed read is a
+// 500 naming it, never an empty list an Admin would read as "no destinations"
+// (and set one up again).
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret, maskSecret } from "@/lib/serverCrypto";
 import { computeNextRunAt } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
-
-const ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"];
+import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -44,14 +53,15 @@ interface DestinationCreateBody {
 
 export async function GET(req: NextRequest) {
   const orgId = new URL(req.url).searchParams.get("orgId") || "";
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const { data } = await auth.admin
+  const { data, error } = await auth.admin
     .from("export_destinations")
     .select("*")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
+  if (error) return NextResponse.json({ error: `Could not read this workspace's export destinations (${error.message}).` }, { status: 500 });
 
   // Strip + mask encrypted columns before returning
   const safe = (data ?? []).map((d: EncryptedDestinationRow & Record<string, unknown>) => ({
@@ -71,8 +81,8 @@ export async function POST(req: NextRequest) {
   let body: DestinationCreateBody;
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
-  const { orgId } = body || {};
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const orgId = String(body?.orgId ?? "");
+  const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   if (!body.name || !body.destination_type) {
@@ -142,16 +152,39 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await auth.admin.from("audit_logs").insert({
+  const { error: auditErr } = await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_CREATED",
     resource_id: data.id,
     resource_type: "export_destination",
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    user_role: auth.admittedRole,
     details: { name: data.name, destination_type: data.destination_type },
   });
+  // CHECKED: a refused audit row is said in the answer (the destination
+  // stands), never swallowed.
+  const warnings: string[] = [];
+  if (auditErr) {
+    console.error(`[data-export/destinations] org ${orgId}: the EXPORT_DESTINATION_CREATED audit row was not written: ${auditErr.message}`);
+    warnings.push(`Created, but the creation could not be recorded in the audit log: ${auditErr.message}`);
+  }
 
-  return NextResponse.json({ destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined } });
+  // BKP-13 Done-when 3: creating ANY destination (a webhook included) tells
+  // every other controller. A refused alert is said in the answer, never
+  // swallowed; the destination stands either way.
+  const alert = await alertAdminsOfDestination(auth.admin, {
+    orgId, actorUserId: auth.userId, actorEmail: auth.email, change: "created",
+    destinationId: data.id, destinationName: data.name, destinationType: data.destination_type,
+    enabled: data.enabled === true, schedule: data.schedule_kind,
+  }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
+  if (!alert.ok) {
+    console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
+    warnings.push(`Created, but the other Admins could not be alerted: ${alert.error}`);
+  }
+
+  return NextResponse.json({
+    destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined },
+    ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+  });
 }

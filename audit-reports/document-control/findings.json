@@ -1937,7 +1937,6 @@
         "app/api/admin/restore/apply-table/route.ts:24,38-43,74-89",
         "lib/exportTables.ts:53,67,130",
         "lib/dataRestore.ts:86-93,249-251",
-        "app/api/admin/restore/apply/route.ts:130",
         "app/api/admin/restore/begin/route.ts:78-85"
       ],
       "has_verifier_correction": false,

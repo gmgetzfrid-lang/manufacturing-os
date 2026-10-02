@@ -73,7 +73,6 @@ vi.mock("@/lib/serverAuth", async () => {
 });
 
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
-import { POST as applySingle } from "@/app/api/admin/restore/apply/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import { POST as previewRoute } from "@/app/api/admin/restore/preview/route";
 import {
@@ -95,10 +94,6 @@ async function chunk(table: string, rows: Row[], idRemap: { orgId: Record<string
   const res = await applyTable(post("/api/admin/restore/apply-table", { table, rows, idRemap, manifest: { orgId: "backup-org" } }));
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
-async function single(envelope: unknown) {
-  const res = await applySingle(post("/api/admin/restore/apply", { envelope, confirm: true }));
-  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
-}
 const rowsOf = (t: string) => db.rows[t] ?? [];
 const audits = (action: string) => rowsOf("audit_logs").filter((r) => r.action === action);
 
@@ -116,20 +111,24 @@ beforeEach(() => {
   db.authUsers = null;
 });
 
-describe("ORG-1 / BKP-3 — the single-shot /apply forces the org boundary", () => {
+// intelligence ILIFE-4 (admin-and-org Round G, P3): the single-shot
+// /api/admin/restore/apply had no caller and was deleted; the chunked
+// /apply-table the page drives is the one restore door. The cases below that
+// ran through it now run through /apply-table (the same shared write,
+// applyRestoreChunk), and its route-only cases went with it.
+describe("ORG-1 / BKP-3 — the restore forces the org boundary", () => {
   it("rows naming a foreign org_id land in THIS workspace — zero rows land in the foreign org", async () => {
-    const { status, body } = await single({
-      manifest: { orgId: "throwaway-uuid", orgName: "Acme" },
-      tables: {
-        documents: [{ id: "d-forged", org_id: VICTIM, title: "P&ID forged" }],
-        notifications: [{ id: "n-forged", org_id: VICTIM, title: "hi" }],
-        notes: [{ id: "note-1", org_id: "throwaway-uuid", body: "x" }],
-        // append-only: never imported on either path (SURF-8)
-        audit_logs: [{ id: "a-forged", org_id: VICTIM, action: "DOCUMENT_APPROVED" }],
-      },
-    });
-    expect(status).toBe(200);
-    expect(body.ok).toBe(true);
+    const remap = { orgId: { "throwaway-uuid": ORG }, uid: {} };
+    for (const [table, rows] of [
+      ["documents", [{ id: "d-forged", org_id: VICTIM, title: "P&ID forged" }]],
+      ["notifications", [{ id: "n-forged", org_id: VICTIM, title: "hi" }]],
+      ["notes", [{ id: "note-1", org_id: "throwaway-uuid", body: "x" }]],
+    ] as const) {
+      const r = await chunk(table, [...rows], remap);
+      expect(r.status, table).toBe(200);
+    }
+    // append-only: never imported (SURF-8)
+    expect((await chunk("audit_logs", [{ id: "a-forged", org_id: VICTIM, action: "DOCUMENT_APPROVED" }], remap)).status).toBe(400);
     for (const t of ["documents", "notifications", "notes", "audit_logs"]) {
       expect(rowsOf(t).filter((r) => r.org_id === VICTIM), t).toEqual([]);
     }
@@ -140,27 +139,12 @@ describe("ORG-1 / BKP-3 — the single-shot /apply forces the org boundary", () 
   });
 
   it("a row that omits org_id cannot land org-less: it is bound to this workspace", async () => {
-    await single({ manifest: { orgId: "b" }, tables: { notes: [{ id: "n1", body: "no org" }] } });
+    await chunk("notes", [{ id: "n1", body: "no org" }]);
     expect(rowsOf("notes")).toEqual([expect.objectContaining({ id: "n1", org_id: ORG })]);
     await chunk("notes", [{ id: "n2", body: "no org either" }]);
     expect(rowsOf("notes").find((r) => r.id === "n2")?.org_id).toBe(ORG);
   });
 
-  it("an envelope carrying a table not on the export contract is refused with 400 before ANY write", async () => {
-    const { status, body } = await single({
-      manifest: { orgId: "b", orgName: "Renamed" },
-      tables: {
-        org_members: [{ uid: "u-new", email: "new@x.io", role: "Viewer" }],
-        documents: [{ id: "d1", org_id: "b" }],
-        pg_authid_please: [{ rolname: "x" }],
-      },
-    });
-    expect(status).toBe(400);
-    expect(String(body.error)).toMatch(/pg_authid_please/);
-    expect(body.offContract).toEqual(["pg_authid_please"]);
-    expect(db.writes).toEqual([]); // no placeholder, no org rename, no rows
-    expect(rowsOf("documents")).toEqual([]);
-  });
 
   it("the plan marks an off-contract table as never imported, with the reason", () => {
     const plan = planRestore({ manifest: { orgId: "b" }, tables: { made_up: [{}], documents: [{}], users: [{}] } }, { orgId: ORG, orgName: "", members: [] });
@@ -213,22 +197,16 @@ describe("BKP-3 Done-when 3 — org-less rows are bounded by their parent row", 
     expect((trail.details as Record<string, unknown>).refused).toHaveLength(2);
   });
 
-  it("curated_collection_items are bounded by their collection the same way, on the single-shot route too", async () => {
+  it("curated_collection_items are bounded by their collection the same way", async () => {
     db.keys.curated_collection_items = [["collection_id", "document_id"]];
     db.rows.curated_collections = [{ id: "c-mine", org_id: ORG }, { id: "c-victim", org_id: VICTIM }];
-    const { status, body } = await single({
-      manifest: { orgId: "b" },
-      tables: {
-        curated_collection_items: [
-          { collection_id: "c-mine", document_id: "d1", sort_order: 1 },
-          { collection_id: "c-victim", document_id: "d2", sort_order: 1 },
-        ],
-      },
-    });
-    expect(status).toBe(200);
+    const r = await chunk("curated_collection_items", [
+      { collection_id: "c-mine", document_id: "d1", sort_order: 1 },
+      { collection_id: "c-victim", document_id: "d2", sort_order: 1 },
+    ], { orgId: { b: ORG }, uid: {} });
+    expect(r.status).toBe(200);
     expect(rowsOf("curated_collection_items").map((x) => x.collection_id)).toEqual(["c-mine"]);
-    const t = (body.tables as Array<Record<string, unknown>>).find((x) => x.name === "curated_collection_items")!;
-    expect(t.refused).toEqual([expect.objectContaining({ id: "c-victim/d2", code: "parent_outside_workspace" })]);
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "c-victim/d2", code: "parent_outside_workspace" })]);
   });
 
   it("an unreadable parent fails the chunk closed — nothing is written on a guess", async () => {
@@ -239,8 +217,8 @@ describe("BKP-3 Done-when 3 — org-less rows are bounded by their parent row", 
   });
 });
 
-describe("BKP-3 Done-when 2 — one shared function, so the two routes cannot diverge", () => {
-  it("the same rows land identically through /apply-table and /apply", async () => {
+describe("BKP-3 Done-when 2 — one shared function writes every restored row", () => {
+  it("rows land through the shared write with the org forced and every bearer column scrubbed", async () => {
     db.rows.documents = [{ id: "d1", org_id: ORG }];
     const rows = [
       { id: "s1", org_id: VICTIM, token: "live-token", revoked_at: null, document_id: "d1" },
@@ -248,10 +226,6 @@ describe("BKP-3 Done-when 2 — one shared function, so the two routes cannot di
     ];
     await chunk("document_shares", rows);
     const viaChunk = rowsOf("document_shares").map(({ token, revoked_at, ...rest }) => ({ ...rest, token: String(token).slice(0, 9), revoked: !!revoked_at }));
-    db.rows.document_shares = [];
-    await single({ manifest: { orgId: "backup-org" }, tables: { document_shares: rows } });
-    const viaSingle = rowsOf("document_shares").map(({ token, revoked_at, ...rest }) => ({ ...rest, token: String(token).slice(0, 9), revoked: !!revoked_at }));
-    expect(viaSingle).toEqual(viaChunk);
     expect(viaChunk).toEqual([
       { id: "s1", org_id: ORG, document_id: "d1", token: "restored-", revoked: true },
       { id: "s2", org_id: ORG, document_id: "d1", token: "restored-", revoked: true },
@@ -264,24 +238,6 @@ describe("BKP-3 Done-when 2 — one shared function, so the two routes cannot di
       expect(r, table).toMatchObject({ ok: false, status: 400, inserted: 0 });
     }
     expect(db.writes).toEqual([]);
-  });
-});
-
-describe("ALOG-8 (restore/apply site) — the DATA_RESTORE audit row is a checked write", () => {
-  it("writes DATA_RESTORE naming the backup and per-table counts", async () => {
-    const { status } = await single({ manifest: { orgId: "backup-org" }, tables: { notes: [{ id: "n1", org_id: "backup-org" }] } });
-    expect(status).toBe(200);
-    const row = audits("DATA_RESTORE")[0];
-    expect(row).toMatchObject({ org_id: ORG, user_id: "admin-1" });
-    expect(row.details).toMatchObject({ backupOrgId: "backup-org", totalInserted: 1, tables: [{ name: "notes", inserted: 1 }] });
-  });
-
-  it("a rejected audit insert is surfaced as a 500 naming what was written — never a silent success", async () => {
-    db.writeError = (table) => (table === "audit_logs" ? { code: "23502", message: "null value in column \"action\"" } : null);
-    const { status, body } = await single({ manifest: { orgId: "backup-org" }, tables: { notes: [{ id: "n1" }] } });
-    expect(status).toBe(500);
-    expect(String(body.error)).toMatch(/restore audit row failed: null value/);
-    expect(body.totalInserted).toBe(1);
   });
 });
 
@@ -299,7 +255,7 @@ describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is r
     library_numbering: [{ org_id: "backup-org", library_id: "lib-1", pattern: "P-{seq}" }],
   };
 
-  it("restoring the same backup twice: the second run skips what exists — zero failed tables, on both routes", async () => {
+  it("restoring the same backup twice: the second run skips what exists — zero failed tables, chunk by chunk and through the page's driver", async () => {
     db.keys = { ...KEYS };
     db.rows.documents = [{ id: "d1", org_id: ORG }];
     db.rows.libraries = [{ id: "lib-1", org_id: ORG }];
@@ -311,10 +267,11 @@ describe("BKP-12 — the id-less tables re-run cleanly, and a refused chunk is r
       expect(again.status, `${table} re-run`).toBe(200);
       expect(again.body.inserted, `${table} re-run`).toBe(0);
     }
-    // the single-shot route, into a workspace that already has every row
-    const { status, body } = await single({ manifest: { orgId: "backup-org" }, tables: rowsFor });
-    expect(status).toBe(200);
-    expect(body.failedTables).toEqual([]);
+    // the page's driver, into a workspace that already has every row
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: rowsFor };
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(run.stoppedAt).toBeNull();
+    expect(run.totalInserted).toBe(0);
     expect(rowsOf("codebook_config")).toHaveLength(1);
   });
 
@@ -455,21 +412,18 @@ describe("BKP-11 / BKP-1 (restore halves) — nothing restored can fire or be pr
     for (const row of rowsOf("export_destinations")) {
       expect(row).toMatchObject({ org_id: ORG, enabled: false, next_run_at: null, webhook_secret_encrypted: null, access_key_id_encrypted: null, secret_access_key_encrypted: null });
     }
-    // the single-shot route lands it the same way
-    db.rows.export_destinations = [];
-    await single({ manifest: { orgId: "backup-org" }, tables: { export_destinations: [dest("e3")] } });
-    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, next_run_at: null, webhook_secret_encrypted: null });
   });
 
-  it("the single-shot route scrubs every bearer column like the chunked one: shares and intake links revoked behind a placeholder, an issued transmittal voided", async () => {
-    await single({
+  it("every bearer column is scrubbed through the page's driver: shares and intake links revoked behind a placeholder, an issued transmittal voided", async () => {
+    const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: {
         document_shares: [{ id: "s1", org_id: "backup-org", token: "live-share", revoked_at: null }],
         project_intake_links: [{ id: "l1", org_id: "backup-org", token: "live-intake", revoked_at: null }],
         transmittals: [{ id: "t1", org_id: "backup-org", portal_token: "live-portal", status: "issued", notes: null }],
       },
-    });
+    };
+    await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     for (const t of ["document_shares", "project_intake_links"]) {
       const row = rowsOf(t)[0];
       expect(String(row.token), t).toMatch(/^restored-/);
@@ -492,7 +446,7 @@ describe("ORG-1 (fix pass) — what a restored row POINTS AT is bounded to this 
     db.rows.projects = [{ id: "p-mine", org_id: ORG }, { id: "p-victim", org_id: VICTIM }];
   });
 
-  it("a team_members row naming another tenant's team is refused and never written — the attacker never joins the victim's team (both routes)", async () => {
+  it("a team_members row naming another tenant's team is refused and never written — the attacker never joins the victim's team", async () => {
     const r = await chunk("team_members", [
       { team_id: T_VICTIM, uid: "attacker", org_id: VICTIM },
       { team_id: T_MINE, uid: "u1" },
@@ -500,11 +454,6 @@ describe("ORG-1 (fix pass) — what a restored row POINTS AT is bounded to this 
     expect(r.status).toBe(200);
     expect(rowsOf("team_members")).toEqual([expect.objectContaining({ team_id: T_MINE, uid: "u1", org_id: ORG })]);
     expect(r.body.refused).toEqual([{ id: `${T_VICTIM}/attacker`, code: "parent_outside_workspace", message: `team_id ${T_VICTIM} is not a teams row of this workspace` }]);
-    db.rows.team_members = [];
-    const { status, body } = await single({ manifest: { orgId: "b" }, tables: { team_members: [{ team_id: T_VICTIM, uid: "attacker" }] } });
-    expect(status).toBe(200);
-    expect(rowsOf("team_members")).toEqual([]);
-    expect((body.tables as Array<Record<string, unknown>>)[0].refused).toEqual([expect.objectContaining({ code: "parent_outside_workspace" })]);
   });
 
   it("a checkout episode on another tenant's document never lands (the deployment-wide one-active index stays the victim's)", async () => {
@@ -545,17 +494,13 @@ describe("ORG-1 (fix pass) — what a restored row POINTS AT is bounded to this 
     expect(r.body.heldElsewhere).toBe(1);
   });
 
-  it("a long version chain written newest-first restores whole across chunks — rows go parents-first (both routes)", async () => {
+  it("a long version chain written newest-first restores whole across chunks — rows go parents-first", async () => {
     db.fks.document_versions = [{ column: "supersedes_version_id", parent: "document_versions" }, { column: "record_id", parent: "documents" }];
     const chain = Array.from({ length: 1200 }, (_, i) => ({ id: `v${i}`, org_id: "backup-org", record_id: "d-mine", supersedes_version_id: i === 0 ? null : `v${i - 1}` })).reverse();
     const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { document_versions: chain } };
     const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(result.stoppedAt).toBeNull();
     expect(result).toMatchObject({ totalInserted: 1200, totalRefused: 0 });
-    db.rows.document_versions = [];
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect(body).toMatchObject({ totalInserted: 1200, failedTables: [] });
   });
 
   it("an unreadable parent table fails the chunk closed — nothing is written on a guess", async () => {
@@ -641,14 +586,11 @@ describe("BKP-5 (fix pass) — a key another workspace holds is 'not restored', 
     expect(rowsOf("notes").find((n) => n.id === "n-theirs")?.org_id).toBe(VICTIM); // untouched, and not ours
   });
 
-  it("a backup restored beside its still-live source org: every id is held elsewhere — 0 inserted, and the totals say why (single-shot too)", async () => {
+  it("a backup restored beside its still-live source org: every id is held elsewhere — 0 inserted, and the totals say why", async () => {
     db.rows.notes = [{ id: "n1", org_id: VICTIM }, { id: "n2", org_id: VICTIM }];
     const env: RestoreEnvelopeLike = { manifest: { orgId: VICTIM }, tables: { notes: [{ id: "n1", org_id: VICTIM }, { id: "n2", org_id: VICTIM }] } };
     const result = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(result).toMatchObject({ totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 2, stoppedAt: null });
-    const { body } = await single(env);
-    expect(body).toMatchObject({ totalInserted: 0, totalExisting: 0, totalHeldElsewhere: 2 });
-    expect(String(body.note)).toMatch(/2 record\(s\) were NOT restored: their ids are in use by another workspace/);
   });
 
   it("an org-less row belongs to the workspace of its bounding parent", async () => {
@@ -718,17 +660,16 @@ describe("runChunkedRestore — a request that never gets an answer stops the ru
 });
 
 describe("ORG-1 Done-when 4 — an Object.prototype name is off contract too: 400 before any write", () => {
-  it("'constructor' and '__proto__' table keys are refused by the single-shot route", async () => {
-    const raw = '{"envelope":{"manifest":{"orgId":"b"},"tables":{"notes":[{"id":"n1"}],"constructor":[{"x":1}],"__proto__":[{"x":1}]}},"confirm":true}';
-    const res = await applySingle(new NextRequest(`https://app/api/admin/restore/apply?orgId=${ORG}`, {
-      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: raw,
-    }));
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(res.status).toBe(400);
-    expect([...(body.offContract as string[])].sort()).toEqual(["__proto__", "constructor"]);
+  it("'constructor' and '__proto__' tables are refused by /apply-table and planned out of an envelope", async () => {
+    for (const table of ["constructor", "__proto__"]) {
+      const r = await chunk(table, [{ id: "x" }]);
+      expect(r.status, table).toBe(400);
+    }
     expect(db.writes).toEqual([]);
-    const r = await chunk("constructor", [{ id: "x" }]);
-    expect(r.status).toBe(400);
+    const env = JSON.parse('{"manifest":{"orgId":"b"},"tables":{"notes":[{"id":"n1"}],"constructor":[{"x":1}],"__proto__":[{"x":1}]}}') as RestoreEnvelopeLike;
+    const plan = planFor(env);
+    expect(plan.counts.tables.filter((t) => t.offContract).map((t) => t.name).sort()).toEqual(["__proto__", "constructor"]);
+    expect(plan.counts.tables.filter((t) => t.willImport).map((t) => t.name)).toEqual(["notes"]);
   });
 });
 
@@ -741,7 +682,7 @@ describe("BKP-5 (fix pass 2) — a column the database computes is never sent, s
     db.rows.knowledge_documents = [{ id: "kd-1", org_id: ORG, library_id: "kl-1" }];
   });
 
-  it("the review's run: chunks and questions carrying tsv / search_tsv land, and the tables after them are attempted (both routes)", async () => {
+  it("the review's run: chunks and questions carrying tsv / search_tsv land, and the tables after them are attempted", async () => {
     const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: {
@@ -758,10 +699,6 @@ describe("BKP-5 (fix pass 2) — a column the database computes is never sent, s
     expect(result).toMatchObject({ totalInserted: 5, totalRefused: 0 });
     expect(rowsOf("knowledge_chunks")[0]).not.toHaveProperty("tsv");
     expect(rowsOf("knowledge_questions")[0]).not.toHaveProperty("search_tsv");
-    for (const t of ["knowledge_chunks", "knowledge_page_entities", "knowledge_questions", "output_templates", "output_generations"]) db.rows[t] = [];
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect(body).toMatchObject({ totalInserted: 5, failedTables: [] });
   });
 
   it("intelligence ILIFE-5: a knowledge mirror whose controlled document is not restored is refused per row; its chunks follow it; the run goes on", async () => {
@@ -962,18 +899,12 @@ describe("ORG-1 (fix pass 2) — a storage key under another workspace's prefix 
     expect(r.body.refused).toEqual([{ id: "v-evil", code: "storage_key_outside_workspace", message: expect.stringContaining(`(orgs/${VICTIM_ID}/)`) }]);
   });
 
-  it("deep inside JSONB too (single-shot route); text that merely mentions 'orgs/' is data", async () => {
-    const { body } = await single({
-      manifest: { orgId: "b" },
-      tables: {
-        output_generations: [
-          { id: "g-evil", org_id: "b", meta: { files: [{ key: `orgs/${VICTIM_ID}/out/a.docx` }] } },
-          { id: "g-ok", org_id: "b", meta: { note: "see the orgs/teams/ page" } },
-        ],
-      },
-    });
-    const t = (body.tables as Array<Record<string, unknown>>)[0];
-    expect(t.refused).toEqual([expect.objectContaining({ id: "g-evil", code: "storage_key_outside_workspace" })]);
+  it("deep inside JSONB too; text that merely mentions 'orgs/' is data", async () => {
+    const r = await chunk("output_generations", [
+      { id: "g-evil", org_id: "b", meta: { files: [{ key: `orgs/${VICTIM_ID}/out/a.docx` }] } },
+      { id: "g-ok", org_id: "b", meta: { note: "see the orgs/teams/ page" } },
+    ], { orgId: { b: ORG }, uid: {} });
+    expect(r.body.refused).toEqual([expect.objectContaining({ id: "g-evil", code: "storage_key_outside_workspace" })]);
     expect(rowsOf("output_generations").map((g) => g.id)).toEqual(["g-ok"]);
   });
 });
@@ -1022,16 +953,15 @@ describe("BKP-11 (restore half) / DEC-45 (fix pass 3) — no restored row of the
     expect(restoreTableRefusal("email_notifications")).toMatch(/delivery state is never restored/);
   });
 
-  it("the single-shot /apply plans it out and lands the rest; the plan says why; a live queue row of this workspace is untouched", async () => {
+  it("the plan marks it out and says why; a restore lands the rest and leaves a live queue row of this workspace untouched", async () => {
     db.rows.email_notifications = [{ id: "live-1", org_id: ORG, to_email: "a@acme.com", status: "sent", attempt_count: 1 }];
-    const env = { manifest: { orgId: "backup-org" }, tables: { email_notifications: [hostile("m1")], notes: [{ id: "n1", org_id: "backup-org" }] } };
-    const plan = planFor(env as RestoreEnvelopeLike);
+    const env = { manifest: { orgId: "backup-org" }, tables: { email_notifications: [hostile("m1")], notes: [{ id: "n1", org_id: "backup-org" }] } } as RestoreEnvelopeLike;
+    const plan = planFor(env);
     expect(plan.counts.tables.find((t) => t.name === "email_notifications")).toMatchObject({ willImport: false, reason: expect.stringMatching(/outbound mail queue/) });
     expect(plan.counts.tables.find((t) => t.name === "email_notifications")!.offContract).toBeUndefined();
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect(body.failedTables).toEqual([]);
-    expect((body.tables as Array<{ name: string }>).map((t) => t.name)).toEqual(["notes"]);
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan, orgNameChoice: "current", post: routePost });
+    expect(run.stoppedAt).toBeNull();
+    expect(run.tables.map((t) => t.name)).toEqual(["notes"]);
     expect(rowsOf("email_notifications")).toEqual([{ id: "live-1", org_id: ORG, to_email: "a@acme.com", status: "sent", attempt_count: 1 }]);
     expect(sendable()).toEqual([]);
   });
@@ -1115,18 +1045,6 @@ describe("BKP-5 / BKP-12 (fix pass 3) — a re-run links the placeholders the fi
     expect(membersWith("bob@acme.com")).toHaveLength(1);
   });
 
-  it("the single-shot /apply run twice: the same", async () => {
-    const env = {
-      manifest: { orgId: "backup-org", orgName: "Acme" },
-      tables: { org_members: backupMembers, documents: [{ id: "d1", org_id: "backup-org" }], document_favorites: [{ org_id: "backup-org", user_id: "old-bob", document_id: "d1" }] },
-    };
-    const first = await single(env);
-    expect(first.body).toMatchObject({ ok: true, createdUsers: 2 });
-    const second = await single(env);
-    expect(second.body).toMatchObject({ ok: true, createdUsers: 0, linkedUsers: 3, totalInserted: 0 });
-    expect(rowsOf("document_favorites")).toHaveLength(1);
-    expect(membersWith("bob@acme.com")).toHaveLength(1);
-  });
 
   it("one address with several rows links the active one first; a row given no status counts as active", () => {
     const env: RestoreEnvelopeLike = { manifest: { orgId: "b" }, tables: { org_members: [{ uid: "old", email: "dan@acme.com" }] } };
@@ -1141,12 +1059,12 @@ describe("BKP-5 / BKP-12 (fix pass 3) — a re-run links the placeholders the fi
     expect(linkTo([]).linkedStatus).toBeUndefined();
   });
 
-  it("every status a membership can hold links (types/schema.ts MemberStatus), and both routes and the page read them", () => {
+  it("every status a membership can hold links (types/schema.ts MemberStatus), and /begin, /preview and the page read them", () => {
     const schema = readFileSync(join(process.cwd(), "types/schema.ts"), "utf8");
     const declared = /export type MemberStatus = ([^;]+);/.exec(schema)![1].match(/"([a-z_]+)"/g)!.map((x) => x.slice(1, -1));
     expect([...RESTORE_LINK_MEMBER_STATUSES].sort()).toEqual([...declared].sort());
     // Fix pass 4: /preview reconciles the same way, and every reader checks the read.
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts", "app/api/admin/restore/preview/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
+    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/preview/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
       const src = readFileSync(join(process.cwd(), f), "utf8");
       expect(src, f).toMatch(/\{ data: memberRows, error: memberReadErr \}[^;]*from\("org_members"\)\.select\("uid, email, status"\)\.eq\("org_id", (orgId|activeOrgId)\)\.in\("status", \[\.\.\.RESTORE_LINK_MEMBER_STATUSES\]\)/);
       expect(src, f).toMatch(/if \(readErr\) (throw|\{)/);
@@ -1170,15 +1088,11 @@ describe("BKP-5 (fix pass 3) — a cleared pointer is reported only for a row th
     expect(r.body.cleared).toEqual([expect.objectContaining({ id: "team-3", code: "person_not_restored" })]);
     expect(rowsOf("teams").map((t) => t.id)).toEqual(["team-live", "team-3"]);
     expect(audits("RESTORE_CHUNK")[0].details).toMatchObject({ inserted: 1, refused: [expect.objectContaining({ id: "team-2" })], cleared: [expect.objectContaining({ id: "team-3" })] });
-    // the run's totals and the single-shot route agree
+    // the run's totals agree
     db.rows.teams = [{ id: "team-live", org_id: ORG, name: "Ops" }];
     const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { teams: [team("team-2", "Ops"), team("team-3", "Eng")] } };
     const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(run).toMatchObject({ totalInserted: 1, totalRefused: 1, totalCleared: 1 });
-    db.rows.teams = [{ id: "team-live", org_id: ORG, name: "Ops" }];
-    const { body } = await single(env);
-    const t = (body.tables as Array<Record<string, unknown>>).find((x) => x.name === "teams")!;
-    expect(t).toMatchObject({ inserted: 1, refused: [expect.objectContaining({ id: "team-2" })], cleared: [expect.objectContaining({ id: "team-3" })] });
   });
 
   it("a cleared row refused alone (one-row chunk) reports no clear, and leaves no 'pointer cleared' audit", async () => {
@@ -1232,14 +1146,8 @@ describe("BKP-5 / BKP-12 (fix pass 4) — the reconciliation fails closed: an un
     expect(audits("RESTORE_BEGIN")).toEqual([]);
   });
 
-  it("/apply: the same — no placeholder, no table, no audit; and the page's driver stops at /begin with that message", async () => {
+  it("the page's driver stops at /begin with that message — no placeholder, no table", async () => {
     db.readError.org_members = "permission denied";
-    const r = await single(env());
-    expect(r.status).toBe(500);
-    expect(String(r.body.error)).toMatch(/^Could not read this workspace's members \(permission denied\)/);
-    expect(db.attempts).toEqual([]);
-    expect(rowsOf("documents")).toEqual([]);
-    expect(audits("DATA_RESTORE")).toEqual([]);
     const e = env() as RestoreEnvelopeLike;
     await expect(runChunkedRestore({ orgId: ORG, envelope: e, plan: planFor(e), orgNameChoice: "current", post: routePost }))
       .rejects.toThrow(/Could not read this workspace's members/);
@@ -1293,18 +1201,8 @@ describe("BKP-5 / BKP-12 (fix pass 4) — the reconciliation fails closed: an un
     expect(rowsOf("document_favorites")).toEqual([]);
   });
 
-  it("/apply: a placeholder that cannot be made stops before any table, and the DATA_RESTORE row records what was made and why it stopped", async () => {
-    db.writeError = (table, op, rows) => (table === "org_members" && op === "insert" && rows[0].email === "cara@acme.com" ? { code: "P0001", message: "refused by trigger" } : null);
-    const r = await single(env());
-    expect(r.status).toBe(500);
-    expect(r.body).toMatchObject({ createdUsers: 1, totalInserted: 0, tables: [] });
-    expect(String(r.body.error)).toMatch(/placeholder for cara@acme\.com/);
-    expect(rowsOf("documents")).toEqual([]);
-    expect(rowsOf("document_favorites")).toEqual([]);
-    expect(audits("DATA_RESTORE")[0].details).toMatchObject({ createdUsers: 1, totalInserted: 0, tables: [], failed: "placeholder for cara@acme.com: refused by trigger", orgNameApplied: false });
-  });
 
-  it("a refused rename answers 500 before any placeholder (both routes); an applied one is recorded as applied", async () => {
+  it("a refused rename answers 500 before any placeholder; an applied one is recorded as applied", async () => {
     db.writeError = (table, op) => (table === "orgs" && op === "update" ? { code: "23505", message: "duplicate org name" } : null);
     const renamed = { manifest: { orgId: "backup-org", orgName: "Acme Inc." }, orgNameChoice: "backup" };
     const r = await begin(renamed);
@@ -1312,9 +1210,6 @@ describe("BKP-5 / BKP-12 (fix pass 4) — the reconciliation fails closed: an un
     expect(String(r.body.error)).toMatch(/^Could not apply the backup's workspace name \(duplicate org name\) — nothing was written\.$/);
     expect(memberInserts()).toEqual([]);
     expect(audits("RESTORE_BEGIN")).toEqual([]);
-    const s1 = await applySingle(post("/api/admin/restore/apply", { envelope: { ...env(), manifest: { orgId: "backup-org", orgName: "Acme Inc." } }, orgNameChoice: "backup", confirm: true }));
-    expect(s1.status).toBe(500);
-    expect(memberInserts()).toEqual([]);
     expect(rowsOf("documents")).toEqual([]);
     db.writeError = null;
     const ok = await begin(renamed);
@@ -1344,20 +1239,16 @@ describe("ORG-1 (fix pass 4) — an acceptable-use agreement, the spend ledger a
     expect(db.attempts).toEqual([]);
   });
 
-  it("the single-shot /apply and the page's driver plan them out and land the rest", async () => {
+  it("the page's driver plans them out and lands the rest", async () => {
     const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: { ai_key_agreements: [agreement("k1", "u-1")], ai_usage_limits: [cap], ai_usage_events: [spend], notes: [{ id: "n1", org_id: "backup-org" }] },
     };
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect((body.tables as Array<{ name: string }>).map((t) => t.name)).toEqual(["notes"]);
     const sent: string[] = [];
     const spy: RestorePost = async (path, b) => {
       if (path.startsWith("/api/admin/restore/apply-table")) sent.push(String((b as { table: string }).table));
       return routePost(path, b);
     };
-    db.rows.notes = [];
     await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: spy });
     expect(sent).toEqual(["notes"]);
     for (const t of ["ai_key_agreements", "ai_usage_limits", "ai_usage_events"]) expect(rowsOf(t), t).toEqual([]);
@@ -1439,7 +1330,7 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
     expect(records()).not.toMatch(/old-bob/);
   });
 
-  it("a new person with two rows: ONE placeholder, both uids map to it (/begin and /apply), and a re-run links it", async () => {
+  it("a new person with two rows: ONE placeholder, both uids map to it (/begin and the page's driver), and a re-run links it", async () => {
     const begin = async () => {
       const res = await beginRoute(post("/api/admin/restore/begin", { manifest: { orgId: "backup-org" }, orgMembers: bobRows }));
       return (await res.json()) as { createdUsers: number; idRemap: { uid: Record<string, string> } };
@@ -1452,21 +1343,20 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
     const again = await begin();
     expect(again).toMatchObject({ createdUsers: 0 });
     expect(again.idRemap.uid).toEqual(first.idRemap.uid);
-    // the single-shot route, into a fresh workspace
+    // the page's driver, into a fresh workspace
     db.rows.org_members = [];
-    const env = {
+    const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: { org_members: bobRows, documents: [{ id: "d1", org_id: "backup-org" }], document_favorites: [{ org_id: "backup-org", user_id: "old-bob-inactive", document_id: "d1" }, { org_id: "backup-org", user_id: "old-bob-active", document_id: "d1" }] },
     };
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect(body).toMatchObject({ createdUsers: 1 });
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: pagePlan(env), orgNameChoice: "current", post: routePost });
+    expect(run).toMatchObject({ createdUsers: 1 });
     const uid = rowsOf("org_members")[0].uid;
     // both favorites name the one placeholder: the second is the same key, kept as existing — never a raw backup uid
     expect(rowsOf("document_favorites")).toEqual([expect.objectContaining({ user_id: uid, document_id: "d1" })]);
   });
 
-  it("a backup member with no email address and no member here is unmapped: the plan says so and every row naming them is refused (both routes)", async () => {
+  it("a backup member with no email address and no member here is unmapped: the plan says so and every row naming them is refused", async () => {
     const env: RestoreEnvelopeLike = {
       manifest: { orgId: "backup-org" },
       tables: {
@@ -1501,17 +1391,6 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
     expect(rowsOf("documents").map((d) => d.id)).toEqual(["d-ann"]);
     expect(records()).not.toMatch(/old-ghost/);
     expect(audits("RESTORE_BEGIN")[0].details).toMatchObject({ unmappedMembers: 1 });
-    // the single-shot route refuses them the same way, and its trail says so
-    db.rows = { orgs: [{ id: ORG, name: "Acme" }], org_members: [], audit_logs: [] };
-    const { status, body } = await single(env);
-    expect(status).toBe(200);
-    expect(body).toMatchObject({ unmappedMembers: 1 });
-    expect(String(body.note)).toMatch(/1 backup member\(s\) with no email address could not be mapped to anyone here/);
-    const tm = (body.tables as Array<{ name: string; refused?: Array<{ id: string; code: string }> }>).find((t) => t.name === "team_members");
-    expect(tm?.refused?.map((r) => [r.id, r.code])).toEqual([["team-1/old-ghost", "person_not_mapped"]]);
-    expect(rowsOf("documents").map((d) => d.id)).toEqual(["d-ann"]);
-    expect(audits("DATA_RESTORE")[0].details).toMatchObject({ unmappedMembers: 1 });
-    expect(records()).not.toMatch(/old-ghost/);
   });
 
   it("restored into the workspace that still holds them, a member with no address is linked by uid — nothing is refused", async () => {
@@ -1529,37 +1408,12 @@ describe("BKP-5 / ORG-1 (fix pass 5) — every backup uid is mapped to a person,
   });
 
   it("every route and the page pass members with no address to the planner (they link by uid)", () => {
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts", "app/api/admin/restore/preview/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
+    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/preview/route.ts", "app/(protected)/admin/restore/page.tsx"]) {
       const src = readFileSync(join(process.cwd(), f), "utf8");
       expect(src, f).not.toMatch(/\.filter\(\(m\) => m\.email\)/);
       expect(src, f).toMatch(/\.map\(\(m\) => \(\{ uid: m\.uid, email: m\.email, status: m\.status \}\)\)/);
     }
-    for (const f of ["app/api/admin/restore/begin/route.ts", "app/api/admin/restore/apply/route.ts"]) {
-      expect(readFileSync(join(process.cwd(), f), "utf8"), f).toMatch(/for \(const alias of u\.aliasUids \?\? \[\]\) created\[alias\] = newUid;/);
-    }
-  });
-});
-
-describe("BKP-5 / ALOG-8 (fix pass 5) — the single-shot DATA_RESTORE row carries what was not counted and what was filtered", () => {
-  it("a count-less server: the per-table entry and the totals say uncounted, never 'inserted 0' alone", async () => {
-    db.countless = true;
-    const plants = Array.from({ length: 500 }, (_, i) => ({ id: `p${i}`, org_id: "backup-org", name: `Plant ${i}` }));
-    const { status, body } = await single({ manifest: { orgId: "backup-org" }, tables: { plants } });
-    expect(status).toBe(200);
-    expect(body).toMatchObject({ totalInserted: 0, totalUncounted: 500 });
-    expect(String(body.note)).toMatch(/500 record\(s\) were sent but the server did not report whether they were written/);
-    const details = audits("DATA_RESTORE")[0].details as Record<string, unknown>;
-    expect(details).toMatchObject({ totalInserted: 0, totalUncounted: 500, totalFiltered: 0 });
-    expect(details.tables).toEqual([expect.objectContaining({ name: "plants", inserted: 0, uncounted: 500 })]);
-  });
-
-  it("comments of an archived ticket left out by the filter are counted in the trail too", async () => {
-    db.rows.tickets = [{ id: "t-archived", org_id: ORG, archived_at: "2026-09-01T00:00:00Z" }, { id: "t-live", org_id: ORG, archived_at: null }];
-    const { body } = await single({ manifest: { orgId: "backup-org" }, tables: { ticket_comments: [{ id: "c1", ticket_id: "t-archived" }, { id: "c2", ticket_id: "t-live" }] } });
-    expect(body).toMatchObject({ totalInserted: 1, totalFiltered: 1 });
-    const details = audits("DATA_RESTORE")[0].details as Record<string, unknown>;
-    expect(details).toMatchObject({ totalFiltered: 1 });
-    expect(details.tables).toEqual([expect.objectContaining({ name: "ticket_comments", inserted: 1, filtered: 1 })]);
+    expect(readFileSync(join(process.cwd(), "app/api/admin/restore/begin/route.ts"), "utf8")).toMatch(/for \(const alias of u\.aliasUids \?\? \[\]\) created\[alias\] = newUid;/);
   });
 });
 
@@ -1570,7 +1424,7 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
     db.rows.libraries = [{ id: "lib-1", org_id: ORG }, { id: "lib-2", org_id: ORG }];
   });
 
-  it("the review's run: five requests filed here, then 150 restored — the next number is 151, not 6 (all three paths)", async () => {
+  it("the review's run: five requests filed here, then 150 restored — the next number is 151, not 6 (chunk and driver)", async () => {
     const counters = [{ org_id: "backup-org", year: 2026, next_seq: 150 }, { org_id: "backup-org", year: 2025, next_seq: 40 }];
     db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 5 }, { org_id: ORG, year: 2025, next_seq: 90 }];
     const r = await chunk("ticket_number_counters", counters);
@@ -1582,16 +1436,12 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
     db.rows.ticket_number_counters = [];
     const fresh = await chunk("ticket_number_counters", counters);
     expect(fresh.body).toEqual({ ok: true, inserted: 2 });
-    // the driver and the single-shot route report it too
+    // the driver reports it too
     db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 5 }];
     const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { ticket_number_counters: [counters[0]] } };
     const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
     expect(run).toMatchObject({ totalAdvanced: 1, totalExisting: 1 });
     expect(rowsOf("ticket_number_counters")[0].next_seq).toBe(150);
-    db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 5 }];
-    const { body } = await single(env);
-    expect(body).toMatchObject({ totalAdvanced: 1 });
-    expect((audits("DATA_RESTORE")[0].details as { tables: unknown[] }).tables).toEqual([expect.objectContaining({ name: "ticket_number_counters", advanced: 1 })]);
   });
 
   it("a library's document counter the same way; nothing but the counter changes", async () => {
@@ -1636,10 +1486,6 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
     expect(run.notAttempted).toEqual(["documents"]);
     expect(rowsOf("documents")).toEqual([]); // P-0041 never lands beside a counter still at 3
     expect(rowsOf("library_numbering")[0].next_number).toBe(3);
-    // the single-shot route stops there too
-    const { body } = await single(env);
-    expect(body.failedTables).toEqual(["library_numbering", "documents"]);
-    expect(rowsOf("documents")).toEqual([]);
   });
 
   it("fix pass 6 — every counter table is restored before the table it numbers (RESTORE_TABLE_ORDER)", () => {
@@ -1664,8 +1510,6 @@ describe("BKP-5 (fix pass 5) — a numbering counter held here is advanced past 
     expect(page).toMatch(/KEPT EXACTLY AS THEY ARE — not overwritten, not repaired \(the one exception, a numbering counter, is described below\)\. `/);
     expect(page.indexOf("${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.")).toBeGreaterThan(page.indexOf("await previewChunkedRestore("));
     expect(page.indexOf("${RESTORE_ADDITIVE_NOTE} This can't be auto-undone.")).toBeLessThan(page.indexOf("await runChunkedRestore("));
-    const apply = readFileSync(join(process.cwd(), "app/api/admin/restore/apply/route.ts"), "utf8");
-    expect(apply).toMatch(/the one exception is a numbering counter, raised — never lowered — to the backup's value/);
   });
 
   it("the counter tables and columns are the ones the numbering functions write", () => {

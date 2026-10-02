@@ -230,12 +230,8 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       ["app/api/admin/ticket-shed/commit/route.ts", adminSurface("storage")!.writes!],
       ["app/api/admin/ticket-shed/restore/route.ts", adminSurface("storage")!.writes!],
       ["app/api/admin/restore/begin/route.ts", adminSurface("restore")!.entry as string[]],
-      ["app/api/admin/restore/apply/route.ts", adminSurface("restore")!.entry as string[]],
       ["app/api/admin/restore/apply-table/route.ts", adminSurface("restore")!.entry as string[]],
       ["app/api/admin/restore/preview/route.ts", adminSurface("restore")!.entry as string[]],
-      ["app/api/data-export/run/route.ts", adminSurface("data-export")!.writes!],
-      ["app/api/data-export/runs/route.ts", adminSurface("data-export")!.writes!],
-      ["app/api/data-export/destinations/route.ts", adminSurface("data-export")!.writes!],
       ["app/api/stripe/checkout/route.ts", adminSurface("billing")!.writes!],
       ["app/api/stripe/portal/route.ts", adminSurface("billing")!.writes!],
     ];
@@ -243,6 +239,18 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       const m = /const [A-Z_]*ROLES = (\[[^\]]*\]);/.exec(src(file));
       expect(m, file).not.toBeNull();
       expect(setEq(JSON.parse(m![1]) as string[], roles), file).toBe(true);
+    }
+  });
+  it("every data-export route calls the gate itself — no role constant of its own (admin-and-org BKP-8; SURF-19's data-export rows)", () => {
+    expect(adminSurface("data-export")!.entry).toEqual(["Admin"]);
+    for (const file of [
+      "app/api/data-export/structured/route.ts", "app/api/data-export/run/route.ts", "app/api/data-export/runs/route.ts",
+      "app/api/data-export/destinations/route.ts", "app/api/data-export/destinations/[id]/route.ts", "app/api/data-export/destinations/[id]/test/route.ts",
+    ]) {
+      const s = src(file);
+      expect(s, file).toMatch(/await authorizeAdminSurface\(req, orgId, "data-export"\)/);
+      expect(s, file).not.toMatch(/const [A-Z_]*ROLES = /);
+      expect(s, file).not.toMatch(/authorizeOrgRole\(/);
     }
   });
   it("the three capability surfaces carry the page's historical default as their entry set", () => {
