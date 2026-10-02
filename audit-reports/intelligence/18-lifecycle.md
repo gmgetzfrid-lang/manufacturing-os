@@ -661,7 +661,7 @@ lib/schemaExpectations.ts:10-13 `// Generated from supabase/migrations (CREATE T
 ## ILIFE-13 · syncAllKnowledgeSources takes an unordered slice of 25 libraries platform-wide — libraries past the cut never sync, ever
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-06b INGEST ROUTE FOLLOW-UPS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeSourceSync.ts:299`, `lib/knowledgeSourceSync.ts:303`, `lib/knowledgeSourceSync.ts:309`, `app/api/cron/maintenance/route.ts:245`
@@ -711,6 +711,20 @@ Tests: `lib/__tests__/sourceSync.test.ts` ILIFE-13 block:
 - ✓ Selection is fairly interleaved across orgs.
 
 **Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`last_synced_at`). OPEN until the UI shows the timestamp and the cron forwards `unsynced`.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-06b, the remainder the integrator re-owned (orphan sweep). Reproduced first (DEC-29) on HEAD `3bf3b75`: the maintenance route built `knowledgeSync` from `libraries`, `added`, `refreshed` and `removed` only, so the sync's `unsynced` never reached the cron's JSON; `GET /api/knowledge/sources` selected no `last_synced_at`, so nothing in the app could show when a library last synced.
+
+- **The cron says what it left.** `app/api/cron/maintenance/route.ts` (one hunk in the existing knowledge-sources step): `knowledgeSync` carries `unsynced` (libraries this run left for the next — the rotation reaches them oldest first) and `deferred` (rev-ups another sync landed first) beside its counts.
+- **The library says when it last synced.** `GET /api/knowledge/sources` answers each source's `lastSyncedAt` and the library's `lastSyncedAt`: its OLDEST source stamp, null when any source never synced or a rev-up left it due first — exactly how the cron orders it. On a database without `20261122` it lists the sources and answers `syncTracked: false`, never an invented time. `lib/knowledge.ts` types them (`KnowledgeSource.lastSyncedAt`, the list's `lastSyncedAt` / `syncTracked`) and adds `lastSyncedLabel`. The library's Sources strip (`components/knowledge/SourcesPanel.tsx`, rendered at the top of the knowledge library page) shows "Last synced with Document Control 5 minutes ago." (the exact time on hover), or "Not synced with Document Control yet — the nightly run reaches it first, or Sync now reconciles it at once."; where the time is not tracked, or the route predates the field, it shows nothing.
+
+Tests: `lib/__tests__/knowledgeSourcesSynced.test.ts` (the route's per-source and per-library stamps, a never-synced source, a database without the column, the label, the cron's forwarded fields) and `lib/__tests__/sourcesPanelSynced.test.ts` (rendered: how long ago with the time on hover, never synced, nothing when untracked or from an older route, nothing with no sources). Each failed against the base.
+
+**Done-when.**
+- ✓ Library selection rotates by a `last_synced_at` cursor persisted per library (I-06, unchanged).
+- ✓ The result reports how many libraries were left unsynced, and the cron's JSON now carries it (`knowledgeSync.unsynced`); the knowledge library UI shows a per-library last-synced timestamp — on the library's Sources strip, not in `app/(protected)/knowledge/[id]/page.tsx` itself (I-20's file this round), which renders that strip.
+- ✓ Selection is fairly interleaved across orgs (I-06, unchanged).
+
+**Scope / residual.** Pending migration: `20261122_intel_roundG_ingest_integrity.sql` (`last_synced_at`). Until it is pasted the cron's rotation falls back to the daily offset and the strip shows no time (the route says `syncTracked: false`). A library with no sources shows no sync line: nothing syncs it. The cron's JSON is read by whoever reads the run's output; no alert is raised on a large `unsynced` (not asked for).
 
 ---
 
