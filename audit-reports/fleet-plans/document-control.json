@@ -552,7 +552,8 @@
     "P14 merged",
     "P17 merged (P17 re-creates the guard first; start from its body)",
     "P18 merged (P18 re-creates the guard after P17; start from P18's body)",
-    "P19 if it merges first (P19 re-creates the same guard; start from the newest body, found by scanning)"
+    "P19 if it merges first (P19 re-creates the same guard; start from the newest body, found by scanning)",
+    "P20 if it merges first (P20 re-creates the same guard; start from the newest body, found by scanning)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder)."
   },
@@ -610,6 +611,24 @@
     "the paste of this package's migration follows 20261164's, which follows 20261159's (held until projects-and-cost INTK-18 lands or the user ratifies DEC-63's P17 Landed line)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-02 at the P18 merge (DEC-31 remainder: REV-23). Does not wait on any ratification; its paste waits on 20261164's."
+  },
+  {
+   "name": "P20 RETIRED-DOCUMENT HOLD LIMBS \u2014 a controller's bare pointer move on a held retired document and the exit of a stamped retirement whose stamp names another revision no longer pass a hold unrecorded",
+   "findings": [
+    "REV-24 (opened by the integrator 2026-10-02 at the P19 merge, DEC-31: Q-22a \u2014 bind a controller's pointer move on a held Superseded / Archived / Void document (v_unforced_move binds only a move out of an issue status); Q-22b \u2014 judge the exit into an issue status of a stamped retirement whose stamp names ANOTHER revision as the new door (refused over a hold for everyone), never a recorded controller pass (REV-18); put_back_retired_issue keeps refusing to force it)"
+   ],
+   "files": [
+    "one migration re-creating enforce_document_publish_guard from its NEWEST body (20261165 after P19, or P16's if P16 lands first) \u2014 lineDiff test scanning supabase/migrations; DEC-30 counts-only inventory (held retired documents whose stamp names another revision; held retired documents in all); one paste",
+    "components/documents/ArchiveConfirmModal.tsx (basis 'unknown' over a hold: say the restore will be refused, or offer Draft) \u2014 only if the guard change makes the dialog's answer wrong",
+    "tests: both limbs on PostgreSQL 16 and in a pinned transcription; every legitimate put-back of P13 / P14 / P17 / P18 / P19 still completes"
+   ],
+   "migrationsLikely": 1,
+   "when": "after P19 merged (20261165 = the newest guard); any order with P16 \u2014 whichever runs second starts from the other's body",
+   "dependsOn": [
+    "P19 merged (20261165 = the newest enforce_document_publish_guard)",
+    "its paste follows 20261165's, which follows 20261164's and 20261159's (held until projects-and-cost INTK-18 lands or the user ratifies DEC-63's P17 Landed line)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the P19 merge (DEC-31: REV-24). Does not wait on any ratification; its paste waits on 20261165's."
   }
  ],
  "crossAreaFileOverlaps": [

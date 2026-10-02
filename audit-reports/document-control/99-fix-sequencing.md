@@ -455,6 +455,48 @@ one-paste migration:
   newest definition, found by the lineDiff test's scan — and pastes after
   it.)*
 
+⚠ **Paste order — P19 STAMPED PUT-BACK RECORD (2026-10-02).** One
+one-paste migration:
+- `20261165_dc_roundF_stamped_put_back.sql` (`REV-23`) — **after `20261164`
+  (required)**, so after `20261159`, `20261151`, `20261144`, `20261130` and
+  `20261070` too; its first statement refuses to run, changing nothing,
+  without `20261164`'s guard and `restore_reversed_source`. `20261164` waits
+  on `20261159`, which is itself held (projects-and-cost `INTK-18` deployed,
+  or the user's ratification of DEC-63's P17 Landed line), so this file
+  waits with both. It re-creates `enforce_document_publish_guard` from
+  `20261164`'s body (every P18, REV-22 limb 1, RG-14, REV-20 and REV-18 rule
+  kept) and adds `put_back_retired_issue` (SECURITY INVOKER).
+  `restore_reversed_source` is not re-created. **Never re-paste `20261164`,
+  `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
+  guard migration after it** — each drops the P19 rule.
+- **Deploy first:** the app carrying P19 goes out BEFORE the paste. In it,
+  four put-backs call `put_back_retired_issue` and keep their direct writes
+  while the function is absent (PGRST202 / 42883): `unarchiveDocument`,
+  `undoFailedSupersede`, `restoreSupersededSource` and the reversal's
+  `putStatusBack`. An app before P19 makes those put-backs with the bare
+  write, which this guard refuses for Document Control over an active hold.
+  Its un-archive of a held, stamped document is refused. A failed supersede,
+  split, merge or reversal over a held document leaves that document
+  retired, its rollback named for manual attention.
+- **After the paste:** Document Control's put-back of a held, stamped
+  retirement into an issue status passes the hold only through the function
+  (recorded as `REV_HOLD_OVERRIDDEN`), or through P18's reversal door. A bare
+  PATCH or a status editor's write is refused ("…release the hold before
+  issuing it."). A held stamped Void has no recorded door; it is counted by
+  the inventory. The function forces only when asked (`p_force_hold`). The
+  un-archive dialog shows Document Control the active holds and asks for an
+  explicit confirmation before it sends the force. A rollback forces only a
+  retirement the caller made. (P19 review fix: the function's signature
+  gained `p_force_hold`, nine arguments. The file has never been pasted, so
+  no older signature exists to drop.)
+- **P16 (`REV-21`) and P19 re-create the same guard.** Whichever is pasted
+  second starts from the other's body (the lineDiff scan finds it) and
+  pastes after it.
+- *(Integrator, P19 merge, 2026-10-02: the two Q-22 limbs P19's record names
+  are opened as `REV-24` and owned by a new P20 RETIRED-DOCUMENT HOLD LIMBS,
+  which re-creates the same guard again — P16 and P20 each start from the
+  newest body at their time and paste after it.)*
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a

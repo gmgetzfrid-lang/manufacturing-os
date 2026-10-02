@@ -13,6 +13,16 @@
 // (final review fix: afterIssueRefusal). Anything the stamp does not record
 // keeps the default every un-archive had before (Issued — third review fix):
 // Draft is pre-selected only on the guard's evidence, never by default.
+//
+// REV-23 (P19 review fix): Document Control's un-archive of a held, stamped
+// document back to Issued passes the hold only as a recorded override
+// (put_back_retired_issue's p_force_hold, recorded as REV_HOLD_OVERRIDDEN),
+// and an override is chosen, never implied: the dialog reads the active
+// holds when it opens and, for a controller restoring the archived issue,
+// names them and requires an explicit "Required." confirmation (the Split /
+// Merge wizards' HeldSourceNotice) before the restore passes forceHold.
+// Without it no force is sent: over a hold the guard refuses the restore in
+// the new-door sentence, and the dialog offers the Draft restore.
 
 import React, { useEffect, useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore, Check } from "lucide-react";
@@ -20,9 +30,11 @@ import {
   archiveDocument, unarchiveDocument, unarchiveRestoreDefault, UNARCHIVE_RESTORE_STATUSES,
   type StatusIssueOutcome,
 } from "@/lib/revisions";
-import { isIssueRefusal, ISSUE_REFUSAL } from "@/lib/issueStatus";
+import { isIssueRefusal, ISSUE_REFUSAL, isControlledIssueStatus } from "@/lib/issueStatus";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
+import { readActiveHolds, holdReasonLabel } from "@/lib/holdGate";
+import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord } from "@/types/schema";
 
 type RestoreStatus = (typeof UNARCHIVE_RESTORE_STATUSES)[number];
@@ -65,6 +77,36 @@ async function afterIssueRefusal(
   return "Restoring it as a Draft needs the same authority — ask Document Control to restore it.";
 }
 
+/** REV-23 (P19 review fix): the active holds a controller's restore of the
+ *  archived issue would pass — read when the dialog opens. `none` when there
+ *  are none, or the actor is not Document Control (below it the publisher
+ *  tier refuses any un-archive over a hold — OWN-15 — in words the dialog
+ *  already answers, so there is nothing to confirm). */
+type HeldRestore =
+  | { kind: "none" }
+  | { kind: "held"; reasons: string[] }
+  | { kind: "unreadable"; error: string };
+
+/** REV-23 (P19 review fix): read the holds, and ask who the actor is only
+ *  when there are any (or they cannot be read) — the controller tier read as
+ *  the guard reads it (the role collection, not the headline). Never throws:
+ *  an unanswered question is `none`, and the restore then sends no force
+ *  (the guard decides it bare). */
+async function heldRestoreFor(
+  documentId: string, actor: { orgId: string; actorUserId: string; actorRole?: string },
+): Promise<HeldRestore> {
+  try {
+    const read = await readActiveHolds(documentId);
+    if (read.readable && read.holds.length === 0) return { kind: "none" };
+    const principal = await resolveActorPrincipal({ uid: actor.actorUserId, orgId: actor.orgId, headlineRole: actor.actorRole });
+    if (!isControllerPrincipal(principal)) return { kind: "none" };
+    if (!read.readable) return { kind: "unreadable", error: read.error };
+    return { kind: "held", reasons: Array.from(new Set(read.holds.map(holdReasonLabel))) };
+  } catch {
+    return { kind: "none" };
+  }
+}
+
 interface ArchiveConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -93,23 +135,44 @@ export default function ArchiveConfirmModal({
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Issued");
   const [basis, setBasis] = useState<"loading" | "issued" | "not-issued" | "unknown">("loading");
   const [followUps, setFollowUps] = useState<RestoreFollowUps | null>(null);
+  // REV-23 (P19 review fix): the holds a controller's restore of the archived
+  // issue would pass, and their confirmation.
+  const [heldRestore, setHeldRestore] = useState<HeldRestore>({ kind: "none" });
+  const [holdAck, setHoldAck] = useState(false);
 
   useEffect(() => {
     if (!isOpen || mode !== "unarchive") return;
     let alive = true;
     setBasis("loading");
+    setHeldRestore({ kind: "none" });
+    setHoldAck(false);
     (async () => {
       const d = doc.id
         ? await unarchiveRestoreDefault(doc.id).catch(() => ({ status: "Issued" as RestoreStatus, basis: "unknown" as const }))
         : { status: "Issued" as RestoreStatus, basis: "unknown" as const };
-      if (alive) { setRestoreStatus(d.status); setBasis(d.basis); }
+      // REV-23 (P19 review fix): only the restore that puts the archived issue
+      // back (the stamp names the current revision — basis "issued") can pass
+      // a hold, as Document Control's recorded override; any other restore to
+      // Issued over a hold is refused for everyone (the new door), which the
+      // dialog answers after the refusal — except Document Control's exit of an
+      // archive whose stamp names ANOTHER revision (basis "unknown" after a
+      // pointer move while archived): the guard still admits that one
+      // unrecorded (REV-24, open; integrator, at the P19 merge).
+      const held: HeldRestore = d.basis === "issued" && doc.id
+        ? await heldRestoreFor(doc.id, { orgId, actorUserId, actorRole })
+        : { kind: "none" };
+      if (alive) { setRestoreStatus(d.status); setBasis(d.basis); setHeldRestore(held); }
     })();
     return () => { alive = false; };
-  }, [isOpen, mode, doc.id]);
+  }, [isOpen, mode, doc.id, orgId, actorUserId, actorRole]);
 
   if (!isOpen) return null;
 
   const isArchive = mode === "archive";
+  // REV-23 (P19 review fix): restoring the held archived issue as Issued is
+  // Document Control's override of the hold — confirmed here, or not sent.
+  const needsHoldAck = !isArchive && heldRestore.kind === "held" && isControlledIssueStatus(restoreStatus);
+  const forceHold = needsHoldAck && holdAck ? true : undefined;
 
   const submit = async () => {
     if (isArchive && !reason.trim()) return setError("Reason is required when archiving.");
@@ -119,7 +182,7 @@ export default function ArchiveConfirmModal({
         await archiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole });
         onSuccess();
       } else {
-        const outcome = await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus });
+        const outcome = await unarchiveDocument({ doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus, forceHold });
         // The restore landed; what did not follow it is said before the
         // dialog closes (Done finishes it — onSuccess, then onClose).
         const pending = restoreFollowUps(outcome);
@@ -224,6 +287,20 @@ export default function ArchiveConfirmModal({
                   {basis === "not-issued" && "It was not issued when it was archived (a Draft or In Review), so it comes back as a Draft unless you choose otherwise."}
                   {basis === "unknown" && "What it was before it was archived isn't recorded, so it comes back as Issued, as un-archiving always has, unless you choose otherwise. The database decides that restore: if it is refused, nothing changes and you can restore it as a Draft."}
                 </p>
+                {needsHoldAck && heldRestore.kind === "held" && (
+                  <HeldSourceNotice
+                    decision={{
+                      kind: "acknowledge",
+                      text: `Restore it as ${restoreStatus} over the active ${heldRestore.reasons.length === 1 ? "hold" : "holds"} (${heldRestore.reasons.join(", ")}): it comes back into force while ${heldRestore.reasons.length === 1 ? "the hold stands" : "they stand"}. Restoring it as a Draft needs no override.`,
+                    }}
+                    readError={null}
+                    ack={holdAck}
+                    setAck={setHoldAck}
+                  />
+                )}
+                {heldRestore.kind === "unreadable" && isControlledIssueStatus(restoreStatus) && (
+                  <HeldSourceNotice decision={{ kind: "clear" }} readError={heldRestore.error} ack={false} setAck={() => {}} />
+                )}
                 {restoreStatus === "Issued" && basis === "not-issued" && (
                   <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
                     Restoring as <b>Issued</b> makes its current revision a controlled issue: in a library that requires
@@ -263,7 +340,7 @@ export default function ArchiveConfirmModal({
           </button>
           <button
             onClick={() => void submit()}
-            disabled={busy || (!isArchive && basis === "loading")}
+            disabled={busy || (!isArchive && basis === "loading") || (needsHoldAck && !holdAck)}
             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-60 ${
               isArchive ? "bg-slate-700 hover:bg-slate-800" : "bg-emerald-600 hover:bg-emerald-500"
             }`}

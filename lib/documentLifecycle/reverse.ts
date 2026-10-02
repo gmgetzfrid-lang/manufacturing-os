@@ -91,7 +91,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
-import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument } from "@/lib/revisions";
+import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
@@ -208,8 +208,25 @@ async function readStatusSnapshot(docId: string): Promise<StatusSnapshot> {
 }
 
 /** Compensation: put a document's status fields back as they were (checked —
- *  a put-back that is refused THROWS, so withCompensation names it). */
+ *  a put-back that is refused THROWS, so withCompensation names it).
+ *
+ *  REV-23 (P19): through put_back_retired_issue (20261165) — the same write,
+ *  run as the caller — so un-parking a held sheet the reversal parked (the
+ *  park stamped the issue it took away) back into that issue is recorded
+ *  (REV_HOLD_OVERRIDDEN) for Document Control, as the guard now requires; a
+ *  source put back to Superseded is the bare write through it. The direct
+ *  write only while the function is absent. */
 async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: string): Promise<void> {
+  // The un-park puts back the state from before the park: it asks for the
+  // pass — given only for a park this actor made (parkAsSuperseded writes
+  // the actor as superseded_by_user).
+  const door = await putBackRetiredIssue({
+    documentId: docId, status: snap.status, door: "reversal_rollback",
+    reason: "A reversal that parked this document did not complete; its rollback put the document back.",
+    supersession: snap, forceHold: true,
+  });
+  if (door.kind === "landed") return;
+  if (door.kind === "refused") throw new Error(`${docId} could not be put back to ${snap.status} (${door.reason})`);
   const { data, error } = await supabase.from("documents").update({
     status: snap.status,
     superseded_at: snap.superseded_at ?? null,

@@ -14,6 +14,7 @@ import {
   revokeLiveSharesForDocument,
   writeSupersessionLineage,
   startIssuedDocumentClocks,
+  putBackRetiredIssue,
   type CreationStatus,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
@@ -119,7 +120,13 @@ export interface PriorSupersessionFields {
  *  withCompensation reports it for manual cleanup instead of calling the
  *  rollback clean. Lineage DELETE is Document Control / Admin only at the
  *  database (20261131) — for any other actor the leftover rows are named in
- *  the error. */
+ *  the error.
+ *
+ *  REV-23 (P19): the status put-back goes through put_back_retired_issue
+ *  (20261165) — the same write, run as the caller, recorded
+ *  (REV_HOLD_OVERRIDDEN) when Document Control puts a held source it retired
+ *  back into the issue the split / merge stamped, which the guard no longer
+ *  admits bare — and the direct write only while the function is absent. */
 export async function restoreSupersededSource(
   sourceDocId: string,
   priorStatus: string,
@@ -128,21 +135,33 @@ export async function restoreSupersededSource(
   prior: PriorSupersessionFields = {},
 ): Promise<void> {
   const now = new Date().toISOString();
-  const { data: restored, error: restoreErr } = await supabase
-    .from("documents")
-    .update({
-      status: priorStatus,
-      superseded_at: prior.superseded_at ?? null,
-      superseded_by_user: prior.superseded_by_user ?? null,
-      supersession_reason: prior.supersession_reason ?? null,
-      supersession_moc: prior.supersession_moc ?? null,
-      updated_at: now,
-      updated_by: actor.actorUserId,
-    })
-    .eq("id", sourceDocId)
-    .select("id");
-  if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
-    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${restoreErr?.message ?? "the write was refused"})`);
+  // The rollback puts back the state from before the flip: it asks for the
+  // pass — given only for the retirement this actor just made.
+  const door = await putBackRetiredIssue({
+    documentId: sourceDocId, status: priorStatus, door: "lifecycle_rollback",
+    reason: "A split or merge that retired this document did not complete; its rollback put the document back.",
+    supersession: prior, forceHold: true,
+  });
+  if (door.kind === "refused") {
+    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${door.reason})`);
+  }
+  if (door.kind === "absent") {
+    const { data: restored, error: restoreErr } = await supabase
+      .from("documents")
+      .update({
+        status: priorStatus,
+        superseded_at: prior.superseded_at ?? null,
+        superseded_by_user: prior.superseded_by_user ?? null,
+        supersession_reason: prior.supersession_reason ?? null,
+        supersession_moc: prior.supersession_moc ?? null,
+        updated_at: now,
+        updated_by: actor.actorUserId,
+      })
+      .eq("id", sourceDocId)
+      .select("id");
+    if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
+      throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${restoreErr?.message ?? "the write was refused"})`);
+    }
   }
   if (replacementDocIds.length > 0) {
     const { error: delErr } = await supabase

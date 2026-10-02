@@ -21,8 +21,15 @@
 // refuse a Draft restore the same way, so the dialog says to release the
 // hold first or ask Document Control instead.
 //
+// REV-23 (P19 review fix): Document Control's restore of a held archived
+// issue is a recorded override of the hold, and an override is chosen: the
+// dialog names the active holds and requires an explicit confirmation before
+// it sends forceHold; without one no force is sent (the guard refuses over
+// the hold and the dialog offers the Draft restore).
+//
 // Driven as rendered (jsdom); the data layer is mocked (its behaviour is
-// driven end to end in dcRoundFRevUpFirstIssue.test.ts).
+// driven end to end in dcRoundFRevUpFirstIssue.test.ts and, for the hold
+// override, dcRoundFStampedPutBack.test.ts).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -37,6 +44,8 @@ const s = vi.hoisted(() => ({
   /** the actor's role collection, as the membership row holds it */
   roles: ["Engineer"] as string[],
   resolveActorPrincipal: vi.fn(),
+  /** lib/holdGate readActiveHolds — the active holds the dialog reads (REV-23, P19 review fix) */
+  readActiveHolds: vi.fn(),
 }));
 
 vi.mock("@/lib/revisions", () => ({
@@ -47,6 +56,10 @@ vi.mock("@/lib/revisions", () => ({
 }));
 vi.mock("@/lib/principal", () => ({
   resolveActorPrincipal: (...a: unknown[]) => s.resolveActorPrincipal(...a),
+}));
+vi.mock("@/lib/holdGate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/holdGate")>()),
+  readActiveHolds: (...a: unknown[]) => s.readActiveHolds(...a),
 }));
 
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
@@ -70,6 +83,7 @@ beforeEach(() => {
   s.defaultAnswer = { status: "Issued", basis: "unknown" };
   s.gate = null;
   s.roles = ["Engineer"];
+  s.readActiveHolds.mockReset().mockResolvedValue({ readable: true, holds: [] });
   s.resolveActorPrincipal.mockReset().mockImplementation(async (i: { uid: string; orgId?: string; headlineRole?: string }) => ({
     uid: i.uid, orgId: i.orgId, role: (i.headlineRole ?? s.roles[0]), roles: s.roles,
   }));
@@ -297,5 +311,104 @@ describe("REV-19 (P14 final review) — a landed restore says what did not follo
     expect(host.querySelector('[role="alertdialog"]')).toBeNull();
     expect(onSuccess).toHaveBeenCalledWith("Issued");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("REV-23 (P19 review fix) — Document Control's restore over an active hold is confirmed, never implied", () => {
+  const hold = (id: string, reason: string, notes: string | null = null) => ({ id, reason, notes, openedAt: "2026-09-01", openedByName: "Dana" });
+  const checkbox = () => host.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+
+  it("a controller restoring the held archived issue as Issued sees the holds (an Other hold by its description) and must tick the Required confirmation; only then is the restore sent, with forceHold", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.roles = ["Manager", "DocCtrl"]; // the role collection, not the headline
+    s.readActiveHolds.mockResolvedValue({ readable: true, holds: [hold("h1", "Safety"), hold("h2", "Other", "waiting on vendor weld map")] });
+    const { onSuccess } = await open("unarchive", "Manager");
+    await tick();
+    expect(s.readActiveHolds).toHaveBeenCalledWith("d1");
+    expect(s.resolveActorPrincipal).toHaveBeenCalledWith({ uid: "u1", orgId: "o1", headlineRole: "Manager" });
+    expect(host.textContent).toContain("Required. Restore it as Issued over the active holds (Safety, Other: waiting on vendor weld map): it comes back into force while they stand. Restoring it as a Draft needs no override.");
+    expect(host.textContent).toContain("The holds you proceed over are named on the audit record.");
+    expect(checkbox()!.checked).toBe(false);
+    expect(button("Restore Document").disabled).toBe(true);
+    await click(checkbox()!);
+    expect(checkbox()!.checked).toBe(true);
+    expect(button("Restore Document").disabled).toBe(false);
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument).toHaveBeenCalledTimes(1);
+    expect(s.unarchiveDocument.mock.calls[0][0]).toMatchObject({ restoreStatus: "Issued", forceHold: true });
+    expect(onSuccess).toHaveBeenCalledWith("Issued");
+  });
+
+  it("the Draft restore needs no override: no confirmation is asked, and no force is sent", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.roles = ["DocCtrl"];
+    s.readActiveHolds.mockResolvedValue({ readable: true, holds: [hold("h1", "Safety")] });
+    await open("unarchive", "DocCtrl");
+    await tick();
+    expect(checkbox()).not.toBeNull();
+    expect(host.textContent).toContain("over the active hold (Safety): it comes back into force while the hold stands.");
+    await choose("Draft");
+    expect(checkbox()).toBeNull();
+    expect(button("Restore Document").disabled).toBe(false);
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls[0][0]).toMatchObject({ restoreStatus: "Draft" });
+    expect(s.unarchiveDocument.mock.calls[0][0].forceHold).toBeUndefined();
+  });
+
+  it("below Document Control nothing is offered (the publisher tier refuses any un-archive over a hold, in words the dialog already answers) and no force is sent", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.roles = ["Engineer"];
+    s.readActiveHolds.mockResolvedValue({ readable: true, holds: [hold("h1", "Safety")] });
+    await open("unarchive", "Engineer");
+    await tick();
+    expect(checkbox()).toBeNull();
+    expect(button("Restore Document").disabled).toBe(false);
+    s.unarchiveDocument.mockRejectedValueOnce(refused(HOLD_PUBLISH));
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls[0][0].forceHold).toBeUndefined();
+    expect(host.textContent).toContain("Restoring it as a Draft is refused the same way: the hold must be released first (or ask Document Control).");
+  });
+
+  it("holds that cannot be read: a controller is told so and the restore is sent WITHOUT a force — over a hold the guard refuses it in the new-door sentence, and the dialog offers the Draft restore", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.roles = ["DocCtrl"];
+    s.readActiveHolds.mockResolvedValue({ readable: false, error: "permission denied for table document_holds" });
+    await open("unarchive", "DocCtrl");
+    await tick();
+    expect(host.textContent).toContain("Couldn't check for active holds (permission denied for table document_holds). The operation still checks them itself and refuses a held document.");
+    expect(checkbox()).toBeNull();
+    expect(button("Restore Document").disabled).toBe(false);
+    s.unarchiveDocument.mockRejectedValueOnce(refused(HOLD_ISSUE));
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls[0][0].forceHold).toBeUndefined();
+    expect(host.textContent).toContain(`${DRAFT_HINT} (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released.`);
+  });
+
+  it("only the restore of the archived issue (the stamp names the current revision) is asked about: an unrecorded or not-issued archive reads no holds and asks no one — any restore of it to Issued over a hold is refused for everyone (but Document Control's exit of an archive whose stamp names another revision — REV-24, open), and the dialog answers after", async () => {
+    for (const basis of ["unknown", "not-issued"] as const) {
+      act(() => root.unmount());
+      root = createRoot(host);
+      s.defaultAnswer = { status: basis === "unknown" ? "Issued" : "Draft", basis };
+      s.roles = ["DocCtrl"];
+      s.readActiveHolds.mockClear();
+      s.resolveActorPrincipal.mockClear();
+      await open("unarchive", "DocCtrl");
+      await tick();
+      expect(s.readActiveHolds, basis).not.toHaveBeenCalled();
+      expect(s.resolveActorPrincipal, basis).not.toHaveBeenCalled();
+      expect(checkbox(), basis).toBeNull();
+    }
+  });
+
+  it("no active hold: nothing asked — the holds are read, the actor never resolved, and the restore is sent as before (no force)", async () => {
+    s.defaultAnswer = { status: "Issued", basis: "issued" };
+    s.roles = ["DocCtrl"];
+    await open("unarchive", "DocCtrl");
+    await tick();
+    expect(s.readActiveHolds).toHaveBeenCalledTimes(1);
+    expect(s.resolveActorPrincipal).not.toHaveBeenCalled();
+    expect(checkbox()).toBeNull();
+    await click(button("Restore Document"));
+    expect(s.unarchiveDocument.mock.calls[0][0].forceHold).toBeUndefined();
   });
 });

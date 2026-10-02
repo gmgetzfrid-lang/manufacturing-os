@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 163,
+    "findings": 164,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 71,
-      "LOW": 19
+      "LOW": 20
     },
     "by_status": {
-      "RESOLVED": 148,
+      "RESOLVED": 149,
       "OPEN": 15
     }
   },
@@ -4173,7 +4173,7 @@
       "id": "REV-23",
       "title": "A controller's bare put-back of a held stamped retirement passes an active hold unrecorded",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from `20261164`'s `enforce_document_publish_guard` — `v_restoring` keeps OWN-15's controller pass over a hold; reproduced on a throwaway PostgreSQL 16 by P18's review fix as F-7: a controller's bare put-back of a held STAMPED source was admitted and nothing was recorded — `REV-22`'s Resolution, \"P18 review fix\")",
       "blast_radius": null,
@@ -4190,6 +4190,29 @@
       ],
       "refuted": false,
       "summary": "Drawing P-310 is Issued, archived by Document Control after 20261144 (stamped Issued / its current revision), then placed under a stop-work hold. A controller PATCHes documents.status of P-310 back to Issued through PostgREST: the guard reads vrestoring, the controller passes the hold, and no REVHOLDOVERRIDDEN or other record says a held drawing came back into force. The un-archive dialog (compone",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-24",
+      "title": "A controller still passes an active hold unrecorded on a held retired document: a bare pointer move on it, and the exit of a stamped retirement whose stamp names another revision",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced on a throwaway PostgreSQL 16.13 by P19 before and after `20261165`, again at its review fix, and by P19's final review: Document Control moved the pointer of held, stamped archive A6 to its previous revision — ADMITTED; then A6 Archived → Issued — ADMITTED, with 0 `REV_HOLD_OVERRIDDEN` rows — `REV-23`'s Scope, \"Found, outside this finding\")",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261165_dc_roundF_stamped_put_back.sql",
+        "components/documents/ArchiveConfirmModal.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Drawing A6 is Issued, archived after 20261144 (stamped), then placed under a stop-work hold. Document Control PATCHes A6's currentversionid to its previous revision, then restores A6 to Issued (through the dialog or a bare PATCH): both admitted, no REVHOLDOVERRIDDEN, and a revision that was never the issued one is now in force over the hold.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
