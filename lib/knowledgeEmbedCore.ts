@@ -627,26 +627,41 @@ export async function readEmbedBuildMarker(
  *  continues the build on the consent that is already standing. A Rebuild
  *  (reset) clears another member's marker first, so a rebuild is never
  *  continued on a consent given for something else.
- *  `expect` makes the write conditional on the marker the caller read.
- *  Without one, setting a consent is conditional on the marker read HERE
- *  (none read → none may exist), so a consent recorded between that read and
- *  the write is never overwritten: a write that no longer applies re-reads
- *  once and applies the same rule to what it finds; still moving → said.
+ *  Clearing (no payer): `expect` makes the clear conditional on the marker
+ *  the caller read (the drain's and the route's tidy-ups). Setting a consent
+ *  takes no `expect`: it is conditional on the marker read HERE (none read →
+ *  none may exist), so a consent recorded between that read and the write is
+ *  never overwritten: a write that no longer applies re-reads once and
+ *  applies the same rule to what it finds; still moving → said. (No caller
+ *  ever passed `expect` with a payer; I-20 fix pass 5 removed that option,
+ *  and the overloads below refuse it.)
  *  Returns the write error, if any — a consent that did not record is said. */
+export async function setEmbedBuildMarker(
+  libraryId: string, userId: null, opts?: { expect?: MarkerExpectation },
+): Promise<string | null>;
+export async function setEmbedBuildMarker(
+  libraryId: string, userId: string, opts?: { standing?: boolean },
+): Promise<string | null>;
 export async function setEmbedBuildMarker(
   libraryId: string, userId: string | null, opts?: { standing?: boolean; expect?: MarkerExpectation },
 ): Promise<string | null> {
   if (!userId) return (await writeMarker(libraryId, { set: null }, opts?.expect)).error;
-  return (await recordEmbedBuildConsent(libraryId, userId, opts)).error;
+  return (await recordEmbedBuildConsent(libraryId, userId, { standing: opts?.standing })).error;
 }
 
 /** What recording a consent found and did (GOV-14). `prior` is the marker
- *  the write was conditional on — read inside the write, in the round that
- *  landed — so, with `applied`, it is the consent the write replaced (null:
- *  there was none): the same payer and instant as what the stored marker
- *  held when the write changed it. Without `applied` and with no error,
- *  `prior` is another member's standing consent, which stands. `undefined`
- *  when the marker could not be read (then nothing was written). */
+ *  the write was conditional on — read inside recordEmbedBuildConsent, in
+ *  the round that landed, and compared in the write on its payer and its
+ *  instant (an instant `prior` lacks is expected still absent) — so, with
+ *  `applied`, it is the consent the write replaced (null: there was none):
+ *  the same payer and instant as what the stored marker held when the write
+ *  changed it. Every writer that changes `standing` also re-stamps the
+ *  instant ("keep current" off does since I-20 fix pass 5), so `prior`'s
+ *  standing flag is the stored one too — except across the embed route's
+ *  raced put-back, which restores a flag alone (04-ai-governance.md, GOV-14
+ *  residual). Without `applied` and with no error, `prior` is another
+ *  member's standing consent, which stands. `undefined` when the marker
+ *  could not be read (then nothing was written). */
 export interface ConsentWrite {
   error: string | null;
   applied: boolean;
@@ -657,9 +672,11 @@ export interface ConsentWrite {
  *  replaced (`ConsentWrite`). The audit of a consent (the embed route's
  *  auditConsent) decides on THIS prior, never on a read of its own taken
  *  earlier: a consent released or replaced between that read and the write
- *  would otherwise be taken for a renewal and get no audit row. */
+ *  would otherwise be taken for a renewal and get no audit row. The write
+ *  is always conditional on the marker this function read (there is no
+ *  caller-supplied expectation). */
 export async function recordEmbedBuildConsent(
-  libraryId: string, userId: string, opts?: { standing?: boolean; expect?: MarkerExpectation },
+  libraryId: string, userId: string, opts?: { standing?: boolean },
 ): Promise<ConsentWrite> {
   let prior: ConsentWrite["prior"];
   for (let round = 0; round < 2; round++) {
@@ -670,13 +687,16 @@ export async function recordEmbedBuildConsent(
       return { error: null, applied: false, prior };
     }
     const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
-    const expect = opts?.expect ?? (prior ? { userId: prior.userId, at: prior.at || null } : NO_MARKER);
+    // The payer and the instant read: "" (no instant) expects none still —
+    // so a writer that stamps one (a renewal, "keep current" off) in between
+    // makes this write re-read rather than carry a standing flag it removed.
+    const expect = prior ? { userId: prior.userId, at: prior.at } : NO_MARKER;
     const out = await writeMarker(
       libraryId,
       { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
       expect,
     );
-    if (out.error || out.applied || opts?.expect) return { error: out.error, applied: out.applied, prior };
+    if (out.error || out.applied) return { error: out.error, applied: out.applied, prior };
   }
   return {
     error: "the background build's consent changed while this one was being recorded — start the build again to record it",

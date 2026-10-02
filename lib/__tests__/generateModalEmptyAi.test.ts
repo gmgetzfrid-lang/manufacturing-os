@@ -15,6 +15,13 @@
 // drafted when it is ticked; the per-document tick still works, and Download
 // and File stay refused until every empty AI field is filled or overridden.
 //
+// I-20 fix pass 5: a tick lasts only while its field is empty. A value
+// typed into the field ends it (keepBlankAfterEdit), so a field filled in
+// and then cleared again is refused until it is ticked again — whether the
+// tick was a document's own or the batch's. Unticking a field's batch tick
+// takes the tick off that field in every document where it is still empty,
+// a tick set on one document included, and the dialog says so.
+//
 // REGRESSION: a batch whose AI fields are all written renders exactly as
 // before — no mark, no refusal, the Download button sends the reviewed values.
 
@@ -40,7 +47,7 @@ vi.mock("@/lib/supabase", () => {
 });
 
 import GenerateModal, {
-  emptyAiFields, documentsBlockedByEmptyAi, emptyAiFieldsAcrossBatch, setKeepBlankAcrossBatch,
+  emptyAiFields, documentsBlockedByEmptyAi, emptyAiFieldsAcrossBatch, setKeepBlankAcrossBatch, keepBlankAfterEdit,
 } from "@/components/templates/GenerateModal";
 import type { OutputTemplate } from "@/lib/outputTemplates";
 
@@ -314,5 +321,116 @@ describe("PR-6 (I-20 fix pass 4) — one field left blank in every document wher
     await openAndDraft(three("Regards"));
     expect(host.querySelector("[data-empty-ai-batch]")).toBeNull();
     expect(button(/^Download 3 documents/)!.disabled).toBe(false);
+  });
+});
+
+describe("PR-6 (I-20 fix pass 5) — a tick lasts only while its field is empty; unticking a field's batch tick takes off every tick of that field on the documents where it is still empty", () => {
+  const batchBox = (tag: string) => host.querySelector(`[data-empty-ai-batch-field="${tag}"] input[type="checkbox"]`) as HTMLInputElement | null;
+  const ownBox = (tag: string) => host.querySelector(`[data-empty-ai-field="${tag}"] input[type="checkbox"]`) as HTMLInputElement | null;
+  const three = () => [
+    { values: { name: "Acme", body: "Please find attached.", closing: "" }, filename: "Acme.docx", sourceRow: 1 },
+    { values: { name: "Brix", body: "As discussed.", closing: "" }, filename: "Brix.docx", sourceRow: 2 },
+    { values: { name: "Cole", body: "For review.", closing: "" }, filename: "Cole.docx", sourceRow: 3 },
+  ];
+  /** Type into the open document's field `tag` (an AI field: a textarea). */
+  async function type(tag: string, value: string) {
+    const label = [...host.querySelectorAll("label")].find((l) => l.querySelector("span")?.textContent?.startsWith(tag) && l.querySelector("textarea"));
+    const area = label!.querySelector("textarea") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(area, value); area.dispatchEvent(new Event("input", { bubbles: true })); });
+    await settle();
+  }
+  const open = async (filename: string) => {
+    const row = rowButton(filename);
+    if (!row.parentElement!.querySelector('[data-empty-ai-field], textarea')) await click(row);
+  };
+  async function chooseLibrary() {
+    const select = [...host.querySelectorAll("select")].find((sel) => [...sel.options].some((o) => o.value === "L1")) as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(select, "L1"); select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+  }
+
+  it("pure: a value typed into a field ends that document's tick for it, and only that one; whitespace ends nothing; unchanged state is returned as is", () => {
+    const kb = { "0|closing": true, "1|closing": true, "0|body": true };
+    expect(keepBlankAfterEdit(kb, 1, "closing", "Thanks")).toEqual({ "0|closing": true, "0|body": true });
+    expect(keepBlankAfterEdit(kb, 1, "closing", "   ")).toBe(kb);
+    expect(keepBlankAfterEdit(kb, 2, "closing", "Thanks")).toBe(kb);
+    expect(keepBlankAfterEdit(kb, 0, "name", "Acme")).toBe(kb);
+  });
+
+  it("reproduction → fix (the reviewer's sequence): three empty, the batch tick, document 2 filled in, the tick taken off, documents 1 and 3 filled in, document 2 cleared — Download and File are refused until document 2 is ticked again", async () => {
+    await openAndDraft(three());
+    await click(batchBox("closing")!);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(false);
+    await open("Brix.docx");
+    await type("closing", "Thanks");
+    // still offered for the two documents where it is empty, and still read as ticked there
+    expect(host.querySelector('[data-empty-ai-batch-field="closing"]')!.textContent).toMatch(/all 2 documents/);
+    expect(batchBox("closing")!.checked).toBe(true);
+    await click(batchBox("closing")!);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(true);
+    await open("Acme.docx");
+    await type("closing", "Regards");
+    await open("Cole.docx");
+    await type("closing", "Best");
+    expect(button(/^Download 3 documents/)!.disabled).toBe(false);
+    await open("Brix.docx");
+    await type("closing", "");
+    // document 2's field is empty again and carries no tick: refused (it used to keep the batch tick and go through)
+    expect(button(/^Download 3 documents/)!.disabled).toBe(true);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/1 document has an empty AI-written field\./);
+    expect(rowButton("Brix.docx").querySelector("[data-empty-ai]")?.textContent).toMatch(/1 empty AI field$/);
+    expect(ownBox("closing")!.checked).toBe(false);
+    await chooseLibrary();
+    expect(button(/^File 3 into library/)!.disabled).toBe(true);
+    expect(ot.renderDocuments).not.toHaveBeenCalled();
+    expect(ot.fileDocumentsToLibrary).not.toHaveBeenCalled();
+    // ticked again, it goes through as written
+    await click(ownBox("closing")!);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(false);
+    await click(button(/^Download 3 documents/)!);
+    expect(ot.renderDocuments).toHaveBeenCalledWith(expect.objectContaining({
+      documents: [
+        { values: { name: "Acme", body: "Please find attached.", closing: "Regards" }, filename: "Acme.docx" },
+        { values: { name: "Brix", body: "As discussed.", closing: "" }, filename: "Brix.docx" },
+        { values: { name: "Cole", body: "For review.", closing: "Best" }, filename: "Cole.docx" },
+      ],
+    }));
+  });
+
+  it("reproduction → fix: a document's own tick, then the field filled in, then cleared again — refused, the tick reads unticked", async () => {
+    await openAndDraft([{ values: { name: "Acme", body: "Text", closing: "" }, filename: "Acme.docx", sourceRow: 1 }]);
+    await click(ownBox("closing")!);
+    expect(button(/^Download 1 document$/)!.disabled).toBe(false);
+    await type("closing", "Regards");
+    await type("closing", "");
+    expect(ownBox("closing")!.checked).toBe(false);
+    expect(button(/^Download 1 document$/)!.disabled).toBe(true);
+    expect(host.querySelector("[data-empty-ai-blocked]")).not.toBeNull();
+  });
+
+  it("negative control: editing anything else leaves a tick alone — another field of the same document, the file name, whitespace in the ticked field itself", async () => {
+    await openAndDraft([{ values: { name: "Acme", body: "", closing: "" }, filename: "Acme.docx", sourceRow: 1 }]);
+    await click(ownBox("closing")!);
+    await type("body", "Written by the reviewer.");
+    const name = host.querySelector("input.font-mono") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(name, "Acme-final.docx"); name.dispatchEvent(new Event("input", { bubbles: true })); });
+    await settle();
+    await type("closing", "   ");
+    expect(ownBox("closing")!.checked).toBe(true);
+    expect(button(/^Download 1 document$/)!.disabled).toBe(false);
+  });
+
+  it("unticking a field's batch tick takes off every tick of that field where it is still empty — one set on a single document included — and the dialog says so", async () => {
+    await openAndDraft(three());
+    // the first document is open: its own tick first, then the batch tick, then untick
+    await click(ownBox("closing")!);
+    await click(batchBox("closing")!);
+    await click(batchBox("closing")!);
+    expect(ownBox("closing")!.checked).toBe(false);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/3 documents have 3 empty AI-written fields\./);
+    expect(host.querySelector("[data-empty-ai-batch-untick]")!.textContent).toMatch(/Unticking one takes “Leave it blank” off that field in every document where it is still\s+empty, a tick set on a single document included\. Typing into a field ends its tick: cleared\s+again, it needs ticking again\./);
   });
 });

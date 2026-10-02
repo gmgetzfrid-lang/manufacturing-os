@@ -787,3 +787,187 @@ describe("GOV-14 done-when 4 / SEM-1 — key-overview: the builds on MY key, and
     expect((await res.json()).error).toBe("orgId and libraryId are required");
   });
 });
+
+// ── I-20 fix pass 5 ─────────────────────────────────────────────────────────
+//
+// GOV-14 (pre-existing, closed here). "Keep current" switched off took
+// `standing` off with a patch that left the consent's instant as it was. A
+// build pass that had read the consent before that patch, and wrote after
+// it, still matched its compare (payer and instant) and wrote its own
+// standing flag back: the consent stood again while the switch-off had
+// answered { standing: false }, and nobody was told. Now the switch-off
+// re-stamps the instant, so that write fails its compare, re-reads, and
+// records the consent as the switch-off left it. The consent write also
+// expects an instant its read lacked to be still absent, so an instant-less
+// consent is covered the same way.
+//
+// GOV-14 (pre-existing, recommended): a build pass whose write did not apply
+// (another member's standing consent stands) audited nonetheless — reading
+// the marker back, and, were it the caller's by then (their own "keep
+// current" in another tab), writing a second row naming the wrong
+// `replaced`, or, that row failing, withdrawing the consent the other
+// request had recorded and audited. A write that did not apply is no longer
+// audited, and nothing is put back.
+describe("I-20 fix pass 5 — 'keep current' off is never undone by a build pass that read the consent before it; a write that did not apply is not audited", () => {
+  const lib = () => admin.state.tables.knowledge_libraries[0];
+  const rowFor = (at: string) => ({ id: `a-${at}`, action: "EMBED_BUILD_CONSENT_RECORDED", resource_type: "knowledge_library", resource_id: LIB, user_id: ME, details: { stampedAt: at } });
+  const consentWrites = () => admin.state.calls
+    .filter((c) => c.table === "rpc:embed_build_marker_write")
+    .map((c) => c.args[0] as Row)
+    .filter((a) => !a.p_patch && (a.p_marker as Row | null)?.userId === ME);
+  /** Just before the FIRST marker write lands, `meanwhile` runs to the end
+   *  (it may be a whole request); every later write goes straight through. */
+  function beforeFirstMarkerWrite(meanwhile: () => Promise<void> | void) {
+    const real = admin.state.rpc.embed_build_marker_write;
+    let first = true;
+    admin.state.rpc.embed_build_marker_write = (async (a: Record<string, unknown>) => {
+      if (first) { first = false; await meanwhile(); }
+      return real(a);
+    }) as unknown as typeof real;
+  }
+
+  it("reproduction → fix: 'keep current' switched off between a build pass's read of the consent and its write — standing stays off; the build pass's write fails its compare, re-reads, and records the consent as the switch-off left it", async () => {
+    lib().ai_features = { embedBuild: { userId: ME, at: "2026-09-20T00:00:00Z", standing: true, lastDrainAt: "2026-09-21T00:00:00Z" } };
+    admin.state.tables.audit_logs = [rowFor("2026-09-20T00:00:00Z")];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    let off: { status: number; body: unknown } | null = null;
+    let offAt = "";
+    beforeFirstMarkerWrite(async () => {
+      const res = await POST(req({ action: "keep-current", on: false }));
+      off = { status: res.status, body: await res.json() };
+      offAt = String(marker()!.at);
+    });
+    const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+    expect(off).toEqual({ status: 200, body: { standing: false } });
+    // the switch-off stands: the consent is the caller's plain build
+    expect(marker()).toMatchObject({ userId: ME });
+    expect(marker()!.standing).toBeUndefined();
+    expect(body.backgroundNote).toBeUndefined();
+    // the build pass's first write held to the instant it read and matched nothing; it re-read and held to the switch-off's
+    const writes = consentWrites();
+    expect(writes.map((w) => w.p_expect_at)).toEqual(["2026-09-20T00:00:00Z", offAt]);
+    expect((writes[0].p_marker as Row).standing).toBe(true);
+    expect((writes[1].p_marker as Row).standing).toBeUndefined();
+    expect(offAt).not.toBe("2026-09-20T00:00:00Z");
+    // a renewal of a consent a row names: no new row
+    expect(consentRows()).toHaveLength(1);
+  });
+
+  it("recordEmbedBuildConsent against the patch 'keep current' off now writes (standing off, instant re-stamped): it re-reads, reports the consent it actually replaced, and writes no standing flag", async () => {
+    const { recordEmbedBuildConsent } = await import("@/lib/knowledgeEmbedCore");
+    lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-01T00:00:00Z", standing: true } };
+    beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-02T10:00:00Z" } }; });
+    const out = await recordEmbedBuildConsent(LIB, ME);
+    expect(out.applied).toBe(true);
+    expect(out.prior).toMatchObject({ userId: ME, at: "2026-10-02T10:00:00Z", standing: false });
+    expect(marker()).toMatchObject({ userId: ME });
+    expect(marker()!.standing).toBeUndefined();
+  });
+
+  it("an instant-less consent is covered too: the write expects the instant still absent, so the switch-off's re-stamp makes it re-read (it used to hold to the payer alone)", async () => {
+    lib().ai_features = { embedBuild: { userId: ME, standing: true } };
+    admin.state.tables.audit_logs = [rowFor("")];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    let off: unknown = null;
+    beforeFirstMarkerWrite(async () => { off = await (await POST(req({ action: "keep-current", on: false }))).json(); });
+    await POST(req({}));
+    expect(off).toEqual({ standing: false });
+    expect(marker()).toMatchObject({ userId: ME });
+    expect(marker()!.standing).toBeUndefined();
+    expect(consentWrites()[0].p_expect_at).toBe("");
+  });
+
+  it("the residual this leaves, pinned: the compare sees the payer and the instant only — a patch that took `standing` off and kept the instant (the raced put-back's flag-only patch) would still be written over", async () => {
+    const { recordEmbedBuildConsent } = await import("@/lib/knowledgeEmbedCore");
+    lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-01T00:00:00Z", standing: true } };
+    beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-01T00:00:00Z" } }; });
+    const out = await recordEmbedBuildConsent(LIB, ME);
+    expect(out).toMatchObject({ applied: true, prior: { standing: true } });
+    expect(marker()).toMatchObject({ standing: true });
+  });
+
+  it("REGRESSION (no race): 'keep current' off with passages left answers { standing: false } and keeps the consent, its payer, last run and holds — only `standing` goes and the instant is re-stamped, which is what AI settings then lists as 'last confirmed'; with nothing left it clears the consent as before", async () => {
+    const was = { userId: ME, at: "2026-09-20T00:00:00Z", standing: true, lastDrainAt: "2026-09-21T00:00:00Z", blockedUntil: "2999-01-01T00:00:00Z", blockedReason: "cap", lastError: "cap reached", errorRuns: 2 };
+    lib().ai_features = { decoder: "PID", embedBuild: { ...was } };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const before = Date.now();
+    expect(await (await POST(req({ action: "keep-current", on: false }))).json()).toEqual({ standing: false });
+    const { standing: _s, at: _a, ...kept } = was;
+    void _s; void _a;
+    expect(marker()).toEqual({ ...kept, at: marker()!.at });
+    expect(Date.parse(String(marker()!.at))).toBeGreaterThanOrEqual(before - 1000);
+    expect((lib().ai_features as Row).decoder).toBe("PID");
+    expect(consentRows()).toHaveLength(0);
+    const listed = await (await POST(new NextRequest("http://test/api/knowledge/embed", {
+      method: "POST", headers: { authorization: "Bearer tok" }, body: JSON.stringify({ orgId: ORG, action: "key-overview" }),
+    }))).json();
+    expect(listed.builds[0]).toMatchObject({ libraryId: LIB, standing: false, startedAt: marker()!.at });
+    // nothing left: the stamp is cleared, exactly as before
+    detail = { ...detail, remaining: 0, waiting: 0, embedded: 10 };
+    lib().ai_features = { embedBuild: { ...was } };
+    expect(await (await POST(req({ action: "keep-current", on: false }))).json()).toEqual({ standing: false });
+    expect(marker()).toBeUndefined();
+  });
+
+  it("negative control: with nothing in between, a build pass over the caller's own standing consent still carries `standing` over in one write — no re-read, no row (renewal)", async () => {
+    lib().ai_features = { embedBuild: { userId: ME, at: "2026-09-20T00:00:00Z", standing: true } };
+    admin.state.tables.audit_logs = [rowFor("2026-09-20T00:00:00Z")];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+    expect(body.backgroundNote).toBeUndefined();
+    expect(marker()).toMatchObject({ userId: ME, standing: true });
+    expect(consentWrites()).toHaveLength(1);
+    expect(consentWrites()[0].p_expect_at).toBe("2026-09-20T00:00:00Z");
+    expect(consentRows()).toHaveLength(1);
+  });
+
+  /** The n-th knowledge_libraries read runs `then` first: the route's library
+   *  check is the 1st, the consent write's own read the 2nd — so the 3rd is
+   *  the first read after the build pass's consent write was decided. */
+  function onLibraryRead(nth: number, then: () => void) {
+    const real = admin.state.failReads;
+    let reads = 0;
+    admin.state.failReads = new Proxy(real, {
+      get: (t, p: string) => {
+        if (p === "knowledge_libraries" && ++reads === nth) then();
+        return (t as Record<string, unknown>)[p];
+      },
+    });
+  }
+  const myKeepCurrentInAnotherTab = () => {
+    lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-02T11:00:00Z", standing: true } };
+    admin.state.tables.audit_logs!.push({ ...rowFor("2026-10-02T11:00:00Z"), details: { stampedAt: "2026-10-02T11:00:00Z", standing: true, request: { action: "keep-current" } } });
+  };
+
+  it("reproduction → fix: a build pass whose write did not apply (another member's standing consent stood) writes no row — even when the consent is the caller's by the time it would have looked (their 'keep current' in another tab, audited there)", async () => {
+    lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true } };
+    onLibraryRead(3, myKeepCurrentInAnotherTab);
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+    expect(body.backgroundNote).toBeUndefined();
+    // the other tab's row only — none from this pass, which recorded nothing (it used to add one naming OTHER as `replaced`)
+    expect(consentRows()).toHaveLength(1);
+    expect((consentRows()[0].details as Row).request).toEqual({ action: "keep-current" });
+    expect(marker()).toEqual({ userId: ME, at: "2026-10-02T11:00:00Z", standing: true });
+  });
+
+  it("reproduction → fix: …and with audit rows failing, that other request's audited consent is left standing — never withdrawn by a pass that recorded nothing", async () => {
+    lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z", standing: true } };
+    onLibraryRead(3, myKeepCurrentInAnotherTab);
+    admin.state.failWrites.audit_logs = { message: "audit down" };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+    expect(body.backgroundNote).toBeUndefined();
+    expect(marker()).toEqual({ userId: ME, at: "2026-10-02T11:00:00Z", standing: true });
+    expect(admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write")).toHaveLength(0);
+  });
+
+  it("negative control: a write that DID apply is audited as before — over another member's plain build, the row names it", async () => {
+    lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-09-01T00:00:00Z" } };
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    await POST(req({}, REQUEST_HEADERS));
+    expect(marker()).toMatchObject({ userId: ME });
+    expect(consentRows()).toHaveLength(1);
+    expect((consentRows()[0].details as Row).replaced).toEqual({ userId: OTHER, standing: false });
+  });
+});

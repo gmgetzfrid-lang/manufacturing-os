@@ -695,7 +695,9 @@ export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refres
                 <div className="mt-0.5" data-build-confirmed="true">
                   {/* I-20 fix pass 4: the marker's instant is re-stamped by every
                       build pass and "keep current" press — the last confirmation,
-                      not when the consent was first given. */}
+                      not when the consent was first given. Fix pass 5: switching
+                      "keep current" off re-stamps it too (the build it leaves
+                      still runs on this key), so the footer names that case. */}
                   {fmtWhen(b.startedAt) ? `Consent last confirmed ${fmtWhen(b.startedAt)}` : "Consent recorded"}
                   {fmtWhen(b.lastDrainAt) ? `; last ran ${fmtWhen(b.lastDrainAt)}` : "; not run in the background yet"}.
                 </div>
@@ -716,8 +718,9 @@ export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refres
       )}
       <p className="text-[10px] text-[var(--color-text-muted)]">
         Each runs on your embeddings key and counts against your monthly cap. Stop ends it; what it already
-        embedded stays. &ldquo;Last confirmed&rdquo; is the last build pass or &ldquo;keep current&rdquo; press that
-        confirmed the consent — not when it was first given.
+        embedded stays. &ldquo;Last confirmed&rdquo; is the last time the consent was stamped again — by a build
+        pass, or by &ldquo;keep current&rdquo; being switched on or off on that library (switching it off leaves the
+        build to finish on your key) — not when it was first given.
       </p>
     </div>
   );

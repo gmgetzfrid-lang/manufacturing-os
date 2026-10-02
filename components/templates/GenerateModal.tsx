@@ -19,7 +19,11 @@
 // only the person reviewing can say which. A field the AI left empty in
 // several documents can be left blank in all of them at once — one tick per
 // field, covering the documents drafted when it is ticked (I-20 fix pass 4);
-// there is no tick that releases every field.
+// there is no tick that releases every field. A tick lasts only while its
+// field is empty: typing into the field ends it, so a field cleared again is
+// refused until it is ticked again; unticking a field's batch tick takes the
+// tick off that field in every document where it is still empty, a tick set
+// on one document included (I-20 fix pass 5).
 
 import React, { useState } from "react";
 import {
@@ -64,15 +68,36 @@ export function emptyAiFieldsAcrossBatch(
 }
 
 /** PR-6 (I-20 fix pass 4): the batch override for ONE field — tick (or
- *  untick) "leave it blank" on every document where the AI wrote nothing
- *  for `tag`, and on no other field. It writes the per-document overrides,
- *  so it reaches only the documents drafted now: a later batch's empty
- *  field is ticked again, and each document's own tick still works. */
+ *  untick) "leave it blank" on every document where `tag` is empty now, and
+ *  on no other field. It writes the per-document overrides, so it reaches
+ *  only the documents drafted now: a later batch's empty field is ticked
+ *  again, and each document's own tick still works. Unticking clears every
+ *  override of that field on the documents where it is still empty — one
+ *  set there by hand too, as the checkbox reads them all (it is checked
+ *  only while every one of them is overridden) and the dialog says so. A
+ *  document where the field was filled in holds no override for it
+ *  (keepBlankAfterEdit, fix pass 5), so nothing is left behind there. */
 export function setKeepBlankAcrossBatch(
   keepBlank: Readonly<Record<string, boolean>>, docs: readonly DraftedDocument[], tag: string, on: boolean,
 ): Record<string, boolean> {
   const next = { ...keepBlank };
   docs.forEach((d, i) => { if (emptyAiFields(d, [tag]).length > 0) next[`${i}|${tag}`] = on; });
+  return next;
+}
+
+/** PR-6 (I-20 fix pass 5): an override says "this AI field is empty, and
+ *  stays empty on purpose" — it lasts only while the field is empty. A
+ *  value typed into the field ends that document's override for it, so a
+ *  field filled in and cleared again is refused until it is ticked again
+ *  (per document, or across the batch). Whitespace is still empty
+ *  (emptyAiFields), so it ends nothing. Unchanged state is returned as is. */
+export function keepBlankAfterEdit(
+  keepBlank: Record<string, boolean>, docIndex: number, tag: string, value: string,
+): Record<string, boolean> {
+  const key = `${docIndex}|${tag}`;
+  if (!value.trim() || !(key in keepBlank)) return keepBlank;
+  const next = { ...keepBlank };
+  delete next[key];
   return next;
 }
 
@@ -226,6 +251,9 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   const updateValue = (docIndex: number, tag: string, value: string) => {
     setDocs((prev) => prev.map((d, i) =>
       i === docIndex ? { ...d, values: { ...d.values, [tag]: value } } : d));
+    // PR-6 (fix pass 5): a field filled in no longer carries its "leave it
+    // blank" — cleared again, it is refused until ticked again.
+    setKeepBlank((prev) => keepBlankAfterEdit(prev, docIndex, tag, value));
   };
   const updateFilename = (docIndex: number, filename: string) => {
     setDocs((prev) => prev.map((d, i) => (i === docIndex ? { ...d, filename } : d)));
@@ -511,6 +539,11 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                       </span>
                     </label>
                   ))}
+                  <p data-empty-ai-batch-untick="true" className="text-[10px] text-[var(--color-text-muted)]">
+                    Unticking one takes &ldquo;Leave it blank&rdquo; off that field in every document where it is still
+                    empty, a tick set on a single document included. Typing into a field ends its tick: cleared
+                    again, it needs ticking again.
+                  </p>
                 </div>
               )}
               {blocked.length > 0 && (

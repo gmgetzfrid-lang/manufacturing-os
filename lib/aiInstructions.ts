@@ -86,9 +86,13 @@ export async function deleteAiInstruction(id: string): Promise<void> {
 
 /** Count of instructions active for a scope (its own + global, enabled
  *  only) — the number behind "N standing instructions apply" chips on AI
- *  surfaces, and the same set loadOrgInstructionsBlock sends with a call in
- *  that scope. Disabled playbooks and other scopes' are not counted, so 0
- *  means "none applies here", never "the org has none". null when the count
+ *  surfaces, over the same filter loadOrgInstructionsBlock reads for a call
+ *  in that scope. Disabled playbooks and other scopes' are not counted, so 0
+ *  means "none applies here", never "the org has none" — and the loader
+ *  then sends none, exactly. Above 0 the loader may send fewer than this
+ *  count: it reads at most 50 rows, and stops at the first one that would
+ *  take its block past 4,000 characters (lib/aiInstructionsServer.ts; HUB-6,
+ *  I-20 fix pass 5). null when the count
  *  could not be read: a failed read is never "none", so the library Ask
  *  header's "No playbook applies to this library's asks" invitation (HUB-6)
  *  is never shown over a read that failed. */

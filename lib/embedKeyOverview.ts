@@ -42,8 +42,9 @@ export interface EmbedKeyBuild {
   /** A standing consent: keep this index current as documents arrive. */
   standing: boolean;
   /** The marker's `at`: when the consent was last confirmed. Every build
-   *  pass and every "keep current" press re-stamps it, so it is NOT when the
-   *  consent was first given (I-20 fix pass 4; the name is the wire's). */
+   *  pass and every "keep current" press — switching it on, or (I-20 fix
+   *  pass 5) off while passages are left — re-stamps it, so it is NOT when
+   *  the consent was first given (I-20 fix pass 4; the name is the wire's). */
   startedAt: string | null;
   lastDrainAt: string | null;
   blockedUntil: string | null;
@@ -152,8 +153,8 @@ export interface EmbeddingSwitchImpact {
   cannotGrow: Array<Lib & { model: string }>;
   /** Background builds on this member's key in libraries whose index the
    *  new model cannot add to. A background run holds such a build (model
-   *  conflict) once it has passages to embed there — not at once, and not a
-   *  "keep current" on a library already fully embedded (buildFates). */
+   *  conflict) once it finds a passage there it can take — not at once, and
+   *  not a "keep current" on a library already fully embedded (buildFates). */
   buildsStop: Array<Lib & { model: string | null; standing: boolean }>;
   /** Libraries whose vectors could not be read. */
   unknown: Lib[];
@@ -254,34 +255,51 @@ export function embeddingLossImpact(
  *    connection once, when it reached that library, and finishes that run
  *    with it (the consent is re-read before every batch; the key is not);
  *  - `embedding`: a build with passages still to embed — one the member
- *    started, or one kept current — is held for a model conflict (switch;
- *    re-checked hourly) or released (loss: "no embedding key") by the next
- *    run that works on it;
+ *    started, or one kept current — is held for a model conflict (switch)
+ *    or released (loss: "no embedding key") by the next run that finds a
+ *    passage there it can take. A run takes none while an earlier hold is
+ *    still dated in the future (it skips the library), nor while every
+ *    passage left is leased by another run or waiting to be retried (it
+ *    reports busy / retrying and reads no key). On a switch, a payer who has
+ *    not accepted the current AI agreement is held for that first. A hold
+ *    lasts at least an hour (RECHECK_HOLD_MS); the drain itself runs only
+ *    from the nightly maintenance cron and the library page-load nudge, so
+ *    the next look is the first of those after the hour — not "hourly"
+ *    (I-20 fix pass 5). The model-conflict hold ends once the library is
+ *    rebuilt with the new model, or the member sets their model back to
+ *    the one the library holds; a library that already mixes two models
+ *    conflicts with every model (buildModelConflict), so only a Rebuild
+ *    ends its hold;
  *  - `embedded`: on a library already fully embedded the drain reads no key
  *    at all — a plain build is cleared as finished, and a "keep current"
- *    consent stays ("current") until new documents give it passages; the
- *    run that then works on it holds or releases it.
- *  A run that works on a library skips it while an earlier hold (the cap,
- *  a backoff) is still dated in the future. */
+ *    consent stays ("current") until new documents give it passages; it is
+ *    then held or released as above. */
 export function buildFates(kind: "switch" | "loss", afterModel?: string): { running: string; embedding: string; embedded: string } {
   if (kind === "switch") {
     return {
       running: "A background run already working on one of them finishes that run with the setting it read when it reached the library.",
-      embedding: "One with passages still to embed — a build you started, or one kept current — is held for a model conflict "
-        + "by the next background run that works on it, and looked at again every hour, until the library is rebuilt "
-        + `with ${afterModel ?? "the new model"} or you set your embedding model back.`,
+      embedding: "One with passages still to embed — a build you started, or one kept current — is held by the next "
+        + "background run that finds a passage there it can take: for a model conflict, or first for the AI agreement "
+        + "if you have not accepted the current one. (A run takes none while every passage left is being embedded by "
+        + "another run or waits to be retried, nor while an earlier hold is still in force.) Such a hold lasts at least "
+        + "an hour; after that the next background run — the nightly one, or one started when a member opens a library "
+        + "in this workspace — looks at it again. The model conflict ends once the library is rebuilt with "
+        + `${afterModel ?? "the new model"}, or once you set your embedding model back to the one the library was built `
+        + "with; a library that already mixes two models stays held until it is rebuilt.",
       embedded: "A library already fully embedded is left as it is: a build you started there is cleared as finished, and "
         + "a “keep current” consent stays (listed under Background builds on your key) until new documents give it "
-        + "passages to embed — the next background run then holds it. Stop it there to end it now.",
+        + "passages to embed — it is then held as above. Stop it there to end it now.",
     };
   }
   return {
     running: "A background run already working on one of them finishes that run on the key it read when it reached the library.",
     embedding: "One with passages still to embed — a build you started, or one kept current — is ended (its consent "
-      + "released) by the next background run that works on it.",
+      + "released) by the next background run that finds a passage there it can take. (A run takes none while every "
+      + "passage left is being embedded by another run or waits to be retried, nor while an earlier hold is still in "
+      + "force.)",
     embedded: "A library already fully embedded is left as it is: a build you started there is cleared as finished, and "
       + "a “keep current” consent stays (listed under Background builds on your key) until new documents give it "
-      + "passages to embed — the next background run then ends it. Stop it there to end it now.",
+      + "passages to embed — it is then ended as above. Stop it there to end it now.",
   };
 }
 

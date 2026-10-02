@@ -1215,9 +1215,12 @@ export default function KnowledgeLibraryPage() {
       );
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
   }, [thread, threadId, seededTurns, threadStoreKey]);
-  // Org Playbooks visibility: how many standing instructions ride on asks —
+  // Org Playbooks visibility: how many standing instructions apply to asks —
   // the org's enabled playbooks scoped to library asks or everywhere, the
-  // same set the ask route sends (loadOrgInstructionsBlock). null until the
+  // set the ask route draws from (loadOrgInstructionsBlock). A 0 is exact:
+  // the route sends none. Above 0 the route may send fewer than counted —
+  // it reads at most 50 of them, and stops at the first that would take its
+  // block past 4,000 characters (HUB-6, I-20 fix pass 5). null until the
   // count is read, and when it could not be read, so the empty state below
   // never flashes — nor shows over a failed read.
   const [instructionCount, setInstructionCount] = useState<number | null>(null);

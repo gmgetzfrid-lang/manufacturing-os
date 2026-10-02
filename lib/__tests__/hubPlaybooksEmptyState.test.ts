@@ -16,6 +16,12 @@
 // invitation says exactly that; it used to say "No playbooks yet" over an org
 // whose playbooks were disabled or scoped to codebook imports or drawings.
 //
+// I-20 fix pass 5: the count and the ask route's loader share a filter, not
+// a set. A 0 is exact (the route sends none); above 0 the loader reads at
+// most 50 rows and stops at the first that would take its block past 4,000
+// characters, so the route may send fewer than the count says. The comments
+// that called the count "the same set the ask route sends" now say so.
+//
 // REGRESSION: with playbooks the header reads "N standing instruction(s)
 // apply" exactly as before.
 
@@ -257,5 +263,70 @@ describe("HUB-6 (I-20 fix pass 4) — the invitation claims only what the count 
       act(() => root.unmount());
       root = createRoot(host);
     }
+  });
+});
+
+describe("HUB-6 (I-20 fix pass 5) — the count and the route's loader share a filter: a 0 is exact; above 0 the route may send fewer than counted", () => {
+  type Pb = { org_id: string; scope: string; enabled: boolean; title: string; body: string };
+  /** org_ai_instructions over `rows`, honouring the filters AND the limit the caller chains. */
+  const table = (rows: Pb[]) => {
+    const filters: Array<(r: Pb) => boolean> = [];
+    let head = false;
+    let lim = Infinity;
+    const q: Record<string, unknown> = {};
+    q.select = (_c: string, o?: { head?: boolean }) => { if (o?.head) head = true; return q; };
+    q.eq = (k: keyof Pb, v: unknown) => { filters.push((r) => r[k] === v); return q; };
+    q.in = (k: keyof Pb, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return q; };
+    q.order = () => q;
+    q.limit = (n: number) => { lim = n; return q; };
+    q.then = (resolve: (v: unknown) => void) => {
+      const hit = rows.filter((r) => filters.every((f) => f(r)));
+      resolve(head ? { count: hit.length, error: null, data: null } : { data: hit.slice(0, lim), error: null });
+    };
+    return q;
+  };
+  const pb = (title: string, body = `${title} body`): Pb => ({ org_id: "o1", scope: "knowledge", enabled: true, title, body });
+  const sent = (block: string) => block.split("\n").filter((l) => l.startsWith("- ")).length;
+
+  it("60 enabled playbooks for library asks count 60; the route sends 50 of them", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    const { loadOrgInstructionsBlock } = await import("@/lib/aiInstructionsServer");
+    const rows = Array.from({ length: 60 }, (_, i) => pb(`Rule ${i + 1}`));
+    sb.from.mockImplementation(() => table(rows));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(60);
+    const admin = { from: () => table(rows) } as unknown as Parameters<typeof loadOrgInstructionsBlock>[0];
+    expect(sent(await loadOrgInstructionsBlock(admin, "o1", "knowledge"))).toBe(50);
+  });
+
+  it("three long playbooks count 3; the route stops at the first that would take its block past 4,000 characters", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    const { loadOrgInstructionsBlock } = await import("@/lib/aiInstructionsServer");
+    const rows = [pb("One", "x".repeat(2_000)), pb("Two", "y".repeat(2_000)), pb("Three", "z".repeat(10))];
+    sb.from.mockImplementation(() => table(rows));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(3);
+    const admin = { from: () => table(rows) } as unknown as Parameters<typeof loadOrgInstructionsBlock>[0];
+    const block = await loadOrgInstructionsBlock(admin, "o1", "knowledge");
+    expect(sent(block)).toBe(1);
+    expect(block.length).toBeLessThanOrEqual(4_000);
+  });
+
+  it("negative control: a count of 0 is exact — the route sends nothing", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    const { loadOrgInstructionsBlock } = await import("@/lib/aiInstructionsServer");
+    const rows = [{ ...pb("Off"), enabled: false }, { ...pb("Codebook"), scope: "codebook" }];
+    sb.from.mockImplementation(() => table(rows));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(0);
+    const admin = { from: () => table(rows) } as unknown as Parameters<typeof loadOrgInstructionsBlock>[0];
+    expect(await loadOrgInstructionsBlock(admin, "o1", "knowledge")).toBe("");
+  });
+
+  it("the comments no longer call the count the set the route sends", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync("app/(protected)/knowledge/[id]/page.tsx", "utf8");
+    const helper = readFileSync("lib/aiInstructions.ts", "utf8");
+    expect(page).not.toMatch(/same set the ask route sends/);
+    expect(helper).not.toMatch(/the same set loadOrgInstructionsBlock sends/);
+    expect(page).toMatch(/A 0 is exact/);
+    expect(helper).toMatch(/at most 50 rows/);
   });
 });

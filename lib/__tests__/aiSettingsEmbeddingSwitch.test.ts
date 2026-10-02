@@ -635,7 +635,11 @@ describe("SEM-1 (I-20 fix pass 4) — the confirm says what happens to each kind
     expect(kind).toBe("switch");
     expect(items).toEqual([["running", f.running], ["embedding", f.embedding], ["embedded", f.embedded]]);
     expect(text).not.toMatch(/builds on your key stop|held for a model conflict\) in/);
-    expect(f.embedded).toMatch(/“keep current” consent stays \(listed under Background builds on your key\) until new documents give it passages to embed — the next background run then holds it\. Stop it there to end it now\./);
+    expect(f.embedded).toMatch(/“keep current” consent stays \(listed under Background builds on your key\) until new documents give it passages to embed — it is then held as above\. Stop it there to end it now\./);
+    // I-20 fix pass 5: held for at least an hour and looked at again by the next background run — never "every hour"
+    expect(f.embedding).toMatch(/Such a hold lasts at least an hour; after that the next background run — the nightly one, or one started when a member opens a library in this workspace — looks at it again\./);
+    expect(f.embedding).toMatch(/a library that already mixes two models stays held until it is rebuilt\.$/);
+    expect(f.embedding).not.toMatch(/every hour|hourly/);
   });
 
   it("reproduction → fix: a loss (the embeddings key removed, no OpenAI chat key) says the same per kind — ended, not 'the next background run releases them'", async () => {
@@ -647,8 +651,8 @@ describe("SEM-1 (I-20 fix pass 4) — the confirm says what happens to each kind
     expect(kind).toBe("loss");
     expect(items).toEqual([["running", f.running], ["embedding", f.embedding], ["embedded", f.embedded]]);
     expect(text).not.toMatch(/the next background run releases them|builds on your key end\b/);
-    expect(f.embedding).toBe("One with passages still to embed — a build you started, or one kept current — is ended (its consent released) by the next background run that works on it.");
-    expect(f.embedded).toMatch(/the next background run then ends it\. Stop it there to end it now\./);
+    expect(f.embedding).toBe("One with passages still to embed — a build you started, or one kept current — is ended (its consent released) by the next background run that finds a passage there it can take. (A run takes none while every passage left is being embedded by another run or waits to be retried, nor while an earlier hold is still in force.)");
+    expect(f.embedded).toMatch(/it is then ended as above\. Stop it there to end it now\./);
   });
 
   it("an overview that cannot be read still says, per kind, what happens to a build on the key — for a switch and for a loss", async () => {
@@ -705,7 +709,8 @@ describe("GOV-14 done-when 4 — every background build on my key, in one place,
       `Consent last confirmed ${new Date("2026-09-01T00:00:00Z").toLocaleString()}; last ran ${new Date("2026-09-02T00:00:00Z").toLocaleString()}.`,
     );
     expect(rows[0].textContent).not.toMatch(/Consent recorded/);
-    expect(host.textContent).toMatch(/“Last confirmed” is the last build pass or “keep current” press that\s+confirmed the consent — not when it was first given\./);
+    // fix pass 5: "keep current" switched off re-stamps the instant too — the footer says so
+    expect(host.textContent).toMatch(/“Last confirmed” is the last time the consent was stamped again — by a build\s+pass, or by “keep current” being switched on or off on that library \(switching it off leaves the\s+build to finish on your key\) — not when it was first given\./);
     expect(rows[1].textContent).toMatch(/kept current as documents arrive/);
     expect(rows[1].textContent).toMatch(/not run in the background yet/);
     expect(rows[1].textContent).toMatch(/Waiting until .* — your monthly AI budget is reached\./);

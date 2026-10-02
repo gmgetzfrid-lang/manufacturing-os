@@ -35,7 +35,13 @@
 //     word for word: a run under way finishes on what it read; a build with
 //     passages left is held (switch) or released (loss) by the next run; a
 //     "keep current" on a library already fully embedded is left as it is
-//     until new passages arrive.
+//     until new passages arrive. Fix pass 5: the hold lasts at least an hour
+//     and is looked at again by the next background run (the nightly
+//     maintenance run or a library page-load nudge — the drain has no
+//     schedule of its own, so not "every hour"); a run takes nothing, and
+//     holds nothing, while every passage left is leased or waiting; an
+//     unsigned agreement is held first; setting the model back ends a
+//     single-model library's hold, never a mixed library's.
 //   * 20261121 — the paste contract, byte fidelity against 20261014 / 20261007,
 //     and the census. (The SQL itself was run against a scratch PostgreSQL 16:
 //     see the finding records.)
@@ -774,12 +780,13 @@ describe("SEM-1, AI settings' confirm (I-20 fix pass 4) — what the drain does 
   it("the confirm's three cases are the ones below, for a switch and for a loss", () => {
     const sw = buildFates("switch", "the-new-model");
     expect(sw.running).toMatch(/finishes that run with the setting it read when it reached the library/);
-    expect(sw.embedding).toMatch(/passages still to embed — a build you started, or one kept current — is held for a model conflict by the next background run that works on it, and looked at again every hour, until the library is rebuilt with the-new-model/);
-    expect(sw.embedded).toMatch(/already fully embedded is left as it is: a build you started there is cleared as finished, and a “keep current” consent stays .* until new documents give it passages to embed — the next background run then holds it/);
+    expect(sw.embedding).toMatch(/passages still to embed — a build you started, or one kept current — is held by the next background run that finds a passage there it can take: for a model conflict, or first for the AI agreement if you have not accepted the current one\. \(A run takes none while every passage left is being embedded by another run or waits to be retried, nor while an earlier hold is still in force\.\) Such a hold lasts at least an hour; after that the next background run — the nightly one, or one started when a member opens a library in this workspace — looks at it again\. The model conflict ends once the library is rebuilt with the-new-model, or once you set your embedding model back to the one the library was built with; a library that already mixes two models stays held until it is rebuilt\./);
+    expect(sw.embedding).not.toMatch(/every hour|hourly/);
+    expect(sw.embedded).toMatch(/already fully embedded is left as it is: a build you started there is cleared as finished, and a “keep current” consent stays .* until new documents give it passages to embed — it is then held as above/);
     const loss = buildFates("loss");
     expect(loss.running).toMatch(/finishes that run on the key it read when it reached the library/);
-    expect(loss.embedding).toMatch(/is ended \(its consent released\) by the next background run that works on it/);
-    expect(loss.embedded).toMatch(/“keep current” consent stays .* until new documents give it passages to embed — the next background run then ends it/);
+    expect(loss.embedding).toMatch(/is ended \(its consent released\) by the next background run that finds a passage there it can take\. \(A run takes none while every passage left is being embedded by another run or waits to be retried, nor while an earlier hold is still in force\.\)/);
+    expect(loss.embedded).toMatch(/“keep current” consent stays .* until new documents give it passages to embed — it is then ended as above/);
   });
 
   it("running: a run already working on a library when the key is removed, or the model switched, finishes that run on what it read — every passage, one model", async () => {
@@ -856,6 +863,103 @@ describe("SEM-1, AI settings' confirm (I-20 fix pass 4) — what the drain does 
       expect(out.drained[0]).toMatchObject({ outcome: "complete" });
       expect(stamp()).toBeNull();
     }
+  });
+
+  // ── I-20 fix pass 5: the confirm's "embedding" case, word by word ─────────
+  const keyReads = () => admin.state.calls.filter((c) => c.table === "ai_connections" && c.method === "select").length;
+  const holdRunsOut = () => { (admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild.blockedUntil = "2000-01-01T00:00:00Z"; };
+  const run = () => drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+
+  it("reproduction of the old wording's error (fix pass 5): a model-conflict hold is NOT looked at every hour — it lasts at least an hour, a run inside it skips the library without reading the key, and the first background run after it (the nightly maintenance run or a page-load nudge; the drain has no schedule of its own) looks again", async () => {
+    // the drain runs from two places only: the daily maintenance cron and the library page-load nudge
+    const crons = (JSON.parse(repo("vercel.json")) as { crons: Array<{ path: string; schedule: string }> }).crons;
+    expect(crons.find((c) => c.path === "/api/cron/maintenance")?.schedule).toBe("0 3 * * *");
+    expect(crons.some((c) => /embed/.test(c.path))).toBe(false);
+    expect(repo("app/(protected)/knowledge/[id]/page.tsx")).toContain("m.nudgeEmbedDrain()");
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2)];
+    switchModel();
+    await run();
+    expect(stamp()).toMatchObject({ blockedReason: "model_conflict" });
+    expect(Date.parse(stamp()!.blockedUntil!) - Date.now()).toBeGreaterThan(59 * 60_000);
+    // a run while the hold is in force: skipped, no key read, nothing changed
+    const reads = keyReads();
+    const held = stamp();
+    const within = await run();
+    expect(within.drained[0]).toMatchObject({ outcome: "blocked" });
+    expect(within.drained[0].note).toMatch(/^model_conflict until /);
+    expect(keyReads()).toBe(reads);
+    expect(stamp()).toEqual(held);
+    // the hold runs out; the next run (whenever it comes) looks again — still switched, held again
+    holdRunsOut();
+    const after = await run();
+    expect(keyReads()).toBe(reads + 1);
+    expect(after.drained[0].outcome).toBe("blocked");
+    expect(stamp()).toMatchObject({ blockedReason: "model_conflict" });
+    expect(Date.parse(stamp()!.blockedUntil!)).toBeGreaterThan(Date.now() + 59 * 60_000);
+  });
+
+  it("reproduction of the old wording's error (fix pass 5): while every passage left is leased by another run, or waiting to be retried, a run takes none — busy / retrying, no hold written, no key read, nothing released — after a switch and after a loss", async () => {
+    const future = new Date(Date.now() + 10 * 60_000).toISOString();
+    for (const change of [switchModel, loseKey]) {
+      for (const [left, outcome] of [[chunk(2, { embed_claimed_until: future }), "busy"], [chunk(2, { embed_attempts: 1, embed_retry_after: future }), "retrying"]] as const) {
+        seedDrainWorld();
+        admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", standing: true })];
+        admin.state.tables.knowledge_chunks = [embeddedChunk(1), { ...left }];
+        change();
+        const reads = keyReads();
+        const out = await run();
+        expect(out.drained[0].outcome).toBe(outcome);
+        expect(keyReads()).toBe(reads);
+        expect(stamp()).toMatchObject({ userId: PAYER, standing: true });
+        expect(stamp()!.blockedReason).toBeUndefined();
+      }
+    }
+  });
+
+  it("fix pass 5: a payer who has not accepted the current AI agreement is held for that first — the model conflict is not reached until it is accepted", async () => {
+    seedDrainWorld();
+    admin.state.tables.ai_key_agreements = [];
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2)];
+    switchModel();
+    await run();
+    expect(stamp()).toMatchObject({ blockedReason: "agreement" });
+    expect(Date.parse(stamp()!.blockedUntil!) - Date.now()).toBeGreaterThan(59 * 60_000);
+    seedDrainWorld();
+    switchModel();
+    holdRunsOut();
+    await run();
+    expect(stamp()).toMatchObject({ blockedReason: "model_conflict" });
+    expect(provider.inputs).toHaveLength(0);
+  });
+
+  it("fix pass 5: setting the model back ends a single-model library's hold at the next look — a library that already mixes two models stays held whatever model is set; only a Rebuild ends it", async () => {
+    seedDrainWorld();
+    const model = saved();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2)];
+    switchModel();
+    await run();
+    expect(stamp()).toMatchObject({ blockedReason: "model_conflict" });
+    admin.state.tables.ai_connections[0].embedding_model = model;      // set back
+    holdRunsOut();
+    const back = await run();
+    expect(back.drained[0]).toMatchObject({ outcome: "complete", embedded: 1 });
+    expect(chunks().every((c) => c.embedding_model === model)).toBe(true);
+    // a mixed library: held under either of its models, or a third
+    for (const m of [model, another(), EMBEDDING_PROVIDERS.find((p) => p.id === "voyage")!.models.find((x) => x !== model && x !== another()) ?? model]) {
+      seedDrainWorld();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+      admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2, { embedding: "[0]", embedding_model: another() }), chunk(3)];
+      admin.state.tables.ai_connections[0].embedding_model = m;
+      const out = await run();
+      expect(out.drained[0].outcome).toBe("blocked");
+      expect(stamp()).toMatchObject({ blockedReason: "model_conflict" });
+      expect(out.drained[0].note).toMatch(/already mixes/);
+    }
+    expect(provider.inputs).toHaveLength(1);                            // only the set-back single-model library's passage
   });
 });
 

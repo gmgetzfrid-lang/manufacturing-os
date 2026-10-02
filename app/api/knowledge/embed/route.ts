@@ -78,7 +78,11 @@
 // actually replaced (recordEmbedBuildConsent's `prior`, the marker its
 // compare-and-set was conditional on) — never on an earlier read of the
 // route's own, so a consent released or replaced in between is audited as
-// the new consent it is.
+// the new consent it is. A write that did not apply (another member's
+// standing consent stands) is not audited at all, and "keep current"
+// switched off re-stamps the consent's instant, so a build pass that read
+// the consent before it re-reads instead of putting `standing` back (I-20
+// fix pass 5).
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -703,9 +707,17 @@ export async function POST(req: NextRequest) {
     if (marker) {
       const detail = await loadEmbedDetail(orgId, libraryId);
       const left = detail ? detail.remaining : stats.total - stats.embedded;
+      // GOV-14 (I-20 fix pass 5): taking `standing` off re-stamps the
+      // instant too. A consent write (a build pass) compares the payer and
+      // the instant it read and carries the payer's own standing flag from
+      // that read; with the instant left as it was, a build pass that read
+      // the consent before this patch and wrote after it matched, and put
+      // `standing` back while this request answered { standing: false }.
+      // Re-stamped, that write no longer matches: it re-reads, and records
+      // the consent as this request left it.
       const write = left === 0
         ? await clearEmbedBuildMarkerIf(libraryId, expectationOf(marker))
-        : await patchEmbedBuildMarkerIf(libraryId, { standing: undefined }, expectationOf(marker));
+        : await patchEmbedBuildMarkerIf(libraryId, { standing: undefined, at: new Date().toISOString() }, expectationOf(marker));
       if (write.error) return bad(`Couldn't withdraw the standing consent: ${write.error}`, 500);
       if (!write.applied) {
         return bad(
@@ -751,12 +763,20 @@ export async function POST(req: NextRequest) {
   // newly records is audited, naming the request (GOV-14), judged against
   // the consent the write replaced (I-20 fix pass 4: a consent released or
   // replaced just before this pass's write is a new consent, never a renewal).
+  // A write that did not apply with no error left another member's standing
+  // consent standing (a plain build never replaces it): nothing of the
+  // caller's was recorded, so there is nothing to audit — and nothing to put
+  // back. Auditing it anyway would read the marker back and, were it the
+  // caller's by then (their own "keep current" in another tab), write a
+  // second row naming the wrong `replaced`, or — that row failing —
+  // withdraw the consent that other request recorded and audited (I-20 fix
+  // pass 5).
   const consent = await recordEmbedBuildConsent(libraryId, user.id);
   const markerError = consent.error;
   let backgroundNote: string | null = markerError
     ? `The background continuation could not be recorded (${markerError}) — keep this page open until the build finishes.`
     : null;
-  if (!markerError) {
+  if (!markerError && consent.applied) {
     const unaudited = await auditConsent(req, {
       orgId, libraryId, userId: user.id, action: "build",
       before: consent.prior,
