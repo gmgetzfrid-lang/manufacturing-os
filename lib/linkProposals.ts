@@ -250,14 +250,75 @@ export async function requestProposalInvalidation(documentId: string): Promise<{
   }
 }
 
-/** Every pending pair, for drawing ghost edges on the graph. */
+/** Every pending pair, for drawing ghost edges on the graph. Kept for any
+ *  caller that only wants the pairs: an error reads as none here. The graph
+ *  reads readPendingProposalPairs, which says which (GM-7). */
 export async function listPendingPairs(orgId: string): Promise<Array<{
   a: string; b: string; proposer: ProposerKind;
 }>> {
-  const { data, error } = await supabase
-    .from("proposed_links").select("document_id, target_document_id, proposer")
-    .eq("org_id", orgId).eq("status", "pending").limit(4000);
-  if (error) return [];
-  return ((data as Array<{ document_id: string; target_document_id: string; proposer: ProposerKind }>) ?? [])
-    .map((r) => ({ a: r.document_id, b: r.target_document_id, proposer: r.proposer }));
+  const r = await readPendingProposalPairs(orgId);
+  return r.pairs.map((p) => ({ a: p.documentId, b: p.targetDocumentId, proposer: p.proposer }));
+}
+
+/** How many pending pairs the graph draws at most. */
+export const PENDING_PAIRS_CAP = 4000;
+/** PostgREST cuts every response at db-max-rows (1,000 by default) without
+ *  an error, so the pairs are read in windows no larger than that. */
+const PAIR_WINDOW = 1000;
+
+export interface PendingPairsRead {
+  /** Both ends are documents: proposed_links.document_id and
+   *  target_document_id are NOT NULL references to documents (20260807), so
+   *  the kind is a fact of the schema, carried as data (`nodeA` / `nodeB`
+   *  are the graph node ids). */
+  pairs: Array<{
+    documentId: string; targetDocumentId: string; proposer: ProposerKind;
+    nodeA: string; nodeB: string;
+  }>;
+  /** Pending proposals this reader can see (proposed_links RLS: both
+   *  documents readable — LNK-4). null when it could not be counted. */
+  total: number | null;
+  /** More are pending than were read (the cap, or a short window). */
+  capped: boolean;
+  /** The read failed — never the same as "none pending". */
+  error: string | null;
+}
+
+/** GM-7 — the pending pairs for the graph, telling a failed read and a
+ *  capped one apart from an empty queue. Ordered (most confident first, then
+ *  id) so "the first N" is a rule. A database without proposed_links (before
+ *  20260807) has none pending, which is not an error. */
+export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIRS_CAP): Promise<PendingPairsRead> {
+  type Row = { id: string; document_id: string; target_document_id: string; proposer: ProposerKind };
+  const pairs: PendingPairsRead["pairs"] = [];
+  let total: number | null = null;
+  let short = false;
+  for (let from = 0; from < cap; from += PAIR_WINDOW) {
+    const to = Math.min(cap, from + PAIR_WINDOW) - 1;
+    const sel = supabase.from("proposed_links");
+    const q = from === 0
+      ? sel.select("id, document_id, target_document_id, proposer", { count: "exact" })
+      : sel.select("id, document_id, target_document_id, proposer");
+    const { data, error, count } = await q
+      .eq("org_id", orgId).eq("status", "pending")
+      .order("confidence", { ascending: false }).order("id", { ascending: true })
+      .range(from, to);
+    if (error) {
+      if (from === 0 && (error.code === "42P01" || /does not exist/i.test(error.message ?? ""))) {
+        return { pairs: [], total: 0, capped: false, error: null };
+      }
+      return { pairs, total, capped: false, error: error.message || "the read failed" };
+    }
+    if (from === 0) total = typeof count === "number" ? count : null;
+    const rows = (data as Row[] | null) ?? [];
+    for (const r of rows) {
+      pairs.push({
+        documentId: r.document_id, targetDocumentId: r.target_document_id, proposer: r.proposer,
+        nodeA: `doc:${r.document_id}`, nodeB: `doc:${r.target_document_id}`,
+      });
+    }
+    if (rows.length < to - from + 1) { short = true; break; }
+  }
+  const capped = total !== null ? total > pairs.length : (!short && pairs.length >= cap);
+  return { pairs, total, capped, error: null };
 }

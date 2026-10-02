@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   GraphSim, seedPosition, buildAdjacency, neighborhood, shortestPath,
-  DEFAULT_SIM_PARAMS,
+  DEFAULT_SIM_PARAMS, depthFade, FADE_FLOOR,
 } from "@/lib/graphSim";
 
 const dist = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) =>
@@ -243,5 +243,41 @@ describe("inflating a flat layout into 3D", () => {
     sim.setDimensions(3);
     const after = sim.nodes.map((n) => Math.hypot(n.x, n.y, n.z));
     after.forEach((r, i) => expect(r).toBeCloseTo(before[i], 3));
+  });
+});
+
+// GPV-9 (intelligence Round G, I-14): the hop distance neighborhood() reports
+// reaches the renderers, which fade and shrink by it.
+describe("depthFade — the distance the renderers draw by", () => {
+  it("draws the root and its direct neighbours at full weight", () => {
+    expect(depthFade(0, 3)).toEqual({ alpha: 1, shrink: 1 });
+    expect(depthFade(1, 3)).toEqual({ alpha: 1, shrink: 1 });
+  });
+
+  it("fades monotonically to the floor at the rim of the neighbourhood", () => {
+    const d2 = depthFade(2, 3), d3 = depthFade(3, 3);
+    expect(d2.alpha).toBeLessThan(1);
+    expect(d3.alpha).toBeLessThan(d2.alpha);
+    expect(d3.alpha).toBeCloseTo(FADE_FLOOR);
+    expect(d3.shrink).toBeLessThan(d2.shrink);
+    expect(d3.shrink).toBeGreaterThan(0.5);
+  });
+
+  it("draws a node with no distance (no focus) exactly as before", () => {
+    expect(depthFade(undefined, 3)).toEqual({ alpha: 1, shrink: 1 });
+    expect(depthFade(null, 3)).toEqual({ alpha: 1, shrink: 1 });
+  });
+
+  it("a depth-1 focus has no rim to fade", () => {
+    expect(depthFade(1, 1)).toEqual({ alpha: 1, shrink: 1 });
+  });
+
+  it("reads the same distances neighborhood() returns", () => {
+    const adj = buildAdjacency([{ a: "r", b: "n1" }, { a: "n1", b: "n2" }, { a: "n2", b: "n3" }]);
+    const near = neighborhood("r", adj, 3);
+    const alphas = ["r", "n1", "n2", "n3"].map((id) => depthFade(near.get(id), 3).alpha);
+    expect(alphas[0]).toBe(1);
+    expect(alphas[1]).toBe(1);
+    expect(alphas[2]).toBeGreaterThan(alphas[3]);
   });
 });
