@@ -111,6 +111,7 @@ about the system.
 | [DEC-75](#dec-75) | A restore writes **only the export contract's tables, only into the authorized workspace**: one shared write path forces `org_id`, every foreign key to an org-scoped table must name a row of that workspace (a row of a table with no `org_id` lands only under a parent of it), a person with no sign-in account is cleared or refuses the row, a storage key under another workspace's prefix is refused, and anything else is refused before a write; the outbound mail queue and the AI agreements, spend ledger and caps are never restored, and every service-role-only contract table is classified by a census; computed columns are never sent; tables restore parents-first; a restore **only adds** — an existing row is kept as it is (a numbering counter is only raised, never lowered), a re-run links the placeholders an earlier run created, a reconciliation read or write that fails stops the restore before any table, a key another workspace holds is reported as not restored, a row the database refuses is reported while the rest lands, and the counts are shown before and after; **one archive layout** (`manifest.json` + `tables/`) both producers write and the restore page reads, in parts | low | `ORG-1`, `BKP-3`, `BKP-5`, `BKP-7`, `BKP-10`, `BKP-12` |
 | [DEC-76](#dec-76) | The Projects surface: one word per concept (`lib/projectVocabulary` — contractor, task, and one "no longer counts" word per record); a database refusal reaches a user as a plain sentence, the raw detail logged (`lib/userFacingError`); a contractor links to its Known Company once and never re-points, a do-not-use name linked elsewhere needs a recorded reason (an app-level rule); Accept is confirmed by the document pick and the signature ceremony; the shared Modal answers Escape on the topmost dialog only (item 5: for the integrator to ratify) | low | `UX-15`, `REL-3`, `UX-10`, `MON-7`, `COST-12`, `A11Y-8`, `A11Y-4` |
 | [DEC-77](#dec-77) | The document-status vocabulary: "IFC" is not a status — no editor offers it for a new choice, existing IFC rows are not moved and are read the one way the gates already do (not issued, not in force); the spreadsheet import keeps every row it imports today (a case or spacing variant respelled, IFC and any other unrecognised value imported as written with a STATUS NOT RECOGNISED warning); IFC → Issued / Locked is treated as an issue by the editors (the database limb is `REV-21`). **Awaiting the user's ratification** (with `REV-21`) | low | `VFY-20`, `REV-21` |
+| [DEC-44 (N7)](#dec-44-n7) | The corner contract: **two docks** — the bottom-right `CornerDock` (jobs pinned nearest the corner, messages above, an explicit priority, never mount order) and the bottom-centre `CentreDock` (undo stack above the graph chip, each slot on its old layer); **at most 4 cards** show at once, toasts and jobs together, the rest in one "+N more" card that expands in place and opens the notification center when messages are hidden; a toast's timer runs only while it is visible; identical toasts within 10 s are one card with a count; the corner dock lives on **its own layer above every modal** (`Z.dock` = 750, `lib/zLayers.ts`, which owns every z value); a phone sees **one summary pill**; a dismissal sticks per account and workspace — *provisional number, for the integrator to renumber* | low | `STACK-1`…`STACK-11`, `STACK-13`, `TAX-8`, `TAX-14`, `RT-11`, `OS-4` |
 
 ---
 
@@ -4902,3 +4903,44 @@ dialog to close on one Escape closes its own stack in its handler.
 **Reversal.** The other option: add "IFC" to `DocumentStatus` (`types/schema.ts`), to the print gate (`filterPackDocs` / `documentStanding`) and to `IN_FORCE_STATUSES` (`lib/verifyVerdict.ts`) together — never one alone — and move it from `RETIRED_STATUS_OPTIONS` back into the editors' lists; the pinning test then requires it in force at both gates. IFC paper scans green again and IFC sheets print into packs.
 
 **Risk:** low. A user who chose IFC from the bulk editor or the upload now chooses Issued (or another listed status); no existing row changes and no gate or database rule moves.
+
+
+<a id="dec-44-n7"></a>
+## DEC-44 (N7) · The corner contract: two docks, a cap of four, a layer above every modal, a pill on a phone
+
+*Minted by notifications Round G, package N7 CORNER (2026-10-01), under the protocol's fail-safe rule, as a provisional "DEC-44 (N7)". It is distinct from the download-record DEC-44; DEC-44 to DEC-78 are taken on the integration branch, so the integrator renumbers it at merge. It records the three defaults in the fleet plan's "decisionsNeeded" for N7. References: notifications `STACK-1`…`STACK-11`, `STACK-13`, `TAX-8`, `TAX-14`, `RT-11`, `OS-4`; `components/ui/CornerDock.tsx`, `lib/zLayers.ts`, `hooks/useDismissed.ts`.*
+
+**Decision. Floating signals have two homes and one set of rules.**
+
+1. **Two docks.**
+   - The bottom-right `CornerDock` holds background jobs (backup 10, knowledge indexing 20, uploads 30) pinned nearest the corner, with transient messages (toasts) above them. A widget's place is its explicit priority, never the order it mounted in.
+   - The bottom-centre `CentreDock` holds the projects undo stack above the "Back to graph" chip. Each of its slots keeps the layer its surface already had (chip 40, undo 280), so neither moves relative to a drawer or a modal.
+   - No other globally-mounted surface shares a corner. The bottom-left stays the service worker's offline and update pills (PKG-1's); top-centre stays UpdatePill. Their one-wording unification is `TAX-15`.
+2. **A visible cap of 4 (plan default).**
+   - Toasts and job cards share the four places, jobs first. One place is kept while a message waits, so a bulk upload cannot hide every error toast.
+   - Everything else is counted in one "+N more" card. The card expands the column in place, height-bounded and scrolling, anchored at the corner. While messages are among the hidden, it also opens the notification center.
+   - Inside a widget the most important cards win: an upload failure before a progress bar.
+3. **Time and repetition.**
+   - A toast's (or a finished upload card's) auto-dismiss timer runs only while the card is within the visible stack. Leaving the stack pauses it; entering it again restarts the full duration.
+   - Identical toasts within 10 seconds are one card with a count. "Identical" is the same type, title and message, or the same `coalesceKey` when the producer passes one (kind + resource; NotificationListener is N3's).
+4. **Its own layer (plan default: portal to `document.body` at a top band).**
+   - The corner dock renders into `document.body` at `Z.dock` = 750: above every modal, backdrop and dialog (the highest is the app dialog at 700), and below only the pointer-following hover preview (800) and the print-only cover (9999), as before.
+   - `lib/zLayers.ts` lists every z value in use (`Z_SCALE`), and a test refuses an unlisted one. A new layer is decided there, not picked in a component.
+   - Nothing was renumbered except the dock. The three upload-starting modals read their unchanged numbers from the module.
+5. **It moves out of the way.**
+   - A page's fixed bottom bar declares its height in `--dock-bottom` (`useDockBottomInset`), and both docks sit above it.
+   - A full-height right drawer declares its width (`useOccupyRightRail`; the open notification center through the layout), and the corner dock moves to its left when 340px of room remain.
+6. **A phone sees one pill.** Below Tailwind's `sm` breakpoint the corner dock is one summary pill — the most urgent card's label and the count — that expands on tap. While it is collapsed, no card is "visible", so toast timers wait.
+7. **A dismissal sticks.**
+   - `hooks/useDismissed.ts` persists a dismissal per account and workspace (`dismissed:<uid>:<orgId>:<key>`), hydration-safe and never throwing, and clears every key on sign-out.
+   - New background work after a dismissal comes back as a pill at most, never the full card.
+
+**Rationale.** Report 06's defects all came from one cause: each widget positioned, layered, ordered and timed itself, and nothing coordinated them. The contract lives in one file, so every existing consumer inherits it. The fail-safe direction everywhere is "a failure is never the thing hidden": jobs and failures are seen first, and a hidden message keeps its full time.
+
+**Reversal.**
+- **The cap** is `DOCK_VISIBLE_CAP` in `components/ui/CornerDock.tsx`.
+- **The dock's band** is `Z.dock` in `lib/zLayers.ts`. The plan's alternative was to renumber every modal below 300; that is one value per modal in `Z` plus the scan test's scale.
+- **The phone pill** is `DOCK_MOBILE_QUERY`; setting it to `"not all"` turns it off.
+- **Coalescing** is `COALESCE_WINDOW_MS` in `components/providers/ToastProvider.tsx`; 0 turns it off.
+
+**Risk:** low. Every surface still appears and is dismissible. What changes: a fifth card waits behind "+N more"; on a phone, toasts wait in the pill; and the corner dock now paints over a modal's backdrop. The dock's container ignores the pointer, and only its cards take clicks.

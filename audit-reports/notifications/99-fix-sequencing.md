@@ -104,6 +104,27 @@ flipped, the settings page does not offer the "Pop-up toasts" switch.
 `lib/__tests__/notificationPrefs.test.ts` fails whenever the listener mentions
 either name while the flag is false, and the reverse (`RT-10`).*
 
+*Hand-off (2026-10-01, notifications Round G, N7 CORNER → N3 / N4 / N12, under
+`DEC-44 (N7)`):*
+- *`showToast` takes an optional `coalesceKey`. Identical toasts within 10 seconds
+  are already one card with a count, by type, title and message.
+  `components/providers/NotificationListener.tsx` (N3's) should pass
+  `` coalesceKey: `${row.kind}:${row.resource_id}` `` for a notification row, so
+  that differently worded rows about one event coalesce too (`RT-11` / `OS-4`
+  done-when 2).*
+- *The corner dock is `role="region"` / `aria-live="polite"` /
+  `aria-relevant="additions"`. The toast list is `role="status"`, an error toast
+  is `role="alert"`, and every toast's X has `aria-label="Dismiss"`. That is
+  NEDGE-5's done-when 2 limb, for N3 to verify and close.*
+- *The notification center is passed to the dock as a right rail by the layout
+  (`occupiedRightPx`, 480 = `NotificationCenter.tsx`'s `w-[480px]`, pinned by a
+  test). If N2 / N3 change the panel's width, update
+  `NOTIFICATION_CENTER_RAIL_PX`, or have the panel call `useOccupyRightRail`
+  itself and drop the prop.*
+- *`app/(protected)/layout.tsx`: N7 changed the `<main>` mount block (the docks
+  first) and the hook preamble of `ProtectedContent` (one line,
+  `useNotificationCenter`). N4 (:239 provider) and N12 (:72) rebase on it.*
+
 Then the census holes in severity order: `PROD-2` (access requests notify
 nobody), `PROD-14` (`markup_request` never notifies the person asked), `PROD-9`
 (holds never notify the owner), `PROD-3`, `PROD-5`.

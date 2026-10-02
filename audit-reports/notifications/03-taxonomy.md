@@ -1,6 +1,6 @@
 # 03 · Alerts vs notifications — the taxonomy
 
-**14 findings** — 6 HIGH · 8 MEDIUM.
+**16 findings** — 6 HIGH · 8 MEDIUM · 2 LOW. `TAX-15` and `TAX-16` opened by notifications Round G N7 CORNER, 2026-10-01 (DEC-31 remainders of `TAX-14` and `TAX-8`).
 
 Every distinct way this app tells a person something, what each is for, and where they duplicate or contradict each other.
 
@@ -282,7 +282,7 @@ components/notifications/NotificationCenter.tsx:76-80 -- `const counts = { all: 
 ## TAX-8 · Dismissals are not remembered, and one indicator actively un-dismisses itself when new work arrives - contradicting its own comment
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:50-55`, `components/providers/KnowledgeIndexIndicator.tsx:91`, `components/documents/EditOverlapBanner.tsx:41-42`, `components/documents/EditOverlapBanner.tsx:133-137`, `components/ui/FirstRunHint.tsx:26-50`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Substance holds: both dismissals are ephemeral React state and the indexing card genuinely un-hides itself whenever the poll finds queued work. One imprecision worth recording — the comment at :50-55 ('new work must NOT re-expand a card the user deliberately tucked away') governs `minimized`, not `hidden`, and `minimized` is in fact never reset by the drain, so the code does not literally contradict that comment; it fails to extend the same stickiness to the Dismiss affordance.
@@ -308,6 +308,20 @@ components/documents/EditOverlapBanner.tsx:41-42 -- `const [dismissed, setDismis
 - [ ] Every dismissible signalling surface persists its dismissal on the same substrate `FirstRunHint` uses (or a shared `useDismissed(key)` hook)
 - [ ] `setHidden(false)` is removed from the drain loop, or the dismissal is scoped to the current run and documented as such
 - [ ] "Heads-up sent" survives a remount (derived from the notification rows, not local state)
+
+**Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc` (KnowledgeIndexIndicator `setHidden(false)` at :164; EditOverlapBanner `dismissed` / `nudged` component state at :41-42). New `hooks/useDismissed.ts` (`useDismissed`, `useDismissedSet`, `clearDismissals`) generalises FirstRunHint's substrate. It keys `dismissed:<uid>:<orgId>:<key>`, reads through `useSyncExternalStore` with a "dismissed" server snapshot (hydration-safe, as FirstRunHint), wraps every storage access (an in-memory copy holds when storage throws), and clears every key on sign-out. KnowledgeIndexIndicator uses it (see STACK-6). In `components/documents/EditOverlapBanner.tsx`:
+- **Dismiss** persists per overlap: the document plus the set of people in it (`overlapKey`). A new person joining makes a new overlap, and the banner shows again.
+- **"Heads-up sent ✓" from the rows.** It is derived from the `overlap_advisory` rows the viewer can read: addressed to the viewer, about the document, from someone in the overlap, within 14 days (`OVERLAP_HEADSUP_WINDOW_DAYS`).
+- **The viewer's own send** is remembered for the overlap on the same substrate. `notifyMany` skips the actor, and `notifications_own_select` (`20260723_notifications_unify.sql:37`) shows only rows addressed to the reader, so a heads-up the viewer sent cannot be read back from the client.
+
+The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "TAX-8 — EditOverlapBanner…" ("Heads-up sent" from a received row, with the query's filters asserted; the viewer's send and the dismissal survive a remount; a new person shows it again) and the `useDismissed` suite.
+
+**Done-when.**
+- ✓ Every dismissible surface the finding names persists its dismissal on a shared `useDismissed` hook, FirstRunHint's substrate. The other dismissible banners found (StaleCheckoutBanner, SetupChecklist) already persist on their own keys; toasts and upload cards are transient by design.
+- ✓ `setHidden(false)` is removed from the drain loop.
+- ✓ "Heads-up sent" survives a remount: derived from the notification rows wherever the viewer can read them. The viewer's own send is per-browser, because RLS keeps sent rows from the sender — the cross-device remainder is opened as `TAX-16`.
+
+**Scope / residual.** `TAX-16` (a sender's own heads-up from another device; it needs a server read of rows one sent, after N5's server-side notification route). No migration.
 
 ---
 
@@ -495,7 +509,7 @@ app/api/cron/maintenance/route.ts:370-372 -- `// Manual distribution-ack request
 ## TAX-14 · Three floating-signal corners and four z-layers; BackupIndicator (z-300) covers the offline/update pills (z-200) in the same bottom-left corner, and two separate surfaces both announce "a new version is available" in different words
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:3-13`, `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:74-88`, `components/projects/UndoToastHost.tsx:21`, `components/system/UpdatePill.tsx:41-48`, `app/(protected)/layout.tsx`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed including simultaneous mounting: app/(protected)/layout.tsx:61-65 mounts UpdatePill, CornerDock, BackupIndicator and KnowledgeIndexIndicator; app/layout.tsx:93 mounts ServiceWorkerManager; UndoToastHost is mounted by components/projects/ExecutionView.tsx:926 — so the Projects → Execution scenario has all of them live at once, and the two different 'new version' wordings come from two independent detectors (a waiting service worker vs. a polled /api/version build id).
@@ -526,5 +540,69 @@ components/projects/UndoToastHost.tsx:21 -- `<div className="fixed bottom-4 left
 - [ ] `BackupIndicator` and `ServiceWorkerManager` share one left dock as flex children, or move into `CornerPortal`
 - [ ] One component owns "a newer build exists", fed by both the version poll and the SW waiting-worker signal - one wording, one placement, one prompt at a time
 - [ ] A single `Z` constant module owns every overlay layer number
+
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With a backup running and the browser offline, the base backup card (bottom-left, z-300) covered the offline pill (8,160 px²). Now:
+- **Two docks, documented.** The bottom-right `CornerDock` holds background jobs pinned nearest the corner, with transient messages above; the bottom-centre `CentreDock` holds in-page action feedback (the undo stack) above the return chip. Both are described in `components/ui/CornerDock.tsx`'s header and in `lib/zLayers.ts`.
+- **The backup in the dock.** `BackupIndicator` renders through `CornerPortal` (STACK-8).
+- **One layer module.** `lib/zLayers.ts` owns the layer numbers, enforced by a scan test (STACK-10).
+
+No two globally-mounted surfaces share a corner now: bottom-right holds the dock alone, bottom-left ServiceWorkerManager's pills alone, bottom-centre the graph chip (the undo host is ExecutionView's, not global), top-centre UpdatePill. After: the backup card is in the dock and the offline pill is on top (overlap 0). Tests: `lib/__tests__/cornerDock.test.ts` (z scale, old fixed corners gone, the centre dock), `lib/__tests__/cornerJobs.test.ts` (backup in the jobs slot).
+
+**Done-when.**
+- ✓ Exactly two docks exist and are documented, and no two globally-mounted surfaces share a corner with different z-index values. Reading note: the plan's design meets "one for transient/action feedback, one for long-running background jobs" as the corner dock's two slots plus the centre dock for in-page action feedback (`DEC-44 (N7)`).
+- ✓ `BackupIndicator` moves into `CornerPortal`.
+- dw3 (one component owns "a newer build exists") — NOT done here. Per the plan and DEC-31 it needs `components/pwa/ServiceWorkerManager.tsx`, which is public-surfaces PKG-1's, so it is opened as `TAX-15`, to be worked after PKG-1 merges.
+- ✓ A single `Z` constant module owns every overlay layer number (`lib/zLayers.ts`, with a scan test that refuses an unlisted value).
+
+**Scope / residual.** `TAX-15`. No migration.
+
+---
+
+<a id="tax-15"></a>
+
+## TAX-15 · Two surfaces still announce "a newer build exists", in two different words — the remainder of TAX-14
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** to be worked after public-surfaces PKG-1 merges, because it owns `components/pwa/ServiceWorkerManager.tsx`. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `TAX-14` done-when 3.
+- **Verification:** CONFIRMED (read on `b9cdfdc`)
+- **Locations:** `components/system/UpdatePill.tsx:64,79` (top-centre, polls `/api/version`: "This tab is running an old version — tap to load the update"); `components/pwa/ServiceWorkerManager.tsx:181-194` (bottom-left, watches the service worker's waiting worker: "Update available — tap to refresh"); `app/(protected)/layout.tsx` mounts UpdatePill and `app/layout.tsx:93` mounts ServiceWorkerManager.
+- **Independently verified:** — opened 2026-10-01 by N7 from `TAX-14`'s record; not yet challenged by a second party.
+
+**Mechanism.** Two independent detectors report the same fact. UpdatePill compares the build id it booted with against `/api/version`. ServiceWorkerManager listens for a new worker reaching `installed` while one controls the page. Every deploy produces both signals (OFF-4 / OFF-11), so after a deploy both surfaces can be live at once: a top-centre pill and a bottom-left button, each with its own wording and its own reload path. UpdatePill's path goes through `loadLatestBuild`, which activates the waiting worker; it also asks before reloading over an upload in flight (`STACK-13`). The service-worker button's path is `applyServiceWorkerUpdate`, with no upload check beyond the page's `beforeunload` guard.
+
+**Failure scenario.** After a deploy a user sees "This tab is running an old version" at the top and "Update available" at the bottom-left. They are unsure whether these are two updates or one. They tap the bottom-left button during an upload and get the browser's generic "Leave site?" prompt instead of the app's explanation.
+
+**Done when.**
+
+- [ ] One component owns "a newer build exists". It is fed by both the version poll and the waiting-worker signal: one wording, one placement, one prompt at a time.
+- [ ] Its reload path is the one `loadLatestBuild` path and asks before reloading over an upload in flight (`confirmReloadDuringUploads`, `components/system/UpdatePill.tsx`).
+- [ ] A test pins that only one surface renders when both signals are true.
+
+**Closer:** the first notifications package after public-surfaces PKG-1 merges (the plan's "update-available unification").
+
+---
+
+<a id="tax-16"></a>
+
+## TAX-16 · A heads-up's sender sees "Heads-up sent" only in the browser they sent it from
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications, after N5 DISPATCH-AND-WRITE-HOLES moves notification writes to a server route. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `TAX-8` done-when 3.
+- **Verification:** CONFIRMED (read on the N7 branch)
+- **Locations:** `components/documents/EditOverlapBanner.tsx` ("Heads-up sent" derivation); `lib/inAppNotifications.ts:106-140` (`notifyMany` skips the actor); `supabase/migrations/20260723_notifications_unify.sql:37` (`notifications_own_select`: `user_id = auth.uid()`).
+- **Independently verified:** — opened 2026-10-01 by N7; not yet challenged by a second party.
+
+**Mechanism.** `TAX-8` made "Heads-up sent" survive a remount. It is derived from the `overlap_advisory` rows the viewer can read: one addressed to the viewer from someone in the overlap means a heads-up went round. A heads-up the viewer sent themselves cannot be read back. `notifyMany` writes no row for the actor, and RLS lets a member read only rows addressed to them. So the sender's own send is remembered on the dismissal substrate (`hooks/useDismissed.ts`): per account, per workspace, in that browser.
+
+**Failure scenario.** A user sends a heads-up from their laptop, then opens the same document on a tablet. The tablet offers "Send heads-up" again. Sending it re-notifies the colleagues, who receive a second, identical advisory.
+
+**Done when.**
+
+- [ ] The sender's own heads-up is read from the server: a route that answers whether the caller sent an `overlap_advisory` about the document to the current set of people within the window (service role, filtered by `actor_user_id = caller`), or the write route returns and records it.
+- [ ] The banner derives "Heads-up sent" from that answer on every device; the per-browser marker becomes a cache at most.
+
+**Closer:** notifications, after N5's server-side notification route exists.
 
 ---

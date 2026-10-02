@@ -31,7 +31,7 @@ Progress and completion messaging: how many things render in that corner, whethe
 ## STACK-1 · A long AI job (semantic index build) has zero corner presence and no unmount cleanup — navigating away hides it while it keeps running
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/knowledge/SemanticIndexPanel.tsx:44-107`, `components/knowledge/SemanticIndexPanel.tsx:194`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. Contrast with the sibling KnowledgeIndexIndicator, which does portal into CornerPortal and sets `alive = false` on cleanup — SemanticIndexPanel does neither, so navigating away leaves an in-browser paid loop running with the Stop button unmounted.
@@ -61,6 +61,14 @@ components/knowledge/SemanticIndexPanel.tsx:76-80
 - [ ] the semantic build publishes to a module-level store like lib/clientBackup's publish/subscribe and renders a CornerPortal card with progress and Stop
 - [ ] or the panel sets stopRef.current = true in a cleanup so the job cannot outlive its only visible control
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc`: `components/knowledge/SemanticIndexPanel.tsx` had one effect (`useEffect(() => { void load(); }, [load])`, :83) and no cleanup; `stopRef` was reachable only from the panel's Stop button. Now an unmount cleanup sets `stopRef.current = true` (and a `leftRef`), so `buildSemanticIndex`'s `shouldStop` turns true and the browser loop stops at its next batch boundary when the panel leaves the page — every committed batch is kept and a build resumes where it stopped. The outcome is said in a 15-second toast that outlives the page ("Meaning-index build stopped when you left the page — N passage(s) left. … build again to resume"); the in-panel Stop keeps its own wording. Test: `lib/__tests__/cornerJobs.test.ts` "STACK-1 — SemanticIndexPanel stops its build when it unmounts" (the real panel, `lib/knowledge` mocked: `shouldStop()` is false while mounted and true after unmount; the toast names the passages left).
+
+**Done-when.**
+- dw1 (a module-level store + CornerPortal card) — not taken: the done-when is either/or, and the second branch was taken.
+- ✓ dw2: the panel sets `stopRef.current = true` in a cleanup, so the job cannot outlive its only visible control.
+
+**Scope / residual.** The semantic build still runs only while its panel is mounted (the panel already says "Leave this page open and it will finish"); a dock card that would let it run anywhere is not built. The server-side background build (SEM-11) is unchanged. No migration.
+
 ---
 
 <a id="stack-2"></a>
@@ -68,7 +76,7 @@ components/knowledge/SemanticIndexPanel.tsx:76-80
 ## STACK-2 · A user-cancelled upload is reported to the corner as a red "Failed", contradicting the code's own stated intent
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:62-64`, `lib/storage.ts:402-409`, `lib/storage.ts:420-430`, `components/providers/UploadIndicator.tsx:57-75`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contradiction is doubly explicit: MetadataStagingModal.tsx:50-52 documents the contract as "`signal` aborts the in-flight transfers when the user presses Stop ... reports UploadCancelledError as 'the user stopped this', not as a failure", and stopUpload (:424-427) is a real user-facing 'Stop upload' button (:768-771). storage.ts never honours that contract on the corner-indicator channel.
@@ -99,6 +107,14 @@ components/providers/UploadIndicator.tsx:60
 - [ ] UploadActivityStatus gains "cancelled" and both catch sites emit it for UploadCancelledError
 - [ ] UploadIndicator renders cancelled in a neutral tone reading "Stopped", auto-clearing on the done timing
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc` (`lib/storage.ts` :586-589 / :595-598 / :604-609 emitted `status: "error"` before any `UploadCancelledError` check; the multipart catch had no cancel branch at all); a probe test on the base tree records `['uploading', 'error']` for a Stop. Now `UploadActivityStatus` gains `"cancelled"`, and one helper, `emitUploadEnd(id, name, err)`, emits `cancelled` (no error text) for an `UploadCancelledError` and `error` with the message for anything else, at all three catch sites of `uploadToPath` (multipart, the upload-slot request, the single PUT). What is rethrown is unchanged. `components/providers/UploadIndicator.tsx` renders `cancelled` in a neutral tone — a slate square and "Stopped", no rose text — and clears it on the "Done" timing (`UPLOAD_CLEAR_MS.cancelled = 2500`). Tests: `lib/__tests__/cornerJobs.test.ts` "STACK-2 — lib/storage emits 'cancelled'…" (single PUT, multipart, a real failure still `error` with its reason) and "…UploadIndicator renders a cancelled upload as a neutral 'Stopped'…" (no rose, no "Failed", gone after 2.5s; a failure still reads "Failed" with its reason for 7s).
+
+**Done-when.**
+- ✓ `UploadActivityStatus` gains `"cancelled"` and both catch sites (all three) emit it for `UploadCancelledError`.
+- ✓ UploadIndicator renders it neutral, reading "Stopped", auto-clearing on the done timing.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-3"></a>
@@ -106,7 +122,7 @@ components/providers/UploadIndicator.tsx:60
 ## STACK-3 · AI ingestion failure is swallowed by an empty catch — the user is told "caught up", never "failed"
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:97-112`, `app/api/knowledge/ingest/route.ts:179-185`, `lib/knowledge.ts:450-458`, `app/(protected)/knowledge/[id]/page.tsx:1931`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. The one mitigation the finding already cites is real but out of the way: knowledge/[id]/page.tsx:1931 does show `Indexing failed — {doc.error}` with a resume button, but only on that library's page — a user anywhere else in the app sees a green 'caught up' card that actively asserts the opposite of what happened.
@@ -144,6 +160,20 @@ app/api/knowledge/ingest/route.ts:179-184
 - [ ] the empty `catch {}` at KnowledgeIndexIndicator.tsx:108 binds the error and records it instead of discarding it
 - [ ] the done branch never renders a green checkmark when failed.length > 0
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With one queued document whose batch moved and then stalled, the base card flipped to the emerald check, "Knowledge indexing caught up / 0 documents indexed.", with no link. (Line drift: intelligence I-02b rewrote the loop; the empty catch is :175 on `b9cdfdc`, `catch { /* the reason is on the row (or answered 409); move on */ }`.) Now in `components/providers/KnowledgeIndexIndicator.tsx`:
+- `DriveState` carries `failed: FailedDoc[]` (`{ id, name, libraryId, message }`); the queue read selects `library_id`.
+- The catch binds the error. It records it unless `ingestFailureOf(e)` says it is not a failure: a park — the engine's 409 for a back-off in force or a vision retry held for a reason (`visionRetryBlocked` / `failureRetryBlocked`; per I-02b "nothing failed now", the reason is on the row) — or another session's claim (lib/knowledge's busy sentence; a test pins the wording). A failed batch (502, the row marked errored), a refused non-PDF, a stall or an unfinished run is recorded with the engine's own words. A failure before any progress now brings the card too; it used to show nothing.
+- The finished card renders a rose branch: "N document(s) could not be indexed", each document's name and reason, how many did index, and "Open the library to resume →" to `/knowledge/[libraryId]` (or `/knowledge` when the failures span libraries). The working card says "N could not be indexed so far"; the minimized pill turns rose ("N not indexed"). The green check never shows while `failed.length > 0`.
+
+After the fix the same harness shows the rose card, the reason and the link `/knowledge/lib1`. Tests: `lib/__tests__/cornerJobs.test.ts` "STACK-3 — ingestFailureOf" (park, held retry, busy, failure, stall) and "…the rose 'could not be indexed' branch…" / "a document that failed before any progress is still reported"; the I-02b suite (`lib/__tests__/knowledgeIndexIndicator.test.ts`) still passes — a park and a busy claim show no card.
+
+**Done-when.**
+- ✓ `DriveState` carries a `failed[]` list (docName + message) and the card renders a rose "N document(s) could not be indexed" branch with the per-doc reason and a link to `/knowledge/[libraryId]`.
+- ✓ The empty catch binds the error and records it.
+- ✓ The done branch never renders a green checkmark when `failed.length > 0`.
+
+**Scope / residual.** The busy test is a match on lib/knowledge's sentence (that file is intelligence I-03's this round); a structured `busy` flag on that throw would be cleaner and is I-03's to add. No migration.
+
 ---
 
 <a id="stack-4"></a>
@@ -151,7 +181,7 @@ app/api/knowledge/ingest/route.ts:179-184
 ## STACK-4 · Bottom-center is a second uncoordinated corner: undo toasts and the graph return chip occupy identical coordinates
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/UndoToastHost.tsx:21`, `components/graph/BackToGraphChip.tsx:24`, `app/(protected)/layout.tsx:68`, `components/projects/ExecutionView.tsx:926`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The collision is exactly as described and reachable. Severity is overstated: useUndoableActions.ts:25 `const TIMEOUT_MS = 7000` caps the occlusion at 7s and caps the stack at 3 (line 39 `t.slice(-2)`), and the chip is NOT the only way back — ViewTabs.tsx:110 has a `/graph` nav entry and graph/page.tsx:299-300 states "layout and settings persist per-org already", so reaching /graph by any route restores the same map.
@@ -177,6 +207,16 @@ components/graph/BackToGraphChip.tsx:24
 - [ ] a single bottom-center dock exists (mirroring CornerDock) that both UndoToastHost and BackToGraphChip portal into, or the chip is relocated
 - [ ] overlap is verified with ?from=graph on a project execution page
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With the real `UndoToastHost` (ExecutionView's host) and the real `BackToGraphChip` at `/projects/p1?from=graph`, the base undo toast covered the chip (4,373 px² overlap); the chip was not clickable at its centre. Now `components/ui/CornerDock.tsx` adds the bottom-centre dock: `CentreDock` (portaled to `document.body`, mounted once in the protected layout) with two slots — `chip` (fixed, `Z.pageChip` = 40, the chip's old layer) and `toasts` (fixed, `Z.undoToast` = 280, the undo host's old layer) — and `CentrePortal`. `BackToGraphChip` renders into the chip slot; `UndoToastHost` renders into the toasts slot (the edit is local: its outer fixed box became the portal; the A11Y-6 live region and every toast are unchanged). While the chip is present the toasts slot sits 2.5rem higher, so the undo stack stands above the chip instead of on it; both honour `--dock-bottom`.
+
+One dock, two layers, on purpose: a single stacking box would have moved the chip from 40 to 280 — above every modal backdrop between 50 and 260, so a click on it would navigate away from an open modal — or the undo toasts from 280 to 40, under every drawer. Neither surface moves relative to any other overlay (pinned in `lib/__tests__/cornerDock.test.ts`). After: overlap 0; the chip is clickable; the undo toast's top is 702 and the chip's 752. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-4 — one bottom-centre dock…" (both portal in, the slot lifts with the chip, layers 40 / 280, the live region stays mounted, the fallback without a dock).
+
+**Done-when.**
+- ✓ A single bottom-centre dock exists (mirroring CornerDock) that both UndoToastHost and BackToGraphChip portal into.
+- ✓ Overlap verified with `?from=graph` on a project page: in the harness, with the execution view's real host and the real chip. The full ExecutionView needs Supabase.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-5"></a>
@@ -184,7 +224,7 @@ components/graph/BackToGraphChip.tsx:24
 ## STACK-5 · CornerPortal renders its own duplicate fixed corner for the first frame of every appearance
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `components/ui/CornerDock.tsx:32-48`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate: the fallback box carries the identical `fixed bottom-4 right-4 z-[300]` coordinates as the dock (line 25), and because the lookup is deferred into a macrotask the fallback is committed and painted at least once on every mount — and CornerPortal remounts on every appearance (UploadIndicator.tsx:47 `if (list.length === 0) return null`). But the defect is a sub-100ms transient with no state, data or interaction consequence; LOW, not MEDIUM.
@@ -213,6 +253,22 @@ components/ui/CornerDock.tsx:40-46
 - [ ] target resolves synchronously via useLayoutEffect, or the fallback renders nothing on the first frame and appears only after a tick confirms no dock exists
 - [ ] the fallback is offset or hidden when a dock is present
 
+**Resolution (2026-10-01, notifications Round G).** Observed first, since this was SUSPECTED. Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase).
+- **The variant that matters — CONFIRMED.** `ToastProvider` was rendered above a gate that mounts `CornerDock` 300 ms later, as `ProtectedContent` does after auth. On the base tree the toast was not in `#corner-dock`. It sat in the fallback corner for good (the effect had `[]` deps and never retried), and it covered the upload card completely (13,824 px²).
+- **The one-frame variant — also seen.** A MutationObserver caught the re-mounting upload card committed outside the dock on every run. One run's per-frame sampler caught a painted FALLBACK frame.
+
+The fix:
+- `CornerPortal` reads the dock's slot elements from a module store (`useSyncExternalStore`). `CornerDock` fills that store through stable ref callbacks, so a portal that mounted before the dock moves into it the moment it appears.
+- With no target, the portal renders nothing on its first frame. The fallback appears only after a tick confirms there is no dock (it carries `Z.dock`).
+
+After: the toast is in the dock, the overlap is 0, and nothing is committed outside the dock. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-5 — …" (a provider mounted before the dock lands its toast in it; with the dock mounted no fallback is ever committed; nothing on the first frame without a dock).
+
+**Done-when.**
+- ✓ The fallback renders nothing on the first frame and appears only after a tick confirms no dock exists. This is the done-when's second option; the store also re-resolves whenever a dock mounts.
+- ✓ The fallback is never shown while a dock is present: the target wins, by construction.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-6"></a>
@@ -220,7 +276,7 @@ components/ui/CornerDock.tsx:40-46
 ## STACK-6 · Dismissal of the indexing card is silently undone by the next queued document, and no dismissal survives reload
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:50-55`, `components/providers/KnowledgeIndexIndicator.tsx:88-92`, `components/providers/UploadIndicator.tsx:39-44`, `lib/clientBackup.ts:227-229`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The setHidden(false) reset and the non-persistence across reload are both real. Severity is too high because the finding's own cited lines 50-55 contain the mitigation: `const [minimized, setMinimized] = useState(false)` is explicitly sticky across drain passes ("new work must NOT re-expand a card the user deliberately tucked away"), and the X/Dismiss button only renders in the `phase === "done"` state — so what gets re-shown after dismissal is a *new* card for *new* work, not a resurrection of the dismissed 'caught up' card.
@@ -252,6 +308,14 @@ components/providers/KnowledgeIndexIndicator.tsx:52-55
 - [ ] `setHidden(false)` no longer fires for a queue the user already dismissed — new work reopens as the minimized pill at most
 - [ ] minimized/hidden persist to localStorage keyed by org, cleared on sign-out alongside the intel-status- keys in RoleContext.tsx:272-277
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc` (`setHidden(false)` at :164 inside the drain; `hidden` / `minimized` plain state); a probe test on the base tree re-opens "Knowledge indexing caught up" after a dismissal and a remount. Now `setHidden(false)` is gone from the drain, and Dismiss and Minimize persist through `hooks/useDismissed.ts` under `dismissed:<uid>:<orgId>:knowledge-index:dismissed` / `…:minimized`. After a dismissal, new work shows as the minimized pill at most: rose when a pass ends with a failure, nothing when it ends clean. Expanding the pill clears both. `useDismissed` removes every `dismissed:` key on `SIGNED_OUT` through its own one-time auth listener — the same event RoleContext clears the `intel-status-` snapshots on. `components/providers/RoleContext.tsx` belongs to identity / PKG-1 and is not edited. The keys carry the uid as well as the org, so the next account on a shared browser never inherits a dismissal even if a sign-out was missed. Tests: `lib/__tests__/knowledgeIndexIndicator.test.ts` (the I-02b test's last step pinned the old re-open and now pins the pill: "Indexing 40%" while working, nothing after a clean end); `lib/__tests__/cornerJobs.test.ts` "a dismissal persists for this account in this workspace…", "the drain never re-opens the card", and the `useDismissed` suite (sign-out clears, storage that throws, hydration).
+
+**Done-when.**
+- ✓ `setHidden(false)` no longer fires: new work reopens as the minimized pill at most.
+- ✓ minimized / hidden persist to localStorage keyed by org (and account), cleared on sign-out alongside the intel-status- keys. It is the same event, through the hook's own listener, because RoleContext is another package's file.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-7"></a>
@@ -259,7 +323,7 @@ components/providers/KnowledgeIndexIndicator.tsx:52-55
 ## STACK-7 · On a phone the corner stack is near-full-width and lands on top of the library's bottom action tray
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/ToastProvider.tsx:63`, `components/providers/UploadIndicator.tsx:51`, `components/providers/KnowledgeIndexIndicator.tsx:150`, `components/documents/StagingTray.tsx:20`, `components/ui/CornerDock.tsx:25`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every count: at 375px viewport a `w-80` toast is 320/375 = 85% of the width, and the dock's z-[300] sits over the tray's z-30 full-width bottom bar whose right-hand Clear/Open controls live exactly under the dock's bottom-right anchor. Only `w-[330px]` on the indexing card has a viewport-relative max-width; the toast and upload cards have none.
@@ -289,6 +353,20 @@ components/documents/StagingTray.tsx:20
 - [ ] the dock lifts above any page-declared bottom bar (a CSS var the tray sets, consumed as the dock's bottom offset)
 - [ ] on mobile the dock collapses to a single summary pill that expands on tap
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). At 360×740 with the real `StagingTray`, the base toast was 320px wide (89% of the viewport), the upload card 288px, and the dock covered all three tray buttons. The fix has three parts.
+- **Widths.** Cards clamp to the viewport: toasts `w-[min(20rem,calc(100vw-2rem))]`, upload cards `w-[min(18rem,…)]`, the indexing card `w-[min(330px,…)]`, the backup card `w-[min(340px,…)]`.
+- **The tray.** `StagingTray` declares its height in `--dock-bottom` (`useDockBottomInset`: measured, kept current by a ResizeObserver, removed on unmount). Both docks sit above it.
+- **Phones.** Below the `sm` breakpoint the dock collapses to one summary pill. It shows the most urgent card's label — an error first, then a running job, then the newest — and the count. A tap expands it (the cap still applies) and "Hide" folds it.
+
+After: no tray button is covered and the pill reads "Uploading 1 file · 2". Expanded, the toast is 320px inside 360 (left 24) and no card is over the tray. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-7 — …" (the tray sets and clears the variable; every card clamps; the phone pill, tap and Hide).
+
+**Done-when.**
+- ✓ Cards use `w-[min(…,calc(100vw-2rem))]`.
+- ✓ The dock lifts above a page-declared bottom bar: the tray sets `--dock-bottom` and the dock uses it as its bottom offset.
+- ✓ On mobile the dock collapses to a single summary pill that expands on tap.
+
+**Scope / residual.** While the pill is collapsed no card is "within the visible stack", so toast timers wait (RT-11): on a phone a toast is read when the pill is opened, then expires. No migration.
+
 ---
 
 <a id="stack-8"></a>
@@ -296,7 +374,7 @@ components/documents/StagingTray.tsx:20
 ## STACK-8 · The backup — the longest-running job in the app — is not in the dock at all, and it covers the offline/update pills
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:73`, `components/ui/CornerDock.tsx:3-13`, `lib/clientBackup.ts:224`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I checked the one thing that could refute this — that ServiceWorkerManager might not be mounted on protected pages — and it is: app/layout.tsx:93 `<ServiceWorkerManager />` in the ROOT layout, which wraps app/(protected)/layout.tsx. A 340px x ~130px card at bottom-5/left-5 z-300 fully covers a pill at bottom-4/left-4 z-200, and BackupIndicator is genuinely outside the dock.
@@ -326,6 +404,15 @@ components/providers/BackupIndicator.tsx:65
 - [ ] BackupIndicator gains a minimize pill matching KnowledgeIndexIndicator's pattern
 - [ ] Cancel is behind an appConfirm
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With a backup running and the browser offline, the base backup card covered the offline pill (8,160 px²); the pill was not on top at its centre, and the card had no minimize. Now `components/providers/BackupIndicator.tsx` renders through `CornerPortal` in the dock's jobs slot, at priority 10, nearest the corner; there is no more `fixed bottom-5 left-5 z-[300]`. It minimizes to a pill that keeps the percent (KnowledgeIndexIndicator's pattern). Cancel goes through `confirmCancelBackup` → `appConfirm` ("Cancel the backup?" — the parts saved stay, the backup will be incomplete and cannot be resumed — "Keep running" / "Cancel backup"), and `cancelBackup` runs only on yes. `components/pwa/ServiceWorkerManager.tsx` (PKG-1's) is not edited, and `lib/clientBackup.ts` (A&O P2's) behaves as before. After: the card is in the dock, the offline pill is on top, the overlap is 0, and the minimize control is present. Tests: `lib/__tests__/cornerJobs.test.ts` "STACK-8 — BackupIndicator" (Cancel asks and cancels only on yes; the card is in the jobs slot, minimizes to "Backup 25%", and the X still dismisses a finished run).
+
+**Done-when.**
+- ✓ BackupIndicator renders through CornerPortal like the other two; ServiceWorkerManager is untouched.
+- ✓ BackupIndicator gains a minimize pill matching KnowledgeIndexIndicator's pattern.
+- ✓ Cancel is behind an appConfirm.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-9"></a>
@@ -333,7 +420,7 @@ components/providers/BackupIndicator.tsx:65
 ## STACK-9 · The dock has no ordering rule and no cap — stack order is "whoever last became visible", and toasts are unbounded
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:32-48`, `components/providers/ToastProvider.tsx:40-49`, `components/providers/ToastProvider.tsx:57-59`, `components/providers/UploadIndicator.tsx:46`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three legs hold. Inter-widget order is purely `createPortal` append order (i.e. whichever CornerPortal mounted last), and with `bottom-4` and no `top`/`max-h`, the column grows upward off the top of the viewport with nothing to scroll it. Notably the app already knows how to cap a stack — useUndoableActions.ts:39 `[...t.slice(-2), ...] // keep last 3` — the dock and ToastProvider just don't.
@@ -363,6 +450,20 @@ components/providers/ToastProvider.tsx:42
 - [ ] the dock caps visible children (e.g. 3–4) and collapses the rest into a "+N more" expander with max-height and overflow-y-auto
 - [ ] a 40-file upload is verified not to exceed the viewport
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With 40 uploads, 24 distinct toasts and 10 identical nudges, the base dock's top was at −3,839px and its height 4,623px in an 800px viewport. It held 114 cards, 86 of them entirely above the viewport, could not scroll, and showed 10 nudge cards. The SUSPECTED ToastProvider-outside-ProtectedContent timing is CONFIRMED (see STACK-5). The dock gets a contract in `components/ui/CornerDock.tsx` (decision: `DEC-44 (N7)`):
+- **Slots and priority.** Two slots: `jobs` (backup 10, knowledge 20, uploads 30 — `DOCK_PRIORITY`) pinned nearest the corner, and `transient` (toasts) above. Each portal's wrapper carries its priority as CSS `order`, so mount order no longer decides anything.
+- **A cap.** `DOCK_VISIBLE_CAP = 4` covers toasts and job cards together. `allocateDock` is pure: jobs first, and one place kept while a message waits. The rest go into one "+N more" card that expands the dock in place and, when messages are among them, also offers "Notifications" (the center). Widgets ask `useDockAllowance` how many cards to show; the upload cards show failures first (`pickVisibleUploads`).
+- **Scrolling.** The dock is column-reverse with `max-height: calc(100dvh − --dock-bottom)` and `overflow-y-auto`. An expanded column stays anchored at the corner and scrolls upward.
+
+After: the dock's top is at 460, it holds 5 cards (4 plus "+61 more"), none above the viewport, and the nudges coalesce into one "×10" card. Expanded, it is exactly the viewport high (its shadow margin aside), scrollable, and a mouse wheel scrolls it. Tests: `lib/__tests__/cornerDock.test.ts` — the `allocateDock` suite, "40 upload events render at most DOCK_VISIBLE_CAP cards and a '+36 more' expander…", "hidden messages offer the notification center…", "jobs sit nearest the corner…".
+
+**Done-when.**
+- ✓ CornerDock takes an explicit slot and priority per portal (persistent jobs pinned nearest the corner, transient toasts above), not append order.
+- ✓ The dock caps visible children at 4 and collapses the rest into a "+N more" expander, with a max-height and overflow-y-auto.
+- ✓ A 40-file upload is verified not to exceed the viewport: in Chromium (above) and in jsdom.
+
+**Scope / residual.** None. No migration.
+
 ---
 
 <a id="stack-10"></a>
@@ -370,7 +471,7 @@ components/providers/ToastProvider.tsx:42
 ## STACK-10 · The modal that starts a bulk upload paints over the dock that reports it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/layout.tsx:59-72`, `components/ui/CornerDock.tsx:25`, `components/documents/MetadataStagingModal.tsx:461`, `app/(protected)/documents/[libraryId]/page.tsx:2537-2547`, `components/assets/AssetPhotoUploader.tsx:140`, `components/documents/CustomizeNodeModal.tsx:98`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, including the tail of the scenario: MetadataStagingModal.tsx:405-406 documents that "The parent closes the modal on a clean run, but it keeps the modal open when some files failed", and the parent at app/(protected)/documents/[libraryId]/page.tsx:2543 `throw e` is what drives that. MetadataStagingModal does not createPortal (no such import), so the DOM-order tiebreak applies.
@@ -411,6 +512,27 @@ app/(protected)/documents/[libraryId]/page.tsx:2543-2547
 - [ ] MetadataStagingModal, AssetPhotoUploader (z-510) and CustomizeNodeModal (z-400) are all verified to render below the dock while an upload is in flight
 - [ ] a manual pass confirms upload cards remain readable with each of those modals open
 
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With each of the three real modals open over a failed upload card, `elementFromPoint` at the card's centre hit the modal's overlay on the base tree (`z-[300]`, `z-[510]`, `z-[400]`). The fix (decision: `DEC-44 (N7)`):
+- **One layer module.** New `lib/zLayers.ts`: `Z` (pageChip 40, undoToast 280, metadataStagingModal 300, customizeNodeModal 400, assetPhotoUploader 510, dialog 700, dock 750, hoverPreview 800, print 9999) and `Z_SCALE`, every z-index value in use (the 2026-10-01 inventory plus the dock's band).
+- **The dock's band.** The dock is portaled to `document.body` at `Z.dock`: above every modal, backdrop and dialog band, below only the pointer-following hover preview (800, as before) and the print cover (9999).
+- **The three modals.** `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal` read their layer from `Z` as `style={{ zIndex }}`, with the same values; Tailwind cannot generate a class from a runtime number.
+
+Inventory of what was replaced: the dock's 300 (dock and fallback); BackupIndicator's 300 (it now lives in the dock); UndoToastHost's 280 and BackToGraphChip's 40 (now the centre slots' layers, same values); and the three modals' 300 / 400 / 510 (same values). No overlay moved relative to another, except the dock, which moved above the modals by design.
+
+After: the upload card is on top under all three modals. Tests: `lib/__tests__/cornerDock.test.ts` "lib/zLayers — the scale":
+- every z literal in app/, components/, hooks/ and lib/ is listed in `Z_SCALE`, so a new layer is decided in the module;
+- the dock is strictly above everything but 800 and 9999;
+- the old values and the relative order are pinned;
+- the modals read from the module;
+- the old fixed corners are gone.
+
+**Done-when.**
+- ✓ A documented z-index scale exists, and the dock is portaled to document.body and given the top band.
+- ✓ MetadataStagingModal, AssetPhotoUploader (510) and CustomizeNodeModal (400) are each verified to render below the dock while an upload card shows.
+- ✓ Manual pass in Chromium: the failed card's name, "Failed" and its reason read clearly over the blurred staging overlay (harness screenshot).
+
+**Scope / residual.** Only the layers this contract touches read from the module. The scan test makes `Z_SCALE` the owner of every other number without converting ~150 call sites (DEC-31). No migration.
+
 ---
 
 <a id="stack-11"></a>
@@ -418,7 +540,7 @@ app/(protected)/documents/[libraryId]/page.tsx:2543-2547
 ## STACK-11 · Three full-height right-edge drawers own the bottom-right corner; the dock floats on top of all of them with no offset
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/InspectorDrawer.tsx:42`, `components/documents/HistoryDrawer.tsx:161`, `components/notifications/NotificationCenter.tsx:102`, `components/ui/CornerDock.tsx:25`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly; there is no bottom offset, right offset, or drawer-aware repositioning anywhere in CornerDock.tsx. Nothing in the drawers raises above 241, so the dock always wins.
@@ -443,6 +565,19 @@ components/notifications/NotificationCenter.tsx:102
 
 - [ ] a shared "right rail occupied" signal (context or CSS var) shifts the dock left by the open drawer's width, or the dock docks to the drawer's left edge
 - [ ] open-drawer plus active-upload is manually verified to leave both readable
+
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). With the real `InspectorDrawer` open (720px wide at a 1280px viewport), the base toast lay entirely over the drawer (17,920 px²) and so did the upload card (13,824). Now:
+- **The signal.** `useOccupyRightRail(ref, open)` in `components/ui/CornerDock.tsx`: a drawer declares its measured width while open (ResizeObserver plus resize).
+- **The rule.** The dock's right offset is the widest open rail when the viewport leaves `DOCK_MIN_ROOM_PX` (340) beside it. Otherwise it stays 0: at phone width the dock stays at the edge, collapsed to its pill.
+- **Who declares it.** `InspectorDrawer` and `HistoryDrawer` call the hook. The notification center (`components/notifications/**`, N2's this round) is passed by the layout instead: `ProtectedContent` reads `isOpen` from `useNotificationCenter` and passes `occupiedRightPx = NOTIFICATION_CENTER_RAIL_PX` (480; a test pins it to `NotificationCenter.tsx`'s `w-[480px]`).
+
+After: the toast lies over the drawer by 0 px², and so does the upload card; the toast sits at x 224–544 and the drawer starts at 560. Tests: `lib/__tests__/cornerDock.test.ts` "STACK-11 — …" (the offset rule, a drawer's width moving the dock and closing it putting it back, the notification center's rail, both drawers declaring it).
+
+**Done-when.**
+- ✓ A shared "right rail occupied" signal shifts the dock left by the open drawer's width.
+- ✓ Open drawer plus an active upload is verified in Chromium to leave both readable.
+
+**Scope / residual.** The notification center's width is a constant in the dock module, tied to that file's class by a test; the center declaring the rail itself is a one-line call for its owner (N2 / N3). No migration.
 
 ---
 
@@ -489,7 +624,7 @@ components/knowledge/SemanticIndexPanel.tsx:49-50
 ## STACK-13 · Upload progress lives only in tab memory: a reload kills the transfer, leaves no record, and no beforeunload guards it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:28-40`, `lib/storage.ts:378-431`, `components/providers/UploadIndicator.tsx:19-37`, `lib/clientBackup.ts:211-214`, `components/system/UpdatePill.tsx:41-43`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Fully confirmed, and the asymmetry is the sharpest evidence: the backup path deliberately installs `warnUnload` with the message "A backup is still running — leaving this tab will stop it", while the multipart upload path — the one the finding is about — installs nothing. UpdatePill.tsx:41-42 `onClick={() => window.location.reload()}` is a one-tap, unguarded path into that loss.
@@ -518,5 +653,17 @@ const warnUnload = (e: BeforeUnloadEvent) => {
 
 - [ ] a beforeunload guard is registered while lib/uploadActivity's inFlight > 0 (the counter already exists)
 - [ ] UpdatePill's reload is suppressed or warned while isUploading() is true
+
+**Resolution (2026-10-01, notifications Round G).** Reproduced on `b9cdfdc`: `beforeunload` appears only in `lib/clientBackup.ts` and `app/(protected)/plot-plans/[id]/page.tsx`; a probe test on the base tree registers no guard for an upload in flight. Now `lib/uploadActivity.ts` registers a `beforeunload` guard (modelled on clientBackup's `warnUnload`) while anything is in flight. Two counters feed it:
+- `inFlight`: a batch a page declared with `beginUpload` (the library page).
+- `transfers` (new): every `uploadToPath` call holds one through `beginTransfer` / `endTransfer` in `lib/storage.ts`, wherever the upload started.
+
+Only `inFlight` parks indexing, as before. `hasUploadsInFlight()` (no cooldown) and `releaseUploadUnloadGuard()` are exported. `components/system/UpdatePill.tsx` asks before loading the update while an upload is in flight (`confirmReloadDuringUploads` → `appConfirm` "An upload is still running" / "Reload anyway" / "Wait"). On "Reload anyway" it releases the guard, so the browser does not ask a second time. The pill checks `hasUploadsInFlight()` rather than `isUploading()`: the latter adds a 20-second indexing cooldown during which nothing can be lost. Tests: `lib/__tests__/cornerJobs.test.ts` "STACK-13 — …" (the guard installs and drains with both counters; `uploadToPath` holds a transfer for exactly the call; release; UpdatePill asks only while uploading). `lib/__tests__/sw.test.ts` (UpdatePill still goes through `loadLatestBuild`) passes.
+
+**Done-when.**
+- ✓ A beforeunload guard is registered while uploadActivity's `inFlight > 0`, and while any transfer is on the wire.
+- ✓ UpdatePill's reload is warned while an upload is in flight.
+
+**Scope / residual.** The service worker's own "Update available — tap to refresh" button (ServiceWorkerManager, PKG-1's) is covered by the beforeunload guard itself, not by a dialog of its own. No migration.
 
 ---

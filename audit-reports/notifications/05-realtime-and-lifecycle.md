@@ -391,7 +391,7 @@ if (staleIds.length > 0) {
 ## RT-11 · Toasts are an unbounded, uncapped stack in a fixed corner with no max-height — a realtime burst pushes cards off the top of the viewport
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/ToastProvider.tsx:40-49`, `components/providers/ToastProvider.tsx:57-59`, `components/ui/CornerDock.tsx:22-27`, `lib/postPublish.ts:36-60`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. Bottom-anchored with no height bound means the stack grows upward past the viewport top with no way to scroll to it, and a user who is both an intent-holder and a library follower does receive 2 notification rows per document in a bulk rev-up.
@@ -415,6 +415,23 @@ const id = Math.random().toString(36).substring(2, 9);
 - [ ] identical (kind + resourceId) toasts arriving within a short window coalesce into one card with a count instead of stacking
 - [ ] CornerDock gets a `max-h-[calc(100dvh-2rem)]` and `overflow-y-auto` so nothing can ever render above the viewport
 - [ ] the auto-dismiss timer does not start until the card is actually within the visible stack
+
+**Resolution (2026-10-01, notifications Round G).** Reproduced: Observed in Chromium (Playwright, `/opt/pw-browsers/chromium-1194`) against the real components of `b9cdfdc` and of `fleet/N7-corner`, rendered by a component harness (a vite build of the actual files; only the database, auth, the storage transport and `next/navigation` stubbed — the full page needs Supabase). A 24-toast burst plus 40 uploads put the base dock's top at −3,839px in an 800px viewport, with 86 cards entirely above it and no scrolling (see STACK-9). Now:
+- **The cap.** `components/providers/ToastProvider.tsx` shows the newest toasts within the dock's shared cap of 4 (`useDockAllowance`, `visibleToasts`). The rest are counted in the dock's single "+N more" card, which expands the stack and, while messages are hidden, offers "Notifications" — it opens the notification center (the layout passes `useNotificationCenter().open` to `CornerDock`).
+- **Coalescing.** Identical toasts within `COALESCE_WINDOW_MS` (10 s) are one card with a "×N" count, moved to the newest place with its time restarted. The key is the toast's content (type, title, message) unless the producer passes the new optional `coalesceKey`, such as kind:resource_id.
+- **Height.** The dock has `max-height: calc(100dvh − --dock-bottom)` and `overflow-y-auto`, so nothing can render above the viewport.
+- **Timers.** A toast's timer runs only while its card is within the visible stack: it starts on entering, is cleared on leaving, and restarts for the full duration on re-entering.
+- **Accessibility.** The list is `role="status"`, an error toast is `role="alert"`, and the X has `aria-label="Dismiss"`. The dock itself is `role="region"`, `aria-live="polite"`, `aria-relevant="additions"` (NEDGE-5 dw2's part, for N3 to verify).
+
+Tests: `lib/__tests__/cornerDock.test.ts` "toasts: cap, coalesce, timers…" (a single toast appears, is announced, is dismissible and expires; ten identical toasts are one ×10 card; a collapsed toast keeps its full time and expires only after it showed; a toast on a page with no dock still shows) and "hidden messages offer the notification center…".
+
+**Done-when.**
+- ✓ `showToast` caps the visible stack (the newest 4) and collapses the remainder into a single "+N more" card that opens the notification center.
+- ✓ Identical toasts within a short window coalesce into one card with a count. By content today; by kind + resourceId once the producer passes `coalesceKey`. NotificationListener is N3's file this round (hand-off in `99-fix-sequencing.md`); until then the same kind about the same resource arrives with the same title and body and coalesces by content.
+- ✓ The dock gets a max-height and overflow-y-auto.
+- ✓ The auto-dismiss timer does not start until the card is within the visible stack.
+
+**Scope / residual.** Passing `coalesceKey: kind:resource_id` from `components/providers/NotificationListener.tsx` is N3's one line (hand-off). No migration.
 
 ---
 
