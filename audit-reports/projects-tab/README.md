@@ -67,7 +67,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
 | 01 | [Security & access](./01-security-access.md) | 21 | 4 | 19 / 21 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 15 / 17 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 18 | 3 | 16 / 18 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 13 | 0 | 9 / 13 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 10 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 7 / 8 |

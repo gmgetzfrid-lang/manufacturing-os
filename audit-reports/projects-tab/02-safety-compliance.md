@@ -463,6 +463,8 @@ and not having a delay claim.
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (J6a). The picker lives on the Report; the Planning list's "+Nd vs plan" chip and the detail panel still compare with the live baseline.
 
+*J12 fix pass 7 (2026-10-02): this report's progress table read SAF-7 OPEN, while this record's Status line, its Resolution block and its done-whens (1 ✓ pending `20261099`, 2 ✓, 3 ✓) say RESOLVED. The table row was stale, and it now reads RESOLVED.*
+
 ---
 
 ## SAF-8 · A task can be Missed and one-hundred-percent earned at the same time
@@ -981,6 +983,8 @@ project history for the document will be hidden.
 - Every `lib` file and every Projects-surface file has zero unchecked update / delete sites, and the ratchets are empty.
 - No audit row is written after a write that matched zero rows, on any of those paths.
 
+*J12 fix pass 7 (2026-10-02): the projects-tab README's row for this report did not count this finding. It read "17 | 3 | 15 / 17"; it now reads "18 | 3 | 16 / 18". The 18 findings are SAF-1 to SAF-18 (three CRITICAL), and two are open: SAF-9 and this one. SAF-7's progress-table row is corrected above.*
+
 ---
 
 ## Report progress
@@ -993,7 +997,7 @@ project history for the document will be hidden.
 | SAF-4 | HIGH | RESOLVED |
 | SAF-5 | CRITICAL | RESOLVED |
 | SAF-6 | HIGH | RESOLVED |
-| SAF-7 | HIGH | OPEN |
+| SAF-7 | HIGH | RESOLVED |
 | SAF-8 | MEDIUM | RESOLVED |
 | SAF-9 | HIGH | OPEN |
 | SAF-10 | HIGH | RESOLVED |
