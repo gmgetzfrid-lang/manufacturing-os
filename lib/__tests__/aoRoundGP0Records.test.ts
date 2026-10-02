@@ -7,23 +7,40 @@
 //                       stand-in that honours column projection: a reader of
 //                       any column but `data` gets nothing. The SQL evaluator
 //                       reads the same column at its newest definition.
-//   ALOG-12 dw 2 / 3    the route's audit `before` is the row the compare-and-
-//                       set write replaced (never the 60 s browser cache), and
-//                       a grant rewrites the stored caps verbatim.
+//   ALOG-12 dw 2 / 3    the route's audit `before` is read fresh at write time,
+//                       with the service-role client and never through the
+//                       60 s cache, and a grant rewrites the stored caps
+//                       verbatim. `before` is NOT always the row the write
+//                       replaced: revoke_member's grant strip leaves
+//                       updated_at alone, so the compare-and-set cannot see
+//                       it (see ALOG-12; the tripwire below).
 //   ORG-2 done-when 3   replaying schema.sql then every numbered migration (the
-//                       only supported install, schema.sql:3-15) leaves
+//                       only supported install, schema.sql:3-27) leaves
 //                       org_members with SELECT / UPDATE / INSERT / DELETE
 //                       policies and no FOR ALL.
 //   ORG-3 dw 1 / 3 / 4  access_requests ends with one org-correlated SELECT
 //                       policy and no INSERT policy; the signup page checks
 //                       res.ok before it shows "Request Sent".
 //
-// NOT holding at HEAD (the records stay OPEN): ALOG-13 done-when 1 — the
-// permissions console still says the legacy read/write/admin matrix is GONE
-// while /admin/libraries still writes write_access / admin_access. That is an
-// `it.fails` tripwire: it fails the suite the day the fix makes it hold, so
-// the owner (admin-and-org P8) flips it to `it`. ORG-6's tripwire lives with
-// the census it needs, in searchPathPin.test.ts.
+// The census pins: every caller of the capability-policy loaders (ALOG-1)
+// and every file naming libraries.write_access / admin_access (ALOG-13) is
+// one its record lists. A new caller or reader fails the pin until the
+// record names it; removing one keeps it green.
+//
+// NOT holding at HEAD (the records stay OPEN), each an `it.fails` tripwire
+// that fails the suite the day the fix makes it hold, so the owner flips it
+// to `it`:
+//   ALOG-13 done-when 1  the permissions console still says the legacy
+//                        read/write/admin matrix is GONE while a library
+//                        write still names write_access / admin_access. The
+//                        write side is a census over app/, lib/, hooks/,
+//                        components/ and types/ (today: the wizard save AND
+//                        createLibrary), not one file. Owner admin-and-org P8.
+//   revoke_member        its grant strip does not stamp updated_at, so the
+//                        policy route's compare-and-set cannot see it (the
+//                        proposed finding in ALOG-12's record). Owner
+//                        admin-and-org P8, which re-creates revoke_member.
+// ORG-6's tripwire lives with the census it needs, in searchPathPin.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -31,6 +48,27 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+
+// Every non-test .ts / .tsx under the app's source roots, repo-relative.
+let walked: string[] | null = null;
+function sourceFiles(): string[] {
+  if (walked) return walked;
+  const out: string[] = [];
+  const walk = (rel: string) => {
+    for (const e of readdirSync(join(process.cwd(), rel), { withFileTypes: true })) {
+      const p = `${rel}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules" && e.name !== "__tests__") walk(p);
+      } else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\.(ts|tsx)$/.test(e.name)) {
+        out.push(p);
+      }
+    }
+  };
+  for (const root of ["app", "lib", "hooks", "components", "types"]) walk(root);
+  walked = out.sort();
+  return walked;
+}
+const filesMatching = (re: RegExp) => sourceFiles().filter((f) => re.test(src(f)));
 
 // ── a PostgREST stand-in that honours column projection ─────────────────────
 type Row = Record<string, unknown>;
@@ -155,6 +193,42 @@ describe("ALOG-1 done-when 1 — the capability policy round-trips through the o
   });
 });
 
+describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is complete", () => {
+  // Grouped as ALOG-1's record groups them. A caller of the defaults-on-error
+  // loader that is not listed here is one the record has not judged.
+  const RECORDED = new Set([
+    // the two console surfaces P9's marker must change
+    "components/permissions/CapabilityPolicyEditor.tsx",
+    "components/permissions/ViewAsSimulator.tsx",
+    // field-facing: the hold opened / released / stale audience, and the
+    // client holds gate (fail-open by design)
+    "lib/holds.ts",
+    // client affordances
+    "app/(protected)/requests/page.tsx",
+    "app/(protected)/requests/[id]/page.tsx",
+    "app/(protected)/transmittals/page.tsx",
+    "app/(protected)/admin/holds/page.tsx",
+    "components/documents/HoldStrip.tsx",
+    "components/documents/InspectorPanel.tsx",
+    "components/documents/CheckoutStatusCell.tsx",
+    "hooks/useTicketNotifications.ts",
+    // through the entry: drafting-flow AUTHZ-7
+    "app/api/tickets/workflow-action/route.ts",
+    // strict
+    "lib/adminGate.ts",
+    "lib/transmittals.ts",
+    "app/api/ai/usage/route.ts",
+  ]);
+
+  it("every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists", () => {
+    expect(sourceFiles()).toContain("lib/capabilityPolicy.ts"); // the walk is not empty
+    const callers = filesMatching(/\bloadCapabilityPolicy(?:Entry|Strict)?\s*\(/)
+      .filter((f) => f !== "lib/capabilityPolicy.ts");
+    expect(callers.length).toBeGreaterThan(0);
+    expect(callers.filter((f) => !RECORDED.has(f))).toEqual([]);
+  });
+});
+
 describe("ALOG-12 done-when 2 / 3 — the route's audit `before` and the grant path", () => {
   it("`before` is read fresh at write time: another admin's route write, not what this process had cached", async () => {
     db.tables.org_configurations = [{ org_id: "o1", key: "capability_policy", data: { caps: { "ticket.assign": ["Admin"] }, grants: [] }, updated_at: "2026-10-01T00:00:00Z" }];
@@ -258,19 +332,67 @@ describe("ORG-3 — access_requests is org-scoped, service-role-written, and the
 
 describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
   const CONSOLE = "app/(protected)/admin/permissions/page.tsx";
-  const LIBRARIES = "app/(protected)/admin/libraries/page.tsx";
+  // A write names the column as an object key: `write_access: …`.
+  const WRITES = /\bwrite_access\s*:|\badmin_access\s*:/;
 
-  // The tripwire below must not pass vacuously: if either file moved, src()
-  // would throw inside it.fails and the suite would stay green. If this
-  // fails, re-point the tripwire before anything else.
-  it("both files the tripwire reads exist", () => {
-    expect(existsSync(join(process.cwd(), CONSOLE)), CONSOLE).toBe(true);
-    expect(existsSync(join(process.cwd(), LIBRARIES)), LIBRARIES).toBe(true);
+  // The record's census (ALOG-13 Partial): the console comment, two writers
+  // (the wizard save and createLibrary) and three reading files.
+  const RECORDED = new Set([
+    CONSOLE,
+    "app/(protected)/admin/libraries/page.tsx",
+    "lib/libraryCollections.ts",
+    "app/(protected)/documents/[libraryId]/page.tsx",
+    "app/(protected)/documents/page.tsx",
+  ]);
+
+  it("every source file that names write_access / admin_access is one the record lists", () => {
+    const naming = filesMatching(/\b(?:write_access|admin_access)\b/);
+    expect(naming.length).toBeGreaterThan(0);
+    expect(naming.filter((f) => !RECORDED.has(f))).toEqual([]);
   });
 
-  it.fails("done-when 1: the console's 'GONE' comment does not coexist with a library save that still writes write_access / admin_access", () => {
+  // The tripwire below must not pass vacuously: if the console moved, src()
+  // would throw inside it.fails and the suite would stay green. If this
+  // fails, re-point the tripwire before anything else.
+  it("the console file the tripwire reads exists, and the write census walks app/ and lib/", () => {
+    expect(existsSync(join(process.cwd(), CONSOLE)), CONSOLE).toBe(true);
+    expect(sourceFiles()).toContain("app/(protected)/admin/libraries/page.tsx");
+    expect(sourceFiles()).toContain("lib/libraryCollections.ts");
+  });
+
+  // Flips only when the comment goes or EVERY writer stops: today both
+  // app/(protected)/admin/libraries/page.tsx:116 and
+  // lib/libraryCollections.ts:180-181 write the columns.
+  it.fails("done-when 1: the console's 'GONE' comment does not coexist with a library write that still names write_access / admin_access", () => {
     const claimsGone = /read\/write\/admin role matrix is GONE/.test(src(CONSOLE));
-    const stillWrites = /\bwrite_access:|\badmin_access:/.test(src(LIBRARIES));
+    const stillWrites = filesMatching(WRITES).length > 0;
     expect(claimsGone && stillWrites).toBe(false);
+  });
+});
+
+describe("revoke_member's grant strip — NOT holding at HEAD (proposed finding in ALOG-12's record; owner admin-and-org P8)", () => {
+  // The newest definition, as P8 must re-create it (20261043 on f1ac550).
+  const newestRevokeMember = () => {
+    const dir = join(process.cwd(), "supabase", "migrations");
+    const re = /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:public\.)?revoke_member\s*\(/i;
+    const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort()
+      .filter((f) => re.test(readFileSync(join(dir, f), "utf8")));
+    const sql = readFileSync(join(dir, files[files.length - 1]), "utf8");
+    const body = sql.slice(sql.search(re));
+    return { file: files[files.length - 1], fn: body.slice(0, body.indexOf("\n$$;")) };
+  };
+  const grantStrip = (fn: string) => {
+    const at = fn.indexOf("UPDATE org_configurations");
+    return at < 0 ? "" : fn.slice(at, fn.indexOf(";", at));
+  };
+
+  it("the newest revoke_member still strips the removed member's grants by rewriting `data`", () => {
+    const { fn } = newestRevokeMember();
+    expect(fn.length).toBeGreaterThan(0);
+    expect(grantStrip(fn)).toMatch(/\bdata = jsonb_set\(data, '\{grants\}'/);
+  });
+
+  it.fails("the grant strip stamps updated_at, so the policy route's compare-and-set sees it", () => {
+    expect(grantStrip(newestRevokeMember().fn)).toMatch(/\bupdated_at\s*=/);
   });
 });

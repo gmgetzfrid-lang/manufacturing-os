@@ -806,7 +806,7 @@ member keeps every team-derived ACL grant.
 *Landed 2026-10-02 (admin-and-org Round G, P0): admin-and-org `ORG-2` is closed by pointer to roles-and-permissions `SURF-1` + `OWN-12` (`20261042` + `20261043`, both live). All four Acceptance lines hold on base `f1ac550`:
 - `revoke_member` removes or suspends with a real statement as definer, and every refusal raises.
 - A suspended member leaves `my_org_ids()` and `my_team_ids()`.
-- Removal clears ownership, team supervision, open checkouts, grants and rosters, and audits each scope it clears.
+- Removal clears ownership, team supervision, open checkouts, grants, rosters and follow subscriptions. It audits each ownership and supervision scope it clears (`OWNER_CLEARED` / `TEAM_SUPERVISOR_CLEARED` rows) and records the cleared-scope, ended-checkout and revoked-grant counts on `MEMBER_REMOVED`; roster and subscription deletions are not itemised.
 - The last-admin trigger fires on both paths.
 ACL rules naming a removed person are not pruned. That gap is `ORG-7` (admin-and-org P8). P8 re-creates `revoke_member` starting from `20261043`, its newest definition.*
 

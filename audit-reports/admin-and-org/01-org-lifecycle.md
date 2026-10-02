@@ -188,7 +188,7 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
   - Suspend writes `status = 'suspended'` (`20261043:103-111`), which `my_org_ids()` and every RLS predicate exclude.
   - `my_team_ids()` follows active membership (`20261042`, `DEC-20`).
 
-**Scope / residual.** None for this finding. One note for the next owner: admin-and-org P8's brief says to re-create `revoke_member` "VERBATIM from 20261042". Its newest definition is `20261043:45-194`, and P8 should start from that. `20261043` §0 fixed `active_collaborators = '{}'::text[]`; 20261042's body assigned `'[]'::jsonb` there, which raises 42804.
+**Scope / residual.** None for this finding. One note for the next owner: admin-and-org P8's brief says to re-create `revoke_member` "VERBATIM from 20261042". Its newest definition is `20261043:45-194`, and P8 should start from that. `20261043` §0 fixed `active_collaborators = '{}'::text[]`; 20261042's body assigned `'[]'::jsonb` there, which raises 42804. A second note for P8: the grant strip in that body (`20261043:161-167`) leaves `updated_at` unchanged, so the capability-policy route's compare-and-set cannot see it. `ALOG-12`'s record proposes that as a LOW finding owned by P8, fixed by `updated_at = now()` in the same `UPDATE` when P8 re-creates the function.
 
 ---
 
@@ -387,14 +387,14 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
   - On base `f1ac550` the order-aware census finds no unpinned live definer among 127.
   - **What the lint cannot see: a paste out of filename order.** It knows the files, not the order they were pasted in. Known case: `20261011_collections_guard_and_trash.sql` (`audit-reports/MIGRATION-PASTE-ORDER.md` row 10, ASK) re-creates `enforce_document_move_guard()` as SECURITY DEFINER with no `SET search_path` (`20261011:38-42`). It sorts before `20261020`, so the replay counts 20261020's ALTER as its pin and the lint passes it. The paste guide says the opposite about live state: pasting 20261011 now would revert that pin, and its move-guard part needs a re-based file rather than a paste.
     - That hazard is held by the paste guide's row 10 (ASK). Whoever re-bases 20261011 adds `SET search_path = public` to the function. A later `ALTER FUNCTION enforce_document_move_guard() SET search_path = public` (for example, in P8's ORG-13 migration) would restore the pin after an accidental paste, but would not prevent one.
-    - A schema-health probe of live state (a SECURITY DEFINER function in `public` whose `proconfig` has no `search_path`) would catch every out-of-order paste. No package owns one.
+    - A schema-health probe of live state (a SECURITY DEFINER function in `public` whose `proconfig` has no `search_path`) would also catch an out-of-order paste. It is optional hardening outside this criterion, which asks for "a CI or schema-health check" and is met by the CI lint. It is not proposed as a finding, and no package is tasked with it; paste guide row 10 holds the one known case.
     - Pin: `searchPathPin.test.ts` "the known out-of-order case is as recorded". It fails the day the function is pinned at creation or by a later ALTER; this paragraph is then updated.
 
 **Done-when.**
 1. ✗ for one of twelve: `acl_subject_in_bucket`. It is a SECURITY INVOKER helper with no relation reference, reached only under `node_visible`'s pin (owner P8). The eleven SECURITY DEFINER helpers ✓.
-2. ✓ for the numbered replay order: the lint is order-aware, counts a top-level static ALTER as a pin, and fails on every definer that replay leaves unpinned. It cannot see a file pasted out of filename order; the known case is `20261011` (`enforce_document_move_guard`, paste guide row 10, ASK).
+2. ✓ met by the CI lint, for the numbered replay order: the lint is order-aware, counts a top-level static ALTER as a pin, and fails on every definer that replay leaves unpinned. It cannot see a file pasted out of filename order; the known case is `20261011` (`enforce_document_move_guard`), held by paste guide row 10 (ASK). A live-state probe would be optional hardening outside the criterion.
 
-**Scope / residual.** One `ALTER FUNCTION` line (P8, once the plan is amended). The out-of-order paste of 20261011 stays with the paste guide's row 10. Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`, and this package's fix passes). No migration.
+**Scope / residual.** One `ALTER FUNCTION` line (P8, once the plan is amended). The out-of-order paste of 20261011 stays with the paste guide's row 10; a live-state probe is outside this finding. Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`, and this package's fix passes). No migration.
 
 ---
 
