@@ -1029,6 +1029,91 @@ describe("ASK-7 — the cap is enforced against THIS ask's projected cost, and t
     }
   });
 
+  /** The B31.3 appendix whose three pages a Fetch for "Table A-1 stress"
+   *  finds; deep read renders nothing for the first answer, the Fetch every
+   *  page it asks for. */
+  const fetchablePages = () => {
+    rowsOf("knowledge_documents").push(kdoc("k-tab", { name: "B31.3 Appendix A.pdf" }));
+    rowsOf("knowledge_chunks").push(
+      ...[12, 13, 14].map((page) => kchunk("k-tab", `Table A-1 allowable stress values, carbon steel, sheet ${page}`, { id: `c-tab-${page}`, page })),
+    );
+    vi.mocked(renderKnowledgePages)
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async (_k: string, pages: number[]) => pages.map((page) => ({ page, mediaType: "image/png", base64: "AAAA" })));
+  };
+
+  it("reproduction → fix (fix pass 7): a second answer whose reservation refuses it records no fetched page's document — no model saw it; fix pass 6 recorded it", async () => {
+    vi.mocked(renderKnowledgePages).mockClear();
+    ordinaryLibrary();
+    fetchablePages();
+    // Another tab's spend lands between the pricing and the second answer's
+    // reservation, as in fix pass 6's case — this time with pages fetched.
+    let landed = false;
+    db.hooks.push((op) => {
+      if (landed || op.table !== "ai_usage_events" || op.kind !== "insert" || h.calls.length !== 3) return;
+      landed = true;
+      rowsOf("ai_usage_events").push({
+        id: "u-other-tab", org_id: ORG, user_id: CTRL, op: "knowledgeVision", model: "chat-model-a", ok: true,
+        input_tokens: 1, output_tokens: 1, est_cost_usd: 9.99, created_at: new Date().toISOString(),
+      });
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } }, ANSWER];
+    const res = await ask({ question: Q });
+    expect(res.status).toBe(200);
+    expect(landed).toBe(true);
+    const body = await res.json();
+    expect(h.calls).toHaveLength(3);
+    expect(body.answer).toMatch(UNANSWERED);
+    // The pages were found and rendered, but the call that would have carried
+    // them was never made: the row records what reached the first answer.
+    expect(vi.mocked(renderKnowledgePages)).toHaveBeenCalledTimes(2);
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toEqual(["k-std"]);
+  });
+
+  it("reproduction → fix (fix pass 7): a provider failure on the second answer — a rate limit (429), an overload (503), a failed call (502) — ends the ask with a saved sentence, never that status after the first answer was paid for; the one ledger row keeps every call's tokens and no reservation is left", async () => {
+    for (const [status, message, spent] of [
+      [429, "Anthropic rate/credit limit hit — the key's owner may need to add credits or wait a moment.", 0],
+      [503, "Anthropic is overloaded right now — this is on their side, not yours. Wait a few seconds and ask again.", 0],
+      [502, "The model returned an empty answer — try again.", 50],
+    ] as const) {
+      resetHarness();
+      vi.mocked(renderKnowledgePages).mockClear();
+      ordinaryLibrary();
+      fetchablePages();
+      h.script = [
+        QUERY_GEN, REFINE_NONE,
+        { text: "**Fetch:** Table A-1 stress", usage: { inputTokens: 4000, outputTokens: 10 } },
+        { throws: { message, status, ...(spent > 0 ? { usage: { inputTokens: spent, outputTokens: 0 } } : {}) } },
+      ];
+      const res = await ask({ question: Q });
+      // Fix pass 6: the provider's error reached the outer catch — 429 / 503 / 502.
+      expect([status, res.status]).toEqual([status, 200]);
+      const body = await res.json();
+      expect(h.calls).toHaveLength(4);
+      expect(h.calls[3].images).toBe(3);
+      expect(body.answer).toBe(
+        "**Answer:** This question was not answered. To answer it, the AI asked to read a page it had not been shown " +
+        `(a table or figure), and answering again after that page request failed at the AI provider: ${message}\n! Ask again in a moment.`,
+      );
+      expect(body.citations).toEqual([]);
+      expect(body.questionId).toBeNull();
+      expect(body.partial).toBeUndefined();
+      const row = rowsOf("knowledge_questions")[0];
+      expect(row).toMatchObject({ mode: "library", answer: body.answer });
+      expect(row.context).not.toHaveProperty("partial");
+      expect(row.context).not.toHaveProperty("arithmetic");
+      // The second call was made, its pages in the request: they reached a
+      // prompt, so the row records their document.
+      expect((row.context as { documents: string[] }).documents).toEqual(expect.arrayContaining(["k-std", "k-tab"]));
+      // One ledger row, with every call's tokens (the failed call's included
+      // when its error carried them); the second call's reservation released.
+      const metered = rowsOf("ai_usage_events").filter((r) => r.op === "knowledgeAsk");
+      expect(metered).toHaveLength(1);
+      expect(metered[0]).toMatchObject({ ok: true, input_tokens: 300 + 500 + 4000 + spent, output_tokens: 20 + 15 + 10 });
+      expect(rowsOf("ai_usage_events").filter((r) => r.input_tokens === null)).toHaveLength(0);
+    }
+  });
+
   it("control: a Fetch the month can cover attaches its pages, as before", async () => {
     ordinaryLibrary();
     rowsOf("knowledge_documents").push(kdoc("k-tab", { name: "B31.3 Appendix A.pdf" }));

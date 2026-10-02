@@ -2529,11 +2529,25 @@ export async function POST(req: NextRequest) {
     /** ASK-7: the answer asked for pages, and what was left of the month
      *  after paying for it could not cover even the shortest answer again —
      *  without the pages too — or the second answer's reservation refused it
-     *  (402 / 429). The ask ends with a stated sentence (saved as a library
-     *  answer), never a 402 or 429 after the first answer was paid for. */
+     *  (402 / 429). The second call was never made. */
     let refetchUnaffordable = false;
-    /** The refusal was 429 (too many calls in flight), not the month's cap. */
+    /** The refusal was 429 (too many calls in flight), not the month's cap.
+     *  Unreachable today: the ask route passes no in-flight limit to its
+     *  gates, and the ledger refuses with 429 only under one (usageServer
+     *  reservationVerdict, maxInFlight). Kept for when one is set. */
     let refetchBusy = false;
+    /** ASK-7 (fix pass 7): the provider failed the second answer call (a
+     *  rate limit, an overload, a 5xx — AiCallError). The request was sent,
+     *  so its pages reached a prompt; the answer did not come back. */
+    let refetchFailed: AiCallError | null = null;
+    // Either way the ask ends with a stated sentence, saved as a library
+    // answer, after the first answer was paid for: never a 402 or 429 from
+    // the second call's reservation or its provider. What every call spent
+    // stays on the one ledger row; the second call's reservation is
+    // released (`call`'s finally). A ledger that cannot be read (503, GOV-4)
+    // and an error that is neither — a network failure the provider client
+    // never turned into an AiCallError — still end the ask in the outer
+    // catch.
     let answerOut = await call({
       system: answerSystem(pageImages),
       user: answerUser(pageImages),
@@ -2562,13 +2576,17 @@ export async function POST(req: NextRequest) {
           inputChars: answerSystem(imgs, note).length + answerUser(imgs).length,
           images: imgs.length, maxTokens: MIN_ANSWER_TOKENS,
         }) <= gate.capUsd - spentSoFar();
+        // The second answer's images. They join what the row records
+        // (`pageImages`) only once the second call is made (ASK-1 / ASK-7,
+        // fix pass 7): a call that is never made showed them to no model.
+        let secondImages = pageImages;
         if (fetched.length > 0 && !shortestFits([...pageImages, ...fetched], fetchNote)) {
           fetchUnaffordable = true;
           fetchNote = "\n\nFETCH RESULT: the pages you requested were found, but this month's remaining AI budget " +
             "cannot cover reading them. Answer with what you have and state plainly which value could not be " +
             "read and exactly where it lives (document, table).";
         } else if (fetched.length > 0) {
-          pageImages = [...pageImages, ...fetched];
+          secondImages = [...pageImages, ...fetched];
         }
         // ASK-7 (fix pass 5): the second answer WITHOUT pages is priced too —
         // when no page matched, or the first answer's real spend left too
@@ -2578,31 +2596,46 @@ export async function POST(req: NextRequest) {
         // That pricing reads the month as the gate read it; the reservation
         // reads the live ledger (another tab's spend, calls in flight). So a
         // reservation that still refuses the second answer (402, or 429) ends
-        // the ask the same way (fix pass 6) — the call was never made. A
-        // ledger that cannot be read (503) still refuses the ask (GOV-4).
-        if (!shortestFits(pageImages, fetchNote)) {
+        // the ask the same way (fix pass 6) — the call was never made. So
+        // does a provider that fails it (AiCallError, fix pass 7 — until then
+        // its 429 / 5xx reached the outer catch and refused the ask after the
+        // first answer was paid for). A ledger that cannot be read (503)
+        // still refuses the ask (GOV-4).
+        if (!shortestFits(secondImages, fetchNote)) {
           refetchUnaffordable = true;
         } else {
           try {
             answerOut = await call({
-              system: answerSystem(pageImages, fetchNote),
-              user: answerUser(pageImages),
-              maxTokens: answerMaxTokens(pageImages, fetchNote),
-              ...(pageImages.length > 0
-                ? { images: pageImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
+              system: answerSystem(secondImages, fetchNote),
+              user: answerUser(secondImages),
+              maxTokens: answerMaxTokens(secondImages, fetchNote),
+              ...(secondImages.length > 0
+                ? { images: secondImages.map((img) => ({ base64: img.base64, mediaType: img.mediaType })) }
                 : {}),
             });
+            pageImages = secondImages;
           } catch (e) {
-            if (!(e instanceof GovernedCallError) || (e.status !== 402 && e.status !== 429)) throw e;
-            refetchUnaffordable = true;
-            refetchBusy = e.status === 429;
+            if (e instanceof AiCallError) {
+              pageImages = secondImages;
+              refetchFailed = e;
+            } else if (e instanceof GovernedCallError && (e.status === 402 || e.status === 429)) {
+              refetchUnaffordable = true;
+              refetchBusy = e.status === 429;
+            } else {
+              throw e;
+            }
           }
         }
       }
     }
-    let answer = refetchUnaffordable
+    /** ASK-7: the Fetch round ended without a second answer. */
+    const unanswered = refetchUnaffordable || refetchFailed !== null;
+    let answer = unanswered
       ? "**Answer:** This question was not answered. To answer it, the AI asked to read a page it had not been " +
-        (refetchBusy
+        (refetchFailed
+          ? "shown (a table or figure), and answering again after that page request failed at the AI provider: " +
+            `${truncateSafe(refetchFailed.message, 300)}\n! Ask again in a moment.`
+          : refetchBusy
           ? "shown (a table or figure), and answering again after that page request was refused because too many " +
             "of your AI calls were already running.\n! Ask again once they have finished."
           : "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
@@ -2612,7 +2645,7 @@ export async function POST(req: NextRequest) {
     // ASK-3: the provider says when its output ceiling cut the answer off. A
     // cut-off answer says so, is stored as partial, and is never offered for
     // rating or used as proven ground.
-    const partial = !refetchUnaffordable && (answerOut.truncated === true || answerOut.stopReason === "max_tokens");
+    const partial = !unanswered && (answerOut.truncated === true || answerOut.stopReason === "max_tokens");
     // ASK-6: a calculation that stops for user-specific values replies with
     // a bare "**Need:** …" line, which the page turns into an input box. It
     // is the MODEL's text — screened here, before it is relayed: refused
@@ -2634,7 +2667,7 @@ export async function POST(req: NextRequest) {
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
-    if (fetchUnaffordable && !refetchUnaffordable) {
+    if (fetchUnaffordable && !unanswered) {
       answer += "\n\n! The pages this answer asked to read were not attached — this month's remaining AI budget " +
         "could not cover reading them.";
     }
@@ -2865,7 +2898,7 @@ export async function POST(req: NextRequest) {
       // every passage of one of them.
       ...graphHops.flatMap((hop) => [hop.from, hop.toId]),
     ]);
-    const arithmetic = !needRefused && !refetchUnaffordable && !/^\*\*Need:\*\*/.test(answer.trim())
+    const arithmetic = !needRefused && !unanswered && !/^\*\*Need:\*\*/.test(answer.trim())
       && answerHasComputation(answer, inputs);
     const contextDocuments = [...drawn].slice(0, ANSWER_CONTEXT_DOC_CAP);
     const context: AnswerContext = {
@@ -2949,7 +2982,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       answer, citations, provider, model, mode: "library", missingDocs, partialDocs,
-      questionId: partial || refetchUnaffordable ? null : questionId, budget: budget(),
+      questionId: partial || unanswered ? null : questionId, budget: budget(),
       graphHops: graphHops.map((h) => ({ from: docName.get(h.from) ?? "retrieved document", to: h.to, via: h.via })),
       // How the passages behind this answer were found. "keyword" is not a
       // degraded state to hide — it's what this product did yesterday and
