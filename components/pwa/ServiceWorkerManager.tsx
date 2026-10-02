@@ -11,18 +11,31 @@
 //      service worker reports (NETWORK messages) as well as navigator.onLine —
 //      plant Wi-Fi that is associated but has no route out reports
 //      onLine === true, which is exactly when a stale screen is most likely.
-//   2. Update available: a quiet toast when a new app version has installed
-//      and is WAITING, letting them refresh on their own schedule rather than
-//      mid-task. Tapping it activates the waiting worker and reloads on
-//      controllerchange, with an unconditional reload after a short timeout so
-//      the button can never do nothing (OFF-4).
+//   2. Update available: when a new app version has installed and is
+//      WAITING, this reports it (`subscribeWaitingWorker` /
+//      `waitingWorkerSnapshot`) to the ONE component that owns "a newer build
+//      exists" — components/system/UpdatePill.tsx, fed by both the waiting
+//      worker and the build-id poll, with one wording, one place and one
+//      prompt at a time (TAX-15, notifications Round G N3). Its tap activates
+//      the waiting worker and reloads on controllerchange, with an
+//      unconditional reload after a short timeout so the button can never do
+//      nothing (OFF-4, `loadLatestBuild` below). On a page without the
+//      protected shell (sign-in, a share link, the transmittal portal), where
+//      that component is not mounted, this renders it for the waiting worker.
 //
 // Registration is best-effort and only runs in the browser over HTTPS (or
 // localhost). If the SW API is missing, this renders nothing and the app
 // behaves exactly as before.
 
 import React from "react";
-import { WifiOff, RefreshCw } from "lucide-react";
+import { WifiOff } from "lucide-react";
+
+// The update prompt is UpdatePill's (TAX-15). Loaded on demand — only when a
+// worker is waiting — so a page without the protected shell still gets it,
+// without a static import cycle (UpdatePill imports loadLatestBuild from here).
+const UpdatePillForWorker = React.lazy(() =>
+  import("@/components/system/UpdatePill").then((m) => ({ default: m.UpdatePillForWaitingWorker })),
+);
 
 export const OFFLINE_PILL_TEXT = "Offline — can't reach the server; data may be missing or out of date";
 
@@ -78,6 +91,39 @@ export function applyServiceWorkerUpdate(waiting: { postMessage: (message: unkno
  *  the pill asks the registration for its waiting worker and activates it
  *  exactly as the toast does — otherwise the toast reappeared right after the
  *  user updated. No registration, no waiting worker or a failed lookup: reload. */
+// ── The waiting-worker signal (TAX-15) ─────────────────────────────────────
+// Module level: the worker is registered once per tab, here, and the update
+// prompt (UpdatePill) reads the answer wherever it is mounted.
+let workerWaiting = false;
+const workerListeners = new Set<() => void>();
+
+/** Subscribe to "a new worker is installed and waiting". */
+export function subscribeWaitingWorker(cb: () => void): () => void {
+  workerListeners.add(cb);
+  return () => { workerListeners.delete(cb); };
+}
+
+/** Whether a new worker is installed and waiting (a newer build exists). */
+export function waitingWorkerSnapshot(): boolean {
+  return workerWaiting;
+}
+
+function reportWaitingWorker() {
+  if (workerWaiting) return;
+  workerWaiting = true;
+  for (const l of workerListeners) {
+    try { l(); } catch { /* a bad listener must not break the others */ }
+  }
+}
+
+/** Test seam: forget the waiting-worker signal (jsdom tests share the module). */
+export function __resetWaitingWorkerForTests() {
+  workerWaiting = false;
+  for (const l of workerListeners) {
+    try { l(); } catch { /* ignore */ }
+  }
+}
+
 export async function loadLatestBuild(
   env: UpdateEnv & { getRegistration: (() => Promise<{ waiting: { postMessage: (message: unknown) => void } | null } | undefined>) | null },
 ): Promise<void> {
@@ -93,8 +139,7 @@ export async function loadLatestBuild(
 export default function ServiceWorkerManager() {
   const [browserOffline, setBrowserOffline] = React.useState(false);
   const [unreachable, setUnreachable] = React.useState(false);
-  const [updateReady, setUpdateReady] = React.useState(false);
-  const waitingRef = React.useRef<ServiceWorker | null>(null);
+  const updateReady = React.useSyncExternalStore(subscribeWaitingWorker, waitingWorkerSnapshot, () => false);
   const offline = browserOffline || unreachable;
 
   React.useEffect(() => {
@@ -123,18 +168,17 @@ export default function ServiceWorkerManager() {
           .register("/sw.js")
           .then((reg) => {
             // A new worker no longer skips waiting at install (OFF-4): it
-            // installs, then waits until this toast (or every tab closing)
-            // lets it take over.
+            // installs, then waits until the update prompt (or every tab
+            // closing) lets it take over.
             const track = (worker: ServiceWorker | null) => {
               if (!worker) return;
               worker.addEventListener("statechange", () => {
                 if (worker.state === "installed" && sw.controller) {
-                  waitingRef.current = worker;
-                  setUpdateReady(true);
+                  reportWaitingWorker();
                 }
               });
             };
-            if (reg.waiting) { waitingRef.current = reg.waiting; setUpdateReady(true); }
+            if (reg.waiting) { reportWaitingWorker(); }
             reg.addEventListener("updatefound", () => track(reg.installing));
           })
           .catch(() => { /* SW optional — ignore */ });
@@ -170,30 +214,24 @@ export default function ServiceWorkerManager() {
     };
   }, [offline]);
 
-  const applyUpdate = () =>
-    applyServiceWorkerUpdate(waitingRef.current, {
-      serviceWorker: "serviceWorker" in navigator ? navigator.serviceWorker : null,
-      reload: () => window.location.reload(),
-      setTimeout: (cb, ms) => window.setTimeout(cb, ms),
-    });
-
   return (
-    <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
-      {offline && (
-        <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
-          <WifiOff className="w-3.5 h-3.5" />
-          {OFFLINE_PILL_TEXT}
-        </div>
-      )}
+    <>
+      <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
+        {offline && (
+          <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
+            <WifiOff className="w-3.5 h-3.5" />
+            {OFFLINE_PILL_TEXT}
+          </div>
+        )}
+      </div>
+      {/* "A newer build exists" is UpdatePill's (TAX-15): one wording, one
+          place, one prompt. Inside the protected shell the shell's own
+          UpdatePill shows it and this one renders nothing. */}
       {updateReady && (
-        <button
-          onClick={applyUpdate}
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-xs font-bold px-3 py-1.5 shadow-lg transition-colors"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          Update available — tap to refresh
-        </button>
+        <React.Suspense fallback={null}>
+          <UpdatePillForWorker />
+        </React.Suspense>
       )}
-    </div>
+    </>
   );
 }
