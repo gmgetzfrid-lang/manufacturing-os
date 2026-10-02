@@ -6,7 +6,9 @@
 // from the run row's own columns (retention_deleted / retention_failed,
 // migration 20261172), and, for a run closed before that paste, from its
 // trace's retention step, as it did before. Rendered: the page is mounted
-// with the runs API answering, and the run rows' text is read.
+// with the runs API answering, and the run rows' text is read. Fix pass 8:
+// after the paste the row's counts lead, and what only the trace holds — how
+// many objects the purge scanned, and why it stopped — follows them.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -52,6 +54,10 @@ const RUNS = [
   { ...base, id: "run-refused", retention_deleted: 0, retention_failed: 0,
     error_message: "Backup delivered and verified, but the retention purge did not finish: deleted 0 archive(s) older than 7 day(s) — Retention purge refused.",
     diagnostics: [{ step: "s3:retention:err", detail: "Retention purge refused" }] },
+  // after the paste: a purge whose delete call threw part-way — its counts, what it scanned, and why it stopped
+  { ...base, id: "run-stopped", retention_deleted: 5, retention_failed: 2,
+    error_message: "Backup delivered and verified, but the retention purge did not finish: deleted 5 archive(s) older than 30 day(s), 2 could not be deleted — the delete call failed: SlowDown.",
+    diagnostics: [{ step: "s3:retention:err", detail: "scanned 12, deleted 5 app archive(s), 2 could not be deleted — the delete call failed: SlowDown" }] },
   // closed before the paste: no columns — read from its trace, as before
   { ...base, id: "run-legacy", retention_deleted: null, retention_failed: null,
     diagnostics: [{ step: "s3:retention:done", detail: "scanned 5, deleted 4 app archive(s)" }] },
@@ -92,35 +98,44 @@ async function renderedRunRows(): Promise<string[]> {
 }
 
 describe("A&O P3 fix pass 7 — BKP-6 Done-when 3: the run list shows a purge's counts from the run row", () => {
-  it("a clean purge: its count from the row's columns (not the trace)", async () => {
+  it("a clean purge: its count from the row's columns (the trace's wording, \"app archive(s)\", is not what is shown), then what it scanned (fix pass 8)", async () => {
     const rows = await renderedRunRows();
     expect(rows).toHaveLength(RUNS.length);
-    expect(rows[0]).toContain("Retention: deleted 3 archive(s)");
+    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 3 archive(s) (scanned 9)");
+    expect(line, "the clean purge's retention line").toBeTruthy();
+    expect(line!.className).not.toContain("text-amber-700");
     expect(rows[0]).not.toContain("could not be deleted");
-    expect(rows[0]).not.toContain("scanned 9");
+    expect(rows[0]).not.toContain("app archive(s)");
   });
 
   it("a failure surfaced: the failed count on the retention line (amber), beside the run's error", async () => {
     await renderedRunRows();
-    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 2 archive(s), 1 could not be deleted");
+    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 2 archive(s), 1 could not be deleted (scanned 4)");
     expect(line, "the failed purge's retention line").toBeTruthy();
     expect(line!.className).toContain("text-amber-700");
     const rows = [...container.querySelectorAll("div.divide-y > div")].map((r) => r.textContent ?? "");
     expect(rows[1]).toContain("retention purge did not finish");
   });
 
-  it("a purge refused outright (0 and 0 on the row) is still shown as a failure", async () => {
+  it("a purge refused outright (0 and 0 on the row) is still shown as a failure, with why (fix pass 8)", async () => {
     await renderedRunRows();
-    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 0 archive(s)");
+    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 0 archive(s) — Retention purge refused");
     expect(line).toBeTruthy();
+    expect(line!.className).toContain("text-amber-700");
+  });
+
+  it("fix pass 8: a purge that stopped part-way — the row's counts first, then what it scanned and why it stopped", async () => {
+    await renderedRunRows();
+    const line = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: deleted 5 archive(s), 2 could not be deleted (scanned 12) — the delete call failed: SlowDown");
+    expect(line, "the stopped purge's retention line").toBeTruthy();
     expect(line!.className).toContain("text-amber-700");
   });
 
   it("a run closed before the paste: read from its trace, as before; a run with no purge has no retention line", async () => {
     const rows = await renderedRunRows();
-    expect(rows[3]).toContain("Retention: scanned 5, deleted 4 app archive(s)");
+    expect(rows[4]).toContain("Retention: scanned 5, deleted 4 app archive(s)");
     const clean = [...container.querySelectorAll("div")].find((d) => d.textContent === "Retention: scanned 5, deleted 4 app archive(s)");
     expect(clean!.className).not.toContain("text-amber-700");
-    expect(rows[4]).not.toContain("Retention:");
+    expect(rows[5]).not.toContain("Retention:");
   });
 });

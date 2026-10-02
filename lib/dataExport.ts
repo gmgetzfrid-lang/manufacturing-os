@@ -549,14 +549,38 @@ const LEDGER_CLOCK_ALLOWANCE_MS = 60_000;
 /** A ledger's parts and chain reads take rows dated no earlier than this
  *  before its baseline's newest row. One export writes a baseline's parts,
  *  EXPORT_FILE_ROWS_PER_INSERT rows to a statement, each statement dated
- *  when it ran (audit_logs.timestamp DEFAULT NOW()), all within the export's
- *  function (maxDuration 300 s), so its earliest part lies within this of
- *  its newest; every delta on its chain was written after the baseline was
- *  read back whole, so after its newest part. Both ends are the database's
- *  own clock. The same bound serves a recall's DATA_EXPORT_UNDELIVERED read
- *  (rebuildExportList): that row is written by the export's own function,
- *  after its DATA_EXPORT row, so within this after it. */
+ *  when it ran (audit_logs.timestamp DEFAULT NOW()), one statement after
+ *  another as the export records itself — before its archive is built or
+ *  delivered, so on any host (A&O P3 fix pass 8: not because of the routes'
+ *  maxDuration, which `next start` does not enforce) — so its earliest part
+ *  lies within this of its newest; every delta on its chain was written
+ *  after the baseline was read back whole, so after its newest part. Both
+ *  ends are the database's own clock. (A recall's DATA_EXPORT_UNDELIVERED
+ *  read has its own, wider bound: UNDELIVERED_READ_WINDOW_MS.) */
 const LEDGER_WRITE_WINDOW_MS = 15 * 60_000;
+/** How long after an export's DATA_EXPORT row a recall (rebuildExportList)
+ *  looks for its DATA_EXPORT_UNDELIVERED row. That row is written after the
+ *  delivery fails (lib/exportRunner.ts buildAndDeliverExport's catch; the
+ *  JSON export's, app/api/data-export/structured), and a delivery has no
+ *  time limit off Vercel: the supported Docker self-host runs `next start`,
+ *  which does not enforce the routes' maxDuration (300 s), the webhook POST
+ *  carries no abort signal and the S3 put and its read-back no request
+ *  timeout (the S3 client also retries, three attempts in all). So a large
+ *  archive to a slow webhook or bucket fails, and is recorded, long after
+ *  its record — the fix pass 7 bound of 15 minutes read such an export as
+ *  delivered (A&O P3 fix pass 8). A day covers an archive at the default
+ *  embed cap (1.5 GB) failing after a whole upload at about 17 KB/s, or
+ *  after the S3 client's three attempts at about 52 KB/s, and a daily
+ *  destination's next push is due within it. The writers get no deadline
+ *  of their own: one would fail a slow upload that succeeds today. It stays
+ *  a range scan of the record's resource on audit_logs_resource_timeline_idx
+ *  (resource_type, resource_id, timestamp) — a day of a destination's own
+ *  ledger and UNDELIVERED rows, or of the workspace's "org" rows — LIMIT 1.
+ *  What it cannot see: a failure recorded later than this, and a delivery
+ *  killed mid-flight (Vercel ending the function at 300 s, a container
+ *  restart), which records nothing at all. So `undelivered: null` means no
+ *  failure is recorded, never that the export arrived. */
+export const UNDELIVERED_READ_WINDOW_MS = 24 * 60 * 60_000;
 
 /** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
  *  and newline-joined — the fingerprint a record carries of the whole list:
@@ -813,9 +837,10 @@ export interface RebuiltExportList {
   recordId: string;
   /** Who took the export, from its DATA_EXPORT row: the person (or the
    *  machine, user_id null), the role the surface admitted them by, when.
-   *  `userId` is the authoritative field. `audit_logs_insert` checks only
-   *  `user_id = auth.uid()` on a member's insert, so on a row a member wrote
-   *  `email` and `role` are whatever that member put there: display hints,
+   *  `userId` is the authoritative field. `audit_logs_insert` (20260813)
+   *  checks a member's insert for `user_id = auth.uid()` and an org the
+   *  member belongs to (or none) — never the email or the role — so on a
+   *  row a member wrote, `email` and `role` are what they put: display hints,
    *  until admin-and-org ALOG-7's trigger resolves them from org_members. A
    *  machine row (user_id null) can be written only by the service role, so
    *  its label and role are the app's own. */
@@ -825,14 +850,18 @@ export interface RebuiltExportList {
   /** Every file the export handed out, by path, with its document and
    *  revision where it has them; its paths hash to the record's sha256. */
   files: LedgerFile[];
-  /** Whether the export arrived. Null: no DATA_EXPORT_UNDELIVERED row names
-   *  the record, so nothing says it failed after it was recorded. Set: the
-   *  export was recorded as leaving and then did not (its file list refused,
-   *  its ZIP not built, the destination refusing it — recordExportUndelivered),
-   *  with that row's error and when it was written. The list is still what
-   *  the export carried; the files never reached the other end, so its
-   *  exporter took nothing. Read from machine rows only (user_id NULL), which
-   *  no member can write, so no member can unsay a delivered export. */
+  /** Whether a failure to deliver is recorded. Set: the export was recorded
+   *  as leaving and then did not (its file list refused, its ZIP not built,
+   *  the destination refusing it — recordExportUndelivered), with that row's
+   *  error and when it was written. The list is still what the export
+   *  carried; the files never reached the other end, so its exporter took
+   *  nothing. Null: no DATA_EXPORT_UNDELIVERED row names the record within
+   *  UNDELIVERED_READ_WINDOW_MS of it — no failure is recorded, which is not
+   *  the same as "arrived" (A&O P3 fix pass 8): a delivery killed mid-flight
+   *  (Vercel ending the function at its 300 s maxDuration, a container
+   *  restart on a self-host) records nothing, and a failure recorded later
+   *  than the window is not read. Read from machine rows only (user_id NULL),
+   *  which no member can write, so no member can unsay a delivered export. */
   undelivered: { error: string | null; at: string | null } | null;
 }
 
@@ -848,7 +877,9 @@ export interface RebuiltExportList {
  *  checks `undelivered` before it names the exporter as having taken it: an
  *  export recorded and then not delivered (a DATA_EXPORT_UNDELIVERED machine
  *  row naming the record, one read on the record's resource) carried the
- *  list but handed nothing out (A&O P3 fix pass 7). Who took it is
+ *  list but handed nothing out (A&O P3 fix pass 7). `undelivered: null`
+ *  means no failure is recorded, not that the files arrived (fix pass 8;
+ *  RebuiltExportList). Who took it is
  *  `exporter.userId`; `email` and `role` are display hints on a member's row
  *  (RebuiltExportList). Never throws: `list` null with a `problem` when the
  *  record is unknown, names no list (an export recorded before this
@@ -908,13 +939,16 @@ export async function rebuildExportList(
   if (exportFileListDigest(paths) !== sha256) {
     return { list: null, problem: `the list rebuilt for the export ${recordId} does not hash to its record` };
   }
-  // Did it arrive? recordExportUndelivered writes its machine row on the
-  // export's resource (the destination's, or the workspace's "org"), naming
-  // the record, from the same function as the DATA_EXPORT row (maxDuration
-  // 300 s) and after it — both dated by the database (audit_logs.timestamp
-  // DEFAULT NOW()). So the read walks the resource's rows from the record's
-  // own time to LEDGER_WRITE_WINDOW_MS after it, never the resource's whole
-  // history; with no readable time on the record it is unbounded.
+  // Is a failure to deliver recorded? recordExportUndelivered writes its
+  // machine row on the export's resource (the destination's, or the
+  // workspace's "org"), naming the record, from the same function as the
+  // DATA_EXPORT row and after it — both dated by the database
+  // (audit_logs.timestamp DEFAULT NOW()) — once the delivery has failed,
+  // however long that took (no deadline off Vercel; A&O P3 fix pass 8: the
+  // bound was 15 minutes, which a slow large delivery outlasts). So the read
+  // walks the resource's rows from the record's own time to
+  // UNDELIVERED_READ_WINDOW_MS after it, never the resource's whole history;
+  // with no readable time on the record it is unbounded.
   const recordedAt = typeof row.timestamp === "string" ? row.timestamp : null;
   const recordedMs = recordedAt ? Date.parse(recordedAt) : NaN;
   const gone = sb.from("audit_logs").select("error:details->>error, timestamp")
@@ -922,7 +956,7 @@ export async function rebuildExportList(
     .eq("action", "DATA_EXPORT_UNDELIVERED").eq("org_id", orgId).is("user_id", null)
     .eq("details->>recordId", recordId);
   const undeliveredRead = await (Number.isFinite(recordedMs)
-    ? gone.gte("timestamp", recordedAt as string).lte("timestamp", new Date(recordedMs + LEDGER_WRITE_WINDOW_MS).toISOString())
+    ? gone.gte("timestamp", recordedAt as string).lte("timestamp", new Date(recordedMs + UNDELIVERED_READ_WINDOW_MS).toISOString())
     : gone
   ).order("timestamp", { ascending: true }).limit(1);
   if (undeliveredRead.error) {

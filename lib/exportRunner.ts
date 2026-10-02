@@ -231,15 +231,19 @@ export function isMissingRetentionColumn(e: { code?: string; message?: string } 
  *  again without them, so a run closes exactly as it did before the paste:
  *  its counts stay in its diagnostics (the `s3:retention:*` step), where the
  *  data-export page still reads them. `retention` says which happened:
- *  "written", "none" (no purge ran — the update is the patch alone) or
- *  "unrecorded" (the columns are not there yet). `error` is the update's
- *  own, for the caller's checked write. */
+ *  "written"; "none" (no purge ran — the update is the patch alone);
+ *  "unrecorded" (the columns are not there yet — the update was written
+ *  again without them, and `error` is that retry's); or "close-failed" (the
+ *  update was refused for another reason — a permission, a timeout — and is
+ *  not retried: the run row is not closed at all, `error` says why; A&O P3
+ *  fix pass 8, was "unrecorded"). `error` is the update's own, for the
+ *  caller's checked write. */
 export async function closeSucceededRun(
   admin: Pick<SupabaseClient, "from">,
   runId: string,
   patch: Record<string, unknown>,
   outcome: RetentionOutcome | undefined,
-): Promise<{ error: RunWriteError; retention: "written" | "none" | "unrecorded" }> {
+): Promise<{ error: RunWriteError; retention: "written" | "none" | "unrecorded" | "close-failed" }> {
   const cols = retentionRunColumns(outcome);
   if (!cols) {
     const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
@@ -247,7 +251,7 @@ export async function closeSucceededRun(
   }
   const first = await admin.from("export_runs").update({ ...patch, ...cols }).eq("id", runId);
   if (!first.error) return { error: null, retention: "written" };
-  if (!isMissingRetentionColumn(first.error)) return { error: first.error as RunWriteError, retention: "unrecorded" };
+  if (!isMissingRetentionColumn(first.error)) return { error: first.error as RunWriteError, retention: "close-failed" };
   console.warn(`[data-export] run ${runId}: export_runs has no retention columns yet (paste ${RETENTION_COLUMNS_MIGRATION}); its purge counts stay in its diagnostics`);
   const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
   return { error: error as RunWriteError, retention: "unrecorded" };
@@ -271,6 +275,19 @@ export interface ExportDestination {
   webhook_secret_encrypted?: string;
   include_files?: boolean;
   retention_days?: number;
+}
+
+/** BILL-3 Done-when 3 (A&O P3 fix pass 8): does this destination push to a
+ *  bucket — the Growth feature the plan gates? Only an s3 / r2 row with a
+ *  bucket: the push switches on `destination_type` (a webhook row never
+ *  touches its `bucket`, which the edit form cannot clear once a row is
+ *  converted), and an s3 / r2 row with no bucket pushes nowhere (the S3
+ *  client refuses an empty bucket before it sends). The one predicate for
+ *  Run Now's plan gate, the scheduled sweep's plan limb and its
+ *  disable-on-lapse, and PATCH's enabling gate. */
+export function pushesToBucket(row: { destination_type?: string | null; bucket?: string | null }): boolean {
+  const type = String(row.destination_type ?? "").trim();
+  return (type === "s3" || type === "r2") && String(row.bucket ?? "").trim() !== "";
 }
 
 /** BKP-11 Done-when 3: what a destination lacks before it may fire, as the
@@ -342,7 +359,15 @@ type BuildAndDeliverParams = {
  *  DATA_EXPORT_UNDELIVERED row against the export's record id
  *  (recordExportUndelivered) before the error goes back to the route, which
  *  marks the run failed. A refused UNDELIVERED row is named in that error
- *  (checked), so the run row says the record is incomplete. */
+ *  (checked), so the run row says the record is incomplete. The row lands
+ *  when the delivery fails, however long that took: off Vercel nothing
+ *  bounds a delivery (`next start` does not enforce the route's maxDuration;
+ *  the webhook POST has no abort signal, the S3 put and read-back no
+ *  request timeout), and no deadline is added here, since one would fail a
+ *  slow upload that succeeds today — the recall's read allows a day
+ *  (lib/dataExport.ts UNDELIVERED_READ_WINDOW_MS; A&O P3 fix pass 8). A
+ *  function killed mid-delivery (Vercel at 300 s, a container restart)
+ *  writes no row at all, and its run row stays "running". */
 export async function buildAndDeliverExport(params: BuildAndDeliverParams): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const recordId = randomUUID();
   let recorded = false;

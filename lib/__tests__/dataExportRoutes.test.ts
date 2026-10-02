@@ -97,11 +97,11 @@ import {
   runOrgExport, PRIVATE_NOTES_CARRIED, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest,
   fileListEntries, fileListRemoved, readDestinationLedger, DESTINATION_FILES_RESOURCE_TYPE,
   EXPORT_LEDGER_ACTOR, LEDGER_CHAIN_MAX_ROWS, WORKSPACE_FILES_RESOURCE_TYPE, readWorkspaceLedger, rebuildExportList,
-  recordExportUndelivered,
+  recordExportUndelivered, UNDELIVERED_READ_WINDOW_MS,
 } from "@/lib/dataExport";
 import {
   s3PurgeOlderThan, retentionProblem, destinationCredentialGap, MAX_EXPORT_RUNS_PER_HOUR,
-  retentionRunColumns, isMissingRetentionColumn, closeSucceededRun, RETENTION_COLUMNS_MIGRATION,
+  retentionRunColumns, isMissingRetentionColumn, closeSucceededRun, RETENTION_COLUMNS_MIGRATION, pushesToBucket,
 } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
 import { ALERT_LINKS } from "@/lib/exportAlerts";
@@ -2327,7 +2327,7 @@ describe("A&O P3 fix pass 7 — BKP-6 Done-when 3: a retention purge's counts on
     // the helper's own answer
     tries = 0;
     expect(await closeSucceededRun({ from: (await import("./helpers/restoreMemoryDb")).from } as never, "run-x", { status: "succeeded" }, { keepDays: 1, scanned: 0, deleted: 0, failed: 0 }))
-      .toEqual({ error: { code: "42501", message: "permission denied for table export_runs" }, retention: "unrecorded" });
+      .toEqual({ error: { code: "42501", message: "permission denied for table export_runs" }, retention: "close-failed" });
     expect(tries).toBe(1);
   });
 
@@ -2412,7 +2412,7 @@ describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrive
     for (const r of [first, third]) expect((await rebuildExportList(await sb(), ORG, r.recordId)).list!.undelivered).toMatchObject({ error: "Webhook 500" });
   });
 
-  it("negative controls: a member's UNDELIVERED row naming the record (their own uid — all audit_logs_insert lets them write), another destination's, or one dated outside the record's write window, never unsays a delivered export", async () => {
+  it("negative controls: a member's UNDELIVERED row naming the record (their own uid — all audit_logs_insert lets them write), another destination's, or one dated before the record or past the read window (fix pass 8: a day), never unsays a delivered export", async () => {
     db.rows.document_versions = destVersions(3);
     await push();
     const record = lastRecord();
@@ -2424,7 +2424,8 @@ describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrive
     forged({ user_id: "u-dc", user_email: "dc@acme.com" });
     forged({ resource_id: "dest-other" });
     forged({ timestamp: new Date(Date.parse(at) - 3_600_000).toISOString() });
-    forged({ timestamp: new Date(Date.parse(at) + 3_600_000).toISOString() });
+    // fix pass 8: the read window is a day (UNDELIVERED_READ_WINDOW_MS); an hour after is inside it now
+    forged({ timestamp: new Date(Date.parse(at) + 25 * 3_600_000).toISOString() });
     forged({ details: { recordId: "another-record", error: "forged" } });
     const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
     expect(problem).toBeUndefined();
@@ -2434,7 +2435,7 @@ describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrive
     expect((await rebuildExportList(await sb(), ORG, record.recordId)).list!.undelivered).toEqual({ error: "forged", at });
   });
 
-  it("the read is one statement on the record's resource, bounded to its write window; a failed read is a problem, never 'delivered'", async () => {
+  it("the read is one statement on the record's resource, bounded to its read window (fix pass 8: a day); a failed read is a problem, never 'delivered'", async () => {
     db.rows.document_versions = destVersions(3);
     await push();
     const record = lastRecord();
@@ -2450,7 +2451,8 @@ describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrive
     expect(arg("eq", "details->>recordId")).toBe(record.recordId);
     const recordedAt = String(audits("DATA_EXPORT").at(-1)!.timestamp);
     expect(arg("gte", "timestamp")).toBe(recordedAt);
-    expect(Date.parse(String(arg("lte", "timestamp"))) - Date.parse(recordedAt)).toBe(15 * 60_000);
+    expect(Date.parse(String(arg("lte", "timestamp"))) - Date.parse(recordedAt)).toBe(24 * 3_600_000);
+    expect(UNDELIVERED_READ_WINDOW_MS).toBe(24 * 3_600_000);
     // a client whose UNDELIVERED read fails
     const mem = await import("./helpers/restoreMemoryDb");
     const failing = {
@@ -2485,6 +2487,121 @@ describe("A&O P3 fix pass 7 — rebuildExportList says whether the export arrive
     const src = readFileSync(join(process.cwd(), "lib", "dataExport.ts"), "utf8");
     expect(src).toMatch(/`userId` is the authoritative field/);
     expect(src).toMatch(/display hints,\s+\*\s+until admin-and-org ALOG-7's trigger resolves them/);
+  });
+});
+
+// A&O P3 fix pass 8, item 1: the recall's UNDELIVERED read was bounded to 15
+// minutes after the record, on the routes' 300 s maxDuration, which only
+// Vercel enforces. On the Docker self-host (`next start`) a delivery has no
+// time limit (the webhook POST has no abort signal, the S3 put no request
+// timeout), so a large archive to a slow webhook or bucket failed, and wrote
+// its UNDELIVERED row, later than that, and the failed export read as
+// delivered (`undelivered: null`, no problem). The read now allows a day
+// (UNDELIVERED_READ_WINDOW_MS); the writers get no deadline.
+
+describe("A&O P3 fix pass 8 — a failure recorded long after its record (a slow delivery off Vercel) is still found", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+  const DEST = "dest-slow";
+  const MIN = 60_000;
+  const HOUR = 3_600_000;
+  const sb = async () => ({ from: (await import("./helpers/restoreMemoryDb")).from }) as never;
+  const push = async (fileRecord: { destinationId: string } | "workspace" = { destinationId: DEST }) => {
+    vi.setSystemTime(nightOf(0));
+    db.rows.document_versions = destVersions(3);
+    await runOrgExport(fileRecord === "workspace"
+      ? { supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com", exporterRole: "Admin", auditDetails: { channel: "zip" } }
+      : { supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system", auditDetails: { channel: "scheduled", destinationId: DEST }, fileRecord });
+    return lastRecord();
+  };
+  /** recordExportUndelivered — the writer both run paths call — `ms` after the record. */
+  const failLater = async (recordId: string, ms: number, destinationId: string | null = DEST) => {
+    vi.setSystemTime(nightOf(0).getTime() + ms);
+    const at = new Date().toISOString();
+    expect(await recordExportUndelivered(await sb(), {
+      orgId: ORG, recordId, destinationId, exporterUserId: null, exporterEmail: "system:scheduled-export", error: "Webhook 504: upstream timeout",
+    })).toBeNull();
+    return at;
+  };
+
+  for (const [label, ms] of [["16 minutes", 16 * MIN], ["6 hours", 6 * HOUR], ["23 hours 59 minutes", 23 * HOUR + 59 * MIN]] as const) {
+    it(`an UNDELIVERED row written ${label} after the record is found (was: null past 15 minutes — the failed export read as delivered)`, async () => {
+      const record = await push();
+      const at = await failLater(record.recordId, ms);
+      const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
+      expect(problem).toBeUndefined();
+      expect(list!.undelivered).toEqual({ error: "Webhook 504: upstream timeout", at });
+    });
+  }
+
+  it("…a person's export, on the workspace's resource, the same: found 6 hours later", async () => {
+    const record = await push("workspace");
+    const at = await failLater(record.recordId, 6 * HOUR, null);
+    expect((await rebuildExportList(await sb(), ORG, record.recordId)).list!.undelivered).toEqual({ error: "Webhook 504: upstream timeout", at });
+  });
+
+  it("negative controls, 6 hours on: a member's row naming the record, another destination's, another record's, the workspace's resource for a destination's record — none counted; the machine row then is", async () => {
+    const record = await push();
+    vi.setSystemTime(nightOf(0).getTime() + 6 * HOUR);
+    const at = new Date().toISOString();
+    const forged = (extra: Row) => db.rows.audit_logs.push({
+      action: "DATA_EXPORT_UNDELIVERED", org_id: ORG, resource_type: DESTINATION_FILES_RESOURCE_TYPE, resource_id: DEST,
+      user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, timestamp: at, details: { recordId: record.recordId, error: "forged" }, ...extra,
+    });
+    forged({ user_id: "u-dc", user_email: "dc@acme.com" });
+    forged({ resource_id: "dest-other" });
+    forged({ details: { recordId: "another-record", error: "forged" } });
+    forged({ resource_type: "org", resource_id: ORG });
+    const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
+    expect(problem).toBeUndefined();
+    expect(list!.undelivered).toBeNull();
+    const real = await failLater(record.recordId, 6 * HOUR + MIN);
+    expect((await rebuildExportList(await sb(), ORG, record.recordId)).list!.undelivered).toEqual({ error: "Webhook 504: upstream timeout", at: real });
+  });
+
+  it("the bound, which is the documented residual: a row more than a day after the record is outside the read — so `undelivered: null` says no failure is recorded, never that the export arrived", async () => {
+    const record = await push();
+    await failLater(record.recordId, 24 * HOUR + MIN);
+    expect((await rebuildExportList(await sb(), ORG, record.recordId)).list!.undelivered).toBeNull();
+    const { client, calls } = await recordingClient();
+    await rebuildExportList(client as never, ORG, record.recordId);
+    const read = calls.find((log) => log.some((c) => c.m === "eq" && c.args[1] === "DATA_EXPORT_UNDELIVERED"))!;
+    const lte = read.find((c) => c.m === "lte" && c.args[0] === "timestamp")!.args[1];
+    expect(Date.parse(String(lte)) - nightOf(0).getTime()).toBe(UNDELIVERED_READ_WINDOW_MS);
+    const src = readFileSync(join(process.cwd(), "lib", "dataExport.ts"), "utf8");
+    expect(src).toMatch(/So `undelivered: null` means no\s+\*\s+failure is recorded, never that the export arrived\./);
+  });
+
+  describe("through the real builder: a scheduled push whose webhook fails only after a long upload", () => {
+    const HOOK = "https://203.0.113.10/hook";
+    let readdir: { mockRestore: () => void } | null = null;
+    beforeEach(async () => {
+      readdir = vi.spyOn(fsPromises, "readdir").mockResolvedValue([] as never);
+      const real = await vi.importActual<typeof import("@/lib/exportRunner")>("@/lib/exportRunner");
+      state.deliver = (p) => real.buildAndDeliverExport(p as never);
+    });
+    afterEach(() => { vi.unstubAllGlobals(); readdir?.mockRestore(); readdir = null; });
+
+    for (const [label, ms] of [["16 minutes", 16 * MIN], ["6 hours", 6 * HOUR]] as const) {
+      it(`the webhook answers 504 after ${label}: the run fails, its UNDELIVERED row lands then, and the recall says undelivered`, async () => {
+        vi.setSystemTime(nightOf(0));
+        vi.stubGlobal("fetch", vi.fn(async () => {
+          vi.setSystemTime(Date.now() + ms); // the upload, then the answer
+          return new Response("upstream timeout", { status: 504 });
+        }));
+        db.rows.document_versions = destVersions(3);
+        db.rows.export_destinations = [dueDestination({ webhook_url: HOOK })];
+        const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+        expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Webhook 504: upstream timeout/) });
+        const record = lastRecord();
+        const recordedAt = Date.parse(String(audits("DATA_EXPORT").at(-1)!.timestamp));
+        const [row] = audits("DATA_EXPORT_UNDELIVERED");
+        expect(Date.parse(String(row.timestamp)) - recordedAt).toBeGreaterThanOrEqual(ms);
+        const { list, problem } = await rebuildExportList(await sb(), ORG, record.recordId);
+        expect(problem).toBeUndefined();
+        expect(list!.undelivered).toEqual({ error: expect.stringMatching(/^Webhook 504: upstream timeout/), at: row.timestamp });
+      }, 30_000);
+    }
   });
 });
 
@@ -2534,5 +2651,134 @@ describe("A&O P3 fix pass 7 — enabling is the Growth act only for a row that p
     db.rows.export_destinations = [disabledBucket()];
     expect((await save(toWebhook(db.rows.export_destinations[0]))).status).toBe(200);
     expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", enabled: true });
+  });
+});
+
+// A&O P3 fix pass 8, item 2: three gates treated a webhook still carrying the
+// bucket name it had before it was converted as a bucket destination — Run
+// Now's plan gate (`|| bucket`) and the sweep's disable-on-lapse
+// (`!!dest.bucket`), both written by P3, and the scheduled gate's plan limb
+// (lib/exportEntitlement.ts, fed `dest.bucket`). Off plan, under
+// SUBSCRIPTION_ENFORCE, the conversion PATCH allows since fix pass 7 was
+// undone that night (the sweep disabled the webhook "for a lapsed plan") and
+// Run Now refused it 402; with the flag off, as today, every run of it
+// carried a "plan gate would skip" notice. One predicate now:
+// lib/exportRunner.ts pushesToBucket — s3 / r2 with a bucket.
+
+describe("A&O P3 fix pass 8 — a webhook that still carries a bucket name is not a bucket destination: Run Now, the sweep's plan limb and its disable agree (BILL-3 Done-when 3)", () => {
+  const disabledBucket = (extra: Row = {}): Row => dueDestination({
+    enabled: false, name: "Old bucket", destination_type: "s3", webhook_url: null, bucket: "plant-backups", region: null, endpoint: null,
+    access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"), ...extra,
+  });
+  const save = (body: Row) => destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body }), params("dest-1"));
+  const offPlan = () => Object.assign(db.rows.orgs[0], { subscribed_plan: "starter", subscription_status: "active" });
+  const toWebhook = (d: Row): Row => ({
+    ...editFormBody(d), destination_type: "webhook", enabled: true, webhook_url: "https://hooks.example.com/in", webhook_secret: "whsec",
+  });
+  const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
+  /** The night comes: the saved destination is due. */
+  const nightFalls = () => Object.assign(db.rows.export_destinations[0], { next_run_at: "2026-09-30T05:00:00.000Z" });
+  /** Off plan: a disabled s3 row converted to a webhook and enabled in one form save — 200 since fix pass 7. */
+  const converted = async () => {
+    offPlan();
+    db.rows.export_destinations = [disabledBucket()];
+    expect((await save(toWebhook(db.rows.export_destinations[0]))).status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", enabled: true, bucket: "plant-backups" });
+    nightFalls();
+  };
+  const planWords = /plan gate|cloud bucket|Growth plan|the destination was disabled/;
+
+  it("pushesToBucket: s3 / r2 with a bucket, nothing else", () => {
+    expect(pushesToBucket({ destination_type: "s3", bucket: "b" })).toBe(true);
+    expect(pushesToBucket({ destination_type: "r2", bucket: " b " })).toBe(true);
+    expect(pushesToBucket({ destination_type: "webhook", bucket: "plant-backups" })).toBe(false);
+    expect(pushesToBucket({ destination_type: "s3", bucket: "  " })).toBe(false);
+    expect(pushesToBucket({ destination_type: "s3", bucket: null })).toBe(false);
+    expect(pushesToBucket({ destination_type: null, bucket: "b" })).toBe(false);
+  });
+
+  it("the reviewer's sequence, flag ON: off plan, convert and enable (200) → that night the sweep pushes it and does NOT disable it → Run Now 200", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    await converted();
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ destinationId: "dest-1", ok: true });
+    expect(JSON.stringify(body.results[0])).not.toMatch(planWords);
+    expect(state.delivered).toHaveLength(1);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: true, last_run_status: "succeeded", last_run_error: null });
+    expect(rowsOf("export_runs")).toEqual([expect.objectContaining({ status: "succeeded", destination_type: "webhook" })]);
+    const res = await runNow();
+    expect(res.status).toBe(200);
+    expect(state.delivered).toHaveLength(2);
+  });
+
+  it("flag OFF (today): the converted webhook's push carries no misleading 'plan gate would skip' notice — not on the sweep result, the run row or the log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await converted();
+      const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+      expect(body.results[0]).toMatchObject({ ok: true });
+      expect(JSON.stringify(body.results[0])).not.toMatch(planWords);
+      expect(JSON.stringify(rowsOf("export_runs")[0].diagnostics)).not.toMatch(planWords);
+      expect(warn.mock.calls.flat().join("\n")).not.toMatch(planWords);
+      expect((await runNow()).status).toBe(200);
+    } finally { warn.mockRestore(); }
+  });
+
+  it("flag ON: a converted webhook skipped for a lapsed SUBSCRIPTION (that limb holds every destination) is skipped, but not disabled — it pushes to no bucket", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    await converted();
+    db.rows.orgs[0].subscription_status = "canceled";
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/subscription inactive/) });
+    expect(body.results[0].error).not.toMatch(/the destination was disabled/);
+    expect(state.delivered).toEqual([]);
+    expect(rowsOf("export_destinations")[0].enabled).toBe(true);
+  });
+
+  it("the other direction: a real s3 row (with its bucket) off plan is gated as before — flag ON: skipped and disabled by the sweep, Run Now 402; r2 the same", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    offPlan();
+    for (const extra of [{}, { destination_type: "r2", endpoint: "https://acct.r2.cloudflarestorage.com", region: "auto" }]) {
+      db.rows.export_destinations = [disabledBucket({ enabled: true, ...extra })];
+      db.rows.export_runs = [];
+      state.delivered = [];
+      const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+      expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/plan no longer includes cloud bucket destinations.*the destination was disabled/) });
+      expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, last_run_status: "failed" });
+      expect(rowsOf("export_runs")[0]).toMatchObject({ status: "cancelled" });
+      const res = await runNow();
+      expect(res.status).toBe(402);
+      expect(((await res.json()) as { error: string }).error).toMatch(/require the Growth plan/);
+      expect(state.delivered).toEqual([]);
+    }
+  });
+
+  it("…flag OFF: the s3 row runs, with the would-be-skip notice, as today; and turning the converted webhook back into a bucket push off plan is 402", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      offPlan();
+      db.rows.export_destinations = [disabledBucket({ enabled: true })];
+      const body = (await (await sweep()).json()) as { results: Array<{ ok: boolean; warnings?: string[] }> };
+      expect(body.results[0].ok).toBe(true);
+      expect(body.results[0].warnings).toEqual(expect.arrayContaining([expect.stringMatching(/^plan gate would skip this run \(SUBSCRIPTION_ENFORCE off\)/)]));
+      expect(rowsOf("export_destinations")[0].enabled).toBe(true);
+      expect((await runNow()).status).toBe(200);
+    } finally { warn.mockRestore(); }
+    // back: the converted webhook, turned into an s3 push again and enabled
+    await converted();
+    Object.assign(db.rows.export_destinations[0], { enabled: false });
+    const res = await save({ ...editFormBody(db.rows.export_destinations[0]), destination_type: "s3", enabled: true });
+    expect(res.status).toBe(402);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", enabled: false });
+  });
+
+  it("the routes share the one predicate", () => {
+    for (const route of ["run", "run-scheduled", "destinations/[id]"]) {
+      const src = readFileSync(join(process.cwd(), "app", "api", "data-export", ...route.split("/"), "route.ts"), "utf8");
+      expect(src, route).toMatch(/pushesToBucket\(/);
+    }
+    const sweepSrc = readFileSync(join(process.cwd(), "app", "api", "data-export", "run-scheduled", "route.ts"), "utf8");
+    expect(sweepSrc).toMatch(/scheduledRunGate\(sb, \{ \.\.\.dest, bucket: pushesToBucket\(dest\) \? dest\.bucket : null \}, enforceBilling\)/);
+    expect(sweepSrc).not.toMatch(/!!dest\.bucket/);
   });
 });

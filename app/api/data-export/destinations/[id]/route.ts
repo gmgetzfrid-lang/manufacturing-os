@@ -41,7 +41,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret } from "@/lib/serverCrypto";
-import { computeNextRunAt, destinationCredentialGap, S3_DEFAULT_REGION } from "@/lib/exportRunner";
+import { computeNextRunAt, destinationCredentialGap, pushesToBucket, S3_DEFAULT_REGION } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
@@ -69,8 +69,6 @@ const TARGET_FIELDS = ["destination_type", "endpoint", "bucket", "prefix", "webh
 /** The store a bucket push lands in (lib/exportRunner.ts buildS3ClientFromDestination and s3Put):
  *  changing one of these on a row that pushes to a bucket is the plan-gated act (XEDGE-8). */
 const BUCKET_STORE_FIELDS = ["destination_type", "endpoint", "region", "bucket"] as const;
-/** The destination types that push to a bucket (lib/exportRunner.ts). */
-const BUCKET_TYPES: ReadonlySet<string> = new Set(["s3", "r2"]);
 
 const given = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
 const norm = (v: unknown): string => String(v ?? "").trim();
@@ -139,7 +137,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const nextBucket = norm("bucket" in body ? body.bucket : current.bucket);
   const bucketChanged = "bucket" in body && !!norm(body.bucket) && norm(body.bucket) !== norm(current.bucket);
   const storeMoved = BUCKET_STORE_FIELDS.some((f) => f in body && storeValue(f, body[f]) !== storeValue(f, current[f]));
-  const bucketGated = bucketChanged || (storeMoved && BUCKET_TYPES.has(nextType) && !!nextBucket);
+  // A row that pushes to a bucket after this save: s3 / r2 with a bucket
+  // (lib/exportRunner.ts pushesToBucket — the rule Run Now and the sweep
+  // apply too, A&O P3 fix pass 8).
+  const bucketPushAfter = pushesToBucket({ destination_type: nextType, bucket: nextBucket });
+  const bucketGated = bucketChanged || (storeMoved && bucketPushAfter);
   if (bucketGated) {
     const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
     if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
@@ -169,7 +171,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // bucket after this save — s3 / r2 with a bucket: a row converted to a
     // webhook and enabled in the same save is not one, though the edit form
     // still sends its old bucket name (A&O P3 fix pass 7).
-    if (BUCKET_TYPES.has(nextType) && nextBucket && !bucketGated) {
+    if (bucketPushAfter && !bucketGated) {
       const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
       if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
     }

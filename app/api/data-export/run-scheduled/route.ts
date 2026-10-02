@@ -54,7 +54,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, pushesToBucket, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote as unconfirmedNoteFor } from "@/lib/exportAlerts";
 
@@ -170,7 +170,13 @@ async function handler(req: NextRequest) {
     // continue; the clock was already advanced by the claim above. Both
     // record writes are CHECKED: a failure is logged and named on the sweep
     // result, so a night with no run row is never a silent gap.
-    const gate = await scheduledRunGate(sb, dest, enforceBilling);
+    // BILL-3 Done-when 3 (A&O P3 fix pass 8): the gate's plan limb tests
+    // `bucket`; it is handed one only for a row that pushes to a bucket — s3 /
+    // r2 with a bucket (pushesToBucket, Run Now's rule) — so a webhook still
+    // carrying the bucket name it had before it was converted is neither
+    // refused (under the flag) nor noticed as "plan gate would skip" (without
+    // it). lib/exportEntitlement.ts itself is not edited.
+    const gate = await scheduledRunGate(sb, { ...dest, bucket: pushesToBucket(dest) ? dest.bucket : null }, enforceBilling);
     for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
     const refusal = gate.ok ? null : gate.reason;
     if (refusal) {
@@ -181,8 +187,10 @@ async function handler(req: NextRequest) {
       // subscription — under the flag, the only time it refuses on billing
       // grounds) and the plan, read again, no longer includes buckets. A skip
       // for a departed configurer, or for an unreadable workspace row, never
-      // disables, whatever the plan.
-      const planLapsed = !gate.ok && enforceBilling && !!dest.bucket && refusedOnBillingLimb(gate.reason)
+      // disables, whatever the plan. Only a row that pushes to a bucket (s3 /
+      // r2 with a bucket — A&O P3 fix pass 8: was any row with a bucket name,
+      // so a converted webhook was disabled for a feature it does not use).
+      const planLapsed = !gate.ok && enforceBilling && pushesToBucket(dest) && refusedOnBillingLimb(gate.reason)
         && await planNoLongerIncludesBuckets(sb, dest.org_id);
       const skipMsg = `skipped: ${refusal}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
       const unrecorded: string[] = [];

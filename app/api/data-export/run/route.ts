@@ -23,7 +23,10 @@
 // BILL-3 Done-when 3: a bucket destination is the Growth feature. Under
 // SUBSCRIPTION_ENFORCE (the rule the scheduled sweep follows, DEC-18) Run Now
 // passes the plan gate creating or enabling one does (402), so a destination
-// the sweep disabled for a lapsed plan cannot be pushed by hand instead.
+// the sweep disabled for a lapsed plan cannot be pushed by hand instead. A
+// bucket destination is one that pushes to a bucket — s3 / r2 with a bucket
+// (lib/exportRunner.ts pushesToBucket, the sweep's rule too), never a webhook
+// that still carries the bucket name it had before it was converted.
 //
 // The rate-limit count and the run row are read and written CHECKED: a run
 // that cannot be counted, or whose run row is refused, is refused (503)
@@ -48,7 +51,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
-import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, pushesToBucket, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote } from "@/lib/exportAlerts";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
@@ -122,9 +125,11 @@ export async function POST(req: NextRequest) {
       { requireWebhookSecret: row.enabled !== true, then: "run it again" },
     );
     if (gap) return NextResponse.json({ error: gap }, { status: 409 });
-    // BILL-3 Done-when 3: the plan gate, behind the sweep's flag (DEC-18).
-    const bucket = row.destination_type === "s3" || row.destination_type === "r2" || !!String(row.bucket ?? "").trim();
-    if (bucket && process.env.SUBSCRIPTION_ENFORCE === "true") {
+    // BILL-3 Done-when 3: the plan gate, behind the sweep's flag (DEC-18),
+    // for a row that pushes to a bucket — s3 / r2 with a bucket, the sweep's
+    // own rule (A&O P3 fix pass 8: a webhook carrying a leftover bucket name
+    // was gated here, 402, though it pushes to no bucket).
+    if (pushesToBucket(row) && process.env.SUBSCRIPTION_ENFORCE === "true") {
       const plan = await assertCloudBucketEntitlement(auth.admin, orgId);
       if (plan) return NextResponse.json({ error: plan.error }, { status: plan.status });
     }

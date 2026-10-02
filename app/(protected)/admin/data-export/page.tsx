@@ -522,19 +522,35 @@ function RunRow({ run }: { run: Run }) {
  *  (retention_deleted / retention_failed, migration 20261172); a run closed
  *  before that paste has none, and its retention step in the trace is read
  *  instead, as before. A purge that stopped with nothing failed (refused for
- *  a missing prefix) is still a failure: its trace step says so. */
+ *  a missing prefix) is still a failure: its trace step says so. The row's
+ *  counts lead; what only the trace holds follows them — how many objects
+ *  the purge scanned, and why it stopped (A&O P3 fix pass 8: the counts had
+ *  replaced that detail). */
 function retentionOf(run: Run): { detail: string; failed: boolean } | null {
   const steps = (run.diagnostics ?? []).filter((d) => d?.step === "s3:retention:done" || d?.step === "s3:retention:err");
   const last = steps[steps.length - 1];
   if (typeof run.retention_deleted === "number") {
     const notDeleted = typeof run.retention_failed === "number" ? run.retention_failed : 0;
+    const trace = retentionTrace(last?.detail);
     return {
-      detail: `deleted ${run.retention_deleted} archive(s)` + (notDeleted > 0 ? `, ${notDeleted} could not be deleted` : ""),
+      detail: `deleted ${run.retention_deleted} archive(s)` + (notDeleted > 0 ? `, ${notDeleted} could not be deleted` : "") +
+        (trace.scanned != null ? ` (scanned ${trace.scanned})` : "") + (trace.reason ? ` — ${trace.reason}` : ""),
       failed: notDeleted > 0 || last?.step === "s3:retention:err",
     };
   }
   if (!last) return null;
   return { detail: last.detail || (last.step === "s3:retention:err" ? "the purge failed" : "done"), failed: last.step === "s3:retention:err" };
+}
+
+/** The detail a retention trace step holds beyond the row's counts
+ *  (lib/exportRunner.ts writes "scanned N, deleted D app archive(s)[, F
+ *  could not be deleted][ — why it stopped]", or only why, when the purge
+ *  threw before it scanned). */
+function retentionTrace(detail: string | undefined): { scanned: number | null; reason: string | null } {
+  if (!detail) return { scanned: null, reason: null };
+  const m = /^scanned (\d+), deleted \d+ app archive\(s\)(?:, \d+ could not be deleted)?(?: — ([\s\S]+))?$/.exec(detail);
+  if (m) return { scanned: Number(m[1]), reason: m[2] ?? null };
+  return { scanned: null, reason: detail };
 }
 
 // ─── Destination create/edit modal ────────────────────────────────────────
