@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { normalizeEmail } from '@/lib/identity';
+import { resolveSignInNext, signInDestination, stashSignInNext } from '@/lib/signInNext';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
@@ -54,6 +55,13 @@ export default function LoginPage() {
   );
   const [autoMicrosoftDisabled, setAutoMicrosoftDisabled] = useState(false);
   const autoMicrosoft = autoMicrosoftStored && !autoMicrosoftDisabled;
+  // Where a successful sign-in lands (PHYS-14): the `next` this page was
+  // opened with — a scanned equipment label sends `/?next=/assets/<tag>` —
+  // or the one carried across a Microsoft round trip, honoured only as a
+  // same-origin relative path; otherwise /dashboard, as before
+  // (lib/signInNext.ts). Read once, on load (the effect below); undefined
+  // until then.
+  const nextRef = useRef<string | null | undefined>(undefined);
 
   // Forward an authenticated user into the app. Membership resolution is
   // OWNED BY RoleProvider — this page used to run its own copy of the
@@ -88,7 +96,7 @@ export default function LoginPage() {
       /* non-fatal */
     }
 
-    router.replace("/dashboard");
+    router.replace(signInDestination(nextRef.current));
   }, [router]);
 
   // Kick off the Microsoft OAuth redirect. `silent` adds prompt=none so an
@@ -96,6 +104,9 @@ export default function LoginPage() {
   // caller falls back to the normal login screen.
   const startMicrosoft = useCallback(async (opts: { silent: boolean; remember: boolean }) => {
     setRememberSession(opts.remember);
+    // The provider brings the browser back as a new load of `/` (redirectTo
+    // unchanged), so `next` crosses the round trip in this tab's storage.
+    stashSignInNext(nextRef.current);
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: "azure",
       options: {
@@ -107,6 +118,7 @@ export default function LoginPage() {
     // On success the browser navigates away; we only reach here if the flow
     // couldn't even start.
     if (oauthError) {
+      stashSignInNext(null);
       if (opts.silent) {
         setView("login");
       } else {
@@ -129,9 +141,14 @@ export default function LoginPage() {
     const errorCode = sp.get("error");
     const errorDesc = sp.get("error_description") || sp.get("error");
     const hasOAuthResponse = params.includes("code=") || hash.includes("access_token");
+    // Once per page load (a re-run of this effect keeps the first answer —
+    // the carried `next` is consumed when read).
+    if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params);
 
     const cleanUrl = () => {
-      try { window.history.replaceState({}, "", "/"); } catch { /* ignore */ }
+      // Keep a safe `next` in the address so a reload still returns to it.
+      const clean = nextRef.current ? `/?next=${encodeURIComponent(nextRef.current)}` : "/";
+      try { window.history.replaceState({}, "", clean); } catch { /* ignore */ }
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -214,7 +231,7 @@ export default function LoginPage() {
       setError(msg);
       setLoading(false);
     } else {
-      router.push('/dashboard');
+      router.push(signInDestination(nextRef.current));
     }
   };
 
