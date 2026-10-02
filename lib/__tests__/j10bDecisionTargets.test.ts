@@ -12,8 +12,9 @@
 // cancel, the PDF opener), so a new write button with any handler name
 // fails here. The first pass matched writers by a list of known handler
 // names, and a writer named anything else went uncounted. Final review: the
-// Documents tab's register (attach, detach) and transition-in panel (adopt,
-// flag to drafting) start writes too, and joined the census.
+// Documents tab's register (attach, detach) and the Intake tab's
+// transition-in panel (adopt, flag to drafting) start writes too, and joined
+// the census.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
