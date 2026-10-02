@@ -110,6 +110,8 @@ The trigger-maintained `jsonb_sync` rows keep flowing for every member who edits
 
 **Scope / residual.** Handed to I-14: Connect (and the shape wizard's link writer) shown only to the registry writer tier. Pending migration: `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`. Members outside the writer tier lose writing manual links and deleting any link; the paste's inventory counts them.
 
+**Fix pass (2026-10-02, review).** A writer's manual link onto a pair the drawing already relates is refused 23505 (the 'drawing' row holds the pair, and a person cannot write it); a later Dismiss of the drawing's reading then took the person's intended link with it. `POST /api/equipment-bridge` `action "adopt"` (`adoptDrawingRelation`; workspace-checked, writer tier, the caller must read the document, the asset must be in the workspace) makes that row the person's — source `manual`, `asserted_by` human, their uid, the sheet kept — and audits `EQUIPMENT_BRIDGE_RELATION_ADOPTED`; Dismiss and the vanished review never remove a manual row. The registry drawer's Link (`app/(protected)/admin/assets/page.tsx`) calls it on 23505. Also handed to I-14: the graph's Connect and `components/graph/GraphShapeWizard.tsx` treat 23505 as "already linked" and should call the same action. A person's `asset_tags` link on such a pair is kept by the Bridge itself (`GAP-302`'s fix pass). Done-when 3 is unchanged: a person still cannot delete or rewrite a 'drawing' row from the client (scratch PG16 case F5).
+
 ---
 
 <a id="area-3"></a>

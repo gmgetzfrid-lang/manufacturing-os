@@ -1874,6 +1874,23 @@ function AssetEditDrawer({
       tag_text: asset.tag, source: "manual",
     });
     if (e && e.code !== "23505") { setError(e.message); return; }
+    if (e) {
+      // 23505: the pair is already linked. When the equipment sweep read it
+      // off the drawing (a 'drawing' row a person cannot write), the link
+      // becomes this person's — otherwise a later Dismiss of the drawing's
+      // reading would take the person's link with it (GAP-302).
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/equipment-bridge", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "adopt", orgId, documentId, assetId: asset.id }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(json.error ?? `The link could not be made yours (HTTP ${res.status}).`); return; }
+        if (json.auditError) setError(String(json.auditError));
+      } catch (err) { setError((err as Error).message); return; }
+    }
     setDocPickerOpen(false);
     refreshDocs();
   };

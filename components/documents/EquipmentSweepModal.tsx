@@ -188,6 +188,8 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
     const failedTags = sum("failed");
     if (failedTags) parts.push(`${failedTags} tag${failedTags === 1 ? "" : "s"} could not be created`);
     if (unreadableSkipped) parts.push(`${unreadableSkipped} document${unreadableSkipped === 1 ? "" : "s"} skipped — you cannot read them`);
+    const notFound = results.filter((r) => r.skipped === "not_found").length;
+    if (notFound) parts.push(`${notFound} document${notFound === 1 ? "" : "s"} not found in this workspace`);
     return parts.length ? parts.join(" · ") : null;
   };
 
@@ -227,7 +229,9 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       const json = await post({ action: "dismiss", documentId, tags });
       setPicked((p) => ({ ...p, [documentId]: new Set() }));
       setNotice(`${(json.dismissed as string[] | undefined)?.length ?? 0} tag(s) dismissed — never applied again; a later revision that brings one back proposes it again.` +
-        (json.remembered === false ? " (This database cannot remember dismissals across a re-sweep yet — migration 20261171.)" : ""));
+        (json.remembered === false ? " (This database cannot remember dismissals across a re-sweep yet — migration 20261171.)" : "") +
+        (Number(json.keptAsPersonsLink ?? 0) > 0 ? ` ${json.keptAsPersonsLink} link(s) stay, because the document's own equipment tags name them.` : ""));
+      if (json.auditError) setError(String(json.auditError));
       await refresh();
       onApplied();
     } catch (e) { setError((e as Error).message); }
@@ -237,7 +241,9 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
   const reviewVanished = async (documentId: string, tag: string, decision: "remove" | "keep") => {
     setApplying(documentId); setError(null);
     try {
-      await post({ action: "vanished", documentId, tags: [tag], decision });
+      const json = await post({ action: "vanished", documentId, tags: [tag], decision });
+      if (json.auditError) setError(String(json.auditError));
+      else if (Number(json.keptAsPersonsLink ?? 0) > 0) setNotice("The drawing's link was removed; the link stays, because the document's own equipment tags name it.");
       await refresh();
       onApplied();
     } catch (e) { setError((e as Error).message); }

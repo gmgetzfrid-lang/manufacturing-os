@@ -36,7 +36,11 @@
 --      longer the document's current one). Both written by the Bridge only;
 --      a person clears them through its review actions, each recorded in
 --      audit_logs (a correction is a row, never an overwrite of the machine
---      row's provenance).
+--      row's provenance). presence_confirmed_on is the revision
+--      (source_version_id) on which a person answered "It is still there":
+--      the Bridge does not mark that row vanished again on that revision
+--      (a later revision may). Written by the service role on the person's
+--      recorded decision.
 --   3. BR-9 / BR-5 / BR-14 — document_equipment_suggestions.dismissed (the
 --      tags a person rejected, with who, when and on which revision — never
 --      re-applied; re-proposed only when a later revision brings the tag
@@ -91,6 +95,7 @@ ALTER TABLE document_assets ADD COLUMN IF NOT EXISTS source_version_id UUID;
 -- ── 2. GAP-309: revision truth ─────────────────────────────────────────────
 ALTER TABLE document_assets ADD COLUMN IF NOT EXISTS vanished_at TIMESTAMPTZ;
 ALTER TABLE document_assets ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+ALTER TABLE document_assets ADD COLUMN IF NOT EXISTS presence_confirmed_on UUID;
 
 ALTER TABLE document_assets DROP CONSTRAINT IF EXISTS document_assets_asserted_by_check;
 ALTER TABLE document_assets ADD CONSTRAINT document_assets_asserted_by_check
@@ -157,10 +162,10 @@ SELECT 'document_assets carries provenance: asserted_by (NOT NULL), asserted_by_
                       AND column_name = 'asserted_by' AND is_nullable = 'NO') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'document_assets carries revision truth: vanished_at, superseded_at (GAP-309)',
-       (SELECT COUNT(*) = 2 FROM information_schema.columns
+SELECT 'document_assets carries revision truth: vanished_at, superseded_at, presence_confirmed_on (GAP-309)',
+       (SELECT COUNT(*) = 3 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'document_assets'
-           AND column_name IN ('vanished_at', 'superseded_at')),
+           AND column_name IN ('vanished_at', 'superseded_at', 'presence_confirmed_on')),
        NULL
 UNION ALL
 SELECT 'asserted_by is machine or human; a drawing row is always machine (validated)',

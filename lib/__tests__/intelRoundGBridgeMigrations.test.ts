@@ -88,9 +88,22 @@ describe("20261170 — GAP-302: the vocabulary and where on the document", () =>
   it("the CHECK admits drawing, re-added NOT VALID and validated only when nothing violates it", () => {
     expect(m70).toMatch(/ADD CONSTRAINT document_assets_source_check\s+CHECK \(source IN \('jsonb_sync', 'manual', 'drawing'\)\) NOT VALID;/);
     expect(m70).toMatch(/IF NOT EXISTS \(SELECT 1 FROM document_assets\s+WHERE source IS NULL OR source NOT IN \('jsonb_sync', 'manual', 'drawing'\)\) THEN\s+ALTER TABLE document_assets VALIDATE CONSTRAINT document_assets_source_check;/);
-    // Whatever CHECK constrains source today is dropped first (20260609 named it inline).
+    // The vocabulary CHECK is dropped first (20260609 named it inline).
     expect(m70).toMatch(/pg_get_constraintdef\(oid\) LIKE '%source%'/);
     expect(read("20260609_phase1_normalization.sql")).toMatch(/source\s+TEXT NOT NULL DEFAULT 'jsonb_sync' CHECK \(source IN \('jsonb_sync','manual'\)\)/);
+  });
+  it("a re-paste after 20261171 drops ONLY the vocabulary CHECK — document_assets_drawing_is_machine survives (fix pass: the loop matched every CHECK mentioning source)", () => {
+    expect(m70).toMatch(/AND \(conname = 'document_assets_source_check'\s+OR \(pg_get_constraintdef\(oid\) LIKE '%source%'\s+AND pg_get_constraintdef\(oid\) LIKE '%jsonb_sync%'\)\) LOOP/);
+    // The loop's predicate over the three CHECKs as PG16 deparses them
+    // (verified on a scratch PG16 cluster after 20261170 then 20261171).
+    const like = (s: string, pat: string) => new RegExp(`^${pat.split("%").map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "s").test(s);
+    const dropped = (name: string, def: string) => name === "document_assets_source_check" || (like(def, "%source%") && like(def, "%jsonb_sync%"));
+    expect(dropped("document_assets_source_check", "CHECK ((source = ANY (ARRAY['jsonb_sync'::text, 'manual'::text, 'drawing'::text])))")).toBe(true);
+    expect(dropped("document_assets_source_check_legacy", "CHECK ((source = ANY (ARRAY['jsonb_sync'::text, 'manual'::text])))")).toBe(true);
+    expect(dropped("document_assets_drawing_is_machine", "CHECK (((source <> 'drawing'::text) OR (asserted_by = 'machine'::text)))")).toBe(false);
+    expect(dropped("document_assets_asserted_by_check", "CHECK ((asserted_by = ANY (ARRAY['machine'::text, 'human'::text])))")).toBe(false);
+    // …and the probe counts the vocabulary CHECK only.
+    expect(m70).toMatch(/AND pg_get_constraintdef\(oid\) LIKE '%source%'\s+AND pg_get_constraintdef\(oid\) LIKE '%jsonb_sync%'\) = 1 AS ok,/);
   });
   it("sheet_label and pages, nullable", () => {
     expect(m70).toMatch(/ADD COLUMN IF NOT EXISTS sheet_label TEXT;/);
@@ -200,7 +213,10 @@ describe("20261171 — the paste contract and provenance", () => {
     for (const c of [
       "asserted_by TEXT NOT NULL DEFAULT 'human'", "asserted_by_user UUID", "model TEXT", "source_revision TEXT",
       "source_version_id UUID", "vanished_at TIMESTAMPTZ", "superseded_at TIMESTAMPTZ",
+      // GAP-309 fix pass: "It is still there" is remembered for its revision.
+      "presence_confirmed_on UUID",
     ]) expect(m71).toContain(`ADD COLUMN IF NOT EXISTS ${c};`);
+    expect(m71).toMatch(/column_name IN \('vanished_at', 'superseded_at', 'presence_confirmed_on'\)/);
     expect(m71).toMatch(/CHECK \(asserted_by IN \('machine', 'human'\)\);/);
     const backfill = m71.indexOf("UPDATE document_assets SET asserted_by = 'machine' WHERE source = 'drawing'");
     const rule = m71.indexOf("CHECK (source <> 'drawing' OR asserted_by = 'machine') NOT VALID;");

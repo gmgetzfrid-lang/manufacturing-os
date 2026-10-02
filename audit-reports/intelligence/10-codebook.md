@@ -89,7 +89,7 @@ lib/equipmentBridgeServer.ts:96-100 — `for (const cand of numberCandidates) { 
 ## CB-2 · Any active org member can write or delete the Bridge's proposal and applied ledger
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** intelligence I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:108-111`, `lib/equipmentBridgeServer.ts:175-180`, `lib/equipmentBridgeServer.ts:278-285`
@@ -124,16 +124,16 @@ supabase/migrations/20260928_site_codebook.sql:108-111 — `CREATE POLICY doc_eq
 
 **Scope / residual.** Limb 2 is handed to I-11 (`lib/equipmentBridgeServer.ts`). A runtime refusal test waits for a database in the test suite.
 
-**Resolution (2026-10-02, intelligence Round G).** The two limbs handed to I-11 by the 2026-09-30 partial:
+**Partial (2026-10-02, intelligence Round G).** The two limbs handed to I-11 by the 2026-09-30 partial (first recorded as a Resolution; restated as a Partial in the review-fix pass because done-when 3 is not met as written):
 - **Re-derived, never trusted.** `applyForDocument` no longer reads `unitCode` or `code` from the stored `suggested` payload. The unit is the stored proposal's unit only when the Site Codebook holds it (`heldUnit`); an unknown one is dropped. The code is always re-derived from the tag and that unit through the codebook (`tagToCode`). A forged code or an unknown unit on the row is never written to an asset.
 - **The runtime refusal.** Exercised on a scratch PostgreSQL 16 with 20261128's ledger policy verbatim: a Viewer's direct INSERT into `document_equipment_suggestions` (a forged `suggested` with `unitCode` 99 and `code` 9999.1) is refused; a controller's lands. Recorded with 20261170's cases (`GAP-302`'s record, case 11).
 
 **Done-when.**
 1. ✓ (2026-09-30) Write restricted to the controller tier by collection, plus the service role (20261128).
 2. ✓ `applyForDocument` re-derives `code` from tag and held unit (`lib/__tests__/equipmentBridge.test.ts` "CB-2: a forged code and an unknown unit on the stored proposal are never written — re-derived from tag + a held unit").
-3. ✓ A Viewer's direct write is refused at runtime: the scratch PostgreSQL 16 case above, plus the static policy census in `lib/__tests__/intelRoundGRegistry.test.ts`. The vitest suite runs no database, so the runtime case is recorded here, not in a repo test.
+3. Not met as written. The done-when asks for a test; no repo test refuses a Viewer's write at runtime, because the vitest suite runs no database. What exists: the static policy census in `lib/__tests__/intelRoundGRegistry.test.ts` (the only write policy is controller-only and nothing later re-opens it) and the scratch PostgreSQL 16 case above (a Viewer's INSERT refused, a controller's landing), which is a manual run, not a test.
 
-**Scope / residual.** Pending migration (unchanged): `supabase/migrations/20261128_intel_roundG_registry_authority.sql`. Limb 2 holds without it.
+**Scope / residual.** Pending migration (unchanged): `supabase/migrations/20261128_intel_roundG_registry_authority.sql`. Limb 2 holds without it. Stays OPEN for limb 3: an in-suite runtime refusal test needs a database in the test suite, which no package in this round provides.
 
 ---
 

@@ -19,6 +19,10 @@
 //   POST { action:"vanished", orgId, documentId, tags, decision }
 //                                  → a person reviews relations the current
 //                                    revision no longer carries (GAP-309)
+//   POST { action:"adopt", orgId, documentId, assetId }
+//                                  → a person links a pair the drawing
+//                                    already relates (their Link was refused
+//                                    23505): the row becomes the person's
 //   POST { action:"coverage", orgId, unitCode? }
 //                                  → the coverage report (GAP-308)
 //   POST { action:"discover", orgId, knowledgeDocumentId, tags }
@@ -32,23 +36,30 @@
 //
 // Writer roles only (Admin / DocCtrl / Manager / Supervisor, by the role
 // collection — ADD-1) — the bridge writes documents and the registry. BR-1:
-// every action that reads or writes a document evaluates the caller's ACL on
-// it first (lib/knowledgeAccess loadPrincipal + readableControlledDocIds —
-// the same engine as the ask and drawing routes). A document the caller
-// cannot read is skipped and counted, never computed, applied or listed
-// (decision: skip and report, never widen). The page shows the sweep only to
-// the controller tier (isController); the API admits the registry writer
-// tier, deliberately — the registry's own write tier (DEC-53) — and the ACL
-// check is what keeps a Manager off a library they cannot read.
+// every action that reads or writes a document first confirms the document
+// is in the caller's workspace (the ACL engine evaluates a document's chain,
+// not its org — a foreign id is refused here, 404), then evaluates the
+// caller's ACL on it (lib/knowledgeAccess loadPrincipal +
+// readableControlledDocIds — the same engine as the ask and drawing routes).
+// A document the caller cannot read is skipped and counted, never computed,
+// applied or listed (decision: skip and report, never widen). The library's
+// configuration (GET's mapping, settings) is read and written only for a
+// library of the caller's workspace that the caller can read. The page shows
+// the sweep only to the controller tier (isController); the API admits the
+// registry writer tier, deliberately — the registry's own write tier
+// (DEC-53) — and the ACL check is what keeps a Manager off a library they
+// cannot read.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   computeForDocument, applyForDocument, dismissForDocument, reviewVanished, discoverFromKnowledge,
-  loadBridgeConfig, type BridgeConfig, type ComputeReason,
+  adoptDrawingRelation, loadBridgeConfig, type BridgeConfig, type ComputeReason,
 } from "@/lib/equipmentBridgeServer";
 import { memberHoldsAny } from "@/lib/roleHeld";
-import { loadPrincipal, readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
+import {
+  loadPrincipal, readableControlledDocIds, loadDcLandscape, containerReadable, type KnowledgePrincipal,
+} from "@/lib/knowledgeAccess";
 import { loadCoverage } from "@/lib/bridgeCoverage";
 
 export const runtime = "nodejs";
@@ -88,6 +99,38 @@ async function readableOf(principal: KnowledgePrincipal, ids: string[]): Promise
   catch { return new Set(); }
 }
 
+/** BR-1: the subset of these ids that are documents of THIS workspace. The
+ *  ACL engine evaluates a document's chain, not its org (a controller reads
+ *  every id it is given), so a caller-supplied id is checked here first. */
+async function inOrgDocIds(orgId: string, ids: string[]): Promise<{ ids: Set<string>; error: string | null }> {
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabaseAdmin.from("documents").select("id")
+      .eq("org_id", orgId).in("id", ids.slice(i, i + 100));
+    if (error) return { ids: new Set(), error: error.message };
+    for (const d of (data ?? []) as Array<{ id: string }>) out.add(String(d.id));
+  }
+  return { ids: out, error: null };
+}
+
+/** BR-1: the library is this workspace's (404 otherwise) and the caller can
+ *  read it (403 otherwise) — its configuration names columns and people. */
+async function libraryGate(orgId: string, libraryId: string, principal: KnowledgePrincipal): Promise<
+  { lib: { id: string; equipment_bridge?: unknown; custom_columns?: unknown } } | NextResponse
+> {
+  const { data: lib, error } = await supabaseAdmin.from("libraries").select("id, equipment_bridge, custom_columns")
+    .eq("id", libraryId).eq("org_id", orgId).maybeSingle();
+  if (error) return bad(error.message, 500);
+  if (!lib) return bad("No such library in this workspace", 404);
+  if (!principal.isController) {
+    let readable = false;
+    try { readable = containerReadable("library", libraryId, principal, await loadDcLandscape(orgId)); }
+    catch { readable = false; } // fails closed
+    if (!readable) return bad("You cannot read this library, so you cannot see or change its equipment sweep.", 403);
+  }
+  return { lib: lib as { id: string; equipment_bridge?: unknown; custom_columns?: unknown } };
+}
+
 /** The library's live documents, in id order, from `after` (keyset). */
 async function libraryDocIds(orgId: string, libraryId: string, after: string | null, limit: number): Promise<{ ids: string[]; error: string | null }> {
   let q = supabaseAdmin.from("documents").select("id")
@@ -105,8 +148,12 @@ export async function GET(req: NextRequest) {
   if (!orgId || !libraryId) return bad("orgId and libraryId required");
   const auth = await authWriter(req, orgId);
   if (auth instanceof NextResponse) return auth;
+  const gate = await libraryGate(orgId, libraryId, auth.principal);
+  if (gate instanceof NextResponse) return gate;
 
-  // Every live document of the library, paged to the end (BR-11).
+  // Every live document of the library, paged to the end (BR-11) — the end
+  // is an EMPTY page: PostgREST cuts a response at its max-rows without an
+  // error, so a short page is not proof of the end.
   const docList: Array<{ id: string; document_number: string | null; title: string | null; name: string | null }> = [];
   for (let after: string | null = null; ;) {
     let q = supabaseAdmin.from("documents").select("id, document_number, title, name")
@@ -117,7 +164,7 @@ export async function GET(req: NextRequest) {
     if (error) return bad(error.message, 500);
     const batch = (data ?? []) as typeof docList;
     docList.push(...batch);
-    if (batch.length < 1000) break;
+    if (batch.length === 0) break;
     after = batch[batch.length - 1].id;
   }
   const readable = await readableOf(auth.principal, docList.map((d) => d.id));
@@ -161,8 +208,7 @@ export async function GET(req: NextRequest) {
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId).is("source_document_id", null).eq("status", "ready");
 
-  const { data: lib } = await supabaseAdmin
-    .from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).maybeSingle();
+  const lib = gate.lib;
 
   return NextResponse.json({
     suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "—" })),
@@ -188,9 +234,8 @@ export async function POST(req: NextRequest) {
   if (action === "settings") {
     const libraryId = String(body.libraryId ?? "");
     if (!libraryId) return bad("libraryId required");
-    const { data: lib, error: libErr } = await supabaseAdmin.from("libraries").select("id").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
-    if (libErr) return bad(libErr.message, 500);
-    if (!lib) return bad("No such library in this workspace", 404);
+    const gate = await libraryGate(orgId, libraryId, auth.principal);
+    if (gate instanceof NextResponse) return gate;
     const prior = await loadBridgeConfig(supabaseAdmin, libraryId);
     const autoApply = body.autoApply === true;
     const cfg: BridgeConfig = {
@@ -232,7 +277,10 @@ export async function POST(req: NextRequest) {
         counts[r.reason]++;
       } catch { counts.failed++; /* per-doc failures never sink the sweep */ }
     }
-    const done = !stoppedEarly && page.ids.length < SWEEP_PAGE;
+    // Done only on an EMPTY page: a page PostgREST cut at its max-rows (no
+    // error) is short without being the end, so a short page hands back its
+    // last id and the next call finds out.
+    const done = !stoppedEarly && page.ids.length === 0;
     return NextResponse.json({
       ok: true,
       computed: counts.computed + counts.no_entities,
@@ -247,10 +295,18 @@ export async function POST(req: NextRequest) {
     if (documentIds.length === 0) return bad("documentIds required");
     const tags = Array.isArray(body.tags) ? body.tags.map(String) : undefined;
     const slice = documentIds.slice(0, 500);
-    const readable = await readableOf(auth.principal, slice);
+    const inOrg = await inOrgDocIds(orgId, slice);
+    if (inOrg.error) return bad(inOrg.error, 500);
+    const readable = await readableOf(auth.principal, slice.filter((d) => inOrg.ids.has(d)));
     const results: Array<Record<string, unknown>> = [];
     let unreadable = 0;
+    let notFound = 0;
     for (const documentId of slice) {
+      if (!inOrg.ids.has(documentId)) {
+        notFound++;
+        results.push({ documentId, skipped: "not_found" });
+        continue;
+      }
       if (!readable.has(documentId)) {
         unreadable++;
         results.push({ documentId, skipped: "unreadable" });
@@ -263,13 +319,16 @@ export async function POST(req: NextRequest) {
         results.push({ documentId, error: (e as Error).message });
       }
     }
-    return NextResponse.json({ ok: true, results, unreadable });
+    return NextResponse.json({ ok: true, results, unreadable, notFound });
   }
 
   if (action === "dismiss" || action === "vanished") {
     const documentId = String(body.documentId ?? "");
     const tags = Array.isArray(body.tags) ? body.tags.map(String).filter(Boolean) : [];
     if (!documentId || tags.length === 0) return bad("documentId and tags required");
+    const inOrg = await inOrgDocIds(orgId, [documentId]);
+    if (inOrg.error) return bad(inOrg.error, 500);
+    if (!inOrg.ids.has(documentId)) return bad("No such document in this workspace", 404);
     const readable = await readableOf(auth.principal, [documentId]);
     if (!readable.has(documentId)) return bad("You cannot read this document, so you cannot review its equipment.", 403);
     try {
@@ -279,6 +338,26 @@ export async function POST(req: NextRequest) {
       const decision = body.decision === "remove" ? "remove" : body.decision === "keep" ? "keep" : null;
       if (!decision) return bad("decision must be remove or keep");
       return NextResponse.json({ ok: true, ...(await reviewVanished(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags, decision })) });
+    } catch (e) {
+      return bad((e as Error).message, 500);
+    }
+  }
+
+  if (action === "adopt") {
+    const documentId = String(body.documentId ?? "");
+    const assetId = String(body.assetId ?? "");
+    if (!documentId || !assetId) return bad("documentId and assetId required");
+    const inOrg = await inOrgDocIds(orgId, [documentId]);
+    if (inOrg.error) return bad(inOrg.error, 500);
+    if (!inOrg.ids.has(documentId)) return bad("No such document in this workspace", 404);
+    const { data: asset, error: assetErr } = await supabaseAdmin.from("assets").select("id")
+      .eq("id", assetId).eq("org_id", orgId).maybeSingle();
+    if (assetErr) return bad(assetErr.message, 500);
+    if (!asset) return bad("No such equipment in this workspace", 404);
+    const readable = await readableOf(auth.principal, [documentId]);
+    if (!readable.has(documentId)) return bad("You cannot read this document, so you cannot link it.", 403);
+    try {
+      return NextResponse.json({ ok: true, ...(await adoptDrawingRelation(supabaseAdmin, { orgId, documentId, assetId, userId: auth.userId })) });
     } catch (e) {
       return bad((e as Error).message, 500);
     }

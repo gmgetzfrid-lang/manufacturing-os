@@ -80,7 +80,9 @@
 -- Pre-apply inventory (DEC-30) is a TEMP TABLE captured before the
 -- transaction, aggregate counts only; nothing existing is rewritten or
 -- deleted. Single paste: inventory → BEGIN/DDL/COMMIT → ONE SELECT (check
--- text, ok boolean, n text). Idempotent.
+-- text, ok boolean, n text). Idempotent, re-pasted before or after
+-- 20261171: the vocabulary CHECK is the only constraint it drops, so
+-- 20261171's document_assets_drawing_is_machine survives a re-paste.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
@@ -121,15 +123,20 @@ SELECT 'active members outside the registry writer tier (lose writing manual lin
 BEGIN;
 
 -- ── 1. GAP-302: the vocabulary, and where on the document ──────────────────
--- Whatever CHECK constrains `source` today (20260609 declared it inline, so
--- Postgres named it document_assets_source_check) is replaced.
+-- The CHECK that constrains `source` to its vocabulary today (20260609
+-- declared it inline, so Postgres named it document_assets_source_check) is
+-- replaced. Only the vocabulary CHECK — the one naming 'jsonb_sync' — is
+-- dropped: 20261171's document_assets_drawing_is_machine also mentions
+-- `source` and survives a re-paste of this file after it.
 DO $$
 DECLARE
   c record;
 BEGIN
   FOR c IN SELECT conname FROM pg_constraint
             WHERE conrelid = 'public.document_assets'::regclass AND contype = 'c'
-              AND pg_get_constraintdef(oid) LIKE '%source%' LOOP
+              AND (conname = 'document_assets_source_check'
+                   OR (pg_get_constraintdef(oid) LIKE '%source%'
+                       AND pg_get_constraintdef(oid) LIKE '%jsonb_sync%')) LOOP
     EXECUTE format('ALTER TABLE document_assets DROP CONSTRAINT %I', c.conname);
   END LOOP;
 END $$;
@@ -261,7 +268,8 @@ SELECT 'document_assets.source admits drawing (GAP-302) — validated unless an 
                   AND pg_get_constraintdef(oid) LIKE '%drawing%')
        AND (SELECT COUNT(*) FROM pg_constraint
              WHERE conrelid = 'public.document_assets'::regclass AND contype = 'c'
-               AND pg_get_constraintdef(oid) LIKE '%source%') = 1 AS ok,
+               AND pg_get_constraintdef(oid) LIKE '%source%'
+               AND pg_get_constraintdef(oid) LIKE '%jsonb_sync%') = 1 AS ok,
        NULL::text AS n
 UNION ALL
 SELECT 'document_assets.sheet_label and .pages exist and are nullable (GAP-302 / GAP-301)',

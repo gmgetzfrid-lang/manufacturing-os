@@ -3,10 +3,14 @@
 //   * /api/equipment-bridge — BR-1: the caller's ACL per document (a writer-
 //     tier member applying into a library they cannot read writes nothing;
 //     the documents they cannot read are skipped and counted; additive roles
-//     admit); BR-11: the sweep is paged with a cursor and a wall-clock budget
-//     and a 500+ document library is swept whole; BR-9: a tag subset and
-//     dismissals reach the server; the settings keep the library's review
-//     mark and record who turned auto-apply on (BR-8).
+//     admit); a document or library of ANOTHER workspace is refused before
+//     the ACL engine is asked (a controller of their own org reads every id
+//     it is given); the library's configuration needs the library readable;
+//     BR-11: the sweep is paged with a cursor and a wall-clock budget, ends
+//     only on an empty page (a page PostgREST cut at max-rows is not the
+//     end), and a 500+ document library is swept whole; BR-9: a tag subset
+//     and dismissals reach the server; the settings keep the library's
+//     review mark and record who turned auto-apply on (BR-8).
 //   * /api/equipment/sheets — GM-14: the sheets an equipment tag is on, per
 //     caller — the relation read AS the caller, the extracted copies filtered
 //     through the knowledge ACL; the entity index never reaches a client.
@@ -21,6 +25,9 @@ const st = vi.hoisted(() => ({
   db: null as unknown as FakeDb,
   callerDb: null as unknown as FakeDb,
   readable: new Set<string>(),
+  /** A controller of their own org: the ACL engine reads every id given. */
+  controller: false,
+  unreadableLibraries: new Set<string>(),
   users: { good: "u-mgr" } as Record<string, string>,
 }));
 
@@ -38,9 +45,13 @@ vi.mock("@/lib/knowledgeAccess", () => ({
   loadPrincipal: async (orgId: string, uid: string) => {
     const m = (st.db.tables.org_members ?? []).find((r) => r.uid === uid && r.org_id === orgId && r.status === "active");
     if (!m) return null;
-    return { uid, orgId, role: m.role, roles: m.roles ?? [m.role], isController: false, teamIds: [] };
+    return { uid, orgId, role: m.role, roles: m.roles ?? [m.role], isController: st.controller, teamIds: [] };
   },
-  readableControlledDocIds: async (_p: unknown, ids: string[]) => new Set(ids.filter((i) => st.readable.has(i))),
+  // As lib/knowledgeAccess.ts: a controller reads every id it is handed —
+  // whatever org the document is in.
+  readableControlledDocIds: async (_p: unknown, ids: string[]) => new Set(st.controller ? ids : ids.filter((i) => st.readable.has(i))),
+  loadDcLandscape: async () => ({ libraries: new Map(), folders: new Map(), teamSupervisors: new Map() }),
+  containerReadable: (_kind: string, id: string) => !st.unreadableLibraries.has(id),
 }));
 vi.mock("@/lib/serverAuth", async () => {
   const { makeFakeSupabase: make, newFakeDb: fresh } = await import("./helpers/fakeSupabase");
@@ -86,6 +97,8 @@ function baseDb(): void {
   };
   st.db.unique = { assets: [["org_id", "tag_normalized"]], document_assets: [["document_id", "asset_id"]] };
   st.readable = new Set();
+  st.controller = false;
+  st.unreadableLibraries = new Set();
   st.users = { good: "u-mgr", viewer: "u-view", dc: "u-dc" };
 }
 
@@ -140,6 +153,76 @@ describe("BR-1 — /api/equipment-bridge evaluates the caller's ACL on every doc
   });
 });
 
+describe("BR-1 — a document or library of ANOTHER workspace is refused before the ACL engine is asked", () => {
+  /** Org B's drawing, applied, with a relation row marked vanished and one
+   *  live; the attacker is a controller of their own org A. */
+  function victim() {
+    st.db.tables.org_members.push({ org_id: "oA", uid: "u-attacker", role: "Admin", roles: ["Admin"], status: "active" });
+    st.users.attacker = "u-attacker";
+    st.controller = true;
+    st.db.tables.libraries.push({ id: "libB", org_id: "oB", equipment_bridge: { targetColumnKey: "equipment", autoApplyBy: "u-victim" }, custom_columns: [{ key: "equipment" }] });
+    st.db.tables.documents.push({ id: "dB", org_id: "oB", library_id: "libB", document_number: "B-1", status: "Issued", metadata: {}, current_version_id: null });
+    st.db.tables.assets.push({ id: "aB1", org_id: "oB", tag: "P-101", tag_normalized: "p101" }, { id: "aB2", org_id: "oB", tag: "P-102", tag_normalized: "p102" });
+    st.db.tables.document_equipment_suggestions.push({ org_id: "oB", document_id: "dB", applied: ["P-101", "P-102"], dismissed: [], suggested: [{ tag: "P-101" }, { tag: "P-102" }] });
+    st.db.tables.document_assets.push(
+      { id: "rB1", org_id: "oB", document_id: "dB", asset_id: "aB1", tag_text: "P-101", source: "drawing", vanished_at: "2026-09-01T00:00:00Z" },
+      { id: "rB2", org_id: "oB", document_id: "dB", asset_id: "aB2", tag_text: "P-102", source: "drawing", vanished_at: "2026-09-01T00:00:00Z" },
+    );
+  }
+  const snapshot = () => JSON.stringify(st.db.tables.document_assets);
+
+  it("reproduction → fix: a controller of org A sending org B's document id gets a 404 on dismiss / vanished (remove and keep); org B's rows are untouched; no audit row is written", async () => {
+    victim();
+    const before = snapshot();
+    for (const body of [
+      { action: "vanished", orgId: "oA", documentId: "dB", tags: ["P-101"], decision: "remove" },
+      { action: "vanished", orgId: "oA", documentId: "dB", tags: ["P-102"], decision: "keep" },
+      { action: "dismiss", orgId: "oA", documentId: "dB", tags: ["P-101"] },
+    ]) {
+      const res = await POST(req(body, "attacker"));
+      expect(res.status, JSON.stringify(body)).toBe(404);
+    }
+    expect(snapshot()).toBe(before);
+    expect(st.db.tables.audit_logs).toHaveLength(0);
+  });
+  it("apply skips another workspace's document as not found; adopt refuses it", async () => {
+    victim();
+    const before = snapshot();
+    const json = await (await POST(req({ action: "apply", orgId: "oA", documentIds: ["dB"] }, "attacker"))).json();
+    expect(json).toMatchObject({ notFound: 1, results: [{ documentId: "dB", skipped: "not_found" }] });
+    expect((await POST(req({ action: "adopt", orgId: "oA", documentId: "dB", assetId: "aB1" }, "attacker"))).status).toBe(404);
+    expect(snapshot()).toBe(before);
+  });
+  it("GET and settings refuse another workspace's library (404) — its mapping and who turned auto-apply on never leave it", async () => {
+    victim();
+    const get = await GET(getReq("http://x/api/equipment-bridge?orgId=oA&libraryId=libB", "attacker"));
+    expect(get.status).toBe(404);
+    expect(JSON.stringify(await get.json())).not.toContain("u-victim");
+    const set = await POST(req({ action: "settings", orgId: "oA", libraryId: "libB", autoApply: true, targetColumnKey: "x" }, "attacker"));
+    expect(set.status).toBe(404);
+    expect(st.db.tables.libraries.find((l) => l.id === "libB")!.equipment_bridge).toEqual({ targetColumnKey: "equipment", autoApplyBy: "u-victim" });
+  });
+  it("a Manager who cannot read a library can neither read its configuration nor turn its auto-apply on (403)", async () => {
+    st.unreadableLibraries = new Set(["lib1"]);
+    expect((await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).status).toBe(403);
+    const set = await POST(req({ action: "settings", orgId: "o1", libraryId: "lib1", autoApply: true, targetColumnKey: "equipment" }));
+    expect(set.status).toBe(403);
+    expect((st.db.tables.libraries[0].equipment_bridge as Row).autoApply).toBeUndefined();
+  });
+  it("adopt: a person's Link refused 23505 on a drawing row makes the row theirs; their own workspace's document and asset only", async () => {
+    library(1);
+    st.readable = new Set(["d0000"]);
+    st.db.tables.assets.push({ id: "a-p1", org_id: "o1", tag: "P-1", tag_normalized: "p1" });
+    st.db.tables.document_assets.push({ id: "r1", org_id: "o1", document_id: "d0000", asset_id: "a-p1", tag_text: "P-1", source: "drawing", asserted_by: "machine", model: "vision-model-x", sheet_label: "N-0 SHT 1" });
+    const json = await (await POST(req({ action: "adopt", orgId: "o1", documentId: "d0000", assetId: "a-p1" }))).json();
+    expect(json).toMatchObject({ ok: true, adopted: true });
+    expect(st.db.tables.document_assets[0]).toMatchObject({ source: "manual", asserted_by: "human", asserted_by_user: "u-mgr", model: null, sheet_label: "N-0 SHT 1" });
+    expect(st.db.tables.audit_logs.map((a) => a.action)).toEqual(["EQUIPMENT_BRIDGE_RELATION_ADOPTED"]);
+    st.readable = new Set();
+    expect((await POST(req({ action: "adopt", orgId: "o1", documentId: "d0000", assetId: "a-p1" }))).status).toBe(403);
+  });
+});
+
 describe("BR-11 — the sweep is paged with a cursor and a budget; a 500+ document library is swept whole", () => {
   it("520 documents: each call takes one page and returns the next cursor; every document is computed exactly once", async () => {
     library(520);
@@ -155,7 +238,8 @@ describe("BR-11 — the sweep is paged with a cursor and a budget; a 500+ docume
       cursor = json.nextCursor;
       expect(calls).toBeLessThan(10);
     }
-    expect(calls).toBe(Math.ceil(520 / SWEEP_PAGE));
+    // Four pages with documents, then the empty page that says done.
+    expect(calls).toBe(Math.ceil(520 / SWEEP_PAGE) + 1);
     expect(computed).toBe(520);
     expect(st.db.tables.document_equipment_suggestions).toHaveLength(520);
   });
@@ -171,9 +255,32 @@ describe("BR-11 — the sweep is paged with a cursor and a budget; a 500+ docume
     expect(first.nextCursor).toBe("d0002");
     spy.mockImplementation(() => 0);
     const second = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1", cursor: first.nextCursor }))).json();
-    expect(second).toMatchObject({ done: true, nextCursor: null });
+    expect(second).toMatchObject({ done: false, nextCursor: "d0009" });
     expect(second.counts.computed).toBe(7);
+    const third = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1", cursor: second.nextCursor }))).json();
+    expect(third).toMatchObject({ done: true, nextCursor: null });
+    expect(third.counts.computed).toBe(0);
     expect(st.db.tables.document_equipment_suggestions).toHaveLength(10);
+  });
+  it("a project whose PostgREST max-rows is below the page size: a cut page is not the end — the whole library is swept, and GET lists it whole", async () => {
+    library(400);
+    st.readable = new Set(st.db.tables.documents.map((d) => String(d.id)));
+    st.db.maxRows = 100;
+    const first = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1" }))).json();
+    // Reproduction: the base route called a 100-row page of 150 the end.
+    expect(first.done).toBe(false);
+    let cursor: string | null = first.nextCursor;
+    let computed = first.counts.computed as number;
+    for (let i = 0; i < 10 && cursor; i++) {
+      const json = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1", cursor }))).json();
+      computed += json.counts.computed;
+      cursor = json.done ? null : json.nextCursor;
+    }
+    expect(computed).toBe(400);
+    expect(st.db.tables.document_equipment_suggestions).toHaveLength(400);
+    const listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
+    expect(listed.suggestions).toHaveLength(400);
+    expect(listed.unreadable).toBe(0);
   });
   it("documents the caller cannot read are counted, never computed", async () => {
     library(4);

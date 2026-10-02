@@ -15,6 +15,12 @@
 //     origin knowledge document is said, and its tags enter through the
 //     knowledge door, unit-less and reported.
 //   * BR-5 / BR-9 / BR-13 / BR-14 / BR-7 / BR-8 / CB-1 / CB-2 / GAP-309.
+//   * Fix pass (2026-10-02): every relation read and write is held to the
+//     caller's workspace; a person's asset_tags link survives the removal of
+//     a drawing row on the same pair; a tag a person took out of its column
+//     leaves the relation (dismissed via 'column'); a reading with a failed
+//     window writes nothing; "It is still there" is remembered for the
+//     revision; checked writes; the apply stamps the current copy's revision.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -37,8 +43,10 @@ import {
   computeForDocument, computeForKnowledgeDoc, applyForDocument, dismissForDocument, reviewVanished,
   discoverFromKnowledge, parseSelfRaw, sheetAddressForPage, sheetText, relationSheetLabel,
   passesExtractorGate, heldForUnknownPrefix, locateUnit, planDismissals, autoApplyActs,
+  planColumnRemovals, adoptDrawingRelation, assetNorm,
   type BridgeSuggestion,
 } from "@/lib/equipmentBridgeServer";
+import { aliasReachedVia } from "@/lib/linkProposerServer";
 import { EMPTY_CODEBOOK, tagKey, normalizeTag, type Codebook, type CodebookEntry } from "@/lib/codebook";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -433,12 +441,120 @@ describe("BR-5 — a tag a person removed from the column is never re-added by a
     seed({ bridge: { targetColumnKey: "equipment", autoApply: true, autoApplyBy: "u-admin" } });
     await computeForDocument(admin(), "o1", "d1"); // auto-applies (column mapped)
     expect(db.tables.documents[0].metadata).toEqual({ equipment: ["E-22", "P-7", "V-101"] });
+    expect(relations().filter((r) => r.source === "drawing")).toHaveLength(3);
     db.tables.documents[0].metadata = { equipment: ["E-22", "V-101"] };       // a person removed P-7
-    await computeForDocument(admin(), "o1", "d1");                            // the re-index's recompute
+    const r = await computeForDocument(admin(), "o1", "d1");                  // the re-index's recompute
     expect(db.tables.documents[0].metadata).toEqual({ equipment: ["E-22", "V-101"] });
-    // Named again by a person, it is applied again.
+    // …and the authoritative relation: no row for P-7 (reproduction: the base
+    // file kept refreshing its drawing row on every recompute).
+    const p7 = db.tables.assets.find((a) => a.tag === "P-7")!;
+    expect(relations().filter((x) => x.asset_id === p7.id)).toEqual([]);
+    expect(r.columnDismissed).toEqual(["P-7"]);
+    expect((ledger().dismissed as Row[]).find((d) => d.tag === "P-7")).toMatchObject({ via: "column", by: null, revision: "v2" });
+    expect(ledger().suggested.find((s) => s.tag === "P-7")!.dismissed).toBe(true);
+    expect(audit("EQUIPMENT_BRIDGE_RELATION_REMOVED")[0].details).toMatchObject({ via: "column", removed: [{ tag: "P-7" }] });
+    expect(audit("EQUIPMENT_BRIDGE_DISMISSED")[0].details).toMatchObject({ via: "column", tags: ["P-7"] });
+    // A further recompute stays put: no row, nothing re-applied.
+    await computeForDocument(admin(), "o1", "d1");
+    expect(relations().filter((x) => x.asset_id === p7.id)).toEqual([]);
+    // Named again by a person, it is applied again — column and relation.
     await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"] });
     expect(db.tables.documents[0].metadata).toEqual({ equipment: ["E-22", "V-101", "P-7"] });
+    expect(relations().filter((x) => x.asset_id === p7.id && x.source === "drawing")).toHaveLength(1);
+    await computeForDocument(admin(), "o1", "d1");
+    expect(relations().filter((x) => x.asset_id === p7.id && x.source === "drawing")).toHaveLength(1);
+  });
+  it("GAP-304 backfill: a tag applied before the relation existed (no column recorded) and since removed from the column is never related", async () => {
+    seed();
+    db.tables.assets.push({ id: "a-p7", org_id: "o1", tag: "P-7", tag_normalized: "p7", unit_code: "20", code: "2050.7", archived: false });
+    // History: all three applied into the column; a person then removed P-7.
+    db.tables.document_equipment_suggestions = [{ org_id: "o1", document_id: "d1", applied: ["E-22", "P-7", "V-101"], dismissed: [], suggested: [{ tag: "E-22" }, { tag: "P-7" }, { tag: "V-101" }] }];
+    db.tables.documents[0].metadata = { equipment: ["E-22", "V-101"] };
+    await computeForDocument(admin(), "o1", "d1");
+    expect(relations().map((x) => x.tag_text).sort()).toEqual(["E-22", "V-101"]);
+    expect((ledger().dismissed as Row[]).map((d) => [d.tag, d.via])).toEqual([["P-7", "column"]]);
+  });
+  it("a column the document never held is a re-mapping, not a removal; tags applied with no column mapped are never column-dismissed", () => {
+    const base = { applied: ["E-22", "P-7"], dismissed: new Set<string>() };
+    // Historical (nothing recorded): the mapped column decides, only when the document holds it.
+    expect(planColumnRemovals({ ...base, recordedColumn: new Map(), mappedColumn: "equipment", metadata: { equipment: ["E-22"] } })).toEqual(["P-7"]);
+    expect(planColumnRemovals({ ...base, recordedColumn: new Map(), mappedColumn: "tags2", metadata: { equipment: ["E-22"] } })).toEqual([]);
+    // Recorded: the column it was written into, even after the library re-maps.
+    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", "equipment"], ["P-7", "equipment"]]), mappedColumn: "tags2", metadata: { equipment: ["e22", "P-7"] } })).toEqual([]);
+    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", "equipment"], ["P-7", "equipment"]]), mappedColumn: "tags2", metadata: { equipment: "E-22" } })).toEqual(["P-7"]);
+    // Applied with no column mapped (AREA-4), a column mapped later.
+    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", null], ["P-7", null]]), mappedColumn: "equipment", metadata: { equipment: [] } })).toEqual([]);
+    // Already dismissed: not planned again.
+    expect(planColumnRemovals({ ...base, dismissed: new Set(["P-7"]), recordedColumn: new Map(), mappedColumn: "equipment", metadata: { equipment: ["E-22"] } })).toEqual([]);
+  });
+  it("with no column mapped, a later mapping does not dismiss what was applied before it", async () => {
+    seed({ bridge: {} });
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    db.tables.libraries[0].equipment_bridge = { targetColumnKey: "equipment" };
+    db.tables.documents[0].metadata = { equipment: [] };
+    const r = await computeForDocument(admin(), "o1", "d1");
+    expect(r.columnDismissed).toBeUndefined();
+    expect(relations().filter((x) => x.source === "drawing")).toHaveLength(3);
+  });
+});
+
+describe("GAP-302 / regression top rule — a person's asset_tags link is never lost when a drawing row on the same pair is removed", () => {
+  /** documents_resync_assets, as transcribed above (ON CONFLICT DO NOTHING). */
+  function personTags(tags: string[]) {
+    db.tables.documents[0].asset_tags = tags.map((tag) => ({ tag }));
+    db.tables.document_assets = relations().filter((r) => !(r.document_id === "d1" && r.source === "jsonb_sync"));
+    for (const t of new Set(tags)) {
+      const a = db.tables.assets.find((x) => x.org_id === "o1" && x.tag_normalized === tagKey(t));
+      if (!a || relations().some((r) => r.document_id === "d1" && r.asset_id === a.id)) continue;
+      relations().push({ id: `sync-${a.id}`, org_id: "o1", document_id: "d1", asset_id: a.id, tag_text: t, source: "jsonb_sync" });
+    }
+  }
+  async function appliedThenTagged() {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    personTags(["e 22"]);    // a Drafter types E-22 into asset_tags: the trigger's insert is skipped (the drawing row holds the pair)
+    expect(relations().filter((r) => r.asset_id === "a-e22").map((r) => r.source)).toEqual(["drawing"]);
+  }
+  it("reproduction → fix: Dismiss of the drawing's E-22 leaves the person's synced link (jsonb_sync, their spelling), and says so", async () => {
+    await appliedThenTagged();
+    const d = await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22"] });
+    expect(d).toMatchObject({ relationsRemoved: 1, keptAsPersonsLink: 1 });
+    const rows = relations().filter((r) => r.asset_id === "a-e22");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ source: "jsonb_sync", tag_text: "e 22", sheet_label: null, pages: null, asserted_by: "human", model: null, source_revision: null });
+    expect(audit("EQUIPMENT_BRIDGE_RELATION_REMOVED")[0].details).toMatchObject({ keptAsPersonsLink: [{ tag: "E-22", assetId: "a-e22", as: "e 22" }] });
+    // The person's next asset_tags edit re-derives it as before.
+    personTags(["e 22", "V-101"]);
+    expect(relations().filter((r) => r.asset_id === "a-e22").map((r) => r.source)).toEqual(["jsonb_sync"]);
+  });
+  it("'It left the sheet' keeps the person's synced link the same way", async () => {
+    await appliedThenTagged();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "E-22");
+    await computeForDocument(admin(), "o1", "d1");
+    const r = await reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22"], decision: "remove" });
+    expect(r).toMatchObject({ changed: 1, keptAsPersonsLink: 1 });
+    expect(relations().filter((x) => x.asset_id === "a-e22")).toEqual([expect.objectContaining({ source: "jsonb_sync", tag_text: "e 22", vanished_at: null })]);
+  });
+  it("a pair the person did not tag is removed outright", async () => {
+    await appliedThenTagged();
+    await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["V-101"] });
+    expect(relations().some((r) => r.asset_id === "a-v101")).toBe(false);
+  });
+  it("a person's Link refused 23505 on the drawing's pair: adopt makes it theirs, and a later Dismiss leaves it", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    const a = await adoptDrawingRelation(admin(), { orgId: "o1", documentId: "d1", assetId: "a-e22", userId: "u-drafter" });
+    expect(a).toEqual({ adopted: true, already: null });
+    expect(relations().find((r) => r.asset_id === "a-e22")).toMatchObject({ source: "manual", asserted_by: "human", asserted_by_user: "u-drafter", model: null, source_revision: null, sheet_label: "2002-D-10001 SHT 4" });
+    expect(await adoptDrawingRelation(admin(), { orgId: "o1", documentId: "d1", assetId: "a-e22", userId: "u-drafter" })).toEqual({ adopted: false, already: "manual" });
+    await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22"] });
+    expect(relations().find((r) => r.asset_id === "a-e22")).toMatchObject({ source: "manual" });
+    // Another workspace never adopts this one's row.
+    expect(await adoptDrawingRelation(admin(), { orgId: "o-other", documentId: "d1", assetId: "a-v101", userId: "u-x" })).toEqual({ adopted: false, already: null });
+    expect(relations().find((r) => r.asset_id === "a-v101")).toMatchObject({ source: "drawing" });
   });
 });
 
@@ -567,6 +683,135 @@ describe("GAP-309 — revision truth: a tag that leaves the sheet is a reviewabl
     // A tag that is not marked vanished cannot be removed through this door.
     expect(await reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["V-101"], decision: "remove" })).toEqual({ changed: 0 });
   });
+  it("'It is still there' is remembered for the revision it was made on: a recompute of the same revision does not ask again; a later revision may", async () => {
+    await appliedAll();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7");
+    await computeForDocument(admin(), "o1", "d1");
+    await reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"], decision: "keep" });
+    const p7 = () => relations().find((x) => x.tag_text === "P-7")!;
+    expect(p7()).toMatchObject({ vanished_at: null, presence_confirmed_on: "v2" });
+    expect(audit("EQUIPMENT_BRIDGE_VANISHED_KEPT")[0].details).toMatchObject({ confirmedOn: "v2" });
+    // Reproduction: the base file re-marked it on the very next recompute.
+    const again = await computeForDocument(admin(), "o1", "d1");
+    expect(again.revision).toMatchObject({ vanished: 0, complete: true });
+    expect(p7().vanished_at).toBeNull();
+    // Rev C still does not carry it: a new question.
+    db.tables.documents[0].current_version_id = "v3";
+    Object.assign(db.tables.knowledge_documents[0], { source_version_id: "v3", source_rev: "C" });
+    expect((await computeForDocument(admin(), "o1", "d1")).revision).toMatchObject({ vanished: 1 });
+    expect(p7().vanished_at).toBeTruthy();
+  });
+  it("a mark whose write is refused is not counted (checked writes)", async () => {
+    await appliedAll();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7");
+    db.beforeUpdate = {
+      document_assets: (next, old) => {
+        if (next.vanished_at && !old.vanished_at) throw { code: "XX000", message: "refused" };
+        return next;
+      },
+    };
+    const r = await computeForDocument(admin(), "o1", "d1");
+    expect(r.revision).toMatchObject({ vanished: 0, failed: 1 });
+  });
+  it("'It left the sheet' writes the ledger first: if `applied` cannot be updated, nothing is removed and the person is told", async () => {
+    await appliedAll();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7");
+    await computeForDocument(admin(), "o1", "d1");
+    db.beforeUpdate = {
+      document_equipment_suggestions: () => { throw { code: "XX000", message: "ledger refused" }; },
+    };
+    await expect(reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"], decision: "remove" }))
+      .rejects.toThrow(/review could not be saved: ledger refused/);
+    expect(relations().some((x) => x.tag_text === "P-7")).toBe(true);
+    expect(ledger().applied).toContain("P-7");
+  });
+  it("a correction whose audit row cannot be written is reported to the caller, not swallowed", async () => {
+    await appliedAll();
+    db.refuseWrites.add("audit_logs");
+    const d = await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"] });
+    expect(d.auditError).toMatch(/audit record could not be written/);
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "E-22");
+    await computeForDocument(admin(), "o1", "d1");
+    const k = await reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22"], decision: "keep" });
+    expect(k.auditError).toMatch(/audit record could not be written/);
+  });
+  it("a reading whose later window fails is not a reading: nothing is marked vanished and the stored proposal is left as it was", async () => {
+    await appliedAll();
+    const before = JSON.stringify(ledger());
+    db.tables.documents[0].current_version_id = "v3";
+    Object.assign(db.tables.knowledge_documents[0], { source_version_id: "v3", source_rev: "C" });
+    // Window 1 answers (without P-7: read so far), window 2 times out.
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7");
+    const failing = windowFails("knowledge_page_entities", 2);
+    await expect(computeForDocument(failing, "o1", "d1")).rejects.toThrow(/could not be read: statement timeout/);
+    expect(relations().every((x) => !x.vanished_at)).toBe(true);
+    expect(JSON.stringify(ledger())).toBe(before);
+  });
+  it("a failed read of the AI-vision record makes the reading incomplete: nothing is marked vanished", async () => {
+    await appliedAll();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7");
+    const r = await computeForDocument(windowFails("knowledge_chunks", 1), "o1", "d1");
+    expect(r.revision).toMatchObject({ vanished: 0, complete: false });
+    expect(relations().every((x) => !x.vanished_at)).toBe(true);
+  });
+});
+
+/** The stand-in, except that one table's windowed reads fail from the
+ *  `failFrom`-th window on (1-based: a window that times out after earlier
+ *  windows answered). */
+function windowFails(table: string, failFrom: number): SupabaseClient {
+  const base = makeFakeSupabase(db);
+  let windows = 0;
+  const wrap = (b: unknown): unknown => new Proxy(b as object, {
+    get(target, prop: string) {
+      const v = (target as Record<string, unknown>)[prop];
+      if (prop === "then") return v;
+      if (prop === "range") {
+        return (a: number, z: number) => (++windows >= failFrom
+          ? Promise.resolve({ data: null, error: { code: "57014", message: "statement timeout" } })
+          : (v as (a: number, z: number) => unknown)(a, z));
+      }
+      return (...args: unknown[]) => wrap((v as (...x: unknown[]) => unknown)(...args));
+    },
+  });
+  return { ...base, from: (t: string) => (t === table ? wrap(base.from(t)) : base.from(t)) } as unknown as SupabaseClient;
+}
+
+describe("BR-1 / the blocker — every relation read and write is held to the caller's workspace", () => {
+  it("reproduction → fix: a review sent with another org's id never touches this org's rows (remove, keep, dismiss)", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-7" && e.tag !== "E-22");
+    await computeForDocument(admin(), "o1", "d1");
+    const before = JSON.stringify(relations());
+    expect(await reviewVanished(admin(), { orgId: "o-attacker", documentId: "d1", userId: "u-x", tags: ["P-7"], decision: "remove" })).toEqual({ changed: 0 });
+    expect(await reviewVanished(admin(), { orgId: "o-attacker", documentId: "d1", userId: "u-x", tags: ["E-22"], decision: "keep" })).toEqual({ changed: 0 });
+    await expect(dismissForDocument(admin(), { orgId: "o-attacker", documentId: "d1", userId: "u-x", tags: ["P-7"] })).rejects.toThrow(/run the sweep first/);
+    expect(JSON.stringify(relations())).toBe(before);
+    expect(audit("EQUIPMENT_BRIDGE_VANISHED_REMOVED")).toHaveLength(0);
+    expect(audit("EQUIPMENT_BRIDGE_VANISHED_KEPT")).toHaveLength(0);
+  });
+  it("the library's every document_assets read, update and delete names org_id", () => {
+    const src = repo("lib/equipmentBridgeServer.ts");
+    const chains = src.split('from("document_assets")').slice(1).map((c) => c.slice(0, 260));
+    expect(chains.length).toBeGreaterThan(6);
+    for (const c of chains) expect(c, c).toMatch(/\.eq\("org_id", orgId\)|org_id: orgId/);
+  });
+});
+
+describe("currentReading — an apply stamps the revision of the CURRENT copy, never a stale one listed first", () => {
+  it("a stale ready copy in another knowledge library does not stamp the relation", async () => {
+    seed({ twins: [
+      { id: "k0", org_id: "o1", library_id: "kl0", name: "old.pdf", source_document_id: "d1", status: "ready", source_version_id: "v1", source_rev: "A", vision_failed_pages: [] },
+      { id: "k1", org_id: "o1", library_id: "kl1", name: "2024-Vessel-List.pdf", source_document_id: "d1", status: "ready", source_version_id: "v2", source_rev: "B", vision_failed_pages: [] },
+    ] });
+    await computeForDocument(admin(), "o1", "d1");
+    db.tables.document_assets = [];
+    db.tables.document_equipment_suggestions[0].applied = [];
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22"] });
+    expect(relations().find((x) => x.asset_id === "a-e22")).toMatchObject({ source_revision: "B", source_version_id: "v2" });
+  });
 });
 
 describe("GAP-307 — the knowledge door: a P&ID uploaded to a knowledge library builds the registry, unit-less and reported", () => {
@@ -604,11 +849,11 @@ describe("GAP-310 — the Bridge's key is the one tag grammar (an import, not a 
     expect(src).not.toMatch(/toLowerCase\(\)\.replace\(\/\[\^a-z0-9\]\+\/g/);
   });
   it("lib/linkProposerServer.ts decides 'reached via an alias' by tagKey — 'North Furnace' and 'NORTH-FURNACE' are one alias", () => {
-    const src = repo("lib/linkProposerServer.ts");
-    expect(src).toMatch(/const viaKey = tagKey\(l\.tag_text \?\? ""\);/);
-    expect(src).toMatch(/aliases\.find\(\(a\) => tagKey\(a\) === viaKey\)/);
-    expect(src).not.toMatch(/normalizeTag\(a\) === viaTag/);
-    expect(tagKey("North Furnace")).toBe(tagKey("NORTH-FURNACE"));
+    expect(aliasReachedVia("NORTH-FURNACE", "H-101", ["North Furnace"])).toBe("North Furnace");
+    expect(aliasReachedVia("h 101", "H-101", ["North Furnace"])).toBeUndefined(); // reached by the canonical tag
+    expect(aliasReachedVia("", "H-101", ["North Furnace"])).toBeUndefined();
+    expect(repo("lib/linkProposerServer.ts")).toMatch(/const matchedAlias = aliasReachedVia\(l\.tag_text, canonical, aliasByAsset\.get\(l\.asset_id\) \?\? \[\]\);/);
+    expect(assetNorm("North Furnace")).toBe(tagKey("NORTH-FURNACE"));
     expect(normalizeTag("North Furnace")).not.toBe(normalizeTag("NORTH-FURNACE"));
   });
 });

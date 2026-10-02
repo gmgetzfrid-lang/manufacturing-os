@@ -286,6 +286,16 @@ async function readPaged<T>(
   }
 }
 
+/** GAP-310: the alias a document reached an asset by — compared by the ONE
+ *  tag grammar (tagKey, the registry's identity key), so "North Furnace" and
+ *  "NORTH-FURNACE" are one alias. Undefined when it reached the asset by its
+ *  canonical tag (or by an empty spelling). Exported for the awkward-input
+ *  agreement table (lib/__tests__/codebook.test.ts). */
+export function aliasReachedVia(tagText: string | null | undefined, canonical: string, aliases: ReadonlyArray<string>): string | undefined {
+  const viaKey = tagKey(tagText ?? "");
+  return viaKey && viaKey !== tagKey(canonical) ? aliases.find((a) => tagKey(a) === viaKey) : undefined;
+}
+
 export async function runLinkProposers(
   admin: SupabaseClient,
   orgId: string,
@@ -496,11 +506,7 @@ export async function runLinkProposers(
     // grammar (GAP-310: tagKey, the registry's identity key — punctuation-
     // blind, so "North Furnace" and "NORTH-FURNACE" are the same alias); the
     // display spelling (`canonical`) is only what the proposal shows.
-    const viaKey = tagKey(l.tag_text ?? "");
-    const aliases = aliasByAsset.get(l.asset_id) ?? [];
-    const matchedAlias = viaKey && viaKey !== tagKey(canonical)
-      ? aliases.find((a) => tagKey(a) === viaKey)
-      : undefined;
+    const matchedAlias = aliasReachedVia(l.tag_text, canonical, aliasByAsset.get(l.asset_id) ?? []);
     tagOccurrences.push({
       documentId: l.document_id,
       tag: canonical,
