@@ -22,6 +22,9 @@ export type ScriptedCall = {
   usage?: { inputTokens: number; outputTokens: number };
   stopReason?: string;
   throws?: { message: string; status?: number; usage?: { inputTokens: number; outputTokens: number } };
+  /** Runs when this call is made, before it answers — a test uses it to act
+   *  as another writer at that exact moment (KACL-4, fix pass 7). */
+  before?: () => void;
 };
 
 export const h = {
@@ -245,6 +248,7 @@ export async function scriptedCall(input: { system: string; user: string; maxTok
   h.calls.push({ system: input.system, user: input.user, maxTokens: input.maxTokens, images: input.images?.length ?? 0 });
   const next = h.script.shift();
   if (!next) throw new Error("no scripted answer");
+  next.before?.();
   if (next.throws) {
     const { AiCallError } = await import("@/lib/ai/providerCall");
     const e = new AiCallError(next.throws.message, next.throws.status ?? 502);

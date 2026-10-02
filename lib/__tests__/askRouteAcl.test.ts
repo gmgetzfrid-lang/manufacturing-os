@@ -60,6 +60,8 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
 import { POST } from "@/app/api/knowledge/ask/route";
 import { POST as historyPOST } from "@/app/api/knowledge/history/route";
 import { DATA_OPEN, DATA_CLOSE, CUT_OFF_LINE } from "@/lib/knowledgeAskGuards";
+import { renderKnowledgePages } from "@/lib/knowledgePageRender";
+import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 
 const ask = (body: Record<string, unknown>, token = "good") => POST(new NextRequest("http://x/api/knowledge/ask", {
   method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -121,6 +123,10 @@ function openAndRestricted(dcOver: Row = {}) {
  *  that asks for mirrors only)? */
 const isMirrorList = (op: { table: string }, filters: Array<{ col: string; op: string }>) =>
   op.table === "knowledge_documents" && filters.some((f) => f.col === "source_document_id" && f.op === "notis");
+/** Is this statement the route's roster read (the knowledge_documents read
+ *  that carries the base columns)? */
+const isRoster = (op: { table: string; kind: string; columns: string[] | "*" }) =>
+  op.table === "knowledge_documents" && op.kind === "select" && Array.isArray(op.columns) && op.columns.includes("pages_indexed");
 
 /** The mirror list does not see document `id`: its row is hidden while the
  *  list is read and back for every statement after it — a mirror a sync
@@ -279,6 +285,292 @@ describe("KACL-4 — the per-asker exclusion set fails CLOSED and is never cut a
       expect(answerCall().user).toContain(OPEN_TEXT);
     }
   });
+
+  // ── Fix pass 7: the roster is the set the ACL decision was made on ──────
+  //
+  // A document created or indexed AFTER the roster read — a mirror a sync
+  // adds, or a plain upload — was never decided on, so no later read admits
+  // it: not a search in any round, not the meaning half, not the drawing
+  // facts, not deep read's anchors or page hunt, not the Fetch round's page
+  // hunt after the first answer, not the SHOW-ME locator after the answer.
+  // The documents the roster held answer as before.
+  const K_LATE_M = U(31);
+  const K_LATE_P = U(32);
+  const K_OK = U(33);
+  const LATE_M_TEXT = "LATE RESTRICTED relief memo: the relief valve set pressure was raised to 340 psig after the trip.";
+  const LATE_P_TEXT = "LATE relief memo: the relief valve set pressure memo copy says 355 psig.";
+  const OK_TEXT = "The relief valve set pressure was verified at 300 psig on the bench.";
+  /** A mirror of a controlled document the Viewer is denied, and a plain
+   *  document with no controlled document behind it — created and indexed
+   *  while the ask runs. */
+  const lateRows = (over: { chunks?: Row[]; entities?: Row[] } = {}): Record<string, Row[]> => ({
+    knowledge_documents: [
+      kdoc(K_LATE_M, { name: "INC-0099 — Flare isolation incident", source_document_id: "dc-late", source_rev: "A" }),
+      kdoc(K_LATE_P, { name: "Memo 7731.pdf" }),
+    ],
+    knowledge_chunks: over.chunks ?? [
+      kchunk(K_LATE_M, LATE_M_TEXT, { id: "c-0late-m", page: 3 }),
+      kchunk(K_LATE_P, LATE_P_TEXT, { id: "c-0late-p", page: 2 }),
+    ],
+    knowledge_page_entities: over.entities ?? [],
+  });
+  const land = (rows: Record<string, Row[]>) => {
+    for (const [t, rs] of Object.entries(rows)) (db.tables[t] ??= []).push(...rs.map((r) => ({ ...r })));
+  };
+  /** The rows land on the first statement after the roster read. */
+  function appearAfterRoster(rows: Record<string, Row[]>) {
+    let rosterRead = false;
+    let done = false;
+    db.asyncHooks.push(async (op) => {
+      if (done) return;
+      if (isRoster(op)) { rosterRead = true; return; }
+      if (rosterRead) { land(rows); done = true; }
+    });
+  }
+  /** Nothing of the late documents reached a prompt, the response or the
+   *  saved row (its citations and its context). */
+  const neverReached = (body: unknown) => {
+    const row = JSON.stringify(rowsOf("knowledge_questions")[0] ?? null);
+    for (const s of ["340 psig", "355 psig", "INC-0099", "Flare isolation", "Memo 7731", K_LATE_M, K_LATE_P]) {
+      expect([s, allPrompts().includes(s)]).toEqual([s, false]);
+      expect([s, JSON.stringify(body).includes(s)]).toEqual([s, false]);
+      expect([s, row.includes(s)]).toEqual([s, false]);
+    }
+  };
+  /** In the roster: an upload, and a mirror the Viewer may read. The denied
+   *  controlled document the late mirror points at already exists. */
+  const rosterSeed = (extra: Record<string, Row[]> = {}) => seed({
+    documents: [dcDoc("dc-ok"), dcDoc("dc-late", { acl: DENY_VIEWER_ACL })],
+    knowledge_documents: [
+      kdoc(K_OPEN, { name: "Relief standard.pdf" }),
+      kdoc(K_OK, { name: "Bench test record", source_document_id: "dc-ok", source_version_id: "ver-ok", source_rev: "C" }),
+    ],
+    knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-1open", page: 4 }), kchunk(K_OK, OK_TEXT, { id: "c-2ok", page: 1 })],
+    ...extra,
+  });
+  const pagesRender = () => vi.mocked(renderKnowledgePages).mockImplementation(async (_k: string, pages: number[], max = 6) =>
+    pages.slice(0, max).map((page) => ({ page, mediaType: "image/png", base64: "AAAA" })));
+  const pagesRenderNothing = () => vi.mocked(renderKnowledgePages).mockImplementation(async () => []);
+
+  it("reproduction → fix (fix pass 7): a mirror and a plain document indexed AFTER the roster read never reach a prompt, a citation, the saved row or the response — in round 1, round 2 or a missing-document probe; the documents the roster held answer as before", async () => {
+    rosterSeed();
+    appearAfterRoster(lateRows());
+    h.script = [
+      QUERY_GEN,
+      { text: '{"queries": ["relief valve set pressure raised"], "missing_documents": ["relief memo"]}', usage: { inputTokens: 500, outputTokens: 15 } },
+      answer("**Answer:** It must not exceed the design pressure [1]; it was bench-verified [2]."),
+    ];
+    const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Fix pass 6: neither listed nor in the roster, they were searched and
+    // their passages reached the denied Viewer's prompt.
+    neverReached(body);
+    // The roster's documents are unaffected.
+    expect(answerCall().user).toContain(OPEN_TEXT);
+    expect(answerCall().user).toContain(OK_TEXT);
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN, K_OK]);
+    expect(body.citations[1]).toMatchObject({ sourceRev: "C", sourceVersionId: "ver-ok" });
+    const ctx = rowsOf("knowledge_questions")[0].context as { documents: string[]; uploads: string[] };
+    expect([...ctx.documents].sort()).toEqual([K_OPEN, K_OK].sort());
+    expect(ctx.uploads).toEqual([K_OPEN]);
+  });
+
+  it("reproduction → fix (fix pass 7): the meaning half never returns a document indexed after the roster read", async () => {
+    const VEC = new Array(4).fill(0.1);
+    const EMB = EMBEDDING_PROVIDERS.find((p) => p.id === "voyage")!.models[1];
+    const vec = { embedding: VEC, embedding_model: EMB };
+    seed({
+      documents: [dcDoc("dc-ok"), dcDoc("dc-late", { acl: DENY_VIEWER_ACL })],
+      knowledge_documents: [kdoc(K_OPEN, { name: "Relief standard.pdf" })],
+      knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-1open", page: 4, ...vec })],
+    });
+    Object.assign(rowsOf("ai_connections").find((r) => r.user_id === VIEWER) as Row, { embedding_provider: "voyage", embedding_model: EMB, embedding_api_key: "ek" });
+    appearAfterRoster(lateRows({
+      chunks: [kchunk(K_LATE_M, LATE_M_TEXT, { id: "c-0late-m", ...vec }), kchunk(K_LATE_P, LATE_P_TEXT, { id: "c-0late-p", ...vec })],
+    }));
+    const Q = "What holds the vessel below its limit?";
+    h.semanticFor.set(Q, ["c-0late-m", "c-0late-p", "c-1open"]);
+    h.script = [{ text: '["zzqx nothing"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
+    const res = await ask({ question: Q }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(h.semanticCalls.length).toBeGreaterThan(0);
+    neverReached(body);
+    expect(answerCall().user).toContain(OPEN_TEXT);
+    expect(body.retrieval).toBe("hybrid");
+  });
+
+  it("reproduction → fix (fix pass 7): the drawing facts never count, list or name a sheet indexed after the roster read", async () => {
+    rosterSeed({
+      knowledge_page_entities: [{ id: "e-open", org_id: ORG, library_id: LIB, document_id: K_OPEN, page: 2, kind: "equipment", tag: "V-101", raw: "V-101" }],
+    });
+    appearAfterRoster(lateRows({
+      chunks: [],
+      entities: [
+        { id: "e-late-m", org_id: ORG, library_id: LIB, document_id: K_LATE_M, page: 1, kind: "equipment", tag: "ZQ-901", raw: "ZQ-901 FLARE DRUM" },
+        { id: "e-late-p", org_id: ORG, library_id: LIB, document_id: K_LATE_P, page: 1, kind: "equipment", tag: "ZR-902", raw: "ZR-902" },
+      ],
+    }));
+    h.script = [{ text: '["vessels"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE, answer("**Answer:** One vessel.")];
+    const res = await ask({ question: "How many vessels are in this unit?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(answerCall().user).toContain("DRAWING FACTS — tallied by the app");
+    // The two roster documents are the sheets; the late ones are not counted…
+    expect(answerCall().user).toContain("- Sheets: 2");
+    // …and their tags are nowhere — not in the census, not in the register.
+    expect(allPrompts()).not.toMatch(/ZQ|ZR/);
+    expect(JSON.stringify(body)).not.toMatch(/ZQ|ZR/);
+    neverReached(body);
+    expect((rowsOf("knowledge_questions")[0].context as { documents: string[] }).documents).toEqual([K_OPEN]);
+  });
+
+  it("reproduction → fix (fix pass 7): deep read never attaches a page of a document indexed after the roster read — not through a referenced-table anchor, not through the page hunt", async () => {
+    seed({
+      documents: [dcDoc("dc-late", { acl: DENY_VIEWER_ACL })],
+      knowledge_documents: [kdoc(K_OPEN, { name: "Relief standard.pdf" })],
+      knowledge_chunks: [kchunk(K_OPEN, "The relief valve set pressure shall not exceed the limits of Table A-1 and Figure 9 below.", { id: "c-1open", page: 4 })],
+    });
+    appearAfterRoster(lateRows({
+      chunks: [kchunk(K_LATE_P, "Figure 9 relief valve sizing chart, 355 psig curve.", { id: "c-late-fig", page: 6 })],
+      entities: [{ id: "e-anchor", org_id: ORG, library_id: LIB, document_id: K_LATE_M, page: 7, kind: "anchor", tag: "TABLE A-1", raw: "Table A-1" }],
+    }));
+    pagesRender();
+    try {
+      h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the Table A-1 limit [1].")];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const call = answerCall();
+      // The roster's page is attached, as before; nothing else is.
+      expect(call.images).toBe(1);
+      expect(call.user).toContain("PRINTED PAGES — attached page images, in order: image 1 = Relief standard.pdf page 4");
+      expect(call.user).not.toContain("REFERENCED TABLES & FIGURES");
+      neverReached(body);
+    } finally {
+      pagesRenderNothing();
+    }
+  });
+
+  it("reproduction → fix (fix pass 7): the Fetch round's page hunt — after the first answer, long after the roster read — never attaches a page of a document indexed since", async () => {
+    rosterSeed();
+    pagesRender();
+    try {
+      h.script = [
+        QUERY_GEN, REFINE_NONE,
+        {
+          text: "**Fetch:** Table B-7 stress", usage: { inputTokens: 4000, outputTokens: 10 },
+          // Both late documents are created and indexed while the first answer runs.
+          before: () => land(lateRows({
+            chunks: [
+              kchunk(K_LATE_M, "Table B-7 stress limits for the flare header, 340 psig.", { id: "c-late-tab", page: 3 }),
+              kchunk(K_LATE_P, "Table B-7 stress, memo copy, 355 psig.", { id: "c-late-tab2", page: 2 }),
+            ],
+          })),
+        },
+        answer("**Answer:** It must not exceed the design pressure [1]."),
+      ];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(h.calls).toHaveLength(4);
+      // No page matched among the documents the roster held: the second
+      // answer carries the first one's pages and nothing more.
+      expect(h.calls[3].images).toBe(h.calls[2].images);
+      expect(h.calls[3].system).toMatch(/FETCH RESULT: no pages matched your Fetch request/);
+      neverReached(body);
+      expect(answerCall().user).toContain(OPEN_TEXT);
+    } finally {
+      pagesRenderNothing();
+    }
+  });
+
+  it("reproduction → fix (fix pass 7): the SHOW-ME locator — after the answer — never cites a sheet indexed since the roster read; a sheet the roster held is still cited", async () => {
+    rosterSeed({
+      knowledge_page_entities: [{ id: "e-ok", org_id: ORG, library_id: LIB, document_id: K_OK, page: 1, kind: "equipment", tag: "V-903", raw: "V-903 KNOCKOUT DRUM" }],
+    });
+    h.script = [
+      { text: '["zzqx"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE,
+      {
+        ...answer("**Answer:** V-901, V-902 and V-903 are the drums."),
+        before: () => land(lateRows({
+          chunks: [],
+          entities: [
+            { id: "e-late-m", org_id: ORG, library_id: LIB, document_id: K_LATE_M, page: 3, kind: "equipment", tag: "V-901", raw: "V-901 FLARE DRUM 340 psig" },
+            { id: "e-late-p", org_id: ORG, library_id: LIB, document_id: K_LATE_P, page: 2, kind: "equipment", tag: "V-902", raw: "V-902 355 psig" },
+          ],
+        })),
+      },
+    ];
+    const res = await ask({ question: "Where are V-901, V-902 and V-903?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OK]);
+    expect(body.citations[0].tags).toEqual(["V-903"]);
+    neverReached(body);
+  });
+
+  // ── Fix pass 7: the roster's column fallbacks drop only what is missing,
+  //    and a roster that cannot be read refuses the ask like the mirror list.
+  const PGRST204 = (col: string) => ({ code: "PGRST204", message: `Could not find the '${col}' column of 'knowledge_documents' in the schema cache` });
+
+  it("reproduction → fix (fix pass 7): a roster read whose retry names a missing source column keeps source_document_id where the mirror list read it — a mirror the list did not hold is still never searched", async () => {
+    openAndRestricted();
+    mirrorListOmits(K_MIRROR);
+    // vision_pages named first, then source_rev: a database where 20260917
+    // applied only in part (its source_document_id is there — the mirror
+    // list read it).
+    db.hooks.push((op) => {
+      if (!isRoster(op)) return;
+      const cols = op.columns as string[];
+      if (cols.includes("vision_pages")) return { error: PGRST204("vision_pages") };
+      if (cols.includes("source_rev")) return { error: PGRST204("source_rev") };
+    });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Read on the base columns alone, the roster could not tell the mirror
+    // was one, and the denied Viewer's prompt held its passage.
+    expect(allPrompts()).not.toContain("312 psig");
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    expect((rowsOf("knowledge_questions")[0].context as { uploads: string[] }).uploads).toEqual([K_OPEN]);
+  });
+
+  it("fix pass 7: a database with no source column at all (pre-20260917) reads the roster on its base columns and answers as before — every document an upload", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.missingColumns.knowledge_documents = ["source_document_id", "source_version_id", "source_rev", "vision_pages"];
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN]);
+    expect((rowsOf("knowledge_questions")[0].context as { uploads: string[] }).uploads).toEqual([K_OPEN]);
+  });
+
+  for (const [label, roster] of [
+    ["a statement timeout", () => ({ code: "57014", message: "canceling statement due to statement timeout" })],
+    ["an error that merely mentions a column", () => ({ code: "42702", message: 'column reference "id" is ambiguous' })],
+    ["a timeout on the retry without vision_pages", (cols: string[]) => (cols.includes("vision_pages")
+      ? PGRST204("vision_pages") : { code: "57014", message: "canceling statement due to statement timeout" })],
+    ["a source column it cannot read although the mirror list read it", (cols: string[]) => (cols.includes("vision_pages")
+      ? PGRST204("vision_pages") : cols.includes("source_rev") ? PGRST204("source_rev") : PGRST204("source_document_id"))],
+  ] as Array<[string, (cols: string[]) => { code: string; message: string }]>) {
+    it(`reproduction → fix (fix pass 7): a roster read that fails with ${label} refuses the ask (503) before any provider call — no metering row, no reservation, nothing saved`, async () => {
+      openAndRestricted();
+      db.hooks.push((op) => (isRoster(op) ? { error: roster(op.columns as string[]) } : undefined));
+      h.script = [QUERY_GEN, REFINE_NONE, answer()];
+      const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+      // Fix pass 6 went on without the roster (the unlisted-mirror exclusion
+      // off), after query generation was paid for.
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toBe("Couldn't check which documents you may read, so nothing was searched — try again in a moment.");
+      expect(h.calls).toHaveLength(0);
+      expect(rowsOf("ai_usage_events")).toHaveLength(0);
+      expect(rowsOf("knowledge_questions")).toHaveLength(0);
+    });
+  }
 });
 
 // ── KACL-10 ─────────────────────────────────────────────────────────────────
@@ -865,39 +1157,41 @@ describe("ASK-1 — a document deleted since never hides its asker's own answer;
     expect((await (await history({ action: "list" }, "good")).json()).rows).toHaveLength(1);
   });
 
-  it("reproduction → fix (fix pass 6): a mirror the mirror list did not hold, on a database whose roster cannot say which documents are mirrors (no vision_pages: read without the source columns), is never recorded as an upload — deleting it still withholds a teammate's view", async () => {
+  it("reproduction → fix (fix pass 7): on a database without vision_pages (20260917 applied, 20260922 not) the roster still reads the source columns — a mirror the mirror list did not hold is never searched, the upload is recorded as one, and a listed mirror's citation carries its version (IEDGE-4)", async () => {
+    const K_LISTED = U(5);
     seed({
-      documents: [dcDoc("dc-1")],
+      documents: [dcDoc("dc-1"), dcDoc("dc-2")],
       knowledge_documents: [
         kdoc(K_OPEN, { name: "Relief standard.pdf" }),
         kdoc(K_MIRROR, { name: "INC-0042 — Incident report", source_document_id: "dc-1", source_rev: "B" }),
+        kdoc(K_LISTED, { name: "Bench test record", source_document_id: "dc-2", source_version_id: "ver-2", source_rev: "C" }),
       ],
-      knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }), kchunk(K_MIRROR, RESTRICTED, { id: "c-9mirror", page: 2 })],
+      knowledge_chunks: [
+        kchunk(K_OPEN, OPEN_TEXT, { id: "c-0open", page: 4 }),
+        kchunk(K_LISTED, "The relief valve set pressure was verified at 300 psig on the bench.", { id: "c-1listed", page: 1 }),
+        kchunk(K_MIRROR, RESTRICTED, { id: "c-9mirror", page: 2 }),
+      ],
     }, [ENG]);
-    // 20260917 applied, 20260922 not: the mirror list reads, the roster falls
-    // back to its base columns (no source_document_id on its rows).
+    // 20260917 applied, 20260922 not: every read naming vision_pages fails.
     db.missingColumns.knowledge_documents = ["vision_pages"];
     mirrorListOmits(K_MIRROR);
-    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1].")];
-    // The Viewer may read dc-1, so its passage reaching their prompt exposes nothing.
-    expect((await ask({ question: "What is the relief valve set pressure?" }, "viewer")).status).toBe(200);
-    expect(allPrompts()).toContain("312 psig");
-    const row = rowsOf("knowledge_questions")[0];
-    const ctx = row.context as { documents: string[]; uploads: string[] };
-    expect(ctx.documents.sort()).toEqual([K_OPEN, K_MIRROR].sort());
-    // Not KNOWN to be an upload: the list did not hold it, but its roster row
-    // names no controlled document only because the column was not read —
-    // nor is the real upload known as one there (deleting it withholds, as
-    // before fix pass 5); never every unlisted document.
-    expect(ctx.uploads).toEqual([]);
+    h.script = [QUERY_GEN, REFINE_NONE, answer("**Answer:** It must not exceed the design pressure [1]; it was bench-verified [2].")];
+    const res = await ask({ question: "What is the relief valve set pressure?" }, "viewer");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Fix pass 6 read this roster without the source columns, so it could not
+    // tell the unlisted mirror was one: it was searched, and the Viewer's
+    // prompt held its passage (here the Viewer may read dc-1; a denied one's
+    // prompt would have held it the same way).
+    expect(allPrompts()).not.toContain("312 psig");
+    expect(body.citations.map((c: { documentId: string }) => c.documentId)).toEqual([K_OPEN, K_LISTED]);
+    // IEDGE-4: the listed mirror's citation carries the version it was read from.
+    expect(body.citations[1]).toMatchObject({ sourceRev: "C", sourceVersionId: "ver-2" });
+    const ctx = rowsOf("knowledge_questions")[0].context as { documents: string[]; uploads: string[] };
+    expect([...ctx.documents].sort()).toEqual([K_OPEN, K_LISTED].sort());
+    // The upload is KNOWN as one again (fix pass 6 listed none on this database).
+    expect(ctx.uploads).toEqual([K_OPEN]);
     expect((await (await history({ action: "list" }, "as:u-eng")).json()).rows).toHaveLength(1);
-
-    db.tables.knowledge_documents = rowsOf("knowledge_documents").filter((d) => d.id !== K_MIRROR);
-    db.tables.knowledge_chunks = rowsOf("knowledge_chunks").filter((c) => c.document_id !== K_MIRROR);
-    const team = await (await history({ action: "list" }, "as:u-eng")).json();
-    expect(team.rows).toEqual([]);
-    expect(team.withheld).toBe(1);
-    expect((await (await history({ action: "list" }, "viewer")).json()).rows).toHaveLength(1);
   });
 
   it("reproduction → fix (fix pass 6): a MIRROR legend the asker may read is recorded, never as an upload — deleting it still withholds a teammate's view", async () => {

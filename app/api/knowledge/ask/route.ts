@@ -27,8 +27,11 @@
 //   * The per-asker ACL seam fails CLOSED: a mirror read that errors refuses
 //     the ask (503), the mirror list is paged past PostgREST's max-rows, and a
 //     held-back / superseded / fileless controlled document is never searched
-//     even when its mirror still exists (KACL-4, KACL-10). Legend sheets go
-//     through the same seam, scoped to this org (KACL-8, ASK-8).
+//     even when its mirror still exists (KACL-4, KACL-10). The roster of the
+//     searched libraries is read before any provider call and fails closed
+//     too, and no later read uses a document that was not in it (KACL-4, fix
+//     pass 7). Legend sheets go through the same seam, scoped to this org
+//     (KACL-8, ASK-8).
 //   * Document text is DATA: passages, legend sheets, drawing facts and every
 //     document-derived name ride the user turn inside a fence the system
 //     prompt names; the system prompt carries only app-authored rules
@@ -323,6 +326,84 @@ export async function POST(req: NextRequest) {
       excludedDocIds = new Set(linkedDocs.filter((d) => !ok.has(d.source_document_id)).map((d) => d.id));
     }
   }
+
+  // ── The roster: every document this ask may use (KACL-4) ────────────────
+  // One roster of every reachable document — reused by proven-ground,
+  // pull-by-name, whole-document mode, and the graph hop, so designation
+  // resolution is one fetch instead of four.
+  // Paged past PostgREST's max-rows (KACL-4): a roster cut at the cap
+  // would silently drop documents from pull-by-name and the graph hop.
+  // It also carries each mirror's indexed version and revision label
+  // (IEDGE-4) and how many pages AI vision read (PR-4) — absent on older
+  // databases.
+  //
+  // KACL-4 (fix pass 7): the roster is the set this ask's ACL decision was
+  // made on, so it is read right after the mirror list, before any provider
+  // call, and EVERY later read that returns document ids — both searches in
+  // every round, the missing-document probes, the drawing facts' tag and
+  // sheet reads, referenced-table anchors, page hunts in deep read and in the
+  // Fetch round, the SHOW-ME locator — keeps only documents IN it
+  // (`admitted`). A document created or indexed after this read, mirror or
+  // not, was never decided on and never reaches a prompt, a citation, the
+  // record or the response; one in the roster is unaffected. Legend sheets
+  // are decided on their own read (below — a site legend may live outside
+  // the searched libraries). A roster that cannot be read refuses the ask
+  // (503, fix pass 7), like the mirror list: only a missing column takes a
+  // narrower read.
+  type ReachableDoc = {
+    id: string; name: string; library_id: string; file_key: string | null;
+    status: string | null; page_count: number | null; pages_indexed: number | null;
+    source_document_id?: string | null; source_version_id?: string | null; source_rev?: string | null;
+    vision_pages?: number | null;
+  };
+  let reachableDocs: ReachableDoc[] = [];
+  if (mode === "library") {
+    const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+    const BASE_DOC = "id, name, library_id, file_key, status, page_count, pages_indexed";
+    const SOURCE_COLS = "source_document_id, source_version_id, source_rev";
+    const roster = (cols: string) => readAll<ReachableDoc>((from, to) => supabaseAdmin
+      .from("knowledge_documents").select(cols)
+      .in("library_id", reachableLibIds)
+      .order("id", { ascending: true }).range(from, to));
+    let read = await roster(`${BASE_DOC}, ${SOURCE_COLS}, vision_pages`);
+    // Each pre-migration read drops only what that database lacks (fix pass
+    // 7 — fix pass 6 dropped all four columns when only one was missing):
+    // without `vision_pages` (20260917 applied, 20260922 not) the source
+    // columns are still read, so the roster still knows its mirrors, its
+    // uploads and each mirror's version.
+    if (read.error && columnsMissing(read.error, "vision_pages")) {
+      read = await roster(`${BASE_DOC}, ${SOURCE_COLS}`);
+    }
+    // A source column missing: the base columns alone only where the mirror
+    // list found no source column either (a database before 20260917, which
+    // has no mirrors). Where the mirror list READ source_document_id, the
+    // roster keeps it — so an unlisted mirror is still known as one — and
+    // a roster that cannot read it even then refuses (below).
+    if (read.error && columnsMissing(read.error, "source_document_id", "source_version_id", "source_rev")) {
+      read = await roster(noSourceColumn ? BASE_DOC : `${BASE_DOC}, source_document_id`);
+    }
+    if (read.error) {
+      return bad(
+        "Couldn't check which documents you may read, so nothing was searched — try again in a moment.",
+        503,
+      );
+    }
+    // KACL-4 (fix pass 6): a document whose roster row names a controlled
+    // document but which the mirror list does not hold — a sync added it
+    // after the list was read, or the list missed it — was never checked
+    // against this asker's access or the AI boundary, so it is never
+    // searched: excluded like a mirror they may not read. (A roster read
+    // without the source columns — a database with no mirrors — cannot tell;
+    // there is nothing to tell.)
+    for (const d of read.rows) {
+      if (d.source_document_id != null && !mirrorDocIds.has(d.id)) excludedDocIds.add(d.id);
+    }
+    reachableDocs = read.rows.filter((d) => !excludedDocIds.has(d.id));
+  }
+  const rosterById = new Map(reachableDocs.map((d) => [d.id, d]));
+  /** KACL-4 (fix pass 7): may this ask use document `id`? Only when it was in
+   *  the roster the ACL decision was made on — and not excluded there. */
+  const admitted = (id: string): boolean => rosterById.has(id);
 
   // ── ASK-5: the conversation so far, from the record ─────────────────────
   // A thread is only ever continued by the member who started it, in the
@@ -766,6 +847,8 @@ export async function POST(req: NextRequest) {
         // database already applied its LIMIT — at exactly the slot count, a
         // user whose top-ranked docs are excluded got a silently starved
         // passage set and an empty-state message blaming their phrasing.
+        // KACL-4 (fix pass 7): only documents in the roster (`admitted`) —
+        // one indexed after it was read was never decided on.
         const limit = (lib.tier === "governing" ? 10 : 6) * 3;
         let { data } = await supabaseAdmin.rpc("knowledge_search", {
           p_org: orgId, p_library: lib.id, p_query: q, p_limit: limit,
@@ -788,7 +871,7 @@ export async function POST(req: NextRequest) {
         }
         if (!Array.isArray(data)) return [] as RetrievedChunk[];
         return (data as RetrievedChunk[])
-          .filter((c) => !excludedDocIds.has(c.document_id))
+          .filter((c) => admitted(c.document_id))
           .slice(0, lib.tier === "governing" ? 10 : 6)
           .map((c) => ({ ...c, libraryId: lib.id, tier: lib.tier }));
       }));
@@ -924,7 +1007,8 @@ export async function POST(req: NextRequest) {
           for (const row of data as Array<{
             chunk_id: string; document_id: string; page: number; content: string; similarity: number;
           }>) {
-            if (excludedDocIds.has(row.document_id)) continue;
+            // KACL-4 (fix pass 7): only documents in the roster.
+            if (!admitted(row.document_id)) continue;
             if (kept >= slots) break;
             kept++;
             lib.rows++;
@@ -991,55 +1075,9 @@ export async function POST(req: NextRequest) {
       return [...governing, ...reference];
     };
 
-    // One roster of every reachable document — reused by proven-ground,
-    // pull-by-name, whole-document mode, and the graph hop, so designation
-    // resolution is one fetch instead of four.
-    // Paged past PostgREST's max-rows (KACL-4): a roster cut at the cap
-    // would silently drop documents from pull-by-name and the graph hop.
-    // It also carries each mirror's indexed version and revision label
-    // (IEDGE-4) and how many pages AI vision read (PR-4) — absent on older
-    // databases.
-    type ReachableDoc = {
-      id: string; name: string; library_id: string; file_key: string | null;
-      status: string | null; page_count: number | null; pages_indexed: number | null;
-      source_document_id?: string | null; source_version_id?: string | null; source_rev?: string | null;
-      vision_pages?: number | null;
-    };
+    // The roster (`reachableDocs`, `rosterById`, `admitted`) was read before
+    // any provider call (KACL-4, fix pass 7 — above).
     const squashDes = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    let reachableDocs: ReachableDoc[] = [];
-    /** The roster read failed (not a missing column): how many pages AI
-     *  vision read of each document is unknown this time (GOV-9). */
-    let rosterUnread = false;
-    {
-      const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
-      const BASE_DOC = "id, name, library_id, file_key, status, page_count, pages_indexed";
-      const roster = (cols: string) => readAll<ReachableDoc>((from, to) => supabaseAdmin
-        .from("knowledge_documents").select(cols)
-        .in("library_id", reachableLibIds)
-        .order("id", { ascending: true }).range(from, to));
-      let read = await roster(`${BASE_DOC}, source_document_id, source_version_id, source_rev, vision_pages`);
-      // Only a database without those columns reads the roster without them
-      // (fix pass 4): any other failure leaves the roster unread — and what
-      // AI vision read is then unknown, so the GOV-9 fallbacks below warn on
-      // every passage instead of on none.
-      if (read.error && columnsMissing(read.error, "source_document_id", "source_version_id", "source_rev", "vision_pages")) {
-        read = await roster(BASE_DOC);
-      } else if (read.error) {
-        rosterUnread = true;
-      }
-      // KACL-4 (fix pass 6): a document whose roster row names a controlled
-      // document but which the mirror list does not hold — a sync added it
-      // after the list was read, or the list missed it — was never checked
-      // against this asker's access or the AI boundary, so it is never
-      // searched: excluded like a mirror they may not read. Read before
-      // round 1, so no search, legend or roster use ever admits it. (A
-      // roster read without the source columns cannot tell; the list stands.)
-      for (const d of read.rows) {
-        if (d.source_document_id != null && !mirrorDocIds.has(d.id)) excludedDocIds.add(d.id);
-      }
-      reachableDocs = read.rows.filter((d) => !excludedDocIds.has(d.id));
-    }
-    const rosterById = new Map(reachableDocs.map((d) => [d.id, d]));
     /** Legend sheets read as uploads (no controlled document behind them). */
     const legendUploads = new Set<string>();
     /** ASK-1 (fix pass 5): was this recorded document an UPLOAD when the
@@ -1577,7 +1615,10 @@ export async function POST(req: NextRequest) {
         unreadFrom = entRows[DRAWING_FACTS_ROW_CEILING]?.document_id ?? kept[kept.length - 1]?.document_id ?? null;
         entRows = kept.filter((e) => e.document_id !== unreadFrom);
       }
-      const ents = entRows.filter((e) => !excludedDocIds.has(e.document_id));
+      // KACL-4 (fix pass 7): only sheets in the roster — a sheet indexed
+      // after it was read was never decided on, and neither its tags nor
+      // its name may reach the facts.
+      const ents = entRows.filter((e) => admitted(e.document_id));
       if (ents.length > 0) {
         type FactDoc = { id: string; name: string; library_id: string; vision_pages?: number | null };
         let docsRead = await readAll<FactDoc>((from, to) =>
@@ -1594,7 +1635,7 @@ export async function POST(req: NextRequest) {
         // Any other failure: no facts at all, rather than a census that says
         // "Sheets: 0" over the tags it did read.
         if (docsRead.error) throw new Error(docsRead.error.message);
-        const docsList = docsRead.rows.filter((d) => !excludedDocIds.has(d.id));
+        const docsList = docsRead.rows.filter((d) => admitted(d.id));
         // ASK-2: the sheets the ceiling left unread — their silence is never
         // evidence of a one-way connector or a gap.
         const unreadDocs = new Map<string, string>();
@@ -1956,7 +1997,9 @@ export async function POST(req: NextRequest) {
       const { data } = await q;
       const counts = new Map<string, number>();
       for (const r of (data ?? []) as Array<{ document_id: string; page: number }>) {
-        if (excludedDocIds.has(r.document_id)) continue;
+        // KACL-4 (fix pass 7): only documents in the roster — the Fetch
+        // round runs this after the first answer, long after it was read.
+        if (!admitted(r.document_id)) continue;
         const key = `${r.document_id}:${r.page}`;
         counts.set(key, (counts.get(key) ?? 0) + 1);
       }
@@ -2037,11 +2080,12 @@ export async function POST(req: NextRequest) {
             .limit(200);
           const retrievedDocs = new Set(chunks.map((c) => c.document_id));
           for (const tag of wantedAnchors) {
-            const rows = ((aRows ?? []) as typeof anchorHits).filter((r) => r.tag === tag);
+            // KACL-4 (fix pass 7): only anchors of documents in the roster.
+            const rows = ((aRows ?? []) as typeof anchorHits).filter((r) => r.tag === tag && admitted(r.document_id));
             // The Table 3 in the SAME document the prose came from, not a
             // namesake in another standard.
             const best = rows.find((r) => retrievedDocs.has(r.document_id)) ?? rows[0];
-            if (best && !excludedDocIds.has(best.document_id)) anchorHits.push(best);
+            if (best) anchorHits.push(best);
           }
         } catch { /* anchors are additive */ }
       }
@@ -2138,6 +2182,8 @@ export async function POST(req: NextRequest) {
     // A read that fails for any other reason fails toward the WARNING: every
     // passage of a document an AI read pages of (vision_pages) is treated as
     // possibly transcribed (`possible`), never presented as a text-layer quote.
+    // (The roster that says what AI vision read is always read by now: one
+    // that fails refuses the ask — KACL-4, fix pass 7.)
     const chunkSource = new Map<string, { model: string | null; possible?: true }>();
     {
       const ids = [...new Set(chunks.map((c) => c.id))];
@@ -2152,7 +2198,7 @@ export async function POST(req: NextRequest) {
       }
       if (unread) {
         for (const c of chunks) {
-          if (!chunkSource.has(c.id) && (rosterUnread || (rosterById.get(c.document_id)?.vision_pages ?? 0) > 0)) {
+          if (!chunkSource.has(c.id) && (rosterById.get(c.document_id)?.vision_pages ?? 0) > 0) {
             chunkSource.set(c.id, { model: null, possible: true });
           }
         }
@@ -2712,7 +2758,9 @@ export async function POST(req: NextRequest) {
           .limit(2000);
         const firstByTag = new Map<string, { document_id: string; page: number; raw: string | null }>();
         for (const r of (locRows ?? []) as Array<{ document_id: string; page: number; tag: string; raw: string | null }>) {
-          if (excludedDocIds.has(r.document_id)) continue;
+          // KACL-4 (fix pass 7): only sheets in the roster — this runs after
+          // the answer, long after it was read.
+          if (!admitted(r.document_id)) continue;
           if (!firstByTag.has(r.tag)) firstByTag.set(r.tag, r);
         }
         // One citation per sheet+page, carrying every tag found there.
@@ -2749,7 +2797,7 @@ export async function POST(req: NextRequest) {
             // Unread provenance fails toward the warning: a sheet an AI read
             // pages of is marked, never presented as a text-layer quote.
             for (const g of grouped.values()) {
-              if (rosterUnread || (rosterById.get(g.document_id)?.vision_pages ?? 0) > 0) visionPages.set(`${g.document_id}:${g.page}`, null);
+              if ((rosterById.get(g.document_id)?.vision_pages ?? 0) > 0) visionPages.set(`${g.document_id}:${g.page}`, null);
             }
           }
         }

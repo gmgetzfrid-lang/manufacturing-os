@@ -599,18 +599,16 @@ describe("GOV-9 — a passage an AI transcribed from a page image is labelled fo
     });
   }
 
-  it("reproduction → fix (fix pass 4): when the provenance read fails AND the roster that says what AI vision read could not be read either, every passage is possibly transcribed", async () => {
+  it("fix pass 7: the roster that says what AI vision read is never unread — a roster read that fails refuses the ask (503) before any call (KACL-4), where fix pass 4 went on and marked every passage possibly transcribed", async () => {
     visAndText();
     failsWith("id,name,library_id,file_key,status,page_count,pages_indexed,source_document_id,source_version_id,source_rev,vision_pages",
       { code: "42702", message: 'column reference "id" is ambiguous' });
     failsWith("id,source,source_model", { code: "57014", message: "canceling statement due to statement timeout" });
     h.script = [QUERY_GEN, REFINE_NONE, { ...ANSWER, text: "**Answer:** 285 psig [1], tolerance [2]." }];
-    const body = await (await ask({ question: "What is the relief valve set pressure limit?" })).json();
-    const user = answerCall().user;
-    // Fix pass 3 read the roster again without vision_pages and labelled nothing.
-    expect(user).toMatch(/\[1\] \(POSSIBLY AI TRANSCRIPTION \| P&ID 025\.pdf, page 1\)/);
-    expect(user).toMatch(/\[2\] \(POSSIBLY AI TRANSCRIPTION \| Relief standard\.pdf, page 2\)/);
-    expect(body.citations.every((c: { source?: string }) => c.source === "vision")).toBe(true);
+    const res = await ask({ question: "What is the relief valve set pressure limit?" });
+    expect(res.status).toBe(503);
+    expect(h.calls).toHaveLength(0);
+    expect(rowsOf("ai_usage_events")).toHaveLength(0);
   });
 
   it("reproduction → fix (fix pass 4): a show-me sheet's provenance read that fails with a column-mentioning error marks the AI-read sheet", async () => {
