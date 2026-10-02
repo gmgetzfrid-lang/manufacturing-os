@@ -12,13 +12,30 @@
 //
 // Callers: /api/admin/gate (asked by the admin layout before it renders any
 // /admin page) and the API routes that back a surface. Server-only.
+//
+// admin-and-org BKP-8 / DEC-44 (A&O P3) §3: the admitted actor carries
+// `admittedRole` — the role the surface admitted them by (the first of its
+// entry roles they hold), never the headline alone — for the audit rows the
+// surface's routes write: an Admin whose headline is Viewer is recorded as
+// Admin. Additive; nothing else reads it.
 
 import { authorizeOrgRole, type AuthorizedActor, type AuthError } from "@/lib/serverAuth";
 import { loadCapabilityPolicyStrict } from "@/lib/capabilityPolicy";
 import { adminSurface, adminSurfaceAllows, type AdminSurface } from "@/lib/adminSurfaces";
 import { ALL_ROLES } from "@/types/schema";
 
-export type AdminGateActor = AuthorizedActor & { surface: AdminSurface };
+export type AdminGateActor = AuthorizedActor & {
+  surface: AdminSurface;
+  /** The role this surface admitted the actor by: the first of its entry
+   *  roles the actor holds (the headline for an open surface, or one
+   *  admitted by a capability grant alone). */
+  admittedRole: string;
+};
+
+/** The first of a surface's entry roles the actor holds, else the headline. */
+export function admittedRoleFor(surface: Pick<AdminSurface, "entry">, roles: readonly string[], headline: string): string {
+  return (surface.entry === "*" ? undefined : surface.entry.find((r) => roles.includes(r))) ?? headline;
+}
 
 export async function authorizeAdminSurface(
   req: Request,
@@ -48,5 +65,5 @@ export async function authorizeAdminSurface(
   if (!adminSurfaceAllows(surface, actor.roles, policy, actor.userId)) {
     return { error: surface.denied, status: 403 };
   }
-  return { ...actor, surface };
+  return { ...actor, surface, admittedRole: admittedRoleFor(surface, actor.roles, actor.role) };
 }

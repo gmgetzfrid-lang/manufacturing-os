@@ -8,7 +8,10 @@
 // Admin-only (admin-and-org BKP-8 / BKP-13): a destination is an unattended
 // channel for the whole workspace, so it is held to the data-export admin
 // surface by the one gate (lib/adminGate.ts), and creating one rings every
-// other controller's bell (lib/exportAlerts.ts).
+// other controller's bell (lib/exportAlerts.ts). Its audit row's user_role
+// is the role the surface admitted the caller by (the gate's admittedRole —
+// an Admin whose headline is Viewer is recorded as Admin), as the export
+// rows' are (DEC-44 (A&O P3) §3).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -153,7 +156,7 @@ export async function POST(req: NextRequest) {
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    user_role: auth.admittedRole,
     details: { name: data.name, destination_type: data.destination_type },
   });
   // CHECKED: a refused audit row is said in the answer (the destination

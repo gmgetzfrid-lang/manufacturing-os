@@ -38,7 +38,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
-import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
@@ -62,13 +62,6 @@ interface RunBody {
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-/** BKP-8: the role the data-export surface admitted the actor by — the first
- *  of its entry roles the actor holds — never the headline alone. */
-function admittedRole(actor: { role: string; roles: string[]; surface: { entry: string[] | "*" } }): string {
-  const entry = actor.surface.entry;
-  return (entry === "*" ? undefined : entry.find((r) => actor.roles.includes(r))) ?? actor.role;
-}
-
 /** A header-safe line naming what was not recorded. */
 function headerLine(parts: string[]): string {
   return parts.join("; ").replace(/[^\x20-\x7e]/g, "?").slice(0, 300);
@@ -85,26 +78,10 @@ export async function POST(req: NextRequest) {
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   // Rate limit: cap export runs per org per hour so a tight loop can't hammer
-  // the (expensive) ZIP builder or exfiltrate at speed.
-  const MAX_RUNS_PER_HOUR = 12;
-  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-  const { count: recentRuns, error: countErr } = await auth.admin
-    .from("export_runs")
-    .select("id", { count: "exact", head: true })
-    .eq("org_id", orgId)
-    .gte("started_at", oneHourAgo);
-  if (countErr || typeof recentRuns !== "number") {
-    return NextResponse.json(
-      { error: `Could not check this workspace's export rate limit (${countErr?.message ?? "no count returned"}) — nothing was run. Try again shortly.` },
-      { status: 503 },
-    );
-  }
-  if (recentRuns >= MAX_RUNS_PER_HOUR) {
-    return NextResponse.json(
-      { error: `Export rate limit reached (${MAX_RUNS_PER_HOUR}/hour for this workspace). Try again shortly.` },
-      { status: 429 },
-    );
-  }
+  // the (expensive) ZIP builder or exfiltrate at speed — the cap the JSON
+  // export (`structured`) is held to as well (lib/exportRunner.ts).
+  const limited = await exportRateLimitRefusal(auth.admin, orgId);
+  if (limited) return NextResponse.json({ error: limited.error }, { status: limited.status });
 
   // The destination, read CHECKED before anything is opened or sent.
   let dest: ScheduledDestination | null = null;
@@ -159,7 +136,7 @@ export async function POST(req: NextRequest) {
       orgId,
       exporterUserId: auth.userId,
       exporterEmail: auth.email,
-      exporterRole: admittedRole(auth),
+      exporterRole: auth.admittedRole,
       auditDetails: { channel: dest ? `destination:${dest.destination_type}` : "zip", exporterRoles: auth.roles, ...(dest ? { destinationId: dest.id } : {}) },
       includeFiles: dest?.include_files ?? body.includeFiles ?? true,
       delivery: dest

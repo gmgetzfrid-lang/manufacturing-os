@@ -18,8 +18,9 @@
 
 import JSZip from "jszip";
 import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
-import { createHash } from "node:crypto";
-import { runOrgExport, DataExportEnvelope } from "@/lib/dataExport";
+import { createHash, randomUUID } from "node:crypto";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { runOrgExport, recordExportUndelivered, DataExportEnvelope } from "@/lib/dataExport";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -27,6 +28,38 @@ import net from "node:net";
 import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
+
+/** The cap on full exports one workspace may start in an hour, counted on
+ *  export_runs: the manual run (download or destination), the JSON export
+ *  (`structured` — the download and the first step of the browser-built
+ *  Full ZIP; it opens a run row of its own so it is counted, admin-and-org
+ *  BKP-8 / DEC-44 (A&O P3) Risk), and the scheduled pushes in that hour. */
+export const MAX_EXPORT_RUNS_PER_HOUR = 12;
+
+/** A person's export start, held to MAX_EXPORT_RUNS_PER_HOUR. The count is
+ *  read CHECKED: a count that cannot be read refuses (503) — read as 0, it
+ *  would let a tight loop past the cap. Null when the export may start. */
+export async function exportRateLimitRefusal(
+  admin: Pick<SupabaseClient, "from">,
+  orgId: string,
+): Promise<{ error: string; status: number } | null> {
+  const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const { count, error } = await admin
+    .from("export_runs")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .gte("started_at", oneHourAgo);
+  if (error || typeof count !== "number") {
+    return {
+      error: `Could not check this workspace's export rate limit (${error?.message ?? "no count returned"}) — nothing was run. Try again shortly.`,
+      status: 503,
+    };
+  }
+  if (count >= MAX_EXPORT_RUNS_PER_HOUR) {
+    return { error: `Export rate limit reached (${MAX_EXPORT_RUNS_PER_HOUR}/hour for this workspace). Try again shortly.`, status: 429 };
+  }
+  return null;
+}
 
 // ─── SSRF guard ──────────────────────────────────────────────────
 // Export destinations (webhook URL, custom S3 endpoint) are admin-supplied
@@ -213,7 +246,7 @@ export function exportEmbedDeadline(routeStart: number, maxDurationSeconds: numb
 const OMITTED_AT_DEADLINE = "not embedded: the export reached its time limit";
 const OMITTED_SIZE_UNKNOWN = "not embedded: storage did not report its size, so it could not be held to the embed cap";
 
-export async function buildAndDeliverExport(params: {
+type BuildAndDeliverParams = {
   supabaseUrl: string;
   serviceRoleKey: string;
   orgId: string;
@@ -230,7 +263,44 @@ export async function buildAndDeliverExport(params: {
    *  is always built and delivered. Default: this call's start, as a 300 s
    *  route. */
   deadlineAt?: number;
-}): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
+};
+
+/** Build the export and deliver it. DEC-44 (A&O P3) §3: once the export's
+ *  DATA_EXPORT row is written the audit trail says it left, so a failure
+ *  after that — its file list refused, the ZIP not built, the destination
+ *  refusing the delivery (a webhook's 500, a failed bucket put) — writes a
+ *  DATA_EXPORT_UNDELIVERED row against the export's record id
+ *  (recordExportUndelivered) before the error goes back to the route, which
+ *  marks the run failed. A refused UNDELIVERED row is named in that error
+ *  (checked), so the run row says the record is incomplete. */
+export async function buildAndDeliverExport(params: BuildAndDeliverParams): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
+  const recordId = randomUUID();
+  let recorded = false;
+  try {
+    return await buildAndDeliver(params, recordId, () => { recorded = true; });
+  } catch (e) {
+    if (!recorded) throw e;
+    const err = e instanceof Error ? e : new Error(String(e));
+    const unwritten = await recordExportUndelivered(
+      createClient(params.supabaseUrl, params.serviceRoleKey, { auth: { persistSession: false } }),
+      {
+        orgId: params.orgId, recordId,
+        destinationId: params.delivery.kind === "destination" ? params.delivery.destination.id : null,
+        exporterUserId: params.exporterUserId, exporterEmail: params.exporterEmail, error: err.message,
+      },
+    ).catch((x) => (x as Error).message || String(x));
+    if (unwritten) {
+      err.message = `${err.message} — and the record that this export did not leave could not be written (${unwritten})`;
+    }
+    throw err;
+  }
+}
+
+async function buildAndDeliver(
+  params: BuildAndDeliverParams,
+  recordId: string,
+  onRecorded: () => void,
+): Promise<ExportRunResult & { zipBytes?: Uint8Array }> {
   const diagnostics: DiagnosticStep[] = [];
   const step = (s: string, d?: string) => diagnostics.push({ ts: new Date().toISOString(), step: s, detail: d });
   const deadlineAt = params.deadlineAt ?? exportEmbedDeadline(Date.now(), 300);
@@ -247,12 +317,14 @@ export async function buildAndDeliverExport(params: {
     // DEC-44 (A&O P3) §3: every file that leaves is named. A ZIP handed to a
     // person names each one on every run; a push to a destination — a bucket
     // or a webhook, scheduled or Run Now — names them against that
-    // destination's last full list (what was added or removed since), so a
-    // nightly push does not grow the audit trail (itself exported, and read
-    // whole by every later export) by the whole list every night.
+    // destination's ledger (what was added or removed since its previous
+    // push), so a nightly push does not grow the audit trail (itself
+    // exported, and read whole by every later export) by the whole list.
     fileRecord: params.delivery.kind === "destination"
       ? { destinationId: params.delivery.destination.id }
       : "list",
+    recordId,
+    onRecorded,
     deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);

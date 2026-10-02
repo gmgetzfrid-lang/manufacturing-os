@@ -23,7 +23,8 @@
 // "true", "on" or 1 as true while the rules above, keyed on `true`, never ran.
 // The EXPORT_DESTINATION_UPDATED / _DELETED rows are CHECKED: a refused one
 // is said in the answer as a warning (the change itself stands), never
-// swallowed.
+// swallowed. Their user_role is the role the surface admitted the caller by
+// (the gate's admittedRole), as the export rows' are (DEC-44 (A&O P3) §3).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -205,7 +206,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    user_role: auth.admittedRole,
     details: { changedFields: Object.keys(updates) },
   });
   if (auditErr) {
@@ -257,7 +258,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    user_role: auth.admittedRole,
   });
   if (auditErr) {
     console.error(`[data-export/destinations] org ${orgId}: the EXPORT_DESTINATION_DELETED audit row was not written: ${auditErr.message}`);

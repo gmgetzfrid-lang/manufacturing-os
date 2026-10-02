@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    user_role: auth.admittedRole,
     details: { ok: result.ok, error: result.error ?? null },
   });
 

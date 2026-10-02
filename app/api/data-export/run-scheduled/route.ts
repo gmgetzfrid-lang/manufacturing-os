@@ -30,11 +30,16 @@
 // for the next sweep) and the read of what is due: a sweep that cannot read
 // it answers 500, so the cron run shows as failed instead of "processed: 0".
 //
-// BKP-13 / DEC-44 (A&O P3) §1: the data-export surface is Admin-only, so a
-// destination runs only while the member who last confirmed it holds the
-// surface's entry role (Admin) — a destination a Manager or DocCtrl set up
-// before that is skipped and recorded, never disabled, until an Admin opens
-// it and saves it again (that stamps updated_by).
+// BKP-13 / DEC-44 (A&O P3) §1: the data-export surface is Admin-only. A
+// destination whose last configurer does not hold the surface's entry role
+// (Admin) — one a Manager or DocCtrl set up before the surface narrowed —
+// still RUNS: a nightly backup must not stop the night this deploys
+// (regression first; the third review fix pass skipped it, with no bell).
+// That night's bell to every Admin names who last confirmed it and asks them
+// to open it and save it to confirm it (that stamps updated_by), or disable
+// it; the run row, the destination card and the sweep result say the same.
+// It rings every night until an Admin saves it. A failed bell is recorded on
+// the run (alert:unsent) and named on the sweep result.
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -42,7 +47,7 @@ export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
-import { alertAdminsOfExport } from "@/lib/exportAlerts";
+import { alertAdminsOfExport, unconfirmedSentence } from "@/lib/exportAlerts";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { memberHoldsAny } from "@/lib/roleHeld";
 
@@ -160,9 +165,7 @@ async function handler(req: NextRequest) {
     // result, so a night with no run row is never a silent gap.
     const gate = await scheduledRunGate(sb, dest, enforceBilling);
     for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
-    // The configurer must also still hold the data-export surface's entry
-    // role (DEC-44 (A&O P3) §1); recorded and skipped the same way.
-    const refusal = gate.ok ? await configurerRoleRefusal(sb, dest) : gate.reason;
+    const refusal = gate.ok ? null : gate.reason;
     if (refusal) {
       const at = new Date().toISOString();
       // BILL-3 Done-when 3: a lapsed plan DISABLES a bucket destination (the
@@ -200,6 +203,16 @@ async function handler(req: NextRequest) {
       results.push({ destinationId: dest.id, ok: false, error: [skipMsg, ...unrecorded].join("; ") });
       continue;
     }
+
+    // DEC-44 (A&O P3) §1: does its last configurer hold the data-export
+    // surface's entry role? Either way it runs; an unconfirmed one turns the
+    // night's bell into a request to confirm it (below).
+    const confirmation = await configurerConfirmation(sb, dest);
+    const unconfirmedNote = confirmation.unconfirmed
+      ? `${unconfirmedSentence(confirmation.unconfirmed)} An Admin should open it and save it to confirm it, or disable it.`
+      : null;
+    const notices = [...gate.notices, ...(confirmation.notice ? [confirmation.notice] : []), ...(unconfirmedNote ? [unconfirmedNote] : [])];
+    if (confirmation.notice) console.warn(`[run-scheduled] destination ${dest.id}: ${confirmation.notice}`);
 
     const startedAt = new Date().toISOString();
     const { data: runRow, error: runRowErr } = await sb.from("export_runs").insert({
@@ -241,16 +254,22 @@ async function handler(req: NextRequest) {
       });
 
       // BKP-13: the controllers' bell, as for a manual run — every controller
-      // (no person ran this), naming the destination and its configurer. A
-      // refused alert is recorded on the run, never swallowed.
+      // (no person ran this), naming the destination and its configurer; for
+      // an unconfirmed destination, asking every Admin to confirm it or
+      // disable it (DEC-44 (A&O P3) §1). A refused alert is recorded on the
+      // run and named on the sweep result, never swallowed.
       const alert = await alertAdminsOfExport(sb, {
         orgId: dest.org_id, actorUserId: null, actorEmail: SCHEDULED_EXPORT_ACTOR.email,
         destination: dest.destination_type,
-        scheduled: { destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null },
+        scheduled: {
+          destinationName: dest.name || dest.id, configuredBy: dest.updated_by || dest.created_by || null,
+          ...(confirmation.unconfirmed ? { unconfirmed: confirmation.unconfirmed } : {}),
+        },
       }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
       if (!alert.ok) console.error(`[run-scheduled] destination ${dest.id}: the export alert was not sent: ${alert.error}`);
       // BKP-6: a retention purge that did not finish is said on the run row and the card.
       const retentionNote = retentionProblem(result.retention);
+      const cardNote = [retentionNote, unconfirmedNote].filter(Boolean).join(" ") || null;
       const completedAt = new Date().toISOString();
       const unrecorded: string[] = [];
       {
@@ -264,6 +283,8 @@ async function handler(req: NextRequest) {
           destination_type: dest.destination_type,
           diagnostics: [
             ...gate.notices.map((n) => ({ ts: startedAt, step: "gate:notice", detail: n })),
+            ...(confirmation.notice ? [{ ts: startedAt, step: "gate:notice", detail: confirmation.notice }] : []),
+            ...(unconfirmedNote ? [{ ts: startedAt, step: "gate:unconfirmed", detail: unconfirmedNote }] : []),
             ...result.diagnostics,
             ...(alert.ok ? [] : [{ ts: completedAt, step: "alert:unsent", detail: alert.error }]),
           ],
@@ -276,7 +297,7 @@ async function handler(req: NextRequest) {
       const { error: destUpdErr } = await sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
-        last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
+        last_run_error: cardNote ? cardNote.slice(0, 500) : null,
         last_run_bytes: result.bytes,
         next_run_at: computeNextRunAt({
           schedule_kind: dest.schedule_kind,
@@ -288,7 +309,7 @@ async function handler(req: NextRequest) {
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
-      const warnings = [...gate.notices, ...unrecorded];
+      const warnings = [...notices, ...(alert.ok ? [] : [`the export alert was not sent: ${alert.error}`]), ...unrecorded];
 
       results.push({
         destinationId: dest.id, ok: true, bytes: result.bytes,
@@ -332,29 +353,36 @@ async function handler(req: NextRequest) {
   return NextResponse.json({ processed: results.length, results });
 }
 
-/** DEC-44 (A&O P3) §1: why this destination may not run on its configurer's
- *  authority, or null. The member who last confirmed it (updated_by, else
- *  created_by — scheduledRunGate has already checked they are active) must
- *  hold the data-export surface's entry role, read from lib/adminSurfaces.ts
- *  by the full collection (memberHoldsAny). Never throws; a lookup that
- *  errors cannot prove it, so it skips (retried next cycle), as the gate's
- *  membership limb does. */
-async function configurerRoleRefusal(sb: SupabaseClient, dest: ScheduledDestination): Promise<string | null> {
+/** DEC-44 (A&O P3) §1: does the member who last confirmed this destination
+ *  (updated_by, else created_by — scheduledRunGate has already checked they
+ *  are an active member) hold the data-export surface's entry role, read
+ *  from lib/adminSurfaces.ts by the full collection (memberHoldsAny)? Either
+ *  way the push RUNS (regression first): `unconfirmed` (who, by email, and
+ *  the role it takes) when they do not, which the night's bell turns into a
+ *  request to confirm it; `notice` when the lookup failed and nothing can be
+ *  said (the push ran; checked again at the next run). Never throws. */
+async function configurerConfirmation(
+  sb: SupabaseClient,
+  dest: ScheduledDestination,
+): Promise<{ unconfirmed?: { by: string; holds: string }; notice?: string }> {
   const entry = adminSurface("data-export")?.entry ?? ["Admin"];
-  if (entry === "*") return null;
+  if (entry === "*") return {};
   const configurer = dest.updated_by || dest.created_by || null;
-  if (!configurer) {
-    return "this destination has no recorded configurer — an active Admin must open it and save it again to re-confirm";
-  }
+  // A destination with no configurer was already skipped by the gate.
+  if (!configurer) return {};
   const { data, error } = await sb
-    .from("org_members").select("role, roles")
+    .from("org_members").select("role, roles, email")
     .eq("org_id", dest.org_id).eq("uid", configurer).eq("status", "active")
     .maybeSingle();
-  if (error) return `the configurer's role could not be verified (${error.message}); retried next cycle`;
-  if (!memberHoldsAny(data as { role?: unknown; roles?: unknown } | null, entry)) {
-    return `the member who last configured this destination does not hold ${entry.join(" or ")}, which setting up a data export now requires — an Admin must open it and save it again to re-confirm`;
+  if (error) {
+    return { notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${error.message}); the push ran, and this is checked again at the next run` };
   }
-  return null;
+  const member = data as { role?: unknown; roles?: unknown; email?: unknown } | null;
+  if (!memberHoldsAny(member, entry)) {
+    const email = typeof member?.email === "string" && member.email ? member.email : null;
+    return { unconfirmed: { by: email ?? configurer, holds: entry.join(" or ") } };
+  }
+  return {};
 }
 
 /** BILL-3: did the scheduled gate refuse on its subscription or plan limb?

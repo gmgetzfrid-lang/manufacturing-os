@@ -84,7 +84,16 @@ async function alertControllers(
 
 /** A full workspace export ran. A person's export tells every OTHER
  *  controller; a scheduled push (no person: `actorUserId` null) tells every
- *  controller, naming the destination and who last configured it. */
+ *  controller, naming the destination and who last configured it.
+ *
+ *  DEC-44 (A&O P3) §1: a scheduled push whose last configurer does not hold
+ *  the data-export surface's entry role (a destination a Manager or DocCtrl
+ *  set up before the surface became Admin-only) still runs — a nightly
+ *  backup does not stop on deploy — and `scheduled.unconfirmed` turns that
+ *  night's bell into the request: it names who last confirmed it and asks
+ *  every Admin to open it and save it to confirm it, or disable it (a
+ *  DocCtrl, to ask an Admin to). It rings every night until an Admin saves
+ *  the destination (which stamps updated_by). */
 export async function alertAdminsOfExport(
   admin: SupabaseClient,
   info: {
@@ -92,31 +101,48 @@ export async function alertAdminsOfExport(
     actorUserId: string | null;
     actorEmail: string;
     destination: string;
-    /** A scheduled push: the destination's name and its last configurer's uid. */
-    scheduled?: { destinationName: string; configuredBy: string | null };
+    /** A scheduled push: the destination's name and its last configurer's
+     *  uid; `unconfirmed` when that configurer does not hold the surface's
+     *  entry role (`by`: their email, else their uid; `holds`: the role(s)
+     *  it takes, e.g. "Admin"). */
+    scheduled?: { destinationName: string; configuredBy: string | null; unconfirmed?: { by: string; holds: string } };
   },
 ): Promise<ExportAlertResult> {
   const when = new Date().toISOString();
+  const unconfirmed = info.scheduled?.unconfirmed;
   const what = info.scheduled
     ? `A scheduled export pushed the entire workspace to "${info.scheduled.destinationName}" (${info.destination}).`
     : `${info.actorEmail} exported the entire workspace (${info.destination}).`;
-  const body = (forAdmin: boolean) => info.scheduled
-    ? `${what} If you don't recognise this destination, ${forAdmin
-      ? "disable it under Admin → Data export."
-      : "ask an Admin to disable it under Admin → Data export. The run is recorded in the audit log."}`
-    : `${what} If this wasn't expected, ${forAdmin
-      ? "review the account immediately."
-      : "tell an Admin now so they can review the account. The export is recorded in the audit log."}`;
+  const body = (forAdmin: boolean) => unconfirmed
+    ? `${what} ${unconfirmedSentence(unconfirmed)} ${forAdmin
+      ? "Open it under Admin → Data export and save it to confirm it, or disable it."
+      : "Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it. The run is recorded in the audit log."}`
+    : info.scheduled
+      ? `${what} If you don't recognise this destination, ${forAdmin
+        ? "disable it under Admin → Data export."
+        : "ask an Admin to disable it under Admin → Data export. The run is recorded in the audit log."}`
+      : `${what} If this wasn't expected, ${forAdmin
+        ? "review the account immediately."
+        : "tell an Admin now so they can review the account. The export is recorded in the audit log."}`;
   return alertControllers(admin, info.orgId, info.actorUserId, {
-    title: info.scheduled ? "Scheduled workspace export ran" : "Full workspace export was run",
+    title: unconfirmed
+      ? "Scheduled export needs an Admin to confirm it"
+      : info.scheduled ? "Scheduled workspace export ran" : "Full workspace export was run",
     body,
     actorUserId: info.actorUserId,
     actorName: info.actorEmail,
     metadata: {
       destination: info.destination, at: when,
       ...(info.scheduled ? { scheduled: true, destinationName: info.scheduled.destinationName, configuredBy: info.scheduled.configuredBy } : {}),
+      ...(unconfirmed ? { unconfirmed: { by: unconfirmed.by, holds: unconfirmed.holds } } : {}),
     },
   });
+}
+
+/** DEC-44 (A&O P3) §1: what an unconfirmed scheduled push's bell (and its
+ *  run row and destination card) says about who last confirmed it. */
+export function unconfirmedSentence(u: { by: string; holds: string }): string {
+  return `It was last confirmed by ${u.by}, who does not hold ${u.holds} — which setting up a data export now requires.`;
 }
 
 /** A destination was created, enabled, or pointed somewhere new — the act

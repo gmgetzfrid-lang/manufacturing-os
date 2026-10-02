@@ -9,14 +9,19 @@
 //           restore brings them back) and counted, while the user decides
 //           (DEC-44 (A&O P3) §4); the DATA_EXPORT row names the exporter's
 //           role and every file that leaves is named (DATA_EXPORT_FILES): row
-//           by row for a person's export, against the destination's last
-//           full list for a push to a bucket or a webhook (one baseline, then
-//           at most one delta row a night), each row's list compact.
+//           by row for a person's export, against the destination's ledger
+//           for a push to a bucket or a webhook (a baseline, then each night
+//           a delta of that night's change, chained back to it; machine rows
+//           no member can forge), each row's list compact; an export
+//           recorded and then not delivered is recorded as undelivered; the
+//           JSON export is capped like the manual run.
 //   BKP-13  the scheduled push writes its DATA_EXPORT row as a machine
 //           (user_id NULL — DEC-44 (A&O P3)) and the write is CHECKED: an
 //           export that cannot be recorded is refused; every export rings the
 //           controllers' bell, the scheduled one included; creating or
-//           enabling a destination (or re-pointing an enabled one) does too.
+//           enabling a destination (or re-pointing an enabled one) does too;
+//           a destination a non-Admin last confirmed still runs, and its bell
+//           asks every Admin to confirm it or disable it.
 //   BKP-11  enabling a destination requires its credentials (Done-when 3).
 //   BILL-3  a bucket destination whose plan lapsed is disabled, never deleted,
 //           under SUBSCRIPTION_ENFORCE (Done-when 3); enabling one re-checks.
@@ -87,7 +92,8 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
 
 import {
   runOrgExport, PRIVATE_NOTES_CARRIED, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest,
-  fileListEntries, fileListRemoved, readDestinationBaseline, DESTINATION_FILES_RESOURCE_TYPE,
+  fileListEntries, fileListRemoved, readDestinationLedger, DESTINATION_FILES_RESOURCE_TYPE,
+  EXPORT_LEDGER_ACTOR, LEDGER_CHAIN_MAX_ROWS,
 } from "@/lib/dataExport";
 import { s3PurgeOlderThan, retentionProblem, destinationCredentialGap } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
@@ -384,27 +390,52 @@ describe("BKP-8 Done-when 3 / BKP-13 Done-when 1 — the export is recorded, by 
 // changed). The night's list = baseline + delta, and hashes to its
 // DATA_EXPORT row's sha256. The rows are the destination's (resource_type
 // "export_destination", resource_id its id), found by index.
+// Fourth review fix: that delta was cumulative and capped at one row, so a
+// busy destination re-wrote its whole list every few nights (every night
+// at 500+ changes); and any member could insert a matching "baseline" row
+// dated 2099 that every later push took as newest. Now each delta names
+// only what changed since the PREVIOUS push (as many rows as that takes),
+// chained to it (`prev`) and to its baseline (`baselineId`); a new baseline
+// is written only once the chain would pass half the list or
+// LEDGER_CHAIN_MAX_ROWS rows; and the ledger rows are machine rows
+// (user_id NULL) that the ledger alone reads, never later than now.
 
 const nightOf = (n: number) => new Date(Date.UTC(2026, 9, 1, 5, 30, 0) + n * 86_400_000);
 const destVersions = (n: number, from = 0): Row[] => Array.from({ length: n }, (_, j) => {
   const i = from + j;
   return { id: `v-${String(i).padStart(4, "0")}`, org_id: ORG, record_id: `doc-${i % 7}`, revision_label: "A", file_url: key(`libraries/lib-1/D-${i}.pdf`), size: 4 };
 });
-type FileRecord = Record<string, unknown> & { mode: string; recordId: string; sha256: string; baseline?: { recordId: string } };
+type FileRecord = Record<string, unknown> & { mode: string; recordId: string; sha256: string; baseline?: { recordId: string }; prev?: string };
 const exportRecords = () => audits("DATA_EXPORT").map((r) => (r.details as { fileRecord: FileRecord }).fileRecord);
 const lastRecord = () => exportRecords().at(-1)!;
 const fileRowsOf = (recordId: string) => audits("DATA_EXPORT_FILES").filter((r) => (r.details as { recordId: string }).recordId === recordId);
 const fileDetailsOf = (recordId: string) => fileRowsOf(recordId).map((r) => r.details as Row);
-/** What a recall does: rebuild a night's list from the audit trail alone. */
-const rebuild = (record: FileRecord): Set<string> => {
-  if (record.mode !== "delta") return new Set(fileDetailsOf(record.recordId).flatMap((d) => fileListEntries(d).map((f) => f.path)));
-  const list = new Set(fileDetailsOf(record.baseline!.recordId).flatMap((d) => fileListEntries(d).map((f) => f.path)));
-  for (const d of fileDetailsOf(record.recordId)) {
-    for (const f of fileListEntries(d)) list.add(f.path);
+const applyRows = (list: Set<string>, recordId: string) => {
+  for (const d of fileDetailsOf(recordId)) {
     for (const p of fileListRemoved(d)) list.delete(p);
+    for (const f of fileListEntries(d)) list.add(f.path);
   }
   return list;
 };
+/** A ledger record's list: the baseline's own rows, or the list of the
+ *  record it chains from (`prev`) with its own rows applied. */
+const listOfRecord = (recordId: string, baselineId: string): Set<string> => {
+  if (recordId === baselineId) return applyRows(new Set(), recordId);
+  const [first] = fileDetailsOf(recordId);
+  expect(first, `ledger record ${recordId}`).toBeDefined();
+  expect(first.baselineId).toBe(baselineId);
+  return applyRows(listOfRecord(String(first.prev), baselineId), recordId);
+};
+/** What a recall does: rebuild a night's list from the audit trail alone —
+ *  a person's or a baseline's own rows; for a delta, the chain back to its
+ *  baseline (each record's `prev`), then its own rows. */
+const rebuild = (record: FileRecord): Set<string> => {
+  if (record.mode !== "delta") return applyRows(new Set(), record.recordId);
+  return applyRows(listOfRecord(String(record.prev), record.baseline!.recordId), record.recordId);
+};
+/** Every entry (file named, or path removed) the destination ledger rows carry. */
+const ledgerEntries = () => audits("DATA_EXPORT_FILES").reduce((s, r) => s + fileListEntries(r.details).length + fileListRemoved(r.details).length, 0);
+const ledgerBytes = (rows: Row[] = audits("DATA_EXPORT_FILES")) => rows.reduce((s, r) => s + JSON.stringify(r.details).length, 0);
 const handedOut = (env: { files: Array<{ path: string; presignedUrl: string }> }) => env.files.filter((f) => !!f.presignedUrl).map((f) => f.path);
 
 describe("BKP-8 Done-when 3 — a destination push names the files that left (DEC-44 (A&O P3) §3)", () => {
@@ -435,6 +466,11 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
     expect(rebuild(record)).toEqual(new Set(handedOut(env)));
     // the DATA_EXPORT row stays the workspace's
     expect(audits("DATA_EXPORT")[0]).toMatchObject({ resource_type: "org", resource_id: ORG });
+    // fourth review fix: the ledger rows are machine rows (no member can write one); who pushed is in details
+    for (const r of rows) {
+      expect(r).toMatchObject({ user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, user_role: "system" });
+      expect(r.details).toMatchObject({ exportedBy: { userId: null, email: "system:scheduled-export" } });
+    }
   });
 
   it("the next night, nothing changed: no file row at all — the record points at the baseline and hashes to the same list", async () => {
@@ -473,7 +509,7 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
     expect(rebuild(lastRecord()).size).toBe(1200);
   });
 
-  it("a change larger than one row writes a new baseline; the next delta is against it (the newest baseline, by timestamp)", async () => {
+  it("a change past the chain's cap (half the list, at least one row's worth) writes a new baseline; the next delta is against it (the newest baseline, by timestamp)", async () => {
     db.rows.document_versions = destVersions(5);
     await push();
     db.rows.document_versions = destVersions(EXPORT_FILES_PER_AUDIT_ROW + 10);
@@ -482,7 +518,8 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
     expect(second).toMatchObject({ mode: "baseline", count: EXPORT_FILES_PER_AUDIT_ROW + 10 });
     db.rows.document_versions = destVersions(EXPORT_FILES_PER_AUDIT_ROW + 11);
     const env = await push();
-    expect(lastRecord()).toMatchObject({ mode: "delta", added: 1, removed: 0, baseline: { recordId: second.recordId } });
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 1, removed: 0, baseline: { recordId: second.recordId }, prev: second.recordId });
+    expect(second).toMatchObject({ rebased: expect.stringMatching(/would name 505 file\(s\) in 2 row\(s\), past the chain's cap of 500/) });
     expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env)));
   });
 
@@ -528,7 +565,7 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
     expect(lastRecord()).not.toHaveProperty("baselineProblem");
   });
 
-  it("the reads ask by resource, ordered by timestamp, the head read for four small fields and the part read for exactly `parts` rows", async () => {
+  it("the reads ask by resource, machine rows only, never later than now, newest first: the head read four small fields, the parts by page up to `parts`, the chain by its baseline", async () => {
     db.rows.document_versions = destVersions(EXPORT_FILES_PER_AUDIT_ROW + 1);
     await push("dest-a");
     const mem = await import("./helpers/restoreMemoryDb");
@@ -546,19 +583,163 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
         return proxy;
       },
     };
-    const out = await readDestinationBaseline(recording as never, ORG, "dest-a");
-    expect(out.baseline?.paths.size).toBe(EXPORT_FILES_PER_AUDIT_ROW + 1);
-    expect(calls).toHaveLength(2);
+    const out = await readDestinationLedger(recording as never, ORG, "dest-a");
+    expect(out.ledger?.paths.size).toBe(EXPORT_FILES_PER_AUDIT_ROW + 1);
+    expect(out.ledger).toMatchObject({ links: 0, entries: 0, rows: 0 });
+    expect(out.ledger!.head.recordId).toBe(out.ledger!.baseline.recordId);
+    expect(calls).toHaveLength(3);
     for (const log of calls) {
       expect(log).toContainEqual({ m: "eq", args: ["resource_type", "export_destination"] });
       expect(log).toContainEqual({ m: "eq", args: ["resource_id", "dest-a"] });
       expect(log).toContainEqual({ m: "eq", args: ["action", "DATA_EXPORT_FILES"] });
-      expect(log).toContainEqual({ m: "order", args: ["timestamp", { ascending: false }] });
+      expect(log).toContainEqual({ m: "is", args: ["user_id", null] });
+      const lte = log.find((c) => c.m === "lte");
+      expect(lte?.args[0]).toBe("timestamp");
+      expect(Date.parse(String(lte?.args[1])) - Date.now()).toBeLessThanOrEqual(60_000);
       expect(log.some((c) => c.m === "eq" && c.args[0] === "details->>destinationId")).toBe(false);
     }
-    expect(calls[0].find((c) => c.m === "select")!.args[0]).toBe("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt");
-    expect(calls[0]).toContainEqual({ m: "limit", args: [1] });
-    expect(calls[1]).toContainEqual({ m: "limit", args: [2] });
+    const [headRead, partRead, chainRead] = calls;
+    expect(headRead.find((c) => c.m === "select")!.args[0]).toBe("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt");
+    expect(headRead).toContainEqual({ m: "order", args: ["timestamp", { ascending: false }] });
+    expect(headRead).toContainEqual({ m: "limit", args: [1] });
+    expect(partRead).toContainEqual({ m: "order", args: ["details->>part", { ascending: true }] });
+    expect(partRead).toContainEqual({ m: "range", args: [0, 1] });
+    expect(chainRead).toContainEqual({ m: "eq", args: ["details->>kind", "delta"] });
+    expect(chainRead).toContainEqual({ m: "eq", args: ["details->>baselineId", out.ledger!.baseline.recordId] });
+    expect(chainRead).toContainEqual({ m: "order", args: ["timestamp", { ascending: false }] });
+    expect(chainRead).toContainEqual({ m: "limit", args: [LEDGER_CHAIN_MAX_ROWS + 100] });
+  });
+});
+
+// ─── Fourth review fix: the chained ledger, and rows no member can forge ───
+
+describe("BKP-8 Done-when 3 — fourth review fix: each delta is against the previous push, and only the ledger's own rows are read", () => {
+  const DEST = "dest-churn";
+  let night = 0;
+  beforeEach(() => {
+    night = 0;
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const push = async (destinationId = DEST) => {
+    vi.setSystemTime(nightOf(night++));
+    return runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
+      auditDetails: { channel: "scheduled", destinationId }, fileRecord: { destinationId },
+    });
+  };
+
+  it("a busy workspace (5,000 files, 200 new a night, thirty nights): every night rebuilds and hashes, and the ledger stays a small multiple of one baseline — at most 3 entries per changed file beyond it (was: a full baseline every 3rd night, ~19x)", async () => {
+    db.rows.document_versions = destVersions(5000);
+    let changes = 0;
+    const modes: string[] = [];
+    for (let n = 0; n < 30; n++) {
+      if (n > 0) { db.rows.document_versions.push(...destVersions(200, 5000 + (n - 1) * 200)); changes += 200; }
+      const env = await push();
+      const record = lastRecord();
+      modes.push(record.mode);
+      const rebuilt = rebuild(record);
+      expect(rebuilt, `night ${n}`).toEqual(new Set(handedOut(env)));
+      expect(exportFileListDigest([...rebuilt]), `night ${n}`).toBe(record.sha256);
+    }
+    const firstBaseline = fileRowsOf(exportRecords()[0].recordId);
+    // the bound DEC-44 (A&O P3) §3 states: the first baseline, plus at most (1 + 1/0.5) = 3 entries per changed file
+    expect(ledgerEntries()).toBeLessThanOrEqual(5000 + 3 * changes);
+    // measured: 2 baselines in 30 nights, about 4.2x the first baseline's bytes
+    expect(ledgerBytes()).toBeLessThan(ledgerBytes(firstBaseline) * 5);
+    // the deltas carry the night's change, not the change since the baseline
+    const deltas = exportRecords().filter((r) => r.mode === "delta");
+    expect(deltas.length).toBeGreaterThan(20);
+    for (const d of deltas) expect(d).toMatchObject({ added: 200, removed: 0 });
+    expect(modes.filter((m) => m === "baseline").length).toBeLessThanOrEqual(2);
+  }, 120_000);
+
+  it("a night's change larger than one row is one delta over as many rows (500 entries each), chained to the night before; removals chain the same way", async () => {
+    db.rows.document_versions = destVersions(3000);
+    await push();
+    const baseline = lastRecord();
+    db.rows.document_versions.push(...destVersions(700, 3000));
+    const env1 = await push();
+    const first = lastRecord();
+    expect(first).toMatchObject({ mode: "delta", added: 700, removed: 0, prev: baseline.recordId, link: 1, baseline: { recordId: baseline.recordId } });
+    expect(fileDetailsOf(first.recordId).map((d) => [d.part, d.parts, d.prev, d.baselineId])).toEqual([[1, 2, baseline.recordId, baseline.recordId], [2, 2, baseline.recordId, baseline.recordId]]);
+    expect(rebuild(first)).toEqual(new Set(handedOut(env1)));
+    db.rows.document_versions = db.rows.document_versions.slice(300);
+    const env2 = await push();
+    const second = lastRecord();
+    // against the night before (300 removed), not the baseline (700 added and 300 removed)
+    expect(second).toMatchObject({ mode: "delta", added: 0, removed: 300, prev: first.recordId, link: 2 });
+    expect(fileRowsOf(second.recordId)).toHaveLength(1);
+    expect(rebuild(second)).toEqual(new Set(handedOut(env2)));
+    // a quiet night writes nothing and points at the chain's head
+    await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 0, removed: 0, prev: second.recordId, link: 2 });
+    expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env2)));
+    const ledger = await readDestinationLedger({ from: (await import("./helpers/restoreMemoryDb")).from } as never, ORG, DEST);
+    expect(ledger.ledger).toMatchObject({ links: 2, entries: 1000, rows: 3, head: { recordId: second.recordId } });
+  });
+
+  it("a chain that cannot be read back whole (a delta's part gone) is never used: a new full baseline, the problem named", async () => {
+    db.rows.document_versions = destVersions(3000);
+    await push();
+    db.rows.document_versions.push(...destVersions(700, 3000));
+    await push();
+    const delta = lastRecord();
+    db.rows.audit_logs = rowsOf("audit_logs").filter((r) => !((r.details as Row).recordId === delta.recordId && (r.details as Row).part === 2));
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "baseline", baselineProblem: expect.stringMatching(/the changes since the last full list \(.+\) could not be read back whole/) });
+    expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env)));
+  });
+
+  it("a trickle re-bases at the chain's row cap, so the next push never reads back more than that", async () => {
+    db.rows.document_versions = destVersions(10);
+    await push();
+    const modes: string[] = [];
+    for (let n = 0; n <= LEDGER_CHAIN_MAX_ROWS; n++) {
+      db.rows.document_versions.push(...destVersions(1, 100 + n));
+      await push();
+      modes.push(lastRecord().mode);
+    }
+    expect(modes.slice(0, LEDGER_CHAIN_MAX_ROWS).every((m) => m === "delta")).toBe(true);
+    expect(modes[LEDGER_CHAIN_MAX_ROWS]).toBe("baseline");
+    expect(lastRecord()).toMatchObject({ rebased: expect.stringMatching(new RegExp(`in ${LEDGER_CHAIN_MAX_ROWS + 1} row\\(s\\)`)) });
+  }, 120_000);
+
+  it("a member's forged 'baseline' (their own uid, as audit_logs_insert lets them write) dated 2099 is never read: five quiet nights write no file row (was: a full baseline every night)", async () => {
+    db.rows.document_versions = destVersions(1200);
+    await push();
+    const real = lastRecord();
+    const forged = (extra: Row): Row => ({
+      action: "DATA_EXPORT_FILES", org_id: ORG, resource_type: DESTINATION_FILES_RESOURCE_TYPE, resource_id: DEST,
+      user_id: "u-dc", user_email: "dc@acme.com", user_role: "Manager", timestamp: "2099-01-01T00:00:00.000Z", ...extra,
+    });
+    db.rows.audit_logs.push(
+      forged({ details: { kind: "baseline", recordId: "forged", sha256: exportFileListDigest([]), startedAt: "x", part: 1, parts: 1, prefix: "", paths: [], docs: [], refs: [] } }),
+      // a forged delta on the REAL baseline, removing a drawing from the record
+      forged({ details: { kind: "delta", recordId: "forged-delta", baselineId: real.recordId, prev: real.recordId, sha256: "x", part: 1, parts: 1, prefix: `orgs/${ORG}/`, paths: [], docs: [], refs: [], removed: ["libraries/lib-1/D-0.pdf"] } }),
+    );
+    const before = audits("DATA_EXPORT_FILES").length;
+    for (let i = 0; i < 5; i++) {
+      const env = await push();
+      expect(lastRecord()).toMatchObject({ mode: "delta", added: 0, removed: 0, prev: real.recordId, baseline: { recordId: real.recordId } });
+      expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env)));
+    }
+    expect(audits("DATA_EXPORT_FILES")).toHaveLength(before);
+  });
+
+  it("…nor is a machine-looking row dated in the future (past the minute's clock allowance)", async () => {
+    db.rows.document_versions = destVersions(1200);
+    await push();
+    const real = lastRecord();
+    db.rows.audit_logs.push({
+      action: "DATA_EXPORT_FILES", org_id: ORG, resource_type: DESTINATION_FILES_RESOURCE_TYPE, resource_id: DEST,
+      user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, timestamp: "2099-01-01T00:00:00.000Z",
+      details: { kind: "baseline", recordId: "future", sha256: exportFileListDigest([]), startedAt: "x", part: 1, parts: 1, prefix: "", paths: [], docs: [], refs: [] },
+    });
+    const before = audits("DATA_EXPORT_FILES").length;
+    await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 0, baseline: { recordId: real.recordId } });
+    expect(audits("DATA_EXPORT_FILES")).toHaveLength(before);
   });
 });
 
@@ -1081,7 +1262,7 @@ describe("second review fix — the export routes check their own rate-limit rea
 
 // ─── Third review fix: every read and write the two run routes make is checked ─
 
-describe("third review fix — the run routes check every read and write of their own, and a scheduled push needs an Admin's confirmation", () => {
+describe("third review fix — the run routes check every read and write of their own; fourth: a scheduled push not confirmed by an Admin runs and asks for it", () => {
   const run = (body: Row = {}) => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, ...body } }));
   const quiet = () => vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -1162,17 +1343,53 @@ describe("third review fix — the run routes check every read and write of thei
     expect(await res.json()).toEqual({ error: "Webhook 500: down", warnings: ["run row not updated: statement timeout", "last-run status not recorded: statement timeout"] });
   });
 
-  it("a destination last confirmed by a Manager or DocCtrl (before the surface was Admin-only) is skipped and recorded — never disabled — until an Admin saves it again", async () => {
-    db.rows.export_destinations = [dueDestination({ updated_by: "u-dc" })];
+  it("fourth review fix (regression first): a destination last confirmed by a Manager or DocCtrl (before the surface was Admin-only) still RUNS — and every Admin's bell names who confirmed it and asks them to open and save it, or disable it", async () => {
+    db.rows.export_destinations = [dueDestination({ created_by: "u-dc", updated_by: "u-dc" })];
     const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
-    expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^skipped: the member who last configured this destination does not hold Admin, which setting up a data export now requires — an Admin must open it and save it again to re-confirm$/) });
-    expect(state.delivered).toEqual([]);
-    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "cancelled", diagnostics: [expect.objectContaining({ step: "gate:skipped", detail: expect.stringMatching(/does not hold Admin/) })] });
-    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: true, last_run_status: "failed", last_run_error: expect.stringMatching(/does not hold Admin/) });
-    // an Admin re-saves it (PATCH stamps updated_by): the next due run goes
+    // the nightly backup is delivered, as before this package (was: skipped, 0 delivered, 0 bells)
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: [expect.stringMatching(/last confirmed by dc@acme\.com, who does not hold Admin/)] });
+    expect(state.delivered).toHaveLength(1);
+    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "succeeded", diagnostics: expect.arrayContaining([expect.objectContaining({ step: "gate:unconfirmed", detail: expect.stringMatching(/does not hold Admin.*open it and save it to confirm it, or disable it/) })]) });
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: true, last_run_status: "succeeded", last_run_error: expect.stringMatching(/last confirmed by dc@acme\.com, who does not hold Admin/) });
+    // every Admin is asked to confirm it; the DocCtrl (here, its configurer) to ask an Admin
+    const admins = bells().filter((b) => b.user_id === "u-admin" || b.user_id === "u-admin2");
+    expect(admins).toHaveLength(2);
+    for (const b of admins) {
+      expect(b).toMatchObject({ title: "Scheduled export needs an Admin to confirm it", link: "/admin/data-export", metadata: { unconfirmed: { by: "dc@acme.com", holds: "Admin" }, destinationName: "Nightly hook" } });
+      expect(String(b.body)).toBe('A scheduled export pushed the entire workspace to "Nightly hook" (webhook). It was last confirmed by dc@acme.com, who does not hold Admin — which setting up a data export now requires. Open it under Admin → Data export and save it to confirm it, or disable it.');
+    }
+    expect(String(bells().find((b) => b.user_id === "u-dc")!.body)).toMatch(/Ask an Admin to open it under Admin → Data export and save it to confirm it, or disable it\. The run is recorded in the audit log\.$/);
+    // it asks again every night until an Admin saves it (PATCH stamps updated_by); then the bell is the usual one
+    db.rows.notifications = [];
+    Object.assign(db.rows.export_destinations[0], { next_run_at: "2026-09-30T05:00:00.000Z" });
+    await sweep();
+    expect(bells().filter((b) => b.title === "Scheduled export needs an Admin to confirm it")).toHaveLength(3);
+    db.rows.notifications = [];
     Object.assign(db.rows.export_destinations[0], { updated_by: "u-admin2", next_run_at: "2026-09-30T05:00:00.000Z" });
     const again = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
     expect(again.results[0]).toMatchObject({ ok: true });
+    expect(again.results[0]).not.toHaveProperty("warnings");
+    expect(state.delivered).toHaveLength(3);
+    expect(bells().every((b) => b.title === "Scheduled workspace export ran" && !(b.metadata as Row).unconfirmed)).toBe(true);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_error: null });
+  });
+
+  it("…a refused bell for an unconfirmed destination is recorded on the run and named on the sweep result; the backup still left", async () => {
+    db.rows.export_destinations = [dueDestination({ updated_by: "u-dc" })];
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/the export alert was not sent: the alert could not be written \(permission denied\)/)]) });
+    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "succeeded", diagnostics: expect.arrayContaining([expect.objectContaining({ step: "alert:unsent" })]) });
+    expect(state.delivered).toHaveLength(1);
+  });
+
+  it("…a role lookup that fails cannot tell, so the push runs and says the check could not be made", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    let reads = 0;
+    // the gate's membership read passes; the role read (the second org_members read) fails
+    db.readError = new Proxy({} as Record<string, string>, { get: (_t, k) => (k === "org_members" && [2, 3].includes(++reads) ? "connection reset" : undefined) });
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: [expect.stringMatching(/could not be verified \(connection reset\); the push ran/)] });
     expect(state.delivered).toHaveLength(1);
   });
 
@@ -1182,6 +1399,144 @@ describe("third review fix — the run routes check every read and write of thei
     const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
     expect(body.results[0]).toMatchObject({ ok: true });
   });
+});
+
+// ─── Fourth review fix: the JSON export is capped; every writer records the admitted role; a failed delivery is recorded ─
+
+describe("fourth review fix — the JSON export is held to the hourly cap, with a run row of its own", () => {
+  const structured = () => structuredGET(req(`/api/data-export/structured?orgId=${ORG}`));
+
+  it("the thirteenth export in an hour is 429 — the JSON export counts toward the cap the manual run is held to (was: uncapped, each call writing its whole file list)", async () => {
+    for (let i = 0; i < 12; i++) expect((await structured()).status, `call ${i + 1}`).toBe(200);
+    expect(rowsOf("export_runs")).toHaveLength(12);
+    expect(rowsOf("export_runs").every((r) => r.trigger_type === "manual" && r.destination_type === "json" && r.status === "succeeded")).toBe(true);
+    const capped = await structured();
+    expect(capped.status).toBe(429);
+    expect(((await capped.json()) as { error: string }).error).toMatch(/Export rate limit reached \(12\/hour for this workspace\)/);
+    expect(audits("DATA_EXPORT")).toHaveLength(12);
+    // and the manual run counts the JSON exports
+    expect((await runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG } }))).status).toBe(429);
+  });
+
+  it("a count that cannot be read, or a run row that is refused, refuses the export (503): nothing exported, nothing recorded", async () => {
+    db.readError = { export_runs: "permission denied for table export_runs" };
+    const unread = await structured();
+    expect(unread.status).toBe(503);
+    expect(((await unread.json()) as { error: string }).error).toMatch(/Could not check this workspace's export rate limit/);
+    db.readError = {};
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const refused = await structured();
+    expect(refused.status).toBe(503);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/Could not open this export's run record \(permission denied\) — nothing was exported/);
+    expect(audits("DATA_EXPORT")).toEqual([]);
+    expect(bells()).toEqual([]);
+  });
+
+  it("the run row closes with the outcome (counts, bytes, run id); a refused closing write is named in X-Export-Unrecorded and the download proceeds", async () => {
+    db.rows.document_versions = destVersions(3);
+    const res = await structured();
+    expect(res.status).toBe(200);
+    const run = rowsOf("export_runs")[0];
+    expect(res.headers.get("x-export-run-id")).toBe(run.id);
+    expect(run).toMatchObject({ status: "succeeded", triggered_by: "u-admin", file_count: 3, destination_type: "json" });
+    expect(Number(run.total_bytes)).toBe((await res.text()).length);
+    db.writeError = (table, op) => (table === "export_runs" && op === "update" ? { code: "57014", message: "statement timeout" } : null);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const second = await structured();
+    err.mockRestore();
+    expect(second.status).toBe(200);
+    expect(second.headers.get("x-export-unrecorded")).toBe("run row not updated: statement timeout");
+  });
+});
+
+describe("fourth review fix — every data-export writer records the role the surface admitted, not the headline", () => {
+  it("an Admin whose headline is Viewer creating, editing, testing and deleting a destination is recorded as Admin on each row", async () => {
+    state.roles = ["Viewer", "Admin"];
+    const created = await destinationsPOST(req("/api/data-export/destinations", {
+      method: "POST", body: { orgId: ORG, name: "Hook", destination_type: "webhook", webhook_url: "https://hooks.example.com/x", webhook_secret: "s" },
+    }));
+    expect(created.status).toBe(200);
+    const id = String(((await created.json()) as { destination: Row }).destination.id);
+    expect((await destinationPATCH(req(`/api/data-export/destinations/${id}`, { method: "PATCH", body: { orgId: ORG, name: "Hook 2" } }), params(id))).status).toBe(200);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    try {
+      expect((await destinationTEST(req(`/api/data-export/destinations/${id}/test?orgId=${ORG}`, { method: "POST" }), params(id))).status).toBe(200);
+    } finally { vi.unstubAllGlobals(); }
+    expect((await destinationDELETE(req(`/api/data-export/destinations/${id}?orgId=${ORG}`, { method: "DELETE" }), params(id))).status).toBe(200);
+    const rows = rowsOf("audit_logs").filter((r) => String(r.action).startsWith("EXPORT_DESTINATION_"));
+    expect(rows.map((r) => r.action)).toEqual(["EXPORT_DESTINATION_CREATED", "EXPORT_DESTINATION_UPDATED", "EXPORT_DESTINATION_TEST", "EXPORT_DESTINATION_DELETED"]);
+    expect(rows.every((r) => r.user_role === "Admin" && r.user_id === "u-admin")).toBe(true);
+  });
+
+  it("the gate carries it: the first of the surface's entry roles held, else the headline", async () => {
+    const { admittedRoleFor } = await import("@/lib/adminGate");
+    expect(admittedRoleFor({ entry: ["Admin"] }, ["Viewer", "Admin"], "Viewer")).toBe("Admin");
+    expect(admittedRoleFor({ entry: ["Admin", "Manager"] }, ["Manager", "Admin"], "Manager")).toBe("Admin");
+    expect(admittedRoleFor({ entry: "*" }, ["Viewer"], "Viewer")).toBe("Viewer");
+    // no route keeps a copy of its own
+    for (const f of ["structured", "run"]) {
+      expect(readFileSync(join(process.cwd(), `app/api/data-export/${f}/route.ts`), "utf8")).not.toMatch(/function admittedRole/);
+    }
+  });
+});
+
+describe("fourth review fix — an export recorded as leaving that then did not is recorded as undelivered", () => {
+  const HOOK = "https://203.0.113.10/hook";
+  let readdir: { mockRestore: () => void } | null = null;
+  beforeEach(async () => {
+    readdir = vi.spyOn(fsPromises, "readdir").mockResolvedValue([] as never);
+    const real = await vi.importActual<typeof import("@/lib/exportRunner")>("@/lib/exportRunner");
+    state.deliver = (p) => real.buildAndDeliverExport(p as never);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); readdir?.mockRestore(); readdir = null; });
+  const undelivered = () => audits("DATA_EXPORT_UNDELIVERED");
+
+  it("a scheduled push the webhook refuses (500): the run fails, and a DATA_EXPORT_UNDELIVERED machine row names the export's record and the destination", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 500 })));
+    db.rows.document_versions = destVersions(4);
+    db.rows.export_destinations = [dueDestination({ webhook_url: HOOK })];
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/^Webhook 500: down/) });
+    expect(rowsOf("export_runs")[0]).toMatchObject({ status: "failed" });
+    const record = lastRecord();
+    expect(record).toMatchObject({ mode: "baseline", destinationId: "dest-1" });
+    expect(undelivered()).toEqual([expect.objectContaining({
+      org_id: ORG, user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, resource_type: DESTINATION_FILES_RESOURCE_TYPE, resource_id: "dest-1",
+      details: expect.objectContaining({ recordId: record.recordId, destinationId: "dest-1", exportedBy: { userId: null, email: "system:scheduled-export" }, error: expect.stringMatching(/Webhook 500/) }),
+    })]);
+    expect(bells()).toEqual([]);
+  }, 30_000);
+
+  it("Run Now the same; a refused UNDELIVERED row is named in the failure (checked)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+    db.rows.export_destinations = [dueDestination({ webhook_url: HOOK })];
+    const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
+    const first = await runNow();
+    expect(first.status).toBe(500);
+    expect(undelivered()).toEqual([expect.objectContaining({ details: expect.objectContaining({ recordId: lastRecord().recordId, exportedBy: { userId: "u-admin", email: "me@acme.com" } }) })]);
+    db.writeError = (table, _op, rows) => (table === "audit_logs" && rows[0]?.action === "DATA_EXPORT_UNDELIVERED" ? { code: "42501", message: "audit refused" } : null);
+    const second = await runNow();
+    expect(second.status).toBe(500);
+    expect(((await second.json()) as { error: string }).error).toMatch(/^Webhook 503: down — and the record that this export did not leave could not be written \(audit refused\)$/);
+    expect(rowsOf("export_runs").at(-1)).toMatchObject({ status: "failed", error_message: expect.stringMatching(/could not be written \(audit refused\)/) });
+  }, 30_000);
+
+  it("an export refused before its DATA_EXPORT row was written writes no UNDELIVERED row (nothing said it left); one refused after it (its file list) does — the JSON export too", async () => {
+    db.rows.document_versions = destVersions(2);
+    db.writeError = (table, _op, rows) => (table === "audit_logs" && rows[0]?.action === "DATA_EXPORT" ? { code: "22P02", message: "bad" } : null);
+    expect((await structuredGET(req(`/api/data-export/structured?orgId=${ORG}`))).status).toBe(500);
+    expect(undelivered()).toEqual([]);
+    db.writeError = (table, _op, rows) => (table === "audit_logs" && rows[0]?.action === "DATA_EXPORT_FILES" ? { code: "54000", message: "row too big" } : null);
+    const res = await structuredGET(req(`/api/data-export/structured?orgId=${ORG}`));
+    expect(res.status).toBe(500);
+    const recordId = (audits("DATA_EXPORT").at(-1)!.details as { fileRecord: { recordId: string } }).fileRecord.recordId;
+    expect(undelivered()).toEqual([expect.objectContaining({ resource_type: "org", resource_id: ORG, user_id: null, details: expect.objectContaining({ recordId, error: expect.stringMatching(/row too big/) }) })]);
+    expect(rowsOf("export_runs").at(-1)).toMatchObject({ status: "failed" });
+    // the manual ZIP through the real builder: the same
+    const zip = await runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG } }));
+    expect(zip.status).toBe(500);
+    expect(undelivered()).toHaveLength(2);
+  }, 30_000);
 });
 
 // ─── BKP-6: retention's outcome on the run row ─────────────────────────────
