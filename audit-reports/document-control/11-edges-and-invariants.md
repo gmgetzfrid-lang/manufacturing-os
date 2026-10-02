@@ -388,6 +388,11 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 
 **Scope / residual.** None.
 
+*Cross-note (2026-10-01, admin-and-org Round G, P3 fifth review fix pass):*
+- *What changed.* PATCH (`app/api/data-export/destinations/[id]/route.ts`) now judges the bucket against the stored row. It runs the shared gate only when the bucket is added or changed, and still on enabling a bucket destination.
+- *Why.* The edit form always sends the bucket, so the old any-bucket check refused 402 an Admin's unchanged save of a bucket destination on a workspace off Growth. That save is how a scheduled destination a Manager or DocCtrl last saved is confirmed (`BKP-13`, `DEC-44 (A&O P3)` §1).
+- *This finding's tests.* The test above still answers 402. It now allows the stored-row read and asserts that nothing is written (`lib/__tests__/dcRoundFScheduledExports.test.ts`). The unchanged-save, other-bucket and enabling cases are pinned in `lib/__tests__/dataExportRoutes.test.ts`.
+
 ---
 
 <a id="xedge-9"></a>

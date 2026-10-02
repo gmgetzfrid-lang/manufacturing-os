@@ -603,7 +603,7 @@ Fix (the plan's rule: `lib/adminGate.ts authorizeAdminSurface`, no new constant,
   - The ACL limb ✓: only the controller-tier Admin can export.
   - The private-notes limb is **not done**. The notes are carried as before this package, because withholding them made every backup lose them on restore. Which way to go is the user's open decision (`DEC-44 (A&O P3)` §4). Until then the Admin-only gate is the interim mitigation, and the count is recorded.
 - [x] every export writes … an equivalent bulk-distribution record ✓ — `DATA_EXPORT_FILES` names every file that leaves, with its document and revision, each row's list compact:
-  - one by one, on every run, for an export handed to a person;
+  - one by one, on every run, for an export handed to a person; *(Fifth review fix pass: withdrawn — that grew every later backup without bound. A person's export is now named against the workspace's own ledger, the same chained record as a destination's. See the fifth-pass block.)*
   - for a push to a destination — a bucket or a webhook, scheduled or Run Now — against the destination's ledger: a baseline (a full list), then each night a delta naming only what changed since the previous push (500 entries to a row, none when nothing changed), chained back to the baseline; a new baseline once the chain would pass half the list or 400 rows. The night's list is rebuilt from those rows and checked against its digest (`DEC-44 (A&O P3)` §3). *(Third review fix pass: a webhook push moved from the line above to this one. Fourth: the delta was cumulative and capped at one row, which re-wrote a busy destination's whole list every few nights; it is now chained. See the Partial block.)*
 - [x] the role list stops being hardcoded in three route files and comes from the shared policy ✓ — the admin-surface registry through `authorizeAdminSurface`, by the plan's rule (no capability token).
 
@@ -684,7 +684,36 @@ Fix (the plan's rule: `lib/adminGate.ts authorizeAdminSurface`, no new constant,
   - `lib/__tests__/aoRoundGExportDestinationsMigration.test.ts` (P2's census of `export_runs` readers) now lists `structured` and `lib/exportRunner.ts` (the shared count, handed the routes' service client); still no reader on a member's session.
 - Files: `lib/dataExport.ts`, `lib/exportRunner.ts`, `lib/exportAlerts.ts`, `lib/adminGate.ts` (outside the plan's file list: an additive `admittedRole` on the admitted actor), and every route under `app/api/data-export/` but `runs`. No migration.
 
-**Done-when (status).** 1 ✓, 3 ✓ (as corrected above: a baseline, then a chained delta a night of that night's change), 4 ✓. 2 is PARTIAL: the ACL limb ✓; the private-notes limb waits on the user's decision (`DEC-44 (A&O P3)` §4).
+*Fifth review fix pass (admin-and-org Round G, P3).* Done-when 3 was met for destinations only. A person's export still wrote its whole list on every run.
+- **A person's export grew every later backup without bound (major).**
+  - *What went wrong.* `recordExport`'s `"list"` branch wrote every file, 500 to a row, about 150 bytes a file, on every person's export. That covered the JSON download, the browser Full ZIP (whose first step is `/structured`, the page's main backup button) and the manual ZIP.
+  - *Why it matters.* `audit_logs` is itself exported and read whole by every later export. So an Admin taking a daily Full ZIP of a 20,000-file workspace added about 3 MB a day, about 1.1 GB a year. This is the growth the fourth pass removed for destination pushes, only less frequent, and the cap allowed 12 an hour.
+  - *The fix, `lib/dataExport.ts`.* Every person's export is now named against the workspace's own ledger:
+    - `resource_type` `org_export_ledger` (`WORKSPACE_FILES_RESOURCE_TYPE`), `resource_id` the workspace's id;
+    - the same chained baseline and deltas as a destination's, through the same code. `readDestinationLedger` is now `readExportLedger(sb, orgId, key)` over a ledger key, with `readDestinationLedger` and `readWorkspaceLedger` as its two callers;
+    - `recordExport` takes the key from `fileRecord`. It is `"workspace"` (the default; was `"list"`) or `{ destinationId }`. Its one ledger path writes the delta or the baseline, and marks the owner on the `DATA_EXPORT` row's `fileRecord` and on each ledger row (`ledger: "workspace"` or `destinationId`);
+    - the workspace's ledger rows are machine rows too (`EXPORT_LEDGER_ACTOR`, the exporter in `details.exportedBy`). Its reads take only `user_id` NULL rows dated no later than now, so no member can forge one;
+    - `lib/exportRunner.ts buildAndDeliverExport` asks for `"workspace"` for an inline ZIP.
+  - *What a person's export now writes.* The first writes a baseline, a quiet one writes no file row (its record points at the chain's head), and a busy one writes a delta of what changed since the workspace's previous export. A new baseline comes only at half the list or 400 rows. The bound is the destination ledger's: the first baseline plus at most 3 entries per changed file.
+  - *Who took which drawing.* The `DATA_EXPORT` row keeps the person (`user_id`, `user_email`), the role the surface admitted them by (`user_role`), the channel and the list's `sha256`. That record's list is rebuilt from the ledger (the baseline, then the chain back along `prev`), and it hashes to that digest.
+  - The workspace's ledger and each destination's are separate: neither serves as the other's.
+- **The cap counted runs no person started (minor).**
+  - *What went wrong.* The fourth pass held `/structured` to `exportRateLimitRefusal`, which counted every `export_runs` row in the hour: scheduled pushes, gate-skipped (cancelled) rows and failed runs. A workspace with several daily destinations at 05:00, plus their skips, could reach 12. The page's main backup button then answered 429, which nothing refused before this branch.
+  - *The fix, `lib/exportRunner.ts`.* The count now takes only the runs people started (`RATE_LIMITED_TRIGGERS`: `manual`, plus the schema's `api`), and every status but `cancelled` (`RATE_LIMITED_STATUSES`). A failed attempt still counts: it ran the export.
+  - *Effect.* The cap still holds the JSON export and the manual run together, at 12 an hour. `/run` stops counting scheduled pushes, which it counted at base.
+  - *Tests.* "fifth review fix — a person's hourly cap counts the runs people started …":
+    - 8 scheduled and 6 cancelled rows in the hour block neither `/structured` nor `/run`;
+    - 12 person-started rows (4 of them failed) do, and a cancelled one is not counted;
+    - the query's filters are pinned.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`), "BKP-8 Done-when 3 — fifth review fix: a person's export names its files against the workspace's ledger, never its whole list every run":
+  - thirty JSON exports of a quiet 1,200-file workspace through `/structured`: one baseline (3 rows), then thirty `DATA_EXPORT` rows naming the person and no file row (was 90 rows);
+  - thirty person exports of a busy workspace (5,000 files, +200 between exports): each rebuilds and hashes; at most 2 baselines; entries ≤ 5,000 + 3 × changes; bytes under 5× the first baseline (was a full list on every run, more than 30×);
+  - who took which drawing: three exports by two Admins, and rebuilding each record's list finds the new drawing in the second and third, with its document and revision and the exporter on the delta row;
+  - the workspace's and a destination's ledgers kept apart (`readWorkspaceLedger`);
+  - a member's forged workspace baseline dated 2099 never read.
+- The person-export assertions in existing tests were updated to the workspace ledger: the `DATA_EXPORT_FILES` row's machine actor and resource, `mode: "baseline"`, and the inline ZIP after Run Now. No migration.
+
+**Done-when (status).** 1 ✓, 3 ✓ (as corrected above: every export, a person's or a destination push, names its files against a ledger: a baseline, then a chained delta of each export's change), 4 ✓. 2 is PARTIAL: the ACL limb ✓; the private-notes limb waits on the user's decision (`DEC-44 (A&O P3)` §4).
 
 **Scope / residual.** When the user decides: to withhold, ship the first review fix pass's withholding, with its complete:false, README and restore-plan wording; to carry them encrypted to their authors, that is new design work. Either way, this finding then closes. Projects-and-cost `INTK-6`'s role-set limb (Done-when 1) is unaffected.
 
@@ -1099,12 +1128,44 @@ Fix:
   - A role lookup that errors cannot tell: the push runs and the run row and the sweep result say the check could not be made (it used to skip).
 - **Tests** (`lib/__tests__/dataExportRoutes.test.ts`, the "third review fix … fourth: a scheduled push not confirmed by an Admin runs and asks for it" block): a Manager+DocCtrl-confirmed destination is delivered, recorded and carded, each Admin's bell says exactly the sentence above, the DocCtrl's asks an Admin, it asks again the next night, and after an Admin saves it the bell and the card return to normal (fails against the third pass: 0 delivered, 0 bells); a refused bell for it is named on the sweep result; a failed role lookup still runs. The full-collection case stays.
 
+*Fifth review fix pass (admin-and-org Round G, P3).* "It rings every night until an Admin saves the destination" promised a way out that was not always there. The request also went out on a successful push only.
+- **The Admin's save was refused for a bucket destination off Growth (major).**
+  - *Setup.* `SUBSCRIPTION_ENFORCE` is off (`DEC-18`), and the workspace is on Starter or has no plan recorded. The scheduled gate turns the plan limb into a notice, so the bucket push runs and the bell asks for confirmation.
+  - *What went wrong.* The edit modal always sends `bucket`. PATCH ran the `XEDGE-8` gate (`assertCloudBucketEntitlement`) on any non-empty `bucket`, before it read the stored row, so the save answered 402 and `updated_by` was never stamped. The bell repeated forever. The only way out was disabling a DR backup that was running.
+  - *The fix.* `app/api/data-export/destinations/[id]/route.ts PATCH` now runs that gate after the stored-row read, and only when the bucket is added or changed (`bucketChanged`: a non-empty `bucket` that differs from the stored one). Enabling a bucket destination is still gated, now whenever `bucketChanged` did not already gate it, so an unchanged bucket re-sent with `enabled: true` is gated too. `XEDGE-8`'s intent holds: adding a bucket, or pointing at another one, is the same act as creating one. An unchanged save is the confirmation.
+- **The request is not lost on a failed push or a Run Now (minor).**
+  - *Move.* `destinationConfirmation` and the sentence (`unconfirmedNote`) moved from the sweep route into `lib/exportAlerts.ts`, so both run routes read them the same way.
+  - *`run-scheduled`, failure path.* A push that fails now carries the sentence:
+    - in the run row's diagnostics (`gate:unconfirmed`, with any gate notices);
+    - in the sweep result's `error` and `warnings`;
+    - on the card, after the failure message, which is cut to fit so the sentence survives the 500-character card.
+
+    No bell rings for an export that did not leave, as before.
+  - *`run`, Run Now.* Run Now does not confirm a destination: it does not stamp `updated_by`. It makes the same read and keeps the sentence on the card, after the retention note on success or after the failure message on failure, and in the JSON answer's `warnings`. It used to set the card to the retention note or null.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "fifth review fix — an Admin's save confirms an unconfirmed bucket destination on any plan":
+    - on a Starter and on a no-plan workspace with the flag off: the push runs and asks; the Admin's save of the edit form's own body is 200 and stamps `updated_by`; the next night's bell is the usual one and the card is clean;
+    - another bucket, enabling, and a bucket put onto a webhook are still 402, with nothing changed.
+  - The fourth pass's confirm test now saves through `destinationPATCH` with the edit form's body, where it used to assign `updated_by` directly.
+  - "… the request to confirm survives a failed push and a Run Now":
+    - the failure path's run row, card and sweep result;
+    - a long failure cut to fit;
+    - Run Now succeeded and failed, then clean once an Admin has saved.
+  - The save cases and the Run Now case fail against the fourth pass's routes.
+  - `lib/__tests__/dcRoundFScheduledExports.test.ts`'s `XEDGE-8` case now allows the stored-row read and still asserts that nothing is written.
+- **The other converted routes check their own reads and writes (minor).** "Every destination audit row is checked" left out the test route, and three reads still answered as if nothing was there.
+  - *`destinations/[id]/test`.* A failed destination read answers 500 naming it. It used to answer 404 "Destination not found". A refused `EXPORT_DESTINATION_TEST` row is logged and returned as a `warning` beside the probe's result, as create, edit and delete already did.
+  - *`destinations` GET.* A failed read answers 500 naming it. It used to return an empty list, which an Admin would read as no destinations and might set one up again.
+  - *`runs` GET.* A failed history read, or a failed read of the destinations' names, answers 500 naming it. The first used to return an empty history; the second labelled every run's destination "(deleted)".
+  - *The page.* `app/(protected)/admin/data-export/page.tsx refresh` used to keep a list that failed to load silently empty. It now shows "Export destinations could not be loaded: …" or "Export history could not be loaded: …".
+  - *Tests.* "fifth review fix — the destination test, the destination list and the run history check their own reads and writes": one case per route, plus a page pin.
+
 **Done-when.**
 - [x] runOrgExport passes a null user_id … for cron runs and CHECKS the insert's `{error}`, failing the run when the audit row cannot be written ✓.
 - [x] alertAdminsOfExport is called from run-scheduled as well as run ✓.
-- [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included. *(Fourth review fix pass: a destination last confirmed by a non-Admin before this branch keeps running, as before it; every Admin's bell that night asks them to confirm it or disable it. The third pass's pause is withdrawn.)*
+- [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included. *(Fourth review fix pass: a destination last confirmed by a non-Admin before this branch keeps running, as before it; every Admin's bell that night asks them to confirm it or disable it. The third pass's pause is withdrawn. Fifth: the Admin's unchanged save confirms it on any plan, because the bucket gate now runs only when the bucket is added or changed. The request also stays on a failed push and after a Run Now.)*
 
-**Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest of bells would be a notifications decision. (The first review fix pass recorded a destination push by digest only. Since the second, every file is named. Since the third, every destination push, a webhook included, names its files against a baseline; since the fourth, each night's delta names only that night's change, chained back to the baseline (`BKP-8`, `DEC-44 (A&O P3)` §3).) The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-44 (A&O P3)` §2: `user_id` NULL, `system:stripe-webhook`). *(Fourth review fix pass, correcting the third.)* A destination a Manager or DocCtrl configured before this branch keeps running; the nightly bell to every Admin is the request to confirm it, so an Admin who ignores it leaves it running on its old confirmation, which is the pre-branch behaviour. A failed bell is recorded on the run and the sweep result, not re-sent. `scheduledRunGate`'s own skips (no configurer, an inactive one, a billing refusal under the flag) predate this package and still ring no bell. The data-export page does not yet show the `warnings` and `X-Export-Unrecorded` lines the routes now return (pre-existing for alert warnings).
+**Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest of bells would be a notifications decision. (The first review fix pass recorded a destination push by digest only. Since the second, every file is named. Since the third, every destination push, a webhook included, names its files against a baseline; since the fourth, each night's delta names only that night's change, chained back to the baseline (`BKP-8`, `DEC-44 (A&O P3)` §3).) The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-44 (A&O P3)` §2: `user_id` NULL, `system:stripe-webhook`). *(Fourth review fix pass, correcting the third.)* A destination a Manager or DocCtrl configured before this branch keeps running; the nightly bell to every Admin is the request to confirm it, so an Admin who ignores it leaves it running on its old confirmation, which is the pre-branch behaviour. A failed bell is recorded on the run and the sweep result, not re-sent. `scheduledRunGate`'s own skips (no configurer, an inactive one, a billing refusal under the flag) predate this package and still ring no bell. The data-export page does not yet show the `warnings` and `X-Export-Unrecorded` lines the routes now return (pre-existing for alert warnings). *(Fifth review fix pass.)* A failed push of an unconfirmed destination puts the request on its run row, card and sweep result, but rings no bell: an export that did not leave is not announced. Since that pass the page does show the error when the destination list or the run history cannot be loaded.
 
 ---
 
