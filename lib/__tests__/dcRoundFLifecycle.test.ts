@@ -111,7 +111,10 @@ vi.mock("@/lib/supabase", () => ({
       ...base,
       from: (t: string) => readFailable(t, base.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>),
       // RG-12 (P14): a database before 20261151 has no finalize_reviewed_promote — PostgREST answers PGRST202 and the app keeps its three checked writes, which these tests pin.
-      rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } }) : state.rpc(...a)),
+      // REV-22 (P18): nor, before 20261164, restore_reversed_source — the reversal's restore is then the direct write these tests pin (the recorded door is driven in dcRoundFReversalRestore.test.ts).
+      rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } })
+        : a[0] === "restore_reversed_source" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.restore_reversed_source" } })
+        : state.rpc(...a)),
     };
   },
 }));

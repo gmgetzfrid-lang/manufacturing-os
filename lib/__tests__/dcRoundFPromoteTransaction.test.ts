@@ -173,7 +173,7 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     expect(P_RECORD).toContain("VALUES ('REV_HOLD_OVERRIDDEN', p_doc::text, 'document', v_doc.org_id, p_actor,");
     expect(P_RECORD).toMatch(/'holds', \(SELECT jsonb_agg\(jsonb_build_object\('id', h\.id, 'reason', h\.reason\) ORDER BY h\.opened_at\)/);
     expect(P.next.indexOf(P_RECORD)).toBeGreaterThan(P.next.indexOf("IF v_lock_via IS NOT NULL THEN"));
-    // the flag is set by nothing else in the sequence: another migration may only
+    // the flag is set by nothing else in the sequence (but P18's restore door, below): another migration may only
     // READ it (P17's 20261159 re-creates the guard, which reads it with exactly
     // current_setting('app.publish_hold_override', true), and quotes that read in
     // a prosrc probe); with those reads stripped, no mention of the flag may
@@ -181,7 +181,11 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     const withoutFlagReads = (sql: string) => sql
       .split("current_setting('app.publish_hold_override', true)").join("")
       .split("current_setting(''app.publish_hold_override'', true)").join("");
-    for (const f of files.filter((x) => x !== FILE)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
+    // REV-22 (P18): 20261164's restore_reversed_source is the one other setter — the
+    // legacy reversal's recorded put-back; dcRoundFReversalRestore.test.ts pins that
+    // it sets the flag only there, around its own write, and clears it.
+    const RESTORE_DOOR = "20261164_dc_roundF_reversal_restore.sql";
+    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
   });
 

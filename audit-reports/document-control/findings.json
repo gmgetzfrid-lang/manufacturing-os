@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 162,
+    "findings": 163,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 71,
-      "LOW": 18
+      "LOW": 19
     },
     "by_status": {
-      "RESOLVED": 147,
+      "RESOLVED": 148,
       "OPEN": 15
     }
   },
@@ -4149,7 +4149,7 @@
       "id": "REV-22",
       "title": "A controller still passes an active hold unrecorded in two writes REV-20 leaves open: a bare pointer move on a held document already in an issue status, and the un-supersede of a document superseded before 20261144",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from `20261151`'s guard body; both writes exercised on a throwaway PostgreSQL 16 by P14's review fix — `REV-20`'s R14-5 and the transcription cases — and pinned by the guard's transcription in `lib/__tests__/dcRoundFReversalOverCarriedHold.test.ts`)",
       "blast_radius": null,
@@ -4166,6 +4166,30 @@
       ],
       "refuted": false,
       "summary": "A Document Controller inserts a Minor revision row through PostgREST, then PATCHes documents.currentversionid of held, Issued drawing P-200 to it, in a library that is not in require mode. The hold is passed, with no REVHOLDOVERRIDDEN and no record. Or a controller PATCHes P-150 — superseded last year, before 20261144, and under a stop-work hold now — straight back to Issued.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-23",
+      "title": "A controller's bare put-back of a held stamped retirement passes an active hold unrecorded",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from `20261164`'s `enforce_document_publish_guard` — `v_restoring` keeps OWN-15's controller pass over a hold; reproduced on a throwaway PostgreSQL 16 by P18's review fix as F-7: a controller's bare put-back of a held STAMPED source was admitted and nothing was recorded — `REV-22`'s Resolution, \"P18 review fix\")",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261164_dc_roundF_reversal_restore.sql",
+        "lib/revisions.ts",
+        "lib/documentLifecycle/common.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Drawing P-310 is Issued, archived by Document Control after 20261144 (stamped Issued / its current revision), then placed under a stop-work hold. A controller PATCHes documents.status of P-310 back to Issued through PostgREST: the guard reads vrestoring, the controller passes the hold, and no REVHOLDOVERRIDDEN or other record says a held drawing came back into force. The un-archive dialog (compone",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

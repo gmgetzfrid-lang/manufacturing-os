@@ -551,7 +551,8 @@
     "the user's ratification of DEC-77 \u00a74",
     "P14 merged",
     "P17 merged (P17 re-creates the guard first; start from its body)",
-    "P18 merged (P18 re-creates the guard after P17; start from P18's body)"
+    "P18 merged (P18 re-creates the guard after P17; start from P18's body)",
+    "P19 if it merges first (P19 re-creates the same guard; start from the newest body, found by scanning)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder)."
   },
@@ -591,6 +592,24 @@
     "the paste of this package's migration follows 20261159's, which is itself held until projects-and-cost INTK-18 lands (projects-joint J14) or the user ratifies DEC-63's P17 Landed line"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-02 at the P17 merge (DEC-31 remainder of REV-22). Does not wait on any ratification; its paste waits on 20261159's."
+  },
+  {
+   "name": "P19 STAMPED PUT-BACK RECORD \u2014 a controller's put-back of a held stamped retirement passes the hold only through the recorded force",
+   "findings": [
+    "REV-23 (opened by the integrator 2026-10-02 at the P18 merge, DEC-31: the residual P18's review reproduced (F-7) \u2014 a controller's bare put-back of a held STAMPED retirement (v_restoring, OWN-15) passes the hold unrecorded; route undoFailedSupersede, restoreSupersededSource and unarchiveDocument through a recorded door that sets app.publish_hold_override and writes REV_HOLD_OVERRIDDEN in the same transaction, and have the guard bind the bare stamped put-back over a hold for a controller \u2014 or record, for the user's ratification, why it is spared)"
+   ],
+   "files": [
+    "one migration: a recorded put-back function (SECURITY INVOKER under the caller's RLS, or DEFINER per DRLS-16) and enforce_document_publish_guard re-created from its NEWEST body (20261164 after P18, or P16's if P16 lands first) \u2014 lineDiff test scanning supabase/migrations; DEC-30 counts-only inventory; one paste",
+    "lib/revisions.ts (unarchiveDocument, undoFailedSupersede), lib/documentLifecycle/common.ts (restoreSupersededSource) \u2014 through the recorded door with a fallback while the function is absent",
+    "tests: the compensations and the un-archive still complete over a carried hold (regression); a controller's bare stamped put-back over a hold refused; the recorded door writes exactly one REV_HOLD_OVERRIDDEN; a non-controller's put-back unchanged"
+   ],
+   "migrationsLikely": 1,
+   "when": "after P18 (merged 2026-10-02; its 20261164 is the guard's newest body); before or after P16 \u2014 whichever runs second starts from the other's body",
+   "dependsOn": [
+    "P18 merged (20261164 = the newest enforce_document_publish_guard)",
+    "the paste of this package's migration follows 20261164's, which follows 20261159's (held until projects-and-cost INTK-18 lands or the user ratifies DEC-63's P17 Landed line)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the P18 merge (DEC-31 remainder: REV-23). Does not wait on any ratification; its paste waits on 20261164's."
   }
  ],
  "crossAreaFileOverlaps": [
