@@ -29,6 +29,13 @@
 //
 // Server-safe: a type-only import, no client code — the cron and N5's
 // notification_kinds seed read it too.
+//
+// The database keeps a copy (N5, DEC-44 (N5)): notification_kinds()
+// (20261160) lists every kind and its compliance flag, a browser's row of a
+// kind it does not list is refused, and the delete policy (20261161) keeps a
+// compliance kind dismiss-only. A kind added or re-flagged here needs a
+// migration that re-creates notification_kinds() to match;
+// lib/__tests__/notificationWriteRails.test.ts fails until the two agree.
 
 import type { NotificationKind } from "@/lib/inAppNotifications";
 
