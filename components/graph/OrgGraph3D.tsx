@@ -11,12 +11,19 @@
 // you can do here: click and drag nodes, fly to a node, region names, live
 // display settings, proposal ghosts. A mode switch should change the view,
 // not the vocabulary.
+//
+// Direction too (GPV-8 / FLOW-10): with Arrows on, a cone at the fed / the
+// replacing end of every flow and supersession (and of a traced path) — the
+// 3D form of the 2D arrowhead. Curved links are a 2D drawing; the drawer
+// says so in 3D. Focus depth fades and shrinks nodes as in 2D (GPV-9).
 
 import React from "react";
-import type { GraphNode, GraphEdge, GraphNodeType, GraphEdgeType } from "@/lib/orgGraph";
-import { GraphSim } from "@/lib/graphSim";
+import type { GraphNode, GraphEdge, GraphNodeType } from "@/lib/orgGraph";
+import { GraphSim, depthFade } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
-import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
+import {
+  ACCENT, ARROW_EDGE_TYPES, PATH_RGB, edgeRgbFor, nodeColorFor,
+} from "@/components/graph/graphTheme";
 
 // three is heavy; keep it out of every other route's bundle.
 type Three = typeof import("three");
@@ -37,10 +44,15 @@ interface Props {
   regions: Array<{ label: string; ids: string[] }>;
   /** Frame these nodes; bump `nonce` to re-fly to the same set. */
   flyTo: { ids: string[]; nonce: number } | null;
+  /** Focus mode: each node's hop distance from the root (GPV-9). */
+  depthOf?: Map<string, number> | null;
+  depthMax?: number;
   onSelect: (n: GraphNode | null) => void;
   onOpen: (n: GraphNode) => void;
   onSettled?: () => void;
 }
+
+const PATH_FLOAT = PATH_RGB.split(",").map((v) => Number(v) / 255) as [number, number, number];
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
@@ -120,7 +132,7 @@ function makeLabelSprite(
 
 export default function OrgGraph3D({
   nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-  regions, flyTo, onSelect, onOpen, onSettled,
+  regions, flyTo, depthOf = null, depthMax = 2, onSelect, onOpen, onSettled,
 }: Props) {
   const mountRef = React.useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -129,11 +141,11 @@ export default function OrgGraph3D({
   // Live props for the animation loop, which must not re-subscribe per frame.
   const live = React.useRef({
     nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-    regions, onSelect, onOpen, onSettled,
+    regions, depthOf, depthMax, onSelect, onOpen, onSettled,
   });
   live.current = {
     nodes, edges, settings, sim, query, selectedId, highlightIds, pathIds,
-    regions, onSelect, onOpen, onSettled,
+    regions, depthOf, depthMax, onSelect, onOpen, onSettled,
   };
 
   // Camera commands from React, consumed by the loop.
@@ -170,6 +182,9 @@ export default function OrgGraph3D({
       renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       mount.appendChild(renderer.domElement);
+      // Presentational: the page's map region is the labelled, focusable
+      // element the keyboard walks (GPV-13).
+      renderer.domElement.setAttribute("aria-hidden", "true");
       renderer.domElement.style.touchAction = "none";
       renderer.domElement.style.display = "block";
 
@@ -207,6 +222,14 @@ export default function OrgGraph3D({
       });
       const ghostLines = new THREE.LineSegments(ghostGeo, ghostMat);
       scene.add(ghostLines);
+
+      // ── Direction cones (GPV-8): one instanced draw for every arrowhead ─
+      const coneGeo = new THREE.ConeGeometry(0.5, 1, 10);   // tip on +Y
+      const coneMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
+      let cones: InstanceType<Three["InstancedMesh"]> | null = null;
+      const coneUp = new THREE.Vector3(0, 1, 0);
+      const coneDir = new THREE.Vector3();
+      const coneQuat = new THREE.Quaternion();
 
       const labelLayer = new THREE.Group();
       scene.add(labelLayer);
@@ -471,6 +494,15 @@ export default function OrgGraph3D({
         const solid = es.filter((e) => e.type !== "proposed");
         const ghosts = es.filter((e) => e.type === "proposed");
         ghostCount = ghosts.length;
+
+        // Room for an arrowhead on every solid link (a traced path can run
+        // over any edge type, so the capacity is not only the directed ones).
+        if (cones) { scene.remove(cones); cones.dispose(); }
+        cones = new THREE.InstancedMesh(coneGeo, coneMat, Math.max(1, solid.length));
+        cones.frustumCulled = false;
+        for (let i = 0; i < Math.max(1, solid.length); i++) cones.setColorAt(i, scratchColor.setRGB(1, 1, 1));
+        cones.count = 0;
+        scene.add(cones);
         linkGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(Math.max(1, solid.length) * 6), 3));
         linkGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(Math.max(1, solid.length) * 6), 3));
         ghostGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(Math.max(1, ghosts.length) * 6), 3));
@@ -496,6 +528,7 @@ export default function OrgGraph3D({
         const {
           nodes: ns, edges: es, settings: st, sim: s, selectedId: sel,
           highlightIds: gold, pathIds: onPathSet, query: q, regions: regs,
+          depthOf: dOf, depthMax: dMax,
         } = live.current;
         rebuild();
         if (!mesh || !halo) return;
@@ -558,8 +591,9 @@ export default function OrgGraph3D({
           const isGold = gold.has(n.id);
           const matches = q.length >= 2 && n.label.toLowerCase().replace(/[^a-z0-9]+/g, "").includes(q);
           const emphasis = isSpot || inPath || isGold || matches ? 1.7 : 1;
+          const focusFade = dOf ? depthFade(dOf.get(n.id), dMax) : { alpha: 1, shrink: 1 };
           const base = BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1);
-          const size = base * 2.6 * st.nodeScale * emphasis;
+          const size = base * 2.6 * st.nodeScale * emphasis * focusFade.shrink;
 
           dummy.position.set(p.x, p.y, p.z);
           dummy.quaternion.copy(camera.quaternion);   // always face the camera
@@ -569,10 +603,10 @@ export default function OrgGraph3D({
 
           const hex = inPath ? ACCENT.path
             : isGold ? ACCENT.found
-            : (groupColorFor(n, st.groups) ?? NODE_COLORS[n.type]);
+            : (groupColorFor(n, st.groups) ?? nodeColorFor(n));
           const [r, g, b] = hexToRgb(hex);
 
-          let dim = 1;
+          let dim = isSpot ? 1 : focusFade.alpha;
           if (spotId && !isSpot && !neighbours.has(n.id) && !inPath) dim = 0.22;
           if (q.length >= 2 && !matches) dim = Math.min(dim, 0.18);
           if (isGold || inPath) dim = 1;
@@ -603,7 +637,8 @@ export default function OrgGraph3D({
         const col = linkGeo.getAttribute("color") as InstanceType<Three["BufferAttribute"]>;
         const gpos = ghostGeo.getAttribute("position") as InstanceType<Three["BufferAttribute"]>;
         const fade = (d: number) => Math.max(0.25, Math.min(1.15, 1.5 - d / (spherical.radius * 2.1)));
-        let si = 0, gi = 0;
+        const nodeById = st.showArrows ? new Map(ns.map((n) => [n.id, n])) : null;
+        let si = 0, gi = 0, ci = 0;
         for (const e of es) {
           const na = s.get(e.a), nb = s.get(e.b);
           if (!na || !nb) continue;
@@ -615,12 +650,15 @@ export default function OrgGraph3D({
           }
           pos.setXYZ(si * 2, na.x, na.y, na.z);
           pos.setXYZ(si * 2 + 1, nb.x, nb.y, nb.z);
-          const rgbStr = EDGE_RGB[e.type as GraphEdgeType] ?? "148,163,184";
+          const rgbStr = edgeRgbFor(e);
           const [r0, g0, b0] = rgbStr.split(",").map((v) => Number(v) / 255);
           const inSpot = !spotId || e.a === spotId || e.b === spotId;
           const onPath = onPathSet.has(e.a) && onPathSet.has(e.b);
-          const k = (onPath ? 1.6 : inSpot ? 0.9 : 0.16) * st.linkOpacity;
-          const [r, g, b] = onPath ? [0.13, 0.83, 0.93] : [r0, g0, b0];
+          const depthK = dOf && !onPath && !spotId
+            ? Math.min(depthFade(dOf.get(e.a), dMax).alpha, depthFade(dOf.get(e.b), dMax).alpha)
+            : 1;
+          const k = (onPath ? 1.6 : inSpot ? 0.9 : 0.16) * st.linkOpacity * depthK;
+          const [r, g, b] = onPath ? PATH_FLOAT : [r0, g0, b0];
           // Per-END depth cueing: a link running away from the camera fades
           // along its length, which is most of what sells the third axis.
           const ka = k * fade(Math.hypot(na.x - camera.position.x, na.y - camera.position.y, na.z - camera.position.z));
@@ -628,6 +666,35 @@ export default function OrgGraph3D({
           col.setXYZ(si * 2, r * ka, g * ka, b * ka);
           col.setXYZ(si * 2 + 1, r * kb, g * kb, b * kb);
           si++;
+
+          // Direction cone at the target end (flow: the fed; supersession:
+          // the replacement; a path: the next hop).
+          if (cones && nodeById && k > 0.2 && (ARROW_EDGE_TYPES.has(e.type) || onPath) && ci < cones.instanceMatrix.count) {
+            coneDir.set(nb.x - na.x, nb.y - na.y, nb.z - na.z);
+            const len = coneDir.length();
+            if (len > 1e-3) {
+              coneDir.divideScalar(len);
+              const tn = nodeById.get(e.b);
+              const tr = tn ? (BASE_R[tn.type] + Math.min(9, Math.sqrt(tn.degree) * 1.1)) * 2.6 * st.nodeScale * 0.32 : 6;
+              const coneLen = Math.min(len * 0.4, 13 * Math.max(0.6, st.linkThickness));
+              const back = tr + coneLen / 2;
+              dummy.position.set(nb.x - coneDir.x * back, nb.y - coneDir.y * back, nb.z - coneDir.z * back);
+              coneQuat.setFromUnitVectors(coneUp, coneDir);
+              dummy.quaternion.copy(coneQuat);
+              dummy.scale.set(coneLen * 0.55, coneLen, coneLen * 0.55);
+              dummy.updateMatrix();
+              cones.setMatrixAt(ci, dummy.matrix);
+              const kc = Math.min(1.4, kb * 1.25);
+              cones.setColorAt(ci, scratchColor.setRGB(r * kc, g * kc, b * kc));
+              ci++;
+            }
+          }
+        }
+        if (cones) {
+          cones.count = st.showArrows ? ci : 0;
+          cones.visible = st.showArrows && ci > 0;
+          cones.instanceMatrix.needsUpdate = true;
+          if (cones.instanceColor) cones.instanceColor.needsUpdate = true;
         }
         pos.needsUpdate = true; col.needsUpdate = true;
         linkGeo.setDrawRange(0, si * 2);
@@ -702,7 +769,9 @@ export default function OrgGraph3D({
           if (!n || !p) continue;
           let sprite = labelCache.get(id);
           if (!sprite) {
-            sprite = makeLabelSprite(THREE, n.label.slice(0, 24), "#f1f5f9", maxAniso, { worldHeight: 17 });
+            // GAP-306: a scoped map says where links leave the scope.
+            const text = n.label.slice(0, 24) + (n.outside && n.outside > 0 ? `  +${n.outside} out` : "");
+            sprite = makeLabelSprite(THREE, text, "#f1f5f9", maxAniso, { worldHeight: 17 });
             labelCache.set(id, sprite);
             labelLayer.add(sprite);
           }
@@ -730,6 +799,8 @@ export default function OrgGraph3D({
         for (const s of regionCache.values()) { s.material.map?.dispose(); s.material.dispose(); }
         mesh?.dispose();
         halo?.dispose();
+        cones?.dispose();
+        coneGeo.dispose(); coneMat.dispose();
         nodeGeo.dispose(); nodeMat.dispose(); haloMat.dispose();
         linkGeo.dispose(); linkMat.dispose();
         ghostGeo.dispose(); ghostMat.dispose();
