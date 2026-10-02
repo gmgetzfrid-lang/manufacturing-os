@@ -145,7 +145,7 @@ page.tsx:151 `{(["immediate", "hourly", "daily", "never"] as const).map((opt) =>
 ## NEDGE-3 · Deactivated members keep receiving both bell rows and email: the follower and email-lookup queries have no status filter, while the role-pool query does
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notify/recipients.ts:23-45`, `lib/notify/dispatch.ts:135-147`, `lib/notify/recipients.ts:48-62`, `app/api/admin/restore/begin/route.ts:68`, `app/api/admin/restore/apply/route.ts:64`, `supabase/schema.sql:42`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `lib/notify/recipients.ts:23-45` contains no `status` predicate of any kind — a grep for `status`/`active` across that range returns nothing — so a deactivated member stays on the fan-out.
@@ -189,6 +189,29 @@ admin/restore/begin/route.ts:68  `      status: "inactive", display_name: u.disp
 - [ ] resolveRecipients filters the final recipient set against active org membership once, centrally, rather than each source deciding — including the involved[] list, which today is never membership-checked
 - [ ] emailsFor adds `.eq("status", "active")`
 - [ ] A test covers: suspended watcher gets neither bell nor email; active watcher gets both; and a post-restore all-inactive org is caught by an explicit assertion or a restore-completion step that reactivates members
+
+**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `5ed25b9` (the dispatcher) and `018caac` (the database rail). **Reproduced first** on `f1ac550` with `lib/__tests__/notificationDispatchMembership.test.ts`, which drives the real `lib/notify/dispatch.ts`, `lib/notify/recipients.ts` and `lib/inAppNotifications.ts` over the in-memory PostgREST stand-in (`helpers/memoryDb`): a hold to the follow list wrote bell rows for the suspended, the inactive (a restore's placeholder) and the removed subscriber beside the active one, and queued email to the suspended and inactive ones (`emailsFor` read their addresses); the same through `tickets.watchers`, `involved[]` (another org's member included) and the project roster. 11 of the file's 20 cases failed on the base; the role-pool case passed, as the correction above says. **Fix:**
+- `lib/notify/recipients.ts:40` `activeMembersOf(orgId, uids)` — the uids that are ACTIVE members of the org (`status = 'active'`), read in chunks of 150, in input order. A read that FAILS keeps the input unchanged and logs `[notify] active-membership read failed`: a transient error must never silently drop a compliance notice, and the database rail below is the backstop.
+- `lib/notify/dispatch.ts:118` `resolveRecipients` filters the FINAL set once, centrally, after the union and the actor removal (`:129`) — `involved[]` included, which nothing checked before.
+- `resolveFollowers(resource, orgId)` (`recipients.ts:62`) applies the same filter itself (`:83`), a defence in depth for any direct caller; its one caller passes the org (`dispatch.ts:123`).
+- `emailsFor` (`dispatch.ts:195`) adds `.eq("status", "active")` (`:202`) — the second layer: a suspended member's address is never read, even when the recipient filter could not run.
+- `resolveRoleRecipients` is unchanged; it already filtered status and read `roles[]`.
+- In the database (see `OS-1`, `NEDGE-7`): `20261160`'s insert trigger SKIPS a browser's row whose recipient is not an active member of the row's org (`RETURN NULL`, so one suspended watcher never sinks a batch insert for everyone else), and `20261161`'s read policy hides every row from a member who is not active in the row's org.
+
+**Regression pin.** With every member active, five audiences — involved, followers, roles, project, and all four together with the actor named — reach exactly the recipients the `f1ac550` resolver reached (reimplemented in the test over the same tables), on both channels; each bell row keeps its title, body, link, kind, actor and resource; an involved-only email is queued field for field as before; channel subsets are unchanged; the actor is never a recipient; a failed membership read keeps today's delivery. `DEC-43`: a role broadcast to Admin / DocCtrl reaches every active controller, an additively-held DocCtrl included.
+- Files: `lib/notify/dispatch.ts`, `lib/notify/recipients.ts`; `lib/__tests__/orchestratorExecute.test.ts` (one expectation: the dispatcher on the unbound client now stops at its membership read, before any insert — it still delivers nothing).
+- Tests: `lib/__tests__/notificationDispatchMembership.test.ts` (20 cases); `lib/__tests__/notificationWriteRails.test.ts` (the trigger's skip rule, the policy model).
+- Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
+- **Pending migration:** the database half only — `supabase/migrations/20261160_notif_roundG_write_rails.sql`, then `20261161_notif_roundG_read_scope.sql` (DEC-30, applied by hand). The dispatcher half needs neither.
+
+**Done-when.**
+- ✓ `resolveRecipients` filters the final recipient set against active org membership once, centrally, including `involved[]`.
+- ✓ `emailsFor` adds `.eq("status", "active")`.
+- ✓ in part — a test covers a suspended watcher getting neither bell nor email and an active watcher getting both, through `subscriptions` and through `tickets.watchers`. **Not done here:** the post-restore all-inactive org assertion. The plan routes it to admin-and-org P1 (restore / apply) as a pointer. Since this change the asymmetry is gone — after a restore every member is `inactive`, so role broadcasts, follower fan-out and email all reach nobody until a member is reactivated, and after `20261161` an inactive member cannot read their bell either — but nothing yet asserts or repairs the all-inactive state.
+
+**Scope / residual.**
+- Server routes that write bell rows as the service role outside `emit()` — the ticket comment and workflow-action fan-out, whose email lookups also lack a status filter (`app/api/tickets/comment/route.ts`, `app/api/tickets/workflow-action/route.ts`, per the verifier) — still reach a suspended watcher: the insert trigger passes the service role untouched by design. After `20261161` that row is unreadable to them; their email is N6's (the `fanOut` email builders).
+- `app/api/tickets/handback/route.ts` calls `emit()` on the unbound shared client (no `runWithServerClient`), so its "deliverable submitted / published" notice was refused by RLS before this change and now stops at the membership read: it has never been delivered. Not this finding's; flagged for drafting-flow.
 
 ---
 
@@ -296,6 +319,18 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 - [ ] Free-text reasons never enter an email subject line — dispatch.ts uses a category-derived subject for role-broadcast categories rather than falling back to input.title
 - [ ] resolveRoleRecipients (or emit) filters role recipients against evaluateAcl for document-scoped resources, honouring NodeVisibility 'hidden'
 
+**Partial (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `5ed25b9`. **Reproduced first** on `f1ac550` (`lib/__tests__/notificationDispatchMembership.test.ts` "NEDGE-6 (egress)"): a hold to the follow list was mailed with the subject `HOLD placed on PID-4412-R3 — litigation hold, Baytown incident, do not distribute`. **Landed — the egress half (done-when 2):**
+- `lib/notify/dispatch.ts:99` `broadcastSubject(category, resourceType)`. A BROADCAST is an event whose audience includes a role pool (`audience.roles`) or the follow list (`audience.followers`) — people the producer did not name. Its email subject names only the category and the kind of resource ("Status change on a document"), never the title, whatever free text the title carries. The title leads the email body instead (`:164-168`), so the recipient still learns what it is about once the mail is opened. A hold placed or released (`lib/holds.ts` notifyHoldChange, `followers: true`) and a branch opened (`lib/branches.ts`, `roles: ["DocCtrl"]`) are broadcasts.
+- An explicit `email.subject` is the producer's choice and is sent as given (no producer passes one today). An email to named people only (`involved` alone) keeps the title as its subject, as before.
+- Every category × resource type has a fixed, distinct subject (pinned).
+- Done-when 1, the in-app title of a role broadcast: per `DEC-43` controllers are unscoped, so an Admin or DocCtrl reading a hold's title in the bell is consistent with policy, and the bell row is unchanged — the plan's narrowing.
+
+**Not done — done-when 3** (narrowed by the plan to non-controller followers, through the node-visibility check rather than a new ACL walk): a follower who is not a controller and can no longer discover a hidden or private document still receives its title in the bell, and in the email body. The check needs a discover decision for ANOTHER principal over the library → folder → document chain. The database's `node_visible` / `doc_is_visible` answer only for `auth.uid()`; the one evaluator for another principal (`lib/docFileServer.ts` `discoverableDocuments` with `loadContainerAclChain` and `loadReaderPrincipal`) runs on the service role and cannot run in the browser, where most `emit()` calls happen. A client-side chain walk is the new ACL walk the plan forbids. Next step: a server-side discover check the dispatcher can call for a document and a list of uids (an RPC or a route), then drop the non-discovering, non-controller followers of document-scoped events.
+
+**Residual.** The stale-hold nudge (`lib/holds.ts` `scanStaleHolds`) resolves its release pool in the producer and passes it as `involved`, with no follow list, so its email ("Hold past its expected release — <label> (<reason>)") keeps the title as its subject. The producer should pass `email.subject`; `lib/holds.ts` is DC-owned (N9, after DC P5) — a pointer.
+- Tests: `lib/__tests__/notificationDispatchMembership.test.ts` "NEDGE-6 (egress)" (4 cases).
+- Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
+
 ---
 
 <a id="nedge-7"></a>
@@ -303,7 +338,7 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 ## NEDGE-7 · Removing a member deletes only the org_members row; the notifications RLS SELECT policy has no org-membership predicate, so a removed member keeps permanent read access to the full archive of alerts about documents they can no longer open
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:176-181`, `supabase/migrations/20260723_notifications_unify.sql:36-37`, `supabase/migrations/20260621_in_app_notifications.sql:40-41`, `lib/inAppNotifications.ts:157-174`, `app/api/admin/purge/route.ts:70`
 - **Re-verified:** hardening pass — **SURVIVES**. `notifications_own_select` is `FOR SELECT USING (user_id = auth.uid())` (`20260723_notifications_unify.sql:37`) — keyed on the user, with no org-membership term — so removing the `org_members` row leaves every existing notification readable. (Compounded by `roles-and-permissions/SURF-1`: the removal does not take effect at all.)
@@ -329,6 +364,37 @@ admin/purge/route.ts:70  `    table === "email_notifications" ? base.in("status"
 - [ ] notifications_own_select gains an org-membership predicate: `USING (user_id = auth.uid() AND EXISTS (SELECT 1 FROM org_members WHERE org_id = notifications.org_id AND uid = auth.uid() AND status = 'active'))`, and the same for UPDATE/DELETE
 - [ ] handleRemoveMember (or a server route behind it) deletes the member's subscriptions rows for that org and either deletes or org-tombstones their notifications, inside a transaction with the org_members delete
 - [ ] A test exercises the removed-member case: after deletion, a query with that user's token returns zero notifications for the org
+
+**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `018caac`, migration `supabase/migrations/20261161_notif_roundG_read_scope.sql`. **Reproduced first** on a throwaway PostgreSQL 16 shaped like Supabase (the `anon` / `authenticated` / `service_role` roles, `auth.uid()` from the request claims, `org_members` with its read policy) carrying `20260723`'s notifications SQL verbatim and `20261043`'s `revoke_member`: after an Admin's `revoke_member(…, 'remove')`, the removed member's token read 2 of their rows, marked them read and deleted one. **Fix (`20261161`):**
+- `notifications.org_tombstoned_at TIMESTAMPTZ` — NULL is live.
+- `notifications_own_select`, `_update` and `_delete` are now `user_id = auth.uid() AND org_tombstoned_at IS NULL AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = notifications.org_id AND m.uid = auth.uid() AND m.status = 'active')`. UPDATE has it in USING and in WITH CHECK; DELETE adds `DELIV-13`'s terms.
+- `revoke_member(uuid, text)` is re-created from its NEWEST definition — `20261043` §0, found by scanning the sequence, never `20261042` — with one statement added on the REMOVE path, after the roster deletes and before the membership delete, inside the same call (one transaction): `UPDATE notifications SET org_tombstoned_at = NOW() WHERE org_id = v_member.org_id AND user_id = v_member.uid AND org_tombstoned_at IS NULL`. EXECUTE is restated: REVOKEd from PUBLIC and anon, GRANTed to authenticated (the body refuses a NULL uid regardless).
+- Tombstone, not delete — the plan's default: the archive stays for investigators. The purge route (service role) is unchanged.
+- The pre-apply inventory (DEC-30, counts only): rows whose recipient is suspended, inactive, invited, or has no membership row in the row's org; the distinct recipients affected; unread rows; read compliance and read non-compliance rows; off-origin links; tombstoned rows.
+
+**Exercised on PostgreSQL 16.** Both pastes in order, then each pasted a second time (idempotent); on a fresh database `20261161` alone stops at its first statement with "paste 20261160 first" and changes nothing. Every probe was true: 12 for `20261160`, 10 for `20261161`. Then:
+- an active member reads only their own live rows, marks one, several and all read, and clears a read FYI row;
+- a suspended member reads 0 rows and marks none; after `revoke_member(…, 'restore')` they read their 3 rows again;
+- after `revoke_member(…, 'remove')` the removed member's token returns **0 rows for that org** — their 2 rows kept, tombstoned — and marks and deletes nothing, while their row in another org where they are still active stays readable;
+- re-added to the org, they see only the notice written after the re-add;
+- a member removed before the paste (no tombstone) reads 0;
+- an Admin and an additively-held DocCtrl read their own rows (`DEC-43`);
+- the service role still rewrites and deletes anything.
+The scratch cluster was deleted afterwards.
+- Files: `supabase/migrations/20261161_notif_roundG_read_scope.sql` (new).
+- Tests: `lib/__tests__/notificationWriteRails.test.ts` — the policies' text, the paste's one-result-set shape and inventory, `revoke_member`'s line diff against its newest earlier definition (no line removed; exactly the comment and the statement added; placed after the roster sweep and before the membership delete), and "the model of 20261161's policies": the removed, suspended, restored, re-added and multi-org cases over predicates each pinned to the SQL text. `lib/__tests__/dcHotfixAnonExecute.test.ts`, `searchPathPin.test.ts`, `migrationSourceOfTruth.test.ts` and `rpPhase6Migration.test.ts` pass with the new definition.
+- Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
+- **Pending migration:** `supabase/migrations/20261161_notif_roundG_read_scope.sql` — applied by hand (DEC-30), one paste, expect `ok = true` × 10; paste `20261160` first. Until it is applied, a removed member's token still reads their archive. The app reads nothing this file adds and writes only `read_at`, so either deploy order is safe.
+
+**Done-when.**
+- ✓ `notifications_own_select` gains the org-membership predicate (active, in the row's org), and so do UPDATE and DELETE — plus the tombstone. Takes effect once `20261161` is pasted.
+- ✓ Member removal (`admin/users/page.tsx` → `lib/members.ts` `revokeMember` → the `revoke_member` RPC, since `SURF-1`) deletes the member's subscriptions rows for that org — already true, by record: `20261042` / `20261043` (`SURF-1` / `DEC-20`), re-verified at `20261043:173` — and now tombstones their notifications, inside the same function call as the `org_members` delete.
+- ✓ The removed-member case is exercised: on PostgreSQL 16 (above), and in the suite by the policy model in `notificationWriteRails.test.ts`.
+
+**Scope / residual.**
+- Rows of members removed before the paste are not tombstoned (the inventory counts them). They stay hidden while the person is not an active member and would reappear if the same person were re-added. To tombstone them as well, run once: `UPDATE notifications n SET org_tombstoned_at = now() WHERE org_tombstoned_at IS NULL AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = n.org_id AND m.uid = n.user_id);` — the paste does not (DEC-31).
+- Suspend does not tombstone: it is reversible by design, and a suspended member's rows return on restore.
+- A removed member's `email_notifications` and `notification_preferences` rows are untouched; this finding's done-when does not name them.
 
 ---
 

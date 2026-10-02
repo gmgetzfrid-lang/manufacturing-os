@@ -330,7 +330,7 @@ export function publicOrigin(): string {
 ## DELIV-6 · Any active org member can plant a notification in anyone's bell with arbitrary title, body, link and actor_name — including actor_name 'System'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260621_in_app_notifications.sql:52-61`, `supabase/migrations/20260723_notifications_unify.sql:44-52`, `hooks/useTicketNotifications.ts:293-297`, `components/providers/NotificationListener.tsx:84-98`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed; the migration comment itself concedes it ('The kind/body are validated at the app layer' — no such validation exists on the write path). Nothing sanitizes link, so an off-app https:// URL is rendered by the bell exactly like an in-app one; actor_name 'System' is the same string the cron uses (app/api/cron/maintenance/route.ts:352).
@@ -366,6 +366,27 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 - [ ] `kind` is constrained to the known enum (CHECK constraint or a lookup table) so a caller cannot mint a compliance kind
 - [ ] Either `link` is constrained to app-relative paths, or the bell refuses to render off-origin hrefs
 - [ ] System-generated notifications are distinguishable from member-generated ones by something a member cannot set
+
+**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `018caac`, migration `supabase/migrations/20261160_notif_roundG_write_rails.sql` — the same rail as `OS-1`, whose block records the reproduction, the PostgreSQL 16 run and the tests. **Reproduced first** on PostgreSQL 16 with `20260723`'s insert policy: an ordinary member planted a row in a colleague's bell with `kind 'ack_requested'`, `actor_user_id` = the Admin, `actor_name 'System'` and `link 'https://evil.example/login'` — accepted. **Fix (`enforce_notification_insert()`, for every signed-in writer; the service role passes untouched):**
+- `actor_user_id := auth.uid()` when the row names no actor, and a row naming anyone else is refused (42501) — `DELIV-6` dw1's `actor_user_id = auth.uid()`, enforced before RLS's WITH CHECK runs.
+- The recipient must be an active member of the row's org; otherwise the row is skipped (never written, never an error that sinks a batch).
+- `kind` must be one the database's registry copy `notification_kinds()` declares — the 51 kinds of `KIND_META`, pinned by test (`DEC-44 (N5)`); a minted kind is refused (22023).
+- `link` must be NULL, empty, or app-relative: one leading '/', not '//' or '/\', no backslash, no control character — so `https:`, `javascript:`, protocol-relative and tab-smuggled hrefs are refused (22023). Every `link:` the app's producers write was censused (TypeScript AST) and starts with one '/'.
+- A browser's row therefore always carries its writer in `actor_user_id`; only the service role can write a row with `actor_user_id` NULL. That is the mark a member cannot set (dw4). `actor_name` stays the producer's text — the browser's checkout sweep writes 'System' rows legitimately (`lib/projects.ts` `autoReleaseExpiredAdHoc`), and those rows now name the member whose browser ran it.
+- `notifications_org_insert` is kept; the trigger is "the validation" its comment deferred to the app layer.
+- Exercised on PostgreSQL 16: the planted row above is refused at the actor; a minted kind and the off-site, protocol-relative, slash-backslash, tab-smuggled and `javascript:` links are refused; an app link with no actor lands stamped with the writer (see `OS-1`).
+- Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
+- **Pending migration:** `supabase/migrations/20261160_notif_roundG_write_rails.sql` (DEC-30; one paste, `ok = true` × 12).
+
+**Done-when.**
+- ✓ The insert requires `actor_user_id = auth.uid()` (stamped when absent, refused when different) and that the recipient is an active member of the same org (a non-member recipient's row is skipped) — by the BEFORE INSERT trigger, ahead of the unchanged WITH CHECK (the plan's shape).
+- ✓ `kind` is constrained to the known set — a lookup relation, `notification_kinds()`, pinned to `KIND_META`.
+- ✓ `link` is constrained to app-relative paths at the database.
+- ✓ System-generated notifications are distinguishable by something a member cannot set: `actor_user_id IS NULL` only on a server row.
+
+**Scope / residual.**
+- Rows written before the paste keep whatever link they carry (`20261160`'s inventory counts the off-origin ones). A bell-side guard that refuses to render an off-origin href is the bell's owner's (N3).
+- The renderers do not yet show a "System" badge keyed on `actor_user_id IS NULL`; the distinguishing fact now exists in the data (N3's surfaces).
 
 ---
 
@@ -717,7 +738,7 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 ## DELIV-13 · Users can rewrite and delete their own compliance notifications — the UPDATE policy has only USING, so the whole row is editable, not just read_at
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:38-41`, `supabase/migrations/20260621_in_app_notifications.sql:44-46`, `supabase/migrations/20260621_in_app_notifications.sql:65-67`, `lib/inAppNotifications.ts:187-205`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real (title/body/kind/created_at/read_at are all rewritable; the row is deletable — though note Postgres reuses USING as the check when WITH CHECK is omitted, so user_id itself cannot be re-pointed at someone else, and the DELETE policy is a documented 'clear all' affordance). The consequence is overstated, which is why LOW: the obligation lives in its own table, not in notifications — lib/acknowledgments.ts:603 sets the nag cooldown on `document_acknowledgments.notified_at`, so the daily scan re-notifies after the cooldown regardless, and lib/inbox.ts builds the cockpit's pending acks/reviews/recerts from listMyPendingAcks/listMyPendingReviews/listMyDueRecerts, not from the deleted row. Only the 25-hour digest window and the bell entry are actually evadable.
@@ -752,6 +773,24 @@ CREATE POLICY notifications_own_delete ON notifications FOR DELETE USING (user_i
 - [ ] The UPDATE policy carries a WITH CHECK that pins every column except read_at to its prior value (or updates go through a `mark_notification_read(id)` SECURITY DEFINER RPC and the broad policy is dropped)
 - [ ] The DELETE policy is dropped in favour of a soft dismiss, or restricted to already-read non-compliance kinds
 - [ ] Dedupe watermarks for the cron scans move off user-mutable notification rows onto a table users cannot write
+
+**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `018caac`, migration `supabase/migrations/20261161_notif_roundG_read_scope.sql`. **Reproduced first** on PostgreSQL 16 with `20260723`'s policies: a member rewrote their own unread `review_overdue` row (title, `created_at`, `metadata`) and then deleted it. **Fix (`20261161`):**
+- `notifications_own_update` gains a WITH CHECK (the same scope as its USING: own row, live, caller an active member of the row's org).
+- `trg_notifications_read_at_only` — BEFORE UPDATE, SECURITY INVOKER, `search_path` pinned: when the recipient updates their own row, `to_jsonb(NEW) - 'read_at'` must equal `to_jsonb(OLD) - 'read_at'`. Every column but `read_at` is pinned, including any column added later and the new `org_tombstoned_at`. The service role (the purge, the restore, the cron) and a SECURITY DEFINER path acting on another member's rows (`revoke_member`'s tombstone) pass.
+- `notifications_own_delete` takes only READ rows of a NON-compliance kind (`notification_kinds()`'s `compliance`, i.e. `KIND_META`'s), own, live, caller active — the plan's default: "clear all" stays a feature for read FYI rows; a compliance obligation — the 15 compliance kinds: `ack_requested`, `ack_overdue`, `ack_unsatisfiable`, `review_due`, `review_requested`, `review_invalidated`, `review_complete`, `review_overdue`, `review_alternate_activated`, `doc_superseded`, `effective_now`, `retention_eligible`, `access_recert_due`, `owner_behind`, `deletion_requested` — is dismiss-only: mark it read. A legacy kind the registry no longer declares is not a compliance kind.
+- **Regression:** the app only ever writes `read_at` (`markRead`, `markManyRead`, `markAllRead`, the ticket page's clear) and deletes nothing — a census in `notificationWriteRails.test.ts` pins both, so the rail cannot break a client path.
+- **Exercised on PostgreSQL 16:** mark one, mark all (601 rows) — accepted; rewriting a title, `read_at` plus `metadata`, back-dating `created_at`, setting `org_tombstoned_at`, re-pointing `user_id` — each refused (42501); clearing a read FYI row — deleted; a read `ack_requested` row and an unread FYI row — 0 rows deleted; the service role rewrites and deletes anything.
+- Files and tests: as `NEDGE-7` (one migration, `lib/__tests__/notificationWriteRails.test.ts`).
+- Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
+- **Pending migration:** `supabase/migrations/20261161_notif_roundG_read_scope.sql` (DEC-30; one paste, `ok = true` × 10; after `20261160`).
+
+**Done-when.**
+- ✓ The UPDATE policy carries a WITH CHECK, and a trigger pins every column except `read_at` to its prior value.
+- ✓ The DELETE policy is restricted to already-read, non-compliance kinds.
+- ✓ The cron's dedupe watermarks are protected WITHOUT moving them (the plan's resolution of this item): a recipient can no longer edit a watermark row (the metadata the scans key on — `ackRequest`, `staleSessionId`, `staleHoldId`, `reviewHealthDay` — is pinned), so a nag can no longer be suppressed; and a deletion can only RE-arm a nag, never silence one — and never for a compliance kind. Per watermark: `lib/distributionAcks.ts` reads `ack_requested` / `ack_overdue` / `doc_superseded` (all compliance: undeletable); `lib/storageAlerts.ts` and `lib/storageUsage.ts` key per recipient (deleting your own read alert re-arms your own alert); the cron's stale-checkout escalation, `lib/holds.ts` `scanStaleHolds`, the intake review-health nudge and the transmittal notice probe org-wide or per resource on the service role (every copy would have to be read and deleted, and the outcome is one more notice).
+
+**Scope / residual.**
+- `legal_hold_placed` / `legal_hold_released` are not compliance kinds in the registry (`DEC-81` §4 kept the cron's list), so a read one can still be cleared. Making them dismiss-only is one `KIND_META` value plus a migration re-creating `notification_kinds()`.
 
 ---
 
