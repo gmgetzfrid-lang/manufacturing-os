@@ -798,4 +798,56 @@ describe("ING-13 (I-06b) — the re-index's vision gate is the server's, before 
     }]);
     expect(body.errors).toEqual([body.leftovers[0].message]);
   });
+
+  // Review fix pass: the hold reaches the existing corpus, and the answer of
+  // a batch with no vision context says where the held pages are.
+  const WAITS = "1 page waits for AI vision on the document — it is not marked ready until that page is read or the partial index is accepted.";
+  /** A three-page document (its middle page has no text layer) the last
+   *  generation read page 2 of with AI vision; `provenance` false: indexed
+   *  before chunks said how their text was read (every chunk 'text'). */
+  const readBefore = async (provenance: boolean) => {
+    seed(docRow({ status: "ready", pages_indexed: 3, page_count: 3, vision_pages: 1, chunk_version: 1, vision_owed_pages: [] }));
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", name: "P&IDs", chunk_version: 1, ai_features: {} }];
+    db.tables.knowledge_chunks = [1, 2, 3].map((page) => ({
+      id: `c${page}`, document_id: DOC, org_id: "o1", library_id: "kl-1", page, seq: 0, content: `page ${page}`,
+      source: provenance && page === 2 ? "vision" : "text",
+    }));
+    db.tables.entity_mentions = [];
+    r2.objects.set(KEY, await makePdf([prosePage("scope"), null, prosePage("bolting")]));
+  };
+
+  it("the review's reproduction: a keyed controller re-indexes a library indexed before chunks said how they were read; a keyless driver then holds the page that needs AI vision — never 'ready' text-only — and its answer says the page waits", async () => {
+    await readBefore(false);
+    keyed();
+    expect((await reindex()).status).toBe(200);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "stale", vision_owed_pages: [0] });
+
+    // A keyless colleague's app-shell indicator reaches the document first.
+    db.tables.ai_connections = [];
+    const reads = vi.mocked(transcribePageImage).mock.calls.length;
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(body.visionSkipReason).toBe(`Add your AI key in AI settings to read pages that have no text layer. ${WAITS}`);
+    expect(body.visionSkipReason).not.toMatch(/retried automatically|could not be read by AI vision/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2], error: null });
+    expect(vi.mocked(transcribePageImage).mock.calls.length).toBe(reads);
+  });
+
+  it("a member at their monthly cap: the page held for AI vision is said to wait — never 'indexed from its text layer only', never 'retried automatically'", async () => {
+    await readBefore(true);
+    await resetKnowledgeIndex([DOC]);
+    expect(rowsOf("knowledge_documents")[0].vision_owed_pages).toEqual([2]);
+    keyed();
+    vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 10 }) as Awaited<ReturnType<typeof getMonthUsage>>);
+    const body = await (await post({ documentId: DOC })).json();
+    expect(body).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1 });
+    expect(body.visionSkipReason).toBe(
+      "Monthly AI budget reached ($10.00 of $10.00) — 1 page was held for AI vision; any other page without a text layer "
+      + `was indexed from its text layer only. ${WAITS}`,
+    );
+    expect(body.visionSkipReason).not.toMatch(/retried automatically/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+  });
 });

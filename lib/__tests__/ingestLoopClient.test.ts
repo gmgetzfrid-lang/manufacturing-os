@@ -449,9 +449,14 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     const plan = { documents: 6, toReset: 4, visionPagesToReread: 52, keylessHolds: true };
     const msg = tableAwareReindexMessage(plan);
     expect(msg).toContain(
-      "A page AI vision read before that is reached with no such key waits for one — listed as waiting on AI vision, "
-      + "the document searchable but not marked ready until the page is read or an admin accepts the partial index.",
+      "A page AI vision read before, and would read again, that is reached with no such key waits for one — listed as "
+      + "waiting on AI vision, the document searchable but not marked ready until the page is read or an admin accepts the "
+      + "partial index.",
     );
+    // A document indexed before chunks said how their text was read owes
+    // every page that needs AI vision (the reset's OWES_EVERY_VISION_PAGE),
+    // and the confirmation says so.
+    expect(msg).toContain("In a document indexed before the app recorded which pages AI vision read, every page that needs AI vision waits.");
     expect(msg).not.toMatch(/does not read it again until the document is re-indexed on a key/);
     const all = tableAwareReindexMessage({ ...plan, visionPagesToReread: 0 }, { visionAllPages: true });
     expect(all).toMatch(/no usable key of their own indexes them, holding the pages AI vision read before for a key and the rest text-only\./);

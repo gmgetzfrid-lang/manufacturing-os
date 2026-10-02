@@ -65,7 +65,7 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { ingestKnowledgeDocBatch, opcEvidence, type VisionContext } from "@/lib/knowledgeIngest";
 import { textMarkPosition } from "@/lib/drawingLocate";
-import { OPC_LINE_EXAMPLE, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE, auditOpcBoxes, extractDrawingRefs } from "@/lib/drawingText";
+import { OPC_LINE_EXAMPLE, OPC_RAW_STORED_MAX, TITLE_BLOCK_OPEN, TITLE_BLOCK_CLOSE, auditOpcBoxes, extractDrawingRefs, parseOpcLine } from "@/lib/drawingText";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
@@ -311,5 +311,31 @@ describe("DWG-8 — a connector's evidence is its whole line, so the audit reads
     const cut = opcEvidence(astral, "9");
     expect(/^[\uDC00-\uDFFF]/.test(cut)).toBe(false);
     expect(cut).toContain("OPC 9 TO DRAWING 2002-D-2001");
+  });
+
+  it("two connectors in the contract's shape run together: each box's window opens AT its box, so the anchored parse reads its own destination — the box before it never stands in (review fix pass)", () => {
+    const notes = "NOTE ".repeat(60);
+    const run = `${notes}OPC 3: DWG 025-PID-0101 SH 2 — TO V-1402 OPC 4: DWG 025-PID-0107 SH 1 — FROM P-1401A ${notes}`;
+    expect(run.length).toBeGreaterThan(400);
+    const raw4 = opcEvidence(run, "4");
+    expect(raw4.startsWith("OPC 4: DWG 025-PID-0107 SH 1")).toBe(true);
+    expect(raw4.length).toBeLessThanOrEqual(400);
+    expect(parseOpcLine(raw4)).toMatchObject({ box: "4", destination: "025-PID-0107", sheet: "1" });
+    expect(raw4).not.toContain("025-PID-0101");
+    const raw3 = opcEvidence(run, "3");
+    expect(parseOpcLine(raw3)).toMatchObject({ box: "3", destination: "025-PID-0101", sheet: "2" });
+    // The audit pairs each box on its own destination only: box 4 against
+    // 0107's sheet 1, never against 0101 (the 160-character lead-in held
+    // box 3's line, failed the anchored parse, and read both numbers).
+    const rows = [{ document_id: "src", page: 1, tag: "4", raw: raw4 }];
+    const self = new Map([
+      ["d101", ["025-PID-0101", "025-PID-0101-SH2"]],
+      ["d107", ["025-PID-0107", "025-PID-0107-SH1"]],
+    ]);
+    const names = new Map([["src", "src.pdf"], ["d101", "0101.pdf"], ["d107", "0107.pdf"]]);
+    expect(auditOpcBoxes(rows, self, names).targetsByDoc.get("src")).toEqual(["d107"]);
+    // A line in no contract shape keeps the lead-in window, as before.
+    const prose = `${notes}FROM V-1402 VIA OPC 5 CONTINUED ON DRAWING 2002-D-2001 SHEET 4 ${notes}`;
+    expect(opcEvidence(prose, "5").indexOf("OPC 5")).toBe(160);
   });
 });

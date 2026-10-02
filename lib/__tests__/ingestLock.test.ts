@@ -71,7 +71,7 @@ import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
   INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil, ingestFailureMessage,
-  IngestBatchError, refuseNonPdf,
+  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE,
 } from "@/lib/knowledgeIngest";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { indexDocumentMentions, withoutCarriedSentence } from "@/lib/mentionIndexer";
@@ -1361,6 +1361,82 @@ describe("ING-13 (I-06b) — a keyless batch never consumes, text-only, a page A
     const res = await ingestKnowledgeDocBatch(asArg(docRow()));
     expect(res).toMatchObject({ done: true, visionFailedPages: [] });
     expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 0 });
+  });
+
+  it("a document indexed before chunks said how their text was read (every chunk 'text', as 20261122 left them) owes every page that needs AI vision: the reset says so, and a keyless batch holds the textless page", async () => {
+    // The review's reproduction: the row counts a page AI vision read, but
+    // no chunk names it — the owed list used to come back empty, and the
+    // keyless batch took the document to 'ready' text-only.
+    await lastGeneration();
+    db.tables.knowledge_chunks[1].source = "text";
+    const reset = await resetKnowledgeIndex([DOC]);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(docRow()).toMatchObject({ status: "stale", vision_pages: 0, vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+    expect(OWES_EVERY_VISION_PAGE).toBe(0);                  // no real page is page 0
+
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    // Only the page that needs AI vision is held: sheet 1 (a text layer
+    // with its tags) and the prose page index from their text layer.
+    expect(res).toMatchObject({ done: false, pagesIndexed: 3, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [2], error: null });
+    expect(rowsOf("knowledge_chunks").map((c) => c.page).sort()).toEqual([1, 3]);
+    expect(vision.calls).toEqual([]);
+
+    // A key reads it back, and the document completes.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([2]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 1 });
+  });
+
+  it("an earlier reset's 'every page that needs AI vision' is still owed by a reset before this generation reached its last page — and only then", async () => {
+    // Reset again one page into a keyless regeneration (a rev-up, say):
+    // pages 2 and 3 were never reached, so they are still owed.
+    await lastGeneration({
+      status: "indexing", pages_indexed: 1, page_count: 3, vision_pages: 0, vision_owed_pages: [OWES_EVERY_VISION_PAGE],
+    });
+    db.tables.knowledge_chunks = [db.tables.knowledge_chunks[0]];
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([OWES_EVERY_VISION_PAGE]);
+
+    // A generation that reached its last page holds what it owes on
+    // vision_failed_pages: those pages, and nothing more, are owed.
+    await lastGeneration({
+      status: "indexing", pages_indexed: 3, page_count: 3, vision_pages: 0,
+      vision_failed_pages: [2], vision_owed_pages: [OWES_EVERY_VISION_PAGE],
+    });
+    db.tables.knowledge_chunks = db.tables.knowledge_chunks.filter((c) => c.page !== 2);
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([2]);
+  });
+
+  it("a keyless batch holds an owed page only where a driver with a key would read it with AI vision now — a page with a full text layer is indexed from it, and no keyed retry bills it", async () => {
+    // The last generation read sheet 1 with AI vision too (the library once
+    // read every page); it has a text layer with its tags, which a driver
+    // with a key would index from now — so a keyless one does too.
+    await lastGeneration();
+    db.tables.knowledge_chunks[0].source = "vision";
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([1, 2]);
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ visionFailedPages: [2], visionHeldPages: 1 });
+    expect(rowsOf("knowledge_chunks").filter((c) => c.page === 1).map((c) => c.source)).toEqual(["text"]);
+    // The keyed driver that comes next reads exactly what a keyed run reads.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([2]);
+  });
+
+  it("…and in a library that reads every page with AI vision, every owed page is held, as a driver with a key would read each one", async () => {
+    await lastGeneration();
+    db.tables.knowledge_chunks[0].source = "vision";
+    await resetKnowledgeIndex([DOC]);
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), undefined, undefined, { visionAllPages: true });
+    expect(res).toMatchObject({ done: false, visionFailedPages: [1, 2], visionHeldPages: 2 });
+    // The prose page was never read by AI vision: it owes nothing.
+    expect(rowsOf("knowledge_chunks").some((c) => c.page === 3)).toBe(true);
   });
 });
 

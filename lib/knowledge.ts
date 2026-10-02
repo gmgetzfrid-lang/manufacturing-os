@@ -947,11 +947,13 @@ const reindexVisionDrivers = (yours: string): string =>
  *  agreement). A batch with no usable key commits the page with its text
  *  layer only and records nothing to retry — except, where the database
  *  records the pages a reset owes AI vision (`plan.keylessHolds`, 20261162,
- *  ING-13), a page AI vision read before: that one is held for a key, the
- *  document searchable but not marked ready. The page asks this only after it
- *  checked the clicking person's own key (ownVisionKeyProblem) wherever the
- *  dry run counts AI-vision pages or the library reads every page with AI
- *  vision, since its own loop indexes first. A library that reads every page
+ *  ING-13), a page AI vision read before and would read again (in a
+ *  document whose chunks never said which pages it read, any page that
+ *  needs it): that one is held for a key, the document searchable but not
+ *  marked ready. The page asks this only after it checked the clicking
+ *  person's own key (ownVisionKeyProblem) wherever the dry run counts
+ *  AI-vision pages or the library reads every page with AI vision, since
+ *  its own loop indexes first. A library that reads every page
  *  with AI vision (`visionAllPages`) is never indexed by the nightly run
  *  without a sponsored key (`fileBehind`), and a doc-control mirror has no
  *  uploader to sponsor it; but a keyless Admin or Doc Control member with the
@@ -969,9 +971,11 @@ export function tableAwareReindexMessage(
   const counted = `The dry run counts ${pagesLabel(p)} of them as read by AI vision before.`;
   const holds = plan.keylessHolds === true;
   const noKey = holds
-    ? "A page AI vision read before that is reached with no such key waits for one — listed as waiting on AI vision, "
-      + "the document searchable but not marked ready until the page is read or an admin accepts the partial index. Any "
-      + "other page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD sheet, nothing."
+    ? "A page AI vision read before, and would read again, that is reached with no such key waits for one — listed as "
+      + "waiting on AI vision, the document searchable but not marked ready until the page is read or an admin accepts the "
+      + "partial index. In a document indexed before the app recorded which pages AI vision read, every page that needs "
+      + "AI vision waits. Any other page indexed with no such key comes back with only what its text layer holds — for a "
+      + "scan or a CAD sheet, nothing."
     : "A page indexed with no such key comes back with only what its text layer holds — for a scan or a CAD "
     + "sheet, nothing — and AI vision does not read it again until the document is re-indexed on a key (Re-index all).";
   if (allPages) {

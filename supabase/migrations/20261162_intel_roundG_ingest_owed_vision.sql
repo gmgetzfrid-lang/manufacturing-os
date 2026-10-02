@@ -11,15 +11,21 @@
 -- resets owes AI vision: every page that index read with AI vision (its
 -- chunks say so — knowledge_chunks.source = 'vision', 20261122), every page
 -- still waiting on AI vision (vision_failed_pages) and the pages an earlier
--- reset owed that were not reached yet. An ingest batch with NO vision
+-- reset owed that were not reached yet. A document whose chunks predate
+-- their provenance — every chunk 20261122 found reads 'text', so every
+-- document indexed before it — counts AI-vision pages (vision_pages > 0)
+-- that no chunk names: its reset writes 0 (no page is page 0), which owes
+-- AI vision every page that needs it. An ingest batch with NO vision
 -- context (a keyless controller's tab, the nightly drain with no sponsored
--- key, a member at their cap) then HOLDS such a page — listed on
--- vision_failed_pages, the document 'indexing' and searchable, never 'ready'
--- — until a batch with a usable key reads it or a controller accepts the
--- partial index. Before this column the batch committed the page with its
--- text layer only (for a scan or an SHX drawing, nothing), the document
--- reached 'ready', and nothing read the page again. A batch WITH a key never
--- reads the column: it reads exactly the pages it always did.
+-- key, a member at their cap) then HOLDS such a page wherever a batch with a
+-- key would read it with AI vision now (the page needs it, or the library
+-- reads every page) — listed on vision_failed_pages, the document 'indexing'
+-- and searchable, never 'ready' — until a batch with a usable key reads it
+-- or a controller accepts the partial index. Before this column the batch
+-- committed the page with its text layer only (for a scan or an SHX
+-- drawing, nothing), the document reached 'ready', and nothing read the page
+-- again. A batch WITH a key never reads the column: it reads exactly the
+-- pages it always did.
 --
 -- Apply AFTER 20261122_intel_roundG_ingest_integrity.sql (the reset reads
 -- the owed pages only under the ingest claim, and holds them on
@@ -39,7 +45,7 @@
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE any change) ────────
 CREATE TEMP TABLE IF NOT EXISTS _intel_g62_before AS
-SELECT 'knowledge documents holding AI-vision pages (vision_pages > 0; their next reset records those pages as owed)' AS what,
+SELECT 'knowledge documents holding AI-vision pages (vision_pages > 0; their next reset records them as owed — for one indexed before 20261122, every page that needs AI vision)' AS what,
        COUNT(*) AS n
   FROM knowledge_documents WHERE vision_pages > 0
 UNION ALL
@@ -51,7 +57,7 @@ BEGIN;
 ALTER TABLE knowledge_documents ADD COLUMN IF NOT EXISTS vision_owed_pages INTEGER[] NOT NULL DEFAULT '{}';
 
 COMMENT ON COLUMN knowledge_documents.vision_owed_pages IS
-  'Pages the last index generation read with AI vision, recorded by the reset (intelligence Round G I-06b, ING-13): a batch with no vision context holds them for a key instead of indexing them text-only.';
+  'Pages the last index generation read with AI vision, recorded by the reset (intelligence Round G I-06b, ING-13); 0 = its chunks do not say which, so every page that needs AI vision. A batch with no vision context holds them for a key instead of indexing them text-only.';
 
 COMMIT;
 

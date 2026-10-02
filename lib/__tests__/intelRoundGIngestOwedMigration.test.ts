@@ -81,5 +81,12 @@ describe("20261162 — the code reads the column, and runs without it", () => {
 
   it("only a batch with no vision context reads it — a batch with a key reads exactly the pages it always did", () => {
     expect(lib).toMatch(/const owedVision = vision \? new Set<number>\(\) : new Set<number>\(pageQueue\(cur\.vision_owed_pages\)\);/);
+    expect(lib).toMatch(/const owedEveryVisionPage = !vision && owesEveryVisionPage\(cur\.vision_owed_pages\);/);
+  });
+
+  it("the file says what 0 means — the sentinel the reset writes for a document whose chunks predate their provenance (review fix pass)", () => {
+    expect(lib).toMatch(/export const OWES_EVERY_VISION_PAGE = 0;/);
+    expect(sql).toMatch(/0 = its chunks do not say which, so every page that needs AI vision/);
+    expect(sql).toMatch(/for one indexed before 20261122, every page that needs AI vision/);
   });
 });
