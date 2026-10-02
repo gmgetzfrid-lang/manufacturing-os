@@ -118,6 +118,7 @@ about the system.
 | [DEC-82](#dec-82) | An owner-must-approve review policy binds at the database through the rule a roster was **opened under**: each roster row is stamped by the database (`opened_owner_slot`: `owner:<uid>` / `none` / `no_owner` / `author`, the app's own outcomes — `author` only for the owner opening the roster on a version naming no other author — never a client's value, never changed after; a row added to an open roster takes its stamp), and the completion gate refuses an `owner:<uid>` roster without that owner's own bound signature; rosters opened before the paste are never retrofitted | low | `RG-14`, `GAP-4` |
 | [DEC-83](#dec-83) | The ask route: a knowledge library carries **no ACL of its own** (uploads are org-readable, said where they are added; mirrors are filtered per asker); a named thread's turns come **from the record**, the asker's own thread only; a cut-off answer is **partial**, never rated; document text is **data in a fenced user turn**; the row records **every document that reached the model**; model arithmetic is **labelled unverified**, not re-derived; one prompt-size budget; legends scoped to the org and the asker | medium | `KACL-6`, `ASK-5`, `ASK-3`, `ASK-4`, `PR-5`, `ASK-1`, `KACL-1`, `IEDGE-5`, `PR-9`, `ASK-7`, `ASK-8`, `KACL-8` |
 | [DEC-84](#dec-84) | A canceled request is terminal: `CANCELED` offers no action to anyone (no reopen, force close, reassignment or attachment); a withdrawn request wanted again is filed as a new request, never resurrected (the call `DEC-14`'s text did not make) | low | `SM-8`, `EDGE-2`, `WF-17` |
+| [DEC-44 (DF-P1)](#dec-44-df-p1) | Two drafting-flow calls (provisional label, renumbered at merge): (1) who reads which tickets — every member role keeps the org-wide read; **only a Contractor-only collection** is narrowed at the database to tickets it requested, is assigned to, follows or was mentioned on (same scope on `ticket_comments`); the queue's per-role query is a work view, not a read boundary; (2) a workflow transition whose audit row cannot be written stays applied, is marked in the ticket's history, and is answered **500 `audit_unrecorded`** — never `ok` with a missing row. **Item 3 records that the workflow route refuses on an unreadable capability policy (the fleet plan), against `WF-1`'s defaults-for-that-call rule — awaiting the user's ratification** | low | `AUTHZ-13`, `EVID-12`, `SM-7`, `AUTHZ-7`, `WF-1`, `AUTHZ-4` |
 
 ---
 
@@ -589,6 +590,8 @@ model worse. See `GAP-1`.
 
 *Landed 2026-10-01 (projects Round G, J2b): the resource dimension gains a fifth key, `projectId` — `RESOURCE_KEYS` / `CapabilityResource` in `lib/capabilityPolicy.ts` and both rule passes of `org_capability_allows_for` (`20261136`, re-created from `20261132` with the two key lists widened and the `quality.sign_off` CASE row, lineDiff-pinned) — so a rule can name one project: "Safety signs this project's quality records". A stored rule that named `projectId` before read as unconditional in SQL; the migration's inventory counts them (expect 0). The key is allowed on `quality.sign_off` alone (`PROJECT_SCOPED_CAPS`; the J2b integration): `validateCapabilityPolicy` refuses it on any other capability — nothing evaluates another capability with a project, and `20261132`'s evaluator, live until the paste, would read such a rule as unconditional — and the policy route stores a project-scoped rule only once the live database answers a probe for `20261136` (fail closed). Personal grants stay unscoped (WF-13 row 6). The console preserves a project-scoped rule but cannot author one yet (`QUAL-14`). See `QUAL-4`.*
 
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the resource a scoped rule reads can no longer be rewritten by a member — `request_type` and `unit` are workflow-owned in `ticket_update_guard` (`supabase/migrations/20261166_df_roundG_ticket_rails.sql`, re-created from `20261038`, lineDiff-pinned; pending paste). Until the paste a member can still re-type or re-unit a ticket out of a type- or unit-scoped rule (drafting-flow `LEAK-10`, whose paste-time inventory decides HIGH vs CRITICAL). See `LEAK-10`, `LEAK-3`, `AUTHZ-6`.*
+
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
 
@@ -889,6 +892,8 @@ must land first.
 **Risk:** high — new publish path.
 
 *Landed 2026-09-02 (roles-and-permissions Phase 7 build 4 / Round C2): built on this shape — see `GAP-6`, `LIFE-1`, `LIFE-5`, `LIFE-11`; migration `20261049`. There is no new publish path: the ticket pre-seeds `RevUpModal` and `revUpDocument` runs unchanged.*
+
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the not-in-register state this shape relies on is no longer forgeable — `tickets.metadata` is service-only (`20261166`, pending paste), and a close believes a recorded `published` deliverable only when `document_versions` holds that version, of the source document, in the ticket's org, with the ticket as its provenance (`app/api/tickets/workflow-action/route.ts`); anything else closes as not in the register. See drafting-flow `DCW-4`, `HAND-3`.*
 
 <a id="dec-23"></a>
 ## DEC-23 · The `related_ticket_id` review waiver
@@ -5153,3 +5158,35 @@ dialog to close on one Escape closes its own stack in its handler.
 **Reversal.** If reopening a canceled request is ever wanted, add a `case 'CANCELED'` offering `reopen_ticket` on `CLOSED`'s terms and decide what the reopen does to `closed_at`, the cancel reason and the SLA clock; `SM-8`'s done-whens 2 and 3 then apply as written.
 
 **Risk:** low. Nothing in the code changes. A requester who cancels by mistake files again; the canceled ticket stays readable for reference.
+
+<a id="dec-44-df-p1"></a>
+## DEC-44 (DF-P1) · Who reads which tickets; what a transition does when its audit row cannot be written; the route's unreadable policy
+
+*Minted by drafting-flow Round G, package DF-P1 RAILS (2026-10-02), under the provisional label "DEC-44 (DF-P1)", anchor `dec-44-df-p1` — the corpus's branch convention for a decision minted off the integration branch (DEC-44 to DEC-84 are taken there); the integrator renumbers it at merge. Items 1 and 2 take the fleet plan's stated defaults (`audit-reports/fleet-plans/drafting-flow.json`, package DF-P1, decisionsNeeded). Item 3 records a call the plan made and another record questions. References: drafting-flow `AUTHZ-13`, `EVID-12`, `SM-7`, `AUTHZ-7`, `AUTHZ-4`; roles-and-permissions `WF-1`; `supabase/migrations/20261166_df_roundG_ticket_rails.sql`; `lib/__tests__/dfRoundG_P1_rails.test.ts`.*
+
+**Decision.**
+1. **Who reads which tickets.** Every member role keeps the org-wide read of `tickets` and `ticket_comments` — the product model (`DOCACL-2`): coordination, impact, dashboards and the notification surfaces read requests across the org. **Only a member whose whole role collection is Contractor** (`roles` contained in `{Contractor}`, or a headline `Contractor` with an empty `roles`) is narrowed, at the database, to the tickets they requested, are assigned to (drafter or engineer), follow, or were mentioned on — and to those tickets' comment rows. A Contractor who also holds another role keeps the org read. The queue's per-role query (`app/(protected)/requests/page.tsx`) is each role's default *work view* — what is theirs to act on — not a read boundary.
+2. **A transition whose audit row cannot be written.** The workflow route checks the audit insert and retries it once. If it still fails, the transition — already committed by the compare-and-set — **stands**; the ticket's append-only `history` gains an "Audit record not written" entry that names the action, the from / to statuses, the actor and the time (`auditUnrecorded`), and the caller is answered **500** `{ code: "audit_unrecorded", applied: true }`. The route never answers `ok` with a missing audit row.
+3. **An unreadable capability policy at the workflow route.** The route reads the policy fresh through the strict loader and **refuses** the action (503 `policy_unreadable`) when the read fails, rather than acting on the shipped defaults for that call. **Awaiting the user's ratification:** the roles-and-permissions `WF-1` record (a cross-area note from admin-and-org Round G, P0) flags this as conflicting with `WF-1` done-when 2's rule (defaults for that call, uncached). Item 3 changes the workflow route only; `WF-1`'s rule still governs every other caller of the cached loader.
+
+**Rationale.**
+1. Narrowing every non-management role to its own rows (the per-role table `AUTHZ-13` sketches) would break the surfaces that read tickets across the org as the signed-in member. Those reads are the product working as designed, not leaks. The exposure `AUTHZ-13` demonstrates is an outside party's token reading every request in the workspace. A Contractor-only seat is that party. A mention is included because the comment route notifies a mentioned member with a link to the ticket, and a link they cannot open is a dead button (`EDGE-9`'s class).
+2. A transaction RPC would make the update and the audit row atomic, but it means moving the whole compare-and-set write into SQL. The plan allowed either form ("unless the two writes are made one RPC"). Rolling the transition back after the fact is not safe: a compensating write races every other writer of the row. Refusing *before* the write cannot detect a failure that has not happened yet. So the honest outcome is: the change stands, the gap is recorded in the ticket's own append-only log, and the caller is told plainly. The fail-safe property is the one `EVID-12` asks for: no approval reads as cleanly recorded when its audit row is missing.
+3. The shipped defaults are the wide end of the capabilities an org narrows (`AUTHZ-7`'s failure scenario: a removed direct-approval comes back during a database blip). At the one route that decides workflow authority, a refusal the user can retry is the fail-safe choice. Every other caller of the cached loader draws buttons or is another area's decision.
+
+**Implementation.**
+1. `20261166` §3: `ticket_read_scope_ok(...)` (`SECURITY DEFINER`, `search_path` pinned, EXECUTE for authenticated and the service role only) and two RESTRICTIVE SELECT policies **for the authenticated role** — `tickets_read_scope`, `ticket_comments_read_scope`; the paste's inventory counts the Contractor-only members and an upper bound on the reads removed. Exercised on a throwaway PostgreSQL 16 (drafting-flow `AUTHZ-13`).
+2. `app/api/tickets/workflow-action/route.ts` (the checked audit write, the history marker, the 500).
+3. The same route (`loadCapabilityPolicyStrict`, 503 `policy_unreadable`).
+
+**Acceptance.**
+1. A Contractor-only member's unscoped `select` on `tickets` returns only the rows the rule names; a Manager's returns the org; anon's returns nothing.
+2. A forced audit failure yields 500 `audit_unrecorded` and an `auditUnrecorded` history entry, never 200 (`lib/__tests__/dfRoundG_P1_rails.test.ts`, the EVID-12 / SM-7 block).
+3. A policy read error at the route yields 503 with nothing written.
+
+**Reversal.**
+1. To adopt `AUTHZ-13`'s per-role table, replace `ticket_read_scope_ok`'s body (one function, re-created from its newest body) and audit every org-wide ticket read first. To drop the narrowing, drop the two policies.
+2. If the transition and its audit row are later moved into one RPC (with `EVID-12`'s signature binding, DF-P5), the marker path becomes unreachable and can go.
+3. If the user ratifies `WF-1`'s rule for the route, swap the route's loader call back to the cached loader. The route test for the 503 flips.
+
+**Risk:** low. Item 1 narrows only a Contractor-only seat, and only once `20261166` is pasted. Item 2 changes an outcome that was silent success. Item 3 can refuse a workflow action during a database fault that would previously have been decided on the defaults.

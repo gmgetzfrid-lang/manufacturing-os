@@ -202,6 +202,17 @@ every issued deliverable, or visibly knows it does not.
 
 **Scope / residual.** Handed on, binding (fleet plan): a ticket with no source document still ends at an attachment → **DF-P4** (`GAP-105` — the ticket gets a library, so "publish as a new document in library X" has a target). Added by the records fix (2026-10-02): the forgeable deliverable state → **DF-P1** — `metadata` service-only in its `ticket_update_guard` re-creation (brief item (a) already makes every column the app does not write from the browser service-role, and no browser path writes `metadata`), and the close-time check reading a `published` deliverable against the register (`document_versions.related_ticket_id`, written by `20261049`, or the recorded `version_id` in the ticket's org) rather than trusting `metadata` alone. DF-P1's brief does not name `DCW-4`; the integrator adds it, so DF-P1's close re-checks this done-when (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the forgeable not-in-register state (the records fix's DF-P1 limb) is closed; tickets with no source document are DF-P4's, so this stays OPEN.
+- `tickets.metadata` is service-only in the re-created guard (`20261166:240-254`; a member's write is refused — C11 on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time)). **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted.
+- `app/api/tickets/workflow-action/route.ts:548-581` — a close no longer believes a recorded `published` deliverable on its word: it looks for the `document_versions` row the record names, **in the ticket's org, of the source document, carrying this ticket as its provenance** (`related_ticket_id`, written by `20261049`; the proof `/api/tickets/handback` checks before recording one). No such row → the close records the deliverable as **not in the register** (state, `"Closed — deliverable not in the register"` history line, the note that the recorded publication could not be matched), replacing the false `published`. Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:750` (a hand-written `published` with no backing version closes as not in the register — fails on the base code), `:762` (a backed one closes clean).
+- Paste-time inventory: tickets already recording a `published` deliverable the register does not back (counted, not rewritten; a close now marks them).
+
+**Done-when.**
+- ✓ (for a ticket with a source document) `LIFE-1` done-when 1 now holds as written: closing leaves the queryable not-in-register state unless the register backs the publication, and after the paste no member can write or erase that state.
+- ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not" still holds only for tickets with a source document.
+
+**Scope / residual.** Tickets with no source document → **DF-P4** (`GAP-105`, fleet plan).
+
 ---
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see

@@ -114,7 +114,7 @@ receives the queue notifications for it.
 ## LEAK-3 · Any RFI-typed ticket can be closed from `DRAFTING` in one click, skipping every gate
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / data-integrity
 - **Locations:**
@@ -167,6 +167,15 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
 **Severity.** This record's HIGH is the verifier's call for the RFI close — lowered from CRITICAL because `close_rfi` "publishes nothing … The harm is a prematurely terminated ticket, not an unreviewed drawing issued for construction" — and it stands for this finding's scope. The re-type / re-unit path that does end in an unreviewed issue is graded on `LEAK-10` (HIGH, with the condition that raises it to CRITICAL and the inventory query that settles it). The DF-P0 review fix pass had asked the integrator either to raise this record or to open the reach as a new id; the records fix took the second, so this record's severity is unchanged.
 
 **Scope / residual.** Make `request_type` workflow-owned in `ticket_update_guard` (a re-type becomes a route action with a history line and an audit row, if the product needs one at all) → **DF-P1**, which re-creates the guard from its newest body (fleet plan, DF-P1 (a)); same root as the `SM-2` residual. The same guard re-creation closes `LEAK-10` with `unit` (same owner). **DF-P1's brief item (a) names neither column; the integrator adds both, with `LEAK-10`, before DF-P1 starts** (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). No code changed here.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the UPDATE half of done-when 1; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted. `request_type` (and `unit`, `LEAK-10`) is workflow-owned in the re-created guard (`20261166:240-254`): a member's re-type is refused (C11 on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time), "tickets: column(s) request_type, search_tsv are workflow-owned"), so the assigned drafter can no longer re-type a ticket into a close-without-review type. Pinned in shape by `lib/__tests__/dfRoundG_P1_rails.test.ts:148`. Paste-time inventory: tickets whose type is already outside their org's list and the three built-ins (re-typed before the paste, or a type the org has since removed) — counted, never rewritten.
+
+**Done-when.**
+- ✓ A ticket cannot be created (`ticket_insert_integrity`, `20261038`) or updated (after the paste) with a `request_type` outside the org's configured list — a client cannot change it at all.
+- ✓ Close-without-review is a declared property of a configured type (re-verified).
+- ✓ It is not available to every drafter on every ticket (WF-8).
+
+**Scope / residual.** None. A re-type, if the product ever wants one, is a workflow action (`LEAK-10` done-when 2).
 
 ---
 
@@ -441,8 +450,8 @@ worth doing early despite being MEDIUM.
 
 ## LEAK-10 · A member can re-type or re-unit a ticket to step out of a scoped engineer gate and issue for construction with no engineer
 
-- **Severity:** HIGH
-- **Status:** OPEN
+- **Severity:** HIGH — CRITICAL if the `20261166` paste's first inventory row (this record's query) returns a non-zero `n`; see the Resolution
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P1 RAILS — by the integrator's records fix at the DF-P0 merge, 2026-10-02. DF-P1 owns the file the fix lives in: its brief item (a) re-creates `ticket_update_guard` from its newest body (`20261038`), first in the chain DF-P1 → P3 → P4 → P6 → P7 → P8 that re-creates that one trigger (fleet plan `audit-reports/fleet-plans/drafting-flow.json`, DF-P1 `files` (a) and `crossAreaFileOverlaps`), and a re-type action, if one is wanted, lands in `lib/workflow.ts` / `lib/ticketTransitions.ts` / the workflow route, where DF-P1 is also first. Not yet in DF-P1's brief: the integrator adds this id to it (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
 - **Verification:** CONFIRMED (code path traced: the engine's gate follows the two columns, reproduced at engine level by `lib/__tests__/dfRoundG_P0.test.ts:402`; the live guard owns neither column, pinned at `:420`; the direct PATCH was not run against a database — there is none in this session)
 - **Blast radius:** safety / authority
@@ -489,6 +498,17 @@ WHERE key = 'capability_policy'
 1. A client (non-service) UPDATE of `request_type` or `unit` raises — `ticket_update_guard` re-created from its newest body with both columns workflow-owned, lineDiff-pinned against that body.
 2. A re-type or re-unit, if the product needs one, is a workflow action with a history line and an audit row, and the engine re-evaluates the gate on the new value.
 3. A test shows a type-scoped `ticket.engineer_gate_exempt` and a unit-scoped `ticket.direct_approve` cannot be escaped by a client write (the guard refuses the write; the engine's action set on the row is unchanged).
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted. `ticket_update_guard` re-created from its newest body (`20261038`, found by scanning the numbered migrations; every base line kept byte for byte, the added lines exactly DF-P1's — lineDiff and byte-cut pinned, `lib/__tests__/dfRoundG_P1_rails.test.ts:85`, `:121`) adds `IF NEW.request_type … IS DISTINCT FROM OLD.request_type …` and the same for `unit` to the workflow-owned list (`supabase/migrations/20261166_df_roundG_ticket_rails.sql:240-254`; the 15 added columns, `SM-2`).
+- **Severity.** HIGH stands **unless the paste's inventory says otherwise**: the first inventory row of `20261166` is this record's read-only query verbatim (pinned equal to the text above by `lib/__tests__/dfRoundG_P1_rails.test.ts:303`) and runs before the DDL. **If its `n` is non-zero, raise this finding to CRITICAL** (and the area README count with it) — the migration header and the row's own label say the same. In the scratch database, seeded with one type-scoped rule, it counted 1 (it counts; it says nothing about production).
+- Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member's change of `request_type` and of `unit` is refused (C11).
+
+**Done-when.**
+1. ✓ A client UPDATE of `request_type` or `unit` raises — `ticket_update_guard` re-created from its newest body with both columns workflow-owned, lineDiff-pinned against that body (`lib/__tests__/dfRoundG_P1_rails.test.ts:85`, `:148`); after the paste.
+2. ✓ (not needed) No re-type or re-unit action exists or was added: no screen changes either column after filing (census `lib/__tests__/dfRoundG_P1_rails.test.ts:319`), and a mis-filed request is canceled and refiled (`DEC-84`). If one is ever wanted, this done-when's terms apply.
+3. ✓ (scratch database + engine) The guard refuses the client write for both columns (C11), so the row the engine evaluates keeps its type and unit and the action set cannot move; what the escape would have done stays reproduced at engine level (`lib/__tests__/dfRoundG_P0.test.ts:402`). There is no database in CI.
+
+**Scope / residual.** None, beyond reading the paste's first inventory row.
 
 ---
 

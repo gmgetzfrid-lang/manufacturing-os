@@ -63,6 +63,16 @@ lib/projects.ts:832-839 —
 
 **Scope / residual.** Handed on, binding (fleet plan): history immutability (existing elements equal to OLD, append only) and the client-writable arrays → **DF-P1**, which also makes the route's audit row carry attachment ids and content hashes (`EVID-12`). The ticket-to-project history push belongs with the project link → **DF-P8** (`GAP-114`, the `link_project` action). Binding an approval to an e-signature is the ticket roster's job → **DF-P5** (signatures minted by `/api/signatures/sign` against a ticket resource). None of this changed here.
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the history + arrays rail is closed; two limbs belong to other packages, so this stays OPEN. **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted. `supabase/migrations/20261166_df_roundG_ticket_rails.sql:266-288` — the entries already in `history` are immutable (the first `n` elements of the new array must equal the old array), only an append is admitted, and an appended entry must name the caller (their member email or uid); `status`, `deliverable_rev`, `engineer_approved_at` stay guarded (`20261038`). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): an own-name append passes (C06), an append naming somebody else is refused (C07), a rewrite at equal length is refused (C08), a shrink is refused (C09).
+
+**Done-when.**
+- ✓ `history` / `status` / `deliverable_rev` / `engineer_approved_at` are not directly updatable by members beyond an own-name append — a BEFORE UPDATE trigger rejects any change that shrinks or rewrites existing history elements (after the paste).
+- ✗ (in part) Every state change flows through the route (✓); `lib/projects.ts:1588-1599`'s browser history push still exists — dormant (no caller in `app/` or `components/`), and the guard now admits it only as an append in the caller's own name.
+- ✗ History entries still carry the actor's email, not their uid, and approvals carry no e-signature id or content hash. (The approving action's **audit row** now names the drafts approved — id, name, url, size — `EVID-12`.)
+- ✓ (scratch database; there is no database in CI) A member's direct update cannot truncate or rewrite `history` (C08, C09); shape-pinned by `lib/__tests__/dfRoundG_P1_rails.test.ts:85`.
+
+**Scope / residual.** The project push → **DF-P8** (fleet plan: "the project push limb is DF-P8's"). The actor uid, the e-signature id and the content hash on the approving entry → **DF-P5** (signatures minted against the ticket resource), with the hash itself `EVID-12`'s residual.
+
 ---
 
 <a id="evid-2"></a>
@@ -332,6 +342,15 @@ lib/reviewControl.ts:386 —
 - [ ] logAuditAction destructures and inspects `{ error }` from the insert and, on failure, escalates rather than returning normally (throw, or write to a durable dead-letter/outbox table that the maintenance cron drains and alerts on)
 - [ ] No audit call site passes a non-UUID sentinel for user_id; system-initiated actions use a dedicated reserved system actor UUID or a nullable `actor_kind` column, not ""
 - [ ] A test asserts that an audit insert returning `{ error }` produces a non-silent outcome (thrown, retried, or dead-lettered), and a second test asserts that a null-actor cron path still produces a durable audit row
+
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — `lib/audit.ts` internals (fleet plan: "capture {error}, return {ok:boolean, error?:string}, keep every exported signature"). `logAuditAction` (`lib/audit.ts:34-61`) destructures `{ error }` from the insert; a refusal is logged with the action it lost (`Failed to write audit log (<action>): …`) and returned as `{ ok: false, error }`; a landed row is `{ ok: true, error: null }`. The `""` / `"unknown"` / `"system"` stand-ins system paths pass (`:18`) are never sent into the UUID column: the row is written with `user_id NULL` and `metadata.actor_kind = "system"` (plus `actor_label`), so a service-role path — a cron pass — lands a durable row instead of a `22P02` nobody saw. Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:828` (a refused insert → `{ ok: false, error }`, logged with the action), `:838` (each stand-in → `user_id` null, `actor_kind: "system"`, the row inserted). `checkoutRoundF.test.ts` updated for the `ok` field.
+
+**Done-when.**
+- ✗ (in part) `logAuditAction` inspects `{ error }` and reports it (returned, and logged) — but neither throws nor writes a durable dead-letter the cron drains: a caller that ignores the result still loses the row, now with a log line.
+- ✗ (in part) No stand-in reaches `user_id` any more — `lib/audit.ts` writes NULL with `metadata.actor_kind` (a field in `metadata`, not a column, and no reserved system uid); the call sites still pass the stand-ins.
+- ✓ Tests: a `{ error }` insert produces a non-silent outcome (reported and logged); a null-actor cron path produces a durable row.
+
+**Scope / residual.** The dead-letter / outbox and its drain → admin-and-org **P7** (`ALOG-8`); an `actor_kind` column and the audit identity trigger → admin-and-org **P7** (`ALOG-7`, which builds on this `lib/audit.ts` — fleet plan, DF-P1 `dependsOn`). The call-site stand-ins → the owning packages (the ticket-queue sites, DF-P9).
 
 ---
 
@@ -623,6 +642,19 @@ lib/ticketTransitions.ts:247-252 —
 - [ ] details carries deliverable_rev, the approved attachment's id/filename and a server-computed content hash of that attachment
 - [ ] Approval actions (approve_draft_ifc, engineer_approve_final, approve_minor_correction) require a captured e_signature bound to that attachment before the transition commits
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the audit row is checked and names what was decided on; it is not one transaction with the update, carries the storage ETag rather than a content hash the route computed, and approvals bind no signature, so this stays OPEN. The failure handling is [`DEC-44 (DF-P1)`](../DECISIONS.md#dec-44-df-p1) item 2.
+- `app/api/tickets/workflow-action/route.ts:674-739` — the audit insert is checked; one retry; on a second failure the ticket's append-only history gains an `"Audit record not written"` entry (`auditUnrecorded: { action, from, to, actor, at }`), the server logs the lost row, and the caller gets 500 `{ code: "audit_unrecorded", applied: true }` (`:857-864`) — never `ok` with a missing row.
+- `:691-704` — `details` now carry `deliverable_rev` (the issued label after the transition, or the ticket's), and the identity of every file the action carried — `attachment`, `finalAttachment`, `redlineAttachment`: `{ id, name, url, size, etag }`, the ETag being what storage answered when the route vetted the file (`AUTHZ-11`) — and, for the three approving actions, `approvedDrafts`: the submitted Draft files the approval was given on (`:58-60`, `:700-702`).
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:562` (retry; the details carry the issued rev and the approved drafts), `:573` (500 `audit_unrecorded` + the history marker), `:521` (the Final's identity with its ETag).
+
+**Done-when.**
+- ✗ Not one transaction: the update and the audit row are two writes (the plan allowed either an RPC or the loud failure; DF-P1 took the second — `DEC-44 (DF-P1)` item 2 says why).
+- ✓ The insert's `{ error }` is inspected and a failure escalated (500, history marker, log). No dead-letter queue (`SM-7`'s residual).
+- ✗ (in part) `details` carry `deliverable_rev` and the approved / issued files' id and filename (✓), with the storage ETag — a store-side tag (for a multipart upload not a content digest), not a server-computed content hash (✗).
+- ✗ Approval actions do not require a captured e-signature.
+
+**Scope / residual.** The e-signature bound to the approved attachment → **DF-P5** (`EVID-1`'s same limb). A server-computed content hash (sha256 at upload or at vetting) and the transaction form → unowned in the fleet plan; proposed with DF-P5, which binds the signature to exactly those bytes.
+
 ---
 
 <a id="evid-13"></a>
@@ -670,6 +702,20 @@ app/api/admin/purge/route.ts:24 — const MIN_DAYS = 7;
 - [ ] read_at is only ever written by an action the recipient took, and the writer is recorded
 - [ ] The purge predicate for notifications excludes rows whose read_at was system-stamped, and notifications tied to approval/acknowledgment resources are exempt from purge entirely or retained for the record's retention period
 - [ ] A query can answer, per recipient and per notification: created, delivered, seen, acted-on, or never-responded — with each state having its own column
+
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — superseding is a mark and `read_at` is the recipient's again; the purge and per-recipient states are other packages', so this stays OPEN.
+- `app/api/tickets/workflow-action/route.ts:914-943` — retiring stale workflow alerts no longer stamps `read_at`: the route selects the ticket's still-unread workflow rows in the ticket's org that are not yet superseded and marks each `metadata.superseded_at` / `superseded_by: <action>` (conditional on `read_at IS NULL`, so a row the recipient opened meanwhile is left alone).
+- `lib/inAppNotifications.ts:195-209` — the bell's unread list and count leave superseded rows out, so the retired alert still disappears from the badge.
+- `hooks/useTicketNotifications.ts:243-248` — the badge hook's stale-alert reconciliation no longer marks rows read (`markManyRead` removed); it filters them.
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:602` (a transition writes `superseded_at` / `superseded_by` and never `read_at`, org-scoped — fails on the base code), `:619` (the unread list and count filter superseded rows; the hook makes no read write). `sweepRoundE_A.test.ts` re-pinned.
+
+**Done-when.**
+- ✓ Superseding writes a distinct marker (`metadata.superseded_at`) and never touches `read_at`.
+- ✗ (in part) `read_at` is now written only by the recipient's own session (opening the ticket, the bell) — but who wrote it is not recorded beside it.
+- ✗ The purge predicate is unchanged (`app/api/admin/purge/route.ts`): it neither excludes system-stamped rows (there are no new ones; old ones are indistinguishable) nor exempts approval-tied notifications.
+- ✗ No per-recipient created / delivered / seen / acted-on / never-responded columns.
+
+**Scope / residual.** The purge exemption → admin-and-org **P7** (the purge-route change builds on this package's `read_at` semantics — fleet plan, DF-P1 `dependsOn`). The per-recipient states and the recorded writer → **DF-P7** (`GAP-113`: "using read_at ONLY as the recipient's own act (EVID-13 landed in DF-P1)"). DF-P9's hook change must keep honouring the marker.
 
 ---
 

@@ -82,7 +82,7 @@ expect(actionsOf(t, "Viewer", "u-1")).toContain("approve_minor_correction");
 ## SM-2 · RLS on `tickets` is a blanket FOR ALL grant — any active org member can rewrite `status` directly and skip the state machine, the capability policy, the CAS and the audit log entirely
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1080-1081`, `supabase/schema.sql:405`, `app/api/tickets/workflow-action/route.ts:15-26`, `app/(protected)/requests/page.tsx:620`, `app/(protected)/requests/[id]/page.tsx:1328`
 - **Same root cause as** `PERS-1`, `AUTHZ-2`, `EVID-1` — One `CREATE POLICY ... FOR ALL USING (...)` with no `WITH CHECK` (`supabase/schema.sql:1079-1081`). Four lenses found it independently. **One migration closes all four.** Fix once; close the rest citing this one.
@@ -125,6 +125,19 @@ Contrast the route's own stated contract, app/api/tickets/workflow-action/route.
 - ✓ (shape, not live) `lib/__tests__/rpPhase4Migration.test.ts:153` pins the guarded column list (with `status`), `:160` the shrink block, `:174` that `priority`/`comments`/`attachments`/`watchers`/`unread_by`/`last_modified`/`metadata` are *not* guarded; the migration's own probe proved the trigger installed live. There is no database in CI, so no live refusal test — recorded as the evidence form, as WF-2 did.
 
 **Scope / residual.** Handed on, binding (fleet plan): existing `history` entries are rewritable in place and `attachments` / `comments` / `metadata` stay client-writable → **DF-P1** (`ticket_update_guard` re-created from its newest body with append-only history and service-role-only arrays, lineDiff-pinned). Found on HEAD and not named in the plan: `request_type` and `unit` are also unguarded on UPDATE, which keeps `LEAK-3` open and is `LEAK-10` (opened at the DF-P0 merge with the `DEC-13` consequences, same owner); a member can null `last_modified`, which drops the CAS's second leg (`EDGE-11`; a new id is requested, proposed `EDGE-15`, same owner); and the rest of the census above. DF-P1 decides each unguarded column — workflow-owned, service-only, or deliberately client-writable — at minimum `title` / `description` once the request is approved, the SLA clocks and `last_modified` (`99-fix-sequencing.md`, "Hand-offs from DF-P0", the `SM-2` column-census row; DF-P1's brief names history and the arrays only). No migration was needed or written here.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the residual above, closed in the code that decides it; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted. `ticket_update_guard` re-created from its newest body (`20261038`, found by scanning the numbered migrations; every base line kept byte for byte, the added lines exactly DF-P1's — lineDiff and byte-cut pinned, `lib/__tests__/dfRoundG_P1_rails.test.ts:85`, `:121`) now decides every one of the 41 `tickets` columns for a client caller (`auth.uid() IS NOT NULL`; the service role passes as before):
+- **Refused (37).** The 22 `20261038` already owned, unchanged, plus 15 added at `supabase/migrations/20261166_df_roundG_ticket_rails.sql:240-254` — `id`, `title`, `description`, `request_type`, `unit` (the whole `DEC-13` resource: `LEAK-10`, `LEAK-3`, `AUTHZ-6`), `attachments`, `comments`, `metadata` (`DCW-4` / `HAND-3`'s deliverable state, `SM-14`'s source document), `watchers`, `search_keywords`, `search_tsv`, `target_completion_at`, `sla_breach_warned_at`, `sla_breached_at`, `updated_at`.
+- **Client-writable in the shape the app still uses (4).** `priority` (the queue's mark-urgent, free); `last_modified` (stamped, never cleared — `:301-307`, `EDGE-15`); `unread_by` (a write that only removes markers is applied as "the caller's own marker leaves", an addition is refused — `:290-299`); `history` (append-only: the entries already there are immutable, and an appended entry must name the caller by member email or uid — `:266-288`).
+- **The policy** is split per verb with its WITH CHECKs written down (`PERS-1` done-when 3, `:324-347`).
+- Census: `lib/__tests__/dfRoundG_P1_rails.test.ts:133` (every column decided, none twice, 37 + 4 = 41), `:319` (every browser `UPDATE` of `tickets` in `app/`, `lib/`, `components/`, `hooks/` touches only the four client-shaped columns; the three inserts are the creators). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member's change to each of the 15 added columns and to `status` / `deliverable_rev` is refused (cases C11 — e.g. "tickets: column(s) status, search_tsv are workflow-owned — use the request workflow actions"; `search_tsv` is listed beside a source column because the search trigger recomputes it first, same refusal); mark-urgent, the page's mark-read and an own-name history append pass (C01, C02, C06); the service role writes every column (C12).
+
+**Done-when.**
+- ✓ SELECT stays org-wide (`AUTHZ-13` narrows only a Contractor-only collection — `DEC-44 (DF-P1)`); INSERT is constrained to the creating user (the `20261038` trigger, and now `tickets_org_insert`'s WITH CHECK `requester_id = auth.uid()`); a client UPDATE of `status`, `deliverable_rev`, `revision_count`, `assigned_*`, `engineer_approved_at`, `archived_at`, `archive_id` — and of every other column but the four above — raises; the FOR ALL policy is gone.
+- ✓ Every remaining client `tickets.update(...)` is provably limited to columns the database permits: `app/(protected)/requests/page.tsx:655`, `:674` (`priority`, `last_modified`), `app/(protected)/requests/[id]/page.tsx:977` (`unread_by`, own marker), `lib/projects.ts:1599` (an own-name `history` append, dormant) — pinned by the census test, and anything else raises.
+- ✓ (shape + scratch database; there is no database in CI) The migration's probes assert the 15 added refusals and the 22 kept (``supabase/migrations/20261166_df_roundG_ticket_rails.sql`` final SELECT, rows 1-2); the scratch run shows a plain `authenticated` member's `status` change refused.
+
+**Scope / residual.** None for this finding. ⚠ For the integrator: DF-P3 / P4 / P6 / P7 / P8 each re-create `ticket_update_guard` from **this** body; `20261038` must never be re-pasted after `20261166` (it would drop every rail above — the migration header says so). The dormant `lib/projects.ts` history push is `EVID-1`'s project-link limb (DF-P8).
 
 ---
 
@@ -394,6 +407,18 @@ if (newComment) {
 - [ ] The `ticket_comments` mirror failure is logged (and retried or reconciled), not swallowed by `.then(() => {}, () => {})`
 - [ ] A test asserts that a failing audit insert does not produce a `{ok: true}` response
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the audit write is checked and a missing row is loud; the "retryable queue" is not built, so this stays OPEN with an owner. The failure handling is `DEC-44 (DF-P1)` item 2 (the fleet plan's decision `EVID-12/SM-7`).
+- `app/api/tickets/workflow-action/route.ts:674-739` — the audit insert is checked (supabase-js resolves a refused insert with `{ error }`; the old bare `await` reported success either way), retried once, and if it still fails: the error is logged with the action, ticket, transition and actor (`console.error("[workflow-action] AUDIT ROW NOT WRITTEN …")`), the ticket's own append-only `history` gains an `"Audit record not written"` entry carrying `auditUnrecorded: { action, from, to, actor, at }` (written compare-and-set on the token the transition just stamped), and the caller gets **500** `{ code: "audit_unrecorded", applied: true, status }` (`:857-864`) — never `{ ok: true }` with a missing row.
+- `:645-672` — the `ticket_comments` mirror is checked, retried once (a `23505` on the retry counts as landed), then logged with the comment and ticket ids ("reconcile from tickets.comments") instead of `.then(() => {}, () => {})`.
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:562` (a transient failure is retried — one row, 200), `:573` (a row that cannot be written → 500 `audit_unrecorded`, `applied: true`, the history marker written with the compare-and-set on the new token), `:590` (the mirror retried, then logged with both ids; the transition stands). All three fail on the base code.
+
+**Done-when.**
+- ✗ (in part) Not one transaction (no RPC: the update, the mirror and the audit row are still three writes); the audit insert's error **is** checked and a failure is loudly recorded — in the ticket's history and the server log — but not "to a retryable queue": nothing re-attempts the missing row later.
+- ✓ The `ticket_comments` mirror failure is retried and logged, not swallowed.
+- ✓ A failing audit insert does not produce `{ ok: true }` (`:573`).
+
+**Scope / residual.** A drain that finds `history` entries carrying `auditUnrecorded` and writes the missing `audit_logs` rows (or the transition + audit as one RPC) — **unowned in the fleet plan**; proposed owner DF-P11 (AFTER-DC, the maintenance-cron residuals), or admin-and-org P7 with `ALOG-8`'s dead-letter work. The marker is machine-readable for exactly that drain.
+
 ---
 
 <a id="sm-8"></a>
@@ -452,7 +477,7 @@ lib/workflow.ts:80-342 — the switch handles NEW, PENDING_ENG_INITIAL, PENDING_
 ## SM-9 · Four writers to the ticket row bypass the compare-and-set entirely and clobber whole JSONB arrays — including the split-brain the comment API was specifically hardened against
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:978`, `app/(protected)/requests/[id]/page.tsx:1010-1014`, `app/(protected)/requests/[id]/page.tsx:1328`, `app/(protected)/requests/[id]/page.tsx:920`, `app/api/intake/upload/route.ts:182-190`, `app/api/tickets/comment/route.ts:205-216`, `app/api/tickets/workflow-action/route.ts:155-191`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate; if anything undercounted (five writers, not four — the intake route is a fifth). The whole-array clobber is real for comments, attachments+history and watchers, and the guard the finding says they bypass demonstrably exists on the two hardened paths.
@@ -501,6 +526,20 @@ casQuery = auth.readLastModified ? casQuery.eq("last_modified", auth.readLastMod
 - [ ] The intake redline write uses an append-only server-side operation (a `||` JSONB append RPC, like `post_ticket_comment`) rather than a client-computed whole-array replace
 - [ ] No code path writes `tickets.attachments`, `tickets.comments` or `tickets.history` as a whole array without a compare-and-set on the value it read
 - [ ] A test simulates interleaved workflow-action + file-upload writes and asserts neither loses the other's array entry
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS. Done-when 1 was closed by roles-and-permissions [`WF-9`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`, re-verified here): the page no longer writes `comments`, `attachments` or `watchers` — the category edit is the comment route's PATCH (`app/api/tickets/comment/route.ts:225-278`, compare-and-set, mirrored into `ticket_comments`), the upload is the workflow route's `attach_file` action, the follow toggle is `/api/tickets/watch` (`app/api/tickets/watch/route.ts:46-90`, compare-and-set with one re-read). DF-P1 closes the rest; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted.
+- **The intake redline is an append.** `append_ticket_redline(p_ticket_id, p_org_id, p_attachment, p_history)` (new, `supabase/migrations/20261166_df_roundG_ticket_rails.sql:498-527`): one `UPDATE … SET attachments = COALESCE(attachments, '[]'::jsonb) || jsonb_build_array(p_attachment), history = … || jsonb_build_array(p_history), last_modified = NOW() WHERE id = … AND org_id = … AND archived_at IS NULL`, `SECURITY DEFINER`, `search_path` pinned, refused to a signed-in caller inside and EXECUTE granted to `service_role` only. The intake route calls it (`app/api/intake/upload/route.ts:957-985`); a ticket that took no append (archived, gone) attaches nothing and its stored object is removed; any other error → 500 and the object removed. Until the paste the function is absent (PGRST202) and the route falls back to a compare-and-set on the `last_modified` it read (`:986-1010`: the null token its own leg, one re-read and retry, a second loss → 409 "send the redline again", object removed).
+- **The comment route's legacy write** (the `post_ticket_comment`-absent fallback — a whole-array replace) now compare-and-sets on the token it read and answers 409 on a lost race (`app/api/tickets/comment/route.ts:115-139`).
+- **Browser writers** can no longer write `attachments` / `comments` / `watchers` at all, and `history` only as an append in their own name (the `SM-2` guard, `20261166:240-288`): a stale whole-array history write that would drop a concurrent entry is refused by the prefix check, not applied.
+- Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): the service role's append adds exactly one attachment and one history entry and leaves the first entry byte-identical (C28); the wrong org and an archived stub take nothing (C29, C30); a signed-in member and anon cannot execute it (C31, C32, "permission denied for function append_ticket_redline"); a non-object payload is refused (C33).
+
+**Done-when.**
+- ✓ `handleUpdateCategory`, `handleFileUpload` and `toggleWatch` are behind server routes that compare-and-set on `last_modified`, the category edit mirrored into `ticket_comments` (WF-9; re-verified).
+- ✓ The intake redline write is an append-only server-side operation — a `||` JSONB append function like `post_ticket_comment` — rather than a client-computed whole-array replace (after the paste; before it, the route's compare-and-set fallback never overwrites a newer array).
+- ✓ No code path writes `tickets.attachments`, `tickets.comments` or `tickets.history` as a whole array without a compare-and-set on the value it read: the workflow route (`(id, status, last_modified)`, the null token its own leg since `EDGE-15`), the comment route (RPC append; PATCH / DELETE and now the legacy fallback compare-and-set), the hand-back route (`app/api/tickets/handback/route.ts:84-85`), the intake redline (append / fallback compare-and-set); browser writers are held to an append by the guard.
+- ✓ Interleaving tests: `lib/__tests__/intakeUploadRoute.test.ts:1051` (the append keeps a workflow file and an approval history entry already on the row — neither side loses its entry), `:1071` / `:1084` (fallback: the compare-and-set legs; a row that changes under every attempt is refused with nothing attached over the newer arrays), `:1032` (a refused append / update removes the stored object); `lib/__tests__/dfRoundG_P1_rails.test.ts:802` (the comment fallback's legs, and a workflow write landing between read and write → 409, no clobber), `:670` (two concurrent workflow writes on a null-token row: one 200, one 409).
+
+**Scope / residual.** None for this finding. The hand-back route's compare-and-set has no null-token leg (`app/api/tickets/handback/route.ts:85` adds `last_modified` only when present) — the `EDGE-15` class on a file DF-P1 does not own; noted for the hand-back's owner (DF-P2 / DF-P4), not fixed here.
 
 ---
 
@@ -631,7 +670,7 @@ try {
 ## SM-12 · `assign` accepts any active org member as the drafter — no Drafter-role check — while the engineer pick on the same request is role-checked
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:113-132`, `lib/ticketTransitions.ts:193-200`, `lib/workflow.ts:69-75`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The asymmetry is real and correctly described. But the finding's stated scenario — "an assigner picking from a list mis-clicks and assigns to an Accounting or Contractor seat" — is refuted by page.tsx:240-250, where AssignmentModal populates its list with `.from('org_members').select('uid, email, role').eq('org_id', activeOrgId).eq('role', 'Drafter').eq('status','active')`; only Drafters are offered, so the mis-click cannot produce a non-drafter. Exploitation requires a hand-crafted POST by someone who already holds `ticket.assign` authority, which makes this a defense-in-depth gap rather than a MEDIUM.
@@ -682,6 +721,15 @@ case "assign":
 - ✓ An API-route test asserts assigning a Viewer as drafter returns 400 (`lib/__tests__/dfRoundG_P0.test.ts:361`).
 
 **Scope / residual.** Server-stamped `assigned_drafter_name` (and the self-assign name) from `org_members.display_name` → **DF-P1**, the first package on the workflow-action route's input rails. Not in the fleet plan's handed-on list — found on re-verification. `EDGE-11`'s denormalised-name invariant is kept: the name stays on the row; only its source changes.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the name half. `app/api/tickets/workflow-action/route.ts:369-425` — the referenced-member read now selects `display_name, email`; for an assignment the drafter's name is `memberName(refMember)` (`:64-69`: the member's display name, else the local part of their membership email) and the transition input carries it instead of the client's string (`:447`, `assignment: { id, name: assigneeName ?? body.assignment.name }` — the fallback only for a member row with neither field); `self_assign` names the caller from their own membership row (`:457-459`). The name stays denormalised on the row (`EDGE-11`'s invariant); only its source changed. Test: `lib/__tests__/dfRoundG_P1_rails.test.ts:688` — `assign` and `reassign_drafter` with a client name "Somebody Else" store the member's display name; a member with no display name stores the email's local part; `self_assign` stores the caller's display name (fails on the base code).
+
+**Done-when.**
+- ✓ The route validates drafting authority with the headline-or-additive collection (WF-14, re-verified; `dfRoundG_P0.test.ts:361`).
+- ✓ `assigned_drafter_name` is read from `org_members.display_name` server-side (assign, reassign, self-assign), never the client's string.
+- ✓ An API-route test asserts assigning a Viewer as drafter returns 400 (`dfRoundG_P0.test.ts:361`).
+
+**Scope / residual.** None. The page still sends a name (`app/(protected)/requests/[id]/page.tsx:314`); the route ignores it whenever the member row names the drafter.
 
 ---
 
@@ -746,12 +794,21 @@ if (action.requiresFile) {
 
 **Scope / residual.** The route's `Final`-type check → **DF-P1** (the same hunk as `AUTHZ-11`'s attachment-shape and storage-key validation). The type-specific client check at `app/(protected)/requests/[id]/page.tsx:1245` → **DF-P9** (owns the page outside the viewer region). Not in the handed-on list — found on re-verification. `LEAK-8` (whose contract is WF-6's) closes on the server half.
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the server half is closed; the client half is DF-P9's, so this stays OPEN. `app/api/tickets/workflow-action/route.ts:96-155`, `:341-358` — every file record the route appends is vetted (`AUTHZ-11`'s hunk): for `submit_final` the `finalAttachment` must be typed `Final` ("Issuing the final IFC package requires a file typed Final", 400), lie under this ticket's own storage prefix, and be in storage; a `redlineAttachment` must be a `Reference`. Test: `lib/__tests__/dfRoundG_P1_rails.test.ts:498` — a `finalAttachment` typed `Reference`, `Draft` or `Source` is a 400 with no write of any kind to `tickets` and no audit row (fails on the base code); `dfRoundG_P0.test.ts:381` (no / null / URL-less file) still holds.
+
+**Done-when.**
+- ✓ The route enforces `requiresFile` against the right thing: `submit_final` requires a `finalAttachment` typed `Final` (and stored under the ticket); `submit_draft`'s Draft requirement holds structurally (`lib/workflow.ts:348`).
+- ✗ The client check still tests any attachment: `const hasFiles = ticket.attachments && ticket.attachments.length > 0;` (`app/(protected)/requests/[id]/page.tsx:1245-1247`, unchanged — the page is not DF-P1's).
+- ✓ An API-route test posts `submit_final` with `finalAttachment: null` and asserts 400 with the ticket still at `PENDING_IFC` (`dfRoundG_P0.test.ts:381`), and now one typed wrongly (`:498`).
+
+**Scope / residual.** The type-specific client check → **DF-P9** (fleet plan: DF-P9 TICKET-PAGE lists `SM-13`).
+
 ---
 
 ## SM-14 · The ticket ⇄ intent bridge reads the source document with no org filter, keyed on client-writable metadata
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P1 RAILS (the bridge's read scoped to the ticket's org; `metadata` service-only is `SM-2`'s binding residual, also DF-P1's) — by the integrator, 2026-10-02 (opened at the DF-P0 merge from DF-P0's proposal in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open at merge"; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** cross-workspace integrity
@@ -773,6 +830,15 @@ if (action.requiresFile) {
 - The bridge's document read is scoped to the ticket's org and the upsert is skipped when the document is not in that org.
 - A route test: a foreign document id in `metadata` registers no intent.
 - `metadata` becomes service-only (`SM-2`'s binding residual, DF-P1), which removes the forged input.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS. `app/api/tickets/workflow-action/route.ts:776-808` — entering `DRAFTING` / `REVISION_REQ` (or a reassignment at `PENDING_IFC`) reads the source document with `.eq("id", srcDoc.id).eq("org_id", ticket.orgId)`, as the `CLOSED` path does, and upserts the drafter's intent only when that read returns a row; a document id from another workspace registers nothing. **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted. It makes `tickets.metadata` service-only (`20261166:240-254`), so the source-document id can no longer be written from a browser at all. Test: `lib/__tests__/dfRoundG_P1_rails.test.ts:709` — a foreign document id in `metadata` registers no intent; one in the ticket's org does, with its library and current version (fails on the base code). Scratch run: a member's `metadata` write is refused (C11).
+
+**Done-when.**
+- ✓ The bridge's document read is scoped to the ticket's org and the upsert is skipped when the document is not in that org.
+- ✓ A route test: a foreign document id in `metadata` registers no intent.
+- ✓ `metadata` becomes service-only — after the paste (pending migration above).
+
+**Scope / residual.** None. Intents registered from a foreign id before this deploy decay on their own TTL.
 
 ---
 
