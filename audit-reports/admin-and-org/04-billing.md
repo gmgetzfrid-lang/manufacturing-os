@@ -141,6 +141,8 @@ Fix:
   - "under SUBSCRIPTION_ENFORCE, Run Now of a bucket destination on a plan without buckets is 402", then 200 once the plan allows. It fails against the first review fix pass.
   - "…flag off (DEC-18): Run Now of that destination runs as before; a webhook is never plan-gated".
 
+*A&O P3 fix pass 7 (2026-10-02, cross-note).* "Enabling a bucket destination" now means a row that pushes to a bucket after the save: s3 / r2 with a bucket (`app/api/data-export/destinations/[id]/route.ts:172`, `BUCKET_TYPES.has(nextType) && nextBucket`). Off plan, a disabled s3 row converted to a webhook and enabled in one save was refused 402 on the old bucket name the form still sends; it is now 200. Enabling an s3 / r2 row is gated as before. Test: `lib/__tests__/dataExportRoutes.test.ts`, "A&O P3 fix pass 7 — enabling is the Growth act only for a row that pushes to a bucket after the save". Residual, pre-existing: under `SUBSCRIPTION_ENFORCE`, the sweep's plan limb (`scheduledRunGate`, `dest.bucket`) and Run Now still treat a webhook row with a leftover bucket name as a bucket destination; the form cannot clear the stored bucket. With the flag off (`DEC-18`) both run it. See `BKP-13`'s fix pass 7 block.
+
 **Done-when.**
 - [ ] subscribed_plan is derived from the subscription's price id — **not done here**: admin-and-org P4 (the Stripe webhook).
 - [ ] customer.subscription.deleted clears subscribed_plan (or entitlement checks require an active status as well as a plan) — **not done here**: P4.
