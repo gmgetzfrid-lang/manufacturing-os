@@ -13,9 +13,10 @@
 // stack, and the map stays under you the whole time. Only when you actually
 // want the document do you open it, and even then you can come straight back.
 //
-// One node, one set of numbers (GM-11): the header says how many links the
-// node has on the whole map AND how many of them this view shows, and the
-// list below says how many nodes it is showing of how many. A Site Codebook
+// One node, one set of numbers (GM-11): the header counts LINKS — how many
+// the node has on the whole map AND how many of them this view draws (never
+// a proposal) — and the list below counts NODES: how many this view ties it
+// to, how many of those only by a proposed link, and how many it shows. A Site Codebook
 // unit can scope the map to its world (GPV-2 / GAP-306); where Connect
 // could not land (a unit with no codebook identity) the panel says why
 // instead of offering it (GPV-7).
@@ -54,15 +55,18 @@ export interface NodePeekProps {
   /** Why Connect is not offered on this node, when there is a reason worth
    *  saying (a unit with no Site Codebook identity — GPV-7). */
   connectBlocked?: string | null;
-  /** GM-11 — links touching this node in the current view (the header's
-   *  `node.degree` counts the whole map). */
+  /** GM-11 — links touching this node in the current view: drawn edges,
+   *  never a proposal ghost (the header's `node.degree` counts the whole
+   *  map's links). */
   viewDegree?: number;
   /** How many of the node's links on the map are library filing — the part
    *  the Hubs count leaves out. */
   libraryLinks?: number;
-  /** How many nodes the node connects to in this view (`connections` is the
-   *  first twelve of them). */
+  /** How many nodes the node connects to in this view, by a link or a
+   *  proposal (`connections` is the first twelve of them). */
   connectionsTotal?: number;
+  /** How many of those it connects to only by a proposed link. */
+  connectionsProposedOnly?: number;
   /** GPV-2 — scope the map to this unit's world. */
   onScope?: () => void;
   /** The scope the map is assembled for, when it is (boundary stub copy). */
@@ -73,7 +77,7 @@ export interface NodePeekProps {
 export default function NodePeek({
   node, orgId, connections, focused, historyDepth,
   colorFor, colorOf, labelFor, onSelect, onBack, onGoIn, onGoOut, onOpen, onPath, onConnect,
-  connectBlocked, viewDegree, libraryLinks, connectionsTotal, onScope, scopeLabel, onClose,
+  connectBlocked, viewDegree, libraryLinks, connectionsTotal, connectionsProposedOnly = 0, onScope, scopeLabel, onClose,
 }: NodePeekProps) {
   const [evidence, setEvidence] = React.useState<MentionEvidence[] | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -119,7 +123,7 @@ export default function NodePeek({
           <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5" data-testid="peek-degree">
             {labelFor(node.type)} · {links(node.degree)} on the map
             {libraryLinks !== undefined && libraryLinks > 0 && ` (${libraryLinks} library filing)`}
-            {viewDegree !== undefined && viewDegree !== node.degree && ` · ${viewDegree} in this view`}
+            {viewDegree !== undefined && viewDegree !== node.degree && ` · ${links(viewDegree)} in this view`}
           </div>
           {node.outside !== undefined && node.outside > 0 && (
             <div className="text-[10px] text-amber-700 mt-0.5">
@@ -180,8 +184,11 @@ export default function NodePeek({
         {/* WHERE TO — walking the web is the whole interaction. */}
         {connections.length > 0 && (
           <div className="border-t border-[var(--color-border)] pt-2">
-            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              Connected in this view · {totalConnected}
+            <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1" data-testid="peek-connected">
+              Connected in this view · {totalConnected} node{totalConnected === 1 ? "" : "s"}
+              {connectionsProposedOnly > 0 && (
+                <span className="normal-case font-bold tracking-normal text-[var(--color-text-faint)]"> ({connectionsProposedOnly} only by a proposed link)</span>
+              )}
               {totalConnected > connections.length && (
                 <span className="normal-case font-bold tracking-normal text-[var(--color-text-faint)]"> (the {connections.length} most connected)</span>
               )}

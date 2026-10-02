@@ -34,6 +34,15 @@
 //   GPV-5   after a scope change the URL's node is honoured on the NEW map
 //   GM-1    a faded Insights row shows its node before selecting it
 //   GM-7    a read that failed partway says what it drew
+//
+// Fix pass 3 (final review's minors):
+//   GPV-11  a write deferred by the budget never lands on another page's URL
+//           (the browser left /graph before the page unmounted)
+//   GM-7    the proposals chip shows only when ghosts are drawn (the base's
+//           rule) — never with Proposals off — and so do the read's notes
+//   GM-11   the peek's two "in this view" numbers say what each counts
+//   GM-1    a bridge the view hides is faded; a click shows it, then lights it
+//   GPV-13  the keyboard's walk is memoised on what changes it
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -84,6 +93,21 @@ vi.mock("@/lib/orgGraph", async (orig) => ({
     return structuredClone(args[1] && g.scopedGraph ? g.scopedGraph : g.graph);
   }),
 }));
+// The page's own graphView helpers, wrapped (never replaced) so a test can
+// see how often the walk is computed and reach the URL writer's write.
+const gv = vi.hoisted(() => ({ write: null as null | ((v: { qs: string; href: string }) => string) }));
+vi.mock("@/lib/graphView", async (orig) => {
+  const m = await orig<typeof import("@/lib/graphView")>();
+  return {
+    ...m,
+    keyboardOrder: vi.fn(m.keyboardOrder),
+    keyboardBaseOrder: vi.fn(m.keyboardBaseOrder),
+    rateLimitedWriter: vi.fn((write: (v: { qs: string; href: string }) => "done" | "noop" | "failed", opts?: Parameters<typeof m.rateLimitedWriter>[1]) => {
+      gv.write = write;
+      return m.rateLimitedWriter(write, opts);
+    }),
+  };
+});
 vi.mock("@/lib/linkProposals", () => ({
   PENDING_PAIRS_CAP: 4000,
   readPendingProposalPairs: vi.fn(async () => g.proposals),
@@ -104,7 +128,7 @@ vi.mock("@/lib/supabase", () => ({
 import GraphPage from "@/app/(protected)/graph/page";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import { settingsKey, lensByKey } from "@/lib/graphSettings";
-import { URL_WRITE_BURST } from "@/lib/graphView";
+import { URL_WRITE_BURST, keyboardOrder, keyboardBaseOrder } from "@/lib/graphView";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -362,7 +386,7 @@ describe("GM-1 / GM-6 / GM-11 — insights and degrees say what they count", () 
   it("the peek labels the whole-map degree, the library-filing part and the in-view count", async () => {
     nav.params = new URLSearchParams("focus=d1");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 in this view");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
   });
 });
 
@@ -377,7 +401,7 @@ describe("GM-7 — proposals: failed, capped, counted", () => {
     g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 9000, capped: true, error: null };
     window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
     await render(page());
-    expect(host.querySelector('[data-testid="proposals-capped"]')?.textContent).toContain("1 read (the most confident) of 9,000 proposed connections");
+    expect(host.querySelector('[data-testid="proposals-capped"]')?.textContent).toContain("1 read (the newest) of 9,000 proposed connections");
     expect(host.querySelector('[data-testid="proposals-chip"]')?.textContent).toBe("9,000 connections awaiting review · 1 drawn here");
   });
 });
@@ -388,7 +412,7 @@ describe("GM-7 — a read that failed partway (fix pass)", () => {
     window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
     await render(page());
     const note = host.querySelector('[data-testid="proposals-error"]')?.textContent ?? "";
-    expect(note).toContain("Only the first 1 proposed connection (the most confident) could be loaded (connection reset)");
+    expect(note).toContain("Only the first 1 proposed connection (the newest) could be loaded (connection reset)");
     expect(note).not.toContain("none are drawn");
     expect(last().edges).toContainEqual({ a: "doc:d1", b: "doc:d2", type: "proposed" });
   });
@@ -659,5 +683,238 @@ describe("HUB-11 / IRLS-14", () => {
     await render(page());
     await click(btn("Rebuild the mention index"));
     expect(host.querySelector('[data-testid="mention-run"]')?.textContent).toContain("could not be rebuilt: mention index write: permission denied");
+  });
+});
+
+// ── Fix pass 3 ─────────────────────────────────────────────────────────────
+
+describe("GPV-11 — a deferred URL write never lands on another page (fix pass 3)", () => {
+  it("the page's write refuses once the browser has left /graph, and writes while it is on it", async () => {
+    await render(page());
+    expect(gv.write).toBeTruthy();
+    const spy = vi.spyOn(window.history, "replaceState");
+    // A client-side navigation the page has not unmounted for yet.
+    window.history.pushState(null, "", "/documents/L1?doc=d1");
+    expect(gv.write!({ qs: "lens=plant", href: "/graph?lens=plant" })).toBe("noop");
+    expect(spy).not.toHaveBeenCalled();
+    expect(`${window.location.pathname}${window.location.search}`).toBe("/documents/L1?doc=d1");
+    // Back on the graph, the same write lands.
+    window.history.pushState(null, "", "/graph");
+    expect(gv.write!({ qs: "lens=plant", href: "/graph?lens=plant" })).toBe("done");
+    expect(window.location.search).toBe("?lens=plant");
+  });
+
+  // A write the budget deferred, then a navigation away before the page
+  // unmounts: the timer comes due and must not rewrite that page's entry.
+  const deferAWrite = async () => {
+    nav.params = new URLSearchParams("local=asset%3Aa1&depth=1");
+    await render(page());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    // Spend the budget (each click is its own commit and its own push) …
+    for (let i = 0; i < URL_WRITE_BURST + 4; i++) {
+      await act(async () => { (btn(i % 2 === 0 ? "One hop more" : "One hop fewer") as HTMLElement).click(); });
+    }
+    await flush();
+    // … then one change never written before: it waits for the budget.
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "cbunit:20")!); });
+    await flush();
+    expect(window.location.search).not.toContain("select=");
+  };
+  const comeDue = async () => {
+    await act(async () => { vi.advanceTimersByTime(30_000); });
+    await flush();
+  };
+
+  it("control: with the browser still on /graph, the deferred write lands when the budget refills", async () => {
+    try {
+      await deferAWrite();
+      await comeDue();
+      expect(window.location.pathname).toBe("/graph");
+      expect(window.location.search).toContain("select=cbunit%3A20");
+    } finally { vi.useRealTimers(); }
+  }, 20_000);
+
+  it("a navigation away before unmount: the deferred write never rewrites the other page's URL", async () => {
+    try {
+      await deferAWrite();
+      const spy = vi.spyOn(window.history, "replaceState");
+      window.history.pushState(null, "", "/documents/L1?doc=d1");
+      await comeDue();
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/documents/L1?doc=d1");
+      expect(spy).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  }, 20_000);
+
+  it("a route change the page renders before it unmounts drops the pending write and pushes none for the new path", async () => {
+    try {
+      await deferAWrite();
+      const spy = vi.spyOn(window.history, "replaceState");
+      window.history.pushState(null, "", "/documents/L1?doc=d1");
+      nav.pathname = "/documents/L1";
+      await render(page());
+      await comeDue();
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/documents/L1?doc=d1");
+      expect(spy).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  }, 20_000);
+});
+
+describe("GM-7 — the proposals chip follows what is drawn (fix pass 3)", () => {
+  const onePair = { documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" };
+
+  it("Proposals off: no chip and no proposal notes, however long the queue", async () => {
+    g.proposals = { pairs: [onePair], total: 9000, capped: true, error: null };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showProposals: false }));
+    await render(page());
+    expect(last().edges.some((e) => e.type === "proposed")).toBe(false);
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeNull();
+    expect(host.querySelector('[data-testid="proposals-capped"]')).toBeNull();
+  });
+
+  it("Proposals off: a failed read is not announced over a drawing the person turned off", async () => {
+    g.proposals = { pairs: [], total: null, capped: false, error: "statement timeout" };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showProposals: false }));
+    await render(page());
+    expect(host.querySelector('[data-testid="proposals-error"]')).toBeNull();
+  });
+
+  it("Proposals on, but this view draws no ghost: no chip (the base's rule)", async () => {
+    g.proposals = { pairs: [onePair], total: 5, capped: false, error: null };
+    nav.params = new URLSearchParams("lens=plant");
+    await render(page());
+    expect(last().edges.some((e) => e.type === "proposed")).toBe(false);
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeNull();
+  });
+
+  it("Proposals on, a ghost drawn: the chip counts the reader's queue", async () => {
+    g.proposals = { pairs: [onePair], total: 5, capped: false, error: null };
+    await render(page());
+    expect(host.querySelector('[data-testid="proposals-chip"]')?.textContent).toBe("5 connections awaiting review · 1 drawn here");
+    // Turning Proposals off in Settings takes the chip away with the ghosts.
+    await click(btn("Settings"));
+    const toggle = [...host.querySelectorAll("label, button")].find((el) => el.textContent?.trim().startsWith("Proposed connections"));
+    const input = toggle?.querySelector("input") ?? toggle;
+    await click(input as HTMLElement);
+    expect((last().settings as unknown as { showProposals: boolean }).showProposals).toBe(false);
+    expect(last().edges.some((e) => e.type === "proposed")).toBe(false);
+    expect(host.querySelector('[data-testid="proposals-chip"]')).toBeNull();
+  });
+});
+
+describe("GM-11 — the peek's numbers say what each counts (fix pass 3)", () => {
+  it("the header counts links (no proposal); the list counts nodes, naming those tied only by a proposal", async () => {
+    g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 1, capped: false, error: null };
+    nav.params = new URLSearchParams("focus=d1");
+    await render(page());
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
+    expect(host.querySelector('[data-testid="peek-connected"]')?.textContent).toBe("Connected in this view · 2 nodes (1 only by a proposed link)");
+  });
+
+  it("with no proposal, the list names no proposal part", async () => {
+    nav.params = new URLSearchParams("focus=asset%3Aa1");
+    await render(page());
+    expect(host.querySelector('[data-testid="peek-connected"]')?.textContent).toBe("Connected in this view · 3 nodes");
+  });
+});
+
+describe("GM-1 — a bridge the view hides (fix pass 3)", () => {
+  // Two rings of four — documents and equipment — held together by ONE tag.
+  const withBridge = (): OrgGraph => {
+    const base = baseGraph();
+    const docs = ["b1", "b2", "b3", "b4"].map((id) => node(`doc:${id}`, "document", `DOC-${id}`, { degree: 2 }));
+    const kit = ["x1", "x2", "x3", "x4"].map((id) => node(`asset:${id}`, "asset", `E-${id}`, { degree: 2 }));
+    return {
+      ...base,
+      nodes: [...base.nodes, ...docs, ...kit],
+      edges: [
+        ...base.edges,
+        edge("doc:b1", "doc:b2", "related"), edge("doc:b2", "doc:b3", "related"), edge("doc:b3", "doc:b4", "related"), edge("doc:b4", "doc:b1", "related"),
+        edge("asset:x1", "asset:x2", "flow"), edge("asset:x2", "asset:x3", "flow"), edge("asset:x3", "asset:x4", "flow"), edge("asset:x4", "asset:x1", "flow"),
+        edge("doc:b1", "asset:x1", "tag"),
+      ],
+    };
+  };
+  const openBridges = async () => {
+    await click(btn(/^\s*Insights/));
+    await click(btn(/Bridges/));
+  };
+
+  it("drawn: the row is not faded and a click lights the pair up (as before)", async () => {
+    g.graph = withBridge();
+    await render(page());
+    await openBridges();
+    const rows = host.querySelectorAll('[data-testid="bridge-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].className).not.toContain("opacity-50");
+    await click(rows[0]);
+    expect([...last().flyTo!.ids].sort()).toEqual(["asset:x1", "doc:b1"]);
+    expect(peek()).toBeNull();
+  });
+
+  it("hidden by the lens: faded and said; a click shows both ends, then lights the pair up on the map", async () => {
+    g.graph = withBridge();
+    nav.params = new URLSearchParams("lens=plant");
+    await render(page());
+    expect(last().nodes.map((n) => n.id)).not.toContain("doc:b1");
+    await openBridges();
+    const row = host.querySelector('[data-testid="bridge-row"]')!;
+    expect(row.className).toContain("opacity-50");
+    expect(text()).toContain("1 of these is hidden by the current view (faded)");
+    await click(row);
+    expect(last().settings.hiddenTypes).not.toContain("document");
+    const drawn = last().nodes.map((n) => n.id);
+    expect(drawn).toContain("doc:b1");
+    expect(drawn).toContain("asset:x1");
+    // Every id the spotlight names is drawn.
+    expect(last().flyTo!.ids.every((id) => drawn.includes(id))).toBe(true);
+    expect([...last().flyTo!.ids].sort()).toEqual(["asset:x1", "doc:b1"]);
+    expect(host.querySelector('[data-testid="bridge-row"]')!.className).not.toContain("opacity-50");
+  });
+
+  it("hidden by focus: a click leaves focus so both ends are drawn", async () => {
+    g.graph = withBridge();
+    nav.params = new URLSearchParams("local=asset%3Aa1&depth=1");
+    await render(page());
+    expect(last().nodes.map((n) => n.id)).not.toContain("doc:b1");
+    await openBridges();
+    await click(host.querySelector('[data-testid="bridge-row"]'));
+    expect(text()).not.toContain("Focused: P-101");
+    expect(last().nodes.map((n) => n.id)).toEqual(expect.arrayContaining(["doc:b1", "asset:x1"]));
+  });
+});
+
+describe("GPV-13 — the keyboard's walk is memoised on what changes it (fix pass 3)", () => {
+  it("a keystroke that cannot change the walk recomputes nothing; a selection never redoes the full sort", async () => {
+    await render(page());
+    const region = host.querySelector('[role="application"]') as HTMLDivElement;
+    await key(region, "ArrowDown");
+    const status = host.querySelector("#graph-keyboard-status")?.textContent;
+    vi.mocked(keyboardOrder).mockClear();
+    vi.mocked(keyboardBaseOrder).mockClear();
+    const input = host.querySelector("input[data-graph-search]") as HTMLInputElement;
+    await typeInto(input, "p");                   // one character: the walk is unchanged
+    expect(keyboardOrder).not.toHaveBeenCalled();
+    expect(keyboardBaseOrder).not.toHaveBeenCalled();
+    // The walk kept its place: the list did not change.
+    expect(host.querySelector("#graph-keyboard-status")?.textContent).toBe(status);
+    await typeInto(input, "");
+    expect(keyboardOrder).not.toHaveBeenCalled();
+    await typeInto(input, "pi");                  // two: the walk is the matches
+    expect(keyboardOrder).toHaveBeenCalledTimes(1);
+    await typeInto(input, "");
+    vi.mocked(keyboardOrder).mockClear();
+    await act(async () => { last().onSelect(last().nodes.find((n) => n.id === "doc:d2")!); });
+    await flush();
+    expect(keyboardOrder).toHaveBeenCalledTimes(1);
+    expect(keyboardBaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("the walk is the same list it always was (matches, neighbours, everything by weight)", async () => {
+    nav.params = new URLSearchParams("select=asset%3Aa1");
+    await render(page());
+    const region = host.querySelector('[role="application"]') as HTMLDivElement;
+    await key(region, "ArrowDown");
+    // P-101's neighbours, most connected first: Crude Unit (3), PID-1 (3), Coker (1).
+    expect(host.querySelector("#graph-keyboard-status")?.textContent).toMatch(/^Crude Unit, Unit, 3 links — 1 of 3\./);
   });
 });

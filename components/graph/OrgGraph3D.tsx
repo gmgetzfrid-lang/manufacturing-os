@@ -21,6 +21,7 @@ import React from "react";
 import type { GraphNode, GraphEdge, GraphNodeType } from "@/lib/orgGraph";
 import { GraphSim, depthFade } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
+import { nodeIndexer } from "@/lib/graphView";
 import {
   ACCENT, ARROW_EDGE_TYPES, PATH_RGB, edgeRgbFor, nodeColorFor,
 } from "@/components/graph/graphTheme";
@@ -517,6 +518,9 @@ export default function OrgGraph3D({
 
       // ── Frame ──────────────────────────────────────────────────────────
       let raf = 0;
+      // The direction cones read each target's radius: an id index rebuilt
+      // only when the node set changes, never per frame (I-14 fix pass 3).
+      const indexNodes = nodeIndexer();
       let wasSettled = false;
       let lastFly = 0;
       let lastGlow = true;
@@ -637,7 +641,7 @@ export default function OrgGraph3D({
         const col = linkGeo.getAttribute("color") as InstanceType<Three["BufferAttribute"]>;
         const gpos = ghostGeo.getAttribute("position") as InstanceType<Three["BufferAttribute"]>;
         const fade = (d: number) => Math.max(0.25, Math.min(1.15, 1.5 - d / (spherical.radius * 2.1)));
-        const nodeById = st.showArrows ? new Map(ns.map((n) => [n.id, n])) : null;
+        const nodeById = st.showArrows ? indexNodes(ns) : null;
         let si = 0, gi = 0, ci = 0;
         for (const e of es) {
           const na = s.get(e.a), nb = s.get(e.b);

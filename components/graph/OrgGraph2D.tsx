@@ -18,6 +18,7 @@ import React from "react";
 import type { GraphNode, GraphEdge, GraphNodeType } from "@/lib/orgGraph";
 import { depthFade, type GraphSim } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
+import { nodeIndexer } from "@/lib/graphView";
 import {
   ACCENT, ARROW_EDGE_TYPES, PATH_RGB, edgeRgbFor, nodeColorFor, unitVariant,
 } from "@/components/graph/graphTheme";
@@ -117,6 +118,9 @@ export default function OrgGraph2D({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     let raf = 0, alive = true, wasSettled = false;
+    // The arrowheads read each target's radius: an id index rebuilt only when
+    // the node set changes, never per frame (I-14 fix pass 3).
+    const indexNodes = nodeIndexer();
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -197,7 +201,7 @@ export default function OrgGraph2D({
 
       // ── Links ────────────────────────────────────────────────────────
       ctx.lineCap = "round";
-      const nodeById = st.showArrows ? new Map(ns.map((n) => [n.id, n])) : null;
+      const nodeById = st.showArrows ? indexNodes(ns) : null;
       for (const e of es) {
         const na = s.get(e.a), nb = s.get(e.b);
         if (!na || !nb) continue;

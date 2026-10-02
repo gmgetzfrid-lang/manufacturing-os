@@ -9,7 +9,9 @@
 //   * GPV-7 / AREA-10: Connect writes a flow end by the node's own codebook
 //     identity and refuses an operational unit with none, a system, or a
 //     mixed pair; the optimistic edge uses the ids the rebuild draws.
-//   * GPV-13: the keyboard's walk over the map.
+//   * GPV-13: the keyboard's walk over the map — and (fix pass 3) the same
+//     walk from the memoised full sort, and the renderers' node index built
+//     once per node set.
 //   * IRLS-14: no mention links — which case, and the next step.
 //   * GPV-8 / FLOW-10 / GPV-14 / GPV-4: the tables both renderers draw by.
 //   * GPV-11: the view → URL writer stays inside the History API's budget
@@ -18,6 +20,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sliceView, viewDegree, answerVisibility, flowEndpoint, planConnect, connectOffer, keyboardOrder, mentionNotice,
+  keyboardBaseOrder, keyboardQuery, nodeIndexer,
   CONNECT_PAIR_MESSAGE, rateLimitedWriter, URL_WRITE_BURST, URL_WRITE_REFILL_MS, URL_WRITE_RETRY_MS,
   type UrlWriteResult,
 } from "@/lib/graphView";
@@ -195,6 +198,39 @@ describe("GPV-13 — the keyboard's walk", () => {
     const all = keyboardOrder(graph.nodes, graph.edges, "", null);
     expect(all).toHaveLength(graph.nodes.length);
     expect(all[0].id).toBe("asset:p1");
+  });
+});
+
+describe("GPV-13 — the memoised walk is the same walk (fix pass 3)", () => {
+  it("a query shorter than two characters walks as if nothing were typed", () => {
+    expect(keyboardQuery("")).toBe("");
+    expect(keyboardQuery("p")).toBe("");
+    expect(keyboardQuery(" -P")).toBe("");
+    expect(keyboardQuery("P-1")).toBe("p1");
+    expect(keyboardOrder(graph.nodes, graph.edges, "p", null)).toEqual(keyboardOrder(graph.nodes, graph.edges, "", null));
+  });
+
+  it("handed the full sort, every case gives the list it gives without it — the fallback a copy, never the same array", () => {
+    const base = keyboardBaseOrder(graph.nodes);
+    for (const [q, sel] of [["", null], ["P-10", null], ["", "asset:p2"], ["", "lib:L"], ["", "gone"], ["pi", "asset:p2"]] as const) {
+      expect(keyboardOrder(graph.nodes, graph.edges, q, sel, base)).toEqual(keyboardOrder(graph.nodes, graph.edges, q, sel));
+    }
+    const walk = keyboardOrder(graph.nodes, graph.edges, "", null, base);
+    expect(walk).not.toBe(base);
+    walk.reverse();
+    expect(keyboardOrder(graph.nodes, graph.edges, "", null, base)[0].id).toBe("asset:p1");
+  });
+
+  it("the renderers' node index is built once per node array, not once per frame", () => {
+    const index = nodeIndexer();
+    const first = index(graph.nodes);
+    expect(first.get("asset:p1")?.label).toBe("P-101");
+    for (let frame = 0; frame < 5; frame++) expect(index(graph.nodes)).toBe(first);
+    const next = [...graph.nodes, n("asset:p9", "asset", { label: "P-109" })];
+    const rebuilt = index(next);
+    expect(rebuilt).not.toBe(first);
+    expect(rebuilt.get("asset:p9")?.label).toBe("P-109");
+    expect(index(next)).toBe(rebuilt);
   });
 });
 

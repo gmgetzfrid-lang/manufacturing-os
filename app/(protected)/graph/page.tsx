@@ -23,8 +23,9 @@
 // an asked question and the node in the peek. `?focus=<id>` — every existing
 // link's spelling — still selects and flies to a node, once per link
 // (GPV-5). Forces, colours and 2D/3D stay per-org local. The URL is written
-// within the History API's budget (lib/graphView.ts rateLimitedWriter), and
-// the search box reaches it when asked or left — never per keystroke.
+// within the History API's budget (lib/graphView.ts rateLimitedWriter), only
+// while the browser is still on /graph, and the search box reaches it when
+// asked or left — never per keystroke.
 //
 // The map region is focusable: arrow keys step through nodes, Enter selects
 // (and picks a Path or Connect end), Escape closes the top overlay (GPV-13).
@@ -53,8 +54,8 @@ import {
 } from "@/lib/graphSettings";
 import { formatScopeParam, parseScopeParam, type ScopeRef } from "@/lib/scope";
 import {
-  sliceView, viewDegree, answerVisibility, planConnect, connectOffer, keyboardOrder, mentionNotice,
-  rateLimitedWriter, type UrlWriteResult,
+  sliceView, viewDegree, answerVisibility, planConnect, connectOffer, keyboardOrder, keyboardBaseOrder,
+  keyboardQuery, mentionNotice, rateLimitedWriter, GRAPH_PATH, type UrlWriteResult,
 } from "@/lib/graphView";
 import { edgeLabelFor, nodeColorFor, unitVariant, type UnitVariant } from "@/components/graph/graphTheme";
 import GraphControls from "@/components/graph/GraphControls";
@@ -474,6 +475,10 @@ function GraphPageInner() {
   // lands at once, a stream is coalesced to its latest value, and a refused
   // write is skipped and retried — never thrown into the page.
   const [urlWriter] = React.useState(() => rateLimitedWriter<{ qs: string; href: string }>((v): UrlWriteResult => {
+    // Only while the browser is still on the graph: a write the budget
+    // deferred can come due after a navigation away (a link, Back) and
+    // before this page unmounts — it never rewrites that page's entry.
+    if (window.location.pathname !== GRAPH_PATH) return "noop";
     if (window.location.search.replace(/^\?/, "") === v.qs) {
       if (!written.current.includes(v.qs)) written.current.push(v.qs);
       return "noop";
@@ -489,11 +494,21 @@ function GraphPageInner() {
     if (written.current.length > 64) written.current = written.current.slice(-64);
     return "done";
   }));
-  React.useEffect(() => () => urlWriter.cancel(), [urlWriter]);
+  // A write still waiting for budget is dropped on a route change away from
+  // the graph, on Back / Forward (the URL → view effect applies the entry
+  // the browser moved to) and on unmount.
+  React.useEffect(() => {
+    if (pathname !== GRAPH_PATH) urlWriter.cancel();
+  }, [pathname, urlWriter]);
+  React.useEffect(() => {
+    const drop = () => urlWriter.cancel();
+    window.addEventListener("popstate", drop);
+    return () => { window.removeEventListener("popstate", drop); urlWriter.cancel(); };
+  }, [urlWriter]);
 
   React.useEffect(() => {
-    if (!applied || typeof window === "undefined") return;
-    urlWriter.push({ qs: urlNow, href: urlNow ? `${pathname}?${urlNow}` : pathname });
+    if (!applied || typeof window === "undefined" || pathname !== GRAPH_PATH) return;
+    urlWriter.push({ qs: urlNow, href: urlNow ? `${GRAPH_PATH}?${urlNow}` : GRAPH_PATH });
   }, [applied, urlNow, pathname, urlWriter]);
 
   // `from=graph` lets the destination page offer a way back; `graphq` is
@@ -588,22 +603,31 @@ function GraphPageInner() {
     if (select) setSelected(select);
   }, []);
 
-  const allConnections = React.useMemo(() => {
-    if (!selected || !view) return [];
-    const ids = new Set<string>();
-    for (const e of [...view.edges, ...view.ghosts]) {
-      if (e.a === selected.id) ids.add(e.b);
-      if (e.b === selected.id) ids.add(e.a);
+  // The peek's list: the NODES the selection is tied to in this view — by a
+  // drawn link or by a proposal ghost — and how many of them only by a
+  // proposal (GM-11: the list counts nodes, the header counts links).
+  const { allConnections, proposedOnly } = React.useMemo(() => {
+    if (!selected || !view) return { allConnections: [] as GraphNode[], proposedOnly: 0 };
+    const linked = new Set<string>(), proposed = new Set<string>();
+    for (const e of view.edges) {
+      if (e.a === selected.id) linked.add(e.b);
+      if (e.b === selected.id) linked.add(e.a);
+    }
+    for (const e of view.ghosts) {
+      if (e.a === selected.id && !linked.has(e.b)) proposed.add(e.b);
+      if (e.b === selected.id && !linked.has(e.a)) proposed.add(e.a);
     }
     const byId = new Map(view.nodes.map((n) => [n.id, n]));
-    return [...ids].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
+    const list = [...linked, ...proposed].map((id) => byId.get(id)).filter((n): n is GraphNode => !!n)
       .sort((a, b) => b.degree - a.degree);
+    return { allConnections: list, proposedOnly: [...proposed].filter((id) => byId.has(id)).length };
   }, [selected, view]);
   const connections = React.useMemo(() => allConnections.slice(0, 12), [allConnections]);
 
-  // GM-11: one node, labelled numbers — on the whole map (the radius uses the
-  // same), how many of those are library filing (the Hubs count leaves them
-  // out), and in this view.
+  // GM-11: one node, labelled numbers — its links on the whole map (the
+  // radius uses the same), how many of those are library filing (the Hubs
+  // count leaves them out), and its links in this view (drawn edges, never a
+  // proposal ghost — the assembly's `degree` counts no proposal either).
   const peekCounts = React.useMemo(() => {
     if (!selected || !graph || !view) return null;
     let library = 0;
@@ -658,16 +682,28 @@ function GraphPageInner() {
   // An item the map has but this view hides: show its type (library links
   // with a library), leave focus, then select it when drawn — the one path
   // for "hidden by this view — Show it" and a faded Insights row (GM-1).
-  const reveal = React.useCallback((n: GraphNode) => {
+  const showTypesOf = React.useCallback((ns: GraphNode[]) => {
+    const types = new Set(ns.map((n) => n.type));
     patchSettings({
-      hiddenTypes: settings.hiddenTypes.filter((t) => t !== n.type),
+      hiddenTypes: settings.hiddenTypes.filter((t) => !types.has(t)),
       hideUnlinked: false,
-      ...(n.type === "library" ? { showLibraryEdges: true } : {}),
+      ...(types.has("library") ? { showLibraryEdges: true } : {}),
     });
     setFocusId(null);
-    setPendingSelect(n.id);
     setSelectMiss(null);
   }, [settings.hiddenTypes, patchSettings]);
+  const reveal = React.useCallback((n: GraphNode) => {
+    showTypesOf([n]);
+    setPendingSelect(n.id);
+  }, [showTypesOf]);
+  // A bridge the view hides (either end): show both ends' types by the same
+  // path, then light the pair up — the spotlight an in-view bridge gets
+  // (GM-1, fix pass 3: a click used to spotlight ids the map did not draw).
+  const revealBridge = React.useCallback((a: GraphNode, b: GraphNode) => {
+    showTypesOf([a, b]);
+    setSelected(null);
+    setHighlight((prev) => ({ ids: [a.id, b.id], nonce: (prev?.nonce ?? 0) + 1 }));
+  }, [showTypesOf]);
 
   // ── Escape closes the top overlay (GPV-13) ────────────────────────────
   React.useEffect(() => {
@@ -691,9 +727,18 @@ function GraphPageInner() {
   }, [connect, pathMode, answer, insightsOpen, selected, focusId]);
 
   // ── The keyboard's walk over the map (GPV-13) ─────────────────────────
+  // Memoised on what changes the walk (fix pass 3): the node set, the edges,
+  // the search once it has two characters, the selected id. The full sort
+  // (every node, most connected first) is kept per node set and copied —
+  // never redone on a keystroke or a selection.
+  const viewNodes = view?.nodes ?? null;
+  const viewEdges = view?.edges ?? null;
+  const kbdQuery = keyboardQuery(rawQuery);
+  const selectedId = selected?.id ?? null;
+  const kbdBase = React.useMemo(() => (viewNodes ? keyboardBaseOrder(viewNodes) : []), [viewNodes]);
   const kbdList = React.useMemo(
-    () => (view ? keyboardOrder(view.nodes, view.edges, rawQuery, selected?.id ?? null) : []),
-    [view, rawQuery, selected],
+    () => (viewNodes && viewEdges ? keyboardOrder(viewNodes, viewEdges, kbdQuery, selectedId, kbdBase) : []),
+    [viewNodes, viewEdges, kbdQuery, selectedId, kbdBase],
   );
   const [kbd, setKbd] = React.useState<{ list: GraphNode[]; index: number } | null>(null);
   const kbdIndex = kbd && kbd.list === kbdList ? kbd.index : -1;
@@ -729,6 +774,7 @@ function GraphPageInner() {
   const canRebuildMentions = hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"]);
   const missNode = selectMiss ? graph?.nodes.find((n) => n.id === selectMiss) ?? null : null;
   const orphansHidden = insights ? insights.orphans.filter((n) => !inView.has(n.id)).length : 0;
+  const bridgesHidden = insights ? insights.bridges.filter((b) => !inView.has(b.a.id) || !inView.has(b.b.id)).length : 0;
   const offer = selected ? connectOffer(selected) : null;
   const pendingTotal = proposalRead?.total ?? null;
 
@@ -1057,22 +1103,29 @@ function GraphPageInner() {
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
                             One thin line holding two clusters of the map together. Click to light it up.
+                            {bridgesHidden > 0 && ` ${bridgesHidden} of these ${bridgesHidden === 1 ? "is" : "are"} hidden by the current view (faded) — a click shows it.`}
                           </div>
-                          {insights.bridges.map((b) => (
-                            <button key={`${b.a.id}|${b.b.id}`} onClick={() => { spotlight([b.a.id, b.b.id]); setSelected(null); }}
-                              className="w-full px-1.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-left">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(b.a) }} />
-                                <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.a.label}</span>
-                                <span className="text-[10px] text-amber-600 font-black shrink-0">↔</span>
-                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(b.b) }} />
-                                <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.b.label}</span>
-                              </div>
-                              <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
-                                Only link between clusters of {b.sideA} and {b.sideB} nodes
-                              </div>
-                            </button>
-                          ))}
+                          {insights.bridges.map((b) => {
+                            const drawn = inView.has(b.a.id) && inView.has(b.b.id);
+                            return (
+                              <button key={`${b.a.id}|${b.b.id}`}
+                                onClick={() => { if (drawn) { spotlight([b.a.id, b.b.id]); setSelected(null); } else revealBridge(b.a, b.b); }}
+                                title={drawn ? undefined : "Hidden by the current lens or filter — click to show it"}
+                                data-testid="bridge-row"
+                                className={`w-full px-1.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-left ${drawn ? "" : "opacity-50"}`}>
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(b.a) }} />
+                                  <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.a.label}</span>
+                                  <span className="text-[10px] text-amber-600 font-black shrink-0">↔</span>
+                                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(b.b) }} />
+                                  <span className="text-[11px] font-bold text-[var(--color-text)] truncate">{b.b.label}</span>
+                                </div>
+                                <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
+                                  Only link between clusters of {b.sideA} and {b.sideB} nodes
+                                </div>
+                              </button>
+                            );
+                          })}
                         </>
                       )
                     )}
@@ -1139,18 +1192,20 @@ function GraphPageInner() {
                   <Info className="w-3 h-3" /> {t}
                 </div>
               ))}
-              {/* GM-7: a failed or capped proposal read is said, never shown as "none". */}
-              {proposalRead?.error && (
+              {/* GM-7: a failed or capped proposal read is said, never shown as "none"
+                  — while proposals are drawn at all: with Proposals off there
+                  is no drawing for the note to qualify (fix pass 3). */}
+              {settings.showProposals && proposalRead?.error && (
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="proposals-error">
                   <Info className="w-3 h-3" />
                   {proposals.length > 0
-                    ? <>Only the first {plural(proposals.length, "proposed connection")} (the most confident) could be loaded ({proposalRead.error}) — the rest are not drawn; the review queue still has them.</>
+                    ? <>Only the first {plural(proposals.length, "proposed connection")} (the newest) could be loaded ({proposalRead.error}) — the rest are not drawn; the review queue still has them.</>
                     : <>Proposed connections couldn&apos;t be loaded ({proposalRead.error}) — none are drawn; the review queue still has them.</>}
                 </div>
               )}
-              {proposalRead?.capped && (
+              {settings.showProposals && proposalRead?.capped && (
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="proposals-capped">
-                  <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the most confident) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `more than ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
+                  <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the newest) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `more than ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
                 </div>
               )}
               {/* IRLS-14: no mention links, and which case it is. */}
@@ -1185,7 +1240,10 @@ function GraphPageInner() {
               )}
             </div>
 
-            {(view.ghosts.length > 0 || (pendingTotal ?? 0) > 0) && (
+            {/* Shown only when this view draws proposal ghosts, as the base
+                did — never with Proposals off (fix pass 3) — and counting the
+                reader's whole queue, not the drawing (GM-7). */}
+            {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
                 className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10"
                 data-testid="proposals-chip">
@@ -1333,6 +1391,7 @@ function GraphPageInner() {
                 orgId={activeOrgId}
                 connections={connections}
                 connectionsTotal={allConnections.length}
+                connectionsProposedOnly={proposedOnly}
                 viewDegree={peekCounts?.inView}
                 libraryLinks={peekCounts?.library}
                 focused={!!focusId}

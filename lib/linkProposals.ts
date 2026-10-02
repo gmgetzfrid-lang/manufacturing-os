@@ -279,49 +279,72 @@ export interface PendingPairsRead {
   /** Pending proposals this reader can see (proposed_links RLS: both
    *  documents readable — LNK-4). null when it could not be counted. */
   total: number | null;
-  /** More are pending than were read (the cap, or a short window). */
+  /** More are pending than were read (the cap). */
   capped: boolean;
   /** The read failed — never the same as "none pending". */
   error: string | null;
 }
 
+/** A PostgREST filter value inside an `or` tree, double-quoted: a
+ *  timestamptz carries `.`, `:` and `+`, which the tree syntax reserves. */
+const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
 /** GM-7 — the pending pairs for the graph, telling a failed read and a
- *  capped one apart from an empty queue. Ordered (most confident first, then
- *  id) so "the first N" is a rule. A database without proposed_links (before
- *  20260807 — Postgres 42P01, PostgREST PGRST205, lib/orgGraph.ts
+ *  capped one apart from an empty queue. A database without proposed_links
+ *  (before 20260807 — Postgres 42P01, PostgREST PGRST205, lib/orgGraph.ts
  *  isMissingRelation) has none pending, which is not an error; any other
- *  failure, a missing column included, is. */
+ *  failure, a missing column included, is.
+ *
+ *  The read is cheap (I-14 fix pass 3): newest first, in KEYSET windows on
+ *  (created_at desc, id desc) — the order of proposed_links_org_status_idx
+ *  (org_id, status, created_at DESC), so each window is an index range with
+ *  a LIMIT, never a sort of the whole queue, and every row the RESTRICTIVE
+ *  proposed_links_read_endpoints policy is evaluated on is a row the read
+ *  returns. It stops at an EMPTY window, never a short one (a project whose
+ *  db-max-rows is below the window returns short windows that are not the
+ *  end; the keyset makes the extra request safe), or at the cap. The queue
+ *  is counted only when the cap is reached — one head count; below the cap
+ *  the read itself is the count. */
 export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIRS_CAP): Promise<PendingPairsRead> {
-  type Row = { id: string; document_id: string; target_document_id: string; proposer: ProposerKind };
+  type Row = { id: string; document_id: string; target_document_id: string; proposer: ProposerKind; created_at: string };
   const pairs: PendingPairsRead["pairs"] = [];
-  let total: number | null = null;
-  let short = false;
-  for (let from = 0; from < cap; from += PAIR_WINDOW) {
-    const to = Math.min(cap, from + PAIR_WINDOW) - 1;
-    const sel = supabase.from("proposed_links");
-    const q = from === 0
-      ? sel.select("id, document_id, target_document_id, proposer", { count: "exact" })
-      : sel.select("id, document_id, target_document_id, proposer");
-    const { data, error, count } = await q
-      .eq("org_id", orgId).eq("status", "pending")
-      .order("confidence", { ascending: false }).order("id", { ascending: true })
-      .range(from, to);
+  let last: { created_at: string; id: string } | null = null;
+  while (pairs.length < cap) {
+    const want = Math.min(PAIR_WINDOW, cap - pairs.length);
+    let q = supabase.from("proposed_links")
+      .select("id, document_id, target_document_id, proposer, created_at")
+      .eq("org_id", orgId).eq("status", "pending");
+    // "After" the last row in (created_at desc, id desc) order.
+    if (last) q = q.or(`created_at.lt.${orValue(last.created_at)},and(created_at.eq.${orValue(last.created_at)},id.lt.${last.id})`);
+    const { data, error } = await q
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .limit(want);
     if (error) {
-      if (from === 0 && isMissingRelation(error)) {
+      if (!last && isMissingRelation(error)) {
         return { pairs: [], total: 0, capped: false, error: null };
       }
-      return { pairs, total, capped: false, error: error.message || "the read failed" };
+      return { pairs, total: null, capped: false, error: error.message || "the read failed" };
     }
-    if (from === 0) total = typeof count === "number" ? count : null;
     const rows = (data as Row[] | null) ?? [];
+    if (rows.length === 0) return { pairs, total: pairs.length, capped: false, error: null };
     for (const r of rows) {
       pairs.push({
         documentId: r.document_id, targetDocumentId: r.target_document_id, proposer: r.proposer,
         nodeA: `doc:${r.document_id}`, nodeB: `doc:${r.target_document_id}`,
       });
     }
-    if (rows.length < to - from + 1) { short = true; break; }
+    const tail = rows[rows.length - 1];
+    if (typeof tail.created_at !== "string" || !tail.created_at || !tail.id
+      || (last && tail.created_at === last.created_at && tail.id === last.id)) {
+      // No usable key on the last row: refuse to page on rather than loop.
+      return { pairs, total: null, capped: false, error: "the read cannot page past its last row" };
+    }
+    last = { created_at: tail.created_at, id: tail.id };
   }
-  const capped = total !== null ? total > pairs.length : (!short && pairs.length >= cap);
-  return { pairs, total, capped, error: null };
+  // At the cap: one head count says how many are pending.
+  const { count, error } = await supabase.from("proposed_links")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).eq("status", "pending");
+  const total = !error && typeof count === "number" ? count : null;
+  return { pairs, total, capped: total === null || total > pairs.length, error: null };
 }

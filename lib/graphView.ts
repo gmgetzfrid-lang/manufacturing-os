@@ -10,7 +10,8 @@
 //   * what a Connect between two nodes writes, or why it is refused — a flow
 //     ends at registry equipment or a Site Codebook unit, by the node's own
 //     unit identity (GPV-7 / AREA-10);
-//   * the keyboard's walk over the map (GPV-13);
+//   * the keyboard's walk over the map (GPV-13), and the per-node-set
+//     memos the page and the renderers keep (fix pass 3);
 //   * what the map says when it draws no mention links (IRLS-14);
 //   * the rate at which the view is written to the URL (GPV-11 — the
 //     History API throws past a browser's budget; clock and timer injected).
@@ -191,17 +192,34 @@ export function planConnect(from: GraphNode, target: GraphNode): ConnectPlan | n
 // ── GPV-13: the keyboard's walk ─────────────────────────────────────────
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+const byLabel = (a: GraphNode, b: GraphNode) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
+const byWeight = (a: GraphNode, b: GraphNode) => b.degree - a.degree || byLabel(a, b);
+
+/** The part of the search that changes the walk: the normalised query once
+ *  it has two characters, else "" — a shorter one walks as if nothing were
+ *  typed, so the page memoises the walk on THIS, not on every keystroke. */
+export function keyboardQuery(query: string): string {
+  const q = norm(query);
+  return q.length >= 2 ? q : "";
+}
+
+/** Every node, most connected first — the walk with nothing typed and no
+ *  neighbours to walk. The one full sort: the page memoises it per node set
+ *  and hands it to keyboardOrder. */
+export function keyboardBaseOrder(nodes: readonly GraphNode[]): GraphNode[] {
+  return [...nodes].sort(byWeight);
+}
 
 /** The nodes the arrow keys step through, in order: the search matches when
  *  something is typed; the selected node's neighbours (walking the web);
- *  otherwise every node, most connected first. */
+ *  otherwise every node, most connected first (`base`, when the caller holds
+ *  keyboardBaseOrder(nodes) — copied, never re-sorted). */
 export function keyboardOrder(
   nodes: GraphNode[], edges: GraphEdge[], query: string, selectedId: string | null,
+  base?: readonly GraphNode[],
 ): GraphNode[] {
-  const byLabel = (a: GraphNode, b: GraphNode) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
-  const byWeight = (a: GraphNode, b: GraphNode) => b.degree - a.degree || byLabel(a, b);
-  const q = norm(query);
-  if (q.length >= 2) return nodes.filter((n) => norm(n.label).includes(q)).sort(byLabel);
+  const q = keyboardQuery(query);
+  if (q) return nodes.filter((n) => norm(n.label).includes(q)).sort(byLabel);
   if (selectedId && nodes.some((n) => n.id === selectedId)) {
     const near = new Set<string>();
     for (const e of edges) {
@@ -211,7 +229,23 @@ export function keyboardOrder(
     const list = nodes.filter((n) => near.has(n.id)).sort(byWeight);
     if (list.length > 0) return list;
   }
-  return [...nodes].sort(byWeight);
+  return base ? [...base] : keyboardBaseOrder(nodes);
+}
+
+/** A node-id index rebuilt only when the node array itself changes — the
+ *  renderers read a node's radius for every arrowhead on every frame, and
+ *  the page hands them the same array until the view changes (I-14 fix
+ *  pass 3: the index used to be rebuilt over every node on every frame). */
+export function nodeIndexer(): (nodes: readonly GraphNode[]) => Map<string, GraphNode> {
+  let builtFor: readonly GraphNode[] | null = null;
+  let index = new Map<string, GraphNode>();
+  return (nodes) => {
+    if (nodes !== builtFor) {
+      builtFor = nodes;
+      index = new Map(nodes.map((n) => [n.id, n]));
+    }
+    return index;
+  };
 }
 
 // ── IRLS-14: no mention links, and why ──────────────────────────────────
@@ -248,6 +282,11 @@ export function mentionNotice(cov: MentionCoverage | undefined | null, equipment
 }
 
 // ── GPV-11: writing the view to the URL within the History API's budget ──
+
+/** The graph page's own path: the URL writer writes only while the browser
+ *  is still on it (a write deferred by the budget can come due after a
+ *  navigation away, before the page unmounts — I-14 fix pass 3). */
+export const GRAPH_PATH = "/graph";
 
 /** Browsers cap the History API: WebKit throws a SecurityError past 100
  *  `replaceState` calls in 30 seconds (10 in older builds), Gecko past 200
