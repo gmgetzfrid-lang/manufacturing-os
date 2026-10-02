@@ -118,7 +118,7 @@ guard and the MOC gate in one move.
 3. `runPostPublishSideEffects` fires for it — verified by a fresh ack roster and
    a supersede notification.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-11`](../drafting-flow/06-state-machine.md#sm-11) closes on this record's `rowToTicket` fix (route test added in `lib/__tests__/dfRoundG_P0.test.ts`); [`PERS-5`](../drafting-flow/07-persistence-and-rls.md) stays OPEN on the `as Ticket` cast (DF-P4). [`HAND-3`](../drafting-flow/11-document-handoff.md) (stamp / QR wording → DF-P10; a captured base version id → DF-P2), [`PROJ-1`](../drafting-flow/12-projects-boundary.md) (source-less promotion → DF-P4; the project reference → DF-P8) and [`DCW-4`](../drafting-flow/03-doc-control-wiring.md) (tickets with no source document → DF-P4) record the hand-back and keep those residuals.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-11`](../drafting-flow/06-state-machine.md#sm-11) closes on this record's `rowToTicket` fix (route test added in `lib/__tests__/dfRoundG_P0.test.ts`); the bridge it made live reads the source document with no org filter, keyed on client-writable `metadata` — requested as a new drafting-flow id (proposed `SM-14`, DF-P1); [`PERS-5`](../drafting-flow/07-persistence-and-rls.md) stays OPEN on the `as Ticket` cast (DF-P4). [`HAND-3`](../drafting-flow/11-document-handoff.md) (stamp / QR wording → DF-P10; a captured base version id → DF-P2), [`PROJ-1`](../drafting-flow/12-projects-boundary.md) (source-less promotion → DF-P4; the project reference → DF-P8) and [`DCW-4`](../drafting-flow/03-doc-control-wiring.md) (tickets with no source document → DF-P4) record the hand-back and keep those residuals.*
 
 ---
 
@@ -269,7 +269,7 @@ the human to launder it through their filesystem. Persisting markup unblocks
 3. A markup that exists is discoverable from the document without the user
    having downloaded anything.
 
-*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`HAND-8`](../drafting-flow/11-document-handoff.md) records the markup store and stays OPEN on Send to Drafting's silent clean-original fallback (`components/viewers/FullScreenViewer.tsx:950-958`); the fleet plan assigns that region to public-surfaces PS-STAMP, which has merged, so the integrator re-owns it.*
+*Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`HAND-8`](../drafting-flow/11-document-handoff.md) records the markup store and stays OPEN on Send to Drafting's silent clean-original fallback — the `sendToDrafting` handler (`components/viewers/FullScreenViewer.tsx:912-990`: the bake `catch` at `:950-958` and the empty-`ensureBytes()` branch at `:949-950`), not PS-STAMP's `downloadWithMarkup` region (`:1000` onward), so the plan's PS-STAMP hand-off does not apply; owner drafting-flow DF-P9 (`drafting-flow/99-fix-sequencing.md`, "Hand-offs from DF-P0").*
 
 ---
 

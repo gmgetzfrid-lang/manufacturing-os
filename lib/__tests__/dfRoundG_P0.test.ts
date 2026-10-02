@@ -341,7 +341,7 @@ describe("ROUTE-2 — every (Role × TicketStatus): the attention badge is the e
     }
   });
 
-  it("documents WF-24's recorded edge: the badge cannot take the requester's current collection, so for a requester known to have left (requesterRoles: [], what the route resolves) the page and route require the co-review while the badge does not — an under-count, never an unclearable badge", () => {
+  it("documents WF-24's recorded edge, which keeps FRIC-7 OPEN (DF-P9): the badge cannot take the requester's current collection, so for a requester known to have left (requesterRoles: [], what the route resolves) the page and route require the co-review while the badge does not — an under-count, never an unclearable badge", () => {
     const t = ticketAt("PENDING_REVIEW");
     for (const role of ["Manager", "Engineer-2"] as Role[]) {
       const present = WorkflowEngine.getActions(t, role, "stranger", undefined, { userRoles: [role] }).filter((a) => !a.optional && !a.disabledReason);
@@ -378,7 +378,7 @@ describe("SM-12 — the drafter pick is role-checked like the engineer pick", ()
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe("LEAK-8 / SM-13 — submit_final without a deliverable is refused by the route", () => {
-  it("route: a direct POST of submit_final with no finalAttachment (absent, null, or URL-less) is a 400 — no write, no audit row, the ticket stays at PENDING_IFC; with the Final file it lands on FINAL_DRAFT", async () => {
+  it("route: a direct POST of submit_final with no finalAttachment (absent, null, or URL-less) is a 400 — no write of any kind reaches the tickets row, no audit row; with the Final file it lands on FINAL_DRAFT", async () => {
     state.user = { id: "d-1" };
     state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
     state.rows.tickets = [ticketRow({ status: "PENDING_IFC", attachments: [DRAFT] })];
@@ -389,7 +389,7 @@ describe("LEAK-8 / SM-13 — submit_final without a deliverable is refused by th
     }
     expect(updateOf("tickets")).toHaveLength(0);
     expect(insertsOf("audit_logs")).toHaveLength(0);
-    expect(state.rows.tickets[0].status).toBe("PENDING_IFC");
+    expect(state.calls.filter((c) => c.table === "tickets" && ["update", "upsert", "insert", "delete"].includes(c.method))).toHaveLength(0);
     const ok = await post({ ticketId: "t1", actionType: "submit_final", finalAttachment: FINAL });
     expect(ok.status).toBe(200);
     expect((await ok.json()).status).toBe("FINAL_DRAFT");
@@ -431,8 +431,8 @@ describe("LEAK-3 / AUTHZ-6 (records the open gap) — every DEC-13 scoped rule r
         expect(m[1], f).not.toMatch(/\b(request_type|unit)\b/);
       }
     }
-    // the four browser writers SM-2's census names (priority ×2, unread_by, the dormant history push)
-    expect(writers).toBe(4);
+    // a ratchet, not a pin: SM-2's census named four (priority ×2, unread_by, the dormant history push); fixes only remove them
+    expect(writers).toBeLessThanOrEqual(4);
   });
 });
 

@@ -171,6 +171,8 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
 - ✓ Close-without-review is a declared property of a configured type, not the literal `'RFI'` (the `['RFI']` default applies only when the org configured none).
 - ✓ It is not available to every drafter on every ticket (WF-8).
 
+**Severity of the widened scope (review fix pass).** This record's HIGH is the verifier's call for the RFI close — lowered from CRITICAL because `close_rfi` "publishes nothing … The harm is a prematurely terminated ticket, not an unreviewed drawing issued for construction". The widened scope is not that harm: re-typing or re-uniting around a type- or unit-scoped `ticket.engineer_gate_exempt` or `ticket.direct_approve` rule ends at `PENDING_IFC` with an issued label and no engineer (`lib/__tests__/dfRoundG_P0.test.ts:402`) — the outcome that made `SM-1` / `AUTHZ-1` CRITICAL. Wherever an org has such a rule, it is **CRITICAL-class**, and the HIGH above understates it. DF-P0 may not change the area's severity headline, so the integrator either raises this record to CRITICAL or opens the widened scope as a new CRITICAL id (proposed `LEAK-10`, written out in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open"), with the README count updated at merge — **before DF-P1 starts**, since packages are ranked by severity.
+
 **Scope / residual.** Make **both** `request_type` and `unit` workflow-owned in `ticket_update_guard` (a re-type or re-unit becomes a route action with a history line and an audit row, if the product needs one at all) → **DF-P1**, which re-creates the guard from its newest body (fleet plan, DF-P1 (a)); same root as the `SM-2` residual. Until then every `DEC-13` scoped rule on a ticket — `ticket.engineer_gate_exempt`, `ticket.direct_approve`, the reviewer / drafter pick scoping, `engineeringFirst`, close-without-review — is advisory against a member willing to PATCH the row. **DF-P1's brief item (a) names neither column; the integrator must add both before DF-P1 starts** (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). No code changed here.
 
 ---
@@ -310,27 +312,53 @@ back under review, `/api/verify-ticket` still reports the field copy as
 
 **Partial (2026-10-02, drafting-flow Round G).** The code half is closed by pointer to roles-and-permissions [`WF-21`](../roles-and-permissions/06-request-workflow.md) / `DEC-15` (Round E, `e5a203b`), whose contract this finding's done-when adopts. Re-verified against `f1ac550`: `reopen_ticket` starts a new cycle — `updates.revision_count = (ticket.revisionCount || 0) + 1; updates.draft_iteration = 0; updates.deliverable_rev = null;` (`lib/ticketTransitions.ts:354-363`) — so after an issue at Rev 2 the next submission is `3A` and the next approval `3`; and the public endpoint is reopen-aware — `const reopened = !currentRev && !!issuedBefore && !!t.status && !TERMINAL.has(t.status);` (`app/api/verify-ticket/route.ts:120`), the last issue read from the `issued Rev N` history line (`:59-69`), a reopened ticket's last-issue print reading `revision_in_progress` (`:139-140`), never `current`. PS-VERIFY (merged) kept this verdict ladder. Tests: `lib/__tests__/sweepRoundE_A.test.ts:710` ("WF-21 / DEC-15": lifecycle, minor-correction stamp, the verify route end to end).
 
-The failure scenario still reproduces for one population this repository cannot observe. A ticket reopened **before** Round E (2026-09-17) under the old three-line `reopen_ticket` kept its `revision_count` and its issued, digits-only `deliverable_rev`. While it stays at `PENDING_REVIEW` / `PENDING_FINAL_APPROVAL`: (a) the verify route treats a row that still carries a label as not reopened — `reopened` requires `!currentRev` (`:120`), `inReview` is false for an issued label (`:121`), so a print of that label verifies `current` (`:142`) while the drawing is back under review; (b) its next approval writes `issuedRevLabel(ticket.revisionCount)` from the un-bumped count (`lib/ticketTransitions.ts:285`, `:294`, `:316`) and issues the same label a second time. A `request_revision` / `reject` from there bumps the cycle (`:339-344`) and ends the hazard for that row, which is why the at-risk set is exactly the rows still sitting in those two statuses with an issued label. (Since Round E no transition can put a digits-only label on a row in those statuses: `submit_draft` writes a letter rev, `reopen_ticket` nulls it.)
+The failure scenario still reproduces for populations this repository cannot observe — three of them (the DF-P0 review widened this from one: the first query could return 0 while the failure stood). Each starts from a ticket reopened **before** Round E (2026-09-17) under the old three-line `reopen_ticket`, which kept its `revision_count` and its issued, digits-only `deliverable_rev`.
+- (a) **Still under review.** While it stays at `PENDING_REVIEW` / `PENDING_FINAL_APPROVAL`: the verify route treats a row that still carries a label as not reopened — `reopened` requires `!currentRev` (`app/api/verify-ticket/route.ts:120`), `inReview` is false for an issued label (`:121`), so a print of that label verifies `current` (`:142`) while the drawing is back under review; and its next approval writes `issuedRevLabel(ticket.revisionCount)` from the un-bumped count (`lib/ticketTransitions.ts:285`, `:294`, `:316`; `issuedRevLabel` is `revisionCount + 1`, `:119-121`) and issues the same label a second time. A `request_revision` / `reject` from there bumps the cycle (`:339-344`) and ends the hazard for that row. (Since Round E no transition can put a digits-only label on a row in those statuses: `submit_draft` writes a letter rev, `reopen_ticket` nulls it.)
+- (b) **Already re-issued.** Once that second approval has happened — before Round E or after it — the duplicate exists: the row sits at `PENDING_IFC`, `FINAL_DRAFT` or `CLOSED` with `deliverable_rev` = N and two `… issued Rev N` lines in `history`, and the first package's print reads Rev N and verifies `current` (`currentRev` is issued, `latestIssued` is `currentRev`, `printedRev === latestIssued` — `app/api/verify-ticket/route.ts:125-142`). (a)'s status filter cannot see these rows, and no counter repair can tell the two prints apart.
+- (c) **Archived.** The ticket shed clears the row's history — the commit writes `{ comments: [], history: [], metadata: { …, archive_summary: tombstone }, archived_at: now, archive_id }` (`app/api/admin/ticket-shed/commit/route.ts:173`) — so a repeated label on an archived ticket is visible only in its archive bundle, while the stub keeps `deliverable_rev` and verifies exactly as in (b).
 
 **Done-when.**
-- ✓ (code) Two approvals of the same ticket cannot produce the same issued label for any reopen performed since Round E (WF-21 / DEC-15). ✗ (data) For a pre-Round-E reopen still under review they can — unknown whether any such row exists.
-- ✓ (code) A ticket reopened since Round E does not verify as current while back under review. ✗ (data) A pre-Round-E reopened row still carrying its issued label does.
+- ✓ (code) Two approvals of the same ticket cannot produce the same issued label for any reopen performed since Round E (WF-21 / DEC-15). ✗ (data) For a pre-Round-E reopen still under review they can (a), and where the second approval has already happened they did (b, c) — unknown whether any such row exists.
+- ✓ (code) A ticket reopened since Round E does not verify as current while back under review. ✗ (data) A pre-Round-E reopened row still carrying its issued label does (a), and the first print of a re-issued label verifies `current` at any later status (b, c).
 
-**Blocker (`DEC-27` #4 / `DEC-30`).** Whether the legacy population exists is production data this repository cannot observe. Unblocking step — paste into the Supabase SQL editor (read-only, one aggregate row, no customer data):
+**Blocker (`DEC-27` #4 / `DEC-30`).** Whether any of the three populations exists is production data this repository cannot observe. Unblocking step — paste into the Supabase SQL editor (read-only, one result set of three aggregate rows, no customer data):
 
 ```sql
-SELECT 'LEAK-7 / SM-5: tickets under review still carrying an issued label (reopened before Round E)' AS check,
+SELECT 'LEAK-7 / SM-5 (a): tickets under review still carrying an issued label (reopened before Round E)' AS check,
        NULL::boolean AS ok,
        COUNT(*)::text AS n
 FROM tickets
 WHERE status IN ('PENDING_REVIEW', 'PENDING_FINAL_APPROVAL')
+  AND deliverable_rev ~ '^[0-9]+$'
+UNION ALL
+SELECT 'LEAK-7 / SM-5 (b): tickets whose history issues the same Rev label twice (any status)',
+       NULL::boolean,
+       COUNT(*)::text
+FROM tickets t
+WHERE EXISTS (
+  SELECT 1
+  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(t.history) = 'array' THEN t.history ELSE '[]'::jsonb END) AS h(entry),
+       LATERAL regexp_matches(h.entry ->> 'action', '[[:<:]]issued Rev ([0-9]+)[[:>:]]') AS m(g)
+  GROUP BY m.g[1]
+  HAVING COUNT(*) > 1
+)
+UNION ALL
+SELECT 'LEAK-7 / SM-5 (c): archived tickets carrying an issued label (history moved to the archive bundle; (b) cannot see it)',
+       NULL::boolean,
+       COUNT(*)::text
+FROM tickets
+WHERE archived_at IS NOT NULL
   AND deliverable_rev ~ '^[0-9]+$';
 ```
 
-- `n = 0` → nothing to repair: flip this finding to `RESOLVED` on the code half above, recording the result here.
-- `n > 0` → repair those rows through the service role before closing — bump `revision_count` by one, null `deliverable_rev` and reset `draft_iteration`, with a history line, exactly what today's `reopen_ticket` does — as a `DEC-30` migration (inventory temp table first, aggregate counts only) under **DF-P10**, then record the before/after counts here and close.
+- `(a) = 0`, `(b) = 0` **and** `(c) = 0` → nothing to repair and nothing already re-issued: flip this finding to `RESOLVED` on the code half above, recording the three results here. Any other result keeps it open.
+- `(a) > 0` → repair those rows through the service role — bump `revision_count` by one, null `deliverable_rev` and reset `draft_iteration`, with a history line, exactly what today's `reopen_ticket` does — as a `DEC-30` migration (inventory temp table first, aggregate counts only) under **DF-P10**, and record the before/after counts here.
+- `(b) > 0` → the duplicate label is already issued and printed; bumping counters cannot tell the two prints apart, because both read Rev N. LEAK-7 stays **OPEN under DF-P10** until the verify route can answer for a specific print — per-attachment identity, `PHYS-2` / `SM-5` done-when 3 — recording the count here.
+- `(c) > 0` → those archived tickets' histories are in their archive bundles (the shed's restore brings them back), so whether any of them repeated a label is unobservable from the database. (c) counts every archived ticket with an issued label, not only those with a repeat — the fail-safe reading, since the shed leaves nothing on the row to tell them apart. LEAK-7 stays **OPEN under DF-P10** for that remainder until the bundles' histories have been checked for a repeated `issued Rev N` line (each repeat then counts toward (b)), recording the count here.
 
-**Scope / residual.** The explicit history check that would catch any such row at the next approval is [`SM-5`](./06-state-machine.md#sm-5)'s done-when 2 — OPEN under **DF-P10**, which also owns the repair above. Two approvals that already issued the same label before Round E cannot be told apart by label alone; that is `SM-5` done-when 3 / `PHYS-2` (per-attachment identity), DF-P10. The `FINAL_DRAFT → reject_final` window (WF-21's recorded residual) and the canceled / archived verdicts are `EDGE-2` (DF-P10).
+The query was run in the DF-P0 fix pass on a throwaway Postgres 16 against 12 synthetic rows (each population; a letter rev under review; `NULL`, object and scalar `history`; entries with no `action`; `issued Rev 1` beside `issued Rev 12`) and returned 2 / 1 / 1 as constructed. Two choices in it are deliberate: `regexp_matches` returns no row for a line that does not match (with `regexp_match` in the `LATERAL`, the non-matching lines form a `NULL` group that `HAVING COUNT(*) > 1` counts), and the `CASE` guard keeps `jsonb_array_elements` from raising on a non-array `history`. The word-boundary brackets mirror the verify route's `/\bissued Rev (\d+)\b/` (`app/api/verify-ticket/route.ts:59`) without a backslash in the pasted string.
+
+**Scope / residual.** The explicit history check that would catch an (a) row at its next approval is [`SM-5`](./06-state-machine.md#sm-5)'s done-when 2 — OPEN under **DF-P10**, which also owns the (a) repair above. Rows in (b) and (c), whatever the date of the second approval, carry two issues of one label that cannot be told apart by label alone; that is `SM-5` done-when 3 / `PHYS-2` (per-attachment identity), DF-P10, and this finding stays open on them. The `FINAL_DRAFT → reject_final` window (WF-21's recorded residual) and the canceled / archived verdicts are `EDGE-2` (DF-P10).
 
 ---
 
@@ -356,7 +384,7 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
 
 **Done when.** See `WF-6`.
 
-**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`WF-6`](../roles-and-permissions/06-request-workflow.md) (`087a39c`, 2026-09-01), re-verified against `f1ac550`. The route now reads `action.requiresFile`: `app/api/tickets/workflow-action/route.ts:203-205` — `if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) {` → 400 "Issuing the final IFC package requires the deliverable file", before `computeTransition`, so a direct POST can no longer mint a "Final package issued" ticket with no deliverable. WF-6 proved it with a source pin (`lib/__tests__/rpPhase4Migration.test.ts:200`); this round adds the route-harness test the done-when asks for: `lib/__tests__/dfRoundG_P0.test.ts:381` drives the real handler with no `finalAttachment`, with `null`, and with a URL-less record — each 400, no tickets write, no audit row, the ticket still `PENDING_IFC`; the Final file → 200 `FINAL_DRAFT`. Mutation-checked: disabling the guard fails it.
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`WF-6`](../roles-and-permissions/06-request-workflow.md) (`087a39c`, 2026-09-01), re-verified against `f1ac550`. The route now reads `action.requiresFile`: `app/api/tickets/workflow-action/route.ts:203-205` — `if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) {` → 400 "Issuing the final IFC package requires the deliverable file", before `computeTransition`, so a direct POST can no longer mint a "Final package issued" ticket with no deliverable. WF-6 proved it with a source pin (`lib/__tests__/rpPhase4Migration.test.ts:200`); this round adds the route-harness test the done-when asks for: `lib/__tests__/dfRoundG_P0.test.ts:381` drives the real handler with no `finalAttachment`, with `null`, and with a URL-less record — each 400, with no write of any kind reaching the `tickets` table (no `update` / `upsert` / `insert` / `delete` call — the review fix pass replaced a status assertion the harness could never fail, since its mock does not write payloads back) and no audit row; the Final file → 200 `FINAL_DRAFT`. Mutation-checked: disabling the guard fails it (re-run in the fix pass).
 
 **Done-when.** ✓ `submit_final` is refused server-side when no deliverable attachment exists; ✓ a test covers the direct-POST case (`lib/__tests__/dfRoundG_P0.test.ts:381`).
 
