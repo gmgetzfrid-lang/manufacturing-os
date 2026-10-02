@@ -238,6 +238,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "knowledge_questions", column: "context", migration: "20261153_intel_roundG_ask_answer_context.sql", feature: "Library answers record what reached the model (a teammate sees a stored answer only when they may read every document in it)" },
   // intelligence I-09 (IEDGE-8): until it is pasted every dismissal is settled.
   { table: "process_flows", column: "source_version_id", migration: "20261155_intel_roundG_process_flows_authority.sql", feature: "Process flows — the revision a PFD proposal was read from (a dismissal binds that reading; IEDGE-8)" },
+  // intelligence I-06b (ING-13): until it is pasted a reset records no owed
+  // AI-vision pages and a keyless batch commits such a page text-only.
+  { table: "knowledge_documents", column: "vision_owed_pages", migration: "20261162_intel_roundG_ingest_owed_vision.sql", feature: "Knowledge ingest — the AI-vision pages a regenerated document owes (a keyless batch holds them for a key instead of committing them text-only)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

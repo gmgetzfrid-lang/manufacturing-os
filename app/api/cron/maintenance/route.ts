@@ -104,7 +104,7 @@ async function handler(req: NextRequest) {
     complianceOrgs: number;
     complianceEmails: number;
     folderTrashPurged?: number;
-    knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number };
+    knowledgeSync?: { libraries: number; added: number; refreshed: number; removed: number; deferred: number; unsynced: number };
     knowledgeIngest?: { docs: number; pages: number; completed: number };
     orchestratorProposalsPruned?: number;
     platformStorage?: { r2Pct: number; dbPct: number; alerts: number };
@@ -432,6 +432,9 @@ async function handler(req: NextRequest) {
     result.knowledgeSync = {
       libraries: sync.libraries, added: sync.added,
       refreshed: sync.refreshed, removed: sync.removed,
+      // ILIFE-13: the libraries this run left for the next (the rotation
+      // reaches them oldest first), and the rev-ups another sync landed first.
+      deferred: sync.deferred, unsynced: sync.unsynced,
     };
     if (sync.errors.length) {
       result.errors.push(...sync.errors.slice(0, 5).map((m) => `knowledge-sync: ${m}`));

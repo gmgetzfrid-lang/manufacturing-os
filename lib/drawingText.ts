@@ -212,10 +212,9 @@ export function extractEquipmentTags(text: string): EquipmentTagHit[] {
  *  grammar extractEquipmentTags uses to keep them OUT of the equipment
  *  count, so the two can never disagree about what a line number is.
  *
- *  Not yet written to the index: storing them as their own entity kind
- *  ('line' — "which line feeds V-3") is a call in lib/knowledgeIngest.ts,
- *  the ingest owner's file, handed over with DWG-2. Until then a line
- *  number is simply never equipment. */
+ *  Ingest stores each as its own entity kind, 'line' (lib/knowledgeIngest.ts,
+ *  DWG-2), beside the equipment tags of the same line or text item — never
+ *  counted by a census (TAG_ENTITY_KINDS leaves it out). */
 export function extractLineNumbers(text: string): string[] {
   const out = new Set<string>();
   const upper = text.toUpperCase();
@@ -484,9 +483,10 @@ export function unitOfRef(ref: string, prefixLen: number): string | null {
 // prompt and the parser cannot drift apart again (the prompt once asked for
 // no OPC line at all, and the whole connector layer — including the audit's
 // top-severity verdict — had no input). The destination drawing comes
-// FIRST, right after the box: an evidence line is stored cut to
-// OPC_RAW_STORED_MAX characters, and a long service description must never
-// push the drawing number off the end of it (DWG-8).
+// FIRST, right after the box: an evidence line was stored cut to
+// OPC_RAW_STORED_MAX characters until I-06b (and is still cut, longer, at
+// OPC_EVIDENCE_MAX), and a long service description must never push the
+// drawing number off the end of it (DWG-8).
 //
 // The destination is LABELLED (DWG) and read BY POSITION (parseOpcLine).
 // Sites number drawings every way there is — 025-M-0107, 4410-01-001,
@@ -515,10 +515,16 @@ export const OPC_NO_DRAWING = "NONE";
 /** Written in place of the drawing number when the connector shows only a
  *  sheet: it continues on another sheet of this same drawing. */
 export const OPC_SAME_DRAWING = "SAME";
-/** Ingest stores a connector's evidence line cut to this many characters
- *  (lib/knowledgeIngest.ts, truncateSafe(line, 160) — pinned by a test). A
- *  stored line this long may have been cut: its missing drawing number is
- *  UNKNOWN, never evidence of a broken connector. */
+/** Ingest stored a connector's evidence line cut to this many characters
+ *  (truncateSafe(line, 160)) until intelligence Round G I-06b. It now stores
+ *  at most OPC_EVIDENCE_MAX characters (opcEvidence in lib/knowledgeIngest.ts
+ *  — pinned by a test): a connector in the contract's shape that does not
+ *  open its line is stored from its own box token, whatever the line's
+ *  length; any other line is stored whole up to OPC_EVIDENCE_MAX, and a
+ *  longer one as a window of that size around the box. The audit cannot
+ *  tell a row stored before then from one stored since, so a stored line
+ *  this long may have been cut: its missing drawing number is UNKNOWN,
+ *  never evidence of a broken connector. */
 export const OPC_RAW_STORED_MAX = 160;
 
 const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;

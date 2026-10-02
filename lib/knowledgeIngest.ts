@@ -48,8 +48,8 @@ import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
   hasCarriedMarker, chunkerVersionOf, CHUNKER_LEGACY, CHUNKER_TABLE_AWARE, type ChunkerVersion, type PdfTextItem,
 } from "@/lib/knowledgeText";
 import {
-  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
-  parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, MIN_TAGS_THIN_PAGE,
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock, extractLineNumbers,
+  parseOpcBoxes, parseOpcLine, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, MIN_TAGS_THIN_PAGE,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -61,6 +61,57 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 export const PAGE_BATCH = 50;
 
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
+/** DWG-3: a text-layer position is stored as pdf.js's own point on the page
+ *  AS DRAWN — viewport.convertToViewportPoint applies /Rotate, the CropBox
+ *  origin and /UserUnit — over the drawn page's size, 0..1 from the left and
+ *  from the top, under this pos_source. Rows written before it carry 'text':
+ *  the unrotated point over the rotated viewport, which the viewer maps
+ *  through the same transform (textMarkPosition, lib/drawingLocate.ts) — so
+ *  the two encodings are told apart by their pos_source, and never rotated
+ *  twice. */
+export const TEXT_VIEWPORT_POS = "viewport";
+
+/** A fraction of the drawn page, or null when the point is off it (a glyph
+ *  the CropBox cuts away). Off-page is a fact about the glyph, never a value
+ *  to pin to an edge; only float noise at the edge is folded in. */
+const onPage = (v: number): number | null => (v >= -1e-6 && v <= 1 + 1e-6 ? clamp01(v) : null);
+
+/** DWG-8: a connector's evidence line — what the reference audit reads its
+ *  destination from — is stored whole up to this many characters. A
+ *  connector line runs to a couple of hundred (box, direction, service,
+ *  destination equipment, drawing and sheet); the old 160-character cut
+ *  took the drawing number off the end of a long one. */
+export const OPC_EVIDENCE_MAX = 400;
+/** …and, of a longer line not written in the connector contract's shape,
+ *  how much before its box token the window keeps. */
+const OPC_EVIDENCE_LEAD = 160;
+
+/** The evidence stored for connector `box` found on `line`. A connector in
+ *  the contract's shape ("OPC <n>: DWG <destination> …", read by position —
+ *  parseOpcLine, anchored at its box) is stored FROM its box, whatever the
+ *  line's length: evidence opening before it would hold whatever precedes
+ *  it — on a run-together line, the previous connector, whose box and
+ *  drawing number the anchored parse would then read as this one's (or,
+ *  past the cap, the audit would read every number in the window, that one
+ *  included). Any other line within OPC_EVIDENCE_MAX is stored whole. A
+ *  longer one is a text layer with no line breaks — a whole sheet run
+ *  together — so the window is taken around THIS box's token, keeping up
+ *  to OPC_EVIDENCE_LEAD characters before it. Either way its destination
+ *  survives, and the sheet's first numbers (a title block, another
+ *  connector) no longer stand in for it. A window still at the cap may
+ *  have been cut, which the audit records as unknown, never broken
+ *  (OPC_RAW_STORED_MAX in lib/drawingText.ts). */
+export function opcEvidence(line: string, box: string): string {
+  const digits = box.replace(/\D/g, "");
+  const at = digits ? line.search(new RegExp(String.raw`\bOPC[\s#.:-]*0*${digits}\b`, "i")) : -1;
+  if (at > 0 && parseOpcLine(line.slice(at))) return truncateSafe(line.slice(at), OPC_EVIDENCE_MAX);
+  if (line.length <= OPC_EVIDENCE_MAX) return line;
+  let start = Math.max(0, Math.min(Math.max(0, at) - OPC_EVIDENCE_LEAD, line.length - OPC_EVIDENCE_MAX));
+  const c = line.charCodeAt(start);
+  if (c >= 0xdc00 && c <= 0xdfff) start++;               // never open on half a surrogate pair
+  return truncateSafe(line.slice(start), OPC_EVIDENCE_MAX);
+}
 
 /** Vision transcription context. Present only on the user-driven ingest
  *  path: transcription spends the TRIGGERING user's own key, so a
@@ -116,6 +167,12 @@ export interface IngestBatchResult {
    *  pages it tried go to the back of the queue, so the next batch tries the
    *  ones waiting longest. */
   visionRetryAttempts: number;
+  /** Pages in THIS batch held for AI vision, listed in `visionFailedPages`
+   *  without a read being tried: the batch had no vision context, and the
+   *  page needs AI vision for a reason someone can fix (`noVisionReason`),
+   *  or the document owes it AI vision (ING-13). Nothing retries such a
+   *  page until a driver with a usable key reaches the document. */
+  visionHeldPages: number;
   /** Another driver holds this document's claim — nothing was done (ING-2). */
   busy: boolean;
   /** With `busy`: at most how long (ms) until that claim is free. A live
@@ -192,6 +249,10 @@ type KnowledgeDocRow = {
   vision_retry_tried?: number[] | null;
   /** Failed batches in a row (ING-8); only a batch that did work zeroes it. */
   ingest_failures?: number | null;
+  /** 20261162: pages the last index generation read with AI vision, recorded
+   *  by the reset — a batch with no vision context holds them rather than
+   *  consume them text-only (ING-13). */
+  vision_owed_pages?: number[] | null;
   /** The controlled document a mirror reflects (for the mention pass). */
   source_document_id?: string | null;
   error?: string | null;
@@ -276,8 +337,21 @@ const INGEST_COLUMNS_20261122 = [
   "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried",
   "ingest_failures",
 ];
+/** …and the one 20261162 adds (ING-13). */
+const INGEST_COLUMNS_20261162 = ["vision_owed_pages"];
 
 // ── The shared reset (ING-3 / DWG-1 / ING-12) ─────────────────────────────
+
+/** A document the reset queued whose old index it could not fully delete
+ *  (ING-13): reset (it is in `reset`, out of Ask, queued) — the next index
+ *  generation's first batch clears what is left. `message` is the same
+ *  sentence `errors` carries for it. */
+export interface ResetLeftover {
+  documentId: string;
+  /** The steps that failed, each with its error ("chunks: …"). */
+  left: string[];
+  message: string;
+}
 
 export interface KnowledgeIndexReset {
   /** Documents whose derived index is gone and that are queued ('stale'). */
@@ -288,6 +362,9 @@ export interface KnowledgeIndexReset {
    *  caller's view is stale and a later pass reconciles from the row). */
   busy: string[];
   errors: string[];
+  /** Present when a document was reset with part of its old index left —
+   *  the same reports `errors` carries for them, by id (ING-13). */
+  leftovers?: ResetLeftover[];
 }
 
 /** Everything the index derives from a file, zeroed: the row says "nothing
@@ -297,14 +374,69 @@ const RESET_ROW = {
   vision_pages: 0, empty_pages: 0, vision_failed_pages: [] as number[],
   vision_partial_accepted: false, chunk_version: null, vision_retry_after: null,
   vision_retry_tried: [] as number[], ingest_failures: 0,
+  vision_owed_pages: [] as number[],
 };
+
+/** Written in vision_owed_pages in place of page numbers (no page is page
+ *  0): the index being reset read pages with AI vision, but its chunks do
+ *  not say which — every chunk written before 20261122 gave them their
+ *  provenance reads 'text' — or the reset points the row at a new file (a
+ *  rev-up), whose pages the old numbers do not name; so it owes AI vision
+ *  every page that needs it (ING-13). */
+export const OWES_EVERY_VISION_PAGE = 0;
+/** vision_owed_pages says the index owes AI vision every page that needs
+ *  it (OWES_EVERY_VISION_PAGE). */
+const owesEveryVisionPage = (v: unknown): boolean =>
+  Array.isArray(v) && v.some((n) => Number(n) === OWES_EVERY_VISION_PAGE && n !== null && n !== "");
+
+/** The pages a document's index owes AI vision once it is reset (ING-13):
+ *  every page its current generation read with AI vision (its chunks say
+ *  so — GOV-9), every page still waiting on AI vision (vision_failed_pages:
+ *  a failed read, a held page, an accepted partial index's unread pages),
+ *  and the pages an earlier reset owed that this generation has not reached
+ *  yet. When the row counts more AI-vision pages (vision_pages) than its
+ *  chunks name — a document indexed before chunks said how their text was
+ *  read, which is every document 20261122 found — or an earlier reset owed
+ *  every such page and this generation has not reached its last page, it
+ *  owes OWES_EVERY_VISION_PAGE as well. A reset writes them on the row
+ *  (vision_owed_pages), so a batch with no vision context — a keyless
+ *  controller's tab, the cron without a sponsor — holds them for a key
+ *  instead of committing them text-only as complete. An error when the
+ *  chunks cannot be read: a reset that cannot say what it would throw away
+ *  does not throw it away. A database without chunk provenance
+ *  (pre-20261122) has nothing to read there. */
+async function visionOwedPages(documentId: string, row: Record<string, unknown>): Promise<{ pages: number[] } | { error: string }> {
+  const owed = new Set<number>(pageQueue(row.vision_failed_pages));
+  const reached = Number(row.pages_indexed ?? 0);
+  for (const p of pageQueue(row.vision_owed_pages)) if (p > reached) owed.add(p);
+  const pageCount = Number(row.page_count ?? 0);
+  let everyPage = owesEveryVisionPage(row.vision_owed_pages) && !(pageCount > 0 && reached >= pageCount);
+  const read = new Set<number>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabaseAdmin.from("knowledge_chunks")
+      .select("page").eq("document_id", documentId).eq("source", "vision")
+      .order("page", { ascending: true }).range(from, from + 999);
+    if (error) {
+      if (isMissingColumn(error)) break;
+      return { error: error.message };
+    }
+    const rows = (data ?? []) as Array<{ page: number }>;
+    for (const r of rows) read.add(Number(r.page));
+    if (rows.length < 1000) break;
+  }
+  for (const p of read) owed.add(p);
+  if (Number(row.vision_pages ?? 0) > read.size) everyPage = true;
+  return { pages: [...(everyPage ? [OWES_EVERY_VISION_PAGE] : []), ...pageList([...owed])] };
+}
 
 /** THE reset of a knowledge document's derived index — the one the rev-up
  *  refresh (lib/knowledgeSourceSync.ts) and the library re-index call, and
  *  the drawing intelligence "Rebuild index" is to call once I-07 moves
  *  app/api/knowledge/drawing/route.ts onto it (today that rebuild resets
  *  without the claim), so none can forget a table again.
- *  Under the document's ingest claim, in order:
+ *  Under the document's ingest claim, and once the pages the index being
+ *  reset owes AI vision are read (20261162, ING-13 — a reset that cannot
+ *  read them deletes nothing, not even the line traces), in order:
  *
  *    1. on a rev-up (`purgeLineTraces`), the cached line traces drawn over
  *       the old sheet — a pure cache, dropped while the row still names the
@@ -400,6 +532,31 @@ export async function resetKnowledgeIndex(
     }
     if (lease.kind === "busy" && !opts.supersedeBusy) { out.busy.push(id); continue; }
 
+    // What step 2 writes on the row. With 20261162 it records the pages the
+    // index being reset owes AI vision (ING-13) — read here, before anything
+    // is deleted, the old sheet's line traces (step 1) included: a reset that
+    // cannot read them changes nothing.
+    const full: Record<string, unknown> = { ...RESET_ROW, ...(opts.rowUpdate?.(id) ?? {}) };
+    if (seen && "vision_owed_pages" in seen) {
+      const owed = await visionOwedPages(id, seen);
+      if ("error" in owed) {
+        out.errors.push(`${id}: the pages AI vision read could not be listed, so nothing was reset: ${owed.error}`);
+        await release();
+        continue;
+      }
+      // A reset that points the row at another file (the rev-up): the old
+      // file's page numbers name nothing in the new one — a sheet inserted
+      // or removed before the one AI vision read moves it — so an index
+      // that owed AI vision anything owes the new file every page that
+      // needs it (OWES_EVERY_VISION_PAGE). Only pages a driver with a key
+      // reads anyway are held for it (ingestKnowledgeDocBatch).
+      const newFile = opts.purgeLineTraces === true
+        || ("file_key" in full && (full.file_key ?? null) !== (seen.file_key ?? null));
+      full.vision_owed_pages = newFile && (owed.pages.length > 0 || Number(seen.vision_pages ?? 0) > 0)
+        ? [OWES_EVERY_VISION_PAGE]
+        : owed.pages;
+    }
+
     // 1. The old sheet's cached traces (rev-up only), while the row still
     //    names the old file.
     if (opts.purgeLineTraces) {
@@ -412,10 +569,10 @@ export async function resetKnowledgeIndex(
       }
     }
 
-    // 2. The row: queued and zeroed (and re-pointed) FIRST. Under our own
-    //    claim the claim is kept through the deletes; under someone else's
-    //    (supersedeBusy) theirs is left exactly as it is.
-    const full: Record<string, unknown> = { ...RESET_ROW, ...(opts.rowUpdate?.(id) ?? {}) };
+    // 2. The row: queued and zeroed (and re-pointed) FIRST — `full`, with the
+    //    owed pages read above. Under our own claim the claim is kept through
+    //    the deletes; under someone else's (supersedeBusy) theirs is left
+    //    exactly as it is.
     let updErr: DbError = null;
     let wrote = 0;
     if (seen) {
@@ -441,9 +598,10 @@ export async function resetKnowledgeIndex(
       // does not have yet, newest first.
       const ladder = [
         full,
-        Object.fromEntries(Object.entries(full).filter(([k]) => !INGEST_COLUMNS_20261122.includes(k))),
         Object.fromEntries(Object.entries(full).filter(([k]) =>
-          !INGEST_COLUMNS_20261122.includes(k) && k !== "vision_pages" && k !== "last_section")),
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k))),
+        Object.fromEntries(Object.entries(full).filter(([k]) =>
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && k !== "vision_pages" && k !== "last_section")),
       ];
       for (const update of ladder) {
         const { data, error } = await expectOn(supabaseAdmin.from("knowledge_documents")
@@ -478,6 +636,9 @@ export async function resetKnowledgeIndex(
     out.reset.push(id);
     if (left.length > 0) {
       out.errors.push(`${id}: ${left.join("; ")} (the row is queued; the re-index's first batch clears what is left)`);
+      // ING-13: the same report, structured — by id, with what is left — so
+      // a caller never has to parse the sentence.
+      (out.leftovers ??= []).push({ documentId: id, left, message: out.errors[out.errors.length - 1] });
     }
   }
   return out;
@@ -789,6 +950,10 @@ export interface LibraryReindex extends KnowledgeIndexReset {
   /** Documents still to reset after this call — not reached before the
    *  deadline, busy, or failed. Run the action again to continue. */
   remaining: number;
+  /** Dry run only: this database records the pages a reset owes AI vision
+   *  (20261162), so a driver with no usable key holds them rather than
+   *  indexing them text-only (ING-13) — the confirmation says which. */
+  keylessHolds?: boolean;
 }
 
 /** The explicit per-library switch between chunkers. Never run
@@ -824,6 +989,11 @@ export async function reindexLibraryChunks(
   if (opts.dryRun) {
     const { error } = await supabaseAdmin.from("knowledge_libraries").select("chunk_version").eq("id", libraryId).maybeSingle();
     if (error) throw new Error(isMissingColumn(error) ? needsMigration : `library: ${error.message}`);
+    // ING-13: can a reset here record what AI vision read (20261162)? A
+    // probe that fails for any reason says no — the worse outcome is said.
+    const { error: owedErr } = await supabaseAdmin.from("knowledge_documents")
+      .select("vision_owed_pages").eq("library_id", libraryId).limit(1);
+    out.keylessHolds = !owedErr;
     return out;
   }
 
@@ -837,6 +1007,7 @@ export async function reindexLibraryChunks(
     out.reset.push(...res.reset);
     out.busy.push(...res.busy);
     out.errors.push(...res.errors);
+    if (res.leftovers) (out.leftovers ??= []).push(...res.leftovers);
   }
   out.remaining = todo.length - out.reset.length;
   return out;
@@ -966,6 +1137,13 @@ export async function ingestKnowledgeDocBatch(
      *  drivers pass it (the route for its requester, the drain for the
      *  uploader). */
     noVisionReason?: string | null;
+    /** The library reads every page with AI vision (ai_features.
+     *  visionAllPages), for a caller that passes no `vision` — which
+     *  otherwise carries it (`forceAllPages`). With it, a page the document
+     *  owes AI vision (ING-13) is held whatever its text layer holds, as a
+     *  driver with a key would read it; without it, only a page that needs
+     *  AI vision is. */
+    visionAllPages?: boolean;
   } = {},
 ): Promise<IngestBatchResult> {
   ensurePdfPolyfills();
@@ -985,7 +1163,7 @@ export async function ingestKnowledgeDocBatch(
       emptyPages: 0,
       emptyPagesTotal: Number(row.empty_pages ?? 0),
       visionPages: 0, visionBudgetSpent: false, stoppedForTime: false,
-      visionFailedPages: failedNow, visionError: null, visionRetryAttempts: 0,
+      visionFailedPages: failedNow, visionError: null, visionRetryAttempts: 0, visionHeldPages: 0,
       busy: false, retryAfterMs: null, superseded: false,
       visionRetryBlocked: false, visionRetryMessage: null, visionRetryAfter: null,
       failureRetryBlocked: false, failureRetryMessage: null, failureRetryAfter: null, retryNowError: null,
@@ -1233,6 +1411,23 @@ export async function ingestKnowledgeDocBatch(
     const tried = new Set<number>(genStart ? [] : pageQueue(cur.vision_retry_tried).filter((p) => failed.has(p)));
     const accepted = !genStart && cur.vision_partial_accepted === true;
     const retryMode = from >= pageCount && queueBefore.length > 0 && !accepted;
+    // ING-13: pages the last index generation read with AI vision (recorded
+    // by the reset, 20261162) — or, for a document whose chunks never said
+    // which, or one a rev-up re-pointed at a new file, every page that
+    // needs it (OWES_EVERY_VISION_PAGE). Only a batch with NO vision
+    // context reads this: it holds such a page for a key, as it holds one
+    // for a reason someone can fix — but only where a driver with a key
+    // would read it with AI vision now (the page needs it, or the library
+    // reads every page), so a regenerated document's owed pages are read,
+    // and billed, whichever driver reaches it first. A batch with a key
+    // reads exactly the pages it always did. A page nothing owes (a first
+    // index, a document whose last generation was keyless) is still
+    // indexed from its text layer by a batch with no key: no background
+    // job bills anyone.
+    const owedVision = vision ? new Set<number>() : new Set<number>(pageQueue(cur.vision_owed_pages));
+    const owedEveryVisionPage = !vision && owesEveryVisionPage(cur.vision_owed_pages);
+    const readsEveryPage = vision ? vision.forceAllPages === true : opts.visionAllPages === true;
+    let visionHeldPages = 0;
     const baseVisionPages = genStart ? 0 : Number(cur.vision_pages ?? 0);
     const baseEmptyPages = genStart ? 0 : Number(cur.empty_pages ?? 0);
 
@@ -1319,7 +1514,9 @@ export async function ingestKnowledgeDocBatch(
       let visionHeld = false;
       const rawPageText = lines.join("\n");
       const tagsFromText = extractEquipmentTags(rawPageText).length + extractDrawingRefs(rawPageText).length;
-      if (forceVision || vision?.forceAllPages || pageNeedsVision(rawPageText, tagsFromText)) {
+      const needsVision = pageNeedsVision(rawPageText, tagsFromText);
+      const owedHere = (owedVision.has(p) || owedEveryVisionPage) && (needsVision || readsEveryPage);
+      if (forceVision || vision?.forceAllPages || needsVision || owedHere) {
         // Don't START a vision page we can't finish — a page begun at t=50s on
         // a 60s function is pure waste, and worse, it takes the whole batch's
         // committed progress down with it.
@@ -1373,12 +1570,16 @@ export async function ingestKnowledgeDocBatch(
           // the last finished page so the caller's next call resumes exactly
           // here with a fresh invocation's worth of time.
           return { stop: timeForVision ? "budget" : "time" };
-        } else if (opts.noVisionReason) {
+        } else if (opts.noVisionReason || owedHere) {
           // GOV-11 / GOV-4: no vision for a reason someone can fix (the
           // agreement, the ledger). The page keeps its text layer for now and
           // waits for AI vision on the row, like a provider failure (ING-6):
           // consumed text-only, the document would reach 'ready' and the page
-          // would never be read once the reason is gone.
+          // would never be read once the reason is gone. ING-13: so does a
+          // page the document owes AI vision (one the last index generation
+          // read with it, and a driver with a key would read with it now),
+          // whatever the reason this batch has none (no key, no budget) — a
+          // regenerated document never throws away what AI vision read in it.
           visionHeld = true;
         }
       }
@@ -1407,17 +1608,33 @@ export async function ingestKnowledgeDocBatch(
               nx: null, ny: null, pos_source: null,
             });
           }
+          // DWG-2: a pipe line number is kept as what it is — a line, never
+          // equipment (extractEquipmentTags refuses it by the same grammar).
+          for (const ln of extractLineNumbers(line)) {
+            entities.push({
+              org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
+              page: p, kind: "line", tag: ln, raw: truncateSafe(line, 160), x: null, y: null,
+              nx: null, ny: null, pos_source: null,
+            });
+          }
         }
       } else if (isDrawingLikePage(pageText)) {
         // Normalized position rides along with every hit: PDF user space has
         // its origin at the BOTTOM-left and is sized in points, neither of
         // which a browser overlay can use. 0..1 from the top-left survives any
         // zoom or render width, so "show me V-3" can point straight at it.
+        // DWG-3: through pdf.js's own transform onto the page as drawn —
+        // /Rotate, the CropBox origin and /UserUnit included — so a rotated
+        // or cropped sheet's marks land where the glyphs are (they used to
+        // be divided by the rotated viewport and pinned to an edge).
         const view = page.getViewport({ scale: 1 });
-        const norm = (x: number | null, y: number | null) =>
-          x === null || y === null || !view.width || !view.height
-            ? { nx: null, ny: null }
-            : { nx: clamp01(x / view.width), ny: clamp01(1 - y / view.height) };
+        const norm = (x: number | null, y: number | null): { nx: number | null; ny: number | null } => {
+          if (x === null || y === null || !view.width || !view.height) return { nx: null, ny: null };
+          const [px, py] = view.convertToViewportPoint(x, y);
+          const nx = onPage(px / view.width);
+          const ny = onPage(py / view.height);
+          return nx === null || ny === null ? { nx: null, ny: null } : { nx, ny };
+        };
         for (const item of content.items as TextItem[]) {
           const str = (item.str ?? "").trim();
           if (str.length < 2) continue;
@@ -1428,14 +1645,21 @@ export async function ingestKnowledgeDocBatch(
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
               page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(str, 160), x, y,
-              nx, ny, pos_source: nx === null ? null : "text",
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
             });
           }
           for (const ref of extractDrawingRefs(str)) {
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
               page: p, kind: "ref", tag: ref, raw: truncateSafe(str, 160), x, y,
-              nx, ny, pos_source: nx === null ? null : "text",
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
+            });
+          }
+          for (const ln of extractLineNumbers(str)) {
+            entities.push({
+              org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
+              page: p, kind: "line", tag: ln, raw: truncateSafe(str, 160), x, y,
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
             });
           }
         }
@@ -1448,12 +1672,14 @@ export async function ingestKnowledgeDocBatch(
       if (visionRead || isDrawingLikePage(pageText)) {
         // Off-page connector BOX NUMBERS — the small numbered box at the page
         // edge that pairs with the same number on the continuation sheet. The
-        // raw line keeps the stream/destination + drawing ref for pairing.
+        // raw line keeps the stream/destination + drawing ref for pairing —
+        // from its own box on a contract line, else the whole line (DWG-8:
+        // opcEvidence), never one cut before its drawing number.
         for (const line of lines) {
           for (const box of parseOpcBoxes(line)) {
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
-              page: p, kind: "opc", tag: box, raw: truncateSafe(line, 160), x: null, y: null,
+              page: p, kind: "opc", tag: box, raw: opcEvidence(line, box), x: null, y: null,
               nx: null, ny: null, pos_source: null,
             });
           }
@@ -1564,7 +1790,7 @@ export async function ingestKnowledgeDocBatch(
         const read = step.page;
         entityRows.push(...read.entities);
         if (read.visionFailed) { failed.add(p); visionError = read.visionFailed; }
-        else if (read.visionHeld) failed.add(p);
+        else if (read.visionHeld) { failed.add(p); visionHeldPages++; }
         else failed.delete(p);
         lastCompletedPage = p;
         const built = chunkRowsFor(p, read, section, carried);
@@ -1977,7 +2203,7 @@ export async function ingestKnowledgeDocBatch(
       pagesReadable: Math.max(0, reached - failedAfter.length),
       emptyPages, emptyPagesTotal: leased ? emptyTotal : emptyPages,
       visionPages, visionBudgetSpent, stoppedForTime,
-      visionFailedPages: failedAfter, visionError, visionRetryAttempts: attempted,
+      visionFailedPages: failedAfter, visionError, visionRetryAttempts: attempted, visionHeldPages,
       busy: false, retryAfterMs: null, superseded: false,
       // A commit that finished a retry round says when the rest is tried.
       visionRetryBlocked: false, visionRetryMessage: roundBackoff?.message ?? null, visionRetryAfter: roundBackoff?.after ?? null,
@@ -2162,7 +2388,7 @@ export async function drainKnowledgeIngestQueue(opts: {
         // record or ledger that cannot be read) holds the pages that need
         // vision and is named on the row — never the generic "add a key".
         const res = await ingestKnowledgeDocBatch(row, sponsor.ctx, opts.deadlineMs,
-          sponsor.ctx ? {} : { noVisionReason: sponsor.noVisionReason ?? null });
+          sponsor.ctx ? {} : { noVisionReason: sponsor.noVisionReason ?? null, visionAllPages: sponsor.forceAllPages });
         // Someone else is indexing it, or it moved under us: not ours now.
         // Failed vision pages this run cannot retry: said on the row, and
         // the document keeps its index — never an error (ING-6). A failed

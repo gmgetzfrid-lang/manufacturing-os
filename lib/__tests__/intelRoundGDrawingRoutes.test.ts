@@ -36,6 +36,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 
 const net = vi.hoisted(() => ({ maxRows: 1000, rpcMissing: false, rpcCalls: [] as string[] }));
@@ -896,6 +898,20 @@ describe("DWG-13 / PR-10 — the relocate round: a refuted point is never cached
     body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["E-9"], action: "reject" })).json();
     expect(body.cleared).toBe(0);
     expect(rowsOf("knowledge_page_entities").find((e) => e.tag === "E-9")).toMatchObject({ nx: 0.2, pos_source: "text" });
+  });
+
+  it("DWG-3 (I-06b): a text-layer mark stored on the page as drawn ('viewport') comes back exact — never approximate, never rejectable, no AI call", async () => {
+    locateSheet();
+    Object.assign(rowsOf("knowledge_page_entities").find((e) => e.tag === "E-9")!, { nx: 0.8, ny: 0.7, pos_source: "viewport" });
+    const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["E-9"] })).json();
+    const mark = body.positions.find((p: { tag: string }) => p.tag === "E-9");
+    expect(mark).toEqual({ tag: "E-9", nx: 0.8, ny: 0.7, source: "viewport" });
+    expect(ai.calls).toHaveLength(0);
+    const cleared = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["E-9"], action: "reject" })).json();
+    expect(cleared.cleared).toBe(0);
+    // The viewer draws it where it is stored, as an exact mark.
+    const viewer = readFileSync(join(process.cwd(), "components/knowledge/CitedPageViewer.tsx"), "utf8");
+    expect(viewer).toMatch(/const approx = m\.source === "vision";/);
   });
 });
 

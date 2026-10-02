@@ -52,6 +52,7 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import { assertAiGates, GovernedCallError } from "@/lib/ai/aiGates";
 import type { AiProviderId } from "@/lib/ai/providerCall";
 
 export const runtime = "nodejs";
@@ -149,9 +150,11 @@ export async function POST(req: NextRequest) {
   // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
   // model. It spends THIS user's key — the person who triggered indexing —
   // metered as its own op and stopped at their monthly cap. No key or no
-  // headroom just means text-only indexing, never a failure. A reason the
-  // member can fix — an agreement that is unsigned or cannot be read, a
-  // ledger that cannot be read (GOV-11 / GOV-4) — never consumes a page
+  // headroom just means text-only indexing, never a failure — except for a
+  // page the document owes AI vision (ING-13), which the engine holds for a
+  // key and the answer says is waiting. A reason the member can fix — an
+  // agreement that is unsigned or cannot be read, a ledger that cannot be
+  // read (GOV-11 / GOV-4) — never consumes a page
   // that needs vision: the engine holds it on the row (`noVisionReason`),
   // the text layer of the rest still indexes, and a read-every-page library
   // is not indexed at all (below) — as the cron drain does.
@@ -175,6 +178,9 @@ export async function POST(req: NextRequest) {
   // agreement. `allPages` says the same for a read-every-page library.
   let noVisionReason: string | null = null;
   let heldForVision: { allPages: string; status: 409 | 428; provider?: string } | null = null;
+  /** The cap sentence, when the member's monthly cap is reached: what the
+   *  answer says once the batch shows whether it held pages (ING-13). */
+  let capReached: string | null = null;
   {
     const { data: conn } = await supabaseAdmin
       .from("ai_connections").select("provider, model, api_key")
@@ -225,9 +231,11 @@ export async function POST(req: NextRequest) {
         heldForVision = { allPages: "AI usage can't be read right now.", status: 409 };
       } else if (cap > 0 && spent.spentUsd >= cap) {
         // At the cap the pages are indexed from their text layer only, and
-        // nothing reads them again by itself (never promised here).
-        visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
-          "pages without a text layer were indexed from their text layer only.";
+        // nothing reads them again by itself (never promised here) — except
+        // a page the document owes AI vision (ING-13), which the engine
+        // holds for it, and the answer then says so (below).
+        capReached = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)})`;
+        visionSkipReason = `${capReached} — pages without a text layer were indexed from their text layer only.`;
       } else {
         vision = {
           provider: conn!.provider as AiProviderId,
@@ -289,7 +297,10 @@ export async function POST(req: NextRequest) {
       // unclaimed on a pre-20261122 database.
       ...("source_version_id" in doc ? { source_version_id: (doc.source_version_id as string | null) ?? null } : {}),
     };
-    const batchOpts = { ...retry, noVisionReason };
+    // ING-13: the library's read-every-page choice rides inside `vision`
+    // when there is one; a batch without one is told it too, so the pages it
+    // holds for a key are the ones a driver with a key would read.
+    const batchOpts = { ...retry, noVisionReason, visionAllPages: forceAllPages };
     let res: IngestBatchResult = await ingestKnowledgeDocBatch(row, vision, deadlineMs, batchOpts);
     // The loser WAITS (ING-2): the other driver holds the claim for one batch
     // at most. Look again until it lets go, while a batch still fits.
@@ -331,9 +342,18 @@ export async function POST(req: NextRequest) {
     // page was indexed with its text layer only, and the note says so.
     if (res.visionFailedPages.length > 0) {
       const n = res.visionFailedPages.length;
-      // Held for a reason the member can fix (GOV-11 / GOV-4): the reason
-      // leads visionSkipReason already; this says where the pages are.
-      const note = noVisionReason && !res.legacy
+      // No vision context here — a reason the member can fix (GOV-11 /
+      // GOV-4), no key, or the cap reached: nothing retries the pages on
+      // their own, and a page this batch held (ING-13) was not indexed
+      // text-only. The reason leads visionSkipReason already; this says
+      // where the pages are.
+      const waiting = !vision && !res.legacy;
+      if (waiting && capReached && res.visionHeldPages > 0) {
+        const h = res.visionHeldPages;
+        visionSkipReason = `${capReached} — ${h} page${h === 1 ? " was" : "s were"} held for AI vision; ` +
+          "any other page without a text layer was indexed from its text layer only.";
+      }
+      const note = waiting
         ? `${n} page${n === 1 ? " waits" : "s wait"} for AI vision on the document — it is not marked ready until ` +
           `${n === 1 ? "that page is" : "they are"} read or the partial index is accepted.`
         : `${n} page${n === 1 ? "" : "s"} could not be read by AI vision` +
@@ -475,7 +495,21 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
  *      document already on the chosen chunker (or not yet indexed) is
  *      skipped, so a re-run never resets — or re-bills — one twice, and a
  *      document being indexed at that moment is reported busy and picked up
- *      by the next run. */
+ *      by the next run.
+ *    - A run that would re-read AI-vision pages (the dry run counts them),
+ *      or resets documents in a library that reads every page with AI
+ *      vision, first puts the CALLER through the vision test — the gate
+ *      stack in lib/ai/aiGates.ts: their own key on an allowed provider, the
+ *      signed agreement, under the monthly cap (ING-13). One who fails it is
+ *      refused with 409 before anything is audited or reset: the library
+ *      page checks the clicking person's key too, but a direct call or any
+ *      other client never meets that check. The refusal carries the gate's
+ *      status and details (the agreement to sign, the cap figures). A check
+ *      that cannot run at all (a saved key that cannot be decrypted) answers
+ *      500 with the reason, again before anything is audited or reset.
+ *    - A document reset with part of its old index left is reported by id in
+ *      `leftovers` ({ documentId, left, message }); `errors` keeps its
+ *      message too, for a client that predates the field (ING-13). */
 async function reindex(libraryId: string, chunker: unknown, userId: string, dryRun: boolean, deadlineMs: number) {
   if (!libraryId) return bad("libraryId is required");
   if (chunker !== 1 && chunker !== 2) return bad("chunker must be 1 or 2");
@@ -501,7 +535,40 @@ async function reindex(libraryId: string, chunker: unknown, userId: string, dryR
     return NextResponse.json({
       ok: true, dryRun: true, chunker,
       documents: plan.documents, toReset: plan.toReset, visionPagesToReread: plan.visionPagesToReread,
+      keylessHolds: plan.keylessHolds === true,
     });
+  }
+
+  // ── The vision test, before anything is audited or reset (ING-13) ──────
+  //    The documents a run resets are indexed again on the key of whoever
+  //    indexes them; a run that would throw away pages AI vision read (or
+  //    that resets a read-every-page library) is the caller's to make only
+  //    with a key that can read them back.
+  if (plan.toReset > 0) {
+    const { data: libAi, error: libAiErr } = await supabaseAdmin
+      .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+    if (libAiErr) return bad(`The library's AI settings could not be read, so nothing was changed: ${libAiErr.message}`, 500);
+    const visionAllPages = ((libAi?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
+    if (plan.visionPagesToReread > 0 || visionAllPages) {
+      try {
+        await assertAiGates({ orgId: lib.org_id as string, userId, op: "knowledgeVision" });
+      } catch (e) {
+        // A check that could not run at all (a saved key that cannot be
+        // decrypted, say) is not a refusal: answered as JSON, with nothing
+        // audited or reset.
+        if (!(e instanceof GovernedCallError)) {
+          return bad(`The AI vision check could not run, so nothing was reset: ${(e as Error).message}`, 500);
+        }
+        const n = plan.visionPagesToReread;
+        const lead = visionAllPages ? "This library reads every page with AI vision"
+          : `This re-index reads ${n} page${n === 1 ? "" : "s"} AI vision read before again`;
+        return NextResponse.json({
+          error: `Nothing was reset. ${lead}, and your AI key cannot read ${visionAllPages ? "its pages" : "them"} right now: ${e.message}`,
+          visionRequired: true, gateStatus: e.status, ...(e.details ?? {}),
+          chunker, toReset: plan.toReset, visionPagesToReread: n,
+        }, { status: 409 });
+      }
+    }
   }
 
   // The intent, recorded before anything is reset.
@@ -523,6 +590,7 @@ async function reindex(libraryId: string, chunker: unknown, userId: string, dryR
   return NextResponse.json({
     ok: out.errors.length === 0, chunker,
     reset: out.reset.length, busy: out.busy.length, errors: out.errors.slice(0, 20),
+    leftovers: (out.leftovers ?? []).slice(0, 20),
     toReset: out.toReset, visionPagesToReread: out.visionPagesToReread, remaining: out.remaining,
   }, { status: out.errors.length === 0 ? 200 : 207 });
 }

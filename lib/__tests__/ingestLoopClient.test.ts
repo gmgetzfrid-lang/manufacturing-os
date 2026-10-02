@@ -299,6 +299,35 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     });
   });
 
+  it("ING-13: a route that returns structured leftovers is read by id — never by the engine's wording — and a leftover's message is not filed again as an error", async () => {
+    // A wording the old regex would not recognise: only the structured field
+    // can tell this document was reset.
+    const msg = "d-9: chunks: timeout (queued — cleared by its first batch)";
+    answers = [{
+      __status: 207, ok: false, chunker: 2, reset: 4, busy: 0, errors: [msg, "d-4: row: permission denied"],
+      leftovers: [{ documentId: "d-9", left: ["chunks: timeout"], message: msg }], remaining: 1,
+    }, {
+      __status: 207, ok: false, chunker: 2, reset: 0, busy: 0, errors: ["d-4: row: permission denied"], leftovers: [], remaining: 1,
+    }];
+    expect(await runTableAwareReindex("lib-1")).toEqual({
+      reset: 4, busy: 0, errors: ["d-4: row: permission denied"], leftovers: [msg], remaining: 1, stopped: null,
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("ING-13: structured leftovers are kept from every call, one per document; a route without the field still files the engine's wording (an app that predates the field)", async () => {
+    const first = "d-1: page entities: timeout (the row is queued; the re-index's first batch clears what is left)";
+    const second = "d-2: mentions: timeout (queued)";
+    answers = [
+      { __status: 207, ok: false, chunker: 2, reset: 5, busy: 0, errors: [first], remaining: 2 },
+      { __status: 207, ok: false, chunker: 2, reset: 2, busy: 0, errors: [second],
+        leftovers: [{ documentId: "d-2", left: ["mentions: timeout"], message: second }], remaining: 0 },
+    ];
+    expect(await runTableAwareReindex("lib-1")).toEqual({
+      reset: 7, busy: 0, errors: [], leftovers: [first, second], remaining: 0, stopped: null,
+    });
+  });
+
   it("an earlier call's failure that a later call reset is not reported — leftovers are kept from every call", async () => {
     const left = "d-1: page entities: timeout (the row is queued; the re-index's first batch clears what is left)";
     answers = [
@@ -414,6 +443,34 @@ describe("the accept-partial and table-aware re-index calls (ING-6, ING-4)", () 
     // With nothing counted (and not a read-every-page library) the page asks
     // for no key, so it never says the run starts "on your key" outright.
     expect(msg).not.toContain("this page starts on your key as soon as you confirm");
+  });
+
+  it("ING-13: where the database records what a reset owes AI vision (keylessHolds), the confirmation and the key refusal say a keyless driver holds those pages — never that they come back text-only for good", () => {
+    const plan = { documents: 6, toReset: 4, visionPagesToReread: 52, keylessHolds: true };
+    const msg = tableAwareReindexMessage(plan);
+    expect(msg).toContain(
+      "A page AI vision read before, and would read again, that is reached with no such key waits for one — listed as "
+      + "waiting on AI vision, the document searchable but not marked ready until the page is read or an admin accepts the "
+      + "partial index.",
+    );
+    // A document indexed before chunks said how their text was read owes
+    // every page that needs AI vision (the reset's OWES_EVERY_VISION_PAGE),
+    // and the confirmation says so.
+    expect(msg).toContain("In a document indexed before the app recorded which pages AI vision read, every page that needs AI vision waits.");
+    expect(msg).not.toMatch(/does not read it again until the document is re-indexed on a key/);
+    const all = tableAwareReindexMessage({ ...plan, visionPagesToReread: 0 }, { visionAllPages: true });
+    expect(all).toMatch(/no usable key of their own indexes them, holding the pages AI vision read before for a key and the rest text-only\./);
+    expect(all).not.toMatch(/indexes them text-only\./);
+    const refusal = tableAwareReindexKeyRefusal(plan, "you have no AI key saved — add yours in AI settings first");
+    expect(refusal).toMatch(/those pages would wait for one, and their documents would not be marked ready until they are read or an admin accepts the partial index\.$/);
+    expect(refusal).not.toMatch(/only their text layer/);
+  });
+
+  it("ING-13: the plan carries keylessHolds only when the route says so — a route that predates it plans as before", async () => {
+    answers = [{ ok: true, dryRun: true, chunker: 2, documents: 3, toReset: 2, visionPagesToReread: 9, keylessHolds: true }];
+    expect(await planTableAwareReindex("lib-1")).toEqual({ documents: 3, toReset: 2, visionPagesToReread: 9, keylessHolds: true });
+    answers = [{ ok: true, dryRun: true, chunker: 2, documents: 3, toReset: 2, visionPagesToReread: 9, keylessHolds: false }];
+    expect(await planTableAwareReindex("lib-1")).toEqual({ documents: 3, toReset: 2, visionPagesToReread: 9 });
   });
 
   it("a read-every-page library: the nightly run skips a document with no uploader key (every doc-control mirror), and a keyless controller's open app indexes it text-only — said, even when no vision page was counted", () => {

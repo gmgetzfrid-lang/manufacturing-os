@@ -16,9 +16,13 @@
 //          Bridge and the mention pass follow, as for any 'ready' document)
 //   ING-4  the per-library re-index: a dry run first, the intent audited
 //          before anything is reset, bounded, resumable, never twice
+//   ING-13 (I-06b) the re-index refuses, before it audits or resets
+//          anything, a caller who fails the vision test (lib/ai/aiGates)
+//          when the run would re-read AI-vision pages or the library reads
+//          every page with AI vision; its leftovers come back structured
 //   ADD-1  the controller gate reads the role collection
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 import { makePdf, prosePage, drawingSheet } from "./knowledgePdfFixtures";
@@ -44,9 +48,14 @@ vi.mock("unpdf", async (orig) => ({
 }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn() }));
+// The real module underneath (capReached, capIsLocked … for lib/ai/aiGates,
+// which the re-index's vision gate runs — ING-13); the ledger reads stubbed.
+vi.mock("@/lib/ai/usageServer", async (orig) => ({
+  ...(await orig<typeof import("@/lib/ai/usageServer")>()),
+  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn(),
+}));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
+vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: vi.fn((k: string) => k) }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
 import {
@@ -55,6 +64,7 @@ import {
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
+import { openAiKey } from "@/lib/ai/keyVault";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const DOC = "kd-9";
@@ -543,19 +553,26 @@ describe("ING-6 — failed vision pages on the response, and the explicit way ou
 });
 
 describe("ING-4 / ING-7 — 'Re-index with table-aware chunking' is an explicit per-library action", () => {
+  // The library's documents hold AI-vision pages, so the run re-reads them:
+  // the controller running it has a key the ingest path can read with — a
+  // saved connection on an allowed provider, the signed agreement (seed),
+  // under the monthly cap (ING-13; a keyless controller is refused below).
   const library = () => {
     seed(docRow({ status: "ready", pages_indexed: 3, page_count: 3, vision_pages: 2, chunk_version: 1 }));
     db.tables.knowledge_documents.push(docRow({ id: "kd-10", status: "ready", pages_indexed: 1, page_count: 1, vision_pages: 1 }));
     db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", name: "Standards", chunk_version: 1 }];
     db.tables.knowledge_chunks = [{ id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "old" }];
     db.tables.entity_mentions = [];
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "m", api_key: "k" }];
   };
+  beforeEach(() => { vi.mocked(getCapUsd).mockImplementation(async () => 10); });
+  afterEach(() => { vi.mocked(getCapUsd).mockImplementation(async () => 0); });
 
   it("a dry run says what the re-index would reset and re-bill — before anything is changed", async () => {
     library();
     const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2, dryRun: true });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, dryRun: true, chunker: 2, documents: 2, toReset: 2, visionPagesToReread: 3 });
+    expect(await res.json()).toEqual({ ok: true, dryRun: true, chunker: 2, documents: 2, toReset: 2, visionPagesToReread: 3, keylessHolds: true });
     expect(db.tables.knowledge_libraries[0].chunk_version).toBe(1);
     expect(rowsOf("knowledge_chunks")).toHaveLength(1);
     expect(rowsOf("knowledge_documents").every((d) => d.status === "ready")).toBe(true);
@@ -642,5 +659,206 @@ describe("ING-4 / ING-7 — 'Re-index with table-aware chunking' is an explicit 
     expect(res.status).toBe(424);
     expect((await res.json()).error).toMatch(/needs migration 20261122_intel_roundG_ingest_integrity\.sql/);
     expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+  });
+});
+
+describe("ING-13 (I-06b) — the re-index's vision gate is the server's, before anything is audited or reset", () => {
+  // One document, read last time with AI vision on two of its pages (the dry
+  // run counts them), in a library that may or may not read every page.
+  const library = (over: { visionPages?: number; visionAllPages?: boolean } = {}) => {
+    seed(docRow({ status: "ready", pages_indexed: 3, page_count: 3, vision_pages: over.visionPages ?? 2, chunk_version: 1 }));
+    db.tables.knowledge_libraries = [{
+      id: "kl-1", org_id: "o1", name: "P&IDs", chunk_version: 1,
+      ai_features: over.visionAllPages ? { visionAllPages: true } : {},
+    }];
+    db.tables.knowledge_chunks = [{ id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "old" }];
+    db.tables.entity_mentions = [];
+  };
+  const keyed = () => { db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "m", api_key: "k" }]; };
+  const reindex = () => post({ action: "reindex", libraryId: "kl-1", chunker: 2 });
+  /** Nothing audited, the library's choice and every document as they were. */
+  const untouched = () => {
+    expect(rowsOf("audit_logs")).toEqual([]);
+    expect(db.tables.knowledge_libraries[0].chunk_version).toBe(1);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(1);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", pages_indexed: 3, chunk_version: 1 });
+    expect(db.ops.some((o) => o.table === "knowledge_documents" && o.kind === "update")).toBe(false);
+  };
+  beforeEach(() => { vi.mocked(getCapUsd).mockImplementation(async () => 10); });
+  afterEach(() => {
+    vi.mocked(getCapUsd).mockImplementation(async () => 0);
+    vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 0 }) as Awaited<ReturnType<typeof getMonthUsage>>);
+  });
+
+  it("the record's reproduction: a keyless controller's run that would re-read AI-vision pages answers 409 — nothing audited, nothing reset", async () => {
+    library();
+    const res = await reindex();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ visionRequired: true, gateStatus: 412, toReset: 1, visionPagesToReread: 2 });
+    expect(body.error).toMatch(/^Nothing was reset\. This re-index reads 2 pages AI vision read before again, /);
+    expect(body.error).toMatch(/Add your Claude or OpenAI key in AI settings first/);
+    untouched();
+  });
+
+  it("a library that reads every page with AI vision is refused for a keyless controller even with no AI-vision page counted", async () => {
+    library({ visionPages: 0, visionAllPages: true });
+    const res = await reindex();
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^Nothing was reset\. This library reads every page with AI vision, /);
+    untouched();
+  });
+
+  it("a library AI vision does not read: the keyless controller's run goes ahead exactly as before", async () => {
+    library({ visionPages: 0 });
+    const res = await reindex();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, reset: 1, toReset: 1, visionPagesToReread: 0, remaining: 0 });
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "stale", pages_indexed: 0 });
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_LIBRARY_REINDEXED"]);
+  });
+
+  it("a controller whose key can read runs it — audited first, then reset", async () => {
+    library(); keyed();
+    const res = await reindex();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, reset: 1, visionPagesToReread: 2, remaining: 0 });
+    expect(rowsOf("audit_logs").map((a) => a.action)).toEqual(["KNOWLEDGE_LIBRARY_REINDEXED"]);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "stale", pages_indexed: 0 });
+  });
+
+  it("a key at its monthly cap, or locked at $0, is refused with the cap's own sentence", async () => {
+    library(); keyed();
+    vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 10 }) as Awaited<ReturnType<typeof getMonthUsage>>);
+    let res = await reindex();
+    expect(res.status).toBe(409);
+    let body = await res.json();
+    expect(body).toMatchObject({ visionRequired: true, gateStatus: 402 });
+    expect(body.error).toMatch(/Monthly AI budget reached \(\$10\.00 of \$10\.00\)/);
+    untouched();
+
+    vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 0 }) as Awaited<ReturnType<typeof getMonthUsage>>);
+    vi.mocked(getCapUsd).mockImplementation(async () => Number.MIN_VALUE);
+    res = await reindex();
+    expect(res.status).toBe(409);
+    body = await res.json();
+    expect(body).toMatchObject({ gateStatus: 402, locked: true });
+    expect(body.error).toMatch(/Your monthly AI cap is set to \$0, so AI is locked for you/);
+    untouched();
+  });
+
+  it("an unsigned agreement is refused, carrying the agreement to sign so a client can prompt", async () => {
+    library(); keyed();
+    db.tables.ai_key_agreements = [];
+    const res = await reindex();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ gateStatus: 428, agreementRequired: true, agreementVersion: AGREEMENT_VERSION });
+    expect(String(body.agreementText)).not.toBe("");
+    expect(body.error).toMatch(/Accept the AI acceptable-use agreement first/);
+    untouched();
+  });
+
+  it("a ledger that cannot be read refuses the run (GOV-4) — never a 500, nothing reset", async () => {
+    library(); keyed();
+    const { AiUsageUnavailableError } = await import("@/lib/ai/usageServer");
+    vi.mocked(getCapUsd).mockImplementation(async () => { throw new AiUsageUnavailableError("statement timeout"); });
+    const res = await reindex();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ gateStatus: 503 });
+    expect(body.error).toMatch(/AI usage can't be read right now/);
+    untouched();
+  });
+
+  it("a vision check that cannot run at all (a saved key that cannot be decrypted) answers a JSON 500 with the reason — nothing audited, nothing reset (fix pass 3)", async () => {
+    library(); keyed();
+    vi.mocked(openAiKey).mockImplementationOnce(() => { throw new Error("Unsupported state or unable to authenticate data"); });
+    const res = await reindex();
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "The AI vision check could not run, so nothing was reset: Unsupported state or unable to authenticate data" });
+    untouched();
+  });
+
+  it("the dry run changes nothing and answers as before, whoever asks — and says whether a keyless driver would hold the AI-vision pages (20261162)", async () => {
+    library();
+    const res = await post({ action: "reindex", libraryId: "kl-1", chunker: 2, dryRun: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, dryRun: true, chunker: 2, documents: 1, toReset: 1, visionPagesToReread: 2, keylessHolds: true });
+    untouched();
+    // A database without 20261162: a keyless driver indexes them text-only, and the plan says so.
+    db.missingColumns.knowledge_documents = ["vision_owed_pages"];
+    const before = await (await post({ action: "reindex", libraryId: "kl-1", chunker: 2, dryRun: true })).json();
+    expect(before).toMatchObject({ toReset: 1, visionPagesToReread: 2, keylessHolds: false });
+    untouched();
+  });
+
+  it("a document reset with part of its old index left comes back structured, by id, beside errors (which keep the message for an older client)", async () => {
+    library(); keyed();
+    db.hooks.push((op) => op.table === "knowledge_chunks" && op.kind === "delete"
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const res = await reindex();
+    expect(res.status).toBe(207);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: false, reset: 1, remaining: 0 });
+    expect(body.leftovers).toEqual([{
+      documentId: DOC,
+      left: ["chunks: canceling statement due to statement timeout"],
+      message: `${DOC}: chunks: canceling statement due to statement timeout (the row is queued; the re-index's first batch clears what is left)`,
+    }]);
+    expect(body.errors).toEqual([body.leftovers[0].message]);
+  });
+
+  // Review fix pass: the hold reaches the existing corpus, and the answer of
+  // a batch with no vision context says where the held pages are.
+  const WAITS = "1 page waits for AI vision on the document — it is not marked ready until that page is read or the partial index is accepted.";
+  /** A three-page document (its middle page has no text layer) the last
+   *  generation read page 2 of with AI vision; `provenance` false: indexed
+   *  before chunks said how their text was read (every chunk 'text'). */
+  const readBefore = async (provenance: boolean) => {
+    seed(docRow({ status: "ready", pages_indexed: 3, page_count: 3, vision_pages: 1, chunk_version: 1, vision_owed_pages: [] }));
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", name: "P&IDs", chunk_version: 1, ai_features: {} }];
+    db.tables.knowledge_chunks = [1, 2, 3].map((page) => ({
+      id: `c${page}`, document_id: DOC, org_id: "o1", library_id: "kl-1", page, seq: 0, content: `page ${page}`,
+      source: provenance && page === 2 ? "vision" : "text",
+    }));
+    db.tables.entity_mentions = [];
+    r2.objects.set(KEY, await makePdf([prosePage("scope"), null, prosePage("bolting")]));
+  };
+
+  it("the review's reproduction: a keyed controller re-indexes a library indexed before chunks said how they were read; a keyless driver then holds the page that needs AI vision — never 'ready' text-only — and its answer says the page waits", async () => {
+    await readBefore(false);
+    keyed();
+    expect((await reindex()).status).toBe(200);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "stale", vision_owed_pages: [0] });
+
+    // A keyless colleague's app-shell indicator reaches the document first.
+    db.tables.ai_connections = [];
+    const reads = vi.mocked(transcribePageImage).mock.calls.length;
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(body.visionSkipReason).toBe(`Add your AI key in AI settings to read pages that have no text layer. ${WAITS}`);
+    expect(body.visionSkipReason).not.toMatch(/retried automatically|could not be read by AI vision/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2], error: null });
+    expect(vi.mocked(transcribePageImage).mock.calls.length).toBe(reads);
+  });
+
+  it("a member at their monthly cap: the page held for AI vision is said to wait — never 'indexed from its text layer only', never 'retried automatically'", async () => {
+    await readBefore(true);
+    await resetKnowledgeIndex([DOC]);
+    expect(rowsOf("knowledge_documents")[0].vision_owed_pages).toEqual([2]);
+    keyed();
+    vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 10 }) as Awaited<ReturnType<typeof getMonthUsage>>);
+    const body = await (await post({ documentId: DOC })).json();
+    expect(body).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1 });
+    expect(body.visionSkipReason).toBe(
+      "Monthly AI budget reached ($10.00 of $10.00) — 1 page was held for AI vision; any other page without a text layer "
+      + `was indexed from its text layer only. ${WAITS}`,
+    );
+    expect(body.visionSkipReason).not.toMatch(/retried automatically/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
   });
 });

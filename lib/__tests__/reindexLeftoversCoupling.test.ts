@@ -3,10 +3,12 @@
 // document the engine RESET but could not fully clear (a leftover: counted
 // in `reset`, out of Ask, queued) from one it could NOT reset (an error),
 // by matching RESET_WITH_LEFTOVERS against the route's free-text `errors`.
-// The route returns no structured leftovers yet (ING-13), so the regex is
-// coupled to the engine's wording in lib/knowledgeIngest.ts and to what
-// app/api/knowledge/ingest/route.ts does with it — files the client does not
-// own. This pins the coupling both ways:
+// Since ING-13 (intelligence Round G, I-06b) the route also returns them
+// structured (`leftovers`, by id) and the client reads that; the regex is
+// kept only for a route that predates the field, so it stays coupled to the
+// engine's wording in lib/knowledgeIngest.ts and to what
+// app/api/knowledge/ingest/route.ts does with it. This pins the coupling
+// both ways:
 //
 //   1. Source: every message resetKnowledgeIndex pushes for a document it
 //      reset with leftovers matches the regex, every other message it
@@ -44,13 +46,20 @@ vi.mock("@/lib/r2", () => ({ R2_BUCKET: "bucket", r2: { send: vi.fn() } }));
 vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn() }));
+// The real module underneath (lib/ai/aiGates reads capReached …): the
+// re-index of a library holding AI-vision pages puts the caller through the
+// vision test (ING-13) — the controller here has a key, signed, under a cap.
+vi.mock("@/lib/ai/usageServer", async (orig) => ({
+  ...(await orig<typeof import("@/lib/ai/usageServer")>()),
+  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 10), recordAskUsage: vi.fn(),
+}));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
 import { resetKnowledgeIndex } from "@/lib/knowledgeIngest";
 import { RESET_WITH_LEFTOVERS, runTableAwareReindex } from "@/lib/knowledge";
+import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const ENGINE = join(process.cwd(), "lib/knowledgeIngest.ts");
 
@@ -171,7 +180,8 @@ const seed = () => resetDb({
   knowledge_chunks: [1, 2, 3].map((p) => ({ id: `c${p}`, document_id: DOC, org_id: "o1", library_id: "kl-1", page: p, seq: 0, content: `page ${p}` })),
   knowledge_page_entities: [{ id: "e1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, kind: "equipment", tag: "P-101" }],
   entity_mentions: [],
-  ai_connections: [],
+  ai_connections: [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "m", api_key: "k" }],
+  ai_key_agreements: [{ id: "ag-1", org_id: "o1", user_id: "u-ctrl", scope: "use", agreement_version: AGREEMENT_VERSION }],
   audit_logs: [],
 });
 const failing = (table: string, kind: Op["kind"], when: (op: Op) => boolean = () => true) =>
@@ -225,6 +235,9 @@ describe("RESET_WITH_LEFTOVERS matches what the engine produces (behaviour)", ()
     expect(posted).toEqual([{ action: "reindex", libraryId: "kl-1", chunker: 2 }]);
     expect(answered[0].status).toBe(207);
     expect(answered[0].body).toMatchObject({ reset: 1, remaining: 0 });
+    // ING-13: the route says so by id, and repeats the message in `errors`.
+    expect(answered[0].body.leftovers).toEqual([expect.objectContaining({ documentId: DOC, left: [expect.stringMatching(/^chunks: /)] })]);
+    expect(answered[0].body.errors).toEqual([(answered[0].body.leftovers as Array<{ message: string }>)[0].message]);
     expect(out).toMatchObject({ reset: 1, errors: [], stopped: null });
     expect(out.leftovers).toHaveLength(1);
     expect(out.leftovers[0]).toMatch(new RegExp(`^${DOC}: chunks: canceling statement due to statement timeout `));
@@ -238,6 +251,7 @@ describe("RESET_WITH_LEFTOVERS matches what the engine produces (behaviour)", ()
     expect(answered[0].body).toMatchObject({ reset: 0, remaining: 1 });
     expect(out).toMatchObject({ reset: 0, leftovers: [], remaining: 1, stopped: null });
     expect(out.errors).toEqual([`${DOC}: row: canceling statement due to statement timeout`]);
+    expect(answered[0].body.leftovers).toEqual([]);
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "ready", pages_indexed: 3 });
   });
 });

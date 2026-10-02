@@ -16,6 +16,32 @@ import {
   findMentions, summarizeByAsset, AUTO_LINK_CONFIDENCE,
   type AliasEntry,
 } from "@/lib/mentionIndex";
+import { pageTail } from "@/lib/knowledgeText";
+
+/** The head chunker 2 gives a page's first chunk when it carries in the
+ *  previous page's unfinished sentence (ING-7: carriedTailMarker in
+ *  lib/knowledgeText.ts, "[cont. from p. N] "). */
+const CARRIED_HEAD_RE = /^\[cont\. from p\. (\d+)\] /;
+
+/** A chunk as the mention engine reads it: without the sentence chunker 2
+ *  carried in from page N (ING-7's handoff). Those words are page N's and
+ *  are counted on page N; matched here too, a tag named in them would be
+ *  counted on this page as well. They are cut exactly — the words carried
+ *  are page N's own unfinished sentence, which pageTail reads back from its
+ *  last chunk, as the ingest does across a batch boundary — never by a
+ *  guess at where the carry ends: when page N's chunk is not at hand, or its
+ *  sentence does not match, only the marker goes. A drawing sheet never
+ *  carries, so a tag list is never touched. */
+export function withoutCarriedSentence(content: string, lastChunkOfPage: (page: number) => string | undefined): string {
+  const head = CARRIED_HEAD_RE.exec(content);
+  if (!head) return content;
+  const rest = content.slice(head[0].length);
+  const words = pageTail(lastChunkOfPage(Number(head[1])) ?? "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return rest;
+  const carried = new RegExp(`^${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")}`);
+  const m = carried.exec(rest);
+  return m ? rest.slice(m[0].length) : rest;
+}
 
 /** How many chunks we pull per round. Chunks are ~paragraph sized. */
 const CHUNK_PAGE = 500;
@@ -87,8 +113,10 @@ export async function indexDocumentMentions(
 
   // Page → concatenated text. Matching per PAGE rather than per chunk means
   // a tag split across a chunk boundary still lands, and the mention count
-  // is the count a human would give.
+  // is the count a human would give. A sentence chunker 2 carried in from the
+  // page before is read on its own page only (withoutCarriedSentence).
   const byPage = new Map<number, string>();
+  const lastChunk = new Map<number, string>();
   for (let from = 0; ; from += CHUNK_PAGE) {
     const { data, error } = await supabaseAdmin
       .from("knowledge_chunks")
@@ -101,7 +129,9 @@ export async function indexDocumentMentions(
     if (error) fail(`mention index: ${error.message}`, knowledgeDocumentId);
     const rows = (data ?? []) as ChunkRow[];
     for (const c of rows) {
-      byPage.set(c.page, `${byPage.get(c.page) ?? ""}\n${c.content}`);
+      const own = withoutCarriedSentence(c.content, (page) => lastChunk.get(page));
+      byPage.set(c.page, `${byPage.get(c.page) ?? ""}\n${own}`);
+      lastChunk.set(c.page, c.content);
     }
     result.chunksScanned += rows.length;
     if (rows.length < CHUNK_PAGE) break;

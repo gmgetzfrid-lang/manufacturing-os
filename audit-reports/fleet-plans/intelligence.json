@@ -1056,6 +1056,30 @@
         "I-18 merged (it edits lib/orchestrator/loop.ts; this package edits tools.ts beside it)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-01 at the I-09 merge (DEC-31 remainder: FLOW-14 Partial, GAP-315 BUILD LATER)."
+    },
+    {
+      "name": "I-22 KEYLESS TEXT-ONLY RECORD — a page a keyless batch commits from its text layer, where a driver with a key would read it with AI vision, is marked on the row; the ask route's DRAWING FACTS says how many pages AI vision could not read",
+      "findings": [
+        "ING-13 (remainder re-owned by the integrator 2026-10-02 at the I-06b merge: done-when 2 for a regenerated document whose last generation was itself keyless — a rev-up, table-aware re-index or rebuild of a document that owes AI vision nothing commits pageNeedsVision pages text-only as complete; the narrowest fix is a keyless-commit count on the row (new column), set by the engine wherever a batch with no vision context commits a page a driver with a key would read with AI vision — or a DEC-58 ruling that accepts it, for the user's ratification)",
+        "ING-6 (remainders re-owned by the integrator 2026-10-02 at the I-06b merge: (a) the third criterion — app/api/knowledge/ask/route.ts's DRAWING FACTS states how many pages AI vision could not read (knowledge_documents.vision_failed_pages), I-03 merged without it; (b) the keyless first-index limb — the same keyless text-only path as ING-13's remainder: one marker or one DEC-58 ruling covers both)"
+      ],
+      "files": [
+        "lib/knowledgeIngest.ts (the batch's commit path only: count a page committed text-only that a keyed driver would read with AI vision) — AFTER I-18 merges, which edits this file next",
+        "one migration: knowledge_documents keyless-commit count (ADD COLUMN IF NOT EXISTS, nullable or default 0; DEC-30 counts-only inventory; one paste) — tolerated absent by the engine and every reader",
+        "app/api/knowledge/ask/route.ts (DRAWING FACTS: the count of pages AI vision could not read, from vision_failed_pages and the new count) — coordinate with I-12 / I-16, which also edit this route",
+        "the library surfaces that show a document's index state (say 'N pages indexed from their text layer only, no AI key')",
+        "tests: both ING-13 cases (rev-up and same-file reset of a document last indexed keyless) and a first index; regression — a batch with a key, and a keyless org's document that needs no AI vision, behave exactly as before"
+      ],
+      "migrationsLikely": 1,
+      "when": "after I-18 merges (I-18 edits lib/knowledgeIngest.ts after I-06b); the DEC-58 alternative may be proposed for the user's ratification instead of the column",
+      "dependsOn": [
+        "I-06b merged (20261162 vision_owed_pages, the owed-page hold; ING-13 done-whens 1, 3, 4)",
+        "I-18 merged (lib/knowledgeIngest.ts)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-02 at the I-06b merge (DEC-31: ING-13's and ING-6's keyless limbs had no running owner). Never hold a keyless org's page (the fix-pass-2 design: a document no AI vision ever read completes text-only) — mark it.",
+      "decisionsNeeded": [
+        "DEC-58 — accept a keyless first index / keyless regeneration ending text-only with only a marker (proposed default: yes, marked on the row and said on the library surface), or hold such pages for a key (rejected at I-06b fix pass 3: it parks every revised drawing of a keyless org)"
+      ]
     }
   ],
   "crossAreaFileOverlaps": [

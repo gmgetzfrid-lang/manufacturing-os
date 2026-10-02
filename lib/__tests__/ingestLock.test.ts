@@ -25,7 +25,7 @@
 //          one left; ING-7 the carry never touches a drawing sheet
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
+import { db, resetDb, rowsOf, type Op, type Row } from "./knowledgeFakeDb";
 import { makePdf, drawingSheet, prosePage, type PageSpec } from "./knowledgePdfFixtures";
 
 const r2 = vi.hoisted(() => ({ objects: new Map<string, Uint8Array>(), deleted: [] as string[] }));
@@ -71,9 +71,10 @@ import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
   INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil, ingestFailureMessage,
-  IngestBatchError, refuseNonPdf,
+  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE,
 } from "@/lib/knowledgeIngest";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { indexDocumentMentions, withoutCarriedSentence } from "@/lib/mentionIndexer";
 
 const DOC = "kd-1";
 const baseDoc = (over: Row = {}): Row => ({
@@ -1236,6 +1237,377 @@ describe("ING-6 — a failed vision page is never silently 'read'", () => {
   });
 });
 
+describe("ING-13 (I-06b) — a keyless batch never consumes, text-only, a page AI vision read in the last index generation", () => {
+  // Three sheets; sheet 2 has no text layer (an SHX plot, a scan) and was
+  // read by AI vision in the last generation — its chunk says so (GOV-9).
+  // The row carries 20261162's column (vision_owed_pages).
+  const pages: PageSpec[] = [drawingSheet(1, ["V-101", "P-201A", "E-301"]), null, prosePage("bolting")];
+  const lastGeneration = async (over: Row = {}) => {
+    const doc = await seed(pages, {
+      status: "ready", pages_indexed: 3, page_count: 3, vision_pages: 1, chunk_version: 1, vision_owed_pages: [], ...over,
+    });
+    db.tables.knowledge_chunks = [
+      { id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: "sheet 1", source: "text" },
+      { id: "c2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: transcript(2), source: "vision", source_model: "m" },
+      { id: "c3", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 3, seq: 0, content: "bolting", source: "text" },
+    ];
+    return doc;
+  };
+  const readsAll = () => { vision.impl = async (page) => ({ text: transcript(page), usage: { inputTokens: 1, outputTokens: 1 }, model: "vision-tier" }); };
+
+  it("the record's reproduction: after a reset, a keyless batch holds the page AI vision read — listed, the document 'indexing', never 'ready' text-only — and a key reads it back", async () => {
+    await lastGeneration();
+    const reset = await resetKnowledgeIndex([DOC]);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    // The reset recorded what the last generation read with AI vision.
+    expect(docRow()).toMatchObject({ status: "stale", pages_indexed: 0, vision_pages: 0, vision_owed_pages: [2] });
+
+    // A keyless driver (another controller's tab, the cron without a sponsor).
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: false, pagesIndexed: 3, visionFailedPages: [2], pagesReadable: 2, visionPages: 0 });
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [2], vision_pages: 0, error: null });
+    expect(vision.calls).toEqual([]);
+    // Pages 1 and 3 are indexed and searchable meanwhile.
+    expect(rowsOf("knowledge_chunks").map((c) => c.page).sort()).toEqual([1, 3]);
+
+    // The next keyless batch parks it with the plain reason, never 'error'.
+    const parked = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(parked).toMatchObject({ visionRetryBlocked: true, done: false });
+    expect(parked.visionRetryMessage).toBe(visionRetryMessage([2], null));
+    expect(docRow()).toMatchObject({ status: "indexing", error: visionRetryMessage([2], null) });
+
+    // A driver with a key reads it back and the document completes.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([2]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 1, error: null });
+    expect(rowsOf("knowledge_page_entities").some((e) => e.page === 2 && e.tag === "V-102")).toBe(true);
+  });
+
+  it("a keyed re-index reads exactly the pages a first index reads, and completes as before", async () => {
+    // The last generation read sheet 1 too (the library once read every
+    // page with AI vision); this one does not, so it is not read again.
+    await lastGeneration();
+    db.tables.knowledge_chunks[0].source = "vision";
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([1, 2]);
+    readsAll();
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(res).toMatchObject({ done: true, visionPages: 1, visionFailedPages: [] });
+    expect(vision.calls).toEqual([2]);
+
+    // …the same pages a first index of the same file reads.
+    await seed(pages, { vision_owed_pages: [] });
+    vision.calls = [];
+    const fresh = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(fresh).toMatchObject({ done: true, visionPages: 1 });
+    expect(vision.calls).toEqual([2]);
+  });
+
+  it("a document no AI vision ever read (a keyless org's) still completes text-only after a reset, as before", async () => {
+    await lastGeneration({ vision_pages: 0 });
+    db.tables.knowledge_chunks = db.tables.knowledge_chunks.filter((c) => c.page !== 2);
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([]);
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: true, visionFailedPages: [] });
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], empty_pages: 1 });
+  });
+
+  it("the owed pages are the last generation's AI reads, its pages still waiting, and an earlier reset's pages not reached yet", async () => {
+    // Mid-way through a regeneration: page 1 read back by AI vision, page 2
+    // waiting on it, page 3 owed by the reset before and not reached yet
+    // (page 1 was owed too, and is read now — its chunk says so).
+    await lastGeneration({ status: "indexing", pages_indexed: 2, vision_failed_pages: [2], vision_owed_pages: [1, 3] });
+    db.tables.knowledge_chunks = [
+      { id: "c1", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 1, seq: 0, content: transcript(1), source: "vision" },
+      { id: "c2", document_id: DOC, org_id: "o1", library_id: "kl-1", page: 2, seq: 0, content: "", source: "text" },
+    ];
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([1, 2, 3]);
+  });
+
+  it("a reset that cannot read which pages AI vision read resets nothing for that document, and says so", async () => {
+    await lastGeneration();
+    db.hooks.push((op, filters) => op.table === "knowledge_chunks" && op.kind === "select" && filters.some((f) => f.col === "source")
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const reset = await resetKnowledgeIndex([DOC]);
+    expect(reset.reset).toEqual([]);
+    expect(reset.errors).toEqual([`${DOC}: the pages AI vision read could not be listed, so nothing was reset: canceling statement due to statement timeout`]);
+    expect(docRow()).toMatchObject({ status: "ready", pages_indexed: 3, ingest_claimed_by: null });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(3);
+  });
+
+  it("…and on a rev-up, the old sheet's cached line traces survive it too: they are listed before anything is deleted (fix pass 3)", async () => {
+    // The reset used to purge the traces (step 1) before it read the owed
+    // pages: a read that failed then reported "nothing was reset" with the
+    // traces already gone. (The line tracer is retired and 20261007 drops
+    // its table; a database that still has it loses nothing here either.)
+    const doc = await lastGeneration({ source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3" });
+    db.tables.knowledge_line_traces = [{ id: "t1", document_id: DOC, org_id: "o1", page: 2, from_tag: "V-102", to_tag: "P-202A" }];
+    db.hooks.push((op, filters) => op.table === "knowledge_chunks" && op.kind === "select" && filters.some((f) => f.col === "source")
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const reset = await resetKnowledgeIndex([DOC], {
+      purgeLineTraces: true, supersedeBusy: true,
+      expect: () => ({ source_version_id: "ver-3" }),
+      rowUpdate: () => ({ file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", source_rev: "4" }),
+    });
+    expect(reset.reset).toEqual([]);
+    expect(reset.errors).toEqual([`${DOC}: the pages AI vision read could not be listed, so nothing was reset: canceling statement due to statement timeout`]);
+    expect(rowsOf("knowledge_line_traces")).toEqual([{ id: "t1", document_id: DOC, org_id: "o1", page: 2, from_tag: "V-102", to_tag: "P-202A" }]);
+    expect(db.ops.some((o) => o.kind === "delete")).toBe(false);
+    expect(docRow()).toMatchObject({
+      status: "ready", pages_indexed: 3, vision_pages: 1, vision_owed_pages: [], ingest_claimed_by: null,
+      file_key: doc.file_key, source_version_id: "ver-3", source_rev: "3",
+    });
+    expect(rowsOf("knowledge_chunks")).toHaveLength(3);
+  });
+
+  it("the cron drain without a sponsored key holds the page too: never 'ready' text-only, never billed", async () => {
+    await lastGeneration({ created_by: "u-nokey" });
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", ai_features: {} }];
+    db.tables.ai_connections = [];
+    await resetKnowledgeIndex([DOC]);
+    const out = await drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+    expect(out.errors).toEqual([]);
+    expect(out.completed).toBe(0);
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [2], pages_indexed: 3 });
+    expect(String(docRow().error)).toMatch(/retrying needs an AI key/);
+    expect(vision.calls).toEqual([]);
+  });
+
+  it("a database without 20261162 resets and indexes exactly as before: the keyless batch commits the page text-only", async () => {
+    await lastGeneration();
+    delete db.tables.knowledge_documents[0].vision_owed_pages;
+    db.missingColumns.knowledge_documents = ["vision_owed_pages"];
+    const reset = await resetKnowledgeIndex([DOC]);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: true, visionFailedPages: [] });
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 0 });
+  });
+
+  it("a document indexed before chunks said how their text was read (every chunk 'text', as 20261122 left them) owes every page that needs AI vision: the reset says so, and a keyless batch holds the textless page", async () => {
+    // The review's reproduction: the row counts a page AI vision read, but
+    // no chunk names it — the owed list used to come back empty, and the
+    // keyless batch took the document to 'ready' text-only.
+    await lastGeneration();
+    db.tables.knowledge_chunks[1].source = "text";
+    const reset = await resetKnowledgeIndex([DOC]);
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(docRow()).toMatchObject({ status: "stale", vision_pages: 0, vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+    expect(OWES_EVERY_VISION_PAGE).toBe(0);                  // no real page is page 0
+
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    // Only the page that needs AI vision is held: sheet 1 (a text layer
+    // with its tags) and the prose page index from their text layer.
+    expect(res).toMatchObject({ done: false, pagesIndexed: 3, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [2], error: null });
+    expect(rowsOf("knowledge_chunks").map((c) => c.page).sort()).toEqual([1, 3]);
+    expect(vision.calls).toEqual([]);
+
+    // A key reads it back, and the document completes.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([2]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 1 });
+  });
+
+  it("an earlier reset's 'every page that needs AI vision' is still owed by a reset before this generation reached its last page — and only then", async () => {
+    // Reset again one page into a keyless regeneration (a rev-up, say):
+    // pages 2 and 3 were never reached, so they are still owed.
+    await lastGeneration({
+      status: "indexing", pages_indexed: 1, page_count: 3, vision_pages: 0, vision_owed_pages: [OWES_EVERY_VISION_PAGE],
+    });
+    db.tables.knowledge_chunks = [db.tables.knowledge_chunks[0]];
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([OWES_EVERY_VISION_PAGE]);
+
+    // A generation that reached its last page holds what it owes on
+    // vision_failed_pages: those pages, and nothing more, are owed.
+    await lastGeneration({
+      status: "indexing", pages_indexed: 3, page_count: 3, vision_pages: 0,
+      vision_failed_pages: [2], vision_owed_pages: [OWES_EVERY_VISION_PAGE],
+    });
+    db.tables.knowledge_chunks = db.tables.knowledge_chunks.filter((c) => c.page !== 2);
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([2]);
+  });
+
+  it("a keyless batch holds an owed page only where a driver with a key would read it with AI vision now — a page with a full text layer is indexed from it, and no keyed retry bills it", async () => {
+    // The last generation read sheet 1 with AI vision too (the library once
+    // read every page); it has a text layer with its tags, which a driver
+    // with a key would index from now — so a keyless one does too.
+    await lastGeneration();
+    db.tables.knowledge_chunks[0].source = "vision";
+    await resetKnowledgeIndex([DOC]);
+    expect(docRow().vision_owed_pages).toEqual([1, 2]);
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ visionFailedPages: [2], visionHeldPages: 1 });
+    expect(rowsOf("knowledge_chunks").filter((c) => c.page === 1).map((c) => c.source)).toEqual(["text"]);
+    // The keyed driver that comes next reads exactly what a keyed run reads.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([2]);
+  });
+
+  it("…and in a library that reads every page with AI vision, every owed page is held, as a driver with a key would read each one", async () => {
+    await lastGeneration();
+    db.tables.knowledge_chunks[0].source = "vision";
+    await resetKnowledgeIndex([DOC]);
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()), undefined, undefined, { visionAllPages: true });
+    expect(res).toMatchObject({ done: false, visionFailedPages: [1, 2], visionHeldPages: 2 });
+    // The prose page was never read by AI vision: it owes nothing.
+    expect(rowsOf("knowledge_chunks").some((c) => c.page === 3)).toBe(true);
+  });
+
+  it("a rev-up that inserts a sheet before the one AI vision read: the reset owes the new file every page that needs AI vision — the old numbers name nothing in it — and a keyless batch holds the moved sheet (review fix pass 2)", async () => {
+    // The review's reproduction. Rev 3: [sheet 1, the SHX sheet AI vision
+    // read (page 2), prose]. Rev 4 inserts a prose page, so the SHX sheet
+    // is page 3 now; owing "page 2" held the prose page's number, and the
+    // keyless batch took Rev 4 to 'ready' with the SHX sheet empty.
+    await lastGeneration({ source_document_id: "dc-1", source_version_id: "ver-3", source_rev: "3" });
+    const REV4 = "orgs/o1/dc/rev4.pdf";
+    r2.objects.set(REV4, await makePdf([drawingSheet(1, ["V-101", "P-201A", "E-301"]), prosePage("gaskets"), null, prosePage("bolting")]));
+    const reset = await resetKnowledgeIndex([DOC], {
+      purgeLineTraces: true, supersedeBusy: true,
+      expect: () => ({ source_version_id: "ver-3" }),
+      rowUpdate: () => ({ file_key: REV4, source_version_id: "ver-4", source_rev: "4" }),
+    });
+    expect(reset).toEqual({ reset: [DOC], busy: [], errors: [] });
+    expect(docRow()).toMatchObject({ status: "stale", file_key: REV4, source_rev: "4", vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+
+    // A keyless driver (the cron drain: a mirror has no uploader).
+    const res = await ingestKnowledgeDocBatch(asArg(docRow()));
+    expect(res).toMatchObject({ done: false, pagesIndexed: 4, visionFailedPages: [3], visionHeldPages: 1, visionPages: 0 });
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [3], error: null });
+    expect([...new Set(rowsOf("knowledge_chunks").map((c) => c.page as number))].sort((a, b) => a - b)).toEqual([1, 2, 4]);
+    expect(vision.calls).toEqual([]);
+
+    // A key reads the moved sheet — exactly what a keyed driver reads first.
+    readsAll();
+    const keyed = await ingestKnowledgeDocBatch(asArg(docRow()), visionCtx());
+    expect(keyed.done).toBe(true);
+    expect(vision.calls).toEqual([3]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], vision_pages: 1 });
+  });
+
+  it("any reset that re-points the row at another file owes the same; one that keeps the file keeps the page numbers; a re-pointed document AI vision never read owes nothing (review fix pass 2)", async () => {
+    const REV4 = "orgs/o1/dc/rev4.pdf";
+    // A new file_key without purgeLineTraces (any other re-pointing caller).
+    await lastGeneration();
+    await resetKnowledgeIndex([DOC], { rowUpdate: () => ({ file_key: REV4 }) });
+    expect(docRow()).toMatchObject({ file_key: REV4, vision_owed_pages: [OWES_EVERY_VISION_PAGE] });
+
+    // The same file named again (no change of file): page 2 is page 2.
+    const doc = await lastGeneration();
+    await resetKnowledgeIndex([DOC], { rowUpdate: () => ({ file_key: doc.file_key, source_rev: "3" }) });
+    expect(docRow().vision_owed_pages).toEqual([2]);
+
+    // A rev-up of a document no AI vision ever read (a keyless org's).
+    await lastGeneration({ vision_pages: 0 });
+    db.tables.knowledge_chunks = db.tables.knowledge_chunks.filter((c) => c.page !== 2);
+    await resetKnowledgeIndex([DOC], { purgeLineTraces: true, supersedeBusy: true, rowUpdate: () => ({ file_key: REV4 }) });
+    expect(docRow()).toMatchObject({ file_key: REV4, vision_owed_pages: [] });
+  });
+});
+
+describe("ING-13 / ING-6 (I-06b) — the drain's fileBehind stamps only a row no one holds, still as the drain read it", () => {
+  // An unsponsored mirror in a read-every-page library: the drain cannot
+  // work on it, so it files it behind what lapsed before now (fileBehind).
+  const unsponsored = (over: Row = {}) => {
+    resetDb({
+      knowledge_documents: [baseDoc({
+        library_id: "kl-all", created_by: null, file_key: "orgs/o1/dc/rev3.pdf",
+        source_id: "src-1", source_document_id: "dc-1", source_version_id: "ver-3", ...over,
+      })],
+      knowledge_libraries: [{ id: "kl-all", org_id: "o1", ai_features: { visionAllPages: true } }],
+      ai_connections: [], knowledge_chunks: [], knowledge_page_entities: [], entity_mentions: [], knowledge_line_traces: [],
+    });
+  };
+  /** fileBehind's write: the stamp alone. */
+  const isStamp = (op: Op) => op.table === "knowledge_documents" && op.kind === "update" &&
+    Object.keys(op.payload as Row).join() === "vision_retry_after";
+  /** Act as another writer at the instant between the drain's read and its stamp. */
+  const beforeStamp = (act: (row: Row) => void) => db.hooks.push((op) => { if (isStamp(op)) act(docRow()); });
+  const drain = () => drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
+
+  it("an unclaimed row is filed behind: its stamp moves to the run's time", async () => {
+    unsponsored();
+    const t0 = Date.now();
+    const out = await drain();
+    expect(out).toMatchObject({ docsTouched: 0, errors: [] });
+    expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(t0);
+    expect(db.ops.filter(isStamp)).toHaveLength(1);
+  });
+
+  it("a row someone claims after the drain read it is left exactly as the claimant holds it (the claim-free filter)", async () => {
+    unsponsored();
+    const at = new Date().toISOString();
+    beforeStamp((row) => { row.ingest_claimed_by = "ingest:browser"; row.ingest_claimed_at = at; });
+    const out = await drain();
+    expect(out.errors).toEqual([]);
+    expect(db.ops.filter(isStamp)).toHaveLength(1);                 // tried…
+    expect(docRow()).toMatchObject({ vision_retry_after: null, ingest_claimed_by: "ingest:browser", ingest_claimed_at: at });
+  });
+
+  it("a claim older than the TTL holds no one: the stamp lands", async () => {
+    unsponsored();
+    beforeStamp((row) => { row.ingest_claimed_by = "killed"; row.ingest_claimed_at = new Date(Date.now() - INGEST_LEASE_TTL_MS - 60_000).toISOString(); });
+    const t0 = Date.now();
+    await drain();
+    expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(t0);
+  });
+
+  it("a stamp another writer moved after the drain read it is kept — never overwritten (the compare-and-set on the stamp)", async () => {
+    // Never stamped when read; a park writes its own stamp first.
+    unsponsored();
+    const parked = new Date(Date.now() - 5_000).toISOString();
+    beforeStamp((row) => { row.vision_retry_after = parked; });
+    expect((await drain()).errors).toEqual([]);
+    expect(docRow().vision_retry_after).toBe(parked);
+
+    // Stamped (and lapsed) when read; another writer re-stamps it first.
+    const lapsed = new Date(Date.now() - 3_600_000).toISOString();
+    unsponsored({ vision_retry_after: lapsed });
+    const other = new Date(Date.now() - 1_000).toISOString();
+    beforeStamp((row) => { row.vision_retry_after = other; });
+    expect((await drain()).errors).toEqual([]);
+    expect(docRow().vision_retry_after).toBe(other);
+  });
+
+  it("a row a rev-up re-pointed after the drain read it is left alone (the compare-and-set on file_key)", async () => {
+    unsponsored();
+    beforeStamp((row) => { Object.assign(row, { file_key: "orgs/o1/dc/rev4.pdf", source_version_id: "ver-4", status: "stale" }); });
+    expect((await drain()).errors).toEqual([]);
+    expect(docRow()).toMatchObject({ file_key: "orgs/o1/dc/rev4.pdf", vision_retry_after: null });
+  });
+
+  it("a stamp that cannot be written is reported in the run's errors, and the run goes on", async () => {
+    unsponsored();
+    db.hooks.push((op) => isStamp(op) ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    const out = await drain();
+    expect(out.errors).toEqual([
+      "025-PID-0101.pdf: could not move it behind newer work in the queue: canceling statement due to statement timeout",
+    ]);
+    expect(docRow().vision_retry_after).toBeNull();
+  });
+
+  it("a database without 20261122: no stamp is ever tried (nowhere to write it) — the row is skipped and the run goes on", async () => {
+    const legacyCols = ["ingest_claimed_by", "ingest_claimed_at", "empty_pages", "vision_failed_pages", "vision_partial_accepted", "chunk_version", "vision_retry_after", "vision_retry_tried", "ingest_failures"];
+    unsponsored();
+    db.tables.knowledge_documents = db.tables.knowledge_documents.map((d) => Object.fromEntries(Object.entries(d).filter(([k]) => !legacyCols.includes(k))));
+    db.missingColumns.knowledge_documents = legacyCols;
+    const out = await drain();
+    expect(out).toMatchObject({ docsTouched: 0, completed: 0, errors: [] });
+    expect(db.ops.filter((o) => o.table === "knowledge_documents" && o.kind === "update")).toEqual([]);
+    expect(docRow()).toMatchObject({ status: "pending", pages_indexed: 0 });
+  });
+});
+
 describe("ING-9 — the cron drain refuses a non-PDF exactly as the route does", () => {
   const XLSX = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00, ...new Array(200).fill(0x41)]);
 
@@ -1381,6 +1753,42 @@ describe("ING-4 / ING-7 — chunker 2 through the engine", () => {
     library(1);
     await ingestKnowledgeDocBatch(asArg(doc));
     expect(contents().some((c) => c.includes(WHOLE))).toBe(false);
+  });
+
+  it("ING-7's mention handoff (I-06b): a tag named in the sentence carried onto the next page is counted on the page it is written on, not again on the next", async () => {
+    // Page 1 ends mid-sentence naming E-101; chunker 2 carries it onto
+    // page 2, which names P-205 itself.
+    const A: PageSpec = [
+      "Welding of low alloy piping shall follow the qualified procedure for the joint.",
+      "Preheat for exchanger E-101 shall be maintained at not less than 175F for P-No. 5 materials over",
+    ];
+    const B: PageSpec = [
+      "1/2 in. nominal thickness, except where the procedure qualification permits a lower value.",
+      "Pump P-205 is excluded from this requirement in every service listed here.",
+    ];
+    const doc = await seed([A, B]);
+    library(2);
+    await ingestKnowledgeDocBatch(asArg(doc));
+    const page2 = rowsOf("knowledge_chunks").filter((c) => c.page === 2).map((c) => String(c.content)).join(" ");
+    expect(page2.startsWith("[cont. from p. 1] Preheat for exchanger E-101")).toBe(true);
+    const dict = [
+      { assetId: "a-e101", alias: "E-101", origin: "tag" as const },
+      { assetId: "a-p205", alias: "P-205", origin: "tag" as const },
+    ];
+    await indexDocumentMentions("o1", DOC, dict);
+    const pagesOf = (asset: string) => rowsOf("entity_mentions").filter((m) => m.asset_id === asset).map((m) => m.page).sort();
+    expect(pagesOf("a-e101")).toEqual([1]);
+    expect(pagesOf("a-p205")).toEqual([2]);
+  });
+
+  it("the carried sentence is cut exactly — page N's own words, read back as the ingest does — or only the marker when they cannot be matched", () => {
+    const pageN = "Bolting is per the table. Torque for flange (B-7, 3/4 in.) studs at 175F shall be";
+    const carriedChunk = "[cont. from p. 3] Torque for flange (B-7, 3/4 in.) studs at 175F shall be checked twice. Gasket G-2 is new.";
+    expect(withoutCarriedSentence(carriedChunk, (n) => (n === 3 ? pageN : undefined)).trim()).toBe("checked twice. Gasket G-2 is new.");
+    // Page N's chunk not at hand: the marker goes, the words stay (as before).
+    expect(withoutCarriedSentence(carriedChunk, () => undefined)).toBe(carriedChunk.slice("[cont. from p. 3] ".length));
+    // A chunk with no carry is untouched.
+    expect(withoutCarriedSentence("Gasket G-2 is new.", () => pageN)).toBe("Gasket G-2 is new.");
   });
 
   it("the carried sentence crosses a batch boundary too (read back from the stored last chunk of page 50)", async () => {

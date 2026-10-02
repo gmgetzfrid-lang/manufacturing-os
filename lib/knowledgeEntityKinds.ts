@@ -10,6 +10,8 @@
 //   anchor    — where a caption lives ("TABLE 3", "FIGURE 5-1"), on EVERY
 //               page, prose included — so by far the most numerous kind in a
 //               standards library
+//   line      — a pipe line number (6"-P-1024-A1A), kept as itself rather
+//               than read as equipment (DWG-2)
 //
 // Bulk readers pull a wide slab of this table under a row cap and then feed
 // the result into DETERMINISTIC counts — equipment censuses, reference
@@ -30,7 +32,7 @@
  *  both ways: every `kind: "…"` the ingest writes is listed here, and every
  *  kind listed here is one the ingest writes. A new kind cannot be written
  *  without being declared, and cannot be declared before it is written. */
-export const ENTITY_KINDS = ["equipment", "ref", "opc", "self", "anchor"] as const;
+export const ENTITY_KINDS = ["equipment", "ref", "opc", "self", "anchor", "line"] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
@@ -41,5 +43,9 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
  *  `anchor` is deliberately NOT here: a caption's address ("TABLE 3") is not
  *  a tag, it is written on every page of every document, prose included,
  *  and in a bulk read it would swamp the drawing kinds under the row cap.
- *  Its one reader (the ask route's caption lookup) asks for it by name. */
+ *  Its one reader (the ask route's caption lookup) asks for it by name.
+ *
+ *  Nor is `line` (DWG-2): a pipe line number is not equipment and not a
+ *  drawing reference, a P&ID carries dozens a sheet, and no census, audit or
+ *  register counts it — a reader that wants lines asks for them by name. */
 export const TAG_ENTITY_KINDS: readonly EntityKind[] = ["equipment", "ref", "opc", "self"];

@@ -117,7 +117,7 @@ Both fail against fix pass 3 (`f41a1a8`).
 ## DWG-2 · Every pipe line number on a P&ID mints a phantom piece of equipment — and the vision prompt explicitly asks the model to transcribe them
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-06b INGEST ROUTE FOLLOW-UPS (the ingest half: line numbers as their own entity kind) — by the integrator, 2026-10-01 (I-07 merge: I-07 landed its own half; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/drawingText.ts:63-85`, `lib/knowledgeVision.ts:36-37`, `lib/equipmentBridgeServer.ts:65-78`, `lib/equipmentBridgeServer.ts:200-222`, `components/knowledge/DrawingIntelPanel.tsx:132`
@@ -185,6 +185,21 @@ Tests:
 
 Tests: `lib/__tests__/drawingText.test.ts` "a valve or instrument written with the size of its line is still a tag (fix pass)" (all twelve cases above, each also absent from `extractLineNumbers`) and the `LINE` label cases; `lib/__tests__/intelRoundGDrawingMigration.test.ts` "the DWG-2 phantom count uses the extractor's own line grammar — a size-annotated valve is not a phantom (fix pass)". The first fails against the round's first commit. Every case in the finding's list still yields no tag.
 
+**Resolution (2026-10-02, intelligence Round G).** Package I-06b, the ingest half (DEC-68 item 4). Reproduced first (DEC-29) on HEAD `3bf3b75`: the real ingest of the dense TrueType page in `lib/__tests__/intelRoundGDrawing.test.ts` (40 lines `6"-P-10xx-A1A`) wrote no row for any line number, and a vision transcript's `LINE 6"-P-1024-A1A` none either — the extractor kept them out of the equipment count and the index kept nothing.
+
+- **The rows.** `ingestKnowledgeDocBatch` (`lib/knowledgeIngest.ts`) writes each `extractLineNumbers` hit as `kind: 'line'`, `tag` the normalised line number (`6"-P-1024-A1A`), in the two per-line loops beside `extractEquipmentTags`: a vision transcript's line (no position) and a text-layer item (its position, as every text-layer mark — DWG-3's `pos_source 'viewport'`). The grammar is I-07's, so whatever is a line is never equipment, and the reverse.
+- **Declared, and kept out of every census.** `ENTITY_KINDS` (`lib/knowledgeEntityKinds.ts`) gains `'line'`; the guard holds the inventory to the writer both ways. `TAG_ENTITY_KINDS` leaves it out: no census, audit or register counts a line, and a P&ID's dozens of lines a sheet never compete for a bulk read's row cap. A reader that wants lines asks for them by name. Every reset, range clear and generation clear already drops every kind.
+
+Tests: `lib/__tests__/intelRoundGDrawing.test.ts` "yields equipment tags … — and no phantom pumps from line numbers" (now also: 40 distinct `'line'` rows, each placed) and "a labelled connector … OPC lines land as connector rows" (the transcript's `LINE` as one `'line'` row, no `P-1024` equipment); `lib/__tests__/entityKindGuard.test.ts` (the inventory both ways).
+
+**Done-when.**
+- ✓ `extractEquipmentTags` rejects a line number's tag (I-07, unchanged).
+- ✓ A line number is classified as its own entity kind (`'line'`) rather than discarded.
+- ✓ Tests pin every case in the executed list and the positives (I-07), and now the stored `'line'` rows.
+- ✓ The Bridge creates no registry asset from a line-number occurrence (I-07: it reads `kind = 'equipment'` only).
+
+**Scope / residual.** Equipment rows already minted from line numbers, and the absence of `'line'` rows, last until each document's next re-index (rev-up, rebuild, table-aware re-index); `20261124`'s inventory counts the phantom rows. Nothing reads `'line'` rows yet ("which line feeds V-3" is a reader to build); they are data in place for one.
+
 ---
 
 <a id="dwg-3"></a>
@@ -192,7 +207,7 @@ Tests: `lib/__tests__/drawingText.test.ts` "a valve or instrument written with t
 ## DWG-3 · Text-layer tag positions ignore /Rotate, CropBox origin and /UserUnit — and are the ones the viewer draws as EXACT
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-06b INGEST ROUTE FOLLOW-UPS (the ingest half: norm() and a new pos_source) — by the integrator, 2026-10-01 (I-07 merge: I-07 landed its own half; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:236-240`, `components/knowledge/CitedPageViewer.tsx:504-512`, `node_modules/pdfjs-dist/build/pdf.mjs:14431-14447`, `node_modules/pdfjs-dist/build/pdf.mjs:1238,1277-1292`, `fixtures/PID-Legend.pdf`
@@ -265,6 +280,22 @@ Tests: `lib/__tests__/intelRoundGDrawing.test.ts`, block "DWG-3":
 - ✗ **Not done.** Existing `pos_source = 'text'` rows on rotated pages are not invalidated in the database: rotation is not stored per page, so SQL cannot find them. The viewer places every recoverable one correctly and refuses the rest. Re-deriving the refused ones needs ingest's divisor fixed and the documents re-indexed.
 
 **Scope / residual.** On a 90/270 page, or a page whose CropBox origin is offset, marks whose true position fell outside ingest's rotated divisor were clamped at ingest and are lost. The viewer recovers every mark on a 0/180 page with a zero origin, and every unclamped mark elsewhere. OPEN until the ingest half lands (owner: the ingest file's owner, I-06's design).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-06b, the ingest half. Reproduced first (DEC-29) on HEAD `3bf3b75` through the real ingest: on a `/Rotate` 90, 180 or 270 sheet the stored `nx`/`ny` of a lower-left glyph sat in the wrong quadrant (pos_source `'text'`), a glyph near the top of a 90° sheet was pinned to `ny` 0, and a text item starting left of a CropBox was placed inside the sheet (the crop's origin ignored: `nx` ≈ 0.19 for a point off the drawn page).
+
+- **`norm()` goes through pdf.js.** In `ingestKnowledgeDocBatch` (`lib/knowledgeIngest.ts`) a text item's point goes through `viewport.convertToViewportPoint(x, y)` and is divided by the drawn page's width and height — /Rotate, the CropBox origin and /UserUnit all applied by the library that owns them. The result is pdf.js's own point on the page AS DRAWN, 0..1 from the left and from the top.
+- **A new pos_source.** Such a mark is stored as `pos_source 'viewport'` (`TEXT_VIEWPORT_POS`), the contract `lib/drawingLocate.ts` set: a row stored the old way keeps `'text'`, which now names the old encoding, and the viewer maps only `'text'` through `textMarkPosition`. `components/knowledge/CitedPageViewer.tsx` draws a `'viewport'` mark where it is stored, as an exact mark (only a model's point, `'vision'`, is drawn approximate); the locate route passes the source through unchanged; `TagPosition.source` (`lib/knowledge.ts`) gains `"viewport"`. No point is ever rotated twice.
+- **Reject and null.** `clamp01` no longer pins a value: a point off the drawn page (a text item starting outside the CropBox) gets no position (`nx`, `ny`, `pos_source` null; its raw `x`/`y` kept); only float noise at the edge is folded in.
+
+Tests: `lib/__tests__/intelRoundGDrawing.test.ts` "DWG-3 — … (I-06b: the ingest half)": per `/Rotate` 0, 90, 180, 270 the stored mark is pdf.js's own point to six decimals, in the expected quadrant; a CropBox off the origin and `/UserUnit 2` on a 90° page; the mark the old divisor pinned and lost is placed; an item starting off the drawn page gets no position; a row stored the old way still maps through the viewer's transform onto the same point (and the viewer does not map `'viewport'` again). `lib/__tests__/intelRoundGDrawingRoutes.test.ts` "DWG-3 (I-06b): a text-layer mark stored on the page as drawn ('viewport') comes back exact …". `lib/__tests__/drawingLocate.test.ts` (I-07's legacy mapping) is unchanged and passes.
+
+**Done-when.**
+- ✓ `norm()` routes through `viewport.convertToViewportPoint(x, y)` and divides by the viewport's width and height.
+- ✓ A test renders each of `/Rotate` 0, 90, 180 and 270 with a known glyph position and asserts the stored nx/ny land in the correct quadrant, on pdf.js's own point.
+- ✓ `clamp01` is replaced by a reject-and-null at ingest (a tolerance of 1e-6 for float noise only).
+- ✓ Marked, not invalidated: existing `pos_source = 'text'` rows are told apart by their pos_source (the old encoding), mapped by the viewer, and refused where the old clamp destroyed the value (I-07); each is re-derived as `'viewport'` at its document's next re-index. They are not invalidated in the database, because rotation is not stored per page and SQL cannot find the rotated ones; deleting every `'text'` position would blank the exact marks of every plain sheet for nothing.
+
+**Scope / residual.** Old rows stay `'text'` until their document is re-indexed (a rev-up, the drawing rebuild, the table-aware re-index — each re-bills that document's AI-vision pages). Their marks on 90/270 pages or offset CropBoxes that the old clamp pinned stay unplaceable until then (the viewer says so).
 
 ---
 
@@ -879,7 +910,7 @@ The fix is ingest's: track such a page as unread, for example in `vision_failed_
 ## DWG-8 · A connector's evidence line is truncated to 160 characters before the audit reads it, which can manufacture a 'broken by definition' finding
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-06b INGEST ROUTE FOLLOW-UPS (the ingest half: the full reference stored for opc rows) — by the integrator, 2026-10-01 (I-07 merge: I-07 landed its own half; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeIngest.ts:276`, `lib/drawingText.ts:739-746`, `app/api/knowledge/drawing/route.ts:253-258`, `components/knowledge/DrawingIntelPanel.tsx:344`
@@ -940,6 +971,22 @@ Tests:
 
 
 **Review fix pass 2 (2026-10-01, intelligence Round G).** Criterion 3's principle — absence of evidence is recorded as unknown, never as broken — did not hold for box pairing. A connector into a sheet with NO box numbers read (a text layer, or a sheet read before the contract) was filed `unreturned`, which is `broken_connectors`. The connector's destination was read; what was missing was any evidence on the target's side. That is now the `unpaired` bucket (see DWG-4's second fix pass): `flagged`, never broken, named on the record as `unpairedConnectors`. The criteria's status is unchanged; criterion 3's principle now holds for box pairing as well as for a cut line.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-06b, the ingest half, by the plan's alternative: a longer cut, not a new column. Reproduced first (DEC-29) on HEAD `3bf3b75` through the real ingest: the finding's own 163-character connector line, its drawing number at the end, was stored cut to 160 characters, and the audit filed it `unknown` (I-07's guard) instead of reading its destination.
+
+- **The whole line is the evidence.** An `opc` row's `raw` is `opcEvidence(line, box)` (`lib/knowledgeIngest.ts`): a connector in the contract's shape that does not open its line is stored FROM its box, at any length (up to `OPC_EVIDENCE_MAX`), so a connector before it on the same line never stands in for it; any other line is stored whole up to `OPC_EVIDENCE_MAX` (400 characters — a connector line runs to a couple of hundred), and of a longer line (a text layer with no line breaks, a whole sheet run together) a window of that size around THIS box's token: a connector in the contract's shape (`OPC <n>: DWG <destination> …`, which `parseOpcLine` reads by position, anchored at its box) opens the window AT its box, and any other line keeps up to 160 characters before it — so its destination survives and the sheet's first numbers no longer stand in for it. Surrogate-safe at both ends. *(Review fix pass, 2026-10-02: every long line kept the 160-character lead-in, so a contract connector's window opened mid-text, failed the anchored parse, and the audit read every number in it — a preceding connector's drawing number included, which could pair the box against the wrong sheet. Review fix pass 2: that rule ran only past the 400-character cap; on a shorter run-together line — `OPC 3: DWG 025-PID-0101 SH 2 — TO V-1402 OPC 4: DWG 025-PID-0107 SH 1 — FROM P-1401A`, 84 characters — box 4 was stored as the whole line, the anchored parse read box 3's box and destination, and the audit paired box 4 against 0101, which could file a false `unreturned`. The contract check now runs before the length shortcut.)* Every reader of `raw` — the audit (`auditOpcBoxes`), the ask route's DRAWING FACTS, the link proposer, the lens — reads the longer evidence unchanged.
+- **The audit's threshold stands.** `OPC_RAW_STORED_MAX` (160, `lib/drawingText.ts`) still sends a stored line at or past the old cut to `unknown`, never `broken`: rows written before this change were cut there, and a window at the new cap may have been cut too. Two comments in `lib/drawingText.ts` now say what ingest does. *(Corrected at I-06b fix pass 3, 2026-10-02: they did not quite. The `OPC_RAW_STORED_MAX` comment still said ingest stores "the line whole up to OPC_EVIDENCE_MAX, or a window of that size around the box", which leaves out what review fix pass 2 added: a connector in the contract's shape that does not open its line is stored from its own box, whatever the line's length. The OPC header comment above it still said an evidence line "is stored cut to OPC_RAW_STORED_MAX characters". Both now say what `opcEvidence` stores: at most `OPC_EVIDENCE_MAX` characters, and for that connector, from its box (`lib/drawingText.ts:486-489` and `lib/drawingText.ts:518-528`). Comment only; the criteria's status is unchanged.)*
+
+Tests: `lib/__tests__/intelRoundGDrawing.test.ts` "DWG-8 — a connector's evidence is its whole line …" (through the real ingest, a connector line past the old cut is stored whole and the audit reads its destination — neither `noRef` nor `unknown`; the window around the box on a run-together line, never opening on half a surrogate pair; a short line stored whole, exactly as before; review fix pass: two contract connectors run together, each window opening at its own box, the audit pairing box 4 against its own destination only — mutation-checked: the old lead-in window paired it against both sheets; review fix pass 2: the review's 84-character run-together line, box 4 stored from its own box and paired against 0107 only, box 3 (which opens the line) and a non-contract short line stored whole — mutation-checked: with the length shortcut first, box 4 was stored as the whole line); `lib/__tests__/drawingText.test.ts` "the stored cut is never shorter than the audit's threshold" (re-pinned to `opcEvidence`).
+
+**Done-when.**
+- ✗ Not as its own column, by the plan's alternative ("the full line's drawing reference, or a longer cut"): the reference is read from the full line because the full line is stored (up to 400 characters — from its own box for a contract connector that does not open the line — or the window around the box). A separate column would have needed every reader of `raw` changed with it — the audit and the lens (I-07's), the ask route's DRAWING FACTS, the link proposer — and a migration; the longer cut reaches all of them as they are. The criterion's purpose, an audit that never decides from a display-cut string, holds.
+- ✓ The truncation length is raised (160 → 400) and, on a longer line, the ref-bearing window around the box is kept. `raw` is still both evidence and display: the lens shows the whole stored line.
+- ✓ A "no destination" verdict is not written when the source line may have been cut (I-07, unchanged).
+- ✓ A test feeds a >160-character connector line through the ingest and asserts the audit does not report `noRef` (or `unknown`).
+
+**Scope / residual.** Rows stored before this change keep their 160-character cut until their document is re-indexed; the audit treats them as before (`unknown` when the cut may have taken the destination). A connector line longer than 400 characters is still cut, at the window — recorded `unknown`, never broken. A contract connector's evidence runs on past its own text into what follows it on a run-together line, at any length; `parseOpcLine` cuts its destination at the separator or the sheet, so a following connector stands in only where this one's destination field runs straight into it with neither — a limit of the positional parse on text with no line breaks, not of the stored window. A preceding connector never stands in, on a line of any length (review fix pass 2). A contract connector that does not open its line no longer keeps the text before its box in `raw` (the lens shows it from its box).
+
 ---
 
 <a id="dwg-9"></a>

@@ -1480,9 +1480,16 @@ describe("DWG-8 — a cut evidence line is unknown, never broken", () => {
     expect(audit.unknown).toEqual([]);
   });
 
-  it("the stored cut is the one ingest makes (OPC_RAW_STORED_MAX pinned to lib/knowledgeIngest.ts)", () => {
+  it("the stored cut is never shorter than the audit's threshold (OPC_RAW_STORED_MAX pinned to lib/knowledgeIngest.ts)", () => {
+    // Rows written before intelligence Round G I-06b were cut at 160; since
+    // DWG-8's ingest half the line is stored whole up to OPC_EVIDENCE_MAX
+    // (opcEvidence). A stored line at or past the old cut may still have been
+    // cut, so the threshold that sends it to `unknown` stays the old cut.
     const ingest = readFileSync(join(__dirname, "..", "knowledgeIngest.ts"), "utf8");
-    expect(ingest).toMatch(new RegExp(`kind: "opc", tag: box, raw: truncateSafe\\(line, ${OPC_RAW_STORED_MAX}\\)`));
+    expect(ingest).toMatch(/kind: "opc", tag: box, raw: opcEvidence\(line, box\)/);
+    const max = Number(/export const OPC_EVIDENCE_MAX = (\d+);/.exec(ingest)?.[1]);
+    expect(max).toBeGreaterThanOrEqual(OPC_RAW_STORED_MAX);
+    expect(OPC_RAW_STORED_MAX).toBe(160);
   });
 });
 
