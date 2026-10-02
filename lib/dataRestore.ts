@@ -30,10 +30,6 @@ export interface RestoreEnvelopeLike {
     schemaVersion?: string;
     complete?: boolean;
     files?: { count?: number; missing?: number };
-    /** Per-table outcome (lib/dataExport.ts): a table with `error` or `short` is why a backup is incomplete. */
-    tables?: Array<{ name?: string; error?: string; short?: string }>;
-    /** BKP-8: rows the export left out (private notes) — a restore does not bring them back. */
-    withheld?: { privateNotes?: number; reason?: string };
   };
   tables: Record<string, unknown[]>;
   files?: Array<{ path: string }>;
@@ -611,18 +607,8 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
   tables.sort((a, b) => b.rows - a.rows);
 
   // ── Warnings ─────────────────────────────────────────────────────────────
-  // BKP-8 review fix: a backup is also incomplete when the export withheld
-  // rows (private notes). Each reason is said as itself.
-  const withheldNotes = Number(env.manifest.withheld?.privateNotes ?? 0);
-  const tablesShort = (env.manifest.tables ?? []).some((t) => !!t?.error || !!t?.short);
-  if (env.manifest.complete === false && (tablesShort || withheldNotes <= 0)) {
+  if (env.manifest.complete === false) {
     warnings.push("This backup was marked INCOMPLETE — some tables were not exported. Restoring it will not fully reconstruct the workspace.");
-  }
-  if (withheldNotes > 0) {
-    warnings.push(
-      `This backup was marked INCOMPLETE — it leaves out ${withheldNotes} private note(s): scratchpad notes attached to no document, ` +
-      "project or equipment, which only their authors can read. Restoring it does not bring them back.",
-    );
   }
   const missing = env.manifest.files?.missing ?? 0;
   if (missing > 0) {

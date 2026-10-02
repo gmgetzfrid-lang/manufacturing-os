@@ -244,10 +244,15 @@ export async function buildAndDeliverExport(params: {
     exporterEmail: params.exporterEmail,
     exporterRole: params.exporterRole,
     auditDetails: params.auditDetails,
-    // DEC-44 (A&O P3) §3: a push to the workspace's own destination records
-    // its files by count and digest (the archive carries the list); a ZIP
-    // handed to a person names each one.
-    fileRecord: params.delivery.kind === "destination" ? "digest" : "list",
+    // DEC-44 (A&O P3) §3: every file that leaves is named. A ZIP handed to a
+    // person and a webhook push (an external URL: the archive is on someone
+    // else's server) name each one on every run; a push to a bucket
+    // destination names them against that destination's last full list —
+    // what was added or removed since — so a nightly push does not grow the
+    // audit trail (itself exported) by the whole list every night.
+    fileRecord: params.delivery.kind === "destination" && params.delivery.destination.destination_type !== "webhook"
+      ? { destinationId: params.delivery.destination.id }
+      : "list",
     deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);
@@ -691,11 +696,6 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { at
     : "";
   // EGR-7 / XEDGE-10: say which columns are NOT in this archive and why, so
   // a restore knows the links must be re-issued rather than arriving dead.
-  // BKP-8: rows the export leaves out are said here too, so a restore from
-  // this archive knows what it will not bring back.
-  const withheldNote = (m.withheld?.privateNotes ?? 0) > 0
-    ? `\n## ⚠ Withheld rows — this backup is not complete\n\n${m.withheld!.privateNotes} ${m.withheld!.reason}\nmanifest.json says complete: false for this reason.\n`
-    : "";
   const redacted = Object.entries(m.redactedColumns ?? {});
   const redactedNote = redacted.length > 0
     ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
@@ -720,7 +720,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${omittedNote}${shedNote}${redactedNote}${withheldNote}
+${omittedNote}${shedNote}${redactedNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.

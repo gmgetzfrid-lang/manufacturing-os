@@ -4,10 +4,13 @@
 // and destination hygiene.
 //
 //   BKP-8   every /api/data-export route is Admin-only through the one gate
-//           (lib/adminGate.ts, the data-export surface); a standalone note —
-//           its author's private scratchpad — never leaves in an export; the
-//           DATA_EXPORT row names the exporter's role and the files the
-//           export hands out are named row by row (DATA_EXPORT_FILES).
+//           (lib/adminGate.ts, the data-export surface); standalone notes —
+//           each author's private scratchpad — are still carried (so a
+//           restore brings them back) and counted, while the user decides
+//           (DEC-44 (A&O P3) §4); the DATA_EXPORT row names the exporter's
+//           role and every file that leaves is named (DATA_EXPORT_FILES): row
+//           by row for a person's export or a webhook push, against the
+//           destination's last full list for a bucket push.
 //   BKP-13  the scheduled push writes its DATA_EXPORT row as a machine
 //           (user_id NULL — DEC-44 (A&O P3)) and the write is CHECKED: an
 //           export that cannot be recorded is refused; every export rings the
@@ -81,7 +84,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
   getSignedUrl: vi.fn(async (_c: unknown, cmd: { input: { Key: string } }) => `https://r2.test/${cmd.input.Key}`),
 }));
 
-import { runOrgExport, PRIVATE_NOTES_WITHHELD, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest } from "@/lib/dataExport";
+import { runOrgExport, PRIVATE_NOTES_CARRIED, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest } from "@/lib/dataExport";
 import { s3PurgeOlderThan, retentionProblem, destinationCredentialGap } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
 import { ALERT_LINKS } from "@/lib/exportAlerts";
@@ -187,8 +190,14 @@ describe("BKP-8 — every data-export route is Admin-only, through the one gate"
 });
 
 // ─── BKP-8 Done-when 2: private notes ──────────────────────────────────────
+//
+// Second review fix pass: withholding the notes made every backup lose them
+// on restore — the brief's regression rule forbids that, and the trade-off is
+// the user's open decision (DEC-44 (A&O P3) §4). Until then they are carried
+// as before this package, counted in the manifest and the DATA_EXPORT row;
+// the Admin-only gate is the interim mitigation.
 
-describe("BKP-8 Done-when 2 — a standalone note is its author's, and never leaves in an export", () => {
+describe("BKP-8 Done-when 2 (open) — standalone notes are carried as before, counted, and only an Admin can export", () => {
   const notes = (): Row[] => [
     { id: "n-private", org_id: ORG, body: "my own scratch", created_by: "u-viewer", task_meta: { evidence: [{ path: key("notes/n-private/photo.jpg") }] } },
     { id: "n-doc", org_id: ORG, body: "on a drawing", created_by: "u-viewer", document_id: "doc-1" },
@@ -196,34 +205,28 @@ describe("BKP-8 Done-when 2 — a standalone note is its author's, and never lea
     { id: "n-asset", org_id: ORG, body: "on a pump", created_by: "u-viewer", asset_id: "as-1" },
   ];
 
-  it("the private note is withheld, counted and named; every scoped note is exported as before", async () => {
+  it("every note is exported — the private one too, so a restore brings it back; the backup is complete; the manifest and the DATA_EXPORT row count it", async () => {
     db.rows.notes = notes();
     const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com", exporterRole: "Admin" });
-    expect((env.tables.notes as Row[]).map((n) => n.id).sort()).toEqual(["n-asset", "n-doc", "n-proj"]);
-    expect(env.manifest.tables.find((t) => t.name === "notes")).toEqual({ name: "notes", rowCount: 3 });
-    expect(env.manifest.withheld).toEqual({ privateNotes: 1, reason: PRIVATE_NOTES_WITHHELD });
-    expect(env.manifest.notes).toContain(`1 ${PRIVATE_NOTES_WITHHELD}`);
-    // review fix: a backup that withholds rows does not claim to be complete
-    expect(env.manifest.complete).toBe(false);
-    expect(env.manifest.notes[0]).toBe(
-      "⚠ INCOMPLETE BACKUP — complete except 1 private note(s) withheld (manifest.withheld): a restore of this backup does not bring them back.",
-    );
-    expect(env.manifest.notes.join(" ")).not.toContain("This document is a complete export");
-    // the photo only the private note named is not carried either
-    expect(env.files.map((f) => f.path)).not.toContain(key("notes/n-private/photo.jpg"));
-    expect(audits("DATA_EXPORT")[0].details).toMatchObject({ withheld: { privateNotes: 1 } });
-    expect(JSON.stringify(env)).not.toMatch(/my own scratch/);
+    expect((env.tables.notes as Row[]).map((n) => n.id).sort()).toEqual(["n-asset", "n-doc", "n-private", "n-proj"]);
+    expect(env.manifest.tables.find((t) => t.name === "notes")).toEqual({ name: "notes", rowCount: 4 });
+    expect(env.manifest.complete).toBe(true);
+    expect(env.manifest.notes[0]).toBe("This document is a complete export of every record this organization owns.");
+    expect(env.manifest.notes).toContain(`1 ${PRIVATE_NOTES_CARRIED}`);
+    expect(env.manifest).not.toHaveProperty("withheld");
+    // the photo only the private note names travels with it, as before
+    expect(env.files.map((f) => f.path)).toContain(key("notes/n-private/photo.jpg"));
+    expect(audits("DATA_EXPORT")[0].details).toMatchObject({ privateNotes: { carried: 1 } });
+    expect(JSON.stringify(env.tables.notes)).toMatch(/my own scratch/);
   });
 
-  it("a workspace with no private note exports exactly as before (no withheld entry, no extra note)", async () => {
+  it("a workspace with no private note: no count, no extra note", async () => {
     db.rows.notes = notes().slice(1);
     const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
     expect((env.tables.notes as Row[])).toHaveLength(3);
-    expect(env.manifest.withheld).toBeUndefined();
     expect(env.manifest.complete).toBe(true);
-    expect(env.manifest.notes[0]).toBe("This document is a complete export of every record this organization owns.");
-    expect(env.manifest.notes.join(" ")).not.toContain(PRIVATE_NOTES_WITHHELD);
-    expect(audits("DATA_EXPORT")[0].details).not.toHaveProperty("withheld");
+    expect(env.manifest.notes.join(" ")).not.toContain(PRIVATE_NOTES_CARRIED);
+    expect(audits("DATA_EXPORT")[0].details).not.toHaveProperty("privateNotes");
   });
 
   it("the rule is RLS's: no document, project or asset", () => {
@@ -234,14 +237,17 @@ describe("BKP-8 Done-when 2 — a standalone note is its author's, and never lea
     expect(sql).toMatch(/notes\.document_id IS NULL\s+AND notes\.project_id IS NULL\s+AND notes\.asset_id\s+IS NULL\s+AND notes\.created_by = auth\.uid\(\)/);
   });
 
-  it("the restore plan says the backup leaves the private notes out — as itself, not as tables that failed", async () => {
+  it("the restore plan raises no incompleteness for them, and plans every note for import", async () => {
     db.rows.notes = notes();
     const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
     const plan = planRestore(env as never, { orgId: ORG, orgName: "Acme", members: [{ uid: "u-admin", email: "me@acme.com" }] });
-    expect(plan.warnings).toContain(
-      "This backup was marked INCOMPLETE — it leaves out 1 private note(s): scratchpad notes attached to no document, project or equipment, which only their authors can read. Restoring it does not bring them back.",
-    );
-    expect(plan.warnings.join(" ")).not.toMatch(/some tables were not exported/);
+    expect(plan.warnings.join(" ")).not.toMatch(/INCOMPLETE|private note/);
+    expect(plan.counts.tables.find((t) => t.name === "notes")).toMatchObject({ rows: 4, willImport: true });
+  });
+
+  it("the restore plan is BKP-15's and the deleted route's only: no withheld branch in lib/dataRestore.ts", () => {
+    const src = readFileSync(join(process.cwd(), "lib/dataRestore.ts"), "utf8");
+    expect(src).not.toMatch(/withheld/i);
   });
 });
 
@@ -305,38 +311,157 @@ describe("BKP-8 Done-when 3 / BKP-13 Done-when 1 — the export is recorded, by 
       .rejects.toThrow(/list of files this export hands out could not be recorded in the audit trail \(row too big\) — it was refused/);
   });
 
-  it("DEC-44 (A&O P3) §3: a push to the workspace's own destination records ONE row — the file count and the digest of the sorted list — however many files", async () => {
-    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW * 2 + 1);
-    const env = await runOrgExport({
-      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
-      auditDetails: { channel: "scheduled" }, fileRecord: "digest",
-    });
-    expect(audits("DATA_EXPORT_FILES")).toEqual([]);
-    const row = audits("DATA_EXPORT");
-    expect(row).toHaveLength(1);
+  it("every export carries the digest of its list, and a person's export names each file under the same record id", async () => {
+    db.rows.document_versions = versions(3);
+    const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
     const paths = env.files.filter((f) => !!f.presignedUrl).map((f) => f.path);
-    expect(paths).toHaveLength(EXPORT_FILES_PER_AUDIT_ROW * 2 + 1);
-    expect(row[0].details).toMatchObject({
-      fileRecordRows: 0,
-      fileRecord: { mode: "digest", count: EXPORT_FILES_PER_AUDIT_ROW * 2 + 1, sha256: exportFileListDigest(paths) },
-    });
+    const record = (audits("DATA_EXPORT")[0].details as { fileRecord: Record<string, unknown> }).fileRecord;
+    expect(record).toMatchObject({ mode: "list", count: 3, sha256: exportFileListDigest(paths) });
+    expect(audits("DATA_EXPORT_FILES")[0].details).toMatchObject({ recordId: record.recordId, part: 1, parts: 1 });
     // the digest is of the SORTED list: the archive's own list, in any order, recomputes it
     expect(exportFileListDigest([...paths].reverse())).toBe(exportFileListDigest(paths));
     expect(exportFileListDigest(paths.slice(1))).not.toBe(exportFileListDigest(paths));
   });
+});
 
-  it("…so thirty nightly pushes add thirty audit rows, not thirty per-file lists (audit_logs is itself exported)", async () => {
-    db.rows.document_versions = versions(1200);
-    for (let night = 0; night < 30; night++) {
-      await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", fileRecord: "digest" });
+// ─── BKP-8 Done-when 3, second review fix: a destination push names its files ─
+//
+// The first review fix recorded a destination push by count and digest only:
+// a digest confirms a list but cannot rebuild one, and a webhook's archive is
+// on someone else's server, a retention-purged bucket's is gone. Now: a
+// webhook push names every file on every run (the list mode); a bucket push
+// names them against the destination's last full list — the first push (or
+// a change larger than one row) writes a "baseline" naming every file, and a
+// later push ONE "delta" row naming what was added and removed since (none
+// when nothing changed). The night's list = baseline + delta, and hashes to
+// its DATA_EXPORT row's sha256.
+
+describe("BKP-8 Done-when 3 — a destination push names the files that left (DEC-44 (A&O P3) §3)", () => {
+  const DEST = "dest-bucket";
+  const versions = (n: number, from = 0): Row[] => Array.from({ length: n }, (_, j) => {
+    const i = from + j;
+    return { id: `v-${String(i).padStart(4, "0")}`, org_id: ORG, record_id: `doc-${i % 7}`, revision_label: "A", file_url: key(`libraries/lib-1/D-${i}.pdf`), size: 4 };
+  });
+  let night = 0;
+  beforeEach(() => {
+    night = 0;
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const push = async (destinationId = DEST) => {
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 1, 5, 0, 0) + night++ * 86_400_000));
+    return runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
+      auditDetails: { channel: "scheduled", destinationId }, fileRecord: { destinationId },
+    });
+  };
+  const lastRecord = () => (audits("DATA_EXPORT").at(-1)!.details as { fileRecord: Record<string, unknown> & { baseline?: { recordId: string } } }).fileRecord;
+  const filesOf = (recordId: string) => audits("DATA_EXPORT_FILES").filter((r) => (r.details as { recordId: string }).recordId === recordId).map((r) => r.details as Row & { files: Row[]; removed?: string[] });
+  /** What a recall does: rebuild the night's list from the audit trail alone. */
+  const rebuild = (record: ReturnType<typeof lastRecord>): Set<string> => {
+    if (record.mode === "baseline") return new Set(filesOf(String(record.recordId)).flatMap((d) => d.files.map((f) => String(f.path))));
+    const list = new Set(filesOf(record.baseline!.recordId).flatMap((d) => d.files.map((f) => String(f.path))));
+    for (const d of filesOf(String(record.recordId))) {
+      for (const f of d.files) list.add(String(f.path));
+      for (const p of d.removed ?? []) list.delete(p);
     }
-    expect(audits("DATA_EXPORT")).toHaveLength(30);
-    expect(audits("DATA_EXPORT_FILES")).toEqual([]);
+    return list;
+  };
+  const handed = (env: Awaited<ReturnType<typeof push>>) => env.files.filter((f) => !!f.presignedUrl).map((f) => f.path);
+
+  it("the first push to a bucket destination writes a baseline naming every file (500 to a row), with the destination, the document and the revision", async () => {
+    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW + 1);
+    const env = await push();
+    const record = lastRecord();
+    expect(record).toMatchObject({ mode: "baseline", destinationId: DEST, count: EXPORT_FILES_PER_AUDIT_ROW + 1, sha256: exportFileListDigest(handed(env)) });
+    const rows = filesOf(String(record.recordId));
+    expect(rows.map((d) => [d.kind, d.destinationId, d.part, d.parts])).toEqual([["baseline", DEST, 1, 2], ["baseline", DEST, 2, 2]]);
+    expect(rows[0].files).toContainEqual({ path: key("libraries/lib-1/D-0.pdf"), documentId: "doc-0", versionId: "v-0000" });
+    expect(rebuild(record)).toEqual(new Set(handed(env)));
   });
 
-  it("the server ZIP asks for the digest only when it delivers to a destination; a ZIP handed to a person names each file", () => {
+  it("the next night, nothing changed: no file row at all — the record points at the baseline and hashes to the same list", async () => {
+    db.rows.document_versions = versions(12);
+    await push();
+    const before = audits("DATA_EXPORT_FILES").length;
+    const env = await push();
+    expect(audits("DATA_EXPORT_FILES")).toHaveLength(before);
+    const record = lastRecord();
+    expect(record).toMatchObject({ mode: "delta", destinationId: DEST, count: 12, added: 0, removed: 0, sha256: exportFileListDigest(handed(env)) });
+    expect(rebuild(record)).toEqual(new Set(handed(env)));
+  });
+
+  it("a night with new revisions and a deleted one writes ONE delta row naming what was added (document and revision) and what was removed; baseline + delta rebuilds the night's list", async () => {
+    db.rows.document_versions = versions(10);
+    await push();
+    db.rows.document_versions = [...versions(10).slice(1), ...versions(3, 10)];
+    const env = await push();
+    const record = lastRecord();
+    expect(record).toMatchObject({ mode: "delta", added: 3, removed: 1 });
+    const [delta] = filesOf(String(record.recordId));
+    expect(delta).toMatchObject({ kind: "delta", destinationId: DEST, removed: [key("libraries/lib-1/D-0.pdf")] });
+    expect(delta.files).toContainEqual({ path: key("libraries/lib-1/D-11.pdf"), documentId: "doc-4", versionId: "v-0011" });
+    expect(delta.files).toHaveLength(3);
+    const rebuilt = rebuild(record);
+    expect(rebuilt).toEqual(new Set(handed(env)));
+    expect(exportFileListDigest([...rebuilt])).toBe(record.sha256);
+  });
+
+  it("thirty nightly pushes of a quiet workspace: the baseline once, then thirty DATA_EXPORT rows and no file rows (audit_logs is itself exported)", async () => {
+    db.rows.document_versions = versions(1200);
+    for (let i = 0; i < 30; i++) await push();
+    expect(audits("DATA_EXPORT")).toHaveLength(30);
+    expect(audits("DATA_EXPORT_FILES")).toHaveLength(3);
+    expect(rebuild(lastRecord()).size).toBe(1200);
+  });
+
+  it("a change larger than one row writes a new baseline; the next delta is against it", async () => {
+    db.rows.document_versions = versions(5);
+    await push();
+    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW + 10);
+    await push();
+    const second = lastRecord();
+    expect(second).toMatchObject({ mode: "baseline", count: EXPORT_FILES_PER_AUDIT_ROW + 10 });
+    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW + 11);
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 1, removed: 0, baseline: { recordId: second.recordId } });
+    expect(rebuild(lastRecord())).toEqual(new Set(handed(env)));
+  });
+
+  it("a baseline that cannot be read back whole (a part gone) is never used: a new full baseline, the problem named", async () => {
+    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW + 1);
+    await push();
+    const first = lastRecord();
+    db.rows.audit_logs = rowsOf("audit_logs").filter((r) => !(r.action === "DATA_EXPORT_FILES" && (r.details as Row).part === 2));
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "baseline", baselineProblem: expect.stringMatching(new RegExp(`${String(first.recordId)}\\) could not be read back whole: 1 of 2 part`)) });
+    expect(rebuild(lastRecord())).toEqual(new Set(handed(env)));
+  });
+
+  it("a baseline read that fails writes a full baseline — the export is not refused for it", async () => {
+    db.rows.document_versions = versions(4);
+    await push();
+    db.readError = { audit_logs: "statement timeout" };
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "baseline", baselineProblem: "the last full list could not be read (statement timeout)" });
+    expect(handed(env)).toHaveLength(4);
+  });
+
+  it("each bucket destination has its own baseline, and a person's export (or a webhook's list) never serves as one", async () => {
+    db.rows.document_versions = versions(4);
+    await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
+    await push("dest-a");
+    expect(lastRecord()).toMatchObject({ mode: "baseline", destinationId: "dest-a" });
+    await push("dest-b");
+    expect(lastRecord()).toMatchObject({ mode: "baseline", destinationId: "dest-b" });
+    await push("dest-a");
+    expect(lastRecord()).toMatchObject({ mode: "delta", destinationId: "dest-a", added: 0 });
+  });
+
+  it("the server ZIP asks for the list on a webhook push and for the baseline-and-delta record on a bucket push; a ZIP handed to a person names each file", () => {
     const src = readFileSync(join(process.cwd(), "lib/exportRunner.ts"), "utf8");
-    expect(src).toMatch(/fileRecord: params\.delivery\.kind === "destination" \? "digest" : "list",/);
+    expect(src).toMatch(/fileRecord: params\.delivery\.kind === "destination" && params\.delivery\.destination\.destination_type !== "webhook"\s+\? \{ destinationId: params\.delivery\.destination\.id \}\s+: "list",/);
+    expect(src).not.toMatch(/"digest"/);
     const structured = readFileSync(join(process.cwd(), "app/api/data-export/structured/route.ts"), "utf8");
     expect(structured).not.toMatch(/fileRecord/); // the JSON download is handed to a person: the default per-file list
   });
@@ -530,6 +655,20 @@ describe("BKP-11 Done-when 3 — a destination is enabled only with its credenti
     expect((await patch({ enabled: true })).status).toBe(404);
   });
 
+  it("second review fix: `enabled` that is not a JSON boolean is 400 — \"true\" or 1 would be stored as true with no credential check, plan gate or alert", async () => {
+    db.rows.export_destinations = [restoredWebhook()];
+    for (const enabled of ["true", 1, "on", "t"]) {
+      const res = await patch({ enabled });
+      expect(res.status, String(enabled)).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("enabled must be true or false.");
+    }
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, updated_by: "u-admin2" });
+    expect(audits("EXPORT_DESTINATION_UPDATED")).toEqual([]);
+    expect(bells()).toEqual([]);
+    // a boolean false still saves
+    expect((await patch({ enabled: false, name: "Off" })).status).toBe(200);
+  });
+
   const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
 
   it("review fix: Run Now of a restored webhook (disabled, no secret) is refused 409 — nothing sent, no run row, no bell", async () => {
@@ -645,6 +784,32 @@ describe("BILL-3 Done-when 3 — a bucket destination whose plan lapsed is disab
     expect(rowsOf("export_destinations")[0].enabled).toBe(false);
   });
 
+  const runNowBucket = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
+
+  it("second review fix: under SUBSCRIPTION_ENFORCE, Run Now of a bucket destination on a plan without buckets is 402 — nothing sent, no run row", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    db.rows.orgs[0].subscribed_plan = "starter";
+    db.rows.export_destinations = [{ ...bucketDue(), enabled: false }];
+    const res = await runNowBucket();
+    expect(res.status).toBe(402);
+    expect(((await res.json()) as { error: string }).error).toMatch(/require the Growth plan/);
+    expect(state.delivered).toEqual([]);
+    expect(rowsOf("export_runs")).toEqual([]);
+    db.rows.orgs[0].subscribed_plan = "growth";
+    expect((await runNowBucket()).status).toBe(200);
+    expect(state.delivered).toHaveLength(1);
+  });
+
+  it("…flag off (DEC-18): Run Now of that destination runs as before; a webhook is never plan-gated", async () => {
+    db.rows.orgs[0].subscribed_plan = "starter";
+    db.rows.export_destinations = [bucketDue()];
+    expect((await runNowBucket()).status).toBe(200);
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    db.rows.export_destinations = [dueDestination()];
+    expect((await runNowBucket()).status).toBe(200);
+    expect(state.delivered).toHaveLength(2);
+  });
+
   it("enabling a disabled bucket destination on a lapsed plan is 402, as creating one is", async () => {
     db.rows.orgs[0].subscribed_plan = "starter";
     db.rows.export_destinations = [{ ...bucketDue(), enabled: false }];
@@ -653,6 +818,77 @@ describe("BILL-3 Done-when 3 — a bucket destination whose plan lapsed is disab
     expect(rowsOf("export_destinations")[0].enabled).toBe(false);
     db.rows.orgs[0].subscribed_plan = "growth";
     expect((await destinationPATCH(req("/api/data-export/destinations/dest-1", { method: "PATCH", body: { orgId: ORG, enabled: true } }), params("dest-1"))).status).toBe(200);
+  });
+});
+
+// ─── Second review fix: the routes' own reads and writes are checked ───────
+
+describe("second review fix — the export routes check their own rate-limit read, run rows and destination audit rows", () => {
+  const run = (body: Row = {}) => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, ...body } }));
+
+  it("a rate-limit count that cannot be read refuses the run (503): nothing is exported (was: read as 0 and let through past the cap)", async () => {
+    db.readError = { export_runs: "permission denied for table export_runs" };
+    const res = await run();
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toMatch(/Could not check this workspace's export rate limit \(permission denied for table export_runs\) — nothing was run/);
+    expect(state.delivered).toEqual([]);
+    expect(audits("DATA_EXPORT")).toEqual([]);
+  });
+
+  it("the cap still holds: the thirteenth run in an hour is 429", async () => {
+    db.rows.export_runs = Array.from({ length: 12 }, (_, i) => ({ id: `r-${i}`, org_id: ORG, started_at: new Date().toISOString(), status: "succeeded" }));
+    expect((await run()).status).toBe(429);
+    expect(state.delivered).toEqual([]);
+  });
+
+  it("a refused run row refuses the run (503): no uncounted export with no run history", async () => {
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const res = await run();
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toMatch(/Could not open this export's run record \(permission denied\) — nothing was exported/);
+    expect(state.delivered).toEqual([]);
+    expect(bells()).toEqual([]);
+  });
+
+  it("a scheduled run whose run row is refused does not export: the result and the destination card say so", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    db.writeError = (table, op) => (table === "export_runs" && op === "insert" ? { code: "42501", message: "permission denied" } : null);
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).toMatchObject({ ok: false, error: expect.stringMatching(/not run: the run record could not be opened \(permission denied\)/) });
+    expect(state.delivered).toEqual([]);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ last_run_status: "failed", last_run_error: expect.stringMatching(/run record could not be opened/) });
+  });
+
+  it("a scheduled run whose closing writes are refused still succeeded — and the sweep result names what was not recorded", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    db.writeError = (table, op, rows) => (op === "update" && (
+      (table === "export_runs" && rows[0]?.status === "succeeded") || (table === "export_destinations" && rows[0]?.last_run_status === "succeeded")
+    ) ? { code: "57014", message: "statement timeout" } : null);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    err.mockRestore();
+    expect(body.results[0]).toMatchObject({ ok: true, warnings: expect.arrayContaining([expect.stringMatching(/run row not updated: statement timeout/), expect.stringMatching(/last-run status not recorded: statement timeout/)]) });
+  });
+
+  it("a destination change whose audit row is refused is said in the answer (create, edit, delete) — the change stands", async () => {
+    db.writeError = (table, _op, rows) => (table === "audit_logs" && String(rows[0]?.action ?? "").startsWith("EXPORT_DESTINATION_") ? { code: "42501", message: "audit refused" } : null);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const created = await destinationsPOST(req("/api/data-export/destinations", {
+      method: "POST", body: { orgId: ORG, name: "Hook", destination_type: "webhook", webhook_url: "https://hooks.example.com/x", webhook_secret: "s" },
+    }));
+    expect(created.status).toBe(200);
+    const c = (await created.json()) as { destination: Row; warning?: string };
+    expect(c.warning).toMatch(/Created, but the creation could not be recorded in the audit log: audit refused/);
+    const id = String(c.destination.id);
+    const edited = await destinationPATCH(req(`/api/data-export/destinations/${id}`, { method: "PATCH", body: { orgId: ORG, name: "Hook 2" } }), params(id));
+    expect(edited.status).toBe(200);
+    expect(((await edited.json()) as { warning?: string }).warning).toMatch(/Saved, but the change could not be recorded in the audit log: audit refused/);
+    const deleted = await destinationDELETE(req(`/api/data-export/destinations/${id}?orgId=${ORG}`, { method: "DELETE" }), params(id));
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true, warning: "Deleted, but the deletion could not be recorded in the audit log: audit refused" });
+    expect(rowsOf("export_destinations")).toEqual([]);
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/EXPORT_DESTINATION_DELETED audit row was not written/));
+    err.mockRestore();
   });
 });
 

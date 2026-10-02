@@ -16,6 +16,16 @@
 // secret (lib/exportRunner.ts destinationCredentialGap). A restored row
 // arrives disabled with none of them, still naming the backup owner's URL;
 // it answers 409 here, with nothing sent and no run row opened.
+//
+// BILL-3 Done-when 3: a bucket destination is the Growth feature. Under
+// SUBSCRIPTION_ENFORCE (the rule the scheduled sweep follows, DEC-18) Run Now
+// passes the plan gate creating or enabling one does (402), so a destination
+// the sweep disabled for a lapsed plan cannot be pushed by hand instead.
+//
+// The rate-limit count and the run row are read and written CHECKED: a run
+// that cannot be counted, or whose run row is refused, is refused (503)
+// before anything is exported — it would otherwise run uncounted, past the
+// cap, with no run history.
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -24,6 +34,7 @@ import { authorizeAdminSurface } from "@/lib/adminGate";
 import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
+import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
 
@@ -58,12 +69,18 @@ export async function POST(req: NextRequest) {
   // the (expensive) ZIP builder or exfiltrate at speed.
   const MAX_RUNS_PER_HOUR = 12;
   const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-  const { count: recentRuns } = await auth.admin
+  const { count: recentRuns, error: countErr } = await auth.admin
     .from("export_runs")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId)
     .gte("started_at", oneHourAgo);
-  if ((recentRuns ?? 0) >= MAX_RUNS_PER_HOUR) {
+  if (countErr || typeof recentRuns !== "number") {
+    return NextResponse.json(
+      { error: `Could not check this workspace's export rate limit (${countErr?.message ?? "no count returned"}) — nothing was run. Try again shortly.` },
+      { status: 503 },
+    );
+  }
+  if (recentRuns >= MAX_RUNS_PER_HOUR) {
     return NextResponse.json(
       { error: `Export rate limit reached (${MAX_RUNS_PER_HOUR}/hour for this workspace). Try again shortly.` },
       { status: 429 },
@@ -89,11 +106,17 @@ export async function POST(req: NextRequest) {
       { requireWebhookSecret: row.enabled !== true, then: "run it again" },
     );
     if (gap) return NextResponse.json({ error: gap }, { status: 409 });
+    // BILL-3 Done-when 3: the plan gate, behind the sweep's flag (DEC-18).
+    const bucket = row.destination_type === "s3" || row.destination_type === "r2" || !!String(row.bucket ?? "").trim();
+    if (bucket && process.env.SUBSCRIPTION_ENFORCE === "true") {
+      const plan = await assertCloudBucketEntitlement(auth.admin, orgId);
+      if (plan) return NextResponse.json({ error: plan.error }, { status: plan.status });
+    }
   }
 
   // Open a runs row up front so the UI can poll it
   const startedAt = new Date().toISOString();
-  const { data: runRow } = await auth.admin.from("export_runs").insert({
+  const { data: runRow, error: runRowErr } = await auth.admin.from("export_runs").insert({
     org_id: orgId,
     destination_id: body.destinationId ?? null,
     trigger_type: "manual",
@@ -103,6 +126,12 @@ export async function POST(req: NextRequest) {
     started_at: startedAt,
   }).select("id").single();
   const runId = (runRow as { id: string } | null)?.id;
+  if (runRowErr || !runId) {
+    return NextResponse.json(
+      { error: `Could not open this export's run record (${runRowErr?.message ?? "no run id returned"}) — nothing was exported.` },
+      { status: 503 },
+    );
+  }
 
   try {
     const result = await buildAndDeliverExport({

@@ -26,7 +26,10 @@
 // roleFilter builds (who holds a role, by the full collection); `lte` /
 // `gte` filters; and an `insert(...).select()` answers the rows it wrote,
 // each given a generated `id` when it carries none (the export run row's id
-// the routes read back). No restore path inserts with a select.
+// the routes read back). No restore path inserts with a select. Its second
+// review fix pass: `eq` and `order` take a JSON path `col->>key` (read as
+// text, as PostgREST's `->>` is) — the bucket push's baseline lookup — and
+// `delete()` removes the matching rows (the destination DELETE route).
 
 export type Row = Record<string, unknown>;
 
@@ -52,6 +55,14 @@ export const db = {
 };
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
+
+/** A column, or a JSON path `col->>key` read as text (null when absent). */
+function pick(r: Row, col: string): unknown {
+  const m = /^(\w+)->>(\w+)$/.exec(col);
+  if (!m) return r[col];
+  const v = (r[m[1]] as Record<string, unknown> | null | undefined)?.[m[2]];
+  return v === null || v === undefined ? null : typeof v === "object" ? JSON.stringify(v) : String(v);
+}
 const sameKey = (a: Row, b: Row, cols: string[]) => cols.every((c) => a[c] !== undefined && a[c] !== null && String(a[c]) === String(b[c]));
 
 /** Postgres-like ascending comparison: numbers numerically, everything else as text, nulls last. */
@@ -117,7 +128,7 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
     if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
     const matched = all.filter((r) => filters.every((f) => f(r)));
     const sorted = orders.length === 0 ? matched : [...matched].sort((x, y) => {
-      for (const o of orders) { const c = cmp(x[o.col], y[o.col]); if (c !== 0) return o.asc ? c : -c; }
+      for (const o of orders) { const c = cmp(pick(x, o.col), pick(y, o.col)); if (c !== 0) return o.asc ? c : -c; }
       return 0;
     });
     const ranged = range ? sorted.slice(range[0], range[1] + 1) : sorted;
@@ -173,6 +184,16 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
     db.writes.push({ table, op, n: hit.length });
     return { data: hit, error: null };
   }
+  if (op === "delete") {
+    db.attempts.push({ table, op });
+    const injected = db.writeError?.(table, op, []);
+    if (injected) return { data: null, error: injected };
+    const keep = all.filter((r) => !filters.every((f) => f(r)));
+    const n = all.length - keep.length;
+    all.splice(0, all.length, ...keep);
+    db.writes.push({ table, op, n });
+    return { data: null, error: null };
+  }
   return { data: null, error: null };
 }
 
@@ -187,7 +208,8 @@ export function from(table: string) {
     insert: (rows: unknown, o?: Record<string, unknown>) => { op = "insert"; payload = rows; opts = o; return b; },
     upsert: (rows: unknown, o?: Record<string, unknown>) => { op = "upsert"; payload = rows; opts = o; return b; },
     update: (patch: unknown) => { op = "update"; payload = patch; return b; },
-    eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
+    delete: () => { op = "delete"; return b; },
+    eq: (c: string, v: unknown) => { filters.push((r) => pick(r, c) === v); return b; },
     in: (c: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[c])); return b; },
     not: (c: string, _o: string, _v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },

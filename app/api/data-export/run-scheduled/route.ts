@@ -22,6 +22,10 @@
 // cloud backups is skipped AND disabled under SUBSCRIPTION_ENFORCE (DEC-18),
 // never deleted; an Admin re-enables it once the plan allows (PATCH applies
 // the same entitlement gate to enabling).
+// The run row is opened CHECKED: a run whose row is refused does not export
+// (it would leave no run history). The success path's run-row and
+// destination writes are checked too, and a refused one is logged and named
+// on the sweep result (`warnings`), never swallowed.
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -167,7 +171,7 @@ async function handler(req: NextRequest) {
     }
 
     const startedAt = new Date().toISOString();
-    const { data: runRow } = await sb.from("export_runs").insert({
+    const { data: runRow, error: runRowErr } = await sb.from("export_runs").insert({
       org_id: dest.org_id,
       destination_id: dest.id,
       trigger_type: "scheduled",
@@ -175,6 +179,18 @@ async function handler(req: NextRequest) {
       started_at: startedAt,
     }).select("id").single();
     const runId = (runRow as { id: string } | null)?.id;
+    if (runRowErr || !runId) {
+      // Nothing is exported without its run record; the claim already moved
+      // the clock, so this costs one cycle and is said on the card.
+      const msg = `not run: the run record could not be opened (${runRowErr?.message ?? "no run id returned"}); retried next cycle`;
+      console.error(`[run-scheduled] destination ${dest.id}: ${msg}`);
+      const { error: destErr } = await sb.from("export_destinations").update({
+        last_run_at: startedAt, last_run_status: "failed", last_run_error: msg.slice(0, 500),
+      }).eq("id", dest.id);
+      if (destErr) console.error(`[run-scheduled] destination ${dest.id}: last-run status not recorded: ${destErr.message}`);
+      results.push({ destinationId: dest.id, ok: false, error: destErr ? `${msg}; last-run status not recorded: ${destErr.message}` : msg });
+      continue;
+    }
 
     try {
       const result = await buildAndDeliverExport({
@@ -205,8 +221,9 @@ async function handler(req: NextRequest) {
       // BKP-6: a retention purge that did not finish is said on the run row and the card.
       const retentionNote = retentionProblem(result.retention);
       const completedAt = new Date().toISOString();
-      if (runId) {
-        await sb.from("export_runs").update({
+      const unrecorded: string[] = [];
+      {
+        const { error: runUpdErr } = await sb.from("export_runs").update({
           status: "succeeded",
           table_count: result.tableCount,
           total_rows: result.totalRows,
@@ -223,8 +240,9 @@ async function handler(req: NextRequest) {
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
         }).eq("id", runId);
+        if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
       }
-      await sb.from("export_destinations").update({
+      const { error: destUpdErr } = await sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
         last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
@@ -237,10 +255,13 @@ async function handler(req: NextRequest) {
           from: new Date(completedAt),
         }),
       }).eq("id", dest.id);
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
+      for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
+      const warnings = [...gate.notices, ...unrecorded];
 
       results.push({
         destinationId: dest.id, ok: true, bytes: result.bytes,
-        ...(gate.notices.length ? { warnings: gate.notices } : {}),
+        ...(warnings.length ? { warnings } : {}),
       });
     } catch (e) {
       const completedAt = new Date().toISOString();

@@ -19,6 +19,11 @@
 //     disables a bucket destination whose plan lapsed);
 //   - BKP-13 Done-when 3: every other controller is told, as they are when an
 //     enabled destination is pointed somewhere new.
+// `enabled` must be a JSON boolean (400 otherwise): PostgREST would store
+// "true", "on" or 1 as true while the rules above, keyed on `true`, never ran.
+// The EXPORT_DESTINATION_UPDATED / _DELETED rows are CHECKED: a refused one
+// is said in the answer as a warning (the change itself stands), never
+// swallowed.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -83,6 +88,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const orgId = String(body?.orgId ?? "");
   const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  // The rules below key on `enabled === true`; a string or a number would
+  // skip them and still be stored as true (PostgREST casts it).
+  if ("enabled" in body && typeof body.enabled !== "boolean") {
+    return NextResponse.json({ error: "enabled must be true or false." }, { status: 400 });
+  }
 
   // XEDGE-8: the Growth gate that create applies must hold on edit too —
   // adding a bucket to an existing (webhook / bucket-less) destination is the
@@ -186,7 +197,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await auth.admin.from("audit_logs").insert({
+  const warnings: string[] = [];
+  const { error: auditErr } = await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_UPDATED",
     resource_id: id,
     resource_type: "export_destination",
@@ -196,11 +208,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     user_role: auth.role,
     details: { changedFields: Object.keys(updates) },
   });
+  if (auditErr) {
+    console.error(`[data-export/destinations] org ${orgId}: the EXPORT_DESTINATION_UPDATED audit row was not written: ${auditErr.message}`);
+    warnings.push(`Saved, but the change could not be recorded in the audit log: ${auditErr.message}`);
+  }
 
   // BKP-13 Done-when 3: enabling a destination, or re-pointing an enabled
   // one, tells every other controller. A refused alert is said, never
   // swallowed; the change stands either way.
-  let warning: string | undefined;
   if (enabling || retargeted) {
     const saved = data as CurrentDestination & { id?: string };
     const alert = await alertAdminsOfDestination(auth.admin, {
@@ -211,13 +226,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
     if (!alert.ok) {
       console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
-      warning = `Saved, but the other Admins could not be alerted: ${alert.error}`;
+      warnings.push(`Saved, but the other Admins could not be alerted: ${alert.error}`);
     }
   }
 
   return NextResponse.json({
     destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined },
-    ...(warning ? { warning } : {}),
+    ...(warnings.length ? { warning: warnings.join(" ") } : {}),
   });
 }
 
@@ -235,7 +250,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     .eq("org_id", orgId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await auth.admin.from("audit_logs").insert({
+  const { error: auditErr } = await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_DELETED",
     resource_id: id,
     resource_type: "export_destination",
@@ -244,6 +259,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     user_email: auth.email,
     user_role: auth.role,
   });
+  if (auditErr) {
+    console.error(`[data-export/destinations] org ${orgId}: the EXPORT_DESTINATION_DELETED audit row was not written: ${auditErr.message}`);
+    return NextResponse.json({ ok: true, warning: `Deleted, but the deletion could not be recorded in the audit log: ${auditErr.message}` });
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -201,6 +201,37 @@ export function orTermValue(value: string): string {
  *  postgrest-js flags URLs past 8,000 characters as likely to exceed server
  *  limits; the rest of the URL is well under the 2,000 left. */
 const RECHECK_OR_URL_BUDGET = 6000;
+/** The same budget for one plain-column `.in()` list. keysReferencedOutside
+ *  sends up to 200 keys per `.in()`; at real key lengths
+ *  (`orgs/<uuid>/documents/<uuid>/<stamp>_<name>.pdf`, ~120 characters) that
+ *  is a ~26,000-character URL the gateway refuses (414), and every purge with
+ *  more than a few dozen candidates stopped before its first batch. */
+const RECHECK_IN_URL_BUDGET = 6000;
+
+/** How many characters `value` takes in a query string — the
+ *  application/x-www-form-urlencoded form URLSearchParams (and so
+ *  postgrest-js) writes, which encodes `/`, `(`, `)` and `,` too. */
+export function wireLength(value: string): number {
+  return new URLSearchParams([["", value]]).toString().length - 1;
+}
+
+/** `keys` (deduplicated, in order) cut into `.in()` lists whose encoded
+ *  length stays within `budget` — each key as postgrest-js writes it inside
+ *  `in.(…)` (double-quoted when it holds `,`, `(` or `)`), plus its encoded
+ *  comma — and never more than keysReferencedOutside's own 200 per list. */
+export function inListChunks(keys: readonly string[], budget: number = RECHECK_IN_URL_BUDGET): string[][] {
+  const out: string[][] = [];
+  let cur: string[] = [];
+  let size = 0;
+  for (const key of new Set(keys)) {
+    const len = wireLength(/[,()]/.test(key) ? `"${key}"` : key) + 3;
+    if (cur.length > 0 && (size + len > budget || cur.length >= 200)) { out.push(cur); cur = []; size = 0; }
+    cur.push(key);
+    size += len;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out;
+}
 /** How many re-check statements run at once. */
 const RECHECK_CONCURRENCY = 8;
 
@@ -213,8 +244,9 @@ export class RecheckDeadlineError extends Error {
 }
 
 /** The keys among `keys` that ANY registered key column names right now: the
- *  plain columns by one `.in()` statement per column and 200 keys
- *  (keysReferencedOutside, which also refuses a read a row cap cut short);
+ *  plain columns by one `.in()` statement per column per list of keys sized
+ *  to RECHECK_IN_URL_BUDGET (inListChunks → keysReferencedOutside, which also
+ *  refuses a read a row cap cut short; up to RECHECK_CONCURRENCY lists at once);
  *  the JSON-embedded ones by ONE containment statement per column per chunk
  *  of keys — `col.cs."<probe>"` terms OR-ed, sized to RECHECK_OR_URL_BUDGET —
  *  asked only "does any row match?" (`limit(1)`). A chunk nothing matches
@@ -230,7 +262,27 @@ export async function recheckStillNamed(
 ): Promise<Set<string>> {
   const pastDeadline = () => opts.deadline !== undefined && Date.now() >= opts.deadline;
   if (pastDeadline()) throw new RecheckDeadlineError();
-  const named = await keysReferencedOutside(sb, keys);
+  const named = new Set<string>();
+  {
+    const lists = inListChunks(keys);
+    let at = 0;
+    let stop: unknown = null;
+    const runPlain = async () => {
+      while (stop === null && at < lists.length) {
+        if (pastDeadline()) { stop = new RecheckDeadlineError(); return; }
+        const list = lists[at++];
+        try {
+          for (const key of await keysReferencedOutside(sb, list)) named.add(key);
+        } catch (e) {
+          stop = e;
+          return;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(RECHECK_CONCURRENCY, lists.length) }, runPlain));
+    if (stop !== null) throw stop;
+  }
+  if (pastDeadline()) throw new RecheckDeadlineError();
 
   type Group = { table: string; column: string; probes: ReadonlyArray<{ shape: (key: string) => unknown }> };
   const work: Array<{ group: Group; keys: string[]; terms: string[] }> = [];
@@ -242,7 +294,7 @@ export async function recheckStillNamed(
     for (const key of keys) {
       if (named.has(key)) continue;
       const terms = probes.map((p) => `${group.column}.cs.${orTermValue(probeLiteral(p, key))}`);
-      const len = terms.reduce((n, t) => n + encodeURIComponent(t).length + 3, 0);
+      const len = terms.reduce((n, t) => n + wireLength(t) + 3, 0);
       if (chunk && size + len > RECHECK_OR_URL_BUDGET) { work.push(chunk); chunk = null; size = 0; }
       if (!chunk) chunk = { group, keys: [], terms: [] };
       chunk.keys.push(key);

@@ -21,11 +21,13 @@
 // route is held to the Admin-only data-export surface, lib/adminSurfaces.ts,
 // through lib/adminGate.ts — an Admin is in the controller tier, so the
 // ACL-restricted documents the service role reads are ones the exporter may
-// read anyway; DEC-43). What RLS keeps from EVERY other member, the export
-// keeps out too: a standalone note is its author's private scratchpad and is
-// withheld (withholdPrivateNotes).
+// read anyway; DEC-43). Standalone notes — each author's private scratchpad,
+// which RLS keeps from every other member — are still carried, so a restore
+// brings them back: whether to keep carrying them is the user's open
+// decision (DEC-44 (A&O P3) §4). Until then the Admin-only gate is the
+// mitigation, and the manifest and the DATA_EXPORT row count them.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -74,9 +76,7 @@ export interface DataExportManifest {
    *  table's own count twice while the export ran (intelligence ILIFE-6): the
    *  rows read ARE in this backup, and some rows may be missing. */
   tables: Array<{ name: string; rowCount: number; error?: string; short?: string }>;
-  /** True when every listed table exported cleanly and in full AND no row was
-   *  withheld (`withheld`). False = INCOMPLETE backup: a restore of it does
-   *  not bring the workspace back whole. */
+  /** True when every listed table exported cleanly and in full. False = INCOMPLETE backup. */
   complete: boolean;
   files: {
     count: number;
@@ -108,10 +108,6 @@ export interface DataExportManifest {
    *  be re-issued and destination credentials re-entered rather than
    *  silently arriving dead. */
   redactedColumns: Record<string, string[]>;
-  /** BKP-8: rows the exporter may not read in the app, so the export leaves
-   *  them out — counted here, never silently dropped. Their presence makes
-   *  `complete` false: a restore of this backup does not bring them back. */
-  withheld?: { privateNotes: number; reason: string };
   notes: string[];
 }
 
@@ -147,10 +143,12 @@ export async function runOrgExport(params: {
   auditDetails?: Record<string, unknown>;
   /** How the handed-out files are recorded (DEC-44 (A&O P3) §3). "list"
    *  (default): DATA_EXPORT_FILES rows naming each one — an export handed to
-   *  a person. "digest": the DATA_EXPORT row carries their count and the
-   *  SHA-256 of the sorted list, and no per-file rows — a push to the
-   *  workspace's own destination, whose archive carries the list itself. */
-  fileRecord?: "list" | "digest";
+   *  a person, and a webhook push. `{ destinationId }`: a push to a bucket
+   *  destination — the files are named against that destination's last
+   *  recorded full list (a baseline): only what was added or removed since
+   *  is written, and a new baseline when that would pass one row
+   *  (recordBucketPush). Every file that left is named either way. */
+  fileRecord?: "list" | { destinationId: string };
   presignedUrlSeconds?: number;
   /** Override FILE_CHECK_BUDGET_MS (tests). */
   fileCheckBudgetMs?: number;
@@ -213,14 +211,16 @@ export async function runOrgExport(params: {
     }
   }
 
-  // BKP-8 Done-when 2: a standalone note (no document, project or asset) is
-  // its author's private scratchpad — RLS (notes_standalone_own, 20260630)
-  // admits only created_by, and no member, an Admin included, can read
-  // another's in the app. The dump runs as the service role, so it would hand
-  // every member's private notes to whoever exports. They are withheld before
-  // the file scan (an attachment named only by a private note is not carried
-  // either), counted, and named in the manifest.
-  const privateNotes = withholdPrivateNotes(tables, tableCounts);
+  // BKP-8 Done-when 2 (OPEN — DEC-44 (A&O P3) §4): a standalone note (no
+  // document, project or asset) is its author's private scratchpad — RLS
+  // (notes_standalone_own, 20260630) admits only created_by. The dump runs as
+  // the service role, so it carries every member's. Withholding them would
+  // make every backup lose them on restore (the second review fix pass undid
+  // that), so they are carried as before this package and counted: the
+  // manifest says the archive holds them, and the DATA_EXPORT row records how
+  // many left. The user decides whether to withhold them or carry them
+  // encrypted to their authors.
+  const privateNotes = countPrivateNotes(tables);
 
   // 3. File manifest: every storage key the exported rows reference, read
   //    through lib/storageKeyRegistry.ts (document revisions and their native
@@ -327,9 +327,9 @@ export async function runOrgExport(params: {
   //    record. An export that cannot be recorded is refused before anything
   //    leaves. BKP-8 Done-when 3: the files the export hands out are named
   //    too (DATA_EXPORT_FILES), so the chain of custody names the drawings,
-  //    not just the event — one by one for an export handed to a person, by
-  //    count and digest for a push to the workspace's own destination
-  //    (`fileRecord`, DEC-44 (A&O P3) §3).
+  //    not just the event — one by one for an export handed to a person or
+  //    a webhook push, against the destination's last full list for a bucket
+  //    push (`fileRecord`, DEC-44 (A&O P3) §3).
   await recordExport(sb, params, {
     startedAt,
     tableCount: tableCounts.length,
@@ -369,18 +369,11 @@ export async function runOrgExport(params: {
       );
     }
     notes.push(`⚠ INCOMPLETE BACKUP — ${parts.join(" ")} Resolve before relying on this as a full backup.`);
-  } else if (privateNotes > 0) {
-    // BKP-8 review fix: the backup is NOT complete while rows are withheld —
-    // a disaster-recovery restore of it does not bring them back.
-    notes.push(
-      `⚠ INCOMPLETE BACKUP — complete except ${privateNotes} private note(s) withheld (manifest.withheld): ` +
-      "a restore of this backup does not bring them back.",
-    );
   } else {
     notes.push("This document is a complete export of every record this organization owns.");
   }
   if (privateNotes > 0) {
-    notes.push(`${privateNotes} ${PRIVATE_NOTES_WITHHELD}`);
+    notes.push(`${privateNotes} ${PRIVATE_NOTES_CARRIED}`);
   }
   if (missingFiles > 0) {
     notes.push(
@@ -445,7 +438,7 @@ export async function runOrgExport(params: {
     orgName,
     exportedBy: { userId: params.exporterUserId, email: params.exporterEmail },
     tables: tableCounts,
-    complete: failedTables.length === 0 && shortTables.length === 0 && privateNotes === 0,
+    complete: failedTables.length === 0 && shortTables.length === 0,
     files: {
       count: files.length,
       missing: missingFiles,
@@ -457,17 +450,16 @@ export async function runOrgExport(params: {
     },
     spaceArchives: shedInfo.archiveIds,
     redactedColumns,
-    ...(privateNotes > 0 ? { withheld: { privateNotes, reason: PRIVATE_NOTES_WITHHELD } } : {}),
     notes,
   };
 
   return { manifest, tables, files };
 }
 
-/** BKP-8: why a private note is not in the backup (manifest note / withheld.reason). */
-export const PRIVATE_NOTES_WITHHELD =
-  "private note(s) — scratchpad notes attached to no document, project or equipment — are personal to their authors " +
-  "(only the author can read one in the app) and are NOT in this backup; restoring it does not bring them back.";
+/** BKP-8: the manifest note for the private notes a backup carries. */
+export const PRIVATE_NOTES_CARRIED =
+  "private note(s) — scratchpad notes attached to no document, project or equipment, which in the app only their authors can read — " +
+  "are in this backup, so restoring it brings them back. Keep the archive as private as those notes.";
 
 /** A standalone note: its author's private scratchpad (notes_standalone_own). */
 export function isPrivateNote(row: unknown): boolean {
@@ -475,17 +467,10 @@ export function isPrivateNote(row: unknown): boolean {
   return r.document_id == null && r.project_id == null && r.asset_id == null;
 }
 
-/** Remove the private notes from the dump; returns how many were withheld. */
-function withholdPrivateNotes(tables: Record<string, unknown[]>, tableCounts: DataExportManifest["tables"]): number {
+/** How many private notes the dump carries. */
+function countPrivateNotes(tables: Record<string, unknown[]>): number {
   const rows = tables.notes;
-  if (!Array.isArray(rows)) return 0;
-  const kept = rows.filter((r) => !isPrivateNote(r));
-  const withheld = rows.length - kept.length;
-  if (withheld === 0) return 0;
-  tables.notes = kept;
-  const entry = tableCounts.find((t) => t.name === "notes");
-  if (entry) entry.rowCount = kept.length;
-  return withheld;
+  return Array.isArray(rows) ? rows.filter(isPrivateNote).length : 0;
 }
 
 /** BKP-8 Done-when 3: how many handed-out files one DATA_EXPORT_FILES audit row names. */
@@ -494,27 +479,88 @@ export const EXPORT_FILES_PER_AUDIT_ROW = 500;
 const EXPORT_FILE_ROWS_PER_INSERT = 10;
 
 /** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
- *  and newline-joined — what a digest record names, and what anyone holding
- *  the archive can recompute from its own file list to show it is the one
- *  this record describes. */
+ *  and newline-joined — the fingerprint a record carries of the whole list:
+ *  a bucket push's list rebuilt from its baseline and delta rows must hash to
+ *  it, and anyone holding the archive can recompute it from its own list. */
 export function exportFileListDigest(paths: readonly string[]): string {
   return createHash("sha256").update([...paths].sort().join("\n"), "utf8").digest("hex");
+}
+
+/** DEC-44 (A&O P3) §3: a bucket destination's last recorded full list — the
+ *  DATA_EXPORT_FILES rows of kind "baseline" one push wrote, read back whole
+ *  and checked against the digest they carry. */
+export interface BucketPushBaseline {
+  recordId: string;
+  startedAt: string;
+  sha256: string;
+  paths: Set<string>;
+}
+
+/** The destination's newest baseline. `baseline` null with no `problem`: the
+ *  destination has none yet. With a `problem`: one exists but could not be
+ *  read whole or does not hash to its own digest — the caller writes a new
+ *  full list (the safe side: every file is named again), never a delta
+ *  against a list it cannot vouch for. */
+export async function readBucketPushBaseline(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+  destinationId: string,
+): Promise<{ baseline: BucketPushBaseline | null; problem?: string }> {
+  const head = await sb.from("audit_logs").select("details")
+    .eq("org_id", orgId).eq("action", "DATA_EXPORT_FILES")
+    .eq("details->>destinationId", destinationId).eq("details->>kind", "baseline")
+    .order("details->>startedAt", { ascending: false }).limit(1);
+  if (head.error) return { baseline: null, problem: `the last full list could not be read (${head.error.message})` };
+  const first = ((head.data ?? []) as Array<{ details?: Record<string, unknown> | null }>)[0]?.details;
+  if (!first) return { baseline: null };
+  const recordId = typeof first.recordId === "string" ? first.recordId : "";
+  const parts = Number(first.parts);
+  const sha256 = typeof first.sha256 === "string" ? first.sha256 : "";
+  const startedAt = typeof first.startedAt === "string" ? first.startedAt : "";
+  if (!recordId || !sha256 || !Number.isInteger(parts) || parts < 1) {
+    return { baseline: null, problem: "the last full list is malformed" };
+  }
+  const all = await sb.from("audit_logs").select("details")
+    .eq("org_id", orgId).eq("action", "DATA_EXPORT_FILES").eq("details->>recordId", recordId)
+    .limit(parts + 1);
+  if (all.error) return { baseline: null, problem: `the last full list could not be read (${all.error.message})` };
+  const paths = new Set<string>();
+  const seen = new Set<number>();
+  for (const r of (all.data ?? []) as Array<{ details?: Record<string, unknown> | null }>) {
+    const d = r.details ?? {};
+    seen.add(Number(d.part));
+    for (const f of Array.isArray(d.files) ? d.files : []) {
+      const path = (f as { path?: unknown } | null)?.path;
+      if (typeof path === "string") paths.add(path);
+    }
+  }
+  if (seen.size !== parts || exportFileListDigest([...paths]) !== sha256) {
+    return { baseline: null, problem: `the last full list (${recordId}) could not be read back whole: ${seen.size} of ${parts} part(s), or its digest does not match` };
+  }
+  return { baseline: { recordId, startedAt, sha256, paths } };
 }
 
 /** The DATA_EXPORT row, then the DATA_EXPORT_FILES rows naming every file the
  *  export hands out (a presigned URL in the envelope; the server ZIP embeds
  *  from those URLs) — with the document and revision for a revision's file,
- *  so a recall can ask "who took which drawing". In "digest" mode (a push to
- *  the workspace's own destination) the DATA_EXPORT row carries the count and
- *  exportFileListDigest instead, and no per-file row is written. Every insert is CHECKED and
- *  throws: the caller refuses the export (BKP-13). A machine run (no
- *  exporter uid) carries user_id NULL and the machine's label in user_email
- *  (DEC-44 (A&O P3)), never a string in the uuid column. */
+ *  so a recall can ask "who took which drawing". DEC-44 (A&O P3) §3:
+ *  - "list" (a person's export, a webhook push): every file, 500 to a row,
+ *    on every run;
+ *  - `{ destinationId }` (a bucket push): against the destination's newest
+ *    baseline (readBucketPushBaseline), ONE "delta" row naming the files
+ *    added since (and the paths removed) — none when nothing changed — or,
+ *    when there is no baseline it can vouch for or the change would pass one
+ *    row, a new "baseline" naming every file. The night's list is the
+ *    baseline plus its delta, and hashes to the DATA_EXPORT row's sha256.
+ *  Every insert is CHECKED and throws: the caller refuses the export
+ *  (BKP-13). A machine run (no exporter uid) carries user_id NULL and the
+ *  machine's label in user_email (DEC-44 (A&O P3)), never a string in the
+ *  uuid column. */
 async function recordExport(
   sb: SupabaseClient,
   params: {
     orgId: string; exporterUserId: string | null; exporterEmail: string; exporterRole?: string | null;
-    auditDetails?: Record<string, unknown>; fileRecord?: "list" | "digest";
+    auditDetails?: Record<string, unknown>; fileRecord?: "list" | { destinationId: string };
   },
   info: {
     startedAt: string; tableCount: number; totalRows: number; totalBytes: number; presignedUrlExpiresIn: number; privateNotes: number;
@@ -536,11 +582,49 @@ async function recordExport(
       if (typeof k === "string" && k && !byKey.has(k)) byKey.set(k, ref);
     }
   }
-  // DEC-44 (A&O P3) §3: a push to the workspace's own destination records the
-  // list by count and digest. audit_logs is itself exported, so a per-file
-  // list on every nightly push would grow every later backup without bound.
-  const digest = params.fileRecord === "digest";
-  const parts = digest ? 0 : Math.ceil(handedOut.length / EXPORT_FILES_PER_AUDIT_ROW);
+  const entryOf = (path: string) => {
+    const ref = byKey.get(path);
+    return ref ? { path, documentId: ref.documentId, versionId: ref.versionId } : { path };
+  };
+  const paths = handedOut.map((f) => f.path);
+  const sha256 = exportFileListDigest(paths);
+  const recordId = randomUUID();
+  const chunked = (kind: Record<string, unknown>) => {
+    const parts = Math.ceil(paths.length / EXPORT_FILES_PER_AUDIT_ROW);
+    return Array.from({ length: parts }, (_, i) => ({
+      ...kind,
+      recordId,
+      startedAt: info.startedAt,
+      part: i + 1,
+      parts,
+      files: paths.slice(i * EXPORT_FILES_PER_AUDIT_ROW, (i + 1) * EXPORT_FILES_PER_AUDIT_ROW).map(entryOf),
+    }));
+  };
+
+  let fileRecord: Record<string, unknown>;
+  let fileRows: Array<Record<string, unknown>>;
+  if (params.fileRecord && typeof params.fileRecord === "object") {
+    const { destinationId } = params.fileRecord;
+    const { baseline, problem } = await readBucketPushBaseline(sb, params.orgId, destinationId);
+    const current = new Set(paths);
+    const added = baseline ? paths.filter((p) => !baseline.paths.has(p)) : [];
+    const removed = baseline ? [...baseline.paths].filter((p) => !current.has(p)).sort() : [];
+    if (baseline && added.length + removed.length <= EXPORT_FILES_PER_AUDIT_ROW) {
+      const base = { recordId: baseline.recordId, startedAt: baseline.startedAt, sha256: baseline.sha256 };
+      fileRecord = { mode: "delta", destinationId, count: paths.length, sha256, recordId, baseline: base, added: added.length, removed: removed.length };
+      fileRows = added.length + removed.length === 0 ? [] : [{
+        kind: "delta", destinationId, recordId, startedAt: info.startedAt, baseline: base, sha256, part: 1, parts: 1,
+        files: added.map(entryOf), removed,
+      }];
+    } else {
+      fileRecord = { mode: "baseline", destinationId, count: paths.length, sha256, recordId, ...(problem ? { baselineProblem: problem } : {}) };
+      fileRows = chunked({ kind: "baseline", destinationId, sha256 });
+    }
+  } else {
+    fileRecord = { mode: "list", count: paths.length, sha256, recordId };
+    fileRows = chunked({});
+  }
+
   const { error } = await sb.from("audit_logs").insert({
     action: "DATA_EXPORT",
     resource_id: params.orgId,
@@ -554,29 +638,21 @@ async function recordExport(
       startedAt: info.startedAt,
       presignedUrls: handedOut.length,
       presignedUrlExpiresIn: info.presignedUrlExpiresIn,
-      fileRecordRows: parts,
-      ...(digest ? { fileRecord: { mode: "digest", count: handedOut.length, sha256: exportFileListDigest(handedOut.map((f) => f.path)) } } : {}),
-      ...(info.privateNotes > 0 ? { withheld: { privateNotes: info.privateNotes } } : {}),
+      fileRecordRows: fileRows.length,
+      fileRecord,
+      ...(info.privateNotes > 0 ? { privateNotes: { carried: info.privateNotes } } : {}),
       ...(params.auditDetails ?? {}),
     },
   });
   if (error) {
     throw new Error(`The export could not be recorded in the audit trail (${error.message}) — it was refused, and nothing was exported.`);
   }
-  const rows = Array.from({ length: parts }, (_, i) => ({
+  const rows = fileRows.map((details) => ({
     action: "DATA_EXPORT_FILES",
     resource_id: params.orgId,
     resource_type: "org",
     ...actor,
-    details: {
-      startedAt: info.startedAt,
-      part: i + 1,
-      parts,
-      files: handedOut.slice(i * EXPORT_FILES_PER_AUDIT_ROW, (i + 1) * EXPORT_FILES_PER_AUDIT_ROW).map((f) => {
-        const ref = byKey.get(f.path);
-        return ref ? { path: f.path, documentId: ref.documentId, versionId: ref.versionId } : { path: f.path };
-      }),
-    },
+    details,
   }));
   for (let i = 0; i < rows.length; i += EXPORT_FILE_ROWS_PER_INSERT) {
     const { error: filesErr } = await sb.from("audit_logs").insert(rows.slice(i, i + EXPORT_FILE_ROWS_PER_INSERT));

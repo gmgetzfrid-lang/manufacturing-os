@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await auth.admin.from("audit_logs").insert({
+  const { error: auditErr } = await auth.admin.from("audit_logs").insert({
     action: "EXPORT_DESTINATION_CREATED",
     resource_id: data.id,
     resource_type: "export_destination",
@@ -156,6 +156,13 @@ export async function POST(req: NextRequest) {
     user_role: auth.role,
     details: { name: data.name, destination_type: data.destination_type },
   });
+  // CHECKED: a refused audit row is said in the answer (the destination
+  // stands), never swallowed.
+  const warnings: string[] = [];
+  if (auditErr) {
+    console.error(`[data-export/destinations] org ${orgId}: the EXPORT_DESTINATION_CREATED audit row was not written: ${auditErr.message}`);
+    warnings.push(`Created, but the creation could not be recorded in the audit log: ${auditErr.message}`);
+  }
 
   // BKP-13 Done-when 3: creating ANY destination (a webhook included) tells
   // every other controller. A refused alert is said in the answer, never
@@ -165,10 +172,13 @@ export async function POST(req: NextRequest) {
     destinationId: data.id, destinationName: data.name, destinationType: data.destination_type,
     enabled: data.enabled === true, schedule: data.schedule_kind,
   }).catch((e) => ({ ok: false, notified: 0, error: (e as Error).message }));
-  if (!alert.ok) console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
+  if (!alert.ok) {
+    console.error(`[data-export/destinations] org ${orgId}: the destination alert was not sent: ${alert.error}`);
+    warnings.push(`Created, but the other Admins could not be alerted: ${alert.error}`);
+  }
 
   return NextResponse.json({
     destination: { ...data, access_key_id_encrypted: undefined, secret_access_key_encrypted: undefined, webhook_secret_encrypted: undefined },
-    ...(alert.ok ? {} : { warning: `Created, but the other Admins could not be alerted: ${alert.error}` }),
+    ...(warnings.length ? { warning: warnings.join(" ") } : {}),
   });
 }

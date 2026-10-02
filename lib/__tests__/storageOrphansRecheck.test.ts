@@ -402,10 +402,17 @@ describe("ILIFE-6 c. 3 review fix — the purge stops at a batch boundary before
 
 describe("ILIFE-6 c. 3 review fix — the re-check against the real query builder", () => {
   type Db = Record<string, Array<Record<string, unknown>>>;
+  /** The raw length of every request URL the client sent, in order. */
+  let wireLengths: number[] = [];
+  beforeEach(() => { wireLengths = []; });
   function postgrest(db: Db, urls: string[]) {
     const respond = (status: number, body: unknown, headers: Record<string, string> = {}) =>
       new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
     return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      // A gateway refuses a request line this long (postgrest-js's own 8,000
+      // hint; A&O P2's stand-in refuses an id list past 8 KB the same way).
+      wireLengths.push(String(input).length);
+      if (String(input).length > 8000) return respond(414, { code: "414", message: "URI Too Long" });
       const url = new URL(String(input));
       urls.push(url.pathname.replace(/^\/rest\/v1\//, "") + "?" + [...url.searchParams].map(([a, b]) => `${a}=${b}`).join("&"));
       const table = url.pathname.replace(/^\/rest\/v1\//, "");
@@ -505,6 +512,60 @@ describe("ILIFE-6 c. 3 review fix — the re-check against the real query builde
     const out = await deleteOrphans(sbReal as never, ORG);
     expect(out).toMatchObject({ deleted: 2, kept: 1, errors: [] });
     expect(state.deleted.flat().sort()).toEqual([k("x.bin"), k("y.bin")]);
+  });
+
+  // Second review fix pass: the plain-column `.in()` lists are held to the
+  // URL budget too. keysReferencedOutside sends 200 keys per `.in()`; at real
+  // key lengths that is a ~26,000-character URL, refused, and the purge
+  // deleted nothing past a few dozen candidates.
+  const realKey = (i: number) =>
+    k(`documents/${"d".repeat(8)}-0000-4000-8000-${String(i).padStart(12, "0")}/1727800000000_P-ID-${String(i).padStart(4, "0")}_Rev-C.pdf`);
+
+  it("a 500-candidate batch of real-length keys (≥110 characters): every request stays under 8,000 characters and every true orphan is deleted", async () => {
+    expect(realKey(1).length).toBeGreaterThanOrEqual(110);
+    const urls: string[] = [];
+    const late = realKey(321);
+    const db: Db = { knowledge_documents: [] };
+    state.listing = Array.from({ length: 500 }, (_, i) => object(realKey(i)));
+    const sbReal = client(db, urls);
+    // a knowledge mirror naming one key lands after the scan's pages, as the
+    // balanced write does: the plain re-check must still see it
+    const realFrom = sbReal.from.bind(sbReal);
+    (sbReal as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (db.knowledge_documents.length === 0 && urls.some((u) => u.includes("=in."))) db.knowledge_documents = [{ id: "kd-late", file_key: late }];
+      return realFrom(t);
+    };
+    const out = await deleteOrphans(sbReal as never, ORG);
+    expect(out).toMatchObject({ deleted: 499, kept: 1, errors: [] });
+    expect(state.deleted.flat()).toHaveLength(499);
+    expect(state.deleted.flat()).not.toContain(late);
+    expect(Math.max(...wireLengths)).toBeLessThanOrEqual(8000);
+    // the plain columns were asked in several lists, not one 200-key statement
+    expect(urls.filter((u) => u.startsWith("knowledge_documents?") && u.includes("file_key=in.")).length).toBeGreaterThan(2);
+  });
+
+  it("negative control: one 200-key `.in()` at real key lengths is the request the stub (and the gateway) refuses", async () => {
+    const { keysReferencedOutside } = await import("@/lib/storageKeyRegistry");
+    const keys = Array.from({ length: 200 }, (_, i) => realKey(i));
+    await expect(keysReferencedOutside(client({}, []), keys)).rejects.toThrow(/Couldn't verify whether .* still references these storage keys/);
+    expect(Math.max(...wireLengths)).toBeGreaterThan(8000);
+  });
+
+  it("inListChunks: lists sized by encoded length (a quoted key counted with its quotes), at most 200, every key once", async () => {
+    const { inListChunks, wireLength } = await import("@/lib/storageOrphans");
+    expect(wireLength("orgs/a,b (1).pdf")).toBe("orgs%2Fa%2Cb+%281%29.pdf".length);
+    const keys = Array.from({ length: 500 }, (_, i) => realKey(i));
+    const lists = inListChunks([...keys, keys[0]]);
+    expect(lists.flat()).toEqual(keys);
+    for (const list of lists) {
+      expect(list.reduce((n, key) => n + wireLength(key) + 3, 0)).toBeLessThanOrEqual(6000);
+    }
+    expect(inListChunks(Array.from({ length: 450 }, (_, i) => `k${i}`)).map((l) => l.length)).toEqual([200, 200, 50]);
+    // a key holding `,` / `(` / `)` is written double-quoted inside in.(…): its quotes count
+    const odd = (n: number) => `orgs/x/Pump "A", rev (${n}).pdf`;
+    const quoted = wireLength(`"${odd(1)}"`) + 3;
+    expect(inListChunks([odd(1), odd(2)], 2 * quoted)).toEqual([[odd(1), odd(2)]]);
+    expect(inListChunks([odd(1), odd(2)], 2 * quoted - 1)).toEqual([[odd(1)], [odd(2)]]);
   });
 
   it("negative control: the old array probe, sent by the real builder, is the `{[object Object]}` PostgREST refuses", async () => {
