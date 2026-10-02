@@ -186,7 +186,8 @@ describe("DWG-3 — a text-layer mark is stored where pdf.js draws the glyph, on
   it("a text item that starts off the drawn page (left of the CropBox) gets no position — never one pinned to an edge", async () => {
     // pdf.js drops the glyphs the CropBox cuts away, but keeps an item whose
     // remaining glyphs show: this one starts at x ≈ 46.7, left of the crop's
-    // edge at 50. The old ingest pinned it to nx 0 (and mis-scaled it).
+    // edge at 50. The old ingest ignored the crop's origin and put it at
+    // nx ≈ 0.19 (46.7 / 250), inside the sheet, where nothing is.
     const bytes = await sheet({ rotate: 0, crop: [50, 0, 300, 792], glyphs: [[100, 150, "V-101 DRUM"], [40, 200, "XX E-204 COOLER"]] });
     const rows = await ingest(bytes);
     const off = rows.find((e) => e.kind === "equipment" && e.tag === "E-204")!;
