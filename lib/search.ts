@@ -106,8 +106,13 @@ export interface TagLookupHit {
   via: "tag" | "code" | "alias";
   /** The operating area it is filed under, with the codebook's name. */
   unit: { code: string; label: string | null } | null;
-  /** Documents the asset appears on (the document↔equipment relation). */
-  documents: Array<{ id: string; library_id: string; document_number: string | null; title: string | null }>;
+  /** Documents the asset appears on (the document↔equipment relation), with
+   *  the sheet address the relation carries (GAP-301 — "2002-D-10001 SHT 4")
+   *  and whether a machine read it off the drawing (GAP-303). */
+  documents: Array<{
+    id: string; library_id: string; document_number: string | null; title: string | null;
+    sheetLabel?: string | null; fromDrawing?: boolean;
+  }>;
 }
 
 /** GAP-311 — "FV-2201 is leaking": the asset, its unit and the drawings it
@@ -151,13 +156,23 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
     }
 
     const ids = live.map((f) => f.row.id);
-    const { data: links } = await supabase.from("document_assets").select("asset_id, document_id")
+    // GAP-311: the sheet each link names (20261170's sheet_label); a database
+    // without the column answers the links as before.
+    let linkRes: { data: unknown; error: { code?: string; message?: string } | null } = await supabase.from("document_assets")
+      .select("asset_id, document_id, sheet_label, source")
       .in("asset_id", ids).limit(perAsset * ids.length * 4);
+    if (linkRes.error) {
+      linkRes = await supabase.from("document_assets").select("asset_id, document_id")
+        .in("asset_id", ids).limit(perAsset * ids.length * 4);
+    }
+    const links = linkRes.data;
     const docIdsByAsset = new Map<string, string[]>();
-    for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string }>)) {
+    const linkMeta = new Map<string, { sheetLabel: string | null; fromDrawing: boolean }>(); // `${asset}:${doc}`
+    for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string; sheet_label?: string | null; source?: string | null }>)) {
       const list = docIdsByAsset.get(l.asset_id) ?? [];
       if (!list.includes(l.document_id) && list.length < perAsset) list.push(l.document_id);
       docIdsByAsset.set(l.asset_id, list);
+      linkMeta.set(`${l.asset_id}:${l.document_id}`, { sheetLabel: l.sheet_label ?? null, fromDrawing: l.source === "drawing" });
     }
     const allDocIds = [...new Set([...docIdsByAsset.values()].flat())];
     const docs = new Map<string, TagLookupHit["documents"][number]>();
@@ -172,7 +187,13 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
       asset: { id: row.id, tag: row.tag, description: row.description, unit_code: row.unit_code ?? null, code: row.code ?? null },
       via,
       unit: row.unit_code ? { code: row.unit_code, label: labels.get(row.unit_code) ?? null } : null,
-      documents: (docIdsByAsset.get(row.id) ?? []).map((id) => docs.get(id)).filter((d): d is TagLookupHit["documents"][number] => !!d),
+      documents: (docIdsByAsset.get(row.id) ?? [])
+        .flatMap((id): TagLookupHit["documents"] => {
+          const d = docs.get(id);
+          if (!d) return [];
+          const meta = linkMeta.get(`${row.id}:${id}`);
+          return [{ ...d, sheetLabel: meta?.sheetLabel ?? null, fromDrawing: meta?.fromDrawing ?? false }];
+        }),
     }));
   } catch {
     return [];

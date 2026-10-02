@@ -114,3 +114,18 @@ describe("globalSearch — the exact answer ranks first and lands on the asset h
     expect(pal).toContain("if (h.exact) continue;");
   });
 });
+
+describe("GAP-311 remainder (I-11) — the sheet it is on, from the relation", () => {
+  it("a link the Bridge read off the drawing carries its sheet address into the lookup and the ⌘K subtitle; a hand link stays plain", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4" });
+    Object.assign(db.ref.tables.document_assets[1], { source: "manual", sheet_label: null });
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents.map((d) => [d.document_number, d.sheetLabel, d.fromDrawing])).toEqual([
+      ["2002-D-10001", "2002-D-10001 SHT 4", true],
+      ["2002-D-10002", null, false],
+    ]);
+    const docs = (await globalSearch({ orgId: "o1", query: "FV-2201" })).filter((h) => h.exact && h.kind === "document");
+    expect(docs[0].subtitle).toBe("FV-2201 appears on 2002-D-10001 SHT 4 (read from the drawing) · P&ID crude feed");
+    expect(docs[1].subtitle).toBe("FV-2201 appears on this drawing · P&ID crude feed sht 2");
+  });
+});

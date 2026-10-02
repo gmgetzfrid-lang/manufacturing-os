@@ -98,7 +98,8 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
           id: d.id,
           kind: "document",
           title: d.document_number || d.title || "Untitled",
-          subtitle: `${t.asset.tag} appears on this drawing${d.title && d.document_number ? ` · ${d.title}` : ""}`,
+          // GAP-311: the sheet it is on, when the relation carries it.
+          subtitle: `${t.asset.tag} appears on ${d.sheetLabel ? d.sheetLabel : "this drawing"}${d.fromDrawing ? " (read from the drawing)" : ""}${d.title && d.document_number ? ` · ${d.title}` : ""}`,
           href: `/documents/${d.library_id}?doc=${d.id}`,
           exact: true,
         });
