@@ -7,11 +7,13 @@
 // set on the control, never by a bare element rule; their clusters are
 // spaced 8 px. A census (as a11yProjects.test.ts "A11Y-8 —" does for the
 // Quality tab) pins it. Fix pass: the census is INVERTED — every <button> in
-// the four files carries the floor unless its click is on an explicit list
+// the census files carries the floor unless its click is on an explicit list
 // of read-only handlers (disclosure toggles, a dismiss, a read retry, a
 // cancel, the PDF opener), so a new write button with any handler name
 // fails here. The first pass matched writers by a list of known handler
-// names, and a writer named anything else went uncounted.
+// names, and a writer named anything else went uncounted. Final review: the
+// Documents tab's register (attach, detach) and transition-in panel (adopt,
+// flag to drafting) start writes too, and joined the census.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -56,6 +58,7 @@ const READ_ONLY: RegExp[] = [
   /^\(\) => setOpen\(true\)$/,                                                         // "Create budget line" opens its form
   /^\(\) => \{ setOpen\(false\); setError\(null\); \}$/,                                // …and its cancel
   /^\(\) => setOpenAccount\(isOpen \? null : r\.account\.id\)$/,                         // a ledger line's disclosure
+  /^\(\) => setOpen\(expanded \? null : c\.docId\)$/,                                    // a transition-in sheet's disclosure
   /^\(\) => setType\(t\.v\)$/,                                                          // the entry form's type picker
   /^\(\) => setErr\(null\)$/,                                                            // dismiss the banner
   /^\(\) => void refresh\(\)$/,                                                          // a read retry
@@ -88,6 +91,16 @@ const CENSUS: Array<{ file: string; min: number; must: string[] }> = [
     min: 9,
     must: ['void repair(d, "repost")', 'void repairCo(c, "reverse")', "message: `Void this ", "void link(p)", "void add()"],
   },
+  {
+    file: "components/projects/ProjectDocumentsCard.tsx",
+    min: 3,
+    must: ["setAttachOpen((v) => !v)", "void attach(r)", "void detach(r)"],
+  },
+  {
+    file: "components/projects/TransitionInPanel.tsx",
+    min: 3,
+    must: ["void adoptAllClean()", "void adoptOne(c)", "onFlagCollision(c, impact)"],
+  },
 ];
 
 describe("A11Y-14 — decision controls outside the Quality tab carry the 24 / 44 px floor", () => {
@@ -113,7 +126,7 @@ describe("A11Y-14 — decision controls outside the Quality tab carry the 24 / 4
     });
   }
 
-  it("the read-only list carries no dead entry: each matches a button in the four files", () => {
+  it("the read-only list carries no dead entry: each matches a button in the census files", () => {
     const handlers = CENSUS.flatMap(({ file }) => buttonTags(src(file)).map(onClickOf)).filter((h): h is string => h != null);
     for (const re of READ_ONLY) expect(handlers.some((h) => re.test(h)), String(re)).toBe(true);
   });
@@ -145,5 +158,11 @@ describe("A11Y-14 — decision controls outside the Quality tab carry the 24 / 4
     const quotes = src("components/projects/cost/QuotesPanel.tsx");
     expect((quotes.match(/\$\{DECISION_TARGET\} ml-2 inline-flex/g) ?? []).length).toBe(2);   // correct total, Decline beside Award
     expect(quotes).toContain('<span className="inline-flex items-center gap-2">\n      <select value={accountId}');
+    const tin = src("components/projects/TransitionInPanel.tsx");
+    const bulk = tin.slice(tin.lastIndexOf("<div", tin.indexOf("void adoptAllClean()")), tin.indexOf("void adoptAllClean()"));
+    expect(bulk).toContain('className="flex items-center gap-2 flex-wrap rounded-xl');
+    const sheet = tin.slice(tin.lastIndexOf("<div", tin.indexOf("void adoptOne(c)")), tin.indexOf("void adoptOne(c)"));
+    expect(sheet).toContain('<div className="flex items-center gap-2 flex-wrap">');
+    expect(tin.slice(tin.indexOf("void adoptOne(c)"), tin.indexOf("onFlagCollision(c, impact)"))).not.toContain("<div");   // Adopt and Flag to drafting share that cluster
   });
 });

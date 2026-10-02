@@ -26,6 +26,7 @@ import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucid
 import { supabase } from "@/lib/supabase";
 import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 type LinkedDoc = ProjectDocumentRow;
 
@@ -149,7 +150,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         {canManage && (
           <button
             onClick={() => { setAttachOpen((v) => !v); setQ(""); setResults([]); }}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors"
+            className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors`}
           >
             <Plus className="w-3 h-3" /> Attach document
           </button>
@@ -184,7 +185,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                   <button
                     onClick={() => void attach(r)}
                     disabled={busy === r.id}
-                    className="w-full text-left px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                    className={`${DECISION_TARGET} w-full text-left px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}
                   >
                     {r.label}
                   </button>
@@ -233,7 +234,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                     disabled={busy === r.linkId}
                     aria-label={`Remove ${r.label} from the project`}
                     title={r.source === "checkout" ? "Remove from the register (its history stays on the Activity tab; it re-links on the next checkout under this project)" : "Remove from the register (its history stays on the Activity tab)"}
-                    className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-40"
+                    className={`${DECISION_TARGET} shrink-0 inline-flex items-center justify-center p-1 rounded text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-40`}
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>

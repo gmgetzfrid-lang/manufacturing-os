@@ -728,11 +728,16 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 
   `lib/__tests__/a11yProjects.test.ts`' DECISION_TARGET pin now reads the shared module.
 
+**Review fix (2026-10-02, projects Round G).** The final review found two more Projects files whose buttons start a write with no floor, so the first done-when's tick was not true as written. Both now carry `${DECISION_TARGET}`, with every handler, label and disabled state unchanged:
+- `components/projects/ProjectDocumentsCard.tsx`: Attach document, which opens the attach search (`:151`); each attach pick (`:185`); and detach, "Remove from the register" (`:232`). The detach was 22 px, `p-1` around a 14 px icon. It is now also `inline-flex items-center justify-center`, so the icon stays centred in the larger box. The detach sits beside the row's Open link with `gap-3` (12 px), which is unchanged.
+- `components/projects/TransitionInPanel.tsx`: Adopt N clean (`:229`), Adopt (`:325`) and Flag to drafting (`:336`). Adopt and Flag to drafting share a `gap-2` cluster. Adopt N clean sits in the `gap-2` destination row.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (now 10). Both files are added to the census. The read-only list gains one entry, the transition-in sheet's disclosure (`setOpen(expanded ? null : c.docId)`); the Re-scan was already covered by the read-retry entry. The spacing test pins both `gap-2` containers. Negative controls: before the component change, the census failed for both files (3 bare buttons each, and no shared import); with the change in place, removing the floor from the detach alone fails the `ProjectDocumentsCard.tsx` census.
+
 **Done-when.**
-- ✓ No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer. This covers the four surfaces this finding names here, and the Quality tab (`A11Y-8`).
+- ✓ No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer. This covers the four surfaces this finding names here, `ProjectDocumentsCard.tsx` and `TransitionInPanel.tsx` (review fix, 2026-10-02), and the Quality tab (`A11Y-8`).
 - ✓ A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
 
-**Scope / residual.** A "decision control" is read as a button that starts a write, as the finding's mechanism describes. Read-only toggles and navigation links keep their sizes. The finding's Locations and Assigned line name these four surfaces outside the Quality tab, and all four are done.
+**Scope / residual.** A "decision control" is read as a button that starts a write, as the finding's mechanism describes. Read-only toggles and navigation links keep their sizes. The finding's Locations and Assigned line name these four surfaces outside the Quality tab, and all four are done. The census also covers `ProjectDocumentsCard.tsx` and `TransitionInPanel.tsx` (review fix). Other Projects files are outside this finding's Locations and were not brought under the floor here. Their write buttons still carry no `DECISION_TARGET`: for example the Members tab's save responsibility, make owner and remove (`app/(protected)/projects/[id]/page.tsx:1172`, `:1187`, `:1193`), `StatusControl.tsx:186`, `ProgressControl.tsx:72`, `StaleCheckoutBanner.tsx:153` and `EditProjectModal.tsx:319`. The tick above holds for the surfaces it names, not for these.
 
 ---
 
