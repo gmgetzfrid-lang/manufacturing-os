@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "RESOLVED": 49,
-      "OPEN": 12,
+      "RESOLVED": 50,
+      "OPEN": 11,
       "WONTFIX": 1
     }
   },
@@ -751,7 +751,7 @@
       "id": "PHYS-14",
       "title": "The sign-in page ignores `?next=` — an equipment-label scan sent to sign-in \"carrying the tag\" lands on /dashboard after signing in, the tag lost",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
