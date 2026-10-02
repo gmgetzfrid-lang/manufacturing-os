@@ -60,7 +60,11 @@
 //   saga then rolls that recorded put-back back (a later step refused), the
 //   REV_HOLD_OVERRIDDEN row stays — audit rows are append-only — so the
 //   rollback writes its correction beside it (REV_HOLD_OVERRIDE_UNDONE),
-//   once the source reads back as it was.
+//   once the source reads back as it was — and, when the restore's answer
+//   was lost (an error that may follow a commit), once the record shows
+//   this reversal's pass (integrator fix). The reversal's own record names
+//   the event by the id the database holds (ev.id), the spelling the door
+//   compares.
 //
 //   A split or merge recorded before Round F carries no prior status: the
 //   reversal REFUSES rather than guess one (it used to write 'Issued', which
@@ -362,8 +366,32 @@ async function withRollbackCause<T>(work: (register: Register, rollback: SagaRol
  *  its recorded door to (the source must be that DOC_SPLIT / DOC_MERGED's
  *  resource or merge sibling, and no recorded reversal may have undone it)
  *  and puts on its REV_HOLD_OVERRIDDEN record; and who is running it and why
- *  its saga rolled back, for the correction of that record (review fix). */
-interface RestoreDoor { reversalOf: string; reason: string; actor: ActorContext; rollback: SagaRollback }
+ *  its saga rolled back, for the correction of that record (review fix).
+ *  `reversalOf` is the event's id as the database holds it (ev.id), and
+ *  `reversalResource` its resource — where a recorded reversal of it is
+ *  written (integrator fix). */
+interface RestoreDoor { reversalOf: string; reversalResource: string; reason: string; actor: ActorContext; rollback: SagaRollback }
+
+/** REV-22 (P18, integrator fix): an audit id in one spelling — lower case,
+ *  without the braces and hyphens the uuid type also accepts — so an id a
+ *  record carries in any spelling compares equal to the database's canonical
+ *  one. 20261164's door and inventory compare reversedAuditEventId the same
+ *  way (translate(lower(…), '{}-', '') against the uuid without hyphens). */
+export function auditIdKey(id: unknown): string {
+  return typeof id === "string" ? id.trim().toLowerCase().replace(/[{}-]/g, "") : "";
+}
+
+/** True when two audit ids name the same row, whatever their spelling. */
+export function sameAuditId(a: unknown, b: unknown): boolean {
+  const k = auditIdKey(a);
+  return k !== "" && k === auditIdKey(b);
+}
+
+/** Whether a reversal's call to restore_reversed_source recorded a pass over
+ *  the hold: `recorded` when it answered restored_over_hold, `unknown` when
+ *  its answer was an error other than the function being absent — a refusal,
+ *  or a transport error after the database committed (integrator fix). */
+interface RecordedPass { recorded: boolean; unknown: boolean }
 
 /** REV-22 (P18): PostgREST's answer for a function that does not exist yet
  *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
@@ -373,6 +401,30 @@ export function isMissingRestoreRpc(e: { code?: string | null; message?: string 
   const code = String(e.code ?? "");
   return code === "PGRST202" || code === "42883"
     || /could not find the function|function .*restore_reversed_source.* does not exist/i.test(e.message ?? "");
+}
+
+/** REV-22 (P18, integrator fix): when a restore's answer was lost, the
+ *  REV_HOLD_OVERRIDDEN row this reversal's restore of `docId` wrote, if it
+ *  wrote one — the newest row on the document by this actor via
+ *  reversal_restore naming the reversed event, while it is still uncorrected
+ *  (no REV_HOLD_OVERRIDE_UNDONE after it) and no recorded reversal of the
+ *  event has landed (that closed the door: nothing was recorded). Ids are
+ *  compared in any spelling (sameAuditId). A failed read THROWS. */
+async function findUncorrectedPass(docId: string, door: RestoreDoor): Promise<{ id: string } | null> {
+  type AuditRow = { id: string; action: string; resource_id: string; user_id: string | null; details: Record<string, unknown> | null };
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("id, action, resource_id, user_id, details")
+    .eq("org_id", door.actor.orgId)
+    .in("resource_id", [...new Set([docId, door.reversalResource])])
+    .in("action", ["REV_HOLD_OVERRIDDEN", "REV_HOLD_OVERRIDE_UNDONE", "DOC_SPLIT_REVERSED", "DOC_MERGE_REVERSED"])
+    .order("timestamp", { ascending: false })
+    .limit(100);
+  if (error) throw new Error(error.message);
+  const naming = ((data as AuditRow[] | null) ?? []).filter((r) => sameAuditId(r.details?.reversedAuditEventId, door.reversalOf));
+  if (naming.some((r) => r.action === "DOC_SPLIT_REVERSED" || r.action === "DOC_MERGE_REVERSED")) return null;
+  const newest = naming.find((r) => r.resource_id === docId && r.user_id === door.actor.actorUserId && r.details?.via === "reversal_restore");
+  return newest?.action === "REV_HOLD_OVERRIDDEN" ? { id: newest.id } : null;
 }
 
 /** REV-22 (P18, review fix): the compensation for a restore that
@@ -387,17 +439,35 @@ export function isMissingRestoreRpc(e: { code?: string | null; message?: string 
  *  to: if the put-back did not land, the pass over the hold stands and its
  *  record is true (the put-back's own failure is already named). A
  *  correction that cannot be confirmed or written throws, so
- *  withCompensation names it for manual attention. */
-function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: string, door: RestoreDoor, pass: { recorded: boolean }): () => Promise<void> {
+ *  withCompensation names it for manual attention. Integrator fix: it is
+ *  armed too when the restore's answer was an error other than the function
+ *  being absent (`unknown` — a transport error after the database committed
+ *  reads like a refusal): once the source reads back as it was, the record
+ *  itself is read (findUncorrectedPass) and a pass it finds is corrected the
+ *  same way; a read that fails is named for manual attention, never silent. */
+function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: string, door: RestoreDoor, pass: RecordedPass): () => Promise<void> {
   return async () => {
-    if (!pass.recorded) return;
+    if (!pass.recorded && !pass.unknown) return;
     let after: StatusSnapshot;
     try {
       after = await readStatusSnapshot(docId);
     } catch (e) {
-      throw new Error(`whether ${docId} was put back could not be confirmed (${(e as Error).message}), so the record of the reversal's pass over its hold (REV_HOLD_OVERRIDDEN) was not corrected — check its status and history`);
+      throw new Error(pass.recorded
+        ? `whether ${docId} was put back could not be confirmed (${(e as Error).message}), so the record of the reversal's pass over its hold (REV_HOLD_OVERRIDDEN) was not corrected — check its status and history`
+        : `whether ${docId} was put back could not be confirmed (${(e as Error).message}), and its restore answered with an error, so whether it recorded a pass over its hold (REV_HOLD_OVERRIDDEN) that did not stand was not checked — check its status and history`);
     }
     if (after.status !== snap.status) return;
+    // Integrator fix: the answer was lost (or the restore refused). Whether a
+    // recorded pass committed is read back from the record itself.
+    let lostAnswerPass: { id: string } | null = null;
+    if (!pass.recorded) {
+      try {
+        lostAnswerPass = await findUncorrectedPass(docId, door);
+      } catch (e) {
+        throw new Error(`${docId}'s restore answered with an error and whether it recorded a pass over its hold (REV_HOLD_OVERRIDDEN) could not be checked (${(e as Error).message}) — check its history: a hold override recorded there by this reversal did not stand`);
+      }
+      if (!lostAnswerPass) return;
+    }
     const { error } = await logAuditAction({
       action: "REV_HOLD_OVERRIDE_UNDONE",
       resourceId: docId,
@@ -413,6 +483,7 @@ function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: st
         restoredStatus: restoredTo,
         putBackTo: snap.status,
         rollbackReason: door.rollback.reason,
+        ...(lostAnswerPass ? { restoreAnswerLost: true, correctsAuditLogId: lostAnswerPass.id } : {}),
       },
     });
     if (error) {
@@ -434,7 +505,7 @@ function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: st
 async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register, door: RestoreDoor): Promise<void> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
-  const pass = { recorded: false };
+  const pass: RecordedPass = { recorded: false, unknown: false };
   register({ describe: `correct the hold-override record on ${docId}`, run: correctRecordedPass(docId, snap, status, door, pass) });
   register({ describe: `put ${docId} back to ${snap.status}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
@@ -454,6 +525,9 @@ async function restoreStatus(docId: string, status: string, actorUserId: string,
     throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${why}).`);
   }
   if (!isMissingRestoreRpc(rpcErr)) {
+    // Integrator fix: a refusal, or a transport error after the database
+    // committed — the pass's correction reads back whether one was recorded.
+    pass.unknown = true;
     throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${rpcErr.message || "the restore was refused"}).`);
   }
   const { data, error } = await supabase.from("documents").update({
@@ -661,7 +735,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
     // Un-supersede the source — to the status it actually held (REV-12).
-    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });
+    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
     // Delete the join rows; the audit log retains the relationship so
     // history is still reconstructable.
     await deleteLineage({ supersededIds: [sourceDocId], replacementIds }, register);
@@ -692,7 +766,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
     userRole: input.actorRole ?? "",
     type: "DOC_SPLIT_REVERSED",
     details: {
-      reversedAuditEventId: input.splitAuditEventId,
+      reversedAuditEventId: ev.id,
       reversedNewDocIds: replacementIds,
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
@@ -800,7 +874,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
     for (const sId of allSourceIds) {
-      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });
+      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
     }
     await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] }, register);
   });
@@ -836,7 +910,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     userRole: input.actorRole ?? "",
     type: "DOC_MERGE_REVERSED",
     details: {
-      reversedAuditEventId: input.mergeAuditEventId,
+      reversedAuditEventId: ev.id,
       reversedSourceDocIds: allSourceIds,
       targetDocId,
       targetWasNewlyCreated,

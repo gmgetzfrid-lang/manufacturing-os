@@ -144,24 +144,26 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
   });
 
   it("the door: Document Control (is_org_controller, the guard's own tier), a Superseded document, the source of the recorded DOC_SPLIT / DOC_MERGED the call names in its own org that no recorded reversal has undone, an active hold — then, and only then, the flag", () => {
-    expect(R).toContain("  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = v_org\n                        AND r.resource_id = a.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)\n   LIMIT 1;");
+    expect(R).toContain("  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = v_org\n                        AND r.resource_id = a.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(p_reversal_of::text, '-', ''))\n   LIMIT 1;");
     expect(R).toContain("  IF v_status = 'Superseded'\n     AND v_action IS NOT NULL\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;");
     expect((R.match(/v_forced := true;/g) ?? []).length).toBe(1);
     expect(R).toContain("  v_forced  boolean := false;");
   });
 
-  it("review fix — an event a recorded reversal already undid opens nothing: the reversal rows are matched as the app writes them (on the event's own resource, naming it as reversedAuditEventId — both reversals, since they were first written), and only after the saga lands", () => {
+  it("review fix — an event a recorded reversal already undid opens nothing: the reversal rows are matched as the app writes them (on the event's own resource, naming it as reversedAuditEventId — both reversals, since they were first written; since the integrator fix by the event's own id, ev.id), and only after the saga lands", () => {
     const door = between(R, "  SELECT a.action INTO v_action", "   LIMIT 1;");
     expect(door).toContain("     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n");
     expect(door).toContain("                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n");
-    expect(door).toContain("                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)\n");
+    expect(door).toContain("                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(p_reversal_of::text, '-', ''))\n");
     const reverse = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
-    for (const [type, key] of [["DOC_SPLIT_REVERSED", "input.splitAuditEventId"], ["DOC_MERGE_REVERSED", "input.mergeAuditEventId"]] as const) {
+    for (const type of ["DOC_SPLIT_REVERSED", "DOC_MERGE_REVERSED"] as const) {
       const at = reverse.indexOf(`type: "${type}",`);
       expect(at, type).toBeGreaterThan(0);
       const call = reverse.slice(reverse.lastIndexOf("await logRevisionEvent({", at), reverse.indexOf("});", at));
       expect(call, type).toContain("documentId: sourceDocId,");
-      expect(call, type).toContain(`reversedAuditEventId: ${key},`);
+      // integrator fix: the id the database holds (the event row's), not the caller's spelling of it
+      expect(call, type).toContain("reversedAuditEventId: ev.id,");
+      expect(call, type).not.toMatch(/reversedAuditEventId: input\./);
       // sourceDocId is the reversed event's own resource
       const fn = reverse.slice(reverse.lastIndexOf("export async function reverse", at), at);
       expect(fn, type).toContain("const sourceDocId = ev.resource_id;");
@@ -169,6 +171,20 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
       expect(fn.indexOf("await withRollbackCause(")).toBeGreaterThan(0);
       expect(fn.indexOf("await restoreStatus(")).toBeGreaterThan(fn.indexOf("await withRollbackCause("));
     }
+  });
+
+  it("integrator fix — the door and the inventory compare reversedAuditEventId as the uuid it names: any spelling the uuid type accepts (upper case, braces, hyphens dropped) matches the canonical id, another id does not; no raw text comparison is left", () => {
+    const ANY = "translate(lower(r.details->>'reversedAuditEventId'), '{}-', '')";
+    expect(between(R, "  SELECT a.action INTO v_action", "   LIMIT 1;")).toContain(`AND ${ANY} = replace(p_reversal_of::text, '-', ''))\n`);
+    const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
+    expect(inventory).toContain(`AND ${ANY} = replace(e.event_id::text, '-', ''))\n`);
+    expect(stripComments(M)).not.toMatch(/details->>'reversedAuditEventId' =/);
+    // the two sides as PostgreSQL evaluates them (translate drops each listed character that has no counterpart; uuid::text is canonical)
+    const id = "0b6a3c1e-5f2d-4c8e-9a7b-1d2e3f4a5b6c";
+    const left = (v: string) => v.toLowerCase().replace(/[{}-]/g, "");
+    const right = id.replace(/-/g, "");
+    for (const spelling of [id, id.toUpperCase(), `{${id}}`, `{${id.toUpperCase()}}`, right]) expect(left(spelling), spelling).toBe(right);
+    expect(left("0b6a3c1e-5f2d-4c8e-9a7b-1d2e3f4a5b6d")).not.toBe(right);
   });
 
   it("the flag names this document immediately before its one UPDATE and is cleared immediately after it, before any return", () => {
@@ -244,7 +260,7 @@ describe("20261164 — the one-paste shape", () => {
     expect(recorded).toContain("           WHERE a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n");
     expect(recorded).toContain("           CROSS JOIN LATERAL jsonb_array_elements_text(\n                   CASE WHEN jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                        THEN a.details->'mergeSiblings' ELSE '[]'::jsonb END) AS s(sibling)\n           WHERE a.action = 'DOC_MERGED') e\n");
     // the same not-yet-reversed binding the door reads
-    expect(recorded).toContain("   WHERE NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = e.org_id\n                        AND r.resource_id = e.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND r.details->>'reversedAuditEventId' = e.event_id::text)\n");
+    expect(recorded).toContain("   WHERE NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = e.org_id\n                        AND r.resource_id = e.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.event_id::text, '-', ''))\n");
     // each document is tested against the set (an uncorrelated IN — a hashed lookup), not by a correlated scan
     expect(unstamped).toContain("         COALESCE((d.org_id, d.id::text) IN (SELECT c.org_id, c.source_id FROM recorded c), false) AS recorded_source\n");
     expect(unstamped).not.toMatch(/audit_logs/);

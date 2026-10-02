@@ -45,6 +45,8 @@ const state = vi.hoisted(() => ({
   canned: null as unknown as RpcAnswer,
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   restore: null as unknown as (args: Record<string, unknown>) => Promise<RpcAnswer>,
+  /** The error audit_logs answers the lost-answer correction's look-up with (integrator fix); null = it reads. */
+  auditLookupError: null as { message: string } | null,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -52,6 +54,7 @@ vi.mock("@/lib/supabase", () => ({
     const base = makeFakeSupabase(state.db);
     return {
       ...base,
+      from: (t: string) => (t === "audit_logs" ? auditLogsAsPostgres(base.from(t)) : base.from(t)),
       rpc: async (fn: string, args: Record<string, unknown>) => {
         state.rpcCalls.push({ fn, args });
         if (fn !== "restore_reversed_source") return { data: null, error: { code: "PGRST202", message: "not in this test" } };
@@ -62,6 +65,31 @@ vi.mock("@/lib/supabase", () => ({
     };
   },
 }));
+/** audit_logs as PostgreSQL reads it (integrator fix): `id` is a uuid
+ *  column, so a filter on it takes any spelling the uuid type accepts (upper
+ *  case, braces) — the in-memory rows hold the canonical lower-case one; and
+ *  the lost-answer correction's look-up (it names REV_HOLD_OVERRIDE_UNDONE
+ *  among its actions) answers state.auditLookupError when one is set. */
+function auditLogsAsPostgres(inner: object): object {
+  let lookup = false;
+  const wrap = (b: object): object => new Proxy(b, {
+    get(target, prop) {
+      const v = (target as Record<string | symbol, unknown>)[prop];
+      if (prop === "then" && lookup && state.auditLookupError) {
+        return (resolve: (x: unknown) => void) => resolve({ data: null, error: state.auditLookupError });
+      }
+      if (prop === "then" || typeof v !== "function") return v;
+      return (...args: unknown[]) => {
+        if (prop === "eq" && args[0] === "id" && typeof args[1] === "string") args = ["id", args[1].toLowerCase().replace(/^\{(.*)\}$/, "$1")];
+        if (prop === "in" && args[0] === "action" && Array.isArray(args[1]) && args[1].includes("REV_HOLD_OVERRIDE_UNDONE")) lookup = true;
+        const out = (v as (...a: unknown[]) => unknown)(...args);
+        return out === target ? wrap(target) : out;
+      };
+    },
+  });
+  return wrap(inner);
+}
+
 vi.mock("@/lib/storage", () => ({
   uploadToPath: vi.fn(async (_f: File, path: string) => ({ url: `r2://${path}`, size: 3 })),
   makeLibraryStoragePath: (o: { filename: string }) => `org/lib/${o.filename}`,
@@ -143,6 +171,8 @@ const refused = (f: () => unknown): string | null => {
   return null;
 };
 const has = (v: unknown) => v !== null && v !== undefined;
+/** translate(lower(v), '{}-', '') — NULL for a NULL (a JSON key that is absent). */
+const sqlTranslateLower = (v: unknown): string | null => (has(v) ? String(v).toLowerCase().replace(/[{}-]/g, "") : null);
 
 /** enforce_document_publish_guard() (20261164), transcribed. As in P14's and
  *  P17's transcriptions a NULL status is outside its domain, and the review
@@ -251,7 +281,7 @@ describe("the transcriptions are the SQL's (20261164, in order)", () => {
       "      USING ERRCODE = 'insufficient_privilege';",
       "  IF btrim(COALESCE(p_status, '')) = '' THEN",
       "  SELECT true, d.org_id, d.status, d.retired_issue_status, d.current_version_id, d.rev\n    INTO v_found, v_org, v_status, v_stamp, v_version, v_rev\n    FROM documents d WHERE d.id = p_document_id;\n  IF v_found IS NULL THEN\n    RETURN 'no_match';\n  END IF;",
-      "  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = v_org\n                        AND r.resource_id = a.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)\n   LIMIT 1;",
+      "  SELECT a.action INTO v_action\n    FROM audit_logs a\n   WHERE a.id = p_reversal_of\n     AND a.org_id = v_org\n     AND a.action IN ('DOC_SPLIT', 'DOC_MERGED')\n     AND (a.resource_id = p_document_id::text\n          OR COALESCE(jsonb_typeof(a.details->'mergeSiblings') = 'array'\n                      AND (a.details->'mergeSiblings') ? p_document_id::text, false))\n     AND NOT EXISTS (SELECT 1 FROM audit_logs r\n                      WHERE r.org_id = v_org\n                        AND r.resource_id = a.resource_id\n                        AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')\n                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(p_reversal_of::text, '-', ''))\n   LIMIT 1;",
       "  IF v_status = 'Superseded'\n     AND v_action IS NOT NULL\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;",
       "  IF v_forced THEN\n    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n  END IF;\n  UPDATE documents\n     SET status = p_status,\n         superseded_at = NULL,\n         superseded_by_user = NULL,\n         supersession_reason = NULL,\n         supersession_moc = NULL,\n         updated_at = now(),\n         updated_by = v_uid\n   WHERE id = p_document_id;\n  GET DIAGNOSTICS v_n = ROW_COUNT;\n  IF v_forced THEN\n    PERFORM set_config('app.publish_hold_override', '', true);\n  END IF;\n  IF v_n = 0 THEN\n    RETURN 'no_match';\n  END IF;",
       "  IF v_forced THEN\n    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)\n    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,",
@@ -295,10 +325,11 @@ async function restoreReversedSource(a: Record<string, unknown>): Promise<RpcAns
     && (r.action === "DOC_SPLIT" || r.action === "DOC_MERGED")
     && (r.resource_id === doc.id
       || (Array.isArray((r.details as Row | null)?.mergeSiblings) && ((r.details as Row).mergeSiblings as unknown[]).includes(doc.id)))
-    // review fix: an event a recorded reversal (on the event's resource, naming it) already undid opens nothing
+    // review fix: an event a recorded reversal (on the event's resource, naming it) already undid opens nothing —
+    // integrator fix: named in any spelling the uuid type accepts (translate(lower(…), '{}-', '') = replace(p::text, '-', ''))
     && !T("audit_logs").some((x) => x.org_id === doc.org_id && x.resource_id === r.resource_id
       && (x.action === "DOC_SPLIT_REVERSED" || x.action === "DOC_MERGE_REVERSED")
-      && (x.details as Row | null)?.reversedAuditEventId === a.p_reversal_of));
+      && sqlTranslateLower((x.details as Row | null)?.reversedAuditEventId) === String(a.p_reversal_of).replace(/-/g, "")));
   const before = { status: doc.status, stamp: doc.retired_issue_status ?? null, version: doc.current_version_id, rev: doc.rev };
   const forced = doc.status === "Superseded" && !!ev && isController() && activeHolds(String(doc.id)).length > 0;
   if (forced) state.flag = String(doc.id);
@@ -399,6 +430,7 @@ beforeEach(() => {
   state.rpcMode = "real";
   state.rpcCalls = [];
   state.restore = restoreReversedSource;
+  state.auditLookupError = null;
 });
 
 // ─── REGRESSION FIRST: every reversal still lands, now recorded ──────────
@@ -648,6 +680,23 @@ describe("REV-22 (P18) — restore_reversed_source sets the flag only for its do
     expect(overrides("s5")[0].details).toMatchObject({ reversedAuditEventId: "ev-s5b" });
   });
 
+  it("integrator fix — a reversal recorded with the caller's own spelling of the event's id (upper case, braces) is seen by the door: that event opens nothing", async () => {
+    for (const [id, spelled] of [["s8", "EV-S8"], ["s9", "{EV-S9}"]]) {
+      seedDoc(id, { status: "Superseded" });
+      seedHold(id);
+      T("audit_logs").push(
+        { id: `ev-${id}`, org_id: ORG, action: "DOC_SPLIT", resource_id: id, details: {} },
+        { id: `rev-${id}`, org_id: ORG, action: "DOC_SPLIT_REVERSED", resource_id: id, details: { reversedAuditEventId: spelled } },
+      );
+    }
+    bindGuard();
+    for (const id of ["s8", "s9"]) {
+      expect((await restoreReversedSource({ p_document_id: id, p_status: "Issued", p_reversal_of: `ev-${id}`, p_reason: "r" })).error?.message, id).toBe(S_NEW_DOOR_HOLD);
+      expect(docRow(id).status).toBe("Superseded");
+    }
+    expect(overrides()).toEqual([]);
+  });
+
   it("the answer says whether the pass was recorded: restored_over_hold for the recorded door, restored for the bare write", async () => {
     seedDoc("s6", { status: "Superseded" });
     seedDoc("s7", { status: "Superseded" });
@@ -660,6 +709,36 @@ describe("REV-22 (P18) — restore_reversed_source sets the flag only for its do
     expect((await restoreReversedSource({ p_document_id: "s6", p_status: "Issued", p_reversal_of: "ev-s6" })).data).toBe("restored_over_hold");
     expect((await restoreReversedSource({ p_document_id: "s7", p_status: "Issued", p_reversal_of: "ev-s7" })).data).toBe("restored");
     expect(overrides().map((o) => o.resource_id)).toEqual(["s6"]);
+  });
+});
+
+// ─── integrator fix: the reversal's record names the event by the database's id ─
+describe("REV-22 (P18, integrator fix) — the reversal's own record names the event by the id the database holds (ev.id), not the caller's spelling", () => {
+  it("reverseSplit called with a braced, upper-case id: DOC_SPLIT_REVERSED and the restore carry ev.id — so the door sees the event as reversed when P-160 is superseded again and held", async () => {
+    seedSplit("p160", "none");
+    seedHold("p160a");
+    bindGuard();
+    await reverseSplit({ splitAuditEventId: "{EV-P160}", reason: "r", orgId: ORG, actorUserId: ME, force: true });
+    expect(docRow("p160").status).toBe("Issued");
+    expect(state.rpcCalls.find((c) => c.fn === "restore_reversed_source")?.args.p_reversal_of).toBe("ev-p160");
+    expect(overrides("p160")[0].details).toMatchObject({ reversedAuditEventId: "ev-p160" });
+    expect(audit("DOC_SPLIT_REVERSED")).toHaveLength(1);
+    expect((audit("DOC_SPLIT_REVERSED")[0].details as Row).reversedAuditEventId).toBe("ev-p160");
+    const { supabase } = await import("@/lib/supabase");
+    state.session = null;
+    await supabase.from("documents").update({ status: "Superseded" }).eq("id", "p160").select("id");
+    state.session = ME;
+    expect((await restoreReversedSource({ p_document_id: "p160", p_status: "Issued", p_reversal_of: "ev-p160", p_reason: "again" })).error?.message).toBe(S_NEW_DOOR_HOLD);
+    expect(overrides("p160")).toHaveLength(1);
+  });
+
+  it("reverseMerge called with an upper-case id: DOC_MERGE_REVERSED carries ev.id", async () => {
+    seedMerge("q");
+    bindGuard();
+    await reverseMerge({ mergeAuditEventId: "EV-Q", reason: "r", orgId: ORG, actorUserId: ME });
+    expect(audit("DOC_MERGE_REVERSED")).toHaveLength(1);
+    expect((audit("DOC_MERGE_REVERSED")[0].details as Row).reversedAuditEventId).toBe("ev-q");
+    expect(state.rpcCalls.filter((c) => c.fn === "restore_reversed_source").map((c) => c.args.p_reversal_of)).toEqual(["ev-q", "ev-q"]);
   });
 });
 
@@ -754,7 +833,7 @@ describe("REV-22 (P18, review fix) — a recorded restore that the reversal's sa
     expect(undone()).toEqual([]);
   });
 
-  it("the source of restoreStatus: the correction is registered BEFORE the put-back (so the LIFO rollback runs it after), and armed only by restored_over_hold", () => {
+  it("the source of restoreStatus: the correction is registered BEFORE the put-back (so the LIFO rollback runs it after), and recorded only by restored_over_hold (an unknown answer arms its look-up — integrator fix, below)", () => {
     const reverse = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
     const restore = reverse.slice(reverse.indexOf("async function restoreStatus("), reverse.indexOf("/** Delete this operation's supersession rows"));
     const corr = restore.indexOf("register({ describe: `correct the hold-override record on ${docId}`, run: correctRecordedPass(docId, snap, status, door, pass) });");
@@ -763,6 +842,90 @@ describe("REV-22 (P18, review fix) — a recorded restore that the reversal's sa
     expect(putBack).toBeGreaterThan(corr);
     expect(restore.indexOf('supabase.rpc("restore_reversed_source"')).toBeGreaterThan(putBack);
     expect(restore.match(/pass\.recorded = /g)).toHaveLength(1);
+  });
+});
+
+// ─── integrator fix: a recorded restore whose answer was lost is corrected too ─
+describe("REV-22 (P18, integrator fix) — a restore whose answer is lost (an error other than the function being absent) is checked against the record, and a pass it committed is corrected", () => {
+  const undone = (id?: string) => audit("REV_HOLD_OVERRIDE_UNDONE").filter((r) => !id || r.resource_id === id);
+  const LOST = { message: "TypeError: Failed to fetch" };
+
+  it("the restore committed (recorded over the hold) and its answer was lost: the source is put back, the carried hold released, and the correction is written for that REV_HOLD_OVERRIDDEN row", async () => {
+    seedSplit("p170", "none");
+    seedHold("p170a");
+    bindGuard();
+    state.restore = async (args) => {
+      expect(await restoreReversedSource(args)).toEqual({ data: "restored_over_hold", error: null });
+      return { data: null, error: LOST };
+    };
+    await expect(reverseSplit({ splitAuditEventId: "ev-p170", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/p170 could not be restored to Issued \(TypeError: Failed to fetch\)[\s\S]*rolled back — no partial changes were kept/);
+    expect(docRow("p170").status).toBe("Superseded");
+    expect(activeHolds("p170")).toEqual([]);
+    for (const s of ["p170a", "p170b"]) expect(docRow(s).status).toBe("Issued");
+    expect(overrides("p170")).toHaveLength(1);
+    expect(undone()).toHaveLength(1);
+    expect(undone("p170")[0]).toMatchObject({ org_id: ORG, user_id: ME });
+    expect(undone("p170")[0].details).toMatchObject({
+      via: "reversal_restore", corrects: "REV_HOLD_OVERRIDDEN", reversedAuditEventId: "ev-p170", restoredStatus: "Issued", putBackTo: "Superseded",
+      restoreAnswerLost: true, correctsAuditLogId: overrides("p170")[0].id,
+    });
+    expect(String((undone("p170")[0].details as Row).rollbackReason)).toMatch(/TypeError: Failed to fetch/);
+    expect(T("audit_logs").indexOf(undone("p170")[0])).toBeGreaterThan(T("audit_logs").indexOf(overrides("p170")[0]));
+    expect(audit("DOC_SPLIT_REVERSED")).toEqual([]);
+  });
+
+  it("the answer was lost and nothing committed: no correction — nor for an earlier attempt's pass that is already corrected, nor for a landed reversal's pass (its record names the event in upper case — reverse.ts reads any spelling)", async () => {
+    seedSplit("p171", "none");
+    seedHold("p171a");
+    bindGuard();
+    state.rpcMode = "canned";
+    state.canned = { data: null, error: LOST };
+    await expect(reverseSplit({ splitAuditEventId: "ev-p171", reason: "r", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/p171 could not be restored to Issued \(TypeError: Failed to fetch\)[\s\S]*rolled back — no partial changes were kept/);
+    expect(docRow("p171").status).toBe("Superseded");
+    expect(undone()).toEqual([]);
+
+    // an earlier attempt's pass, already corrected
+    T("audit_logs").push(
+      { id: "ovr-old", org_id: ORG, action: "REV_HOLD_OVERRIDDEN", resource_id: "p171", user_id: ME, timestamp: "2026-09-01T00:00:00Z", details: { via: "reversal_restore", reversedAuditEventId: "ev-p171" } },
+      { id: "und-old", org_id: ORG, action: "REV_HOLD_OVERRIDE_UNDONE", resource_id: "p171", user_id: ME, timestamp: "2026-09-01T00:00:01Z", details: { via: "reversal_restore", corrects: "REV_HOLD_OVERRIDDEN", reversedAuditEventId: "ev-p171" } },
+    );
+    await expect(reverseSplit({ splitAuditEventId: "ev-p171", reason: "r", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/no partial changes were kept/);
+    expect(undone().map((r) => r.id)).toEqual(["und-old"]);
+
+    // a landed reversal of the event, recorded with an upper-case id, and its pass (which stood)
+    seedSplit("p172", "none");
+    seedHold("p172a");
+    T("audit_logs").push(
+      { id: "ovr-landed", org_id: ORG, action: "REV_HOLD_OVERRIDDEN", resource_id: "p172", user_id: ME, timestamp: "2026-09-02T00:00:00Z", details: { via: "reversal_restore", reversedAuditEventId: "ev-p172" } },
+      { id: "rev-landed", org_id: ORG, action: "DOC_SPLIT_REVERSED", resource_id: "p172", user_id: ME, timestamp: "2026-09-02T00:00:01Z", details: { reversedAuditEventId: "EV-P172" } },
+    );
+    await expect(reverseSplit({ splitAuditEventId: "ev-p172", reason: "r", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/no partial changes were kept/);
+    expect(undone("p172")).toEqual([]);
+  });
+
+  it("the record cannot be read: the reversal still rolls back, and says the look-up failed and needs manual attention — never silent", async () => {
+    seedSplit("p173", "none");
+    seedHold("p173a");
+    bindGuard();
+    state.rpcMode = "canned";
+    state.canned = { data: null, error: LOST };
+    state.auditLookupError = { message: "lookup refused" };
+    await expect(reverseSplit({ splitAuditEventId: "ev-p173", reason: "r", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/p173 could not be restored to Issued \(TypeError: Failed to fetch\)[\s\S]*may need manual attention:[\s\S]*correct the hold-override record on p173: p173's restore answered with an error and whether it recorded a pass over its hold \(REV_HOLD_OVERRIDDEN\) could not be checked \(lookup refused\)/);
+    expect(docRow("p173").status).toBe("Superseded");
+    expect(activeHolds("p173")).toEqual([]);
+    expect(undone()).toEqual([]);
+  });
+
+  it("the source of restoreStatus: only an error other than the missing function marks the pass unknown, before the reversal's refusal is thrown", () => {
+    const reverse = readFileSync(join(process.cwd(), "lib/documentLifecycle/reverse.ts"), "utf8");
+    const restore = reverse.slice(reverse.indexOf("async function restoreStatus("), reverse.indexOf("/** Delete this operation's supersession rows"));
+    expect(restore.match(/pass\.unknown = true;/g)).toHaveLength(1);
+    const branch = restore.indexOf("if (!isMissingRestoreRpc(rpcErr)) {");
+    expect(restore.indexOf("pass.unknown = true;")).toBeGreaterThan(branch);
+    expect(restore.indexOf("pass.unknown = true;")).toBeLessThan(restore.indexOf("throw new Error", branch));
   });
 });
 
@@ -824,7 +987,7 @@ describe("REV-22 (P18) — restoreStatus reads the restore's answer; only a miss
     expect(callers).toEqual(["lib/documentLifecycle/reverse.ts"]);
     expect(reverse.match(/supabase\.rpc\("restore_reversed_source"/g)).toHaveLength(1);
     // both reversals pass the event they reverse
-    expect(reverse).toContain("await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });");
-    expect(reverse).toContain("await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reason: input.reason, actor, rollback });");
+    expect(reverse).toContain("await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });");
+    expect(reverse).toContain("await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });");
   });
 });

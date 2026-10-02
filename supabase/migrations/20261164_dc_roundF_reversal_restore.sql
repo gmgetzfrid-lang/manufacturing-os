@@ -126,7 +126,8 @@ WITH recorded AS (
   -- document: a DOC_SPLIT's or DOC_MERGED's resource, or one of a
   -- DOC_MERGED's mergeSiblings, of an event no recorded reversal has undone
   -- (a DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED — written on the event's own
-  -- resource — naming it as reversedAuditEventId), as the door reads it.
+  -- resource — naming it as reversedAuditEventId, in any spelling the uuid
+  -- type accepts), as the door reads it.
   SELECT e.org_id, e.source_id
     FROM (SELECT a.org_id, a.id AS event_id, a.resource_id, a.resource_id AS source_id
             FROM audit_logs a
@@ -142,7 +143,7 @@ WITH recorded AS (
                       WHERE r.org_id = e.org_id
                         AND r.resource_id = e.resource_id
                         AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
-                        AND r.details->>'reversedAuditEventId' = e.event_id::text)
+                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.event_id::text, '-', ''))
 ),
 unstamped AS (
   -- Superseded with no retirement stamp and a current revision: retired
@@ -238,7 +239,11 @@ BEGIN
   -- event's own resource and names it as reversedAuditEventId, and it is
   -- written only once that reversal's saga has landed — so the reversal
   -- being run is never one of them. Both rows are read under the same
-  -- audit_logs policy.
+  -- audit_logs policy. The reversal's id is compared as the uuid it names —
+  -- lower-cased, without the braces and hyphens the uuid type also accepts —
+  -- so a reversal recorded with the caller's own spelling of the id (upper
+  -- case, braces: the app wrote the id it was given until P18's integrator
+  -- fix, which writes the database's own) is seen too.
   SELECT a.action INTO v_action
     FROM audit_logs a
    WHERE a.id = p_reversal_of
@@ -251,7 +256,7 @@ BEGIN
                       WHERE r.org_id = v_org
                         AND r.resource_id = a.resource_id
                         AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
-                        AND r.details->>'reversedAuditEventId' = p_reversal_of::text)
+                        AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(p_reversal_of::text, '-', ''))
    LIMIT 1;
   IF v_status = 'Superseded'
      AND v_action IS NOT NULL
@@ -877,7 +882,7 @@ UNION ALL
 SELECT 'REV-22 (P18): restore_reversed_source refuses a call with no session, sets the flag only for Document Control''s put-back of a held Superseded source of the recorded split / merge it names that no recorded reversal has undone, around its own write, clears it, records REV_HOLD_OVERRIDDEN and answers restored_over_hold',
        (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%RAISE EXCEPTION%'
            AND prosrc LIKE '%AND a.action IN (''DOC_SPLIT'', ''DOC_MERGED'')%'
-           AND prosrc LIKE '%AND NOT EXISTS (SELECT 1 FROM audit_logs r%AND r.resource_id = a.resource_id%AND r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%AND r.details->>''reversedAuditEventId'' = p_reversal_of%'
+           AND prosrc LIKE '%AND NOT EXISTS (SELECT 1 FROM audit_logs r%AND r.resource_id = a.resource_id%AND r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%AND translate(lower(r.details->>''reversedAuditEventId''), ''{}-'', '''') = replace(p_reversal_of%'
            AND prosrc LIKE '%IF v_status = ''Superseded''%AND v_action IS NOT NULL%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%v_forced := true;%'
            AND prosrc LIKE '%PERFORM set_config(''app.publish_hold_override'', p_document_id%UPDATE documents%SET status = p_status,%GET DIAGNOSTICS v_n = ROW_COUNT;%PERFORM set_config(''app.publish_hold_override'', '''', true);%'
            AND prosrc LIKE '%VALUES (''REV_HOLD_OVERRIDDEN''%''via'', ''reversal_restore''%'
