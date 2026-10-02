@@ -31,6 +31,17 @@ const FILE = "20261159_dc_roundF_guard_owner_and_held_pointer.sql";
 const M = mig(FILE);
 const stripComments = (sql: string) => sql.replace(/--[^\n]*/g, "");
 const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
+/** The one way a migration other than 20261151 may name the recorded-force flag: reading it —
+ *  current_setting('app.publish_hold_override', true), in a body or quoted in a prosrc probe. */
+const withoutFlagReads = (sql: string) => sql
+  .split("current_setting('app.publish_hold_override', true)").join("")
+  .split("current_setting(''app.publish_hold_override'', true)").join("");
+/** Every file under a repository directory (repo-relative paths). */
+function walk(rel: string): string[] {
+  return readdirSync(join(process.cwd(), rel), { withFileTypes: true }).flatMap((e) =>
+    e.name === "node_modules" || e.name.startsWith(".") ? []
+      : e.isDirectory() ? walk(`${rel}/${e.name}`) : [`${rel}/${e.name}`]);
+}
 function between(text: string, from: string, to: string): string {
   const a = text.indexOf(from);
   const b = text.indexOf(to, a + from.length);
@@ -185,11 +196,14 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
   });
 
   it("the flag is still SET only by publish_revision and finalize_reviewed_promote (20261151); this guard only reads it", () => {
+    // every other migration may only READ it — the exact read current_setting('app.publish_hold_override', true);
+    // with those reads stripped, no mention of the flag may remain (no SET LOCAL, no set_config in any spelling)
     for (const f of files) {
-      const s = stripComments(mig(f));
       if (f === "20261151_dc_roundF_promote_transaction_and_hold_override.sql") continue;
-      expect(s, f).not.toMatch(/set_config\('app\.publish_hold_override'/);
+      expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
+    expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
+    expect(withoutFlagReads("PERFORM set_config( 'app.publish_hold_override', v, true);")).toMatch(/publish_hold_override/);
     expect(stripComments(G.next).match(/app\.publish_hold_override/g)).toHaveLength(2); // REV-20 (b) and REV-22, both current_setting
     expect(stripComments(G.next)).not.toMatch(/set_config/);
   });
@@ -243,14 +257,19 @@ describe("20261159 — RG-14: the opened-under stamp and the policy helper", () 
     expect(S).toContain("  SELECT count(*) > 0, max(s.opened_owner_slot) INTO v_open, v_inherited\n    FROM document_review_signoffs s\n   WHERE s.document_version_id = NEW.document_version_id;\n  IF v_open THEN\n    NEW.opened_owner_slot := v_inherited;\n    RETURN NEW;\n  END IF;");
     expect(S.indexOf("NEW.opened_owner_slot := v_inherited;")).toBeLessThan(S.indexOf("FROM document_versions v WHERE v.id = NEW.document_version_id;"));
     expect(S.indexOf("IF TG_OP = 'UPDATE' THEN")).toBeLessThan(S.indexOf("NEW.opened_owner_slot := v_inherited;"));
-    // the author: the version's created_by, else the person opening the roster (openReviewRoster's actor fallback)
-    expect(S).toContain("  SELECT v.record_id, COALESCE(v.created_by, auth.uid()) INTO v_doc_id, v_author\n    FROM document_versions v WHERE v.id = NEW.document_version_id;");
+    // the version's recorded author, kept raw (P17 review fix: never COALESCEd into an author)
+    expect(S).toContain("  SELECT v.record_id, v.created_by INTO v_doc_id, v_created_by\n    FROM document_versions v WHERE v.id = NEW.document_version_id;");
+    expect(S).not.toMatch(/COALESCE\(v\.created_by/);
     expect(S).toContain("    FROM documents d WHERE d.id = COALESCE(v_doc_id, NEW.document_id);");
     expect(S).toContain("     OR NOT review_control_owner_must_approve_for(v_control, v_collection, v_library) THEN\n    NEW.opened_owner_slot := 'none';");
     expect(S).toContain("     AND user_is_effective_owner(v_doc_owner, v_collection, v_library, c.uid)");
     expect(S).toContain("  IF v_owner IS NULL THEN\n    NEW.opened_owner_slot := 'no_owner';");
     expect(S).toContain("  SELECT NOT COALESCE(l.review_control->'requireIndependentReviewer' = 'false'::jsonb, false)");
-    expect(S).toContain("  IF COALESCE(v_independent, true) AND v_author IS NOT DISTINCT FROM v_owner THEN\n    NEW.opened_owner_slot := 'author';");
+    // the author exception: only the owner OPENING the roster, on a version naming no other author
+    // (created_by is writable by a library publisher through PostgREST — it never makes the owner the
+    // author of a roster someone else opens)
+    expect(S).toContain("  IF COALESCE(v_independent, true)\n     AND v_owner = auth.uid()\n     AND (v_created_by IS NULL OR v_created_by = auth.uid()) THEN\n    NEW.opened_owner_slot := 'author';");
+    expect(S.match(/v_created_by/g)).toHaveLength(4); // declared, read, and the two tests of the author rule
     expect(S).toContain("  NEW.opened_owner_slot := 'owner:' || v_owner::text;");
     // every assignment of the stamp is one of the five outcomes
     expect([...S.matchAll(/NEW\.opened_owner_slot := ([^;]+);/g)].map((m) => m[1])).toEqual([
@@ -271,12 +290,24 @@ describe("20261159 — RG-14: the opened-under stamp and the policy helper", () 
     expect(rc).toContain("const placed = placeOwnerSlot({ primaries, alternates, owner, skipAuthorUid: requireIndependent ? authorUid : null });");
     // the independence flag: anything but false requires it (the stamp's = 'false'::jsonb)
     expect(rc).toContain("return rc?.requireIndependentReviewer !== false;");
-    // the author is the draft's created_by, else the actor opening the roster (the stamp's COALESCE(v.created_by, auth.uid()))
+    // the app's author is the draft's created_by, else the actor opening the roster; the stamp grants the
+    // author exception only where both agree on the opener (created_by NULL or the opener) — which every
+    // app opener is: submitForReview inserts the draft with created_by = the actor it then opens the
+    // roster as, and the intake approve opens an external submission's (the intake route inserts no
+    // created_by)
     expect(rc).toContain("let authorUid: string | null = input.actorId ?? null;");
     expect(rc).toContain("const { data: verRow } = await supabase.from(\"document_versions\").select(\"created_by\").eq(\"id\", input.versionId).maybeSingle();");
     expect(rc).toContain("if (verRow?.created_by) authorUid = String(verRow.created_by);");
     // both openers pass the signed-in user as the actor (the trigger's auth.uid())
     expect(src("lib/revisions.ts")).toContain("revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,");
+    expect(src("lib/revisions.ts")).toContain("change_log: changeLog.trim(), created_by: actorUserId, created_by_name: actorEmail || actorUserId, created_at: now,");
+    const intakeInsert = between(src("app/api/intake/upload/route.ts"), "const { data: ver, error: verErr } = await supabaseAdmin\n      .from(\"document_versions\")\n      .insert({", "})");
+    expect(intakeInsert).toContain("intake_link_id: linkId,");
+    expect(intakeInsert).not.toMatch(/\bcreated_by:/);
+    // the only roster writes in the app are openReviewRoster's (no other door opens a roster)
+    const rosterWriters = ["lib", "app", "components"].flatMap((d) => walk(d)).filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("__tests__"))
+      .filter((f) => /from\("document_review_signoffs"\)\s*\.(insert|upsert)\(/.test(readFileSync(f, "utf8")));
+    expect(rosterWriters).toEqual(["lib/reviewControl.ts"]);
     expect(src("components/projects/IntakePanel.tsx")).toContain("control, actorId: uid, actorName: userEmail ?? null,");
     // an open roster is never changed by the app: openReviewRoster upserts with ignoreDuplicates (a re-open adds rows, never rewrites one)
     expect(rc).toContain("const upsertOpts = { onConflict: \"document_version_id,reviewer_user_id\", ignoreDuplicates: true } as const;");
@@ -346,5 +377,9 @@ describe("20261159 — the one-paste shape", () => {
     expect(head).toMatch(/Independent of 20261131, 20261143, 20261149, 20261150\n-- and 20261152/);
     expect(head).toMatch(/P16 \(REV-21\) re-creates this guard next, from this body\./);
     expect(head).toMatch(/NOT a widening/);
+    // P17 review fix: the intake approve has no force yet — the paste waits for J10b's, or the user's ratification
+    expect(head).toMatch(/⚠ PASTE PRECONDITION \(REV-22, P17 review fix\): paste this only once the app\n-- deployed offers the intake approve's recorded force/);
+    expect(head).toMatch(/OR once\n-- the user has ratified the interim loss \(DEC-63's P17 Landed line, awaiting\n-- ratification\)/);
+    expect(head).not.toMatch(/no app change is needed for the paste/);
   });
 });

@@ -23,12 +23,16 @@
 --               the inspector recognises — it then offers Document Control
 --               the review promote's recorded force (P14). DECIDED here: the
 --               review promote of a held Issued document takes its recorded
---               force, as a held Draft's does since 20261151; the intake
+--               force, as a held Draft's does since 20261151. The intake
 --               approve (components/projects/IntakePanel.tsx) offers no force
---               yet, so its controller releases the hold first — the
---               integrator's J10b follow-up REV-20 named, now for a held
---               Issued document too. A first pointer write (no current
---               revision) is a creation's (REV-17) and is not this;
+--               yet, so this takes away a flow that works today — a
+--               controller's intake approve of a submission revising a held
+--               Issued document (the only way through: release the hold,
+--               approve, re-place it by hand) — until the integrator's J10b
+--               follow-up gives it the force; hence the PASTE PRECONDITION
+--               below (or the user's ratification of the interim loss,
+--               recorded on DEC-63's P17 line). A first pointer write (no
+--               current revision) is a creation's (REV-17) and is not this;
 --           (2) the un-supersede of a Superseded document carrying NO
 --               retirement stamp (superseded before 20261144, or by the
 --               service role) into an issue status. KEPT SPARED, as
@@ -70,15 +74,20 @@
 --             a signed-in INSERT is stamped — whatever the caller sent is
 --             overwritten. The roster's FIRST row takes the policy and owner
 --             read AT THAT MOMENT for the draft's own document (the version's
---             record, not the row's claimed document_id); its author is the
---             version's created_by or, where none is recorded (an external
---             submission), the person opening the roster, as openReviewRoster
---             falls back to its actor. A row added to a roster already open
---             takes that roster's stamp (NULL for one opened before this
---             paste), so a policy or owner change mid-review never reaches
---             it. A signed-in UPDATE keeps the stamp. The service role is
---             trusted, as the sign-off guard trusts it (a restore replays the
---             stamp it exported).
+--             record, not the row's claimed document_id); 'author' only when
+--             the owner is the person OPENING the roster and the version
+--             names no other author (created_by NULL — an external
+--             submission — or the opener): created_by is writable by a
+--             library publisher through PostgREST, so it never makes the
+--             owner the author of a roster someone else opens (P17 review
+--             fix). Every roster the app opens is one of these
+--             (submitForReview opens as the version's creator; the intake
+--             approve, an external submission's). A row added to a roster
+--             already open takes that roster's stamp (NULL for one opened
+--             before this paste), so a policy or owner change mid-review
+--             never reaches it. A signed-in UPDATE keeps the stamp. The
+--             service role is trusted, as the sign-off guard trusts it (a
+--             restore replays the stamp it exported).
 --           * review_control_owner_must_approve_for (new): the effective
 --             ownerMustApprove along the container chain — the twin of
 --             review_control_mode_for (20261070), the nearest DEFINED level
@@ -123,9 +132,16 @@
 -- this one: each would drop the REV-22 and RG-14 rules (and an earlier one
 -- the REV-20 rules). Independent of 20261131, 20261143, 20261149, 20261150
 -- and 20261152. P16 (REV-21) re-creates this guard next, from this body.
--- Deploy: no app change is needed for the paste — the app carrying P14 already
--- offers a controller the review promote's recorded force when the hold
--- refuses it, and openReviewRoster already writes the owner's slot.
+-- ⚠ PASTE PRECONDITION (REV-22, P17 review fix): paste this only once the app
+-- deployed offers the intake approve's recorded force (IntakePanel calling
+-- finalizeReviewedRevision with forceHold for Document Control on the hold
+-- refusal, as the inspector does — the integrator's J10b follow-up), OR once
+-- the user has ratified the interim loss (DEC-63's P17 Landed line, awaiting
+-- ratification). Until then a controller's intake approve of a submission
+-- revising a held Issued document is refused with no way through but
+-- releasing the hold. Deploy otherwise: the app carrying P14 offers the
+-- review promote's recorded force in the inspector when the hold refuses it,
+-- and openReviewRoster already writes the owner's slot.
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -260,7 +276,7 @@ DECLARE
   v_open        boolean;
   v_inherited   text;
   v_doc_id      uuid;
-  v_author      uuid;
+  v_created_by  uuid;
   v_found       boolean;
   v_doc_owner   uuid;
   v_collection  uuid;
@@ -294,11 +310,9 @@ BEGIN
     RETURN NEW;
   END IF;
   -- The roster's first row: the rule read NOW for the DRAFT's own document
-  -- (the version's record, not the row's claimed document_id). Its author is
-  -- the version's created_by or, where none is recorded (an external
-  -- submission), the person opening the roster — as openReviewRoster falls
-  -- back to its actor.
-  SELECT v.record_id, COALESCE(v.created_by, auth.uid()) INTO v_doc_id, v_author
+  -- (the version's record, not the row's claimed document_id), and the
+  -- author the version records, kept raw for the author rule below.
+  SELECT v.record_id, v.created_by INTO v_doc_id, v_created_by
     FROM document_versions v WHERE v.id = NEW.document_version_id;
   SELECT true, d.owner_user_id, d.collection_id, d.library_id, d.review_control
     INTO v_found, v_doc_owner, v_collection, v_library, v_control
@@ -327,11 +341,24 @@ BEGIN
   END IF;
   -- DEC-21: an owner who authored the revision is skipped where the library
   -- requires an independent reviewer — anything but
-  -- requireIndependentReviewer = false (lib/reviewControl.ts).
+  -- requireIndependentReviewer = false (lib/reviewControl.ts). The author
+  -- exception holds only when the owner is the person OPENING the roster
+  -- and the version names no other author (P17 review fix): created_by is a
+  -- column a library publisher can write through PostgREST (20261037's
+  -- version policies admit any value for a publisher; no trigger keeps it),
+  -- so an author read from it alone let a publisher who is not the owner
+  -- name the owner as author and open a roster without them. Every roster
+  -- the app opens is one of these: submitForReview opens it as the
+  -- version's creator, and the intake approve opens an external
+  -- submission's (no created_by — openReviewRoster's author is then its
+  -- actor). A version naming the owner as author on a roster someone else
+  -- opens is stamped owner:<uid>: the owner approves it.
   SELECT NOT COALESCE(l.review_control->'requireIndependentReviewer' = 'false'::jsonb, false)
     INTO v_independent
     FROM libraries l WHERE l.id = v_library;
-  IF COALESCE(v_independent, true) AND v_author IS NOT DISTINCT FROM v_owner THEN
+  IF COALESCE(v_independent, true)
+     AND v_owner = auth.uid()
+     AND (v_created_by IS NULL OR v_created_by = auth.uid()) THEN
     NEW.opened_owner_slot := 'author';
     RETURN NEW;
   END IF;
@@ -875,7 +902,7 @@ SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role ma
                       AND t.tgrelid = 'documents'::regclass AND p.proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'RG-14: the stamp column exists and trg_review_signoff_owner_stamp fires review_signoff_owner_stamp BEFORE INSERT OR UPDATE on every roster row; the stamp overwrites a signed-in INSERT''s value (a row added to an open roster takes its stamp; the first row''s author falls back to the opener) and keeps it on a signed-in UPDATE',
+SELECT 'RG-14: the stamp column exists and trg_review_signoff_owner_stamp fires review_signoff_owner_stamp BEFORE INSERT OR UPDATE on every roster row; the stamp overwrites a signed-in INSERT''s value (a row added to an open roster takes its stamp; the author exception only for the owner opening the roster on a version naming no other author) and keeps it on a signed-in UPDATE',
        EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'document_review_signoffs' AND column_name = 'opened_owner_slot')
        AND EXISTS (SELECT 1 FROM pg_trigger t
@@ -884,7 +911,9 @@ SELECT 'RG-14: the stamp column exists and trg_review_signoff_owner_stamp fires 
                       AND pg_get_triggerdef(t.oid) LIKE 'CREATE TRIGGER trg_review_signoff_owner_stamp BEFORE INSERT OR UPDATE ON public.document_review_signoffs FOR EACH ROW%')
        AND (SELECT prosrc LIKE '%NEW.opened_owner_slot := OLD.opened_owner_slot;%'
                AND prosrc LIKE '%NEW.opened_owner_slot := v_inherited;%'
-               AND prosrc LIKE '%COALESCE(v.created_by, auth.uid())%'
+               AND prosrc LIKE '%SELECT v.record_id, v.created_by INTO v_doc_id, v_created_by%'
+               AND prosrc LIKE '%AND v_owner = auth.uid()%'
+               AND prosrc LIKE '%AND (v_created_by IS NULL OR v_created_by = auth.uid()) THEN%'
                AND prosrc LIKE '%user_is_effective_owner(v_doc_owner, v_collection, v_library, c.uid)%'
                AND prosrc LIKE '%NEW.opened_owner_slot := ''owner:'' || v_owner%'
               FROM pg_proc WHERE proname = 'review_signoff_owner_stamp'),

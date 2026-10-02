@@ -23,8 +23,19 @@
 //        the rows it writes carry the app's own outcome, a roster with every
 //        primary signed passes the transcribed gate, and the same roster
 //        without the owner's row (one opened through PostgREST) does not.
-//   The SQL itself ran on PostgreSQL 16 (RG-14's record: G-1..G-18b).
+//   The SQL itself ran on PostgreSQL 16 (RG-14's record: G-1..G-18b, G-19..G-21).
 //   Decided as DEC-44 (P17) (provisional number).
+//
+//   P17 review fix: the 'author' exception is granted only to the owner
+//   OPENING the roster on a version that names no other author (created_by
+//   NULL or the opener). created_by is writable by a library publisher
+//   through PostgREST, so reading the author from it alone let a publisher
+//   who is not the owner name the owner as author and open a roster without
+//   them. Every app opener is one of these shapes (submitForReview opens as
+//   the version's creator; the intake approve opens an external submission,
+//   which has no created_by), so the twin is exact on them; on a version
+//   naming someone other than its opener the stamp is stricter — never
+//   'author' — and the matrix's "created_by ≠ opener" axis pins that.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -121,14 +132,15 @@ function sqlStamp(db: Db, NEW: Row, uid: string | null, table: Row[]): string | 
     return stamps.length ? stamps.reduce((a, b) => (b > a ? b : a)) : null; // max()
   }
   const v = byId(db, "document_versions", NEW.document_version_id);
-  const author = (v?.created_by as string | null | undefined) ?? uid; // COALESCE(v.created_by, auth.uid())
+  const createdBy = (v?.created_by as string | null | undefined) ?? null; // v.created_by, raw
   const d = byId(db, "documents", v?.record_id ?? NEW.document_id);
   if (!d || !sqlOwnerMustApproveFor(db, d.review_control, d.collection_id, d.library_id)) return "none";
   const owner = sqlEffectiveOwner(db, d.owner_user_id, d.collection_id, d.library_id);
   if (owner === null) return "no_owner";
   const lib = byId(db, "libraries", d.library_id);
   const independent = !(isObject(lib?.review_control) && lib!.review_control.requireIndependentReviewer === false);
-  if (independent && author === owner) return "author";
+  // COALESCE(v_independent, true) AND v_owner = auth.uid() AND (v_created_by IS NULL OR v_created_by = auth.uid())
+  if (independent && owner === uid && (createdBy === null || createdBy === uid)) return "author";
   return `owner:${owner}`;
 }
 /** The completion gate's RG-14 check (20261159): refused when a row is
@@ -161,7 +173,7 @@ describe("the transcription is the SQL's", () => {
       "  IF TG_OP = 'UPDATE' THEN\n    NEW.opened_owner_slot := OLD.opened_owner_slot;",
       "  SELECT count(*) > 0, max(s.opened_owner_slot) INTO v_open, v_inherited",
       "  IF v_open THEN\n    NEW.opened_owner_slot := v_inherited;",
-      "  SELECT v.record_id, COALESCE(v.created_by, auth.uid()) INTO v_doc_id, v_author",
+      "  SELECT v.record_id, v.created_by INTO v_doc_id, v_created_by",
       "    FROM documents d WHERE d.id = COALESCE(v_doc_id, NEW.document_id);",
       "     OR NOT review_control_owner_must_approve_for(v_control, v_collection, v_library) THEN\n    NEW.opened_owner_slot := 'none';",
       "    FROM (VALUES (1, v_doc_owner),",
@@ -171,7 +183,7 @@ describe("the transcription is the SQL's", () => {
       "     AND user_is_effective_owner(v_doc_owner, v_collection, v_library, c.uid)\n   ORDER BY c.ord\n   LIMIT 1;",
       "  IF v_owner IS NULL THEN\n    NEW.opened_owner_slot := 'no_owner';",
       "  SELECT NOT COALESCE(l.review_control->'requireIndependentReviewer' = 'false'::jsonb, false)",
-      "  IF COALESCE(v_independent, true) AND v_author IS NOT DISTINCT FROM v_owner THEN\n    NEW.opened_owner_slot := 'author';",
+      "  IF COALESCE(v_independent, true)\n     AND v_owner = auth.uid()\n     AND (v_created_by IS NULL OR v_created_by = auth.uid()) THEN\n    NEW.opened_owner_slot := 'author';",
       "  NEW.opened_owner_slot := 'owner:' || v_owner::text;",
     ];
     let at = -1;
@@ -250,8 +262,9 @@ function appOutcome(db: Db, s: Scenario): string {
 }
 
 describe("1. the stamp is the app's roster composition (GAP-4) — over a matrix of policies, owners, memberships, authors and independence", () => {
-  it("every scenario: the database's opened-under stamp names exactly the owner slot the app rosters (or the same reason it rosters none)", () => {
+  it("every scenario an app opener produces: the database's opened-under stamp names exactly the owner slot the app rosters (or the same reason it rosters none); a version naming someone other than its opener is never 'author'", () => {
     let n = 0;
+    let forgeriesRefused = 0;
     const seen = new Set<string>();
     const owners: Array<Pick<Scenario, "docOwner" | "folderOwner" | "libOwner" | "team">> = [
       { docOwner: "own1", folderOwner: null, libOwner: null, team: false },
@@ -262,26 +275,40 @@ describe("1. the stamp is the app's roster composition (GAP-4) — over a matrix
       { docOwner: null, folderOwner: null, libOwner: null, team: false },
     ];
     const inactives = [new Set<string>(), new Set(["own1"]), new Set(["own1", "fold1", "libown"]), new Set(["own1", "fold1", "libown", "sup1"])];
-    const authors: Array<Pick<Scenario, "createdBy" | "actor">> = [
-      { createdBy: "pub1", actor: "pub1" },
-      { createdBy: "own1", actor: "pub1" },
-      { createdBy: null, actor: "own1" },   // an external submission whose roster the owner opens
-      { createdBy: null, actor: "ctl1" },   // …or Document Control opens
-      { createdBy: "sup1", actor: "ctl1" },
+    // The "created_by ≠ opener" axis. AN APP OPENER: submitForReview inserts the draft with created_by =
+    // the actor it opens the roster as; the intake approve opens an external submission's roster (the
+    // intake route inserts no created_by). FOREIGN: a version naming someone other than the person
+    // opening its roster — no app door writes one; a library publisher can, through PostgREST (RG-14's
+    // review: PATCH created_by to the owner, then open a roster without them).
+    const authors: Array<Pick<Scenario, "createdBy" | "actor"> & { appOpener: boolean }> = [
+      { createdBy: "pub1", actor: "pub1", appOpener: true },   // a publisher submits their draft
+      { createdBy: "own1", actor: "own1", appOpener: true },   // the owner submits their own draft
+      { createdBy: "fold1", actor: "fold1", appOpener: true },
+      { createdBy: null, actor: "own1", appOpener: true },     // an external submission whose roster the owner opens
+      { createdBy: null, actor: "ctl1", appOpener: true },     // …or Document Control opens
+      { createdBy: "own1", actor: "pub1", appOpener: false },  // the forgery: the owner named as author by a publisher
+      { createdBy: "sup1", actor: "ctl1", appOpener: false },
+      { createdBy: "pub1", actor: "own1", appOpener: false },  // the owner opens a draft someone else is named on
     ];
     for (const doc of POLICIES) for (const folder of POLICIES) for (const ancestor of POLICIES) for (const library of POLICIES)
-      for (const o of owners) for (const inactive of inactives) for (const a of authors) for (const independent of [undefined, true, false]) {
+      for (const o of owners) for (const inactive of inactives) for (const { appOpener, ...a } of authors) for (const independent of [undefined, true, false]) {
         const s: Scenario = { doc, folder, ancestor, library, ...o, inactive, ...a, independent };
         const db = world(s);
         const sql = sqlStamp(db, { document_version_id: "v2A", document_id: "d1" }, a.actor, []);
         const app = appOutcome(db, s);
-        if (sql !== app) expect({ sql, app, scenario: { ...s, inactive: [...inactive] } }).toBeUndefined();
+        // an app opener: exactly the app's outcome. Foreign: the app's, except that the database never
+        // grants 'author' — where the app would skip the named owner as author, the owner must approve.
+        const expected = appOpener || app !== "author" ? app : `owner:${a.createdBy}`;
+        if (sql !== expected) expect({ sql, app, expected, appOpener, scenario: { ...s, inactive: [...inactive] } }).toBeUndefined();
+        if (!appOpener) expect(sql).not.toBe("author");
+        if (!appOpener && app === "author") forgeriesRefused += 1;
         seen.add(sql!.startsWith("owner:") ? "owner" : sql!);
         n += 1;
       }
-    expect(n).toBeGreaterThan(50_000);
-    // every outcome is reached
+    expect(n).toBeGreaterThan(100_000);
+    // every outcome is reached, and the forgery axis is exercised
     expect([...seen].sort()).toEqual(["author", "no_owner", "none", "owner"]);
+    expect(forgeriesRefused).toBeGreaterThan(1_000);
   });
 });
 
@@ -347,9 +374,11 @@ describe("2. the real openReviewRoster under the stamp — a legitimate roster c
     expect(sqlOwnerGateRefuses(roster, T("e_signatures"))).toBe(false);
   });
 
-  it("regression: the owner authored the draft (DEC-21 skips them) — stamp author, no owner row, completes; with independence off the owner is rostered and required", async () => {
+  it("regression: the owner authored the draft and submits it (DEC-21 skips them) — stamp author, no owner row, completes; with independence off the owner is rostered and required", async () => {
+    // submitForReview opens the roster as the draft's creator: the owner here
     seed({ author: "own1" });
-    await openReviewRoster(input(OWNER_CTL));
+    state.uid = "own1";
+    await openReviewRoster(input(OWNER_CTL, "own1"));
     let roster = T("document_review_signoffs");
     expect(roster.map((r) => [r.reviewer_user_id, r.opened_owner_slot])).toEqual([["rev1", "author"]]);
     signAll(roster);
@@ -358,7 +387,7 @@ describe("2. the real openReviewRoster under the stamp — a legitimate roster c
     state.db = newFakeDb(); bindStamp();
     const optOut: ReviewControl = { ...OWNER_CTL, requireIndependentReviewer: false };
     seed({ author: "own1", library: optOut });
-    await openReviewRoster(input(optOut));
+    await openReviewRoster(input(optOut, "own1"));
     roster = T("document_review_signoffs");
     expect(roster.map((r) => [r.reviewer_user_id, r.slot_group, r.opened_owner_slot])).toEqual([
       ["own1", "owner:own1", "owner:own1"], ["rev1", "person:rev1", "owner:own1"],
@@ -381,6 +410,30 @@ describe("2. the real openReviewRoster under the stamp — a legitimate roster c
     await openReviewRoster(input(OWNER_CTL, "ctl1"));
     roster = T("document_review_signoffs");
     expect(roster.map((r) => [r.reviewer_user_id, r.opened_owner_slot])).toEqual([["own1", "owner:own1"], ["rev1", "owner:own1"]]);
+  });
+
+  it("RG-14 review: a publisher who names the OWNER as the draft's author (created_by, writable through PostgREST) and opens the roster is stamped owner:<owner> — the forged author never skips the owner", async () => {
+    // P PATCHes created_by to the owner W, then opens the roster: openReviewRoster reads created_by and skips
+    // W as author; the stamp does not (W does not open the roster), so the roster cannot publish without W
+    seed({ author: "own1" });
+    state.uid = "pub1";
+    await openReviewRoster(input(OWNER_CTL, "pub1"));
+    const roster = T("document_review_signoffs");
+    expect(roster.map((r) => [r.reviewer_user_id, r.opened_owner_slot])).toEqual([["rev1", "owner:own1"]]);
+    signAll(roster);
+    expect(sqlOwnerGateRefuses(roster, T("e_signatures"))).toBe(true);
+    // the same row through PostgREST, the stamp read directly: created_by naming the owner, a non-owner opener
+    const row = { org_id: "o1", document_id: "d1", document_version_id: "v2A", reviewer_user_id: "rev1", slot: "primary", slot_group: "person:rev1", status: "pending" };
+    expect(sqlStamp(state.db, row, "pub1", [])).toBe("owner:own1");
+    expect(sqlStamp(state.db, row, "ctl1", [])).toBe("owner:own1");
+    // only the owner opening it is the author exception — on a version naming them or nobody
+    expect(sqlStamp(state.db, row, "own1", [])).toBe("author");
+    T("document_versions")[0].created_by = null;
+    expect(sqlStamp(state.db, row, "own1", [])).toBe("author");
+    expect(sqlStamp(state.db, row, "pub1", [])).toBe("owner:own1");
+    // and a version naming someone else, opened by the owner: the owner approves (as the app rosters them)
+    T("document_versions")[0].created_by = "pub1";
+    expect(sqlStamp(state.db, row, "own1", [])).toBe("owner:own1");
   });
 
   it("regression: no active owner — stamp no_owner, no owner row, completes", async () => {
