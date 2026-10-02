@@ -248,8 +248,9 @@ export function ModalBody({ className = "", children }: { className?: string; ch
 }
 
 export function ModalFooter({ className = "", children }: { className?: string; children: React.ReactNode }) {
-  // The corner dock sits above every modal; it keeps clear of this action
-  // row so a toast or an upload card never sits on its buttons (STACK-10).
+  // While a modal that starts an upload has raised the corner dock above
+  // every modal, the dock keeps clear of this action row, so a toast or an
+  // upload card never sits on a dialog's buttons (STACK-10).
   const ref = useRef<HTMLDivElement>(null);
   useDockAvoid(ref, true);
   return (

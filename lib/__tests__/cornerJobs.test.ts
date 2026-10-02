@@ -45,7 +45,7 @@ import { confirmReloadDuringUploads } from "@/components/system/UpdatePill";
 import { confirmCancelBackup } from "@/components/providers/BackupIndicator";
 import { ingestFailureOf } from "@/components/providers/KnowledgeIndexIndicator";
 import {
-  overlapKey, overlapFormedAt, overlapMark, latestOverlapMark, OVERLAP_HEADSUP_WINDOW_DAYS,
+  overlapKey, overlapFormedAt, overlapMark, overlapMarkAt, latestOverlapMark, OVERLAP_HEADSUP_WINDOW_DAYS,
 } from "@/components/documents/EditOverlapBanner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -637,9 +637,10 @@ describe("TAX-8 (review fix) — 'Heads-up sent' counts only a heads-up sent aft
     // Sent and dismissed 20 days ago, for an overlap of the same two people
     // that has since dissolved; the one live now formed 5 days ago.
     window.localStorage.setItem(`${DISMISSED_PREFIX}me:o1:overlap-headsup-sent`, JSON.stringify([overlapMark(key, Date.now() - 20 * DAY)]));
-    const { Banner } = await loadBanner([{ documentId: "d1", libraryId: "L1", intents: [
+    const live = [{ documentId: "d1", libraryId: "L1", intents: [
       { userId: "me", userName: "Me", source: "checkout", createdAt: ago(6) }, { userId: "pat", userName: "Pat", source: "download", createdAt: ago(5) },
-    ] }]);
+    ] }];
+    const { Banner } = await loadBanner(live);
     db.rows = [];
     await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
     await flush(6);
@@ -658,7 +659,64 @@ describe("TAX-8 (review fix) — 'Heads-up sent' counts only a heads-up sent aft
     expect(host.textContent).toContain("Heads-up sent ✓");
     const marks = parseSet(window.localStorage.getItem(`${DISMISSED_PREFIX}me:o1:overlap-headsup-sent`)!);
     expect(marks).toHaveLength(1);
-    expect(latestOverlapMark(marks, key)).toBeGreaterThan(Date.now() - DAY);
+    // Stamped with the live overlap's formed time (Pat joined 5 days ago),
+    // which replaces the old overlap's mark.
+    expect(latestOverlapMark(marks, key)).toBe(overlapFormedAt(live[0].intents));
+    expect(latestOverlapMark(marks, key)).toBeGreaterThan(Date.now() - 20 * DAY);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+});
+
+describe("TAX-8 (N7 review) — marks never mix the browser's clock with the server's", () => {
+  async function loadBanner(overlaps: Array<{ documentId: string; libraryId: string | null; intents: Array<{ userId: string; userName: string; source: string; createdAt?: string }> }>) {
+    const notify = vi.fn(async () => undefined);
+    vi.doMock("@/lib/intents", () => ({ listOrgEditOverlaps: async () => overlaps }));
+    vi.doMock("@/lib/inAppNotifications", () => ({ notifyMany: notify }));
+    vi.resetModules();
+    const { default: Banner } = await import("@/components/documents/EditOverlapBanner");
+    return { Banner, notify };
+  }
+  const offered = () => [...host.querySelectorAll("button")].some((b) => /Send heads-up/.test(b.textContent ?? ""));
+
+  it("overlapMarkAt stamps the overlap's formed time; an unreadable one falls back to now (it is never covered anyway)", () => {
+    expect(overlapMarkAt(1_000, 5_000)).toBe(1_000);
+    expect(overlapMarkAt(9_000, 5_000)).toBe(9_000);
+    expect(overlapMarkAt(Infinity, 5_000)).toBe(5_000);
+  });
+
+  it("on a PC whose clock runs 3 minutes behind the server, a sent heads-up and a dismissal still stick across a remount", async () => {
+    // The overlap formed one minute ago by the server's clock — two minutes
+    // AFTER this browser's Date.now(). Before: the marks were Date.now()
+    // stamps, earlier than "formed", so neither ever counted.
+    const formedIso = new Date(Date.now() + 2 * 60_000).toISOString();
+    const overlap = [{ documentId: "d1", libraryId: "L1", intents: [
+      { userId: "me", userName: "Me", source: "checkout", createdAt: new Date(Date.now() - 60_000).toISOString() },
+      { userId: "pat", userName: "Pat", source: "download", createdAt: formedIso },
+    ] }];
+    const { Banner, notify } = await loadBanner(overlap);
+    db.rows = [];
+    const el = () => React.createElement(Banner, { orgId: "o1", currentUserId: "me", key: Math.random() });
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    const send = [...host.querySelectorAll("button")].find((b) => /Send heads-up/.test(b.textContent ?? ""))!;
+    await act(async () => { send.click(); });
+    await flush();
+    expect(notify).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    expect(offered()).toBe(false);
+    const marks = parseSet(window.localStorage.getItem(`${DISMISSED_PREFIX}me:o1:overlap-headsup-sent`)!);
+    expect(latestOverlapMark(marks, "d1:me,pat")).toBe(Date.parse(formedIso));
+    await act(async () => { (host.querySelector('button[aria-label="Dismiss"]') as HTMLElement).click(); });
+    expect(host.textContent).toBe("");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    expect(host.textContent).toBe("");
     vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
   });
 });

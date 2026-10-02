@@ -82,8 +82,10 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
             {/* The docks first: both portal to document.body (the corner at
-                Z.dock, above every modal), and every indicator, toast, undo
-                toast and the graph chip below renders into them. */}
+                Z.dock, under every overlay, raised above every modal while
+                one that starts an upload is open), and every indicator,
+                toast, undo toast and the graph chip below renders into
+                them. */}
             <CornerDock onOpenCenter={openCenter} occupiedRightPx={centerOpen ? NOTIFICATION_CENTER_RAIL_PX : 0} />
             <CentreDock />
             <NotificationListener />

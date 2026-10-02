@@ -22,7 +22,7 @@ import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filen
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 import { Z } from "@/lib/zLayers";
-import { useDockAvoid } from "@/components/ui/CornerDock";
+import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 export interface CustomColumnDef {
   key: string;
@@ -91,10 +91,11 @@ export default function MetadataStagingModal({
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
-  // The corner dock sits above this modal and reports its uploads; it keeps
-  // clear of this action row, so "Upload All" and "Stop upload" stay
-  // reachable however many cards it holds (STACK-10).
+  // While open, the corner dock rises above this modal and reports its
+  // uploads; it keeps clear of this action row, so "Upload All" and "Stop
+  // upload" stay reachable however many cards it holds (STACK-10).
   const footerRef = React.useRef<HTMLDivElement>(null);
+  useDockRaise(isOpen);
   useDockAvoid(footerRef, isOpen);
 
   // Detect when the user has defined library columns that map to the

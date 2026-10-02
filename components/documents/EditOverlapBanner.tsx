@@ -19,7 +19,7 @@
 //     overlap formed. A new person joining is a new overlap; so is the same
 //     people overlapping again after it dissolved.
 //   - "Dismiss for now" sticks for THIS overlap across a remount and a reload
-//     (hooks/useDismissed, stamped with when it was dismissed).
+//     (hooks/useDismissed, stamped with the overlap it dismissed).
 //   - "Heads-up sent" survives a remount. It is derived from the
 //     notification rows this person can read: an overlap_advisory about the
 //     document, from someone in the overlap, sent after the overlap formed
@@ -28,8 +28,11 @@
 //     never reached them, so the button is offered again. A heads-up this
 //     person sent is not readable back (the rows are the recipients' —
 //     notifications_own_select), so their own send is remembered on the same
-//     substrate as a dismissal, stamped with when they sent it, under the
-//     same rule.
+//     substrate as a dismissal, stamped the same way, under the same rule.
+//   - A mark is stamped with the overlap's own formed time (`overlapMarkAt`),
+//     a server timestamp — never the browser's clock. "Formed" comes from
+//     document_intents.created_at; comparing it with a Date.now() stamp
+//     lost every dismissal and send made on a PC whose clock runs behind.
 
 import React, { useEffect, useState } from "react";
 import { Users, X, BellRing } from "lucide-react";
@@ -66,6 +69,18 @@ export function overlapFormedAt(intents: Array<{ userId: string; createdAt?: str
 /** A remembered mark for one overlap: `<overlapKey>@<epoch ms>`. */
 export function overlapMark(key: string, at: number): string {
   return `${key}@${at}`;
+}
+
+/**
+ * The stamp for a mark made now on an overlap that formed at `formed`: the
+ * formed time itself, so the comparison with `overlapFormedAt` is always
+ * server clock against server clock. The same people overlapping again later
+ * form later, so an old mark never covers the new overlap. (An overlap whose
+ * formed time cannot be read is never covered by any mark; the stamp then
+ * falls back to now and changes nothing.)
+ */
+export function overlapMarkAt(formed: number, now: number = Date.now()): number {
+  return Number.isFinite(formed) ? formed : now;
 }
 
 /** The latest moment `key` was marked among `values` (-Infinity: never). */
@@ -174,9 +189,13 @@ export default function EditOverlapBanner({
   const visible = rows.filter((r) => !isDismissed(r));
   if (visible.length === 0) return null;
 
-  /** Replace this overlap's earlier marks with one made now. */
-  const markNow = (set: typeof sent, key: string) =>
-    set.update((ids) => [...ids.filter((v) => !v.startsWith(`${key}@`)), overlapMark(key, Date.now())]);
+  /** Replace this overlap's earlier marks with one for the overlap as it
+   *  stands — stamped with its formed time, not this browser's clock. */
+  const markNow = (set: typeof sent, row: OverlapRow) => {
+    const key = overlapKey(row.documentId, row.intents);
+    const at = overlapMarkAt(overlapFormedAt(row.intents));
+    set.update((ids) => [...ids.filter((v) => !v.startsWith(`${key}@`)), overlapMark(key, at)]);
+  };
 
   const sendHeadsUp = async (row: OverlapRow) => {
     const userIds = [...new Set(row.intents.map((i) => i.userId))];
@@ -194,7 +213,7 @@ export default function EditOverlapBanner({
         resourceType: "document",
         resourceId: row.documentId,
       });
-      markNow(sent, overlapKey(row.documentId, row.intents));
+      markNow(sent, row);
     } catch { /* best-effort */ }
   };
 
@@ -241,7 +260,7 @@ export default function EditOverlapBanner({
                 </button>
               )}
               <button
-                onClick={() => markNow(dismissed, key)}
+                onClick={() => markNow(dismissed, row)}
                 className="p-1 rounded-md hover:bg-amber-100"
                 title="Dismiss for now"
                 aria-label="Dismiss"

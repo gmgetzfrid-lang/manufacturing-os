@@ -13,10 +13,13 @@
 // Under the dock's cap (STACK-9) the cards that show are chosen failures
 // first, then running transfers, then finished ones — a failure's reason is
 // never the card that gets collapsed into "+N more" while a progress bar
-// shows. A finished card's clear-timer starts only once it is visible, so a
-// failure collapsed behind the cap is still there when it surfaces. (On a
-// phone, a card the folded summary pill stands for counts as visible: it
-// clears on its own time, as on a desktop — STACK-7.)
+// shows. A failure's clear-timer starts only once it is visible, so a
+// failure collapsed behind the cap is still there when it surfaces (on a
+// phone, a card the folded summary pill stands for counts as visible — it
+// clears on its own time, as on a desktop: STACK-7). A "Done" or "Stopped"
+// card clears on its own time from the moment it finished, seen or not, as
+// it always did: behind a running batch it would otherwise wait out the
+// whole batch and then drain four at a time.
 
 import React, { useEffect, useRef, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
@@ -67,12 +70,16 @@ export default function UploadIndicator() {
     : { label: "Uploads finished", tone: "ok" });
   const shown = pickVisibleUploads(list, allowance);
 
-  // A finished card clears UPLOAD_CLEAR_MS after it is first VISIBLE (or
-  // stood for by the phone's pill) — and only if no newer event superseded
-  // it. A started clock is not paused when the card later leaves the stack.
+  // A finished card clears UPLOAD_CLEAR_MS after it finished — a failure
+  // after it is first VISIBLE (or stood for by the phone's pill) — and only
+  // if no newer event superseded it. A started clock is not paused when the
+  // card later leaves the stack.
   useEffect(() => {
-    for (const u of pickVisibleUploads(Object.values(items).sort((a, b) => a._t - b._t), timed)) {
+    const sorted = Object.values(items).sort((a, b) => a._t - b._t);
+    const seen = new Set(pickVisibleUploads(sorted, timed).map((u) => u.id));
+    for (const u of sorted) {
       if (u.status === "uploading") continue;
+      if (u.status === "error" && !seen.has(u.id)) continue;
       const tk = `${u.id}:${u.status}`;
       if (timers.current.has(tk)) continue;
       const status = u.status;

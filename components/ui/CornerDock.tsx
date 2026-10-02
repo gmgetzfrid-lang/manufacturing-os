@@ -21,18 +21,23 @@
 //     asks how many of its cards it may show with `useDockAllowance` (RT-11,
 //     OS-4, STACK-9). The column is height-bounded and scrolls, so nothing
 //     can ever render above the viewport.
-//   - Its own layer. The dock is portaled to document.body at `Z.dock`, a
-//     band above every modal, backdrop and dialog (lib/zLayers.ts), so the
-//     modal that starts an upload no longer paints over the cards reporting
-//     it (STACK-10).
+//   - Its own layer, two bands (lib/zLayers.ts). The dock is portaled to
+//     document.body. At rest it sits at `Z.dock`, where the old dock sat:
+//     over the page and its drawers, under every modal, drawer-overlay and
+//     dialog from the 300 band up — so no overlay gets a card over its own
+//     buttons. A modal that starts an upload raises it with `useDockRaise`
+//     while open: the dock then sits at `Z.dockRaised`, above every modal,
+//     backdrop and dialog, so that modal no longer paints over the cards
+//     reporting its upload (STACK-10, STACK-14).
 //   - It moves out of the way. A page's bottom bar declares its height in
 //     `--dock-bottom` and the dock sits above it; a full-height right-edge
 //     drawer declares its width with `useOccupyRightRail` and the dock moves
-//     left of it when there is room (STACK-7, STACK-11). Because the dock
-//     sits above every modal and its cards take clicks, a modal declares its
-//     action row with `useDockAvoid`, and while the dock's cards would cover
-//     that row the dock sits above it — the modal that starts an upload keeps
-//     its own "Upload All" / "Stop upload" reachable (STACK-10).
+//     left of it when there is room (STACK-7, STACK-11). While raised, the
+//     dock's cards take clicks over modals, so a raising modal declares its
+//     action row with `useDockAvoid` (as does the shared `ModalFooter`, for
+//     a dialog opened over it), and while the dock's cards would cover that
+//     row the dock sits above it — the modal that starts an upload keeps its
+//     own "Upload All" / "Stop upload" reachable (STACK-10).
 //   - On a phone it is one pill. Below the `sm` breakpoint the dock collapses
 //     to a single summary pill that expands on tap (STACK-7). The pill names
 //     the most urgent card (and says it to a screen reader); while it is
@@ -144,9 +149,15 @@ let version = 0;
 let docks = 0;
 let expanded = false;
 let mobileOpen = false;
+/** The fewest cards the expanded column has held since it was opened. */
+let expandedFloor = 0;
 let cache: { version: number; mobile: boolean; alloc: DockAllocation; timed: DockAllocation } | null = null;
+/** The same, for a widget whose live count the store does not hold yet. */
+let ownCache: { version: number; mobile: boolean; byKey: Map<string, { alloc: DockAllocation; timed: DockAllocation }> } | null = null;
 /** Declared modal action rows the dock keeps clear of, by registration. */
 const avoids = new Map<string, DockAvoidRect>();
+/** Open modals that start uploads the dock reports (`useDockRaise`). */
+const raises = new Set<string>();
 /** The dock's own cards, measured: their union's width and natural height. */
 let dockContent = { w: 0, h: 0 };
 /** The page bottom bar's height (`useDockBottomInset`), in px. */
@@ -168,10 +179,18 @@ function isMobile(): boolean {
   catch { return false; }
 }
 
+function storeList(): DockEntryInput[] {
+  return [...entries].map(([id, e]) => ({ id, slot: e.slot, priority: e.priority, count: e.count, seq: e.seq }));
+}
+
 function allocations(): { alloc: DockAllocation; timed: DockAllocation } {
   const mobile = isMobile();
   if (cache && cache.version === version && cache.mobile === mobile) return cache;
-  const list: DockEntryInput[] = [...entries].map(([id, e]) => ({ id, slot: e.slot, priority: e.priority, count: e.count, seq: e.seq }));
+  cache = { version, mobile, ...computeAllocations(storeList(), mobile) };
+  return cache;
+}
+
+function computeAllocations(list: DockEntryInput[], mobile: boolean): { alloc: DockAllocation; timed: DockAllocation } {
   let alloc = allocateDock(list, DOCK_VISIBLE_CAP);
   if (expanded) {
     alloc = { ...alloc, visible: Object.fromEntries(list.map((e) => [e.id, e.count])), hidden: 0, hiddenTransient: 0 };
@@ -185,19 +204,42 @@ function allocations(): { alloc: DockAllocation; timed: DockAllocation } {
     // Collapsed to the summary pill: no card renders.
     alloc = { visible: Object.fromEntries(list.map((e) => [e.id, 0])), hidden: alloc.total, hiddenTransient: 0, total: alloc.total };
   }
-  cache = { version, mobile, alloc, timed };
-  return cache;
+  return { alloc, timed };
 }
 function allocation(): DockAllocation { return allocations().alloc; }
 
-function allowanceFor(id: string, count: number, which: "alloc" | "timed" = "alloc"): number {
+/**
+ * A widget's places, for the count it renders with NOW. A widget registers
+ * its count in a layout effect, after the render that asks — so for the
+ * first render after a new card the store still holds the old count. Asking
+ * the store then would give n places to n+1 cards: the oldest card would
+ * drop out for one commit and come back as a new node, replaying its
+ * entrance and restarting its clock (N7 review). The widget's own entry is
+ * answered with its live count instead; every other entry as the store has
+ * it.
+ */
+function allowanceFor(id: string, slot: DockSlot, priority: number, count: number, which: "alloc" | "timed" = "alloc"): number {
   if (docks === 0) return count; // no dock (public page): the old behaviour
   const e = entries.get(id);
-  if (!e) return Math.min(count, DOCK_VISIBLE_CAP);
-  return allocations()[which].visible[id] ?? 0;
+  if (e && e.count === count) return allocations()[which].visible[id] ?? 0;
+  const mobile = isMobile();
+  if (!ownCache || ownCache.version !== version || ownCache.mobile !== mobile) ownCache = { version, mobile, byKey: new Map() };
+  const key = `${id}\u0000${count}`;
+  let mine = ownCache.byKey.get(key);
+  if (!mine) {
+    const list = storeList().filter((x) => x.id !== id);
+    list.push({ id, slot: e?.slot ?? slot, priority: e?.priority ?? priority, count, seq: e?.seq ?? seq + 1 });
+    mine = computeAllocations(list, mobile);
+    ownCache.byKey.set(key, mine);
+  }
+  return mine[which].visible[id] ?? 0;
 }
 
-function setExpanded(v: boolean) { expanded = v; emit(); }
+function setExpanded(v: boolean) {
+  expanded = v;
+  expandedFloor = v ? allocation().total : 0;
+  emit();
+}
 function setMobileOpen(v: boolean) { mobileOpen = v; emit(); }
 
 // Stable ref callbacks (an inline ref would detach and re-attach on every
@@ -209,10 +251,10 @@ const setCentreToastsTarget = (el: HTMLElement | null) => { if (centreTargets.to
 
 /** Test seam: forget every registration (jsdom tests share the module). */
 export function __resetDockForTests() {
-  entries.clear(); rails.clear(); centreCounts.clear(); avoids.clear();
+  entries.clear(); rails.clear(); centreCounts.clear(); avoids.clear(); raises.clear();
   targets.jobs = targets.transient = null;
   centreTargets.chip = centreTargets.toasts = null;
-  docks = 0; expanded = false; mobileOpen = false; cache = null;
+  docks = 0; expanded = false; expandedFloor = 0; mobileOpen = false; cache = null; ownCache = null;
   dockContent = { w: 0, h: 0 }; bottomBarPx = 0;
   emit();
 }
@@ -250,8 +292,8 @@ export function useDockAllowances(slot: DockSlot, priority: number, count: numbe
     if (!prev || prev.slot !== slot || prev.priority !== priority || changed) emit();
   }, [id, slot, priority, count, label, tone]);
   useLayoutEffect(() => () => { entries.delete(id); emit(); }, [id]);
-  const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, count), () => count);
-  const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, count, "timed"), () => count);
+  const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count), () => count);
+  const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, "timed"), () => count);
   return { shown, timed };
 }
 
@@ -318,15 +360,41 @@ export function useDockBottomInset(ref: React.RefObject<HTMLElement | null>, act
   }, [ref, active]);
 }
 
-// ── A modal's action row (STACK-10) ─────────────────────────────────────────
-// The dock sits above every modal (Z.dock), and its cards, its "+N more" and
-// its phone pill take clicks. On a modal whose action row reaches the
-// bottom-right corner — the bulk-upload wizard's footer on a laptop, any
-// bottom sheet on a phone — they would sit on the very controls that run the
-// upload they report ("Upload All", "Stop upload"). A modal declares its
-// action row; whenever the dock's cards, where they sit now, would overlap
-// it, the dock sits above the row instead. The rest of the modal stays as
-// before: the cards report over it, readable, and every card is dismissible.
+// ── Raised over an upload modal, clear of its action row (STACK-10) ─────────
+// At rest the dock is under every overlay from the 300 band up (Z.dock), as
+// the old dock was: a drawer, a modal or a dialog keeps every one of its
+// controls, whatever the dock holds (STACK-14 — above them, a card that
+// cannot be dismissed covered the asset editor's Save for a whole upload).
+// A modal that starts an upload raises the dock above itself while it is
+// open (`useDockRaise`), so the cards reporting that upload are not painted
+// over. Raised, its cards, its "+N more" and its phone pill take clicks over
+// modals; on a modal whose action row reaches the bottom-right corner — the
+// bulk-upload wizard's footer on a laptop, any bottom sheet on a phone —
+// they would sit on the very controls that run the upload ("Upload All",
+// "Stop upload"). So a raising modal declares its action row
+// (`useDockAvoid`), as does the shared `ModalFooter` (every confirm, alert
+// and prompt — the dialogs that can open over a raising modal), and while
+// the dock is raised and its cards, where they sit now, would overlap a
+// declared row, the dock sits above the row instead. The rest of the modal
+// stays as before: the cards report over it, readable.
+
+/**
+ * While `active`, this overlay starts uploads the dock reports: the dock
+ * rises to `Z.dockRaised`, above every modal, until it closes. An overlay
+ * that raises the dock must also declare its action row with `useDockAvoid`
+ * (lib/__tests__/cornerDock.test.ts refuses one that does not).
+ */
+export function useDockRaise(active: boolean) {
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!active) return;
+    raises.add(id);
+    emit();
+    return () => { raises.delete(id); emit(); };
+  }, [id, active]);
+}
+
+function raisedSnapshot(): boolean { return raises.size > 0; }
 
 /** A declared row, in viewport px. */
 export interface DockAvoidRect { top: number; bottom: number; left: number; right: number }
@@ -422,7 +490,8 @@ export function useDockAvoid(ref: React.RefObject<HTMLElement | null>, active: b
 }
 
 function avoidSnapshot(): number {
-  if (avoids.size === 0 || typeof window === "undefined") return 0;
+  // At rest the dock is under every declared overlay: nothing to keep clear of.
+  if (avoids.size === 0 || raises.size === 0 || typeof window === "undefined") return 0;
   return dockAvoidOffset({
     viewportW: window.innerWidth,
     viewportH: window.innerHeight,
@@ -526,7 +595,9 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   const client = useSyncExternalStore(subscribeClient, () => true, () => false);
   const alloc = useSyncExternalStore(subscribe, allocation, allocation);
   const rail = useSyncExternalStore(subscribe, railSnapshot, () => 0);
-  // Above a declared modal action row when the cards would cover it.
+  // Raised over a modal that starts an upload; at rest under every overlay.
+  const raised = useSyncExternalStore(subscribe, raisedSnapshot, () => false);
+  // Raised: above a declared modal action row when the cards would cover it.
   const avoidOffset = useSyncExternalStore(subscribe, avoidSnapshot, () => 0);
   const boxRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -567,10 +638,22 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
     emit();
     return () => { rails.delete(PROP_RAIL_ID); emit(); };
   }, [occupiedRightPx]);
-  // Nothing left to show: fold the expander and the phone stack back up.
+  // Fold the expander back once it is no longer what the person asked to
+  // see: when nothing would be hidden any more (the cap holds them all), or
+  // when a burst bigger than the cap arrived after it was opened — the cap
+  // applies to that burst, not "everything, for as long as anything is
+  // docked" (a long indexing card kept one click's expansion on for hours).
+  // With nothing left at all, the phone stack folds too.
   useEffect(() => {
-    if (alloc.total === 0 && (expanded || mobileOpen)) {
-      const t = setTimeout(() => { expanded = false; mobileOpen = false; emit(); }, 0);
+    if (expanded) expandedFloor = Math.min(expandedFloor, alloc.total);
+    const foldExpanded = expanded && (alloc.total <= DOCK_VISIBLE_CAP || alloc.total - expandedFloor > DOCK_VISIBLE_CAP);
+    const foldMobile = mobileOpen && alloc.total === 0;
+    if (foldExpanded || foldMobile) {
+      const t = setTimeout(() => {
+        if (foldExpanded) { expanded = false; expandedFloor = 0; }
+        if (foldMobile) mobileOpen = false;
+        emit();
+      }, 0);
       return () => clearTimeout(t);
     }
   }, [alloc.total]);
@@ -589,6 +672,7 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
     <div
       ref={boxRef}
       id={DOCK_ID}
+      data-dock-raised={raised ? "1" : undefined}
       data-dock-avoiding={lifted ? "1" : undefined}
       role="region"
       aria-label="Background activity and messages"
@@ -602,8 +686,10 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
         // sit at the old bottom-4 / right-4 inset, and their shadows fall
         // inside the box instead of being cut off at its edge.
         // Lifted above a modal's action row, the offset takes the place of
-        // the page bottom bar's (it is never lower than it).
-        zIndex: Z.dock,
+        // the page bottom bar's (it is never lower than it). The layer:
+        // under every overlay at rest; above every modal while one that
+        // starts an upload is open.
+        zIndex: raised ? Z.dockRaised : Z.dock,
         right: `calc(${rail}px - 1.5rem)`,
         bottom: lifted ? `calc(${avoidOffset}px - 1.5rem)` : "calc(var(--dock-bottom, 0px) - 1.5rem)",
         maxHeight: lifted ? `calc(100dvh - ${avoidOffset}px + 3rem)` : "calc(100dvh - var(--dock-bottom, 0px) + 3rem)",

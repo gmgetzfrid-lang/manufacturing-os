@@ -16,7 +16,7 @@ import {
 } from "@/lib/assets";
 import { uploadToPath } from "@/lib/storage";
 import { Z } from "@/lib/zLayers";
-import { useDockAvoid } from "@/components/ui/CornerDock";
+import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 interface PendingPhoto {
   id: string;
@@ -43,8 +43,10 @@ export default function AssetPhotoUploader({
   const [isDragOver, setIsDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The corner dock (above this modal) keeps clear of Upload / Cancel (STACK-10).
+  // While open, the corner dock rises above this modal to report its
+  // uploads, and keeps clear of Upload / Cancel (STACK-10).
   const footerRef = useRef<HTMLDivElement>(null);
+  useDockRaise(isOpen);
   useDockAvoid(footerRef, isOpen);
 
   const stagePendingFiles = useCallback((files: FileList | File[] | null) => {

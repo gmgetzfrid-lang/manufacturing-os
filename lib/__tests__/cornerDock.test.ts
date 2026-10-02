@@ -16,13 +16,14 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const up = vi.hoisted(() => ({ listeners: new Set<(e: unknown) => void>() }));
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("@/lib/storage", () => ({
   subscribeUploads: (cb: (e: unknown) => void) => { up.listeners.add(cb); return () => { up.listeners.delete(cb); }; },
 }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams("from=graph"),
   usePathname: () => "/projects/p1",
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: nav.push }),
 }));
 
 import {
@@ -35,7 +36,7 @@ import UndoToastHost from "@/components/projects/UndoToastHost";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import StagingTray from "@/components/documents/StagingTray";
 import { Z, Z_SCALE } from "@/lib/zLayers";
-import RailProbe, { AvoidProbe, ModalProbe } from "./cornerDockRailProbe";
+import RailProbe, { AvoidProbe, ModalProbe, RaisingModalProbe, AssetEditorProbe } from "./cornerDockRailProbe";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,6 +87,7 @@ beforeEach(() => {
   __resetDockForTests();
   up.listeners.clear();
   openCenter.mockReset();
+  nav.push.mockReset();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -167,7 +169,48 @@ describe("the dock renders the cap, the expander and the center doorway", () => 
     expect(openCenter).toHaveBeenCalledWith();
   });
 
-  it("the dock is a labelled live region portaled to document.body at Z.dock (STACK-10, NEDGE-5 for N3)", async () => {
+  it("an expanded '+N more' folds back once nothing would be hidden — a later burst is capped again (N7 review)", async () => {
+    // Before: the expansion stayed on until the dock was empty — expand at
+    // 6 toasts, dismiss 3, and a 40-file upload rendered all 40 cards
+    // (Chromium); a docked indexing card kept it on for hours.
+    await mount(shell());
+    await act(async () => { for (let i = 0; i < 6; i++) toastApi({ type: "info", title: `Keep ${i}`, duration: 0 }); });
+    await flush();
+    const button = (re: RegExp) => [...dock()!.querySelectorAll("button")].find((b) => re.test(b.textContent ?? ""));
+    await act(async () => { button(/more/)!.click(); });
+    await flush();
+    expect(button(/Show fewer/)).toBeTruthy();
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { (dock()!.querySelector('[data-dock-slot="transient"] button[aria-label="Dismiss"]') as HTMLElement).click(); });
+      await flush();
+    }
+    // Three left: the cap holds them all, so the expander is gone.
+    expect(button(/Show fewer/)).toBeUndefined();
+    await act(async () => { for (let i = 0; i < 40; i++) upload(`B${i}`); });
+    await flush();
+    expect(dock()!.querySelectorAll('[data-dock-slot="jobs"] .rounded-xl').length).toBe(3);
+    expect(button(/more/)?.textContent).toContain("+39 more");
+  });
+
+  it("a burst bigger than the cap after the expansion folds it back too; a card or two arriving does not", async () => {
+    await mount(shell());
+    await act(async () => { for (let i = 0; i < 6; i++) toastApi({ type: "info", title: `Keep ${i}`, duration: 0 }); });
+    await flush();
+    const button = (re: RegExp) => [...dock()!.querySelectorAll("button")].find((b) => re.test(b.textContent ?? ""));
+    await act(async () => { button(/more/)!.click(); });
+    await flush();
+    await act(async () => { upload("ONE"); upload("TWO"); });
+    await flush();
+    expect(button(/Show fewer/)).toBeTruthy();
+    expect(dock()!.querySelectorAll(".rounded-xl").length).toBe(8);
+    await act(async () => { for (let i = 0; i < 40; i++) upload(`B${i}`); });
+    await flush();
+    expect(button(/Show fewer/)).toBeUndefined();
+    expect(button(/more/)?.textContent).toMatch(/\+\d+ more/);
+    expect(dock()!.querySelectorAll(".rounded-xl").length).toBe(DOCK_VISIBLE_CAP);
+  });
+
+  it("the dock is a labelled live region portaled to document.body, at rest at Z.dock (STACK-10, NEDGE-5 for N3)", async () => {
     await mount(shell());
     const d = dock()!;
     expect(d.parentElement).toBe(document.body);
@@ -254,6 +297,80 @@ describe("toasts: cap, coalesce, timers that start only when visible (RT-11 / OS
     await act(async () => { vi.advanceTimersByTime(3500); });
     await flush();
     expect(text()).not.toContain("T0");
+  });
+
+  it("a new toast never costs a visible one its card or its clock: two toasts 3s apart, the first goes at 5s, same node throughout (N7 review)", async () => {
+    // Before: the widget registers its count in a layout effect, so the
+    // first render after "Second" got the old count's places — "First"
+    // dropped for one commit, came back as a new node (its slide-in
+    // replayed) and its 5s restarted: Chromium had it still up at 5.5s,
+    // gone at ~8s.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await mount(shell());
+    const card = (t: string) => [...dock()!.querySelectorAll("h4")].find((h) => (h.textContent ?? "").startsWith(t))?.closest(".rounded-xl") ?? null;
+    await act(async () => { toastApi({ type: "info", title: "First", duration: 5000 }); });
+    await flush();
+    const first = card("First");
+    expect(first).not.toBeNull();
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    await act(async () => { toastApi({ type: "info", title: "Second", duration: 5000 }); });
+    await flush();
+    expect(card("Second")).not.toBeNull();
+    // The same DOM node: never unmounted, so no replayed slide-in.
+    expect(card("First")).toBe(first);
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    await flush();
+    expect(card("First")).toBeNull();
+    expect(card("Second")).not.toBeNull();
+    await act(async () => { vi.advanceTimersByTime(3000); });
+    await flush();
+    expect(card("Second")).toBeNull();
+  });
+
+  it("a new upload never re-mounts the cards already showing (no replayed entrance)", async () => {
+    // The lowest-ranked card is the finished one: it is the card a stale
+    // allowance (n places for n+1 cards) would have dropped for a commit.
+    await mount(shell());
+    await act(async () => { upload("U0", "done"); upload("U1"); upload("U2"); });
+    await flush();
+    const node = (n: string) => [...dock()!.querySelectorAll("span")].find((x) => x.textContent === n)?.closest(".rounded-xl") ?? null;
+    const u0 = node("U0.pdf");
+    expect(u0).not.toBeNull();
+    await act(async () => { upload("U3"); });
+    await flush();
+    expect(node("U0.pdf")).toBe(u0);
+    expect(node("U3.pdf")).not.toBeNull();
+  });
+
+  it("a 'Done' or 'Stopped' card behind the cap clears on its own time from when it finished; a failure's clock waits until it is seen", async () => {
+    // Before: finished cards behind four running transfers never started
+    // their clock — after a 40-file run the corner drained Done cards four
+    // at a time for ~25s.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    await mount(shell());
+    await act(async () => { for (let i = 0; i < 4; i++) upload(`RUN${i}`); });
+    await act(async () => { upload("D1", "done"); upload("D2", "done"); upload("S1", "cancelled"); });
+    await flush();
+    const more = () => [...dock()!.querySelectorAll("button")].find((b) => /more/.test(b.textContent ?? ""))?.textContent ?? null;
+    expect(more()).toContain("+3 more");
+    await act(async () => { vi.advanceTimersByTime(2600); });
+    await flush();
+    expect(more()).toBeNull();
+    // Five failures: four show and run their 7s; the fifth waits its turn
+    // and gets its full time once it shows.
+    await act(async () => { for (let i = 0; i < 4; i++) upload(`RUN${i}`, "done"); });
+    await act(async () => { vi.advanceTimersByTime(2600); });
+    await flush();
+    await act(async () => { for (let i = 0; i < 5; i++) upload(`E${i}`, "error", { error: `reason ${i}` }); });
+    await flush();
+    expect(more()).toContain("+1 more");
+    await act(async () => { vi.advanceTimersByTime(7100); });
+    await flush();
+    expect(dock()!.querySelectorAll('[data-dock-slot="jobs"] .rounded-xl').length).toBe(1);
+    expect(more()).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(7100); });
+    await flush();
+    expect(dock()!.querySelectorAll('[data-dock-slot="jobs"] .rounded-xl').length).toBe(0);
   });
 
   it("on a page with no dock (public routes) a toast still shows, in its own corner, after a tick", async () => {
@@ -456,9 +573,54 @@ describe("STACK-7 — the page's bottom bar, card widths, and the phone pill", (
   });
 });
 
-// ── STACK-10 (review fix): the dock never sits on a modal's action row ──────
+// ── STACK-10 / STACK-14: two bands, and never on a modal's action row ───────
 
-describe("STACK-10 — the dock keeps clear of an open modal's action row", () => {
+describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an upload modal raises it", () => {
+  // Chromium before this fix (the reviewer's harness, the asset editor's
+  // classes): with the dock always above every overlay, the editor's Save
+  // was covered at 1280x800, 1440x900 and 1920x1080 by one toast or by one
+  // running upload card — which has no Dismiss. On b9cdfdc it was reachable.
+
+  it("at rest the dock is at Z.dock, under the z-400 asset editor: a running upload card never sits over its Save", async () => {
+    await mount(shell(React.createElement(AssetEditorProbe)));
+    await act(async () => { upload("P-101-photo"); toastApi({ type: "success", title: "Asset saved", duration: 0 }); });
+    await flush();
+    expect(text()).toContain("P-101-photo.pdf");
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    const drawer = document.querySelector("[data-test-drawer]") as HTMLElement;
+    const drawerZ = Number(/z-\[(\d+)\]/.exec(drawer.className)![1]);
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    expect(Number(dock()!.style.zIndex)).toBeLessThan(drawerZ);
+    // The probe carries the real editor's classes (admin/assets/page.tsx).
+    const page = readFileSync(resolve("app/(protected)/admin/assets/page.tsx"), "utf8");
+    expect(page).toContain('<div className="fixed inset-0 z-[400] flex" onClick={onClose}>');
+    expect(page).toContain("relative ml-auto w-full max-w-xl");
+  });
+
+  it("an upload-starting modal raises the dock above every modal while it is open, and it drops back when it closes", async () => {
+    const tree = (open: boolean) => shell(open ? React.createElement(RaisingModalProbe, { key: "m" }) : null);
+    await mount(tree(true));
+    expect(dock()!.getAttribute("data-dock-raised")).toBe("1");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    await mount(tree(false));
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+  });
+
+  it("an overlay that raises the dock must declare its action row: every useDockRaise caller also calls useDockAvoid", () => {
+    const files = ["app", "components", "hooks", "lib"].flatMap((d) => walk(resolve(d)))
+      .filter((f) => !f.endsWith("components/ui/CornerDock.tsx"));
+    const raisers = files.filter((f) => /useDockRaise\(/.test(readFileSync(f, "utf8")));
+    expect(raisers.map((f) => f.replace(resolve(".") + "/", "")).sort()).toEqual([
+      "components/assets/AssetPhotoUploader.tsx",
+      "components/documents/CustomizeNodeModal.tsx",
+      "components/documents/MetadataStagingModal.tsx",
+    ]);
+    for (const f of raisers) expect(readFileSync(f, "utf8")).toMatch(/useDockAvoid\(/);
+  });
+});
+
+describe("STACK-10 — raised, the dock keeps clear of an open modal's action row", () => {
   // Chromium before this fix (bulk-upload wizard, 40 files, 6 uploads):
   // "Upload All" covered at 1280x800 / 1366x768 / 1440x900, "Stop upload"
   // partly covered, and on a phone the pill sat on "Upload All".
@@ -501,11 +663,11 @@ describe("STACK-10 — the dock keeps clear of an open modal's action row", () =
     });
   }
 
-  it("the shared ModalFooter declares its row: six upload cards lift the dock above it while the modal is open, and it comes back when it closes", async () => {
+  it("a raising modal's ModalFooter declares its row: six upload cards lift the dock above it while the modal is open, and it comes back when it closes", async () => {
     viewport(1366, 768);
     const spy = mockLayout(rect(107, 670, 1259, 730), rect(1062, 466, 1350, 752));
     const modal = (open: boolean) => open
-      ? React.createElement(ModalProbe, { key: "m" })
+      ? React.createElement(RaisingModalProbe, { key: "m" })
       : null;
     try {
       await mount(shell(modal(true)));
@@ -515,10 +677,25 @@ describe("STACK-10 — the dock keeps clear of an open modal's action row", () =
       expect(dock()!.getAttribute("data-dock-avoiding")).toBe("1");
       expect(dock()!.style.bottom).toBe("calc(90px - 1.5rem)");
       expect(dock()!.style.maxHeight).toBe("calc(100dvh - 90px + 3rem)");
-      expect(Number(dock()!.style.zIndex)).toBe(Z.dock); // still above the modal
+      expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised); // above the modal
       await mount(shell(modal(false)));
       expect(dock()!.getAttribute("data-dock-avoiding")).toBeNull();
       expect(dock()!.style.bottom).toBe("calc(var(--dock-bottom, 0px) - 1.5rem)");
+      expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("a dialog on its own (appConfirm's ModalFooter, no upload modal open) leaves the dock at rest, under it — not lifted", async () => {
+    viewport(1366, 768);
+    const spy = mockLayout(rect(107, 670, 1259, 730), rect(1062, 466, 1350, 752));
+    try {
+      await mount(shell(React.createElement(ModalProbe)));
+      await act(async () => { for (let i = 0; i < 6; i++) upload(`F${i}`); });
+      await flush();
+      expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+      expect(dock()!.getAttribute("data-dock-avoiding")).toBeNull();
+      expect(dock()!.style.bottom).toBe("calc(var(--dock-bottom, 0px) - 1.5rem)");
+      expect(Number(dock()!.style.zIndex)).toBeLessThan(400); // the shared Modal's default layer
     } finally { spy.mockRestore(); }
   });
 
@@ -536,9 +713,13 @@ describe("STACK-10 — the dock keeps clear of an open modal's action row", () =
     } finally { spy.mockRestore(); }
   });
 
-  it("the three upload-starting modals declare their action rows, and so does the shared ModalFooter", () => {
+  it("the three upload-starting modals raise the dock and declare their action rows, and the shared ModalFooter declares its row", () => {
     const src = (p: string) => readFileSync(resolve(p), "utf8");
     const staging = src("components/documents/MetadataStagingModal.tsx");
+    expect(staging).toContain("useDockRaise(isOpen);");
+    expect(src("components/assets/AssetPhotoUploader.tsx")).toContain("useDockRaise(isOpen);");
+    expect(src("components/documents/CustomizeNodeModal.tsx")).toContain("useDockRaise(open);");
+    expect(src("components/ui/Modal.tsx")).not.toContain("useDockRaise");
     expect(staging).toContain("useDockAvoid(footerRef, isOpen);");
     expect(staging).toMatch(/<div ref=\{footerRef\}[^>]*>\s*<div className="text-\[11px\][^"]*">\s*\{items\.length\} file/);
     const asset = src("components/assets/AssetPhotoUploader.tsx");
@@ -591,6 +772,36 @@ describe("STACK-4 — one bottom-centre dock: the undo stack sits above the grap
     const fb = [...host.querySelectorAll("div")].find((d) => d.textContent === "alone")!;
     expect(fb.className).toContain("fixed bottom-4 left-1/2");
     expect(Number(fb.style.zIndex)).toBe(Z.undoToast);
+  });
+
+  it("through the centre dock, Undo and Dismiss on an undo toast and the 'Back to graph' chip still work", async () => {
+    const onUndo = vi.fn();
+    const onDismiss = vi.fn();
+    const t = { id: 7, message: "Moved 3 tasks", tone: "success", undo: () => {} };
+    await mount(React.createElement(React.Fragment, null,
+      React.createElement(CentreDock),
+      React.createElement(BackToGraphChip),
+      React.createElement(UndoToastHost as unknown as React.FC<Record<string, unknown>>, { toasts: [t], onUndo, onDismiss }),
+    ));
+    const toastSlot = document.querySelector('[data-centre-slot="toasts"]') as HTMLElement;
+    const chipSlot = document.querySelector('[data-centre-slot="chip"]') as HTMLElement;
+    // Rendered through CentrePortal, inside the slots — not a fallback box.
+    expect(host.textContent).toBe("");
+    const undo = [...toastSlot.querySelectorAll("button")].find((b) => /Undo/.test(b.textContent ?? ""))!;
+    expect(undo).toBeTruthy();
+    await act(async () => { undo.click(); });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(onUndo).toHaveBeenCalledWith(t);
+    await act(async () => { (toastSlot.querySelector('button[aria-label="Dismiss"]') as HTMLElement).click(); });
+    expect(onDismiss).toHaveBeenCalledWith(7);
+    const chip = [...chipSlot.querySelectorAll("button")].find((b) => /Back to graph/.test(b.textContent ?? ""))!;
+    await act(async () => { chip.click(); });
+    expect(nav.push).toHaveBeenCalledTimes(1);
+    expect(nav.push).toHaveBeenCalledWith("/graph");
+    // Each clickable sits in a pointer-events-auto box inside the slot's
+    // pointer-events-none column.
+    expect(undo.closest(".pointer-events-auto")).not.toBeNull();
+    expect(chip.className).toContain("pointer-events-auto");
   });
 });
 
@@ -646,14 +857,26 @@ describe("lib/zLayers — the scale", () => {
     expect(found.get(9999) ?? []).toContain("app/globals.css");
   });
 
-  it("the dock is strictly above every modal, backdrop and dialog band, and below only the hover preview and print", () => {
-    const above = [...found.keys()].filter((n) => n >= Z.dock);
+  it("at rest the dock is under every overlay from the 300 band up and over everything below it — the old dock's place", () => {
+    // The old dock was z-[300], first in <main>: every 300-band overlay after
+    // it (and every one above) painted over it; everything under 300 did not.
+    const values = [...found.keys()].filter((n) => n !== Z.dock && n !== Z.dockRaised);
+    expect(values.filter((n) => n < Z.dock).every((n) => n < 300)).toBe(true);
+    expect(values.filter((n) => n >= 300).every((n) => n > Z.dock)).toBe(true);
+    expect(Z.dock).toBeGreaterThan(Z.undoToast);
+    expect(Z.dock).toBeLessThan(Z.metadataStagingModal);
+    // No literal claims the resting band: nothing ties with the dock.
+    expect(found.get(Z.dock) ?? []).toEqual([]);
+  });
+
+  it("raised, the dock is strictly above every modal, backdrop and dialog band, and below only the hover preview and print", () => {
+    const above = [...found.keys()].filter((n) => n >= Z.dockRaised);
     expect(above.sort((a, b) => a - b)).toEqual([Z.hoverPreview, Z.print]);
-    expect(Z.dock).toBeGreaterThan(Z.dialog);
-    expect(Z.dock).toBeGreaterThan(Z.assetPhotoUploader);
-    expect(Z.dock).toBeGreaterThan(Z.customizeNodeModal);
-    expect(Z.dock).toBeGreaterThan(Z.metadataStagingModal);
-    expect(Z.hoverPreview).toBeGreaterThan(Z.dock);
+    expect(Z.dockRaised).toBeGreaterThan(Z.dialog);
+    expect(Z.dockRaised).toBeGreaterThan(Z.assetPhotoUploader);
+    expect(Z.dockRaised).toBeGreaterThan(Z.customizeNodeModal);
+    expect(Z.dockRaised).toBeGreaterThan(Z.metadataStagingModal);
+    expect(Z.hoverPreview).toBeGreaterThan(Z.dockRaised);
   });
 
   it("no overlay is renumbered: the layers read from the module keep the values they had (the old order is pinned)", () => {
@@ -666,8 +889,8 @@ describe("lib/zLayers — the scale", () => {
       dialog: 700, hoverPreview: 800, print: 9999,
     });
     // The relative order of every pair the corner contract touches.
-    const order = [Z.pageChip, 60 /* InspectorDrawer */, 70 /* HistoryDrawer */, 241 /* NotificationCenter */, Z.undoToast,
-      Z.metadataStagingModal, Z.customizeNodeModal, Z.assetPhotoUploader, Z.dialog, Z.dock, Z.hoverPreview, Z.print];
+    const order = [Z.pageChip, 60 /* InspectorDrawer */, 70 /* HistoryDrawer */, 241 /* NotificationCenter */, Z.undoToast, Z.dock,
+      Z.metadataStagingModal, Z.customizeNodeModal, Z.assetPhotoUploader, Z.dialog, Z.dockRaised, Z.hoverPreview, Z.print];
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(Z_SCALE).toEqual([...Z_SCALE].sort((a, b) => a - b));
   });

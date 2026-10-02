@@ -112,13 +112,16 @@ either name while the flag is false, and the reverse (`RT-10`).*
   `` coalesceKey: `${row.kind}:${row.resource_id}` `` for a notification row, so
   that differently worded rows about one event coalesce too. `RT-11` and `OS-4`
   stay OPEN (Partial) on done-when 2 until that line lands; N3 closes them.*
-- *The corner dock sits above every overlay (`Z.dock` = 750) and keeps clear of
-  an overlay's action row only when the overlay declares it
-  (`useDockAvoid(ref, open)` from `components/ui/CornerDock.tsx`). The shared
-  `ModalFooter` and the three upload-starting modals declare theirs (N7 edited
-  `components/ui/Modal.tsx`'s `ModalFooter`, four lines, outside its plan). Any
-  package that adds or edits a modal with a bottom action row should declare it
-  or compose `ModalFooter`; the remaining overlays are `STACK-14`.*
+- *The corner dock rests under every overlay (`Z.dock` = 290, the old dock's
+  place). It rises above every modal (`Z.dockRaised` = 750) only while a modal
+  that starts an upload is open and calls `useDockRaise(open)` (from
+  `components/ui/CornerDock.tsx`). Such a modal must also declare its action
+  row with `useDockAvoid(ref, open)`; a scan test refuses one that does not.
+  The three upload-starting modals do both. The shared `ModalFooter` declares
+  its row for any dialog opened over them (N7 edited `components/ui/Modal.tsx`'s
+  `ModalFooter`, outside its plan). A package that adds a modal that starts an
+  upload raises the dock and declares its row; no other overlay needs anything
+  (`STACK-14`, resolved).*
 - *The corner dock is `role="region"` / `aria-live="polite"` /
   `aria-relevant="additions"`. The toast list is `role="status"`, an error toast
   is `role="alert"`, and every toast's X has `aria-label="Dismiss"`. That is
