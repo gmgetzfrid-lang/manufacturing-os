@@ -741,7 +741,7 @@ log shows what enforcement would have blocked.
 
 *Landed 2026-10-01 (intelligence Round G, I-05): AI provider keys take the same production / development split — with `EXPORT_ENCRYPTION_KEY` unset (or not 64 hex characters) a production server refuses to store a key (`lib/ai/keyVault.ts` `sealAiKey` throws; `/api/ai/connection` answers 503 before spending a verify call), development stores it with a warning, and existing rows keep decrypting (a plaintext one is re-sealed on its next save). Unlike the subscription flag this one is not off by default: storing a secret in plaintext is not a billing decision. See `GOV-12`, `DEC-73` item 6.*
 
-*Landed 2026-10-01 (admin-and-org Round G, P3): the scheduled sweep now also DISABLES a bucket destination whose workspace plan no longer includes cloud backups, under the same flag only (`app/api/data-export/run-scheduled/route.ts`). It does so only when the gate refused on a billing limb (the plan or the subscription), never for a departed configurer, whatever the plan (review fix pass). It never deletes the destination. An unreadable workspace row never disables. With the flag off, nothing changes. Re-enabling one passes the create path's plan gate (`destinations/[id]` PATCH). See `BILL-3` Done-when 3.*
+*Landed 2026-10-01 (admin-and-org Round G, P3): the scheduled sweep now also DISABLES a bucket destination whose workspace plan no longer includes cloud backups, under the same flag only (`app/api/data-export/run-scheduled/route.ts`). It does so only when the gate refused on a billing limb (the plan or the subscription), never for a departed configurer, whatever the plan (review fix pass). It never deletes the destination. An unreadable workspace row never disables. With the flag off, nothing changes. Re-enabling one passes the create path's plan gate (`destinations/[id]` PATCH). See `BILL-3` Done-when 3. Second review fix pass: "Run Now" of a bucket destination passes the same plan gate (402) under the same flag (`POST /api/data-export/run`), so a destination the sweep disabled cannot be pushed by hand instead; with the flag off it runs as before.*
 
 <a id="dec-19"></a>
 ## DEC-19 · `access_requests` — build the surface or remove the feature?
@@ -3432,7 +3432,7 @@ may be scoped for speed. Nothing else changes.
 
 *Landed 2026-10-01 (admin-and-org Round G, P2): the collector reads the ONE storage-key registry the backup reads (`lib/storageKeyRegistry.ts`, `BKP-2`), still with no org filter, and pages by keyset (`ILIFE-6` criterion 3). The decision is unchanged. The `referencedKeys` aggregate (`ILIFE-8`'s residual) was not in A&O P2's plan and still leaves the server.*
 
-*Landed 2026-10-01 (admin-and-org Round G, P3): the reference set is now also asked again, bucket-wide, at both byte-freeing doors. (1) `deleteOrphans` re-checks every candidate just before its `DeleteObjects` batch (`recheckStillNamed`). It sends one `.in()` per plain key column, and for each JSON-embedded column one OR-ed containment statement per chunk of keys, with the probe as a JSON literal. A matching chunk is re-asked key by key. A key named then is kept, a re-check that cannot read stops the purge, and the purge stops at a batch boundary before the route's time limit (`ILIFE-6` criterion 3; the review fix pass replaced the array probes postgrest-js sent as `cs.{[object Object]}`, which refused every purge). (2) `DELETE /api/storage/delete` refuses with 409 a key that any registered key column other than the revision's own still names, and with 503 when that cannot be read (`ILIFE-14`). Neither read is org-scoped, so a reference anywhere protects the object, as this decision says.*
+*Landed 2026-10-01 (admin-and-org Round G, P3): the reference set is now also asked again, bucket-wide, at both byte-freeing doors. (1) `deleteOrphans` re-checks every candidate just before its `DeleteObjects` batch (`recheckStillNamed`). It sends one `.in()` per plain key column, and for each JSON-embedded column one OR-ed containment statement per chunk of keys, with the probe as a JSON literal. A matching chunk is re-asked key by key. A key named then is kept, a re-check that cannot read stops the purge, and the purge stops at a batch boundary before the route's time limit (`ILIFE-6` criterion 3; the review fix pass replaced the array probes postgrest-js sent as `cs.{[object Object]}`, which refused every purge; the second review fix pass sizes the plain-column `.in()` lists by encoded URL length, `inListChunks`, about 45 keys at real lengths instead of 200, whose ~26,000-character URLs the gateway refused). (2) `DELETE /api/storage/delete` refuses with 409 a key that any registered key column other than the revision's own still names, and with 503 when that cannot be read (`ILIFE-14`). Neither read is org-scoped, so a reference anywhere protects the object, as this decision says.*
 
 <a id="dec-58"></a>
 ## DEC-58 · Knowledge ingestion: one writer, one reset, honest pages, a chunker a library chooses
@@ -5062,18 +5062,27 @@ dialog to close on one Escape closes its own stack in its handler.
    - `details` names the channel and any person whose configuration the machine acted on (`configuredBy`), never as the actor.
 
    The write is CHECKED like any other audit row. A row that cannot be written is surfaced (the scheduled export fails its run), never dropped.
-3. **The record names what left.** An export writes its `DATA_EXPORT` row (actor, role, channel, how many download links were minted), and the write is checked. What comes next depends on who received the export.
-   - **Handed to a person** (the JSON download, the browser Full ZIP's envelope, the manual ZIP): `DATA_EXPORT_FILES` rows name every file it hands out, 500 to a row, with the document and revision for a revision's file.
-   - **Pushed to the workspace's own destination** (scheduled, or "Run Now" to a destination): the `DATA_EXPORT` row carries `fileRecord: { mode: "digest", count, sha256 }`, the SHA-256 of the sorted path list, and no per-file rows are written. The archive carries the list itself and recomputes the digest. `audit_logs` is itself exported, so a per-file list on every nightly push would grow every later backup without bound (review fix pass).
+3. **The record names every file that left.** An export writes its `DATA_EXPORT` row: the actor, the role, the channel, how many download links were minted, and `fileRecord { mode, count, sha256, recordId }`, where `sha256` is the SHA-256 of the sorted path list. The write is checked. What follows depends on where the export went (second review fix pass).
+   - **Handed to a person** (the JSON download, the browser Full ZIP's envelope, the manual ZIP) **or pushed to a webhook** (an external URL, whose archive is on someone else's server): `DATA_EXPORT_FILES` rows name every file, 500 to a row, with the document and revision for a revision's file, on every run (`mode: "list"`).
+   - **Pushed to a bucket destination** (scheduled, or "Run Now"): the files are named against that destination's last recorded full list, its baseline.
+     - The first push, or one whose change from the baseline would pass one row, or one that cannot read the baseline back whole and matching its digest, writes a new baseline: `DATA_EXPORT_FILES` rows of kind `baseline`, every file, with the destination and the list's digest.
+     - Any other push writes ONE `delta` row, naming the files added (with document and revision) and the paths removed, or no row when nothing changed.
+     - The night's list is the baseline plus its delta, and it hashes to that night's `sha256`.
 
-   Every write is checked, and an export that cannot be recorded is refused before anything leaves. It is a bulk `audit_logs` record; `download_audits` stays the member's own pull record (`DEC-44` §1).
-4. **What RLS keeps from every other member, the export keeps out.** A standalone note (no document, project or asset) is its author's private scratchpad (`notes_standalone_own`). It is withheld from every export, along with any file only it names. The backup says so instead of claiming to be whole (review fix pass):
-   - the manifest counts the note (`withheld`) and says `complete: false`;
-   - its first note reads "complete except N private note(s) withheld";
-   - the server ZIP's README has a "Withheld rows" section;
-   - the restore plan warns that restoring does not bring the notes back.
+     `audit_logs` is itself exported, so a full list on every nightly push would grow every later backup without bound. After its baseline, a quiet destination adds one audit row a night.
 
-   **Open decision for the user:** a disaster-recovery restore of such a backup permanently loses every member's standalone notes. The choice is to keep withholding (privacy first; the backup is honestly incomplete) or to carry the notes encrypted to their authors (complete, at a cost in design and key handling). Until the user decides, they are withheld.
+   The first review fix pass recorded every destination push by count and digest alone. That was withdrawn: a digest can confirm a list but cannot rebuild one. Every write is checked, and an export that cannot be recorded is refused before anything leaves. It is a bulk `audit_logs` record; `download_audits` stays the member's own pull record (`DEC-44` §1).
+4. **Standalone notes are carried, as before this package, until the user decides.** A standalone note (no document, project or asset) is its author's private scratchpad (`notes_standalone_own`), and the dump runs as the service role.
+   - **The first two passes withheld them.** That made every backup, scheduled disaster-recovery pushes included, lose every member's notes on restore. It broke the brief's binding regression rule, and it took the data-losing side of an open decision as the default.
+   - **The second review fix pass carries them** (the pre-P3 behaviour, so a restore brings them back) and counts them. The manifest notes "N private note(s) … are in this backup, so restoring it brings them back. Keep the archive as private as those notes.", and the `DATA_EXPORT` row records `details.privateNotes.carried`.
+   - **The interim mitigation** is §1: only an Admin can export.
+
+   **Open decision for the user:**
+   - (a) withhold them, with the backup saying it is incomplete in its manifest, README and restore plan (the first review fix pass's wording, ready to restore); or
+   - (b) carry them encrypted to their authors (complete, at a cost in design and key handling); or
+   - (c) keep carrying them in the clear to the Admin who exports.
+
+   Until the user decides, (c) stands, and `BKP-8` stays OPEN for it.
 5. **Every export, and every new way for one to leave, rings the controllers.**
    - A person's export tells every other Admin / DocCtrl. That covers the JSON export (`/structured`: the download and the browser Full ZIP's envelope; added at the review fix pass) and the manual run.
    - A scheduled push tells all of them, naming the destination and its configurer.
@@ -5083,17 +5092,27 @@ dialog to close on one Escape closes its own stack in its handler.
 
 **Rationale.** The export runs as the service role, so the route's gate is the only boundary there is. Manager could export what the ACL hid from them, and every member's private notes went to whoever exported. The scheduled push was unlogged, its audit row refused on the uuid column and the refusal never read, and unannounced: a webhook destination was a silent daily channel. One machine convention keeps "who did this" answerable without a fabricated person; a NULL `user_id` with the channel named is the shape `download_audits` already uses for a share or portal pull (`DEC-44` §1).
 
-**Implementation.** `lib/adminSurfaces.ts`; every route under `app/api/data-export/`; `lib/dataExport.ts` (`withholdPrivateNotes`, `recordExport`, `exportFileListDigest`); `lib/exportAlerts.ts` (new); `lib/exportRunner.ts` (`fileRecord` by delivery, the README's withheld section); `lib/dataRestore.ts` (the restore plan's withheld warning); `app/(protected)/admin/data-export/page.tsx`. Tests: `lib/__tests__/dataExportRoutes.test.ts`, `lib/__tests__/exportContractRoundTrip.test.ts` (a standalone note through export and restore), `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
+**Implementation.**
+- `lib/adminSurfaces.ts`, every route under `app/api/data-export/`, and `app/(protected)/admin/data-export/page.tsx`.
+- `lib/dataExport.ts`: `countPrivateNotes`, `PRIVATE_NOTES_CARRIED`, `recordExport`, `readBucketPushBaseline` and `exportFileListDigest`.
+- `lib/exportAlerts.ts` (new).
+- `lib/exportRunner.ts`: `fileRecord` by delivery — a webhook gets `"list"`, a bucket `{ destinationId }`.
+- Tests: `lib/__tests__/dataExportRoutes.test.ts`, `lib/__tests__/exportContractRoundTrip.test.ts` (standalone notes through export, the server ZIP and restore, all restored) and `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
 
 **Acceptance.**
 - A Manager, DocCtrl or Viewer is refused 403 by every data-export handler, and an Admin is admitted.
 - The scheduled push's `DATA_EXPORT` row has `user_id` NULL, `user_email` `system:scheduled-export` and `user_role` `system`.
 - A refused `DATA_EXPORT` or `DATA_EXPORT_FILES` insert refuses the export.
-- A destination push writes one `DATA_EXPORT` row (count and digest), and no `DATA_EXPORT_FILES` row.
-- A private note is in no export, and a backup that withheld one says `complete: false`, in its README and in the restore plan.
+- A webhook push names every file on every run. A bucket push writes a baseline naming every file, then one delta row a night (none when nothing changed). The night's list rebuilt from the audit trail hashes to that night's `sha256`.
+- Every note is in every export, and a restore brings it back. The manifest and the `DATA_EXPORT` row count the private ones.
 - Every export (the JSON export included), and every destination created, enabled or re-pointed, rings the controllers.
 
 **Reversal.** A stated need for a non-Admin role to export moves the surface's `entry` (one line, the gate follows). It does not add a capability token unless the policy layer should decide it. A stated need to keep private notes in a disaster-recovery backup would carry them encrypted to their authors, never in the clear to the exporter.
 
-**Risk:** low to medium. Manager and DocCtrl lose the export page, its run history and the storage page's export buttons; the buttons now answer 403, and hiding them is admin-and-org P6's. A restore of a newer backup no longer brings back private notes. Every such backup says it is incomplete, and keeping them is the open decision in §4. Controllers get one bell per scheduled run. A destination push's audit record names its files by digest, not one by one: a recall asks the archive for the list.
+**Risk:** low to medium.
+- Manager and DocCtrl lose the export page, its run history and the storage page's export buttons. The buttons now answer 403; hiding them is admin-and-org P6's.
+- An Admin's export still carries every member's private notes, as before this package. That is §4's open decision.
+- Controllers get one bell per scheduled run.
+- A webhook push writes its full file list every run.
+- A bucket push reads its baseline back from `audit_logs` on every run: two reads filtered on `details->>destinationId` / `details->>recordId`, with no index on them.
 

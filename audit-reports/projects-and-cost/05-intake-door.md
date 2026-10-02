@@ -301,7 +301,7 @@ Now every `/api/data-export` route is held to the Admin-only data-export surface
 - [x] A restore never resurrects a live external door ✓ — `DEC-45` (unchanged).
 - [x] The export API's role set and the table's RLS agree ✓ — the export is Admin-only, inside the controller tier the RLS admits (admin-and-org `BKP-8`, `DEC-44 (A&O P3)` §1).
 
-**Scope / residual.** None in this record.
+**Scope / residual.** None in this record. *(Second review fix pass, admin-and-org P3.)* `BKP-8` went back to OPEN for its private-notes limb (Done-when 2), which waits on the user's decision. The Admin-only gate this record closes on is `BKP-8`'s Done-when 1, and it holds.
 
 ---
 

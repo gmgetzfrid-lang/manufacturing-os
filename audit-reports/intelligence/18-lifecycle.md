@@ -176,6 +176,12 @@ Fix: the route is **deleted**. That is the reversible, smaller change of the two
 Wiring it as a small-backup path would have been the larger change. It needs a second branch in the page, a mapping of its answer into the panel's shape, and the org map that "Put the files back" needs, which `/apply` never answered. The stop rule and the write it had were already shared (`applyRestoreChunk`, `runChunkedRestore`), so nothing of them is lost.
 
 Tests that ran a case through it now run it through `/apply-table` or the page's driver: the org boundary, the bounded org-less rows, the bearer scrub, prototype names, re-runs, counters, the reconciliation failures and the rest. Its route-only cases (its 400 envelope refusal, its `DATA_RESTORE` audit row, its `note`) went with it. `lib/__tests__/restoreArchiveRoundTrip.test.ts` pins that the file is gone. `lib/dataRestore.ts` changes only comments that named the deleted route, which is all the deletion strictly requires.
+
+*Second review fix pass (admin-and-org Round G, P3): correction.* The first review fix pass made the last sentence untrue. For admin-and-org `BKP-8` it added a withheld-private-notes warning to `planRestore` and two fields (`tables`, `withheld`) to `RestoreEnvelopeLike`. No plan assigned those to P3. They are reverted, and notes are carried again (`BKP-8`, second review fix pass), so nothing needs them. P3's changes to `lib/dataRestore.ts` are now:
+- `BKP-15`'s reporting (`restoreRefusalCode`, `DANGLING_FLOW_CODE`, `totalDanglingFlows`);
+- the comments that named this deleted route.
+
+`lib/__tests__/dataExportRoutes.test.ts` pins that the file has no withheld branch.
 - Files: `app/api/admin/restore/apply/route.ts` (deleted), `lib/dataRestore.ts` (comments), `lib/__tests__/restoreApplyRoute.test.ts`, `lib/__tests__/restoreArchiveRoundTrip.test.ts`, `lib/__tests__/sweepRoundA.test.ts`, `lib/__tests__/sweepRoundC1b.test.ts`, `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
 
 **Done-when.**
@@ -473,12 +479,27 @@ Fix: just before each `DeleteObjects` batch, `deleteOrphans` calls `recheckStill
 
   27 tests; 22 fail against the first P3 commit.
 
+*Second review fix pass (admin-and-org Round G, P3).* After the first fix, criterion 3's "true orphans are still freed" still failed at real key lengths. The JSON statements were held to the URL budget, but the plain-column re-check was not.
+- **The defect.** `recheckStillNamed` handed a whole delete batch (up to 500 candidates) to `keysReferencedOutside`, which sends 200 keys per `.in()`. A realistic key such as `orgs/<uuid>/documents/<uuid>/<stamp>_<name>.pdf` is about 120 characters. Encoded, 200 of them make a URL of about 26,000 characters, which the gateway refuses (414). So any purge whose first batch held more than a few dozen candidates threw before batch 1 and deleted nothing. The tests used 56-character keys and a stub with no URL limit, so they could not see this.
+- **The fix.** `recheckStillNamed` now cuts its keys into `.in()` lists sized by encoded length (`inListChunks`):
+  - each key is counted as postgrest-js writes it in `in.(…)`, double-quoted when it holds `,`, `(` or `)`, at its form-encoded length (`wireLength`), plus the encoded comma;
+  - each list stays within `RECHECK_IN_URL_BUDGET` (6,000) and never passes 200 keys;
+  - `keysReferencedOutside` is called once per list, up to `RECHECK_CONCURRENCY` lists at once, and the deadline is checked before each list.
+
+  `keysReferencedOutside` (P2's `lib/storageKeyRegistry.ts`) is not edited. The JSON statements' budget uses the same `wireLength`.
+- **Tests.** In `lib/__tests__/storageOrphansRecheck.test.ts`, the PostgREST-like stub fetch now refuses a URL over 8,000 characters with 414, as a gateway does.
+  - New: a 500-candidate batch of 119-character keys through the real supabase-js client. Every request URL is at most 8,000 characters, all 499 true orphans are deleted, and the one key a late knowledge mirror names is kept. The plain columns are asked in several lists.
+  - New negative control: one 200-key `.in()` at that length is over 8,000 characters and refused.
+  - New: `inListChunks` sizes lists by encoded length, counts a quoted key's quotes, caps a list at 200 keys and keeps every key once.
+
+  The first two new tests fail against the first review fix pass's `lib/storageOrphans.ts`.
+
 **Done-when.**
 1. ✓ — every paginated dump has a stable, unique sort key (document-control `XEDGE-13`, A&O P2).
 2. ✓ — the export's count reconciliation (A&O P2).
-3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column just before it is deleted, in statements PostgREST accepts (P3, with the review fix pass). A missed reference now costs a kept orphan, never a deleted live file, and a true orphan is still freed.
+3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column just before it is deleted (P3, with both review fix passes). Every re-check statement is one PostgREST accepts, in its value syntax and its URL length, at real key lengths. A missed reference now costs a kept orphan, never a deleted live file, and a true orphan is still freed.
 
-**Scope / residual.** The re-check costs 11 plain reads per 200 candidates, plus about one JSON statement per column per 20–40 candidates. A purge too large for one request stops at a batch boundary before the route's limit, says how many were left, and is run again; it never deletes unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left. It is milliseconds long, and an upload's object is never a candidate before it is seven days old. The JSON probes are bucket-wide sequential scans (no GIN index on those columns), as the plain reads' columns are.
+**Scope / residual.** At real key lengths the re-check costs 11 plain reads per list of about 45 candidates (8 lists in flight at once), plus about one JSON statement per column per 20–40 candidates. A purge too large for one request stops at a batch boundary before the route's limit, says how many were left, and is run again; it never deletes unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left. It is milliseconds long, and an upload's object is never a candidate before it is seven days old. The JSON probes are bucket-wide sequential scans (no GIN index on those columns), as the plain reads' columns are.
 
 ---
 

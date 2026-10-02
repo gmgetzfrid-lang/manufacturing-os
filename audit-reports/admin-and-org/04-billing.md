@@ -134,6 +134,13 @@ Fix:
 
   The disable and re-enable tests fail against base.
 
+*Second review fix pass (admin-and-org Round G, P3).* "Run Now" skipped the plan.
+- **The gap.** `POST /api/data-export/run` with a `destinationId` checked credentials only. A bucket destination the sweep had disabled for a lapsed plan could still be pushed by hand, so the Growth feature kept working.
+- **The fix.** Run Now now passes `assertCloudBucketEntitlement` (402, nothing sent, no run row) for a bucket destination: type s3 / r2, or a bucket set. It does so under `SUBSCRIPTION_ENFORCE`, the rule the sweep follows (`DEC-18`). With the flag off, it runs as before, and a webhook is never plan-gated.
+- **Tests.** `lib/__tests__/dataExportRoutes.test.ts`, in the BILL-3 block:
+  - "under SUBSCRIPTION_ENFORCE, Run Now of a bucket destination on a plan without buckets is 402", then 200 once the plan allows. It fails against the first review fix pass.
+  - "…flag off (DEC-18): Run Now of that destination runs as before; a webhook is never plan-gated".
+
 **Done-when.**
 - [ ] subscribed_plan is derived from the subscription's price id — **not done here**: admin-and-org P4 (the Stripe webhook).
 - [ ] customer.subscription.deleted clears subscribed_plan (or entitlement checks require an active status as well as a plan) — **not done here**: P4.
