@@ -1,0 +1,532 @@
+// @vitest-environment jsdom
+//
+// notifications Round G, N7 CORNER (2026-10-01) — the jobs in the corner and
+// the dismissals that stick. STACK-1 / STACK-2 / STACK-3 / STACK-6 / STACK-8 /
+// STACK-13 / TAX-8.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const auth = vi.hoisted(() => ({ cb: null as null | ((event: string) => void) }));
+const db = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, queries: [] as Array<Array<{ m: string; a: unknown[] }>> }));
+vi.mock("@/lib/supabase", () => {
+  const from = (table: string) => {
+    const calls: Array<{ m: string; a: unknown[] }> = [{ m: "from", a: [table] }];
+    db.queries.push(calls);
+    const h: ProxyHandler<object> = {
+      get(_t, prop: string) {
+        if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: db.rows, error: null });
+        return (...a: unknown[]) => { calls.push({ m: prop, a }); return new Proxy({}, h); };
+      },
+    };
+    return new Proxy({}, h);
+  };
+  return {
+    supabase: {
+      from,
+      auth: {
+        getSession: async () => ({ data: { session: { access_token: "t" } } }),
+        onAuthStateChange: (cb: (event: string) => void) => { auth.cb = cb; return { data: { subscription: { unsubscribe() {} } } }; },
+      },
+    },
+  };
+});
+
+import { useDismissed, useDismissedSet, clearDismissals, DISMISSED_PREFIX, parseSet } from "@/hooks/useDismissed";
+import {
+  beginTransfer, endTransfer, beginUpload, endUpload, hasUploadsInFlight, releaseUploadUnloadGuard, UPLOAD_UNLOAD_MESSAGE,
+} from "@/lib/uploadActivity";
+import { uploadToPath, subscribeUploads, UploadCancelledError, type UploadActivity } from "@/lib/storage";
+import { confirmReloadDuringUploads } from "@/components/system/UpdatePill";
+import { confirmCancelBackup } from "@/components/providers/BackupIndicator";
+import { ingestFailureOf } from "@/components/providers/KnowledgeIndexIndicator";
+import { overlapKey, OVERLAP_HEADSUP_WINDOW_DAYS } from "@/components/documents/EditOverlapBanner";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let host: HTMLDivElement;
+let root: Root;
+const flush = async (n = 4) => { for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
+
+beforeEach(() => {
+  window.localStorage.clear();
+  db.rows = []; db.queries = [];
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  host.remove();
+  vi.restoreAllMocks();
+});
+
+// ── STACK-2: the user's Stop is "cancelled", never a red "Failed" ───────────
+
+describe("STACK-2 — lib/storage emits 'cancelled' for UploadCancelledError on every catch site", () => {
+  const record = () => {
+    const seen: UploadActivity[] = [];
+    const off = subscribeUploads((e) => seen.push(e));
+    return { seen, off };
+  };
+
+  it("single-PUT path: a Stop before the slot is granted emits uploading → cancelled, with no error text, and rethrows the cancel", async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+    const { seen, off } = record();
+    await expect(uploadToPath(new Blob(["x"]), "orgs/o1/a.pdf", { signal: ctl.signal })).rejects.toBeInstanceOf(UploadCancelledError);
+    off();
+    expect(seen.map((e) => e.status)).toEqual(["uploading", "cancelled"]);
+    expect(seen[1].error).toBeUndefined();
+  });
+
+  it("multipart path: the same — it used to have no cancel branch at all", async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+    const big = { size: 200 * 1024 * 1024, type: "application/pdf", slice: () => new Blob(["x"]) } as unknown as Blob;
+    const { seen, off } = record();
+    await expect(uploadToPath(big, "orgs/o1/big.dwg", { signal: ctl.signal })).rejects.toBeInstanceOf(UploadCancelledError);
+    off();
+    expect(seen.map((e) => e.status)).toEqual(["uploading", "cancelled"]);
+  });
+
+  it("a real failure is still a failure with its reason", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(Object.assign(new Error("network down"), { name: "TypeError" }));
+    const { seen, off } = record();
+    await expect(uploadToPath(new Blob(["x"]), "orgs/o1/a.pdf")).rejects.toThrow(/network down/);
+    off();
+    expect(seen.map((e) => e.status)).toEqual(["uploading", "error"]);
+    expect(seen[1].error).toMatch(/network down/);
+  });
+});
+
+describe("STACK-2 — UploadIndicator renders a cancelled upload as a neutral 'Stopped' that clears on the 'Done' timing", () => {
+  it("'Stopped', no rose, no 'Failed', gone after 2.5s; a failure still says 'Failed' with its reason", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const listeners = new Set<(e: unknown) => void>();
+    vi.doMock("@/lib/storage", () => ({ subscribeUploads: (cb: (e: unknown) => void) => { listeners.add(cb); return () => listeners.delete(cb); } }));
+    vi.resetModules();
+    const { default: Indicator } = await import("@/components/providers/UploadIndicator");
+    await act(async () => { root.render(React.createElement(Indicator)); });
+    await act(async () => {
+      for (const l of listeners) {
+        l({ id: "s", name: "stopped.dwg", percent: 0, status: "cancelled" });
+        l({ id: "f", name: "failed.dwg", percent: 0, status: "error", error: "connection reset" });
+      }
+    });
+    await flush();
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("stopped.dwg");
+    expect(body).toContain("Stopped");
+    const stoppedRow = [...document.querySelectorAll("span")].find((s) => s.textContent === "stopped.dwg")!.parentElement!;
+    expect(stoppedRow.innerHTML).not.toMatch(/rose/);
+    expect(stoppedRow.textContent).not.toContain("Failed");
+    expect(body).toContain("Failed");
+    expect(body).toContain("connection reset");
+    await act(async () => { vi.advanceTimersByTime(2600); });
+    await flush();
+    expect(document.body.textContent).not.toContain("stopped.dwg");
+    expect(document.body.textContent).toContain("failed.dwg");
+    await act(async () => { vi.advanceTimersByTime(4600); });
+    await flush();
+    expect(document.body.textContent).not.toContain("failed.dwg");
+    vi.doUnmock("@/lib/storage");
+    vi.useRealTimers();
+  });
+});
+
+// ── STACK-13: an upload on the wire guards the tab ──────────────────────────
+
+describe("STACK-13 — a beforeunload guard while an upload is in flight", () => {
+  it("installs while a transfer or a declared batch runs, removes when both drain", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+    expect(hasUploadsInFlight()).toBe(false);
+    beginTransfer();
+    expect(hasUploadsInFlight()).toBe(true);
+    expect(add.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
+    beginUpload();
+    beginTransfer();
+    expect(add.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
+    endTransfer(); endTransfer();
+    expect(remove.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(0);
+    endUpload();
+    expect(hasUploadsInFlight()).toBe(false);
+    expect(remove.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
+    const handler = add.mock.calls.find((c) => c[0] === "beforeunload")![1] as (e: Event) => void;
+    const ev = { preventDefault: vi.fn(), returnValue: "" } as unknown as BeforeUnloadEvent;
+    handler(ev);
+    expect(ev.preventDefault).toHaveBeenCalled();
+    expect(ev.returnValue).toBe(UPLOAD_UNLOAD_MESSAGE);
+  });
+
+  it("uploadToPath holds a transfer for exactly the life of the call", async () => {
+    let release!: (v: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((r) => { release = r; }));
+    const p = uploadToPath(new Blob(["x"]), "orgs/o1/a.pdf");
+    await Promise.resolve(); await Promise.resolve();
+    expect(hasUploadsInFlight()).toBe(true);
+    release({ ok: false, status: 503, json: async () => ({}) } as unknown as Response);
+    await expect(p).rejects.toThrow();
+    expect(hasUploadsInFlight()).toBe(false);
+  });
+
+  it("releaseUploadUnloadGuard drops the browser prompt once a person said go, until the work drains", () => {
+    const remove = vi.spyOn(window, "removeEventListener");
+    beginTransfer();
+    releaseUploadUnloadGuard();
+    expect(remove.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
+    endTransfer();
+    const add = vi.spyOn(window, "addEventListener");
+    beginTransfer();
+    expect(add.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
+    endTransfer();
+  });
+
+  it("UpdatePill asks before reloading while an upload is in flight; no upload, no question", async () => {
+    const confirm = vi.fn(async () => false);
+    const release = vi.fn();
+    expect(await confirmReloadDuringUploads({ inFlight: () => false, confirm, release })).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await confirmReloadDuringUploads({ inFlight: () => true, confirm, release })).toBe(false);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    confirm.mockResolvedValueOnce(true);
+    expect(await confirmReloadDuringUploads({ inFlight: () => true, confirm, release })).toBe(true);
+    expect(release).toHaveBeenCalledTimes(1);
+    const src = readFileSync(resolve("components/system/UpdatePill.tsx"), "utf8");
+    expect(src).toContain("if (!(await confirmReloadDuringUploads())) return;");
+  });
+});
+
+// ── STACK-8: the backup in the dock, minimizable, Cancel confirmed ──────────
+
+describe("STACK-8 — BackupIndicator", () => {
+  it("Cancel asks first and cancels only on yes", async () => {
+    const cancel = vi.fn();
+    expect(await confirmCancelBackup(async () => false, cancel)).toBe(false);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(await confirmCancelBackup(async () => true, cancel)).toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders in the dock's jobs slot, minimizes to a pill that keeps the percent, and the X still dismisses a finished run", async () => {
+    let publish!: (p: unknown) => void;
+    const dismiss = vi.fn(() => publish(null));
+    vi.doMock("@/lib/clientBackup", () => ({
+      subscribeBackup: (fn: (p: unknown) => void) => { publish = fn; fn(null); return () => {}; },
+      cancelBackup: vi.fn(), dismissBackup: dismiss,
+    }));
+    vi.resetModules();
+    const { default: Backup } = await import("@/components/providers/BackupIndicator");
+    const { CornerDock, __resetDockForTests } = await import("@/components/ui/CornerDock");
+    __resetDockForTests();
+    await act(async () => { root.render(React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(Backup))); });
+    await act(async () => { publish({ phase: "files", filesDone: 10, filesTotal: 40, bytesDone: 0, bytesTotal: 0, part: 1, errors: [] }); });
+    await flush();
+    const d = document.getElementById("corner-dock")!;
+    expect(d.querySelector('[data-dock-slot="jobs"]')!.textContent).toContain("Backup — file 11 of 40");
+    await act(async () => { (d.querySelector('button[title^="Minimize"]') as HTMLElement).click(); });
+    await flush();
+    expect(d.textContent).toContain("Backup 25%");
+    await act(async () => { (d.querySelector("button") as HTMLElement).click(); });
+    await act(async () => { publish({ phase: "done", filesDone: 40, filesTotal: 40, bytesDone: 0, bytesTotal: 0, part: 2, errors: [] }); });
+    await flush();
+    await act(async () => { (d.querySelector('button[aria-label="Dismiss"]') as HTMLElement).click(); });
+    expect(dismiss).toHaveBeenCalled();
+    vi.doUnmock("@/lib/clientBackup");
+  });
+});
+
+// ── STACK-3: an ingest failure is said, never a green check ─────────────────
+
+describe("STACK-3 — ingestFailureOf", () => {
+  it("a park (409: back-off / held vision retry) and another session's claim are not failures; anything else is, with its words", () => {
+    expect(ingestFailureOf(Object.assign(new Error("AI vision could not read 2 pages…"), { visionRetryBlocked: true }))).toBeNull();
+    expect(ingestFailureOf(Object.assign(new Error("Held for a minute"), { failureRetryBlocked: true }))).toBeNull();
+    expect(ingestFailureOf(new Error("Another session is indexing this document right now. It carries on by itself — reopen the library later to see it finish."))).toBeNull();
+    expect(ingestFailureOf(new Error("Indexing failed: connection reset"))).toBe("Indexing failed: connection reset");
+    expect(ingestFailureOf(new Error("Indexing stalled at page 5 of 40 — …"))).toMatch(/stalled at page 5/);
+    expect(ingestFailureOf(null)).toBe("Indexing failed.");
+  });
+
+  it("the busy sentence it recognises is lib/knowledge's own (a tripwire if the wording moves)", () => {
+    const lib = readFileSync(resolve("lib/knowledge.ts"), "utf8");
+    expect(lib).toContain('"Another session is indexing this document right now. It carries on by itself');
+  });
+});
+
+describe("STACK-3 / STACK-6 / TAX-8 — the indexing card says failures and keeps dismissals", () => {
+  async function mountIndicator(over: { uid?: string } = { uid: "u1" }) {
+    vi.doMock("@/components/providers/RoleContext", () => ({
+      useRole: () => ({ activeOrgId: "o1", uid: over.uid, hasAnyRole: () => true }),
+    }));
+    vi.doMock("@/lib/uploadActivity", () => ({ isUploading: () => false, onUploadActivity: () => () => undefined }));
+    vi.doMock("next/link", () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => React.createElement("a", { href }, children) }));
+    vi.resetModules();
+    const ing = { ingestKnowledgeDocument: vi.fn(), isIngestActive: vi.fn(() => false) };
+    vi.doMock("@/lib/knowledge", () => ing);
+    const { default: KII } = await import("@/components/providers/KnowledgeIndexIndicator");
+    const { CornerDock, __resetDockForTests } = await import("@/components/ui/CornerDock");
+    __resetDockForTests();
+    return { KII, CornerDock, ing };
+  }
+
+  it("a failed document renders the rose 'could not be indexed' branch with the reason and a link to its library — never the green check", async () => {
+    const { KII, CornerDock, ing } = await mountIndicator();
+    db.rows = [{ id: "k1", name: "API-650.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+    ing.ingestKnowledgeDocument.mockImplementation(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => {
+      cb?.(5, 40, { visionPages: 0 });
+      throw new Error("Indexing stalled at page 5 of 40 — that page is taking longer than one server run allows.");
+    });
+    await act(async () => { root.render(React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(KII))); });
+    await flush(8);
+    const d = document.getElementById("corner-dock")!;
+    expect(d.textContent).toContain("1 document could not be indexed");
+    expect(d.textContent).toContain("API-650.pdf");
+    expect(d.textContent).toContain("Indexing stalled at page 5 of 40");
+    expect(d.textContent).not.toContain("caught up");
+    expect(d.querySelector(".text-emerald-600")).toBeNull();
+    expect(d.querySelector("a")?.getAttribute("href")).toBe("/knowledge/lib1");
+    // The queue read now carries the library for that link.
+    expect(String(db.queries[0].find((c) => c.m === "select")?.a[0])).toContain("library_id");
+    vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
+  });
+
+  it("a document that failed before any progress is still reported (it used to show no card at all)", async () => {
+    const { KII, CornerDock, ing } = await mountIndicator();
+    db.rows = [{ id: "k2", name: "B31.3.pdf", library_id: "lib2", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+    ing.ingestKnowledgeDocument.mockRejectedValue(new Error("Indexing failed: the file is not a PDF"));
+    await act(async () => { root.render(React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(KII))); });
+    await flush(8);
+    expect(document.getElementById("corner-dock")!.textContent).toContain("1 document could not be indexed");
+    vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
+  });
+
+  it("a dismissal persists for this account in this workspace: after a remount new work shows only the pill, and a clean end nothing", async () => {
+    const { KII, CornerDock, ing } = await mountIndicator();
+    db.rows = [{ id: "k3", name: "A.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+    ing.ingestKnowledgeDocument.mockImplementation(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => { cb?.(10, 10, { visionPages: 0 }); });
+    const tree = () => React.createElement(React.Fragment, null, React.createElement(CornerDock), React.createElement(KII, { key: Math.random() }));
+    await act(async () => { root.render(tree()); });
+    await flush(8);
+    const d = () => document.getElementById("corner-dock")!;
+    expect(d().textContent).toContain("Knowledge indexing caught up");
+    await act(async () => { (d().querySelector('button[title="Dismiss"]') as HTMLElement).click(); });
+    expect(window.localStorage.getItem(`${DISMISSED_PREFIX}u1:o1:knowledge-index:dismissed`)).toBe("1");
+    // Remount (a reload, in effect) with new work that runs.
+    let release!: () => void;
+    db.rows = [{ id: "k4", name: "B.pdf", library_id: "lib1", status: "pending", pages_indexed: 0, error: null, vision_retry_after: null }];
+    ing.ingestKnowledgeDocument.mockImplementation(async (_id: string, cb?: (i: number, t: number | null, p?: unknown) => void) => {
+      cb?.(4, 10, { visionPages: 0 });
+      await new Promise<void>((r) => { release = r; });
+    });
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(tree()); });
+    await flush(8);
+    expect(d().textContent).toContain("Indexing 40%");
+    expect(d().textContent).not.toContain("Indexing knowledge in the background");
+    await act(async () => { release(); });
+    await flush(8);
+    expect(d().textContent ?? "").toBe("");
+    vi.doUnmock("@/lib/knowledge"); vi.doUnmock("@/components/providers/RoleContext"); vi.doUnmock("@/lib/uploadActivity"); vi.doUnmock("next/link");
+  });
+
+  it("the drain never re-opens the card: `setHidden(false)` is gone from the loop", () => {
+    const src = readFileSync(resolve("components/providers/KnowledgeIndexIndicator.tsx"), "utf8");
+    const drain = src.slice(src.indexOf("const drain = async"), src.indexOf("void drain();"));
+    expect(drain.length).toBeGreaterThan(100);
+    expect(drain).not.toContain("setHidden(");
+    expect(src).toContain('useDismissed("knowledge-index:dismissed", scope)');
+    expect(src).toContain('useDismissed("knowledge-index:minimized", scope)');
+  });
+});
+
+// ── hooks/useDismissed ──────────────────────────────────────────────────────
+
+describe("useDismissed — localStorage keyed by account+workspace, hydration-safe, never throws", () => {
+  function Flag({ k, scope, onApi }: { k: string; scope: string | null; onApi: (api: [boolean, (v: boolean) => void]) => void }) {
+    const api = useDismissed(k, scope);
+    onApi(api);
+    return React.createElement("i", null, api[0] ? "dismissed" : "shown");
+  }
+
+  it("persists under dismissed:<scope>:<key> and survives a remount; another scope is untouched", async () => {
+    let api!: [boolean, (v: boolean) => void];
+    await act(async () => { root.render(React.createElement(Flag, { k: "x", scope: "u1:o1", onApi: (a) => { api = a; } })); });
+    expect(host.textContent).toBe("shown");
+    await act(async () => { api[1](true); });
+    expect(host.textContent).toBe("dismissed");
+    expect(window.localStorage.getItem("dismissed:u1:o1:x")).toBe("1");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(React.createElement(Flag, { k: "x", scope: "u1:o1", onApi: (a) => { api = a; } })); });
+    expect(host.textContent).toBe("dismissed");
+    await act(async () => { root.render(React.createElement(Flag, { k: "x", scope: "u2:o1", onApi: (a) => { api = a; } })); });
+    expect(host.textContent).toBe("shown");
+  });
+
+  it("the server snapshot is 'dismissed', so a dismissed surface never flashes during hydration", () => {
+    const html = renderToString(React.createElement(Flag, { k: "x", scope: "u1:o1", onApi: () => {} }));
+    expect(html).toContain("dismissed");
+  });
+
+  it("with no scope nothing is persisted — the component's own state only", async () => {
+    let api!: [boolean, (v: boolean) => void];
+    await act(async () => { root.render(React.createElement(Flag, { k: "y", scope: null, onApi: (a) => { api = a; } })); });
+    await act(async () => { api[1](true); });
+    expect(host.textContent).toBe("dismissed");
+    expect(Object.keys(window.localStorage).filter((k) => k.startsWith(DISMISSED_PREFIX))).toEqual([]);
+  });
+
+  it("a storage that throws never breaks it: the dismissal holds for the tab", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("SecurityError"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("QuotaExceededError"); });
+    let api!: [boolean, (v: boolean) => void];
+    await act(async () => { root.render(React.createElement(Flag, { k: "z", scope: "u1:o1", onApi: (a) => { api = a; } })); });
+    expect(host.textContent).toBe("shown");
+    await act(async () => { api[1](true); });
+    expect(host.textContent).toBe("dismissed");
+  });
+
+  it("sign-out clears every dismissal (the same SIGNED_OUT the intel-status- snapshots are cleared on)", async () => {
+    let api!: [boolean, (v: boolean) => void];
+    await act(async () => { root.render(React.createElement(Flag, { k: "w", scope: "u1:o1", onApi: (a) => { api = a; } })); });
+    await act(async () => { api[1](true); });
+    window.localStorage.setItem("intel-status-u1-o1", "{}");
+    expect(auth.cb).toBeTypeOf("function");
+    await act(async () => { auth.cb!("SIGNED_OUT"); });
+    expect(window.localStorage.getItem("dismissed:u1:o1:w")).toBeNull();
+    expect(host.textContent).toBe("shown");
+    // Not ours to clear: RoleContext owns that key.
+    expect(window.localStorage.getItem("intel-status-u1-o1")).toBe("{}");
+    clearDismissals();
+  });
+
+  it("useDismissedSet keeps ids, caps its size, and reads a malformed value as empty", async () => {
+    const held: { api: ReturnType<typeof useDismissedSet> | null } = { api: null };
+    function S() {
+      const set = useDismissedSet("rows", "u1:o1");
+      React.useEffect(() => { held.api = set; });
+      return null;
+    }
+    await act(async () => { root.render(React.createElement(S)); });
+    const api = new Proxy({} as ReturnType<typeof useDismissedSet>, { get: (_t, k: string) => (held.api as unknown as Record<string, unknown>)[k] });
+    expect(api.ready).toBe(true);
+    expect(api.has("a")).toBe(false);
+    await act(async () => { api.add("a"); });
+    expect(api.has("a")).toBe(true);
+    expect(parseSet(window.localStorage.getItem("dismissed:u1:o1:rows")!)).toEqual(["a"]);
+    await act(async () => { api.remove("a"); });
+    expect(api.has("a")).toBe(false);
+    expect(parseSet("{not json")).toEqual([]);
+    expect(parseSet('["a", 3, "b"]')).toEqual(["a", "b"]);
+  });
+});
+
+// ── TAX-8: the overlap banner remembers ─────────────────────────────────────
+
+describe("TAX-8 — EditOverlapBanner: a dismissal and 'Heads-up sent' survive a remount", () => {
+  async function loadBanner(overlaps: Array<{ documentId: string; libraryId: string | null; intents: Array<{ userId: string; userName: string; source: string }> }>) {
+    const notify = vi.fn(async () => undefined);
+    vi.doMock("@/lib/intents", () => ({ listOrgEditOverlaps: async () => overlaps }));
+    vi.doMock("@/lib/inAppNotifications", () => ({ notifyMany: notify }));
+    vi.resetModules();
+    const { default: Banner } = await import("@/components/documents/EditOverlapBanner");
+    return { Banner, notify };
+  }
+  const two = [{ documentId: "d1", libraryId: "L1", intents: [
+    { userId: "me", userName: "Me", source: "checkout" }, { userId: "pat", userName: "Pat", source: "download" },
+  ] }];
+
+  it("'Heads-up sent' is derived from an overlap_advisory row this person received from someone in the overlap", async () => {
+    const { Banner } = await loadBanner(two);
+    db.rows = [{ id: "d1", document_number: "P-101", resource_id: "d1", actor_user_id: "pat", actor_name: "Pat" }];
+    await act(async () => { root.render(React.createElement(Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    const adv = db.queries.find((q) => q.some((c) => c.m === "from" && c.a[0] === "notifications"))!;
+    expect(adv).toBeTruthy();
+    expect(adv).toContainEqual({ m: "eq", a: ["kind", "overlap_advisory"] });
+    expect(adv).toContainEqual({ m: "eq", a: ["user_id", "me"] });
+    expect(adv.find((c) => c.m === "gte")?.a[0]).toBe("created_at");
+    expect(OVERLAP_HEADSUP_WINDOW_DAYS).toBe(14);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+
+  it("this person's own heads-up and their dismissal survive a remount; a new person in the overlap shows it again", async () => {
+    const { Banner, notify } = await loadBanner(two);
+    db.rows = [];
+    const el = () => React.createElement(Banner, { orgId: "o1", currentUserId: "me", key: Math.random() });
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    const send = [...host.querySelectorAll("button")].find((b) => /Send heads-up/.test(b.textContent ?? ""))!;
+    await act(async () => { send.click(); });
+    await flush();
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    expect(host.textContent).toContain("Heads-up sent ✓");
+    expect([...host.querySelectorAll("button")].some((b) => /Send heads-up/.test(b.textContent ?? ""))).toBe(false);
+    // Dismiss, remount: still dismissed.
+    await act(async () => { (host.querySelector('button[aria-label="Dismiss"]') as HTMLElement).click(); });
+    expect(host.textContent).toBe("");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(el()); });
+    await flush(6);
+    expect(host.textContent).toBe("");
+    expect(overlapKey("d1", two[0].intents)).toBe("d1:me,pat");
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+    // Someone new joins: a different overlap, shown again.
+    const three = [{ ...two[0], intents: [...two[0].intents, { userId: "sam", userName: "Sam", source: "ticket" }] }];
+    const again = await loadBanner(three);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(React.createElement(again.Banner, { orgId: "o1", currentUserId: "me" })); });
+    await flush(6);
+    expect(host.textContent).toContain("you and Pat, Sam both have active edit work");
+    expect([...host.querySelectorAll("button")].some((b) => /Send heads-up/.test(b.textContent ?? ""))).toBe(true);
+    vi.doUnmock("@/lib/intents"); vi.doUnmock("@/lib/inAppNotifications");
+  });
+});
+
+// ── STACK-1: the semantic build cannot outlive its Stop ─────────────────────
+
+describe("STACK-1 — SemanticIndexPanel stops its build when it unmounts", () => {
+  it("leaving the page flips the loop's stop channel; the outcome is said in a toast that outlives the page", async () => {
+    const toast = vi.fn();
+    let shouldStop: (() => boolean) | null = null;
+    let finish!: (v: unknown) => void;
+    vi.doMock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: toast }) }));
+    vi.doMock("@/lib/knowledge", () => ({
+      semanticStatus: async () => ({ total: 10, coveredNow: 2, remaining: 8, done: false, error: null, embedded: 0, spentThisRun: 0 }),
+      buildSemanticIndex: (_o: string, _l: string, _p: unknown, stop: () => boolean) => { shouldStop = stop; return new Promise((r) => { finish = r; }); },
+      resetSemanticIndex: vi.fn(), retryFailedPassages: vi.fn(), setKeepIndexCurrent: vi.fn(), releaseBackgroundBuild: vi.fn(),
+      acceptAiAgreement: vi.fn(), releaseOutcome: vi.fn(), keepCurrentOutcome: vi.fn(), retryOutcome: vi.fn(),
+    }));
+    vi.resetModules();
+    const { default: Panel } = await import("@/components/knowledge/SemanticIndexPanel");
+    await act(async () => { root.render(React.createElement(Panel, { orgId: "o1", libraryId: "L1", isController: true })); });
+    await flush(6);
+    const build = [...host.querySelectorAll("button")].find((b) => /Build index/.test(b.textContent ?? ""))!;
+    await act(async () => { build.click(); });
+    await flush();
+    expect(shouldStop!()).toBe(false);
+    await act(async () => root.unmount());
+    expect(shouldStop!()).toBe(true);
+    await act(async () => { finish({ total: 10, coveredNow: 4, remaining: 6, done: false, error: null, embedded: 2, spentThisRun: 0 }); });
+    await flush();
+    expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringMatching(/stopped when you left the page — 6 passage/) }));
+    root = createRoot(host);
+    vi.doUnmock("@/components/providers/ToastProvider"); vi.doUnmock("@/lib/knowledge");
+  });
+});

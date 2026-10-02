@@ -21,6 +21,7 @@ import {
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
+import { Z } from "@/lib/zLayers";
 
 export interface CustomColumnDef {
   key: string;
@@ -461,7 +462,7 @@ export default function MetadataStagingModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto" style={{ zIndex: Z.metadataStagingModal }}>
       <div className="w-full max-w-6xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-0 sm:my-8 flex flex-col max-h-[95dvh] sm:max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">

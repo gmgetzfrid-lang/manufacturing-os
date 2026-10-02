@@ -12,6 +12,7 @@ import { X, Check, Loader2, ImageIcon, Upload } from "lucide-react";
 import { NODE_ICON_KEYS, NodeIcon } from "@/lib/nodeIcons";
 import NodeCover, { type NodeAppearanceLike } from "@/components/documents/NodeCover";
 import { uploadToPath } from "@/lib/storage";
+import { Z } from "@/lib/zLayers";
 
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
@@ -95,7 +96,7 @@ export default function CustomizeNodeModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[400] grid place-items-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 grid place-items-center p-4 bg-black/50 backdrop-blur-sm" style={{ zIndex: Z.customizeNodeModal }} onClick={onClose}>
       <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
           <h2 className="font-black text-[var(--color-text)]">{title}</h2>

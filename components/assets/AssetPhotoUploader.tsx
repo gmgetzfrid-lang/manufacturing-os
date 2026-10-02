@@ -15,6 +15,7 @@ import {
   type Asset,
 } from "@/lib/assets";
 import { uploadToPath } from "@/lib/storage";
+import { Z } from "@/lib/zLayers";
 
 interface PendingPhoto {
   id: string;
@@ -137,7 +138,8 @@ export default function AssetPhotoUploader({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      style={{ zIndex: Z.assetPhotoUploader }}
       onClick={onClose}
       onMouseDown={(e) => e.stopPropagation()}
     >

@@ -53,6 +53,9 @@ vi.mock("@/lib/knowledge", () => ing);
 vi.mock("@/lib/uploadActivity", () => ({ isUploading: () => false, onUploadActivity: () => () => undefined }));
 vi.mock("@/components/ui/CornerDock", () => ({
   CornerPortal: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+  // No dock in this harness: every card the indicator asks for may show.
+  useDockAllowance: (_slot: string, _priority: number, count: number) => count,
+  DOCK_PRIORITY: { backup: 10, knowledge: 20, upload: 30, toast: 10 },
 }));
 
 import KnowledgeIndexIndicator from "@/components/providers/KnowledgeIndexIndicator";
@@ -208,11 +211,23 @@ describe("the card shows only on progress", () => {
     await poll();
     expect(ing.ingestKnowledgeDocument).toHaveBeenCalledTimes(2);
     expect(host.textContent).toBe("");
-    // A batch that moves brings it back.
+    // A batch that moves comes back as the minimized pill at most — never the
+    // full card the person closed — and a pass that ends clean after the
+    // dismissal shows nothing (STACK-6 / TAX-8, notifications Round G N7;
+    // before, `setHidden(false)` re-opened the full card on every pass).
     answer([fresh({ id: "next", name: "B31.3.pdf" })]);
-    ing.ingestKnowledgeDocument.mockImplementation(progresses(4, 10));
+    let release!: () => void;
+    ing.ingestKnowledgeDocument.mockImplementation(
+      async (_id: string, onIndex?: (i: number, t: number | null, p?: { visionPages: number }) => void) => {
+        onIndex?.(4, 10, { visionPages: 0 });
+        await new Promise<void>((r) => { release = r; });
+      });
     await poll();
-    expect(host.textContent).toMatch(/Knowledge indexing caught up/);
+    expect(host.textContent).toMatch(/Indexing 40%/);
+    expect(host.textContent).not.toMatch(/Indexing knowledge in the background/);
+    await act(async () => { release(); });
+    await flush();
+    expect(host.textContent).toBe("");
   });
 
   it("a vision retry that reads pages without moving the resume point is progress", async () => {

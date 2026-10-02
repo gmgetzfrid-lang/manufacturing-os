@@ -12,7 +12,7 @@ import { SubscriptionProvider } from "@/components/providers/SubscriptionProvide
 import { ToastProvider } from "@/components/providers/ToastProvider";
 import { NotificationListener } from "@/components/providers/NotificationListener";
 import UploadIndicator from "@/components/providers/UploadIndicator";
-import { CornerDock } from "@/components/ui/CornerDock";
+import { CornerDock, CentreDock, NOTIFICATION_CENTER_RAIL_PX } from "@/components/ui/CornerDock";
 import BackupIndicator from "@/components/providers/BackupIndicator";
 import KnowledgeIndexIndicator from "@/components/providers/KnowledgeIndexIndicator";
 import TrialBanner from "@/components/subscription/TrialBanner";
@@ -21,13 +21,16 @@ import RelationshipGraphHost from "@/components/documents/RelationshipGraphHost"
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
-import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
+import { NotificationCenterProvider, useNotificationCenter } from "@/components/notifications/NotificationCenter";
 import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
 import { resolveProtectedView } from "@/lib/protectedGate";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, booted, uid, userEmail, membershipState } = useRole();
+  // The corner dock's "+N more" opens the notification center (RT-11), and
+  // the open center is a right rail the dock moves left of (STACK-11).
+  const { open: openCenter, isOpen: centerOpen } = useNotificationCenter();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   // Stable callbacks so the Sidebar's route-change / Escape effects can list
   // them as deps honestly without re-firing every render.
@@ -78,9 +81,13 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <TopBar onOpenMobileNav={openMobileNav} />
           <main className="flex-1 overflow-auto relative">
+            {/* The docks first: both portal to document.body (the corner at
+                Z.dock, above every modal), and every indicator, toast, undo
+                toast and the graph chip below renders into them. */}
+            <CornerDock onOpenCenter={openCenter} occupiedRightPx={centerOpen ? NOTIFICATION_CENTER_RAIL_PX : 0} />
+            <CentreDock />
             <NotificationListener />
             <UpdatePill />
-            <CornerDock />
             <UploadIndicator />
             <BackupIndicator />
             <KnowledgeIndexIndicator />

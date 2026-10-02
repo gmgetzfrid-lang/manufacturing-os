@@ -10,12 +10,33 @@
 // Deliberately quiet: an amber banner on the coordination surfaces for the
 // people involved, plus a manual one-click "send a heads-up" (in-app only,
 // never email). No modal, no interruption — per the interruption budget.
+//
+// What it remembers (TAX-8, notifications Round G N7):
+//   - "Dismiss for now" sticks for THIS overlap — the document and the set of
+//     people in it — across a remount and a reload (hooks/useDismissed). A
+//     new person joining the overlap is a new overlap, and it shows again.
+//   - "Heads-up sent" survives a remount. It is derived from the
+//     notification rows this person can read: an overlap_advisory about the
+//     document from someone in the overlap within OVERLAP_HEADSUP_WINDOW_DAYS
+//     means a heads-up already went round. A heads-up this person sent is not
+//     readable back (the rows are the recipients' — notifications_own_select),
+//     so their own send is remembered for this overlap on the same substrate
+//     as a dismissal, and the button does not offer to send it twice.
 
 import React, { useEffect, useState } from "react";
 import { Users, X, BellRing } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listOrgEditOverlaps, type DocumentIntent } from "@/lib/intents";
 import { notifyMany } from "@/lib/inAppNotifications";
+import { useDismissedSet } from "@/hooks/useDismissed";
+
+/** How far back a received heads-up still counts as "sent" for an overlap. */
+export const OVERLAP_HEADSUP_WINDOW_DAYS = 14;
+
+/** One overlap: the document and the people in it (sorted). */
+export function overlapKey(documentId: string, intents: Array<{ userId: string }>): string {
+  return `${documentId}:${[...new Set(intents.map((i) => i.userId))].sort().join(",")}`;
+}
 
 interface OverlapRow {
   documentId: string;
@@ -38,8 +59,12 @@ export default function EditOverlapBanner({
   orgId, currentUserId, currentUserName, onlyMine = true,
 }: EditOverlapBannerProps) {
   const [rows, setRows] = useState<OverlapRow[]>([]);
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [nudged, setNudged] = useState<Set<string>>(new Set());
+  const scope = currentUserId && orgId ? `${currentUserId}:${orgId}` : null;
+  const dismissed = useDismissedSet("overlap-banner", scope);
+  // This person's own sends (unreadable back from the rows — see header).
+  const sent = useDismissedSet("overlap-headsup-sent", scope);
+  // Heads-ups this person RECEIVED about a document, by overlap key → sender.
+  const [received, setReceived] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!orgId || !currentUserId) return;
@@ -69,12 +94,34 @@ export default function EditOverlapBanner({
           documentLabel: labelById.get(o.documentId) ?? "Document",
           intents: o.intents,
         })));
+
+        // "Heads-up sent", from the rows: an advisory about the document
+        // from someone in this overlap, recently. Best-effort — a failed
+        // read leaves the button offered, as before.
+        const since = new Date(Date.now() - OVERLAP_HEADSUP_WINDOW_DAYS * 86_400_000).toISOString();
+        const { data: advisories, error: advErr } = await supabase
+          .from("notifications")
+          .select("resource_id, actor_user_id, actor_name")
+          .eq("user_id", currentUserId)
+          .eq("kind", "overlap_advisory")
+          .eq("resource_type", "document")
+          .in("resource_id", ids)
+          .gte("created_at", since);
+        if (!alive || advErr) return;
+        const got = new Map<string, string>();
+        for (const o of mine) {
+          const people = new Set(o.intents.map((i) => i.userId));
+          const hit = ((advisories ?? []) as Array<{ resource_id: string | null; actor_user_id: string | null; actor_name: string | null }>)
+            .find((a) => a.resource_id === o.documentId && !!a.actor_user_id && people.has(a.actor_user_id));
+          if (hit) got.set(overlapKey(o.documentId, o.intents), hit.actor_name || "someone");
+        }
+        setReceived(got);
       } catch { /* advisory is best-effort */ }
     })();
     return () => { alive = false; };
   }, [orgId, currentUserId, onlyMine]);
 
-  const visible = rows.filter((r) => !dismissed.has(r.documentId));
+  const visible = rows.filter((r) => !dismissed.has(overlapKey(r.documentId, r.intents)));
   if (visible.length === 0) return null;
 
   const sendHeadsUp = async (row: OverlapRow) => {
@@ -93,13 +140,16 @@ export default function EditOverlapBanner({
         resourceType: "document",
         resourceId: row.documentId,
       });
-      setNudged((prev) => new Set(prev).add(row.documentId));
+      sent.add(overlapKey(row.documentId, row.intents));
     } catch { /* best-effort */ }
   };
 
   return (
     <div className="space-y-2 mb-3">
       {visible.map((row) => {
+        const key = overlapKey(row.documentId, row.intents);
+        const receivedFrom = received.get(key) ?? null;
+        const headsUpSent = sent.has(key) || receivedFrom !== null;
         const others = row.intents.filter((i) => i.userId !== currentUserId);
         const otherNames = [...new Set(others.map((i) => i.userName || "someone"))];
         const sourcesByUser = others.map((i) =>
@@ -120,8 +170,13 @@ export default function EditOverlapBanner({
               {" "}({sourcesByUser.join("; ")}). Coordinate now — publishing from diverged bases will stop with a conflict.
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
-              {nudged.has(row.documentId) ? (
-                <span className="text-[10px] font-bold text-emerald-700">Heads-up sent ✓</span>
+              {headsUpSent ? (
+                <span
+                  className="text-[10px] font-bold text-emerald-700"
+                  title={receivedFrom ? `${receivedFrom} sent a heads-up about this document` : "You sent a heads-up about this document"}
+                >
+                  Heads-up sent ✓
+                </span>
               ) : (
                 <button
                   onClick={() => void sendHeadsUp(row)}
@@ -132,9 +187,10 @@ export default function EditOverlapBanner({
                 </button>
               )}
               <button
-                onClick={() => setDismissed((prev) => new Set(prev).add(row.documentId))}
+                onClick={() => dismissed.add(key)}
                 className="p-1 rounded-md hover:bg-amber-100"
                 title="Dismiss for now"
+                aria-label="Dismiss"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
