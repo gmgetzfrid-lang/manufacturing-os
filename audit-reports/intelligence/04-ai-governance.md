@@ -693,6 +693,19 @@ Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCR
 
 **Scope / residual.** OPEN on criterion 4's other consumers (I-07, I-11). Chunks written before `20261122` read `'text'`. After a failed provenance read, a text-layer passage of a document with some vision-read pages is marked as possibly transcribed — every passage, when the roster failed too: the warning errs toward caution for that one ask (since I-03 fix pass 7 a failed roster refuses the ask instead, `KACL-4`). A 42703 (Postgres's undefined column) still means "a database without the column" whichever column it names, as `sourceColumnMissing` reads it: the selects name only the columns a migration adds.
 
+**Partial (2026-10-02, intelligence Round G, I-11).** I-11's limb of criterion 4: the sheet address. The Bridge reads each page's title block as the sheet address (GAP-301) and asks `knowledge_chunks.source = 'vision'` which pages an AI model transcribed. A missing column (before 20261122) means nothing is recorded; any other read failure fails toward the warning, and every page is then treated as AI-read.
+
+A title block read off a transcribed page is never an identity:
+- Its sheet is shown "(AI-read, unconfirmed)" in the sweep's chips and in `/api/equipment/sheets` (the hub's "Also read on").
+- The relation it writes carries the transcribing `model` (20261171), and the asset hub marks that link "AI-read", with "check it against the sheet".
+- A copy whose text layer declares the same page is preferred over a transcribed one.
+- Nothing in the Bridge takes identity from a title block: the unit comes from the controlled document's own `document_number` (CB-1), never from a `self` row. The sheet address is a label on a machine reading.
+
+**Done-when.**
+4. Partly. ✓ (I-03, 2026-10-01) The ask route's DRAWING FACTS. ✓ The sheet address (I-11): `lib/__tests__/equipmentBridge.test.ts` "GOV-9: a title block read off an AI transcription is shown as unconfirmed, never as an identity" and "GAP-301 end to end: … an AI-transcribed page is marked"; `lib/__tests__/equipmentBridgeRoutes.test.ts` "… an AI-read title block is marked". ✗ Still open: the drawing audit and title-block reading (I-07, `PR-11`) and the drawing route's equipment table sheet name.
+
+**Scope / residual.** OPEN on criterion 4's remaining consumers (I-07). The relation's stored `sheet_label` is a plain label. Its machine-and-model provenance sits beside it on the row (`asserted_by`, `model`), and every surface that shows the label shows that mark.
+
 ---
 
 <a id="gov-10"></a>

@@ -32,7 +32,7 @@ De-facto links in untyped JSONB, one-directional links, and FK columns nothing w
 ## WIRE-1 · The Equipment Bridge writes to a column the doc↔asset join table cannot see — every reverse lookup misses AI-extracted equipment
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:260-276`, `supabase/migrations/20260609_phase1_normalization.sql:80-120`, `app/(protected)/assets/[tag]/page.tsx:52-57`, `lib/orgGraph.ts:118-119,262`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → HIGH** by this pass. The wiring gap is real and I could find no path that closes it — no backfill, no second write, no metadata-aware reader. Severity lowered to HIGH: nothing is corrupted or lost (the tags persist in metadata and render as chips), and one reverse surface is unaffected — assets/[tag]/page.tsx:228 also mounts MentionsPanel, which reads entity_mentions rather than document_assets. CRITICAL overstates a broken reverse index.
@@ -56,6 +56,17 @@ lib/equipmentBridgeServer.ts:272 `const { error: updErr } = await admin.from("do
 - [ ] applyForDocument upserts `document_assets` rows (org_id, document_id, asset_id, tag_text, source) for every tag it resolves to an asset, or it also writes `documents.asset_tags` so the existing trigger fires
 - [ ] /assets/<tag> lists the drawings the bridge tagged, sourced from document_assets rather than asset_tags containment
 - [ ] orgGraph `tag` edges appear for bridge-discovered assets
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): with the base files (`e5de803`) swapped back in, seven of the new cases fail (no `document_assets` row after apply; AREA-4's throw "No equipment column mapped for this library…"; no sheets on a suggestion; BR-3's bare `null`; three asset-hub cases), while the regression pin (an unregistered tag still listed by its `asset_tags` containment on the hub) passes on both.
+
+The Bridge's apply writes `document_assets` rows (source 'drawing', with the sheet, pages and provenance) for every tag it resolves to an asset; see `BR-2` / `GAP-304`. The metadata column write is kept, and `documents.asset_tags` is never written by a machine (GAP-302's do-not). Every reverse reader of `document_assets` now sees bridge-derived equipment with no change of its own: the unit hub (`getDocumentsForAssetsHydrated`), the org graph's tag edges (`lib/orgGraph.ts`, under the reader's RLS), where-used (`lib/impact.ts`), revision fanout (`lib/revisionImpact.ts`), consolidation, the shared-equipment proposer, and `lookupTag` / ⌘K. The asset hub reads the relation (with the `asset_tags` containment kept beside it).
+
+**Done-when.**
+1. ✓ `applyForDocument` writes `document_assets` rows (org_id, document_id, asset_id, tag_text, source 'drawing', sheet_label, pages, provenance) for every tag it resolves to an asset (`lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: after apply a document_assets row exists…").
+2. ✓ `/assets/<tag>` lists the drawings the Bridge tagged from `document_assets` (`lib/__tests__/assetHubRelation.test.ts` "a drawing the Bridge read the tag on is listed with its sheet and a 'read from drawing' mark; …").
+3. ✓ By construction. `lib/orgGraph.ts` draws a tag edge for every `document_assets` row (`id, document_id, asset_id`, no source filter), so a bridge-discovered asset gets its edges once the rows exist. Not re-tested here (I-13's `orgGraph.test.ts` covers the edge from the row).
+
+**Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so.
 
 ---
 
@@ -318,7 +329,7 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 ## WIRE-8 · Transmittal↔document and ticket↔document are unindexed JSONB scans, and the ticket link is written in two incompatible shapes
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:394-406`, `supabase/migrations/20260717_transmittals.sql:40,53-54`, `lib/impact.ts:111-118`, `lib/transitionIn.ts:321-322`, `app/(protected)/requests/new/page.tsx:290-297`, `app/api/intake/resolve/route.ts:151-154`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on facts, downgraded on impact. Both queries stay org-scoped, and the finding's own scale ("a few thousand transmittals") is a sub-millisecond scan in Postgres — the performance claim does not carry MEDIUM. The shape mismatch is currently unreachable: intake/resolve pre-filters on `metadata->intake_collision->>intakeLinkId`, which only transitionIn writes, so it only ever sees the `number` shape. Latent inconsistency worth fixing, LOW.
@@ -340,6 +351,20 @@ lib/transmittals.ts:401 `.contains("items", JSON.stringify([{ documentId }]))`. 
 - [ ] GIN indexes exist on transmittals.items (jsonb_path_ops) and tickets.metadata, or transmittal items move to a join table
 - [ ] all three writers of tickets.metadata.source_document agree on one field name
 - [ ] the asset hub's `.contains("asset_tags", …)` gets an index or moves to document_assets
+
+**Resolution (2026-10-02, intelligence Round G).** `20261171` builds:
+- `transmittals_items_path_gin`: GIN `(items jsonb_path_ops)`, for `lib/transmittals.ts`'s `.contains("items", …)`;
+- `tickets_metadata_path_gin`: GIN `(metadata jsonb_path_ops)`;
+- `tickets_source_document_id_idx`: a b-tree on `(metadata -> 'source_document' ->> 'id')`, the exact expression `lib/impact.ts` filters.
+
+On a scratch PostgreSQL 16 with seqscan off, `EXPLAIN` uses each (case P5 in `GAP-302`'s record). The asset hub moved to the relation (WIRE-1).
+
+**Done-when.**
+1. ✓ GIN indexes exist on `transmittals.items` (jsonb_path_ops) and `tickets.metadata`, with a b-tree on the ticket→document expression (`lib/__tests__/intelRoundGBridgeMigrations.test.ts` "WIRE-8: GIN (jsonb_path_ops) on transmittals.items and tickets.metadata; a b-tree on the expression the impact scan filters").
+2. ✓ Record-only. `LIFE-15` (roles-and-permissions, resolved 2026-09-02) made all three writers of `tickets.metadata.source_document` write one canonical shape through `buildSourceDocumentRef` (`lib/sourceDocRef.ts`; `CheckInPanel`, `requests/new`, `lib/transitionIn.ts`), and readers go through the tolerant parser.
+3. ✓ The asset hub reads `document_assets` first. The `.contains("asset_tags", …)` read is kept beside it as the only answer for an unregistered tag; it stays unindexed by choice, because an index build would lock `documents`, the most-written table, inside the one-paste transaction.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261171_intel_roundG_provenance.sql`. The index builds run inside the paste's transaction (non-concurrent); the inventory counts the transmittals and source-document tickets they cover.
 
 ---
 

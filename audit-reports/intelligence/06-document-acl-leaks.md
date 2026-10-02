@@ -421,6 +421,16 @@ app/(protected)/documents/page.tsx:165 — `const visible = isController ? libs 
 - [ ] `document_assets`, `project_documents`, `document_related_resources`, `document_supersessions` and `entity_mentions` each carry a RESTRICTIVE SELECT policy `USING (doc_is_visible(document_id))` (and the second document column where present)
 - [ ] Existence-only surfaces (impact panel counts, graph degree) do not silently reveal hidden nodes through edge counts
 
+**Partial (2026-10-02, intelligence Round G).** `20261170` adds two RESTRICTIVE read rails, `document_assets_document_readable` and `project_documents_document_readable`, each `FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM documents d WHERE d.id = <table>.document_id))`. The EXISTS runs under the caller's own RLS on `documents`, so it IS the documents read decision (`documents_acl_select` and the rest, ownership arms included). A join row is visible only while its document is. This is the same shape `20261120` used for `entity_mentions` and `20261126` for `document_related_resources`. The service role is unaffected.
+
+The impact panel (`lib/impact.ts`), revision fanout (`lib/revisionImpact.ts`) and the org graph (`lib/orgGraph.ts`) read these tables with the caller's client, so their counts and degrees no longer include a hidden document through them. On a scratch PostgreSQL 16, a Viewer sees only the normal document's rows in both tables and an Admin sees both (case 9 in `GAP-302`'s record). `lib/__tests__/projectsRls.test.ts` admits exactly this one restrictive rail on `project_documents`.
+
+**Done-when.**
+1. ◐ `document_assets` ✓ and `project_documents` ✓ (this package); `entity_mentions` ✓ (20261120) and `document_related_resources` ✓ (20261126), already. `document_supersessions` ✗: its read stays member-wide (20261131 DRLS-13). Its readers are the lifecycle's (`lib/documentLifecycle/**`: split, merge, reverse and the lineage walk), which need to see a supersession to decide a lineage. A read rail there has to be decided with those readers, which belong to document control. The predicate used is the documents read decision itself rather than `doc_is_visible()`; they answer the same question, and the EXISTS cannot drift from the documents policies.
+2. ◐ For these two tables ✓: impact counts, revision fanout and graph degree read them under the caller's RLS. `document_supersessions`-derived surfaces are limb 1's residual.
+
+**Scope / residual.** Handed to document control (the owner of `lib/documentLifecycle/**` and 20261131's supersession policies): a RESTRICTIVE read rail on `document_supersessions` covering both document columns, decided with the lineage readers. Pending migration: `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`; its inventory counts the rows on private / hidden documents that become readable only to those who can read the document.
+
 ---
 
 <a id="dacl-12"></a>
