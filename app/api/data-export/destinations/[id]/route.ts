@@ -16,7 +16,14 @@
 //     must re-enter them, and, for a webhook, look at the URL the backup named;
 //   - BILL-3 Done-when 3: a bucket row is the Growth feature, so enabling one
 //     passes the same plan gate as creating one (the scheduled runner
-//     disables a bucket destination whose plan lapsed);
+//     disables a bucket destination whose plan lapsed), as does adding a
+//     bucket or changing it (XEDGE-8). Re-saving a bucket destination with
+//     its bucket unchanged is not gated: it is how an Admin confirms a
+//     scheduled destination a Manager or DocCtrl last saved (DEC-44 (A&O P3)
+//     §1 — the edit form always sends the bucket), and the fifth review fix
+//     pass found that save refused 402 on a workspace off Growth with
+//     SUBSCRIPTION_ENFORCE off, where the push itself still runs — so the
+//     nightly request to confirm it could never be met;
 //   - BKP-13 Done-when 3: every other controller is told, as they are when an
 //     enabled destination is pointed somewhere new.
 // `enabled` must be a JSON boolean (400 otherwise): PostgREST would store
@@ -96,14 +103,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "enabled must be true or false." }, { status: 400 });
   }
 
-  // XEDGE-8: the Growth gate that create applies must hold on edit too —
-  // adding a bucket to an existing (webhook / bucket-less) destination is the
-  // same act as creating one with a bucket.
-  if ("bucket" in body && String(body.bucket ?? "").trim()) {
-    const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
-    if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
-  }
-
   // The row as stored, read CHECKED: every rule below judges the change against it.
   const { data: currentRow, error: currentErr } = await auth.admin
     .from("export_destinations")
@@ -113,6 +112,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (currentErr) return NextResponse.json({ error: `Could not read the destination (${currentErr.message}) — nothing was changed.` }, { status: 500 });
   if (!currentRow) return NextResponse.json({ error: "Destination not found" }, { status: 404 });
   const current = currentRow as CurrentDestination;
+
+  // XEDGE-8: the Growth gate that create applies must hold on edit too —
+  // adding a bucket to an existing (webhook / bucket-less) destination, or
+  // pointing it at another bucket, is the same act as creating one with a
+  // bucket. The same bucket sent back (the edit form always sends it) is
+  // not: that save is the Admin confirming the destination (DEC-44 (A&O P3)
+  // §1). Enabling is gated below.
+  const bucketChanged = "bucket" in body && !!norm(body.bucket) && norm(body.bucket) !== norm(current.bucket);
+  if (bucketChanged) {
+    const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
+    if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
+  }
 
   const enabling = body.enabled === true && current.enabled !== true;
   const nextEnabled = "enabled" in body ? body.enabled === true : current.enabled === true;
@@ -133,8 +144,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   if (enabling) {
     // BILL-3 Done-when 3: enabling a bucket destination is the act the plan
-    // gate guards (a body that sets the bucket was gated above).
-    if (norm("bucket" in body ? body.bucket : current.bucket) && !("bucket" in body && norm(body.bucket))) {
+    // gate guards (a body that adds or changes the bucket was gated above).
+    if (norm("bucket" in body ? body.bucket : current.bucket) && !bucketChanged) {
       const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
       if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
     }

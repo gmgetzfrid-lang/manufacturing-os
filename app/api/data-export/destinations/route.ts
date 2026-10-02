@@ -11,7 +11,9 @@
 // other controller's bell (lib/exportAlerts.ts). Its audit row's user_role
 // is the role the surface admitted the caller by (the gate's admittedRole —
 // an Admin whose headline is Viewer is recorded as Admin), as the export
-// rows' are (DEC-44 (A&O P3) §3).
+// rows' are (DEC-44 (A&O P3) §3). GET's read is CHECKED: a failed read is a
+// 500 naming it, never an empty list an Admin would read as "no destinations"
+// (and set one up again).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -54,11 +56,12 @@ export async function GET(req: NextRequest) {
   const auth = await authorizeAdminSurface(req, orgId, "data-export");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const { data } = await auth.admin
+  const { data, error } = await auth.admin
     .from("export_destinations")
     .select("*")
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
+  if (error) return NextResponse.json({ error: `Could not read this workspace's export destinations (${error.message}).` }, { status: 500 });
 
   // Strip + mask encrypted columns before returning
   const safe = (data ?? []).map((d: EncryptedDestinationRow & Record<string, unknown>) => ({

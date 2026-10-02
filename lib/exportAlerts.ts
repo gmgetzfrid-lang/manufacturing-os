@@ -28,6 +28,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { roleFilter, memberHoldsAny } from "@/lib/roleHeld";
+import { adminSurface } from "@/lib/adminSurfaces";
 
 export interface ExportAlertResult {
   ok: boolean;
@@ -143,6 +144,52 @@ export async function alertAdminsOfExport(
  *  run row and destination card) says about who last confirmed it. */
 export function unconfirmedSentence(u: { by: string; holds: string }): string {
   return `It was last confirmed by ${u.by}, who does not hold ${u.holds} — which setting up a data export now requires.`;
+}
+
+/** DEC-44 (A&O P3) §1: the sentence an unconfirmed destination's run row,
+ *  card and sweep result carry — on a push that left and on one that
+ *  failed, and kept on the card by a Run Now (which does not confirm it). */
+export function unconfirmedNote(u: { by: string; holds: string }): string {
+  return `${unconfirmedSentence(u)} An Admin should open it and save it to confirm it, or disable it.`;
+}
+
+/** DEC-44 (A&O P3) §1: does the member who last confirmed this destination
+ *  (updated_by, else created_by) hold the data-export surface's entry role,
+ *  read from lib/adminSurfaces.ts by the full collection (memberHoldsAny)?
+ *  Either way the push RUNS (regression first): `unconfirmed` (who, by
+ *  email — their uid when they are no longer an active member — and the
+ *  role it takes) when they do not, which the night's bell turns into a
+ *  request to confirm it; `notice` when the lookup failed and nothing can be
+ *  said (the push ran; checked again at the next run). Read by the
+ *  scheduled sweep (whose gate has already checked the configurer is an
+ *  active member) and by Run Now, so neither leaves the card saying less
+ *  than the truth. Never throws. */
+export async function destinationConfirmation(
+  sb: Pick<SupabaseClient, "from">,
+  dest: { org_id: string; updated_by?: string | null; created_by?: string | null },
+): Promise<{ unconfirmed?: { by: string; holds: string }; notice?: string }> {
+  const entry = adminSurface("data-export")?.entry ?? ["Admin"];
+  if (entry === "*") return {};
+  const configurer = dest.updated_by || dest.created_by || null;
+  // A destination with no configurer: the sweep's gate skips it already.
+  if (!configurer) return {};
+  try {
+    const { data, error } = await sb
+      .from("org_members").select("role, roles, email")
+      .eq("org_id", dest.org_id).eq("uid", configurer).eq("status", "active")
+      .maybeSingle();
+    if (error) {
+      return { notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${error.message}); the push ran, and this is checked again at the next run` };
+    }
+    const member = data as { role?: unknown; roles?: unknown; email?: unknown } | null;
+    if (!memberHoldsAny(member, entry)) {
+      const email = typeof member?.email === "string" && member.email ? member.email : null;
+      return { unconfirmed: { by: email ?? configurer, holds: entry.join(" or ") } };
+    }
+    return {};
+  } catch (e) {
+    return { notice: `whether the member who last configured this destination holds ${entry.join(" or ")} could not be verified (${(e as Error).message}); the push ran, and this is checked again at the next run` };
+  }
 }
 
 /** A destination was created, enabled, or pointed somewhere new — the act

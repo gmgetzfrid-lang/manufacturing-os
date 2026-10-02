@@ -142,15 +142,19 @@ export async function runOrgExport(params: {
   /** Extra facts for the DATA_EXPORT row's details (the delivery channel, a
    *  scheduled destination and who configured it). */
   auditDetails?: Record<string, unknown>;
-  /** How the handed-out files are recorded (DEC-44 (A&O P3) §3). "list"
-   *  (default): DATA_EXPORT_FILES rows naming each one — an export handed to
-   *  a person. `{ destinationId }`: a push to a destination, a bucket or a
-   *  webhook — the files are named against that destination's ledger: what
-   *  was added or removed since its previous push (a chained delta), and a
-   *  new full list (a baseline) only when the chain since the last one would
-   *  grow past half the list or LEDGER_CHAIN_MAX_ROWS rows (recordExport).
-   *  Every file that left is named either way. */
-  fileRecord?: "list" | { destinationId: string };
+  /** Which ledger the handed-out files are named against (DEC-44 (A&O P3)
+   *  §3) — what was added or removed since that ledger's previous record (a
+   *  chained delta), and a new full list (a baseline) only when the chain
+   *  since the last one would grow past half the list or
+   *  LEDGER_CHAIN_MAX_ROWS rows (recordExport). "workspace" (default): an
+   *  export handed to a person — the JSON download, the browser-built Full
+   *  ZIP, the manual ZIP — on the workspace's own ledger, shared by every
+   *  person's export. `{ destinationId }`: a push to a destination, a bucket
+   *  or a webhook, scheduled or Run Now — on that destination's ledger.
+   *  Every file that left is named either way; neither writes the whole list
+   *  on every run (audit_logs is itself exported, and read whole by every
+   *  later export). */
+  fileRecord?: "workspace" | { destinationId: string };
   /** The record id this export's DATA_EXPORT row (and its file rows) carry —
    *  the caller's, so a delivery that fails later can be recorded against it
    *  (recordExportUndelivered). Default: a fresh one. */
@@ -338,10 +342,10 @@ export async function runOrgExport(params: {
   //    record. An export that cannot be recorded is refused before anything
   //    leaves. BKP-8 Done-when 3: the files the export hands out are named
   //    too (DATA_EXPORT_FILES), so the chain of custody names the drawings,
-  //    not just the event — one by one for an export handed to a person,
-  //    against the destination's ledger (what changed since its previous
-  //    push) for a push to a bucket or a webhook (`fileRecord`, DEC-44
-  //    (A&O P3) §3).
+  //    not just the event — against a ledger (what changed since its
+  //    previous record): the workspace's for an export handed to a person,
+  //    the destination's for a push to a bucket or a webhook (`fileRecord`,
+  //    DEC-44 (A&O P3) §3).
   await recordExport(sb, params, {
     startedAt,
     tableCount: tableCounts.length,
@@ -495,24 +499,39 @@ const EXPORT_FILE_ROWS_PER_INSERT = 10;
  *  destination's ledger through the audit_logs resource indexes
  *  (`audit_logs_resource_id_idx`, and `(resource_type, resource_id,
  *  timestamp DESC)` from 20260611) instead of filtering every
- *  DATA_EXPORT_FILES row of the workspace on its JSON details. A person's
- *  export keeps `resource_type` "org" and the workspace's id. */
+ *  DATA_EXPORT_FILES row of the workspace on its JSON details. */
 export const DESTINATION_FILES_RESOURCE_TYPE = "export_destination";
-/** DEC-44 (A&O P3) §3: a destination's ledger rows (its baselines and
- *  deltas) are machine rows — user_id NULL, this label in user_email — and
- *  the ledger reads only rows with user_id NULL. audit_logs_insert
- *  (20260813) admits a member's insert only with user_id = auth.uid(), so no
- *  member can write a row the ledger would read (a forged "baseline" dated
- *  2099 used to force a full list every night); only the service role can.
- *  The person behind a Run Now is on the DATA_EXPORT row and in each ledger
- *  row's details.exportedBy. */
+/** DEC-44 (A&O P3) §3: the `resource_type` of the workspace's own ledger —
+ *  the DATA_EXPORT_FILES rows of every export handed to a person (the JSON
+ *  download, the browser-built Full ZIP, the manual ZIP), whose
+ *  `resource_id` is the workspace's id; found by the same indexes. The fifth
+ *  review fix pass moved a person's export onto it: it wrote its whole list
+ *  (about 150 bytes a file) on every run, so a daily Full ZIP of a
+ *  20,000-file workspace grew audit_logs — itself exported, and read whole
+ *  by every later export — by about 1 GB a year. */
+export const WORKSPACE_FILES_RESOURCE_TYPE = "org_export_ledger";
+/** The ledger an export's files are named against: its rows' `resource_type`
+ *  and `resource_id`. */
+export interface ExportLedgerKey {
+  resourceType: string;
+  resourceId: string;
+}
+/** DEC-44 (A&O P3) §3: every ledger's rows (its baselines and deltas — a
+ *  destination's or the workspace's) are machine rows — user_id NULL, this
+ *  label in user_email — and the ledger reads only rows with user_id NULL.
+ *  audit_logs_insert (20260813) admits a member's insert only with user_id =
+ *  auth.uid(), so no member can write a row the ledger would read (a forged
+ *  "baseline" dated 2099 used to force a full list every night); only the
+ *  service role can. The person behind an export (a person's download, a Run
+ *  Now) is on its DATA_EXPORT row — user_id, the role the surface admitted
+ *  them by, the list's sha256 — and in each ledger row's details.exportedBy. */
 export const EXPORT_LEDGER_ACTOR = { email: "system:export-ledger", role: "system" } as const;
-/** DEC-44 (A&O P3) §3: a destination's chain of deltas is re-based — a new
+/** DEC-44 (A&O P3) §3: a ledger's chain of deltas is re-based — a new
  *  baseline written — once the chain since the last baseline, with
  *  tonight's change, would name more than this fraction of tonight's list
  *  (and at least one row's worth, EXPORT_FILES_PER_AUDIT_ROW). Over any run
- *  of nights the ledger then writes at most (1 + 1/fraction) = 3 entries per
- *  changed file, never the whole list per night. */
+ *  of exports the ledger then writes at most (1 + 1/fraction) = 3 entries
+ *  per changed file, never the whole list per export. */
 export const LEDGER_CHAIN_ENTRY_FRACTION = 0.5;
 /** …or would span more than this many rows: the most the next push reads
  *  back of the chain (a trickle of one change a night re-bases every 400
@@ -581,13 +600,13 @@ export function fileListRemoved(details: unknown): string[] {
   return (Array.isArray(d.removed) ? d.removed : []).filter((p): p is string => typeof p === "string").map((p) => prefix + p);
 }
 
-/** DEC-44 (A&O P3) §3: a destination's ledger as its next push finds it —
- *  its newest baseline (a full list, the DATA_EXPORT_FILES rows of kind
- *  "baseline" one push wrote) and the chain of deltas since (each the rows
- *  of kind "delta" one push wrote, naming what was added and removed since
- *  the push before it, `prev`), read back whole and checked against the
- *  digest the chain's newest record carries. */
-export interface DestinationLedger {
+/** DEC-44 (A&O P3) §3: a ledger (a destination's, or the workspace's) as
+ *  its next export finds it — its newest baseline (a full list, the
+ *  DATA_EXPORT_FILES rows of kind "baseline" one export wrote) and the chain
+ *  of deltas since (each the rows of kind "delta" one export wrote, naming
+ *  what was added and removed since the record before it, `prev`), read back
+ *  whole and checked against the digest the chain's newest record carries. */
+export interface ExportLedger {
   baseline: { recordId: string; startedAt: string; sha256: string };
   /** The newest record on the chain — the baseline itself when no delta has
    *  followed it: the list the next delta is computed against. */
@@ -601,14 +620,15 @@ export interface DestinationLedger {
   paths: Set<string>;
 }
 
-/** The destination's ledger. `ledger` null with no `problem`: the
- *  destination has none yet. With a `problem`: one exists but could not be
- *  read whole, or does not hash to its own digest — the caller writes a new
- *  full list (the safe side: every file is named again), never a delta
- *  against a list it cannot vouch for.
+/** A ledger, by its key. `ledger` null with no `problem`: there is none
+ *  yet. With a `problem`: one exists but could not be read whole, or does
+ *  not hash to its own digest — the caller writes a new full list (the safe
+ *  side: every file is named again), never a delta against a list it cannot
+ *  vouch for.
  *
- *  Every read goes through the destination's own rows (`resource_type`
- *  DESTINATION_FILES_RESOURCE_TYPE, `resource_id` the destination), newest
+ *  Every read goes through the ledger's own rows (`resource_type` and
+ *  `resource_id` from its key — DESTINATION_FILES_RESOURCE_TYPE and the
+ *  destination, or WORKSPACE_FILES_RESOURCE_TYPE and the workspace), newest
  *  first by `timestamp`, the order of the resource-timeline index; and every
  *  read takes only machine rows (`user_id` NULL — EXPORT_LEDGER_ACTOR: no
  *  member can write one) dated no later than now (plus a minute's clock
@@ -618,15 +638,15 @@ export interface DestinationLedger {
  *  LEDGER_CHAIN_READ_LIMIT. The chain is walked from its newest record back
  *  along `prev` to the baseline, so a record a concurrent push wrote off the
  *  path is passed over. */
-export async function readDestinationLedger(
+export async function readExportLedger(
   sb: Pick<SupabaseClient, "from">,
   orgId: string,
-  destinationId: string,
-): Promise<{ ledger: DestinationLedger | null; problem?: string }> {
+  key: ExportLedgerKey,
+): Promise<{ ledger: ExportLedger | null; problem?: string }> {
   const ceiling = new Date(Date.now() + LEDGER_CLOCK_ALLOWANCE_MS).toISOString();
   const head = await sb.from("audit_logs")
     .select("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt")
-    .eq("resource_type", DESTINATION_FILES_RESOURCE_TYPE).eq("resource_id", destinationId)
+    .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
     .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
     .eq("details->>kind", "baseline")
     .order("timestamp", { ascending: false }).limit(1);
@@ -646,7 +666,7 @@ export async function readDestinationLedger(
   const seen = new Set<number>();
   for (let from = 0; from < parts; from += LEDGER_PART_PAGE) {
     const page = await sb.from("audit_logs").select("details")
-      .eq("resource_type", DESTINATION_FILES_RESOURCE_TYPE).eq("resource_id", destinationId)
+      .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
       .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
       .eq("details->>recordId", recordId)
       .order("details->>part", { ascending: true })
@@ -667,7 +687,7 @@ export async function readDestinationLedger(
 
   // The chain since it.
   const chain = await sb.from("audit_logs").select("details")
-    .eq("resource_type", DESTINATION_FILES_RESOURCE_TYPE).eq("resource_id", destinationId)
+    .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
     .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
     .eq("details->>kind", "delta").eq("details->>baselineId", recordId)
     .order("timestamp", { ascending: false }).limit(LEDGER_CHAIN_READ_LIMIT);
@@ -720,27 +740,46 @@ export async function readDestinationLedger(
   };
 }
 
+/** A destination's ledger (readExportLedger). */
+export function readDestinationLedger(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+  destinationId: string,
+): Promise<{ ledger: ExportLedger | null; problem?: string }> {
+  return readExportLedger(sb, orgId, { resourceType: DESTINATION_FILES_RESOURCE_TYPE, resourceId: destinationId });
+}
+
+/** The workspace's own ledger — every person's export (readExportLedger). */
+export function readWorkspaceLedger(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+): Promise<{ ledger: ExportLedger | null; problem?: string }> {
+  return readExportLedger(sb, orgId, { resourceType: WORKSPACE_FILES_RESOURCE_TYPE, resourceId: orgId });
+}
+
 /** The DATA_EXPORT row, then the DATA_EXPORT_FILES rows naming every file the
  *  export hands out (a presigned URL in the envelope; the server ZIP embeds
  *  from those URLs) — with the document and revision for a revision's file,
  *  so a recall can ask "who took which drawing". Each row's list is compact
  *  (CompactFileList; fileListEntries reads it back). DEC-44 (A&O P3) §3:
- *  - "list" (an export handed to a person): every file, 500 to a row, on
- *    every run — the person's own rows;
- *  - `{ destinationId }` (a push to a destination — a bucket or a webhook,
- *    scheduled or Run Now): against the destination's ledger
- *    (readDestinationLedger), a "delta" naming what was added and removed
- *    since its previous push — 500 entries to a row, none when nothing
- *    changed — chained to that push (`prev`) and to the baseline
- *    (`baselineId`); or a new "baseline" naming every file when there is no
- *    ledger it can vouch for, or when the chain with tonight's change would
- *    name more than LEDGER_CHAIN_ENTRY_FRACTION of the list or take more
- *    than LEDGER_CHAIN_MAX_ROWS rows. The night's list is the baseline with
- *    the chain applied, and hashes to the DATA_EXPORT row's sha256. These
- *    rows are the destination's (`resource_type`
- *    DESTINATION_FILES_RESOURCE_TYPE, `resource_id` its id) and machine rows
- *    (EXPORT_LEDGER_ACTOR), so the next push finds them by index and no
- *    member can forge one.
+ *  every export names its files against a ledger (readExportLedger) — the
+ *  workspace's (`fileRecord` "workspace", the default: an export handed to
+ *  a person, `resource_type` WORKSPACE_FILES_RESOURCE_TYPE and the
+ *  workspace's id) or a destination's (`{ destinationId }`: a push to a
+ *  bucket or a webhook, scheduled or Run Now, DESTINATION_FILES_RESOURCE_TYPE
+ *  and the destination's id). Against it the export writes a "delta" naming
+ *  what was added and removed since the ledger's previous record — 500
+ *  entries to a row, none when nothing changed — chained to that record
+ *  (`prev`) and to the baseline (`baselineId`); or a new "baseline" naming
+ *  every file when there is no ledger it can vouch for, or when the chain
+ *  with this export's change would name more than LEDGER_CHAIN_ENTRY_FRACTION
+ *  of the list or take more than LEDGER_CHAIN_MAX_ROWS rows. The export's
+ *  list is the baseline with the chain applied, and hashes to its
+ *  DATA_EXPORT row's sha256. The ledger rows are machine rows
+ *  (EXPORT_LEDGER_ACTOR, the exporter in details.exportedBy), so the next
+ *  export finds them by index and no member can forge one; who took the
+ *  export — the person, the role the surface admitted them by — is on the
+ *  DATA_EXPORT row, whose record a recall rebuilds the list of.
  *  The DATA_EXPORT row is written first; `onRecorded` is called once it is.
  *  Every insert is CHECKED and throws: the caller refuses the export
  *  (BKP-13). A machine run (no exporter uid) carries user_id NULL and the
@@ -750,7 +789,7 @@ async function recordExport(
   sb: SupabaseClient,
   params: {
     orgId: string; exporterUserId: string | null; exporterEmail: string; exporterRole?: string | null;
-    auditDetails?: Record<string, unknown>; fileRecord?: "list" | { destinationId: string };
+    auditDetails?: Record<string, unknown>; fileRecord?: "workspace" | { destinationId: string };
     recordId?: string; onRecorded?: (recordId: string) => void;
   },
   info: {
@@ -812,55 +851,54 @@ async function recordExport(
     }));
   };
 
+  // The ledger this export names its files against, and whose it is (on the
+  // DATA_EXPORT row's fileRecord and on each ledger row).
+  const destinationId = params.fileRecord && typeof params.fileRecord === "object" ? params.fileRecord.destinationId : null;
+  const ledgerKey: ExportLedgerKey = destinationId
+    ? { resourceType: DESTINATION_FILES_RESOURCE_TYPE, resourceId: destinationId }
+    : { resourceType: WORKSPACE_FILES_RESOURCE_TYPE, resourceId: params.orgId };
+  const owner: Record<string, unknown> = destinationId ? { destinationId } : { ledger: "workspace" };
+  const resource = { resource_id: ledgerKey.resourceId, resource_type: ledgerKey.resourceType };
+  const fileActor = { org_id: params.orgId, user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, user_role: EXPORT_LEDGER_ACTOR.role };
+  const exportedBy = { userId: params.exporterUserId, email: params.exporterEmail };
   let fileRecord!: Record<string, unknown>;
   let fileRows!: Array<Record<string, unknown>>;
-  let fileActor: Record<string, unknown> = actor;
-  let resource: { resource_id: string; resource_type: string } = { resource_id: params.orgId, resource_type: "org" };
-  if (params.fileRecord && typeof params.fileRecord === "object") {
-    const { destinationId } = params.fileRecord;
-    resource = { resource_id: destinationId, resource_type: DESTINATION_FILES_RESOURCE_TYPE };
-    fileActor = { org_id: params.orgId, user_id: null, user_email: EXPORT_LEDGER_ACTOR.email, user_role: EXPORT_LEDGER_ACTOR.role };
-    const exportedBy = { userId: params.exporterUserId, email: params.exporterEmail };
-    const { ledger, problem } = await readDestinationLedger(sb, params.orgId, destinationId);
-    let rebased: string | null = null;
-    if (ledger) {
-      const current = new Set(paths);
-      const added = paths.filter((p) => !ledger.paths.has(p));
-      const removed = [...ledger.paths].filter((p) => !current.has(p)).sort();
-      const changes = added.length + removed.length;
-      const rowsTonight = Math.ceil(changes / EXPORT_FILES_PER_AUDIT_ROW);
-      const entryCap = Math.max(Math.ceil(paths.length * LEDGER_CHAIN_ENTRY_FRACTION), EXPORT_FILES_PER_AUDIT_ROW);
-      if (ledger.entries + changes <= entryCap && ledger.rows + rowsTonight <= LEDGER_CHAIN_MAX_ROWS) {
-        const base = { recordId: ledger.baseline.recordId, startedAt: ledger.baseline.startedAt, sha256: ledger.baseline.sha256 };
-        const link = ledger.links + (changes > 0 ? 1 : 0);
-        fileRecord = {
-          mode: "delta", destinationId, count: paths.length, sha256, recordId, baseline: base,
-          prev: ledger.head.recordId, link, added: added.length, removed: removed.length,
-        };
-        fileRows = Array.from({ length: rowsTonight }, (_, i) => {
-          const from = i * EXPORT_FILES_PER_AUDIT_ROW;
-          const to = from + EXPORT_FILES_PER_AUDIT_ROW;
-          const a = added.length;
-          return {
-            kind: "delta", destinationId, recordId, startedAt: info.startedAt, baselineId: base.recordId,
-            prev: ledger.head.recordId, link, sha256, part: i + 1, parts: rowsTonight, exportedBy,
-            ...compact(added.slice(Math.min(from, a), Math.min(to, a)), removed.slice(Math.max(from - a, 0), Math.max(to - a, 0))),
-          };
-        });
-      } else {
-        rebased = `the changes since the last full list (${ledger.baseline.recordId}) would name ${ledger.entries + changes} file(s) in ${ledger.rows + rowsTonight} row(s), past the chain's cap of ${entryCap} or ${LEDGER_CHAIN_MAX_ROWS} rows`;
-      }
-    }
-    if (!ledger || rebased) {
+  const { ledger, problem } = await readExportLedger(sb, params.orgId, ledgerKey);
+  let rebased: string | null = null;
+  if (ledger) {
+    const current = new Set(paths);
+    const added = paths.filter((p) => !ledger.paths.has(p));
+    const removed = [...ledger.paths].filter((p) => !current.has(p)).sort();
+    const changes = added.length + removed.length;
+    const rowsTonight = Math.ceil(changes / EXPORT_FILES_PER_AUDIT_ROW);
+    const entryCap = Math.max(Math.ceil(paths.length * LEDGER_CHAIN_ENTRY_FRACTION), EXPORT_FILES_PER_AUDIT_ROW);
+    if (ledger.entries + changes <= entryCap && ledger.rows + rowsTonight <= LEDGER_CHAIN_MAX_ROWS) {
+      const base = { recordId: ledger.baseline.recordId, startedAt: ledger.baseline.startedAt, sha256: ledger.baseline.sha256 };
+      const link = ledger.links + (changes > 0 ? 1 : 0);
       fileRecord = {
-        mode: "baseline", destinationId, count: paths.length, sha256, recordId,
-        ...(problem ? { baselineProblem: problem } : {}), ...(rebased ? { rebased } : {}),
+        mode: "delta", ...owner, count: paths.length, sha256, recordId, baseline: base,
+        prev: ledger.head.recordId, link, added: added.length, removed: removed.length,
       };
-      fileRows = chunked({ kind: "baseline", destinationId, sha256, exportedBy });
+      fileRows = Array.from({ length: rowsTonight }, (_, i) => {
+        const from = i * EXPORT_FILES_PER_AUDIT_ROW;
+        const to = from + EXPORT_FILES_PER_AUDIT_ROW;
+        const a = added.length;
+        return {
+          kind: "delta", ...owner, recordId, startedAt: info.startedAt, baselineId: base.recordId,
+          prev: ledger.head.recordId, link, sha256, part: i + 1, parts: rowsTonight, exportedBy,
+          ...compact(added.slice(Math.min(from, a), Math.min(to, a)), removed.slice(Math.max(from - a, 0), Math.max(to - a, 0))),
+        };
+      });
+    } else {
+      rebased = `the changes since the last full list (${ledger.baseline.recordId}) would name ${ledger.entries + changes} file(s) in ${ledger.rows + rowsTonight} row(s), past the chain's cap of ${entryCap} or ${LEDGER_CHAIN_MAX_ROWS} rows`;
     }
-  } else {
-    fileRecord = { mode: "list", count: paths.length, sha256, recordId };
-    fileRows = chunked({});
+  }
+  if (!ledger || rebased) {
+    fileRecord = {
+      mode: "baseline", ...owner, count: paths.length, sha256, recordId,
+      ...(problem ? { baselineProblem: problem } : {}), ...(rebased ? { rebased } : {}),
+    };
+    fileRows = chunked({ kind: "baseline", ...owner, sha256, exportedBy });
   }
 
   const { error } = await sb.from("audit_logs").insert({
@@ -908,9 +946,9 @@ async function recordExport(
  *  DATA_EXPORT row and its file list also finds that nothing reached the
  *  other end. A machine row (user_id NULL, so no member can write one that
  *  unsays a delivered export); the person is in details.exportedBy. A
- *  destination's ledger may still chain from the undelivered record — its
- *  list is what the push carried, whether or not it arrived; the
- *  UNDELIVERED row is what says it did not. Returns null once written, else
+ *  ledger (the workspace's or a destination's) may still chain from the
+ *  undelivered record — its list is what the export carried, whether or not
+ *  it arrived; the UNDELIVERED row is what says it did not. Returns null once written, else
  *  why it was not (CHECKED: the caller names it with the failure). */
 export async function recordExportUndelivered(
   sb: Pick<SupabaseClient, "from">,

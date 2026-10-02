@@ -102,8 +102,14 @@ export default function DataExportPage() {
         fetch(`/api/data-export/destinations?orgId=${activeOrgId}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/data-export/runs?orgId=${activeOrgId}&limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
+      // A list that could not be read is said, never shown as an empty one
+      // (an Admin seeing "no destinations" may set one up again).
+      const unread: string[] = [];
       if (destRes.ok) setDestinations((await destRes.json()).destinations || []);
+      else unread.push(`Export destinations could not be loaded: ${await destRes.text()}`);
       if (runRes.ok) setRuns((await runRes.json()).runs || []);
+      else unread.push(`Export history could not be loaded: ${await runRes.text()}`);
+      if (unread.length) setError(unread.join(" "));
     } catch (e) {
       setError((e as Error).message);
     } finally { setLoading(false); }

@@ -6,7 +6,10 @@
 //            and are logged + recorded as warnings when the flag is off.
 //   XEDGE-8  ONE shared plan gate (lib/exportEntitlement.ts) for POST, PATCH
 //            and the runner — PATCHing a bucket onto a Starter org's
-//            destination is 402.
+//            destination is 402 (admin-and-org Round G P3, fifth review fix:
+//            judged against the stored row — the same bucket sent back is
+//            not gated, so an Admin can save a destination to confirm it;
+//            pinned in lib/__tests__/dataExportRoutes.test.ts).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -267,7 +270,8 @@ describe("the plan gate on PATCH and POST (XEDGE-8)", () => {
     const res = await patch({ bucket: "their-bucket", endpoint: "https://s3.example", access_key_id: "AK", secret_access_key: "SK", schedule_kind: "daily" });
     expect(res.status).toBe(402);
     expect((await res.json()).error).toBe(CLOUD_BUCKET_REFUSAL);
-    expect(logged("export_destinations")).toEqual([]);
+    // the stored row is read (the gate judges the change against it); nothing is written
+    expect(logged("export_destinations").filter((l) => l.calls.some((c) => c.m === "update" || c.m === "insert"))).toEqual([]);
     expect(logged("audit_logs")).toEqual([]);
   });
 

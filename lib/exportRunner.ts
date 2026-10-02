@@ -29,16 +29,28 @@ import { lookup } from "node:dns/promises";
 
 type DiagnosticStep = { ts: string; step: string; detail?: string };
 
-/** The cap on full exports one workspace may start in an hour, counted on
- *  export_runs: the manual run (download or destination), the JSON export
- *  (`structured` — the download and the first step of the browser-built
- *  Full ZIP; it opens a run row of its own so it is counted, admin-and-org
- *  BKP-8 / DEC-44 (A&O P3) Risk), and the scheduled pushes in that hour. */
+/** The cap on full exports people may start in one workspace in an hour,
+ *  counted on export_runs: the manual run (download or destination) and the
+ *  JSON export (`structured` — the download and the first step of the
+ *  browser-built Full ZIP; it opens a run row of its own so it is counted,
+ *  admin-and-org BKP-8 / DEC-44 (A&O P3) Risk). */
 export const MAX_EXPORT_RUNS_PER_HOUR = 12;
 
-/** A person's export start, held to MAX_EXPORT_RUNS_PER_HOUR. The count is
- *  read CHECKED: a count that cannot be read refuses (503) — read as 0, it
- *  would let a tight loop past the cap. Null when the export may start. */
+/** The export_runs a person's cap counts: the runs people started
+ *  (trigger_type "manual"; "api" is the schema's other person-started
+ *  value), whatever their outcome — a failed attempt still ran the export —
+ *  except a cancelled row. Never the scheduled pushes, nor a scheduled run
+ *  the gate skipped (a cancelled row): the fifth review fix pass found five
+ *  daily destinations at 05:00 plus their gate skips refusing an Admin's
+ *  JSON export or Full ZIP (429), which no cap refused before this
+ *  package. */
+export const RATE_LIMITED_TRIGGERS = ["manual", "api"] as const;
+export const RATE_LIMITED_STATUSES = ["pending", "running", "succeeded", "failed"] as const;
+
+/** A person's export start, held to MAX_EXPORT_RUNS_PER_HOUR (the runs
+ *  RATE_LIMITED_TRIGGERS and RATE_LIMITED_STATUSES name). The count is read
+ *  CHECKED: a count that cannot be read refuses (503) — read as 0, it would
+ *  let a tight loop past the cap. Null when the export may start. */
 export async function exportRateLimitRefusal(
   admin: Pick<SupabaseClient, "from">,
   orgId: string,
@@ -48,6 +60,8 @@ export async function exportRateLimitRefusal(
     .from("export_runs")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId)
+    .in("trigger_type", [...RATE_LIMITED_TRIGGERS])
+    .in("status", [...RATE_LIMITED_STATUSES])
     .gte("started_at", oneHourAgo);
   if (error || typeof count !== "number") {
     return {
@@ -314,15 +328,15 @@ async function buildAndDeliver(
     exporterEmail: params.exporterEmail,
     exporterRole: params.exporterRole,
     auditDetails: params.auditDetails,
-    // DEC-44 (A&O P3) §3: every file that leaves is named. A ZIP handed to a
-    // person names each one on every run; a push to a destination — a bucket
-    // or a webhook, scheduled or Run Now — names them against that
-    // destination's ledger (what was added or removed since its previous
-    // push), so a nightly push does not grow the audit trail (itself
-    // exported, and read whole by every later export) by the whole list.
+    // DEC-44 (A&O P3) §3: every file that leaves is named, against a ledger
+    // (what was added or removed since its previous record): a ZIP handed to
+    // a person against the workspace's, a push to a destination — a bucket
+    // or a webhook, scheduled or Run Now — against that destination's. So no
+    // export grows the audit trail (itself exported, and read whole by every
+    // later export) by the whole list.
     fileRecord: params.delivery.kind === "destination"
       ? { destinationId: params.delivery.destination.id }
-      : "list",
+      : "workspace",
     recordId,
     onRecorded,
     deadlineAt,

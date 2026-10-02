@@ -33,6 +33,13 @@
 // The DATA_EXPORT row's user_role is the role the data-export surface
 // admitted the exporter by (an Admin whose headline is Viewer is recorded as
 // Admin); the full collection is in details.exporterRoles.
+//
+// DEC-44 (A&O P3) §1: Run Now does not confirm a destination (it does not
+// stamp updated_by; saving it does), so a destination a Manager or DocCtrl
+// last saved keeps the request to confirm it on its card after a Run Now,
+// succeeded or failed (lib/exportAlerts.ts destinationConfirmation — the read
+// the nightly sweep makes; fifth review fix: Run Now wiped it, and the card
+// read as a clean success until the next night).
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -40,7 +47,7 @@ export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, exportRateLimitRefusal, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
-import { alertAdminsOfExport } from "@/lib/exportAlerts";
+import { alertAdminsOfExport, destinationConfirmation, unconfirmedNote } from "@/lib/exportAlerts";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 
 type ScheduleParams = Parameters<typeof computeNextRunAt>[0];
@@ -52,7 +59,17 @@ type ScheduledDestination = ExportDestination & {
   schedule_hour_utc?: ScheduleParams["schedule_hour_utc"];
   schedule_day_of_week?: ScheduleParams["schedule_day_of_week"];
   schedule_day_of_month?: ScheduleParams["schedule_day_of_month"];
+  created_by?: string | null;
+  updated_by?: string | null;
 };
+
+/** DEC-44 (A&O P3) §1: the card's request to confirm a destination its last
+ *  configurer could not set up today, or null (also when that could not be
+ *  read: the sweep says so the next night). */
+async function confirmationNoteFor(admin: Parameters<typeof destinationConfirmation>[0], dest: ScheduledDestination): Promise<string | null> {
+  const c = await destinationConfirmation(admin, dest);
+  return c.unconfirmed ? unconfirmedNote(c.unconfirmed) : null;
+}
 
 interface RunBody {
   orgId: string;
@@ -187,11 +204,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (dest) {
-      // Update destination summary + advance the schedule clock
+      // Update destination summary + advance the schedule clock; the card
+      // keeps an unconfirmed destination's request to confirm it.
+      const confirmNote = await confirmationNoteFor(auth.admin, dest);
+      const cardNote = [retentionNote, confirmNote].filter(Boolean).join(" ") || null;
       const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
-        last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
+        last_run_error: cardNote ? cardNote.slice(0, 500) : null,
         last_run_bytes: result.bytes,
         next_run_at: computeNextRunAt({
           schedule_kind: dest.schedule_kind,
@@ -210,7 +230,7 @@ export async function POST(req: NextRequest) {
         bytes: result.bytes,
         fileCount: result.fileCount,
         destinationPath: result.destinationPath,
-        ...(unrecorded.length ? { warnings: unrecorded } : {}),
+        ...(unrecorded.length || confirmNote ? { warnings: [...(confirmNote ? [confirmNote] : []), ...unrecorded] } : {}),
       });
     }
 
@@ -267,10 +287,13 @@ export async function POST(req: NextRequest) {
       if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
     }
     if (dest) {
+      const confirmNote = await confirmationNoteFor(auth.admin, dest);
       const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "failed",
-        last_run_error: msg.slice(0, 500),
+        last_run_error: confirmNote
+          ? `${msg.slice(0, Math.max(0, 500 - confirmNote.length - 1))} ${confirmNote}`.slice(0, 500)
+          : msg.slice(0, 500),
       }).eq("id", dest.id);
       if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
     }

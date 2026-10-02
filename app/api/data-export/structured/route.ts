@@ -15,14 +15,16 @@
 // by (the gate's admittedRole: an Admin whose headline is Viewer is recorded
 // as Admin), the full collection in details.exporterRoles.
 //
-// Fourth review fix (BKP-8 / DEC-44 (A&O P3) Risk): every call writes the
-// export's whole file list to audit_logs, so it is held to the hourly cap
-// the manual run is (lib/exportRunner.ts exportRateLimitRefusal, counted on
-// export_runs): it opens a run row of its own — read and written CHECKED, a
-// refused one refuses the export (503) — and closes it with the outcome; a
-// refused closing write is named in X-Export-Unrecorded. An export whose
-// DATA_EXPORT row was written but which then failed (its file list refused)
-// is recorded as not delivered (DATA_EXPORT_UNDELIVERED).
+// Fourth review fix (BKP-8 / DEC-44 (A&O P3) Risk): it is held to the hourly
+// cap the manual run is (lib/exportRunner.ts exportRateLimitRefusal, counted
+// on the export_runs people started — fifth review fix: never the scheduled
+// pushes or their gate skips): it opens a run row of its own — read and
+// written CHECKED, a refused one refuses the export (503) — and closes it
+// with the outcome; a refused closing write is named in X-Export-Unrecorded.
+// Its files are named against the workspace's ledger (lib/dataExport.ts
+// recordExport — fifth review fix: was its whole list on every call). An
+// export whose DATA_EXPORT row was written but which then failed (its file
+// list refused) is recorded as not delivered (DATA_EXPORT_UNDELIVERED).
 
 import { NextRequest, NextResponse } from "next/server";
 
