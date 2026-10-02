@@ -373,7 +373,8 @@ describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
 });
 
 describe("revoke_member's grant strip — NOT holding at HEAD (proposed finding in ALOG-12's record; owner admin-and-org P8)", () => {
-  // The newest definition, as P8 must re-create it (20261043 on f1ac550).
+  // The newest definition, as P8 must re-create it (20261043 on f1ac550;
+  // 20261161 since notifications N5 — this test scans, so it follows).
   const newestRevokeMember = () => {
     const dir = join(process.cwd(), "supabase", "migrations");
     const re = /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:public\.)?revoke_member\s*\(/i;

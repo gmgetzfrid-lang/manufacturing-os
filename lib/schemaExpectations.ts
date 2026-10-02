@@ -241,6 +241,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // intelligence I-06b (ING-13): until it is pasted a reset records no owed
   // AI-vision pages and a keyless batch commits such a page text-only.
   { table: "knowledge_documents", column: "vision_owed_pages", migration: "20261162_intel_roundG_ingest_owed_vision.sql", feature: "Knowledge ingest — the AI-vision pages a regenerated document owes (a keyless batch holds them for a key instead of committing them text-only)" },
+  // notifications N5 (NEDGE-7): until it is pasted a removed member's
+  // notifications are not tombstoned and the read scope is the old one.
+  { table: "notifications", column: "org_tombstoned_at", migration: "20261161_notif_roundG_read_scope.sql", feature: "Notifications read scope — a removed member's notifications are tombstoned and unreadable (NEDGE-7)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

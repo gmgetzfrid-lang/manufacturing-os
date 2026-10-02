@@ -308,7 +308,8 @@
     "public-surfaces VFY-15 (added at the PS-VERIFY merge 2026-10-01: a per-org effective-date time zone beyond the deployment's facility zone \u2014 the org settings page)",
     "ALOG-15 (opened by the integrator 2026-10-02 at the A&O P0 merge: revoke_member's grant strip stamps updated_at so the capability-policy route's compare-and-set sees it; flip the aoRoundGP0Records.test.ts tripwire to it)",
     "ORG-15 (opened by the integrator 2026-10-02 at the A&O P0 merge: /admin/users checks { error } on the members and pending-requests reads and shows an error state, never an empty roster or a missing card)",
-    "ORG-6 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 for 1 of 12 \u2014 acl_subject_in_bucket (20260708:21-39) has no SET search_path; one ALTER FUNCTION in P8's ORG-13 migration; flip the searchPathPin.test.ts it.fails tripwire)"
+    "ORG-6 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 for 1 of 12 \u2014 acl_subject_in_bucket (20260708:21-39) has no SET search_path; one ALTER FUNCTION in P8's ORG-13 migration; flip the searchPathPin.test.ts it.fails tripwire)",
+    "NEDGE-16 (notifications; opened by N5's second review fix 2026-10-02, owner assigned by the integrator at the N5 merge: after a restore every member is inactive and nothing asserts or repairs it \u2014 notifications reach nobody and, after 20261161, nobody can read their bell; a post-restore membership-integrity check that refuses or repairs an org left with no active Admin, with the restoring Admin kept active, and a test)"
    ],
    "files": [
     "app/(protected)/admin/libraries/page.tsx:183-198",
@@ -321,7 +322,7 @@
     "lib/teams.ts",
     "app/(protected)/admin/teams/page.tsx",
     "new migration A (ORG-13): inventory cross-org team_members rows, then trigger team_members.org_id = teams.org_id",
-    "new migration B (ORG-7 + ALOG-3 + ALOG-15): revoke_member re-created from its NEWEST definition (20261043 at 2026-10-02 \u2014 its \u00a70 fixed the active_collaborators type; re-creating from 20261042 brings back the 42804 bug that fails every member removal; find the newest by scanning supabase/migrations, lineDiff-tested) + ACL-rule pruning + the grant strip stamps updated_at (ALOG-15); optional library-delete audit trigger",
+    "new migration B (ORG-7 + ALOG-3 + ALOG-15): revoke_member re-created from its NEWEST definition (20261161 since the notifications N5 merge \u2014 found by scanning; N5 added the NEDGE-7 tombstone, pinned by a tripwire; it was 20261043 at 2026-10-02 \u2014 its \u00a70 fixed the active_collaborators type; re-creating from 20261042 brings back the 42804 bug that fails every member removal; find the newest by scanning supabase/migrations, lineDiff-tested) + ACL-rule pruning + the grant strip stamps updated_at (ALOG-15); optional library-delete audit trigger",
     "new lib/__tests__/adminOrgSurfaces.test.ts"
    ],
    "migrationsLikely": 2,

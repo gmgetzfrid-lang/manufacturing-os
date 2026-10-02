@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 109,
+    "findings": 113,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
-      "HIGH": 15,
-      "MEDIUM": 74,
+      "HIGH": 17,
+      "MEDIUM": 76,
       "LOW": 18
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 23,
-      "OPEN": 83
+      "RESOLVED": 28,
+      "OPEN": 82
     }
   },
   "status_vocabulary": [
@@ -175,7 +175,7 @@
       "id": "NEDGE-3",
       "title": "Deactivated members keep receiving both bell rows and email: the follower and email-lookup queries have no status filter, while the role-pool query does",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -260,7 +260,7 @@
       "id": "NEDGE-7",
       "title": "Removing a member deletes only the org_members row; the notifications RLS SELECT policy has no org-membership predicate, so a removed member keeps permanent read access to the full archive of alerts about documents they can no longer open",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -284,10 +284,56 @@
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
     },
     {
+      "id": "NEDGE-14",
+      "title": "The ticket comment and workflow-action routes still mail and bell suspended and inactive watchers: their own service-role fan-out has no membership filter",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the two routes at `f1ac550` / `b97e17c`: neither `fanOut` filters its recipients by membership, and neither email lookup has a status predicate)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/tickets/comment/route.ts",
+        "app/api/tickets/workflow-action/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An engineer who watches REQ-118 is suspended. A colleague comments on the ticket. The engineer's inbox receives the comment email, with the ticket label in the subject and the whole comment in the body. A bell row carrying the first 140 characters is also written for them. Once 20261161 is pasted they can no longer read that row. Until then, and in their email regardless, they keep receiving ticke",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-17",
+      "title": "The compliance digest reads one 2,000-row window across every org, unordered: a member's browser-legal compliance rows can push other tenants' overdue items out of their digest",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED. Reproduced on PostgreSQL 16 against `20261160` as it stands on `fleet/N5-dispatch-rails` (below).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/cron/maintenance/route.ts:569-577",
+        "supabase/migrations/20261160_notif_roundG_write_rails.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "At 14:00 a member of org A writes 2,400 ackrequested rows: 600 to each of four colleagues, each row about one of the org's real documents. Every row lands within every cap. At 03:00 the cron runs. The scans write the two overdue items of org B's Document Controller, then the digest reads 2,000 rows, 1,999 of them org A's. Org B's two lines are not in the read. That Document Controller's digest lis",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
       "id": "OS-1",
       "title": "Any active org member can insert unlimited notification rows for any other member, with arbitrary kind/title/body, and no rate limit exists on that path",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -552,7 +598,7 @@
       "id": "DELIV-6",
       "title": "Any active org member can plant a notification in anyone's bell with arbitrary title, body, link and actor_name — including actor_name 'System'",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -944,6 +990,55 @@
       ],
       "refuted": false,
       "summary": "A maintainer implementing the owner's request for login-time nudges reads lib/inAppNotifications.ts, sees morningdigest — composed daily digest: overdue + today + aging dateless with a comment describing exactly the feature they were asked to build, and concludes the composition already exists and just needs surfacing. It does not exist. Conversely, an operator whose workspace is 92% full receives",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-15",
+      "title": "The drafting handback route's \"deliverable submitted / published\" notice has never been delivered: it calls emit() on the unbound shared client",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading `app/api/tickets/handback/route.ts`. The route imports only `supabaseAdmin` and never wraps the `emit()` call in `runWithServerClient`. The same unbound-client path is driven for another `emit()` caller in `lib/__tests__/orchestratorExecute.test.ts`, which shows the dispatcher stopping at its membership read before any insert.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/tickets/handback/route.ts:103-117",
+        "lib/supabase.ts",
+        "lib/notify/dispatch.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drafter publishes the Final deliverable of REQ-204 as Rev C and the handback records it. The requester, the engineer and the ticket's watchers are never told: no bell row and no email. The route answers ok: true. The ticket's history shows the handback, but nobody is notified that the loop closed.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-16",
+      "title": "After a restore every member is inactive, and nothing asserts or repairs it: notifications reach nobody and, after 20261161, nobody can read their bell",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110`: a restore's members are created with `status: \"inactive\"`. Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/admin/restore/begin/route.ts:100",
+        "app/api/admin/restore/apply/route.ts:110",
+        "lib/notify/dispatch.ts",
+        "supabase/migrations/20261161_notif_roundG_read_scope.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin restores the plant's backup into a new workspace and invites the team. Holds are placed, revisions published and acknowledgments requested, and nobody hears about any of it, because every restored member is still inactive. No error appears anywhere.",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
     },
@@ -2496,7 +2591,7 @@
       "id": "DELIV-13",
       "title": "Users can rewrite and delete their own compliance notifications — the UPDATE policy has only USING, so the whole row is editable, not just read_at",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

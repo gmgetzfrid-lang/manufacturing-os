@@ -85,6 +85,60 @@ and route the legitimate client-side writers through a server route.
 ⚠ **`OS-1` is a prerequisite of any nudge feature.** A person-to-person poke on
 top of an unconstrained insert path is a harassment vector, not a feature.
 
+*Hand-off (2026-10-02, notifications Round G, N5 DISPATCH-AND-WRITE-HOLES →
+N8, N9, N12): the database's kind allowlist is a FUNCTION,
+`notification_kinds()` (`20261160`), not the planned reference table. A
+package that adds a kind to `lib/notificationKinds.ts` `KIND_META` also
+re-creates `notification_kinds()` in a migration of its own — from the NEWEST
+definition in `supabase/migrations` plus its new rows — and that migration is
+pasted BEFORE the deploy that writes the kind: once `20261160` is live, a
+browser's row of a kind the live function does not list is refused (22023)
+and only logged by `notify()`, so the notice is silently lost. N8
+(`milestone_*`, `access_request_*`) therefore needs one migration; N9's
+"INSERT the new kinds into notification_kinds" becomes that re-create; N12's
+nudge kind is added the same way. Two packages re-creating it in parallel:
+`lib/__tests__/notificationWriteRails.test.ts` pins the NEWEST definition to
+`KIND_META`, so the later-numbered one fails CI at merge until it carries both
+packages' kinds — and they are pasted in number order.*
+
+*Hand-off (2026-10-02, notifications Round G, N5 → N6) — **`NEDGE-14`**:
+`NEDGE-3`'s invariant — a suspended or inactive member gets neither bell row
+nor email — holds for every `emit()` producer but not for the two ticket
+routes' own service-role `fanOut` (`app/api/tickets/comment/route.ts`,
+`app/api/tickets/workflow-action/route.ts`; drafting-flow's files, whose
+`fanOut` builders N6 edits by plan). N6: both `fanOut` email lookups
+(`comment/route.ts:325`, `workflow-action/route.ts:692`) add
+`.eq("status", "active")`, and `fanOut`'s recipients are filtered to active
+members of the ticket's org before the bell insert (`activeMembersOf`,
+`lib/notify/recipients.ts`). Until then a suspended ticket watcher keeps
+getting comment and workflow emails; the bell rows are hidden from them once
+`20261161` is pasted. The integrator mirrors this in N6's `dependsOn` /
+`findings` in `audit-reports/fleet-plans/notifications.json` (N5 does not
+edit the plan).*
+
+*Hand-off (2026-10-02, notifications Round G, N5 third review fix → N6) —
+**`NEDGE-17`** (HIGH): the compliance digest's read
+(`app/api/cron/maintenance/route.ts` `queueComplianceDigests`) is cross-org,
+unordered and cut at `.limit(2000)`. Three compliance kinds stay
+browser-legal after `20261160` (`ack_requested`, `doc_superseded`,
+`review_requested`), so one member, within the caps, can fill the window in
+a minute and push other users' and other tenants' lines out of their digest.
+Reproduced on PostgreSQL 16. `DELIV-13`'s record said the opposite until
+this review. N6, which owns the route and already orders and pages this scan
+for `NEDGE-9` done-when 3: ordering with a global cap is not enough. Scope the
+read per (org, recipient), or page the whole window with no global cap, or —
+better — compose the digest from the obligation tables (`listMyPendingAcks`,
+pending reviews, due recertifications) instead of user-writable notification
+rows. The integrator adds `NEDGE-17` to N6's `findings` in
+`audit-reports/fleet-plans/notifications.json`.*
+
+*Opened by N5's second review fix (2026-10-02), not this area's to sequence
+alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs
+on the unbound shared client and has never delivered (drafting-flow's route);
+**`NEDGE-16`** — after a restore every member is `inactive` and nothing
+asserts or repairs it (the remainder of `NEDGE-3` done-when 3 that the plan
+pointed at admin-and-org P1, which merged without it).*
+
 ---
 
 ## Phase 2 — Stop the drops

@@ -487,7 +487,7 @@ lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cach
   - The CAPABILITY_POLICY_CHANGED row carries X's grant in both `before` and `after`, so it shows no grant change while the write re-adds one. *Overstated (integrator, at the merge, from the final review): the strip itself is audited — `trg_capability_policy_write_guard` writes its own `CAPABILITY_POLICY_CHANGED` row (`via: direct_write`) for `revoke_member`'s update; what the route's row does not show is the re-add.*
   - Nothing is admitted while X is not a member, because the evaluator refuses a non-member. If X is re-added, the grant is live again, contrary to `DEC-20`'s "grants die with the membership".
   - The window is one request's read-to-write span. Proposed severity: LOW.
-- Fix: set `updated_at = now()` in that `UPDATE`, in P8's re-creation of `revoke_member` (its plan's migration B, for `ORG-7`), starting from `20261043`, the newest definition. The route's existing compare-and-set then answers 409 in the race, with no route change.
+- Fix: set `updated_at = now()` in that `UPDATE`, in P8's re-creation of `revoke_member` (its plan's migration B, for `ORG-7`), starting from `20261043`, the newest definition. *(Integrator, at the notifications N5 merge, 2026-10-02: `revoke_member`'s newest definition is now `20261161` — N5 re-created it from `20261043` §0 verbatim plus the `NEDGE-7` notification tombstone, and a tripwire test fails if a later definition drops it. P8 re-creates it from `20261161`, found by scanning, never from `20261043`.)* The route's existing compare-and-set then answers 409 in the race, with no route change.
 - Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "the grant strip stamps updated_at, so the policy route's compare-and-set sees it". It reads the newest `revoke_member` in the migrations, and P8 flips it to `it`. A plain test beside it checks that the newest definition still strips grants by rewriting `data`.
 - This package does not open the finding, because doing so changes the area README's counts and `99-fix-sequencing.md`, which it does not edit. `ORG-3`'s proposed users-page finding is handled the same way.
 
@@ -607,7 +607,7 @@ components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** admin-and-org P8 (set `updated_at = now()` in `revoke_member`'s grant strip, in P8's re-creation of `revoke_member` from its newest definition, `20261043`) — by the integrator, 2026-10-02 (at the A&O P0 merge, from P0's proposed finding; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
+- **Assigned:** admin-and-org P8 (set `updated_at = now()` in `revoke_member`'s grant strip, in P8's re-creation of `revoke_member` from its newest definition, `20261043` — `20261161` since the notifications N5 merge) — by the integrator, 2026-10-02 (at the A&O P0 merge, from P0's proposed finding; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** access control / audit integrity
 - **Locations:**
@@ -621,7 +621,7 @@ components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "
 
 **Failure scenario.** Admin A removes member X, who holds a personal grant, while Admin B's save, grant or revoke is between the route's read (`:134`) and its compare-and-set (`:218`). The compare-and-set matches, and B's `after`, built from a `before` that still holds X's grant, writes it back. The audit trail does show the strip: `trg_capability_policy_write_guard` writes its own `CAPABILITY_POLICY_CHANGED` row (`via: direct_write`, with `before` and `after`) for `revoke_member`'s update. The route's following `CAPABILITY_POLICY_CHANGED` row then carries X's grant in both `before` and `after`, so the re-add itself is not shown as a change. Nothing is admitted while X is not a member, because the evaluator refuses a non-member. If X is re-added, the grant is live again, contrary to `DEC-20`. The window is one request's read-to-write span.
 
-**Remediation.** In P8's re-creation of `revoke_member` (its plan's migration for `ORG-7`), starting from `20261043`, the newest definition, set `updated_at = now()` in the grant-strip `UPDATE`. The route's existing compare-and-set then answers 409 in the race, with no route change.
+**Remediation.** In P8's re-creation of `revoke_member` (its plan's migration for `ORG-7`), starting from `20261043`, the newest definition (`20261161` since the notifications N5 merge — start from it), set `updated_at = now()` in the grant-strip `UPDATE`. The route's existing compare-and-set then answers 409 in the race, with no route change.
 
 **Done when.**
 - `revoke_member`'s grant strip stamps `updated_at`, re-created from its newest definition with a lineDiff test.

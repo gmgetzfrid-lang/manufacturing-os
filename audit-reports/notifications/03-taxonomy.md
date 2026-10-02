@@ -458,6 +458,7 @@ lib/orchestrator/tools.ts:509-511 -- `kind: "orchestrator_message",\n      title
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N8 PRODUCERS-FREE (done-when 2: the eleven raw inserts onto notify(), each file once its own package has merged; the census stays a ratchet, not ratified as the ban) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageAlerts.ts:56-65`, `lib/storageUsage.ts:250-258`, `lib/inAppNotifications.ts:10-58`, `supabase/migrations/20260621_in_app_notifications.sql:17`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified end to end — these kinds miss KIND_ICON (NotificationBell.tsx:166 falls back to `Bell`), fall through sectionForKind's default to 'other' (which no sidebar row badges), and match no KIND_GROUPS predicate, so groupOf() returns 'other' and no chip is rendered for them (AttentionFeed.tsx:144-158 only maps KIND_GROUPS).

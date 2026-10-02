@@ -29,6 +29,27 @@
 //
 // Server-safe: a type-only import, no client code — the cron and N5's
 // notification_kinds seed read it too.
+//
+// The database keeps a copy (N5, DEC-86): notification_kinds()
+// (20261160) lists every kind and its compliance flag, a browser's row of a
+// kind it does not list is refused, and the delete policy (20261161) keeps a
+// compliance kind dismiss-only. A kind added or re-flagged here needs a
+// migration that re-creates notification_kinds() to match;
+// lib/__tests__/notificationWriteRails.test.ts fails until the two agree.
+// Re-create it from its NEWEST definition plus the new rows, in the same
+// package as the entry here, and paste it BEFORE the deploy that writes the
+// kind: a browser's row of a kind the live function does not list is
+// refused and only logged (99-fix-sequencing.md, the N5 hand-off).
+//
+// A browser row names its writer (20261160, rule 1): once that migration is
+// live, a signed-in member's row whose actor_user_id is anyone else is
+// refused (42501) and only logged by notify(). So a browser producer passes
+// as `actorUserId` the signed-in member or nothing (the trigger stamps the
+// caller), never a stored uid (a document's owner, a ticket's requester, a
+// hold's opener), not even on someone's behalf. A function that forwards an
+// actor hands the same obligation to its callers.
+// lib/__tests__/notificationWriteRails.test.ts pins every producer's actor
+// and the callers one hop up (DEC-86 §2).
 
 import type { NotificationKind } from "@/lib/inAppNotifications";
 
