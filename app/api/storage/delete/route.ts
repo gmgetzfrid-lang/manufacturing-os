@@ -286,8 +286,9 @@ export async function DELETE(req: NextRequest) {
   // outside the revision's own two (judged above). Bucket-wide, as the orphan
   // sweep's reference set is (DEC-57). Fail closed: a read error, or a read a
   // server row cap cut short, refuses with nothing deleted and no custody row.
-  // The app's one caller (lib/costDocs.ts) deletes the cost_documents row
-  // first, so its key is named by nothing when it gets here.
+  // The app's one caller (lib/costDocs.ts uploadCostDoc) calls it only to
+  // clean up an upload whose cost_documents row insert failed, so no row ever
+  // named its key and it is named by nothing when it gets here.
   try {
     const elsewhere = await keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"]);
     if (elsewhere.size > 0) {

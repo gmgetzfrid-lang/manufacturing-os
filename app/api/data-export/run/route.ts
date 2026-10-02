@@ -9,12 +9,19 @@
 //
 // Admin-only (admin-and-org BKP-8): held to the data-export admin surface by
 // the one gate (lib/adminGate.ts; the role set lives in lib/adminSurfaces.ts).
+//
+// BKP-11 Done-when 3: "Run Now" fires a destination as surely as the
+// scheduler does, so it is held to the rule enabling one is: a bucket
+// destination needs both access keys, and a DISABLED webhook its signing
+// secret (lib/exportRunner.ts destinationCredentialGap). A restored row
+// arrives disabled with none of them, still naming the backup owner's URL;
+// it answers 409 here, with nothing sent and no run row opened.
 
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { authorizeAdminSurface } from "@/lib/adminGate";
-import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
+import { buildAndDeliverExport, computeNextRunAt, destinationCredentialGap, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { makeArchiveId } from "@/lib/archive";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
 
@@ -63,6 +70,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // The destination, read CHECKED before anything is opened or sent.
+  let dest: ScheduledDestination | null = null;
+  if (body.destinationId) {
+    const { data, error: destErr } = await auth.admin
+      .from("export_destinations")
+      .select("*")
+      .eq("id", body.destinationId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (destErr) return NextResponse.json({ error: `Could not read the destination (${destErr.message}) — nothing was run.` }, { status: 500 });
+    if (!data) return NextResponse.json({ error: "Destination not found" }, { status: 404 });
+    dest = data as ScheduledDestination;
+    const row = data as ScheduledDestination & { enabled?: boolean | null };
+    const gap = destinationCredentialGap(
+      row.destination_type,
+      { accessKey: !!row.access_key_id_encrypted, secretKey: !!row.secret_access_key_encrypted, webhookSecret: !!row.webhook_secret_encrypted },
+      { requireWebhookSecret: row.enabled !== true, then: "run it again" },
+    );
+    if (gap) return NextResponse.json({ error: gap }, { status: 409 });
+  }
+
   // Open a runs row up front so the UI can poll it
   const startedAt = new Date().toISOString();
   const { data: runRow } = await auth.admin.from("export_runs").insert({
@@ -75,18 +103,6 @@ export async function POST(req: NextRequest) {
     started_at: startedAt,
   }).select("id").single();
   const runId = (runRow as { id: string } | null)?.id;
-
-  let dest: ScheduledDestination | null = null;
-  if (body.destinationId) {
-    const { data } = await auth.admin
-      .from("export_destinations")
-      .select("*")
-      .eq("id", body.destinationId)
-      .eq("org_id", orgId)
-      .maybeSingle();
-    if (!data) return NextResponse.json({ error: "Destination not found" }, { status: 404 });
-    dest = data;
-  }
 
   try {
     const result = await buildAndDeliverExport({

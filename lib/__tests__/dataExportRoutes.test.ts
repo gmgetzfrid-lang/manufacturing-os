@@ -81,8 +81,10 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
   getSignedUrl: vi.fn(async (_c: unknown, cmd: { input: { Key: string } }) => `https://r2.test/${cmd.input.Key}`),
 }));
 
-import { runOrgExport, PRIVATE_NOTES_WITHHELD, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote } from "@/lib/dataExport";
-import { s3PurgeOlderThan, retentionProblem } from "@/lib/exportRunner";
+import { runOrgExport, PRIVATE_NOTES_WITHHELD, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest } from "@/lib/dataExport";
+import { s3PurgeOlderThan, retentionProblem, destinationCredentialGap } from "@/lib/exportRunner";
+import { planRestore } from "@/lib/dataRestore";
+import { ALERT_LINKS } from "@/lib/exportAlerts";
 import { encryptSecret } from "@/lib/serverCrypto";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { GET as structuredGET } from "@/app/api/data-export/structured/route";
@@ -201,7 +203,12 @@ describe("BKP-8 Done-when 2 — a standalone note is its author's, and never lea
     expect(env.manifest.tables.find((t) => t.name === "notes")).toEqual({ name: "notes", rowCount: 3 });
     expect(env.manifest.withheld).toEqual({ privateNotes: 1, reason: PRIVATE_NOTES_WITHHELD });
     expect(env.manifest.notes).toContain(`1 ${PRIVATE_NOTES_WITHHELD}`);
-    expect(env.manifest.complete).toBe(true);
+    // review fix: a backup that withholds rows does not claim to be complete
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.notes[0]).toBe(
+      "⚠ INCOMPLETE BACKUP — complete except 1 private note(s) withheld (manifest.withheld): a restore of this backup does not bring them back.",
+    );
+    expect(env.manifest.notes.join(" ")).not.toContain("This document is a complete export");
     // the photo only the private note named is not carried either
     expect(env.files.map((f) => f.path)).not.toContain(key("notes/n-private/photo.jpg"));
     expect(audits("DATA_EXPORT")[0].details).toMatchObject({ withheld: { privateNotes: 1 } });
@@ -213,6 +220,8 @@ describe("BKP-8 Done-when 2 — a standalone note is its author's, and never lea
     const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
     expect((env.tables.notes as Row[])).toHaveLength(3);
     expect(env.manifest.withheld).toBeUndefined();
+    expect(env.manifest.complete).toBe(true);
+    expect(env.manifest.notes[0]).toBe("This document is a complete export of every record this organization owns.");
     expect(env.manifest.notes.join(" ")).not.toContain(PRIVATE_NOTES_WITHHELD);
     expect(audits("DATA_EXPORT")[0].details).not.toHaveProperty("withheld");
   });
@@ -223,6 +232,16 @@ describe("BKP-8 Done-when 2 — a standalone note is its author's, and never lea
     for (const c of ["document_id", "project_id", "asset_id"]) expect(isPrivateNote({ [c]: "x" }), c).toBe(false);
     const sql = readFileSync(join(process.cwd(), "supabase/migrations/20260630_scratchpad_private.sql"), "utf8");
     expect(sql).toMatch(/notes\.document_id IS NULL\s+AND notes\.project_id IS NULL\s+AND notes\.asset_id\s+IS NULL\s+AND notes\.created_by = auth\.uid\(\)/);
+  });
+
+  it("the restore plan says the backup leaves the private notes out — as itself, not as tables that failed", async () => {
+    db.rows.notes = notes();
+    const env = await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" });
+    const plan = planRestore(env as never, { orgId: ORG, orgName: "Acme", members: [{ uid: "u-admin", email: "me@acme.com" }] });
+    expect(plan.warnings).toContain(
+      "This backup was marked INCOMPLETE — it leaves out 1 private note(s): scratchpad notes attached to no document, project or equipment, which only their authors can read. Restoring it does not bring them back.",
+    );
+    expect(plan.warnings.join(" ")).not.toMatch(/some tables were not exported/);
   });
 });
 
@@ -285,6 +304,42 @@ describe("BKP-8 Done-when 3 / BKP-13 Done-when 1 — the export is recorded, by 
     await expect(runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: "u-admin", exporterEmail: "me@acme.com" }))
       .rejects.toThrow(/list of files this export hands out could not be recorded in the audit trail \(row too big\) — it was refused/);
   });
+
+  it("DEC-44 (A&O P3) §3: a push to the workspace's own destination records ONE row — the file count and the digest of the sorted list — however many files", async () => {
+    db.rows.document_versions = versions(EXPORT_FILES_PER_AUDIT_ROW * 2 + 1);
+    const env = await runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
+      auditDetails: { channel: "scheduled" }, fileRecord: "digest",
+    });
+    expect(audits("DATA_EXPORT_FILES")).toEqual([]);
+    const row = audits("DATA_EXPORT");
+    expect(row).toHaveLength(1);
+    const paths = env.files.filter((f) => !!f.presignedUrl).map((f) => f.path);
+    expect(paths).toHaveLength(EXPORT_FILES_PER_AUDIT_ROW * 2 + 1);
+    expect(row[0].details).toMatchObject({
+      fileRecordRows: 0,
+      fileRecord: { mode: "digest", count: EXPORT_FILES_PER_AUDIT_ROW * 2 + 1, sha256: exportFileListDigest(paths) },
+    });
+    // the digest is of the SORTED list: the archive's own list, in any order, recomputes it
+    expect(exportFileListDigest([...paths].reverse())).toBe(exportFileListDigest(paths));
+    expect(exportFileListDigest(paths.slice(1))).not.toBe(exportFileListDigest(paths));
+  });
+
+  it("…so thirty nightly pushes add thirty audit rows, not thirty per-file lists (audit_logs is itself exported)", async () => {
+    db.rows.document_versions = versions(1200);
+    for (let night = 0; night < 30; night++) {
+      await runOrgExport({ supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", fileRecord: "digest" });
+    }
+    expect(audits("DATA_EXPORT")).toHaveLength(30);
+    expect(audits("DATA_EXPORT_FILES")).toEqual([]);
+  });
+
+  it("the server ZIP asks for the digest only when it delivers to a destination; a ZIP handed to a person names each file", () => {
+    const src = readFileSync(join(process.cwd(), "lib/exportRunner.ts"), "utf8");
+    expect(src).toMatch(/fileRecord: params\.delivery\.kind === "destination" \? "digest" : "list",/);
+    const structured = readFileSync(join(process.cwd(), "app/api/data-export/structured/route.ts"), "utf8");
+    expect(structured).not.toMatch(/fileRecord/); // the JSON download is handed to a person: the default per-file list
+  });
 });
 
 // ─── BKP-13: the scheduled push is recorded and announced ──────────────────
@@ -344,6 +399,60 @@ describe("BKP-13 — the scheduled push writes its record as a machine and rings
     expect(bells().map((b) => b.user_id).sort()).toEqual(["u-admin2", "u-dc"]);
     expect(bells()[0]).toMatchObject({ title: "Full workspace export was run", actor_user_id: "u-admin" });
     expect(state.delivered[0]).toMatchObject({ exporterUserId: "u-admin", exporterRole: "Admin", auditDetails: { channel: "zip", exporterRoles: ["Admin"] } });
+  });
+
+  it("review fix: the JSON export (the download, and the browser Full ZIP's first step) tells every OTHER controller too", async () => {
+    const res = await structuredGET(req(`/api/data-export/structured?orgId=${ORG}`));
+    expect(res.status).toBe(200);
+    expect(bells().map((b) => b.user_id).sort()).toEqual(["u-admin2", "u-dc"]);
+    expect(bells()[0]).toMatchObject({ title: "Full workspace export was run", actor_user_id: "u-admin" });
+    expect(String(bells()[0].body)).toMatch(/^me@acme\.com exported the entire workspace \(JSON export: a download or the browser-built Full ZIP\)\./);
+    expect(res.headers.get("x-export-alert")).toBe("sent to 2");
+  });
+
+  it("…a refused alert is logged and named in X-Export-Alert; the download still proceeds", async () => {
+    db.writeError = (table) => (table === "notifications" ? { code: "42501", message: "permission denied" } : null);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await structuredGET(req(`/api/data-export/structured?orgId=${ORG}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-export-alert")).toMatch(/^unsent: the alert could not be written \(permission denied\)/);
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/\[data-export\/structured\].*the export alert was not sent/));
+    err.mockRestore();
+  });
+
+  it("…an export that could not be recorded rings no bell (it did not leave)", async () => {
+    db.writeError = (table) => (table === "audit_logs" ? { code: "22P02", message: "bad" } : null);
+    const res = await structuredGET(req(`/api/data-export/structured?orgId=${ORG}`));
+    expect(res.status).toBe(500);
+    expect(bells()).toEqual([]);
+  });
+
+  it("review fix: a DocCtrl's bell says to ask an Admin and links the audit log it can read; an Admin's links the data-export page", async () => {
+    db.rows.export_destinations = [dueDestination()];
+    await sweep();
+    const admin = bells().find((b) => b.user_id === "u-admin2")!;
+    const docCtrl = bells().find((b) => b.user_id === "u-dc")!;
+    expect(admin).toMatchObject({ link: ALERT_LINKS.admin });
+    expect(String(admin.body)).toMatch(/If you don't recognise this destination, disable it under Admin → Data export\.$/);
+    expect(docCtrl).toMatchObject({ link: ALERT_LINKS.other });
+    expect(String(docCtrl.body)).toMatch(/ask an Admin to disable it under Admin → Data export\. The run is recorded in the audit log\.$/);
+    expect(ALERT_LINKS).toEqual({ admin: "/admin/data-export", other: "/admin/audit" });
+    // the two pages the links name admit those readers
+    expect(adminSurface("data-export")!.entry).toEqual(["Admin"]);
+    expect(adminSurface("audit")!.entry).toContain("DocCtrl");
+  });
+
+  it("…and the same split for a person's export and a destination change", async () => {
+    await runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG } }));
+    expect(String(bells().find((b) => b.user_id === "u-dc")!.body)).toMatch(/tell an Admin now so they can review the account\. The export is recorded in the audit log\.$/);
+    expect(String(bells().find((b) => b.user_id === "u-admin2")!.body)).toMatch(/review the account immediately\.$/);
+    db.rows.notifications = [];
+    await destinationsPOST(req("/api/data-export/destinations", {
+      method: "POST", body: { orgId: ORG, name: "Hook", destination_type: "webhook", webhook_url: "https://hooks.example.com/x", webhook_secret: "s" },
+    }));
+    expect(bells().find((b) => b.user_id === "u-dc")).toMatchObject({ link: "/admin/audit" });
+    expect(String(bells().find((b) => b.user_id === "u-dc")!.body)).toMatch(/tell an Admin now so they can review it under Admin → Data export\. The change is recorded in the audit log\.$/);
+    expect(bells().find((b) => b.user_id === "u-admin2")).toMatchObject({ link: "/admin/data-export" });
   });
 });
 
@@ -420,6 +529,63 @@ describe("BKP-11 Done-when 3 — a destination is enabled only with its credenti
   it("a destination that does not exist is 404, not a silent no-op", async () => {
     expect((await patch({ enabled: true })).status).toBe(404);
   });
+
+  const runNow = () => runPOST(req("/api/data-export/run", { method: "POST", body: { orgId: ORG, destinationId: "dest-1" } }));
+
+  it("review fix: Run Now of a restored webhook (disabled, no secret) is refused 409 — nothing sent, no run row, no bell", async () => {
+    db.rows.export_destinations = [restoredWebhook()];
+    const res = await runNow();
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/no signing secret\. Check its URL is yours, enter a signing secret, and run it again/);
+    expect(state.delivered).toEqual([]);
+    expect(rowsOf("export_runs")).toEqual([]);
+    expect(bells()).toEqual([]);
+  });
+
+  it("…and of a bucket destination without both keys", async () => {
+    db.rows.export_destinations = [{ ...restoredBucket(), enabled: true }];
+    expect((await runNow()).status).toBe(409);
+    expect(state.delivered).toEqual([]);
+  });
+
+  it("no regression: Run Now of an enabled secret-less webhook an Admin created here, or of a disabled one that has its secret, still runs", async () => {
+    db.rows.export_destinations = [dueDestination({ webhook_secret_encrypted: null })];
+    expect((await runNow()).status).toBe(200);
+    db.rows.export_destinations = [dueDestination({ enabled: false, webhook_secret_encrypted: encryptSecret("s") })];
+    expect((await runNow()).status).toBe(200);
+    expect(state.delivered).toHaveLength(2);
+  });
+
+  it("review fix: re-pointing an ENABLED destination is held to the rule too — s3 → webhook with no secret is 409, nothing changes", async () => {
+    db.rows.export_destinations = [dueDestination({
+      destination_type: "s3", webhook_url: null, bucket: "acme", access_key_id_encrypted: encryptSecret("AK"), secret_access_key_encrypted: encryptSecret("SK"),
+    })];
+    const res = await patch({ destination_type: "webhook", webhook_url: "https://x.example.com/in", enabled: true });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/enter a signing secret, and save it again/);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "s3", enabled: true });
+    expect(bells()).toEqual([]);
+    const ok = await patch({ destination_type: "webhook", webhook_url: "https://x.example.com/in", enabled: true, webhook_secret: "fresh" });
+    expect(ok.status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "webhook", webhook_url: "https://x.example.com/in" });
+  });
+
+  it("…and a new URL for an enabled secret-less webhook needs a secret; the same URL re-sent does not", async () => {
+    db.rows.export_destinations = [dueDestination({ webhook_secret_encrypted: null })];
+    expect((await patch({ webhook_url: "https://elsewhere.example.net/in", enabled: true })).status).toBe(409);
+    expect((await patch({ webhook_url: "https://hooks.example.com/in", enabled: true, name: "Same place" })).status).toBe(200);
+  });
+
+  it("the one rule, shared by PATCH and Run Now", () => {
+    const none = { accessKey: false, secretKey: false, webhookSecret: false };
+    expect(destinationCredentialGap("webhook", none, { requireWebhookSecret: false, then: "x" })).toBeNull();
+    expect(destinationCredentialGap("webhook", none, { requireWebhookSecret: true, then: "x" })).toMatch(/no signing secret/);
+    expect(destinationCredentialGap("s3", { ...none, accessKey: true }, { requireWebhookSecret: false, then: "x" })).toMatch(/no access key and secret/);
+    expect(destinationCredentialGap("r2", { accessKey: true, secretKey: true, webhookSecret: false }, { requireWebhookSecret: true, then: "x" })).toBeNull();
+    for (const f of ["app/api/data-export/run/route.ts", "app/api/data-export/destinations/[id]/route.ts"]) {
+      expect(readFileSync(join(process.cwd(), f), "utf8"), f).toMatch(/destinationCredentialGap\(/);
+    }
+  });
 });
 
 // ─── BILL-3 Done-when 3: a lapsed plan disables a bucket destination ───────
@@ -457,6 +623,26 @@ describe("BILL-3 Done-when 3 — a bucket destination whose plan lapsed is disab
     await sweep();
     expect(state.delivered).toEqual([]);
     expect(rowsOf("export_destinations")[0].enabled).toBe(true);
+  });
+
+  it("review fix: …even when the workspace's plan ALSO lapsed — the skip was for the configurer, so nothing is disabled", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    db.rows.orgs[0].subscribed_plan = "starter";
+    db.rows.export_destinations = [bucketDue()];
+    db.rows.export_destinations[0].updated_by = "u-gone";
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0].error).toMatch(/no longer active in this workspace/);
+    expect(body.results[0].error).not.toMatch(/the destination was disabled/);
+    expect(rowsOf("export_destinations")[0].enabled).toBe(true);
+  });
+
+  it("a lapsed SUBSCRIPTION on a plan without buckets is a billing skip too: disabled", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    Object.assign(db.rows.orgs[0], { subscribed_plan: "starter", subscription_status: "canceled" });
+    db.rows.export_destinations = [bucketDue()];
+    const body = (await (await sweep()).json()) as { results: Array<Record<string, unknown>> };
+    expect(body.results[0].error).toMatch(/subscription inactive.*the destination was disabled/);
+    expect(rowsOf("export_destinations")[0].enabled).toBe(false);
   });
 
   it("enabling a disabled bucket destination on a lapsed plan is 402, as creating one is", async () => {

@@ -6,12 +6,14 @@
 // the actual key after creation and still let the user edit other fields.
 //
 // Admin-only (admin-and-org BKP-8 / BKP-13), through the one gate. ENABLING a
-// destination (turning a disabled one on) is held to three rules:
+// destination (turning a disabled one on), or RE-POINTING an enabled one (its
+// type, endpoint, bucket, prefix or webhook URL changes), is held to rules:
 //   - BKP-11 Done-when 3: it must carry its credentials — an s3 / r2 row its
 //     access key and secret, a webhook row its signing secret — stored or in
-//     this request. A restored destination lands disabled with none of them
-//     (lib/dataRestore.ts landRestoredRow), so this is where an Admin must
-//     re-enter them, and, for a webhook, look at the URL the backup named;
+//     this request (lib/exportRunner.ts destinationCredentialGap, the check
+//     "Run Now" applies too). A restored destination lands disabled with none
+//     of them (lib/dataRestore.ts landRestoredRow), so this is where an Admin
+//     must re-enter them, and, for a webhook, look at the URL the backup named;
 //   - BILL-3 Done-when 3: a bucket row is the Growth feature, so enabling one
 //     passes the same plan gate as creating one (the scheduled runner
 //     disables a bucket destination whose plan lapsed);
@@ -21,7 +23,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret } from "@/lib/serverCrypto";
-import { computeNextRunAt } from "@/lib/exportRunner";
+import { computeNextRunAt, destinationCredentialGap } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
@@ -102,22 +104,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const enabling = body.enabled === true && current.enabled !== true;
   const nextEnabled = "enabled" in body ? body.enabled === true : current.enabled === true;
+  const retargeting = nextEnabled && TARGET_FIELDS.some((f) => f in body && norm(body[f]) !== norm(current[f]));
+  if (enabling || retargeting) {
+    // BKP-11 Done-when 3: a destination is enabled, or an enabled one moved,
+    // only with its credentials — stored, or entered in this save.
+    const gap = destinationCredentialGap(
+      "destination_type" in body ? body.destination_type : current.destination_type,
+      {
+        accessKey: given(body.access_key_id) || !!current.access_key_id_encrypted,
+        secretKey: given(body.secret_access_key) || !!current.secret_access_key_encrypted,
+        webhookSecret: given(body.webhook_secret) || !!current.webhook_secret_encrypted,
+      },
+      { requireWebhookSecret: true, then: enabling ? "enable it again" : "save it again" },
+    );
+    if (gap) return NextResponse.json({ error: gap }, { status: 409 });
+  }
   if (enabling) {
-    // BKP-11 Done-when 3: a destination is enabled only with its credentials.
-    const nextType = norm("destination_type" in body ? body.destination_type : current.destination_type);
-    if (nextType === "webhook" && !given(body.webhook_secret) && !current.webhook_secret_encrypted) {
-      return NextResponse.json(
-        { error: "This webhook destination has no signing secret. Check its URL is yours, enter a signing secret, and enable it again — a destination restored from a backup arrives without one." },
-        { status: 409 },
-      );
-    }
-    if ((nextType === "s3" || nextType === "r2")
-        && ((!given(body.access_key_id) && !current.access_key_id_encrypted) || (!given(body.secret_access_key) && !current.secret_access_key_encrypted))) {
-      return NextResponse.json(
-        { error: "This destination has no access key and secret. Enter them, and enable it again — a destination restored from a backup arrives without credentials." },
-        { status: 409 },
-      );
-    }
     // BILL-3 Done-when 3: enabling a bucket destination is the act the plan
     // gate guards (a body that sets the bucket was gated above).
     if (norm("bucket" in body ? body.bucket : current.bucket) && !("bucket" in body && norm(body.bucket))) {
@@ -125,8 +127,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
     }
   }
-  const retargeted = !enabling && nextEnabled
-    && TARGET_FIELDS.some((f) => f in body && norm(body[f]) !== norm(current[f]));
+  const retargeted = !enabling && retargeting;
 
   const updates: Record<string, unknown> = { updated_by: auth.userId, updated_at: new Date().toISOString() };
   const fields: (keyof DestinationPatchBody)[] = [

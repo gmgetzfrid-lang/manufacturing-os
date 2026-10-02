@@ -170,6 +170,32 @@ export interface ExportDestination {
   retention_days?: number;
 }
 
+/** BKP-11 Done-when 3: what a destination lacks before it may fire, as the
+ *  sentence a 409 carries, or null. An s3 / r2 destination needs both access
+ *  keys (without them the push cannot authenticate at all). A webhook needs
+ *  its signing secret when `requireWebhookSecret`: whenever the act would
+ *  open or move a channel a person has not yet confirmed here — enabling a
+ *  disabled destination, re-pointing an enabled one, or running a disabled
+ *  one by hand (a restored row arrives disabled and with no secret, still
+ *  naming the backup owner's URL). An enabled webhook an Admin created here
+ *  may stay unsigned (the secret is optional at create). `have` says which
+ *  credentials are stored or arrive with the request; `then` ends the
+ *  sentence ("enable it again", "run it again", "save it again"). */
+export function destinationCredentialGap(
+  destinationType: string | null | undefined,
+  have: { accessKey: boolean; secretKey: boolean; webhookSecret: boolean },
+  opts: { requireWebhookSecret: boolean; then: string },
+): string | null {
+  const type = String(destinationType ?? "").trim();
+  if (type === "webhook" && opts.requireWebhookSecret && !have.webhookSecret) {
+    return `This webhook destination has no signing secret. Check its URL is yours, enter a signing secret, and ${opts.then} — a destination restored from a backup arrives without one.`;
+  }
+  if ((type === "s3" || type === "r2") && (!have.accessKey || !have.secretKey)) {
+    return `This destination has no access key and secret. Enter them, and ${opts.then} — a destination restored from a backup arrives without credentials.`;
+  }
+  return null;
+}
+
 /** Held back from a ZIP route's `maxDuration` (app/api/data-export/run and
  *  run-scheduled: 300 s) for what follows the embed loop: compressing the
  *  ZIP, delivering it (the download, the bucket push and its read-back, the
@@ -218,6 +244,10 @@ export async function buildAndDeliverExport(params: {
     exporterEmail: params.exporterEmail,
     exporterRole: params.exporterRole,
     auditDetails: params.auditDetails,
+    // DEC-44 (A&O P3) §3: a push to the workspace's own destination records
+    // its files by count and digest (the archive carries the list); a ZIP
+    // handed to a person names each one.
+    fileRecord: params.delivery.kind === "destination" ? "digest" : "list",
     deadlineAt,
   });
   step("envelope:done", `${envelope.manifest.tables.length} tables, ${envelope.files.length} files`);
@@ -661,6 +691,11 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0, late = { at
     : "";
   // EGR-7 / XEDGE-10: say which columns are NOT in this archive and why, so
   // a restore knows the links must be re-issued rather than arriving dead.
+  // BKP-8: rows the export leaves out are said here too, so a restore from
+  // this archive knows what it will not bring back.
+  const withheldNote = (m.withheld?.privateNotes ?? 0) > 0
+    ? `\n## ⚠ Withheld rows — this backup is not complete\n\n${m.withheld!.privateNotes} ${m.withheld!.reason}\nmanifest.json says complete: false for this reason.\n`
+    : "";
   const redacted = Object.entries(m.redactedColumns ?? {});
   const redactedNote = redacted.length > 0
     ? `\n## Redacted credential columns\n\nSecrets never leave the database. These columns are exported as null:\n${redacted.map(([t, cols]) => `- ${t}: ${cols.join(", ")}`).join("\n")}\nAfter a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), and export destinations must have their credentials re-entered (restored rows arrive disabled).\n`
@@ -685,7 +720,7 @@ Schema version: ${m.schemaVersion}
 - schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
 - tables/<name>.json        — one file per table; JSON array of rows
 - files/<storage-path>      — every binary file, path-preserved
-${omittedNote}${shedNote}${redactedNote}
+${omittedNote}${shedNote}${redactedNote}${withheldNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to
 your storage under the same keys.

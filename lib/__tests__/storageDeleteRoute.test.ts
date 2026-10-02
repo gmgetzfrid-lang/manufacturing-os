@@ -1054,7 +1054,7 @@ describe("ILIFE-14 — a key another record still names is never freed", () => {
     }
   });
 
-  it("the costDocs path (the route's only app caller): its row is gone first, so its key is named by nothing and deletes", async () => {
+  it("the costDocs path (the route's only app caller, cleaning up an upload whose row insert failed): no row names its key, so it deletes", async () => {
     member("Admin");
     state.rows.cost_documents = [{ id: "cd-other", file_url: `orgs/${ORG}/project-costs/p1/another.pdf` }];
     const res = await del(COST);

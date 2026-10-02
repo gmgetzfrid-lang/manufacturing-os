@@ -559,7 +559,8 @@ const codeOneHolder = (authUid: string | null) => {
 };
 const SITE_CODE_INDEX = { cols: ["org_id", "code"], name: SITE_CODE_UNIQUE_INDEX, where: (r: Row) => r.code != null && String(r.code).trim() !== "" };
 
-/** app/api/admin/restore/apply/route.ts: upsert(chunk, { onConflict: "id", ignoreDuplicates: true }), then insert as the fallback. */
+/** The restore write as the single-shot app/api/admin/restore/apply/route.ts sent it (that route is deleted, intelligence ILIFE-4):
+ *  upsert(chunk, { onConflict: "id", ignoreDuplicates: true }), then insert as the fallback. */
 async function restoreChunk(table: string, rows: Row[]) {
   const { supabase: sb } = await import("@/lib/supabase");
   const up = await sb.from(table).upsert(rows.map((r) => ({ ...r })), { onConflict: "id", ignoreDuplicates: true });

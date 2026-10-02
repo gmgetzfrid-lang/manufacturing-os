@@ -28,7 +28,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
-import { scheduledRunGate, cloudBucketAllowed } from "@/lib/exportEntitlement";
+import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -132,10 +132,13 @@ async function handler(req: NextRequest) {
       const at = new Date().toISOString();
       // BILL-3 Done-when 3: a lapsed plan DISABLES a bucket destination (the
       // skip alone would re-fire the refusal every night) — never deletes it.
-      // Only the plan limb, and only under the flag (the gate refuses on
-      // billing grounds only then); a departed configurer or an unreadable
-      // workspace row skips without disabling.
-      const planLapsed = enforceBilling && !!dest.bucket && await planNoLongerIncludesBuckets(sb, dest.org_id);
+      // Only when the gate refused on a BILLING limb (the plan, or the
+      // subscription — under the flag, the only time it refuses on billing
+      // grounds) and the plan, read again, no longer includes buckets. A skip
+      // for a departed configurer, or for an unreadable workspace row, never
+      // disables, whatever the plan.
+      const planLapsed = enforceBilling && !!dest.bucket && refusedOnBillingLimb(gate.reason)
+        && await planNoLongerIncludesBuckets(sb, dest.org_id);
       const skipMsg = `skipped: ${gate.reason}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
       const unrecorded: string[] = [];
       const { error: runErr } = await sb.from("export_runs").insert({
@@ -269,6 +272,14 @@ async function handler(req: NextRequest) {
   }
 
   return NextResponse.json({ processed: results.length, results });
+}
+
+/** BILL-3: did the scheduled gate refuse on its subscription or plan limb?
+ *  Those limbs' reasons carry lib/exportEntitlement.ts's own refusal
+ *  sentences (CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL); the
+ *  membership limb's and the unreadable-row reason carry neither. */
+function refusedOnBillingLimb(reason: string): boolean {
+  return reason.includes(CLOUD_BUCKET_REFUSAL) || reason.includes(SUBSCRIPTION_INACTIVE_REFUSAL);
 }
 
 /** BILL-3: does this workspace's plan no longer include bucket destinations?

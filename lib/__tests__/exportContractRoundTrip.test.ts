@@ -90,7 +90,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) } },
 }));
 
-import { runOrgExport, collectFilePaths, keysetAfter, FILE_CHECK_CONCURRENCY, FILE_CHECK_CEILING_MS, type DataExportEnvelope } from "@/lib/dataExport";
+import { runOrgExport, collectFilePaths, keysetAfter, FILE_CHECK_CONCURRENCY, FILE_CHECK_CEILING_MS, PRIVATE_NOTES_WITHHELD, type DataExportEnvelope } from "@/lib/dataExport";
 import { buildAndDeliverExport } from "@/lib/exportRunner";
 import { runFullBackup } from "@/lib/clientBackup";
 import { REDACT_COLUMNS } from "@/lib/exportTables";
@@ -168,8 +168,9 @@ function seedSource() {
     plot_plans: [{ id: "pp-1", org_id: SRC, name: "Unit 100", image_path: K.plot, markers: [] }],
     org_configurations: [{ id: "cfg-1", org_id: SRC, key: "branding", data: { logoPath: K.logo } }],
     // a key no registered column names (a future evidence field, inside JSON). The note is on a
-    // project: a standalone note is its author's private scratchpad and is withheld from every
-    // export (admin-and-org BKP-8, lib/dataExport.ts withholdPrivateNotes).
+    // project, so it is exported; a STANDALONE note is its author's private scratchpad and is
+    // withheld from every export (admin-and-org BKP-8, lib/dataExport.ts withholdPrivateNotes) —
+    // carried through export and restore in its own block below ("BKP-8 — a standalone note …").
     notes: [{ id: "n-1", org_id: SRC, project_id: "proj-1", body: "Field photo", task_meta: { evidence: [{ path: K.unregistered }] } }],
     // history, not a reference
     audit_logs: [{ id: "al-1", org_id: SRC, action: "STORAGE_DELETE", details: { path: MENTIONED_ONLY } }],
@@ -435,6 +436,45 @@ describe("BKP-2 / BKP-9 — every binary the database references is in the backu
     // nothing restored can fire or be presented (DEC-45, P1)
     expect(String(rowsOf("document_shares")[0].token)).toMatch(/^restored-/);
     expect(rowsOf("export_destinations")[0]).toMatchObject({ enabled: false, next_run_at: null, secret_access_key_encrypted: null });
+  });
+
+  it("BKP-8 review fix — a standalone note through export and restore: withheld, counted, said in the manifest, the README and the restore plan; never restored", async () => {
+    db.rows.notes.push({ id: "n-private", org_id: SRC, body: "Alice's own scratch", created_by: "u-alice", task_meta: { evidence: [{ path: key("notes/n-private/own.jpg") }] } });
+    const env = await exportEnvelope();
+    // the manifest: counted, named, and NOT complete — every table exported cleanly, yet a restore loses the note
+    expect(env.manifest.withheld).toEqual({ privateNotes: 1, reason: PRIVATE_NOTES_WITHHELD });
+    expect(env.manifest.tables.filter((t) => t.error || t.short)).toEqual([]);
+    expect(env.manifest.complete).toBe(false);
+    expect(env.manifest.notes[0]).toBe(
+      "⚠ INCOMPLETE BACKUP — complete except 1 private note(s) withheld (manifest.withheld): a restore of this backup does not bring them back.",
+    );
+    expect(env.manifest.notes).toContain(`1 ${PRIVATE_NOTES_WITHHELD}`);
+    expect(JSON.stringify(env)).not.toContain("Alice's own scratch");
+    expect((env.tables.notes as Row[]).map((n) => n.id)).toEqual(["n-1"]);
+    expect(env.files.map((f) => f.path)).not.toContain(key("notes/n-private/own.jpg"));
+    // the server ZIP's README says it too
+    stubFetch(env);
+    const out = await buildAndDeliverExport({
+      supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com",
+      includeFiles: true, delivery: { kind: "inline" },
+    });
+    const zip = (await JSZip.loadAsync(out.zipBytes!)) as unknown as BackupZipLike & JSZip;
+    const readme = await zip.file("README.md")!.async("string");
+    expect(readme).toContain("## ⚠ Withheld rows — this backup is not complete");
+    expect(readme).toContain(`1 ${PRIVATE_NOTES_WITHHELD}`);
+    expect(JSON.parse(await zip.file("manifest.json")!.async("string"))).toMatchObject({ complete: false, withheld: { privateNotes: 1 } });
+    // the restore: the plan warns, as itself; the scoped note lands, the private one does not exist to land
+    const read = await readBackupArchive([{ name: "manufacturing-os-backup.zip", zip }]);
+    seedTarget();
+    enforceForeignKeys();
+    const plan = planRestore(read.envelope, { orgId: TARGET, orgName: "Acme", members: [{ uid: "t-alice", email: "alice@acme.com" }] });
+    expect(plan.warnings).toEqual([
+      "This backup was marked INCOMPLETE — it leaves out 1 private note(s): scratchpad notes attached to no document, project or equipment, which only their authors can read. Restoring it does not bring them back.",
+    ]);
+    const result = await restoreInto(read.envelope);
+    expect(result.stoppedAt).toBeNull();
+    expect(result.tables.flatMap((t) => (t.refused ?? []).map((r) => `${t.name}:${r.code}`))).toEqual([]);
+    expect(rowsOf("notes").map((n) => n.id)).toEqual(["n-1"]);
   });
 
   it("the browser Full ZIP packs every binary too", async () => {

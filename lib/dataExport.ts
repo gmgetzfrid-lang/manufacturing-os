@@ -25,6 +25,7 @@
 // keeps out too: a standalone note is its author's private scratchpad and is
 // withheld (withholdPrivateNotes).
 
+import { createHash } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -73,7 +74,9 @@ export interface DataExportManifest {
    *  table's own count twice while the export ran (intelligence ILIFE-6): the
    *  rows read ARE in this backup, and some rows may be missing. */
   tables: Array<{ name: string; rowCount: number; error?: string; short?: string }>;
-  /** True when every listed table exported cleanly and in full. False = INCOMPLETE backup. */
+  /** True when every listed table exported cleanly and in full AND no row was
+   *  withheld (`withheld`). False = INCOMPLETE backup: a restore of it does
+   *  not bring the workspace back whole. */
   complete: boolean;
   files: {
     count: number;
@@ -106,7 +109,8 @@ export interface DataExportManifest {
    *  silently arriving dead. */
   redactedColumns: Record<string, string[]>;
   /** BKP-8: rows the exporter may not read in the app, so the export leaves
-   *  them out — counted here, never silently dropped. */
+   *  them out — counted here, never silently dropped. Their presence makes
+   *  `complete` false: a restore of this backup does not bring them back. */
   withheld?: { privateNotes: number; reason: string };
   notes: string[];
 }
@@ -141,6 +145,12 @@ export async function runOrgExport(params: {
   /** Extra facts for the DATA_EXPORT row's details (the delivery channel, a
    *  scheduled destination and who configured it). */
   auditDetails?: Record<string, unknown>;
+  /** How the handed-out files are recorded (DEC-44 (A&O P3) §3). "list"
+   *  (default): DATA_EXPORT_FILES rows naming each one — an export handed to
+   *  a person. "digest": the DATA_EXPORT row carries their count and the
+   *  SHA-256 of the sorted list, and no per-file rows — a push to the
+   *  workspace's own destination, whose archive carries the list itself. */
+  fileRecord?: "list" | "digest";
   presignedUrlSeconds?: number;
   /** Override FILE_CHECK_BUDGET_MS (tests). */
   fileCheckBudgetMs?: number;
@@ -317,7 +327,9 @@ export async function runOrgExport(params: {
   //    record. An export that cannot be recorded is refused before anything
   //    leaves. BKP-8 Done-when 3: the files the export hands out are named
   //    too (DATA_EXPORT_FILES), so the chain of custody names the drawings,
-  //    not just the event.
+  //    not just the event — one by one for an export handed to a person, by
+  //    count and digest for a push to the workspace's own destination
+  //    (`fileRecord`, DEC-44 (A&O P3) §3).
   await recordExport(sb, params, {
     startedAt,
     tableCount: tableCounts.length,
@@ -357,6 +369,13 @@ export async function runOrgExport(params: {
       );
     }
     notes.push(`⚠ INCOMPLETE BACKUP — ${parts.join(" ")} Resolve before relying on this as a full backup.`);
+  } else if (privateNotes > 0) {
+    // BKP-8 review fix: the backup is NOT complete while rows are withheld —
+    // a disaster-recovery restore of it does not bring them back.
+    notes.push(
+      `⚠ INCOMPLETE BACKUP — complete except ${privateNotes} private note(s) withheld (manifest.withheld): ` +
+      "a restore of this backup does not bring them back.",
+    );
   } else {
     notes.push("This document is a complete export of every record this organization owns.");
   }
@@ -426,7 +445,7 @@ export async function runOrgExport(params: {
     orgName,
     exportedBy: { userId: params.exporterUserId, email: params.exporterEmail },
     tables: tableCounts,
-    complete: failedTables.length === 0 && shortTables.length === 0,
+    complete: failedTables.length === 0 && shortTables.length === 0 && privateNotes === 0,
     files: {
       count: files.length,
       missing: missingFiles,
@@ -448,7 +467,7 @@ export async function runOrgExport(params: {
 /** BKP-8: why a private note is not in the backup (manifest note / withheld.reason). */
 export const PRIVATE_NOTES_WITHHELD =
   "private note(s) — scratchpad notes attached to no document, project or equipment — are personal to their authors " +
-  "(only the author can read one in the app) and are NOT in this backup.";
+  "(only the author can read one in the app) and are NOT in this backup; restoring it does not bring them back.";
 
 /** A standalone note: its author's private scratchpad (notes_standalone_own). */
 export function isPrivateNote(row: unknown): boolean {
@@ -474,16 +493,29 @@ export const EXPORT_FILES_PER_AUDIT_ROW = 500;
 /** Audit rows per insert statement (each row carries up to 500 file entries). */
 const EXPORT_FILE_ROWS_PER_INSERT = 10;
 
+/** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
+ *  and newline-joined — what a digest record names, and what anyone holding
+ *  the archive can recompute from its own file list to show it is the one
+ *  this record describes. */
+export function exportFileListDigest(paths: readonly string[]): string {
+  return createHash("sha256").update([...paths].sort().join("\n"), "utf8").digest("hex");
+}
+
 /** The DATA_EXPORT row, then the DATA_EXPORT_FILES rows naming every file the
  *  export hands out (a presigned URL in the envelope; the server ZIP embeds
  *  from those URLs) — with the document and revision for a revision's file,
- *  so a recall can ask "who took which drawing". Every insert is CHECKED and
+ *  so a recall can ask "who took which drawing". In "digest" mode (a push to
+ *  the workspace's own destination) the DATA_EXPORT row carries the count and
+ *  exportFileListDigest instead, and no per-file row is written. Every insert is CHECKED and
  *  throws: the caller refuses the export (BKP-13). A machine run (no
  *  exporter uid) carries user_id NULL and the machine's label in user_email
  *  (DEC-44 (A&O P3)), never a string in the uuid column. */
 async function recordExport(
   sb: SupabaseClient,
-  params: { orgId: string; exporterUserId: string | null; exporterEmail: string; exporterRole?: string | null; auditDetails?: Record<string, unknown> },
+  params: {
+    orgId: string; exporterUserId: string | null; exporterEmail: string; exporterRole?: string | null;
+    auditDetails?: Record<string, unknown>; fileRecord?: "list" | "digest";
+  },
   info: {
     startedAt: string; tableCount: number; totalRows: number; totalBytes: number; presignedUrlExpiresIn: number; privateNotes: number;
     files: DataExportEnvelope["files"]; versions: Array<Record<string, unknown>>;
@@ -504,7 +536,11 @@ async function recordExport(
       if (typeof k === "string" && k && !byKey.has(k)) byKey.set(k, ref);
     }
   }
-  const parts = Math.ceil(handedOut.length / EXPORT_FILES_PER_AUDIT_ROW);
+  // DEC-44 (A&O P3) §3: a push to the workspace's own destination records the
+  // list by count and digest. audit_logs is itself exported, so a per-file
+  // list on every nightly push would grow every later backup without bound.
+  const digest = params.fileRecord === "digest";
+  const parts = digest ? 0 : Math.ceil(handedOut.length / EXPORT_FILES_PER_AUDIT_ROW);
   const { error } = await sb.from("audit_logs").insert({
     action: "DATA_EXPORT",
     resource_id: params.orgId,
@@ -519,6 +555,7 @@ async function recordExport(
       presignedUrls: handedOut.length,
       presignedUrlExpiresIn: info.presignedUrlExpiresIn,
       fileRecordRows: parts,
+      ...(digest ? { fileRecord: { mode: "digest", count: handedOut.length, sha256: exportFileListDigest(handedOut.map((f) => f.path)) } } : {}),
       ...(info.privateNotes > 0 ? { withheld: { privateNotes: info.privateNotes } } : {}),
       ...(params.auditDetails ?? {}),
     },
