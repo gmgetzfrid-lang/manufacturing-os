@@ -82,3 +82,11 @@ narrowed too.
 5. **`BKP-2`** — `cost_documents` binaries are referenced by nothing the system
    knows about and are absent from every backup.
 6. Everything else in severity order.
+
+---
+
+## Integrator notes
+
+- *2026-10-02 (admin-and-org Round G, P3 fourth review fix pass) — two handoffs for the integrator to route; P3 does not edit these files.*
+  1. **Proposed: P6.** `/admin/storage` (`app/(protected)/admin/storage/page.tsx:743-775`) still shows "Download JSON" and "Download ZIP" to every member its surface admits (Admin, Manager, DocCtrl). Since P3 (`BKP-8`) the data-export routes behind them are Admin-only, so a Manager or DocCtrl who clicks one gets the raw 403 JSON (`{"error":"Exporting the whole workspace…"}`) in the page's error slot. The buttons should show only to a member holding the data-export surface's entry (`adminSurface("data-export").entry`, by the full collection, `hasAnyRole` on the client), with a line pointing others to an Admin. P6's plan entry lists that file for its label region only, so this is a scope addition for P6 or the integrator to assign. Recorded under `BKP-8`'s Scope / residual and `DEC-44 (A&O P3)` Risk.
+  2. **For P7's audit-action registry (`ALOG-11`).** P3 writes three actions the viewer should name: `DATA_EXPORT` (a person's export or a scheduled push), `DATA_EXPORT_FILES` (the file list: a person's rows carry the exporter; a destination's ledger rows are machine rows, `user_id` NULL, `user_email` `system:export-ledger`, `resource_type` `export_destination`) and `DATA_EXPORT_UNDELIVERED` (an export recorded as leaving that then did not; a machine row naming the record id). The destination ledger reads only machine rows (`user_id` NULL), which `audit_logs_insert` keeps members from writing; P7's planned `ALOG-7` trigger should leave service-role inserts' `user_id` NULL so that still holds (`DEC-44 (A&O P3)` §3).
