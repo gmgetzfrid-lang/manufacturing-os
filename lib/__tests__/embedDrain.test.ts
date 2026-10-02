@@ -29,6 +29,13 @@
 //   * SEM-1 — the claim hands out nothing while the library holds another
 //     model's vectors.
 //   * GOV-14 limb — a stamp naming no active member is released, never spent.
+//   * SEM-1, AI settings' confirm (I-20 fix pass 4) — what the drain does to
+//     each kind of build on a payer's key after a switch of embedding model or
+//     the loss of the key, which buildFates (lib/embedKeyOverview.ts) says
+//     word for word: a run under way finishes on what it read; a build with
+//     passages left is held (switch) or released (loss) by the next run; a
+//     "keep current" on a library already fully embedded is left as it is
+//     until new passages arrive.
 //   * 20261121 — the paste contract, byte fidelity against 20261014 / 20261007,
 //     and the census. (The SQL itself was run against a scratch PostgreSQL 16:
 //     see the finding records.)
@@ -58,7 +65,8 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (v: unknown) => v }));
 
 import { embedLibrarySlice, parseEmbedBuildMarker, loadEmbedDetail } from "@/lib/knowledgeEmbedCore";
 import { drainEmbedBacklog, orderDrainQueue, nextMonthStartIso, errorBackoffMs, MAX_ERROR_RUNS } from "@/lib/knowledgeEmbedDrain";
-import { EMBED_MAX_ATTEMPTS, EMBEDDING_DIMENSIONS } from "@/lib/ai/embeddings";
+import { EMBED_MAX_ATTEMPTS, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
+import { buildFates } from "@/lib/embedKeyOverview";
 // The CURRENT agreement version (GOV-6 bumped it; a pinned literal would go stale).
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
@@ -740,6 +748,114 @@ describe("SEM-1 / SEM-3 — the drain never mixes two models into one library", 
     expect(out.drained[0]).toMatchObject({ outcome: "blocked" });
     expect(out.drained[0].note).toMatch(/acceptable-use agreement/);
     expect(provider.inputs).toHaveLength(0);
+  });
+});
+
+describe("SEM-1, AI settings' confirm (I-20 fix pass 4) — what the drain does to each kind of build after a switch or a loss, as the confirm says", () => {
+  // The payer's saved model, and another of the same provider's — both from
+  // the catalogue, never spelled out here.
+  const saved = () => String(admin.state.tables.ai_connections[0].embedding_model);
+  const another = () => EMBEDDING_PROVIDERS.find((p) => p.id === "voyage")!.models.find((m) => m !== saved())!;
+  const switchModel = () => { admin.state.tables.ai_connections[0].embedding_model = another(); };
+  const loseKey = () => { admin.state.tables.ai_connections = []; };
+  const stamp = () => parseEmbedBuildMarker((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild);
+  const embeddedChunk = (i: number) => chunk(i, { embedding: "[0]", embedding_model: saved() });
+  const afterProviderCall = (n: number, act: () => void) => {
+    const inner = fetch;
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const res = await (inner as unknown as (u: string, i: RequestInit) => Promise<unknown>)(url, init);
+      if (++call === n) act();
+      return res;
+    }));
+  };
+  const rearm = () => { (admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild.lastDrainAt = "2000-01-01T00:00:00Z"; };
+
+  it("the confirm's three cases are the ones below, for a switch and for a loss", () => {
+    const sw = buildFates("switch", "the-new-model");
+    expect(sw.running).toMatch(/finishes that run with the setting it read when it reached the library/);
+    expect(sw.embedding).toMatch(/passages still to embed — a build you started, or one kept current — is held for a model conflict by the next background run that works on it, and looked at again every hour, until the library is rebuilt with the-new-model/);
+    expect(sw.embedded).toMatch(/already fully embedded is left as it is: a build you started there is cleared as finished, and a “keep current” consent stays .* until new documents give it passages to embed — the next background run then holds it/);
+    const loss = buildFates("loss");
+    expect(loss.running).toMatch(/finishes that run on the key it read when it reached the library/);
+    expect(loss.embedding).toMatch(/is ended \(its consent released\) by the next background run that works on it/);
+    expect(loss.embedded).toMatch(/“keep current” consent stays .* until new documents give it passages to embed — the next background run then ends it/);
+  });
+
+  it("running: a run already working on a library when the key is removed, or the model switched, finishes that run on what it read — every passage, one model", async () => {
+    for (const change of [loseKey, switchModel]) {
+      Object.assign(admin.state, freshAdminState()); installRpcs(admin.state); provider.inputs = []; stubProvider();
+      admin.state.tables.knowledge_documents = [{ id: DOC, org_id: ORG, library_id: LIB, name: "EP-5-6-2 Pipe supports", status: "ready" }];
+      seedDrainWorld();
+      const model = saved();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+      admin.state.tables.knowledge_chunks = Array.from({ length: 100 }, (_, i) => chunk(i + 1));
+      afterProviderCall(1, change);                                        // lands while the first batch is at the provider
+      const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      expect(provider.inputs).toHaveLength(100);
+      expect(out.drained[0]).toMatchObject({ outcome: "complete", embedded: 100 });
+      expect(chunks().every((c) => c.embedding_model === model)).toBe(true);
+    }
+  });
+
+  it("embedding (switch): a build with passages left — kept current or one the payer started — is held for a model conflict by the next run, its consent kept, nothing embedded", async () => {
+    for (const standing of [true, false]) {
+      seedDrainWorld();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", ...(standing ? { standing: true } : {}) })];
+      admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2)];
+      switchModel();
+      provider.inputs = [];
+      const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      expect(out.drained[0].outcome).toBe("blocked");
+      expect(stamp()).toMatchObject({ userId: PAYER, standing, blockedReason: "model_conflict" });
+      expect(Date.parse(stamp()!.blockedUntil!) - Date.now()).toBeGreaterThan(59 * 60_000);   // looked at again in an hour
+      expect(provider.inputs).toHaveLength(0);
+    }
+  });
+
+  it("embedding (loss): a build with passages left — kept current or one the payer started — is ended by the next run (its consent released)", async () => {
+    for (const standing of [true, false]) {
+      seedDrainWorld();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", ...(standing ? { standing: true } : {}) })];
+      admin.state.tables.knowledge_chunks = [embeddedChunk(1), chunk(2)];
+      loseKey();
+      const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      expect(out.drained[0]).toMatchObject({ outcome: "released", note: "no embedding key — stamp cleared" });
+      expect(stamp()).toBeNull();
+    }
+  });
+
+  it("reproduction of the old wording's error: a 'keep current' on a library already fully embedded is neither held nor ended by the next run — it stays, as the confirm now says — and the run after new passages arrive holds it (switch) or ends it (loss)", async () => {
+    for (const [change, then] of [[switchModel, "blocked"], [loseKey, "released"]] as const) {
+      seedDrainWorld();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z", standing: true })];
+      admin.state.tables.knowledge_chunks = [embeddedChunk(1), embeddedChunk(2)];
+      change();
+      const first = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      // the old confirm: "the next background run releases them" / "held for a model conflict"
+      expect(first.drained[0].outcome).toBe("current");
+      expect(stamp()).toMatchObject({ userId: PAYER, standing: true });
+      expect(stamp()!.blockedReason).toBeUndefined();
+      // new documents give it passages to embed: the next run then holds or ends it
+      admin.state.tables.knowledge_chunks.push(chunk(3));
+      rearm();
+      const next = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      expect(next.drained[0].outcome).toBe(then);
+      if (then === "blocked") expect(stamp()).toMatchObject({ standing: true, blockedReason: "model_conflict" });
+      else expect(stamp()).toBeNull();
+    }
+  });
+
+  it("embedded (plain build): a build the payer started, on a library already fully embedded, is cleared as finished by the next run — after a switch or a loss alike", async () => {
+    for (const change of [switchModel, loseKey]) {
+      seedDrainWorld();
+      admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+      admin.state.tables.knowledge_chunks = [embeddedChunk(1), embeddedChunk(2)];
+      change();
+      const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+      expect(out.drained[0]).toMatchObject({ outcome: "complete" });
+      expect(stamp()).toBeNull();
+    }
   });
 });
 

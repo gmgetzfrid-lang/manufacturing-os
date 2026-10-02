@@ -15,9 +15,11 @@
 //     provider that built it (planQueryEmbedding). Switching PROVIDER stops
 //     every index the old provider built from answering for this member;
 //     switching MODEL within a provider keeps them answering, but no build
-//     with the new model can add to them, and the background builds on this
-//     key hold, until each library is rebuilt with the new model. The switch
-//     is confirmed with the libraries named, and each one's Rebuild offered.
+//     with the new model can add to them until each library is rebuilt with
+//     the new model. What happens to the background builds on this key is
+//     not the same for every build — the drain decides it, and the confirm
+//     says each case (buildFates, I-20 fix pass 4). The switch is confirmed
+//     with the libraries named, and each one's Rebuild offered.
 //     A member whose meaning search runs on their OpenAI CHAT key (no
 //     embeddings key saved) loses it when the chat key moves to another
 //     provider or is removed. Removing the chat key deletes the member's
@@ -39,6 +41,9 @@ export interface EmbedKeyBuild {
   libraryName: string;
   /** A standing consent: keep this index current as documents arrive. */
   standing: boolean;
+  /** The marker's `at`: when the consent was last confirmed. Every build
+   *  pass and every "keep current" press re-stamps it, so it is NOT when the
+   *  consent was first given (I-20 fix pass 4; the name is the wire's). */
   startedAt: string | null;
   lastDrainAt: string | null;
   blockedUntil: string | null;
@@ -145,8 +150,10 @@ export interface EmbeddingSwitchImpact {
   /** Indexes built with the old model of the same provider: they keep
    *  answering, but a build with the new model cannot add to them. */
   cannotGrow: Array<Lib & { model: string }>;
-  /** Background builds on this member's key that hold (model conflict)
-   *  until their library is rebuilt with the new model. */
+  /** Background builds on this member's key in libraries whose index the
+   *  new model cannot add to. A background run holds such a build (model
+   *  conflict) once it has passages to embed there — not at once, and not a
+   *  "keep current" on a library already fully embedded (buildFates). */
   buildsStop: Array<Lib & { model: string | null; standing: boolean }>;
   /** Libraries whose vectors could not be read. */
   unknown: Lib[];
@@ -207,9 +214,9 @@ export function embeddingSwitchImpact(
 export type EmbeddingLossCause = "chatKey" | "connectionRemoved" | "embeddingsKeyRemoved";
 
 /** SEM-1: losing the embeddings setting altogether (`cause`). `after` is
- *  none: every index the old provider built stops answering them, and
- *  every background build on their key ends (the drain releases a consent
- *  whose payer has no embeddings key). */
+ *  none: every index the old provider built stops answering them, and the
+ *  drain releases a background build on their key once that build has
+ *  passages to embed (it reads the key only then — buildFates). */
 export interface EmbeddingLossImpact extends Omit<EmbeddingSwitchImpact, "after"> { after: null; cause: EmbeddingLossCause }
 
 export function embeddingLossImpact(
@@ -237,6 +244,45 @@ export function embeddingLossImpact(
     });
   }
   return impact;
+}
+
+/** SEM-1 (I-20 fix pass 4): what a switch, or a loss of every embeddings
+ *  setting, does to each kind of background build on the member's key — as
+ *  the drain (lib/knowledgeEmbedDrain.ts) does it, which is not the same for
+ *  every build:
+ *  - `running`: a run already working on a library read the member's
+ *    connection once, when it reached that library, and finishes that run
+ *    with it (the consent is re-read before every batch; the key is not);
+ *  - `embedding`: a build with passages still to embed — one the member
+ *    started, or one kept current — is held for a model conflict (switch;
+ *    re-checked hourly) or released (loss: "no embedding key") by the next
+ *    run that works on it;
+ *  - `embedded`: on a library already fully embedded the drain reads no key
+ *    at all — a plain build is cleared as finished, and a "keep current"
+ *    consent stays ("current") until new documents give it passages; the
+ *    run that then works on it holds or releases it.
+ *  A run that works on a library skips it while an earlier hold (the cap,
+ *  a backoff) is still dated in the future. */
+export function buildFates(kind: "switch" | "loss", afterModel?: string): { running: string; embedding: string; embedded: string } {
+  if (kind === "switch") {
+    return {
+      running: "A background run already working on one of them finishes that run with the setting it read when it reached the library.",
+      embedding: "One with passages still to embed — a build you started, or one kept current — is held for a model conflict "
+        + "by the next background run that works on it, and looked at again every hour, until the library is rebuilt "
+        + `with ${afterModel ?? "the new model"} or you set your embedding model back.`,
+      embedded: "A library already fully embedded is left as it is: a build you started there is cleared as finished, and "
+        + "a “keep current” consent stays (listed under Background builds on your key) until new documents give it "
+        + "passages to embed — the next background run then holds it. Stop it there to end it now.",
+    };
+  }
+  return {
+    running: "A background run already working on one of them finishes that run on the key it read when it reached the library.",
+    embedding: "One with passages still to embed — a build you started, or one kept current — is ended (its consent "
+      + "released) by the next background run that works on it.",
+    embedded: "A library already fully embedded is left as it is: a build you started there is cleared as finished, and "
+      + "a “keep current” consent stays (listed under Background builds on your key) until new documents give it "
+      + "passages to embed — the next background run then ends it. Stop it there to end it now.",
+  };
 }
 
 /** A switch to another setting, not a loss of every setting. */

@@ -1215,9 +1215,11 @@ export default function KnowledgeLibraryPage() {
       );
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
   }, [thread, threadId, seededTurns, threadStoreKey]);
-  // Org Playbooks visibility: how many standing instructions ride on asks.
-  // null until the count is read, and when it could not be read, so the
-  // empty state below never flashes — nor shows over a failed read.
+  // Org Playbooks visibility: how many standing instructions ride on asks —
+  // the org's enabled playbooks scoped to library asks or everywhere, the
+  // same set the ask route sends (loadOrgInstructionsBlock). null until the
+  // count is read, and when it could not be read, so the empty state below
+  // never flashes — nor shows over a failed read.
   const [instructionCount, setInstructionCount] = useState<number | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
@@ -1869,14 +1871,18 @@ export default function KnowledgeLibraryPage() {
                     {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
                   </Link>
                 )}
-                {/* HUB-6: with no playbook yet the door is still shown — an
-                    invitation to write the first one, never a hidden page. */}
+                {/* HUB-6: with no playbook applying here the door is still
+                    shown — an invitation, never a hidden page. It claims
+                    only what the count read: none enabled for library asks
+                    (or everywhere). The org may still hold disabled ones, or
+                    ones for codebook imports or drawing reading, so it never
+                    says the org has none. */}
                 {instructionCount === 0 && (
                   <Link href="/admin/ai-instructions" data-playbooks-empty="true"
                     className="ml-1.5 font-bold text-violet-700 hover:underline">
                     {isController
-                      ? "No playbooks yet — teach the AI your house rules"
-                      : "No playbooks yet — see what the AI is taught"}
+                      ? "No playbook applies to this library's asks — teach the AI your house rules"
+                      : "No playbook applies to this library's asks — see what the AI is taught"}
                   </Link>
                 )}
               </div>

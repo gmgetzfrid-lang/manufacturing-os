@@ -637,12 +637,37 @@ export async function setEmbedBuildMarker(
   libraryId: string, userId: string | null, opts?: { standing?: boolean; expect?: MarkerExpectation },
 ): Promise<string | null> {
   if (!userId) return (await writeMarker(libraryId, { set: null }, opts?.expect)).error;
+  return (await recordEmbedBuildConsent(libraryId, userId, opts)).error;
+}
+
+/** What recording a consent found and did (GOV-14). `prior` is the marker
+ *  the write was conditional on — read inside the write, in the round that
+ *  landed — so, with `applied`, it is the consent the write replaced (null:
+ *  there was none): the same payer and instant as what the stored marker
+ *  held when the write changed it. Without `applied` and with no error,
+ *  `prior` is another member's standing consent, which stands. `undefined`
+ *  when the marker could not be read (then nothing was written). */
+export interface ConsentWrite {
+  error: string | null;
+  applied: boolean;
+  prior: ReturnType<typeof parseEmbedBuildMarker> | undefined;
+}
+
+/** setEmbedBuildMarker for a consent (a payer), reporting the consent it
+ *  replaced (`ConsentWrite`). The audit of a consent (the embed route's
+ *  auditConsent) decides on THIS prior, never on a read of its own taken
+ *  earlier: a consent released or replaced between that read and the write
+ *  would otherwise be taken for a renewal and get no audit row. */
+export async function recordEmbedBuildConsent(
+  libraryId: string, userId: string, opts?: { standing?: boolean; expect?: MarkerExpectation },
+): Promise<ConsentWrite> {
+  let prior: ConsentWrite["prior"];
   for (let round = 0; round < 2; round++) {
     const { feats, error } = await readFeatures(libraryId);
-    if (error) return error;
-    const prior = parseEmbedBuildMarker(feats.embedBuild);
+    if (error) return { error, applied: false, prior: undefined };
+    prior = parseEmbedBuildMarker(feats.embedBuild);
     if (opts?.standing === undefined && prior?.valid && prior.standing && prior.userId !== userId) {
-      return null;
+      return { error: null, applied: false, prior };
     }
     const standing = opts?.standing ?? (prior?.userId === userId && prior.standing === true);
     const expect = opts?.expect ?? (prior ? { userId: prior.userId, at: prior.at || null } : NO_MARKER);
@@ -651,9 +676,12 @@ export async function setEmbedBuildMarker(
       { set: { userId, at: new Date().toISOString(), ...(standing ? { standing: true } : {}) } },
       expect,
     );
-    if (out.error || out.applied || opts?.expect) return out.error;
+    if (out.error || out.applied || opts?.expect) return { error: out.error, applied: out.applied, prior };
   }
-  return "the background build's consent changed while this one was being recorded — start the build again to record it";
+  return {
+    error: "the background build's consent changed while this one was being recorded — start the build again to record it",
+    applied: false, prior,
+  };
 }
 
 /** Clear the marker only while it is still the one the caller read, and SAY

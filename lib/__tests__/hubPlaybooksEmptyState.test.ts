@@ -10,6 +10,12 @@
 // over a library that has playbooks — and nothing when the count could not
 // be read (countActiveInstructions answers null, never 0, on a failed read).
 //
+// I-20 fix pass 4: the count is the org's ENABLED playbooks scoped to library
+// asks or everywhere — the set the ask route sends — not every playbook the
+// org holds. A 0 is therefore "none applies to this library's asks", and the
+// invitation says exactly that; it used to say "No playbooks yet" over an org
+// whose playbooks were disabled or scoped to codebook imports or drawings.
+//
 // REGRESSION: with playbooks the header reads "N standing instruction(s)
 // apply" exactly as before.
 
@@ -116,7 +122,7 @@ describe("HUB-6 done-when 2 — the library Ask header points at playbooks even 
     const links = playbookLinks();
     expect(links).toHaveLength(1);
     expect(links[0].getAttribute("data-playbooks-empty")).toBe("true");
-    expect(links[0].textContent).toBe("No playbooks yet — teach the AI your house rules");
+    expect(links[0].textContent).toBe("No playbook applies to this library's asks — teach the AI your house rules");
     // it sits in the Ask header, beside what grounds the answers
     expect(links[0].parentElement?.textContent).toMatch(/Answers come ONLY from the indexed documents, cited to the page\./);
   });
@@ -127,7 +133,7 @@ describe("HUB-6 done-when 2 — the library Ask header points at playbooks even 
     await mount();
     const links = playbookLinks();
     expect(links).toHaveLength(1);
-    expect(links[0].textContent).toBe("No playbooks yet — see what the AI is taught");
+    expect(links[0].textContent).toBe("No playbook applies to this library's asks — see what the AI is taught");
   });
 
   it("REGRESSION: with playbooks the header reads 'N standing instruction(s) apply', as before, and no invitation", async () => {
@@ -184,6 +190,72 @@ describe("HUB-6 — a count that could not be read is not 'no playbooks'", () =>
     expect(instructions.countActiveInstructions).toHaveBeenCalledWith("o1", "knowledge");
     expect(playbookLinks()).toHaveLength(0);
     expect(host.querySelector("[data-playbooks-empty]")).toBeNull();
-    expect(host.textContent).not.toMatch(/No playbooks yet/);
+    expect(host.textContent).not.toMatch(/No playbooks? (yet|applies)/);
+  });
+});
+
+describe("HUB-6 (I-20 fix pass 4) — the invitation claims only what the count read: none applies to this library's asks", () => {
+  type Pb = { org_id: string; scope: string; enabled: boolean; title: string; body: string };
+  /** org_ai_instructions over `rows`, applying the filters the caller chains. */
+  const table = (rows: Pb[]) => {
+    const filters: Array<(r: Pb) => boolean> = [];
+    let head = false;
+    const q: Record<string, unknown> = {};
+    q.select = (_c: string, o?: { head?: boolean }) => { if (o?.head) head = true; return q; };
+    q.eq = (k: keyof Pb, v: unknown) => { filters.push((r) => r[k] === v); return q; };
+    q.in = (k: keyof Pb, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return q; };
+    q.order = () => q;
+    q.limit = () => q;
+    q.then = (resolve: (v: unknown) => void) => {
+      const hit = rows.filter((r) => filters.every((f) => f(r)));
+      resolve(head ? { count: hit.length, error: null, data: null } : { data: hit, error: null });
+    };
+    return q;
+  };
+  const pb = (scope: string, enabled: boolean, title: string, org = "o1"): Pb => ({ org_id: org, scope, enabled, title, body: `${title} body` });
+
+  it("an org whose playbooks are all disabled or scoped elsewhere counts 0 — exactly the set the ask route sends (none) — while the org does hold playbooks", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    const { loadOrgInstructionsBlock } = await import("@/lib/aiInstructionsServer");
+    const rows = [
+      pb("knowledge", false, "Cite the clause"),        // disabled
+      pb("codebook", true, "Tag prefixes"),             // another feature's
+      pb("equipment", true, "Title block corner"),      // another feature's
+      pb("global", true, "Other org's rule", "o2"),     // another org's
+    ];
+    sb.from.mockImplementation(() => table(rows));
+    expect(await real.countActiveInstructions("o1", "knowledge")).toBe(0);
+    // the ask route sends none of them either …
+    const admin = { from: () => table(rows) } as unknown as Parameters<typeof loadOrgInstructionsBlock>[0];
+    expect(await loadOrgInstructionsBlock(admin, "o1", "knowledge")).toBe("");
+    // … though the org holds three: "No playbooks yet" would be false here
+    expect(rows.filter((r) => r.org_id === "o1")).toHaveLength(3);
+  });
+
+  it("negative control: one enabled playbook for library asks or everywhere is counted — and is what the ask route sends", async () => {
+    const real = await vi.importActual<typeof import("@/lib/aiInstructions")>("@/lib/aiInstructions");
+    const { loadOrgInstructionsBlock } = await import("@/lib/aiInstructionsServer");
+    for (const scope of ["knowledge", "global"]) {
+      const rows = [pb("knowledge", false, "Cite the clause"), pb("codebook", true, "Tag prefixes"), pb(scope, true, "Answer in metric")];
+      sb.from.mockImplementation(() => table(rows));
+      expect(await real.countActiveInstructions("o1", "knowledge")).toBe(1);
+      const admin = { from: () => table(rows) } as unknown as Parameters<typeof loadOrgInstructionsBlock>[0];
+      const block = await loadOrgInstructionsBlock(admin, "o1", "knowledge");
+      expect(block).toMatch(/- Answer in metric: Answer in metric body/);
+      expect(block).not.toMatch(/Cite the clause|Tag prefixes/);
+    }
+  });
+
+  it("reproduction → fix: with a count of 0 the header says none applies to this library's asks — never that the org has no playbooks", async () => {
+    for (const controller of [true, false]) {
+      setRole(controller);
+      instructions.countActiveInstructions.mockResolvedValue(0);
+      await mount();
+      const link = host.querySelector("[data-playbooks-empty]")!;
+      expect(link.textContent).toMatch(/^No playbook applies to this library's asks — /);
+      expect(host.textContent).not.toMatch(/No playbooks yet/);
+      act(() => root.unmount());
+      root = createRoot(host);
+    }
   });
 });

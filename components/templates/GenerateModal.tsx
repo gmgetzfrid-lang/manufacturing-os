@@ -16,7 +16,10 @@
 // marked on its row, and nothing is made from it — downloaded or filed —
 // until that field is filled in or explicitly left blank, field by field.
 // The server never refuses an empty field: some AI fields are optional, and
-// only the person reviewing can say which.
+// only the person reviewing can say which. A field the AI left empty in
+// several documents can be left blank in all of them at once — one tick per
+// field, covering the documents drafted when it is ticked (I-20 fix pass 4);
+// there is no tick that releases every field.
 
 import React, { useState } from "react";
 import {
@@ -47,6 +50,30 @@ export function documentsBlockedByEmptyAi(
   return docs
     .map((d, index) => ({ index, tags: emptyAiFields(d, aiTags).filter((t) => !keepBlank[`${index}|${t}`]) }))
     .filter((b) => b.tags.length > 0);
+}
+
+/** PR-6 (I-20 fix pass 4): per AI field, the documents where the AI wrote
+ *  nothing — what that field's batch override reaches. Only fields empty in
+ *  two or more documents (with one, the per-document tick is the same). */
+export function emptyAiFieldsAcrossBatch(
+  docs: readonly DraftedDocument[], aiTags: readonly string[],
+): Array<{ tag: string; indexes: number[] }> {
+  return aiTags
+    .map((tag) => ({ tag, indexes: docs.flatMap((d, i) => (emptyAiFields(d, [tag]).length > 0 ? [i] : [])) }))
+    .filter((f) => f.indexes.length > 1);
+}
+
+/** PR-6 (I-20 fix pass 4): the batch override for ONE field — tick (or
+ *  untick) "leave it blank" on every document where the AI wrote nothing
+ *  for `tag`, and on no other field. It writes the per-document overrides,
+ *  so it reaches only the documents drafted now: a later batch's empty
+ *  field is ticked again, and each document's own tick still works. */
+export function setKeepBlankAcrossBatch(
+  keepBlank: Readonly<Record<string, boolean>>, docs: readonly DraftedDocument[], tag: string, on: boolean,
+): Record<string, boolean> {
+  const next = { ...keepBlank };
+  docs.forEach((d, i) => { if (emptyAiFields(d, [tag]).length > 0) next[`${i}|${tag}`] = on; });
+  return next;
 }
 
 /** What the draft action sends beyond DraftResult (PR-6). */
@@ -209,6 +236,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   // PR-6: documents with an empty AI field nobody chose to leave blank.
   const blocked = documentsBlockedByEmptyAi(docs, aiTagList, keepBlank);
   const blockedFields = blocked.reduce((n, b) => n + b.tags.length, 0);
+  // PR-6 (fix pass 4): fields the AI left empty in more than one document.
+  const acrossBatch = emptyAiFieldsAcrossBatch(docs, aiTagList);
   function refuseEmptyAi(): boolean {
     if (blocked.length === 0) return false;
     showToast({
@@ -461,6 +490,27 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                     {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Select>
                   <span className="text-[var(--color-text-muted)]">as Draft rev 0</span>
+                </div>
+              )}
+              {acrossBatch.length > 0 && (
+                <div data-empty-ai-batch="true"
+                  className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text)] space-y-1">
+                  <p className="text-[var(--color-text-muted)]">
+                    The AI wrote nothing for {acrossBatch.length === 1 ? "this field" : "these fields"} in more than one
+                    document. If {acrossBatch.length === 1 ? "it is" : "one is"} optional, leave it blank in each of them
+                    at once — one field at a time:
+                  </p>
+                  {acrossBatch.map((f) => (
+                    <label key={f.tag} data-empty-ai-batch-field={f.tag} className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox"
+                        checked={f.indexes.every((i) => !!keepBlank[`${i}|${f.tag}`])}
+                        onChange={(e) => setKeepBlank((prev) => setKeepBlankAcrossBatch(prev, docs, f.tag, e.target.checked))} />
+                      <span>
+                        Leave <code className="font-mono font-black text-orange-600">{`{${f.tag}}`}</code> blank in
+                        all {f.indexes.length} documents where the AI wrote nothing
+                      </span>
+                    </label>
+                  ))}
                 </div>
               )}
               {blocked.length > 0 && (

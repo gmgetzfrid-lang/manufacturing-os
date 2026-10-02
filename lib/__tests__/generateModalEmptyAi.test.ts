@@ -8,6 +8,13 @@
 // The server never refuses an empty field (some AI fields are optional);
 // the reviewer decides.
 //
+// I-20 fix pass 4: a field the AI left empty in several documents (an
+// optional field empty in every row) can be left blank in all of them with
+// one tick — per field, never a tick that releases every field. The tick
+// writes each document's own override, so it reaches only the documents
+// drafted when it is ticked; the per-document tick still works, and Download
+// and File stay refused until every empty AI field is filled or overridden.
+//
 // REGRESSION: a batch whose AI fields are all written renders exactly as
 // before — no mark, no refusal, the Download button sends the reviewed values.
 
@@ -32,7 +39,9 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: () => b } };
 });
 
-import GenerateModal, { emptyAiFields, documentsBlockedByEmptyAi } from "@/components/templates/GenerateModal";
+import GenerateModal, {
+  emptyAiFields, documentsBlockedByEmptyAi, emptyAiFieldsAcrossBatch, setKeepBlankAcrossBatch,
+} from "@/components/templates/GenerateModal";
 import type { OutputTemplate } from "@/lib/outputTemplates";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -66,8 +75,11 @@ const settle = async () => { for (let i = 0; i < 3; i++) await act(async () => {
 const button = (label: RegExp) => [...host.querySelectorAll("button")].find((b) => label.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
 const click = async (el: HTMLElement) => { await act(async () => { el.click(); }); await settle(); };
 
-async function openAndDraft(documents: Array<{ values: Record<string, string>; filename: string; sourceRow?: number }>) {
-  ot.draftDocuments.mockResolvedValueOnce({ documents, nextOffset: null, rowCount: documents.length, estCostUsd: 0.01 });
+async function openAndDraft(
+  documents: Array<{ values: Record<string, string>; filename: string; sourceRow?: number }>,
+  more?: { nextOffset: number; rowCount: number },
+) {
+  ot.draftDocuments.mockResolvedValueOnce({ documents, nextOffset: more?.nextOffset ?? null, rowCount: more?.rowCount ?? documents.length, estCostUsd: 0.01 });
   await act(async () => {
     root.render(React.createElement(GenerateModal, { orgId: "o1", template, onClose: () => undefined, onGenerated: () => undefined }));
   });
@@ -190,5 +202,117 @@ describe("PR-6 done-when 3 — a document with an empty AI field is not made wit
     await openAndDraft([{ values: { name: "Acme", body: "Text" }, filename: "Acme.docx", sourceRow: 1 }]);
     expect(host.querySelector('[data-empty-ai-field="closing"]')).not.toBeNull();
     expect(button(/^Download 1 document$/)!.disabled).toBe(true);
+  });
+});
+
+describe("PR-6 (I-20 fix pass 4) — one field left blank in every document where the AI wrote nothing: one tick per field", () => {
+  const batchBox = (tag: string) => host.querySelector(`[data-empty-ai-batch-field="${tag}"] input[type="checkbox"]`) as HTMLInputElement | null;
+  const three = (closing = "") => [
+    { values: { name: "Acme", body: "Please find attached.", closing }, filename: "Acme.docx", sourceRow: 1 },
+    { values: { name: "Brix", body: "As discussed.", closing }, filename: "Brix.docx", sourceRow: 2 },
+    { values: { name: "Cole", body: "For review.", closing }, filename: "Cole.docx", sourceRow: 3 },
+  ];
+
+  it("pure: the fields empty in more than one document, and the batch tick writes that field's override on exactly those documents", () => {
+    const docs = [
+      { values: { body: "", closing: "" }, filename: "a" },
+      { values: { body: "", closing: "x" }, filename: "b" },
+      { values: { body: "y", closing: "" }, filename: "c" },
+      { values: { body: "z", closing: "w" }, filename: "d" },
+    ];
+    expect(emptyAiFieldsAcrossBatch(docs, ["body", "closing"])).toEqual([{ tag: "body", indexes: [0, 1] }, { tag: "closing", indexes: [0, 2] }]);
+    // a field empty in one document only has no batch tick (the per-document tick is the same)
+    expect(emptyAiFieldsAcrossBatch(docs.slice(1), ["body", "closing"])).toEqual([]);
+    const kept = setKeepBlankAcrossBatch({}, docs, "closing", true);
+    expect(kept).toEqual({ "0|closing": true, "2|closing": true });
+    // per field: body still blocks documents 0 and 1
+    expect(documentsBlockedByEmptyAi(docs, ["body", "closing"], kept)).toEqual([{ index: 0, tags: ["body"] }, { index: 1, tags: ["body"] }]);
+    // untick takes those overrides back; another field's overrides are left as they were
+    expect(setKeepBlankAcrossBatch({ ...kept, "1|body": true }, docs, "closing", false)).toEqual({ "0|closing": false, "2|closing": false, "1|body": true });
+  });
+
+  it("reproduction → fix: an optional AI field empty in every row is left blank in all of them with ONE tick — no document expanded — and the blanks go through as written", async () => {
+    await openAndDraft(three());
+    expect(button(/^Download 3 documents/)!.disabled).toBe(true);
+    const label = host.querySelector('[data-empty-ai-batch-field="closing"]')!;
+    expect(label.textContent).toMatch(/Leave \{closing\} blank in all 3 documents where the AI wrote nothing/);
+    expect(batchBox("closing")!.checked).toBe(false);
+    await click(batchBox("closing")!);
+    expect(batchBox("closing")!.checked).toBe(true);
+    expect(host.querySelector("[data-empty-ai-blocked]")).toBeNull();
+    for (const f of ["Acme.docx", "Brix.docx", "Cole.docx"]) {
+      expect(rowButton(f).querySelector("[data-empty-ai-kept]")?.textContent).toMatch(/left blank on purpose/);
+    }
+    // the per-document tick reads the same override
+    expect((host.querySelector('[data-empty-ai-field="closing"] input[type="checkbox"]') as HTMLInputElement).checked).toBe(true);
+    const download = button(/^Download 3 documents/)!;
+    expect(download.disabled).toBe(false);
+    await click(download);
+    expect(ot.renderDocuments).toHaveBeenCalledWith(expect.objectContaining({
+      documents: three().map((d) => ({ values: d.values, filename: d.filename })),
+    }));
+  });
+
+  it("negative control — per field, never a global bypass: leaving one field blank across the batch does not release another field's empty documents", async () => {
+    await openAndDraft([
+      { values: { name: "Acme", body: "", closing: "" }, filename: "Acme.docx", sourceRow: 1 },
+      { values: { name: "Brix", body: "", closing: "" }, filename: "Brix.docx", sourceRow: 2 },
+    ]);
+    // one tick per field, and no other control
+    expect([...host.querySelectorAll("[data-empty-ai-batch-field]")].map((l) => l.getAttribute("data-empty-ai-batch-field"))).toEqual(["body", "closing"]);
+    expect(host.querySelectorAll('[data-empty-ai-batch] input[type="checkbox"]')).toHaveLength(2);
+    await click(batchBox("closing")!);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/2 documents have 2 empty AI-written fields\./);
+    expect(button(/^Download 2 documents/)!.disabled).toBe(true);
+    const select = [...host.querySelectorAll("select")].find((sel) => [...sel.options].some((o) => o.value === "L1")) as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => { setter.call(select, "L1"); select.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+    expect(button(/^File 2 into library/)!.disabled).toBe(true);
+    expect(ot.renderDocuments).not.toHaveBeenCalled();
+    expect(ot.fileDocumentsToLibrary).not.toHaveBeenCalled();
+    // the second field's own tick releases them
+    await click(batchBox("body")!);
+    expect(host.querySelector("[data-empty-ai-blocked]")).toBeNull();
+    expect(button(/^Download 2 documents/)!.disabled).toBe(false);
+  });
+
+  it("the tick reaches only the documents drafted when it was ticked: the next batch's empty field is refused again, until it is ticked again", async () => {
+    await openAndDraft(three().slice(0, 2), { nextOffset: 2, rowCount: 3 });
+    await click(batchBox("closing")!);
+    expect(button(/^Download 2 documents/)!.disabled).toBe(false);
+    ot.draftDocuments.mockResolvedValueOnce({ documents: [three()[2]], nextOffset: null, rowCount: 3, estCostUsd: 0.01 });
+    await click(button(/^Draft the next batch/)!);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(true);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/1 document has an empty AI-written field\./);
+    expect(rowButton("Cole.docx").querySelector("[data-empty-ai]")).not.toBeNull();
+    expect(batchBox("closing")!.checked).toBe(false);
+    expect(host.querySelector('[data-empty-ai-batch-field="closing"]')!.textContent).toMatch(/all 3 documents/);
+    await click(batchBox("closing")!);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(false);
+  });
+
+  it("unticking takes the overrides back (Download refused again); a document's own tick still works; a field empty in one document offers no batch tick", async () => {
+    await openAndDraft(three());
+    await click(batchBox("closing")!);
+    await click(batchBox("closing")!);
+    expect(batchBox("closing")!.checked).toBe(false);
+    expect(button(/^Download 3 documents/)!.disabled).toBe(true);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/3 documents have 3 empty AI-written fields\./);
+    // the first document is open: its own tick releases it alone
+    await click(host.querySelector('[data-empty-ai-field="closing"] input[type="checkbox"]') as HTMLElement);
+    expect(host.querySelector("[data-empty-ai-blocked]")!.textContent).toMatch(/2 documents have 2 empty AI-written fields\./);
+    expect(batchBox("closing")!.checked).toBe(false);
+    act(() => root.unmount());
+    root = createRoot(host);
+    await openAndDraft([three()[0], { ...three("Thanks")[1] }]);
+    expect(host.querySelector("[data-empty-ai-batch]")).toBeNull();
+    expect(button(/^Download 2 documents/)!.disabled).toBe(true);
+  });
+
+  it("REGRESSION: every AI field written — no batch tick is offered", async () => {
+    await openAndDraft(three("Regards"));
+    expect(host.querySelector("[data-empty-ai-batch]")).toBeNull();
+    expect(button(/^Download 3 documents/)!.disabled).toBe(false);
   });
 });

@@ -84,11 +84,14 @@ export async function deleteAiInstruction(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-/** Count of instructions active for a scope (its own + global) — the number
- *  behind "N standing instructions apply" chips on AI surfaces. null when
- *  the count could not be read: a failed read is never "none", so the
- *  library Ask header's "No playbooks yet" invitation (HUB-6) is never shown
- *  over an org that has playbooks. */
+/** Count of instructions active for a scope (its own + global, enabled
+ *  only) — the number behind "N standing instructions apply" chips on AI
+ *  surfaces, and the same set loadOrgInstructionsBlock sends with a call in
+ *  that scope. Disabled playbooks and other scopes' are not counted, so 0
+ *  means "none applies here", never "the org has none". null when the count
+ *  could not be read: a failed read is never "none", so the library Ask
+ *  header's "No playbook applies to this library's asks" invitation (HUB-6)
+ *  is never shown over a read that failed. */
 export async function countActiveInstructions(
   orgId: string,
   scope: AiInstructionScope,

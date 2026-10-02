@@ -73,7 +73,12 @@
 // rows were written that no pass renews is continued by the drain on its
 // stamp alone. Only this route writes EMBED_BUILD_CONSENT_RECORDED rows: a
 // member's own insert of one is refused (20261163), so the renewal lookup
-// never takes a member-written row for the route's record.
+// never takes a member-written row for the route's record. Whether a write
+// recorded a new consent or renewed one is decided on the consent the write
+// actually replaced (recordEmbedBuildConsent's `prior`, the marker its
+// compare-and-set was conditional on) — never on an earlier read of the
+// route's own, so a consent released or replaced in between is audited as
+// the new consent it is.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -89,7 +94,7 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
   loadEmbedDetail, failedPassageSamples, embedAgreementSigned, expectationOf,
-  readEmbedBuildMarker, clearEmbedBuildMarkerIf, patchEmbedBuildMarkerIf, type EmbedDetail,
+  readEmbedBuildMarker, clearEmbedBuildMarkerIf, patchEmbedBuildMarkerIf, recordEmbedBuildConsent, type EmbedDetail,
   type EmbedBuildMarker, type MarkerWrite,
 } from "@/lib/knowledgeEmbedCore";
 
@@ -262,10 +267,13 @@ type ConsentUnaudited = {
 };
 
 /** GOV-14: after a consent write, the audit row naming the request that
- *  stamped it. `before` is the marker read ahead of the write (undefined:
- *  it could not be read — only a build pass goes on without it, and its
- *  write carries the caller's own standing flag over, so a withdrawn
- *  standing consent is still said; "keep current" refuses instead). A pass
+ *  stamped it. `before` is the consent the write replaced — the marker its
+ *  compare-and-set was conditional on (recordEmbedBuildConsent's `prior`),
+ *  the same payer and instant as what the stored marker held when the write
+ *  changed it. Never a read the route took earlier: a consent released or
+ *  replaced between that read and the write would be taken for a renewal
+ *  and get no row (I-20 fix pass 4). (undefined: not known — no caller
+ *  passes it now, since a write whose own read fails writes nothing.) A pass
  *  that renews the caller's own consent — or "keep current" over one
  *  already standing — records nothing new once a row names this payer on
  *  this library; a renewal of a consent no row
@@ -668,17 +676,20 @@ export async function POST(req: NextRequest) {
       // over: were the new consent's row then to fail, the put-back could
       // not know what to restore, and withdrawing would switch off a "keep
       // current" the caller already had without anyone knowing it stood.
+      // (The write reads it again itself, and the audit goes by THAT read.)
       let prior = await readEmbedBuildMarker(libraryId);
       if (prior.error) prior = await readEmbedBuildMarker(libraryId);
       if (prior.error) {
         return bad(`Couldn't read the standing consent, so nothing was changed: ${prior.error}`, 500, { standing: null });
       }
-      const err = await setEmbedBuildMarker(libraryId, user.id, { standing: true });
-      if (err) return bad(`Couldn't record the standing consent: ${err}`, 500);
-      // GOV-14: the consent names the request that recorded it, or is not kept.
+      const write = await recordEmbedBuildConsent(libraryId, user.id, { standing: true });
+      if (write.error) return bad(`Couldn't record the standing consent: ${write.error}`, 500);
+      // GOV-14: the consent names the request that recorded it, or is not
+      // kept — judged against the consent the write replaced, not `prior`:
+      // one released or replaced since that read is a new consent.
       const unaudited = await auditConsent(req, {
         orgId, libraryId, userId: user.id, action: "keep-current",
-        before: prior.marker, always: true,
+        before: write.prior, always: true,
       });
       if (unaudited) return bad(keepCurrentRefusal(unaudited), 500, { standing: null });
       return NextResponse.json({ standing: true });
@@ -737,16 +748,18 @@ export async function POST(req: NextRequest) {
   // Consent marker for the background drain: starting a build records WHO
   // is paying, and the drain continues THIS build with THIS key until the
   // library is done — the tab is optional from here on. A consent this pass
-  // newly records is audited, naming the request (GOV-14).
-  const priorMarker = await readEmbedBuildMarker(libraryId);
-  const markerError = await setEmbedBuildMarker(libraryId, user.id);
+  // newly records is audited, naming the request (GOV-14), judged against
+  // the consent the write replaced (I-20 fix pass 4: a consent released or
+  // replaced just before this pass's write is a new consent, never a renewal).
+  const consent = await recordEmbedBuildConsent(libraryId, user.id);
+  const markerError = consent.error;
   let backgroundNote: string | null = markerError
     ? `The background continuation could not be recorded (${markerError}) — keep this page open until the build finishes.`
     : null;
   if (!markerError) {
     const unaudited = await auditConsent(req, {
       orgId, libraryId, userId: user.id, action: "build",
-      before: priorMarker.error ? undefined : priorMarker.marker,
+      before: consent.prior,
     });
     if (unaudited) backgroundNote = buildConsentNote(unaudited);
   }

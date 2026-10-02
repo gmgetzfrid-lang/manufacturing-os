@@ -12,7 +12,10 @@
 //
 // Intelligence Round G, I-20: saving a different embedding model or provider
 // first says which meaning indexes stop answering (or stop growing) and which
-// background builds on this key stop, names the libraries, and after the
+// background builds on this key are affected — and what the drain does to
+// each kind of build (a run under way, one with passages left, a "keep
+// current" on a library already fully embedded: buildFates, fix pass 4) —
+// names the libraries, and after the
 // switch links each one's Rebuild (SEM-1). A member whose meaning search runs
 // on their OpenAI chat key (no embeddings key) is told the same before the
 // chat key moves to another provider or is removed; removing the chat key
@@ -39,7 +42,7 @@ import {
 import {
   getEmbedKeyOverview, effectiveEmbeddingSetting, savedEmbeddingSetting, embeddingSwitchImpact,
   switchImpactIsEmpty, librariesLinkedAfterSwitch, onChatKeyEmbeddings, embeddingLossImpact, releaseBuildOnMyKey,
-  isSwitchImpact,
+  isSwitchImpact, buildFates,
   type EmbeddingSwitchImpact, type EmbeddingLossImpact, type EmbedKeyOverview, type EmbedKeyBuild,
 } from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
@@ -454,6 +457,20 @@ export function KeyEditor({ orgId, current, onChanged }: {
 // users at Voyage AI, which is why it's first in the list and the default.
 const embeddingProviderLabel = (id: string) => EMBEDDING_PROVIDERS.find((p) => p.id === id)?.label ?? id;
 
+/** SEM-1 (I-20 fix pass 4): what the drain does to each kind of background
+ *  build on the key after the change — said per kind, because it is not the
+ *  same for every build (buildFates, lib/embedKeyOverview.ts). */
+function BuildFates({ kind, afterModel }: { kind: "switch" | "loss"; afterModel?: string }) {
+  const f = buildFates(kind, afterModel);
+  return (
+    <ul data-build-fates={kind} className="list-disc pl-5">
+      <li data-build-fate="running">{f.running}</li>
+      <li data-build-fate="embedding">{f.embedding}</li>
+      <li data-build-fate="embedded">{f.embedded}</li>
+    </ul>
+  );
+}
+
 /** SEM-1: the confirm's body when a member switches embedding model or
  *  provider — what stops, in which libraries, and the way back. */
 export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpact | EmbeddingLossImpact }) {
@@ -500,8 +517,10 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
         )}
         {impact.buildsStop.length > 0 && (
           <div data-switch-builds-stop="true">
-            <p><b>The background builds on your key end</b> (with no embeddings key, the next background run releases them) in:</p>
+            <p><b>Background builds on your key</b> in:</p>
             {names(impact.buildsStop)}
+            <p>With no embeddings key:</p>
+            <BuildFates kind="loss" />
           </div>
         )}
         {impact.unknown.length > 0 && (
@@ -511,10 +530,13 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
           </div>
         )}
         {impact.unreadable && (
-          <p data-switch-unreadable="true">
-            Which libraries are affected could not be checked ({impact.unreadable}). Every meaning index built with{" "}
-            {label} stops answering your questions, and every background build on your key ends.
-          </p>
+          <div data-switch-unreadable="true">
+            <p>
+              Which libraries are affected could not be checked ({impact.unreadable}). Every meaning index built with{" "}
+              {label} stops answering your questions. A background build on your key, with no embeddings key:
+            </p>
+            <BuildFates kind="loss" />
+          </div>
         )}
         {cause === "connectionRemoved" ? (
           <p>
@@ -568,8 +590,9 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
       )}
       {impact.buildsStop.length > 0 && (
         <div data-switch-builds-stop="true">
-          <p><b>The background builds on your key stop</b> (held for a model conflict) in:</p>
+          <p><b>Background builds on your key</b> in libraries a build with {after.model} cannot add to:</p>
           {names(impact.buildsStop)}
+          <BuildFates kind="switch" afterModel={after.model} />
         </div>
       )}
       {impact.unknown.length > 0 && (
@@ -579,12 +602,16 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
         </div>
       )}
       {impact.unreadable && (
-        <p data-switch-unreadable="true">
-          Which libraries are affected could not be checked ({impact.unreadable}).{" "}
-          {impact.providerChanged
-            ? `Every meaning index built with ${embeddingProviderLabel(before.provider)} stops answering your questions.`
-            : `Every meaning index built with ${before.model} keeps answering, but a build with ${after.model} cannot add to it.`}
-        </p>
+        <div data-switch-unreadable="true">
+          <p>
+            Which libraries are affected could not be checked ({impact.unreadable}).{" "}
+            {impact.providerChanged
+              ? `Every meaning index built with ${embeddingProviderLabel(before.provider)} stops answering your questions.`
+              : `Every meaning index built with ${before.model} keeps answering, but a build with ${after.model} cannot add to it.`}{" "}
+            A background build on your key in such a library:
+          </p>
+          <BuildFates kind="switch" afterModel={after.model} />
+        </div>
       )}
       <p>
         Each one comes back with a <b>Rebuild</b> of that library&apos;s index with {after.model} — Rebuild index,
@@ -665,8 +692,11 @@ export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refres
                     {stopping === b.libraryId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Stop
                   </Button>
                 </div>
-                <div className="mt-0.5">
-                  {fmtWhen(b.startedAt) ? `Consent recorded ${fmtWhen(b.startedAt)}` : "Consent recorded"}
+                <div className="mt-0.5" data-build-confirmed="true">
+                  {/* I-20 fix pass 4: the marker's instant is re-stamped by every
+                      build pass and "keep current" press — the last confirmation,
+                      not when the consent was first given. */}
+                  {fmtWhen(b.startedAt) ? `Consent last confirmed ${fmtWhen(b.startedAt)}` : "Consent recorded"}
                   {fmtWhen(b.lastDrainAt) ? `; last ran ${fmtWhen(b.lastDrainAt)}` : "; not run in the background yet"}.
                 </div>
                 {waiting && (
@@ -686,7 +716,8 @@ export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refres
       )}
       <p className="text-[10px] text-[var(--color-text-muted)]">
         Each runs on your embeddings key and counts against your monthly cap. Stop ends it; what it already
-        embedded stays.
+        embedded stays. &ldquo;Last confirmed&rdquo; is the last build pass or &ldquo;keep current&rdquo; press that
+        confirmed the consent — not when it was first given.
       </p>
     </div>
   );

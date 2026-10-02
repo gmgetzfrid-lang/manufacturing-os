@@ -28,11 +28,18 @@
 //     OpenAI chat key's default model, or ends it: that confirm names what
 //     stops too, and after a move each library's Rebuild is linked. A removal
 //     that ends a background build no longer says "Nobody else is affected".
+//   SEM-1, the builds on the key (I-20 fix pass 4) — the confirm said the
+//     builds on the key "end" (the next run releases them) or "stop" (held
+//     for a model conflict), but the drain does neither to a "keep current"
+//     on a library already fully embedded, nor to a run already under way.
+//     It now says what happens to each kind (buildFates; embedDrain.test.ts
+//     runs the drain against each case).
 //   GOV-14 done-when 4 — one place lists every background build running on
 //     the member's key, each with a Stop (the route's release action, sent
 //     with onlyMine: a row read before another member's build replaced the
 //     consent stops nothing); a list that cannot be read says so, never
-//     "none running".
+//     "none running". Its instant is labelled "last confirmed" (fix pass 4):
+//     every build pass and "keep current" press re-stamps it.
 //
 // REGRESSION: saving the same provider and model (a new key, or nothing new)
 // asks nothing and reads nothing first — it saves exactly as before; a
@@ -80,7 +87,7 @@ import { EmbeddingKeyEditor, BuildsOnMyKey, KeyEditor } from "@/components/knowl
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import {
   embeddingSwitchImpact, effectiveEmbeddingSetting, switchImpactIsEmpty, librariesToRebuild, librariesLinkedAfterSwitch,
-  embeddingLossImpact, onChatKeyEmbeddings, isSwitchImpact,
+  embeddingLossImpact, onChatKeyEmbeddings, isSwitchImpact, buildFates,
   type EmbedKeyOverview,
 } from "@/lib/embedKeyOverview";
 
@@ -259,7 +266,8 @@ describe("SEM-1 done-when 2 — switching the embedding model or provider confir
     const text = await confirmText();
     expect(text).toContain(`You are switching from ${VOYAGE[1]} (Voyage AI) to ${OPENAI[0]} (OpenAI).`);
     expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with Voyage AI, and an OpenAI key cannot search them:StandardsP&IDs/);
-    expect(text).toMatch(/The background builds on your key stop \(held for a model conflict\) in:P&IDs/);
+    expect(text).toContain(`Background builds on your key in libraries a build with ${OPENAI[0]} cannot add to:P&IDs`);
+    expect(text).toContain(buildFates("switch", OPENAI[0]).embedding);
     expect(text).not.toMatch(/Vendor manuals|Empty/);
     expect(text).toMatch(/Each one comes back with a Rebuild of that library's index with/);
     expect(text).toMatch(/Once you switch, the libraries are linked here\./);
@@ -401,7 +409,7 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     const text = await confirmText();
     expect(text).toContain(`Your meaning-based search runs on this OpenAI chat key (${OPENAI[0]}) — you have no embeddings key saved.`);
     expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with OpenAI, and without an OpenAI key you cannot search them:Vendor manuals/);
-    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:Vendor manuals/);
+    expect(text).toMatch(/Background builds on your key in:Vendor manualsWith no embeddings key:/);
     expect(text).not.toMatch(/Standards|Empty/);
     expect(text).toMatch(/To keep them, add an embeddings key under Meaning-based search first: an OpenAI embeddings key searches these indexes as they are; a key for another provider needs each library's index rebuilt with it — Rebuild index/);
     expect(text).toMatch(/Keyword search is unaffected\./);
@@ -423,7 +431,10 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     await choose(0, "anthropic");
     dialog.appConfirm.mockResolvedValueOnce(false);
     await click(/Verify & save/);
-    expect(await confirmText()).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with OpenAI stops answering your questions, and every background build on your key ends\./);
+    const text = await confirmText();
+    expect(text).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with OpenAI stops answering your questions\. A background build on your key, with no embeddings key:/);
+    expect(text).not.toMatch(/every background build on your key ends/);
+    expect(text).toContain(buildFates("loss").embedded);
     expect(kn.saveAiConnection).not.toHaveBeenCalled();
   });
 
@@ -439,7 +450,7 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone\./);
     expect(text).not.toMatch(/Nobody else is affected/);
     expect(text).toMatch(/These meaning indexes stop answering your questions[\s\S]*Vendor manuals/);
-    expect(text).toMatch(/The background builds on your key end[\s\S]*Vendor manuals/);
+    expect(text).toMatch(/Background builds on your key in:[\s\S]*Vendor manuals/);
     expect(kn.removeAiConnection).not.toHaveBeenCalled();
   });
 
@@ -472,7 +483,7 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone\./);
     expect(text).toContain(`This also removes your embeddings key (Voyage AI, ${VOYAGE[1]}): it is saved with your chat key, and removing the chat key deletes both. After this you have no embeddings connection at all.`);
     expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with Voyage AI, and without a Voyage AI key you cannot search them:StandardsP&IDs/);
-    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:P&IDs/);
+    expect(text).toMatch(/Background builds on your key in:P&IDsWith no embeddings key:/);
     expect(text).not.toMatch(/Vendor manuals|Empty/);
     expect(text).toMatch(/To change your chat key and keep your embeddings key, paste the new key above and press Verify & save instead — saving replaces only the chat key\./);
     expect(text).not.toMatch(/you have no embeddings key saved|add an embeddings key under/);
@@ -494,7 +505,7 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     const text = await confirmText();
     expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. Nobody else is affected\./);
     expect(text).toMatch(/This also removes your embeddings key \(Voyage AI, /);
-    expect(text).not.toMatch(/stop answering|builds on your key end/);
+    expect(text).not.toMatch(/stop answering|Background builds on your key/);
     expect(text).toMatch(/To change your chat key and keep your embeddings key/);
   });
 
@@ -505,7 +516,7 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     await click(/Remove/);
     const text = await confirmText();
     expect(text).toMatch(/This also removes your embeddings key/);
-    expect(text).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with Voyage AI stops answering your questions, and every background build on your key ends\./);
+    expect(text).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with Voyage AI stops answering your questions\. A background build on your key, with no embeddings key:/);
     expect(text).not.toMatch(/Nobody else is affected/);
   });
 
@@ -551,7 +562,7 @@ describe("SEM-1 done-when 2 — removing the embeddings key names what stops (fi
     expect(text).toMatch(new RegExp(`^Meaning-based search stops for you; keyword search is unaffected\\. ${SEM3.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     expect(text).toContain(`Your meaning-based search runs on this Voyage AI embeddings key (${VOYAGE[1]}), and you have no OpenAI chat key for it to fall back on.`);
     expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with Voyage AI, and without a Voyage AI key you cannot search them:StandardsP&IDs/);
-    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:P&IDs/);
+    expect(text).toMatch(/Background builds on your key in:P&IDsWith no embeddings key:/);
     expect(text).toMatch(/To change this key instead, paste the new key and press Verify & save rather than Remove: a Voyage AI key searches these indexes as they are/);
     expect(kn.removeEmbeddingKey).not.toHaveBeenCalled();
   });
@@ -564,7 +575,7 @@ describe("SEM-1 done-when 2 — removing the embeddings key names what stops (fi
     expect(text).not.toMatch(/stops for you/);
     expect(text).toContain(`You are switching from ${VOYAGE[1]} (Voyage AI) to ${OPENAI[0]} (OpenAI).`);
     expect(text).toMatch(/These meaning indexes stop answering your questions\.[\s\S]*StandardsP&IDs/);
-    expect(text).toMatch(/The background builds on your key stop \(held for a model conflict\) in:P&IDs/);
+    expect(text).toContain(`Background builds on your key in libraries a build with ${OPENAI[0]} cannot add to:P&IDs`);
     expect(text).toMatch(/Once you switch, the libraries are linked here\./);
     expect(kn.removeEmbeddingKey).toHaveBeenCalledWith("o1");
     const offer = host.querySelector("[data-rebuild-offer]")!;
@@ -596,6 +607,80 @@ describe("SEM-1 done-when 2 — removing the embeddings key names what stops (fi
   });
 });
 
+describe("SEM-1 (I-20 fix pass 4) — the confirm says what happens to each kind of build on the key, never that every one ends or holds at the next run", () => {
+  const fates = async (call = 0) => {
+    const node = dialog.appConfirm.mock.calls[call][0].message as React.ReactElement;
+    const box = document.createElement("div");
+    const r = createRoot(box);
+    await act(async () => { r.render(node); });
+    const items = [...box.querySelectorAll("[data-build-fate]")].map((li) => [li.getAttribute("data-build-fate"), li.textContent]);
+    const kind = box.querySelector("[data-build-fates]")?.getAttribute("data-build-fates") ?? null;
+    const text = box.textContent ?? "";
+    act(() => r.unmount());
+    return { items, kind, text };
+  };
+  async function clickRemove() {
+    const btn = [...host.querySelectorAll("button")].find((b) => /Remove/.test(b.textContent ?? ""))!;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle();
+  }
+
+  it("reproduction → fix: a switch names the build's library, then each kind — a run under way, one with passages left (held), a 'keep current' on a fully embedded library (left as it is) — never 'the builds stop (held for a model conflict)'", async () => {
+    await renderEditor();
+    await choose(0, "openai");
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await save();
+    const f = buildFates("switch", OPENAI[0]);
+    const { items, kind, text } = await fates();
+    expect(kind).toBe("switch");
+    expect(items).toEqual([["running", f.running], ["embedding", f.embedding], ["embedded", f.embedded]]);
+    expect(text).not.toMatch(/builds on your key stop|held for a model conflict\) in/);
+    expect(f.embedded).toMatch(/“keep current” consent stays \(listed under Background builds on your key\) until new documents give it passages to embed — the next background run then holds it\. Stop it there to end it now\./);
+  });
+
+  it("reproduction → fix: a loss (the embeddings key removed, no OpenAI chat key) says the same per kind — ended, not 'the next background run releases them'", async () => {
+    await renderEditor();
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await clickRemove();
+    const f = buildFates("loss");
+    const { items, kind, text } = await fates();
+    expect(kind).toBe("loss");
+    expect(items).toEqual([["running", f.running], ["embedding", f.embedding], ["embedded", f.embedded]]);
+    expect(text).not.toMatch(/the next background run releases them|builds on your key end\b/);
+    expect(f.embedding).toBe("One with passages still to embed — a build you started, or one kept current — is ended (its consent released) by the next background run that works on it.");
+    expect(f.embedded).toMatch(/the next background run then ends it\. Stop it there to end it now\./);
+  });
+
+  it("an overview that cannot be read still says, per kind, what happens to a build on the key — for a switch and for a loss", async () => {
+    ov.getEmbedKeyOverview.mockRejectedValue(new Error("HTTP 500"));
+    await renderEditor();
+    await choose(0, "openai");
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await save();
+    expect((await fates(0)).items.map(([k]) => k)).toEqual(["running", "embedding", "embedded"]);
+    expect((await fates(0)).kind).toBe("switch");
+    act(() => root.unmount());
+    root = createRoot(host);
+    await renderEditor();
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await clickRemove();
+    expect((await fates(1)).kind).toBe("loss");
+    expect((await fates(1)).text).not.toMatch(/every background build on your key ends/);
+  });
+
+  it("negative control: with no build on the key (and every library read), no build case is described", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue({ ...OVERVIEW, builds: [] });
+    await renderEditor();
+    await choose(0, "openai");
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await save();
+    const { items, text } = await fates();
+    expect(items).toEqual([]);
+    expect(text).toMatch(/These meaning indexes stop answering your questions/);
+    expect(text).not.toMatch(/Background builds on your key/);
+  });
+});
+
 describe("GOV-14 done-when 4 — every background build on my key, in one place, each with a Stop", () => {
   async function renderList() {
     await act(async () => { root.render(React.createElement(BuildsOnMyKey, { orgId: "o1" })); });
@@ -615,9 +700,22 @@ describe("GOV-14 done-when 4 — every background build on my key, in one place,
     expect(rows[0].textContent).toMatch(/P&IDs— finishing a build you started/);
     expect(rows[0].querySelector("a")?.getAttribute("href")).toBe("/knowledge/L-pid");
     expect(rows[0].textContent).toMatch(/; last ran /);
+    // I-20 fix pass 4: the instant is the last confirmation (every build pass re-stamps it), not the consent's first recording
+    expect(rows[0].querySelector("[data-build-confirmed]")?.textContent).toBe(
+      `Consent last confirmed ${new Date("2026-09-01T00:00:00Z").toLocaleString()}; last ran ${new Date("2026-09-02T00:00:00Z").toLocaleString()}.`,
+    );
+    expect(rows[0].textContent).not.toMatch(/Consent recorded/);
+    expect(host.textContent).toMatch(/“Last confirmed” is the last build pass or “keep current” press that\s+confirmed the consent — not when it was first given\./);
     expect(rows[1].textContent).toMatch(/kept current as documents arrive/);
     expect(rows[1].textContent).toMatch(/not run in the background yet/);
     expect(rows[1].textContent).toMatch(/Waiting until .* — your monthly AI budget is reached\./);
+  });
+
+  it("a consent with no instant on its marker claims no time: 'Consent recorded', nothing 'last confirmed'", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue({ builds: [build("L-pid", "P&IDs", { startedAt: null })] });
+    await renderList();
+    const line = host.querySelector("[data-build-confirmed]")!.textContent;
+    expect(line).toBe("Consent recorded; not run in the background yet.");
   });
 
   it("Stop releases that build through the route and the toast is the route's answer; the list is read again", async () => {

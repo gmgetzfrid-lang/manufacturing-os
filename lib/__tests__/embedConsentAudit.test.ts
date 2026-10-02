@@ -18,7 +18,12 @@
 //     when it was not. "Keep current" reads the consent it replaces again
 //     when the first read fails, and never writes over one it still cannot
 //     read (fix pass 3), so it never withdraws a standing consent it did not
-//     know stood.
+//     know stood. Whether a write recorded a new consent or renewed one is
+//     decided on the consent the write replaced — the marker its
+//     compare-and-set was conditional on — never on an earlier read of the
+//     route's own (fix pass 4): a consent released or replaced after the
+//     request read it and before its write is audited as the new consent it
+//     is.
 //   GOV-14 done-when 4 / SEM-1 done-when 2 — `key-overview`: every
 //     background build on the CALLER's key across the workspace (the list AI
 //     settings shows, each with a Stop), and with `models` each library's
@@ -352,6 +357,120 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
     });
   });
 
+  describe("the audit goes by the consent the write replaced, not an earlier read (I-20 fix pass 4)", () => {
+    /** Just before the request's first marker write lands, `meanwhile` runs:
+     *  a release, or another member's build, after the request read the
+     *  consent and before its write. */
+    function beforeFirstMarkerWrite(meanwhile: () => void) {
+      const real = admin.state.rpc.embed_build_marker_write;
+      let first = true;
+      admin.state.rpc.embed_build_marker_write = (a) => {
+        if (first) { first = false; meanwhile(); }
+        return real(a);
+      };
+    }
+    const lib = () => admin.state.tables.knowledge_libraries[0];
+    const release = () => { delete (lib().ai_features as Row).embedBuild; };
+    const recorded = (at: string, standing = false) => {
+      lib().ai_features = { embedBuild: { userId: ME, at, ...(standing ? { standing: true } : {}) } };
+      admin.state.tables.audit_logs = [{ id: "a-1", action: "EMBED_BUILD_CONSENT_RECORDED", resource_type: "knowledge_library", resource_id: LIB, user_id: ME, details: { stampedAt: at } }];
+    };
+
+    it("reproduction → fix: the caller's recorded consent is released before this pass's write lands → the pass records a NEW consent, and a row is written for it (it used to be taken for a renewal: no row)", async () => {
+      recorded("2026-09-20T00:00:00Z");
+      beforeFirstMarkerWrite(release);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+      expect(body.backgroundNote).toBeUndefined();
+      expect(marker()).toMatchObject({ userId: ME });
+      expect(marker()!.at).not.toBe("2026-09-20T00:00:00Z");
+      const rows = consentRows();
+      expect(rows).toHaveLength(2);
+      expect(rows[1].details).toMatchObject({ stampedAt: marker()!.at, standing: false, replaced: null, renewal: null, request: { action: "build" } });
+    });
+
+    it("reproduction → fix: replaced by another member's plain build before the write → the row names whose consent it replaced", async () => {
+      recorded("2026-09-20T00:00:00Z");
+      beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z" } }; });
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      await POST(req({}, REQUEST_HEADERS));
+      expect(marker()).toMatchObject({ userId: ME });
+      expect(consentRows()).toHaveLength(2);
+      expect(consentRows()[1].details).toMatchObject({ stampedAt: marker()!.at, replaced: { userId: OTHER, standing: false }, renewal: null });
+    });
+
+    it("reproduction → fix: 'keep current' over the caller's standing, recorded consent, released before the write → a new standing consent, with its row", async () => {
+      recorded("2026-09-20T00:00:00Z", true);
+      beforeFirstMarkerWrite(release);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }, REQUEST_HEADERS));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ standing: true });
+      expect(consentRows()).toHaveLength(2);
+      expect(consentRows()[1].details).toMatchObject({ stampedAt: marker()!.at, standing: true, replaced: null, renewal: null, request: { action: "keep-current" } });
+    });
+
+    it("…and that new consent, when its row cannot be written, is withdrawn (it is not the caller's earlier one to restore)", async () => {
+      recorded("2026-09-20T00:00:00Z", true);
+      beforeFirstMarkerWrite(release);
+      admin.state.failWrites.audit_logs = { message: "audit down" };
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }));
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe("The standing consent was not kept: its audit row could not be written (audit down).");
+      expect(marker()).toBeUndefined();
+    });
+
+    it("negative control: the caller's own consent re-stamped by another pass of theirs before the write is still a renewal — no new row", async () => {
+      recorded("2026-09-20T00:00:00Z");
+      beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: ME, at: "2026-10-02T09:00:00Z" } }; });
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+      expect(body.backgroundNote).toBeUndefined();
+      expect(marker()).toMatchObject({ userId: ME });
+      expect(consentRows()).toHaveLength(1);
+    });
+
+    it("negative control: another member's standing consent recorded before the write stands — a plain build never replaces it, so no row", async () => {
+      recorded("2026-09-20T00:00:00Z");
+      beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z", standing: true } }; });
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const body = await (await POST(req({}, REQUEST_HEADERS))).json();
+      expect(body.backgroundNote).toBeUndefined();
+      expect(marker()).toEqual({ userId: OTHER, at: "2026-10-02T09:00:00Z", standing: true });
+      expect(consentRows()).toHaveLength(1);
+    });
+
+    it("REGRESSION: with nothing in between, a renewal of a recorded consent writes no row and a first consent writes one — as before", async () => {
+      recorded("2026-09-20T00:00:00Z");
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      await POST(req({}, REQUEST_HEADERS));
+      expect(consentRows()).toHaveLength(1);
+      lib().ai_features = {};
+      admin.state.tables.audit_logs = [];
+      await POST(req({}, REQUEST_HEADERS));
+      expect(consentRows()).toHaveLength(1);
+      expect(consentRows()[0].details).toMatchObject({ replaced: null, renewal: null });
+    });
+
+    it("recordEmbedBuildConsent reports the consent its write replaced — the one its compare-and-set held to, from the round that landed", async () => {
+      const { recordEmbedBuildConsent } = await import("@/lib/knowledgeEmbedCore");
+      recorded("2026-09-20T00:00:00Z");
+      beforeFirstMarkerWrite(() => { lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:00:00Z" } }; });
+      const out = await recordEmbedBuildConsent(LIB, ME);
+      expect(out).toMatchObject({ error: null, applied: true, prior: { userId: OTHER, at: "2026-10-02T09:00:00Z" } });
+      // another member's standing consent: nothing written, and it is the prior named
+      lib().ai_features = { embedBuild: { userId: OTHER, at: "2026-10-02T09:30:00Z", standing: true } };
+      expect(await recordEmbedBuildConsent(LIB, ME)).toMatchObject({ error: null, applied: false, prior: { userId: OTHER, standing: true } });
+      // nothing before
+      lib().ai_features = {};
+      expect(await recordEmbedBuildConsent(LIB, ME)).toEqual({ error: null, applied: true, prior: null });
+      // an unreadable marker: nothing written, the prior unknown
+      admin.state.failReads.knowledge_libraries = { message: "read timeout" };
+      expect(await recordEmbedBuildConsent(LIB, ME)).toEqual({ error: "read timeout", applied: false, prior: undefined });
+    });
+  });
+
   it("a renewal whose row lookup fails writes the row anyway (a second row is harmless, a missing one is not)", async () => {
     admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-30T08:00:00Z" } };
     admin.state.failReads.audit_logs = { message: "lookup down" };
@@ -624,6 +743,22 @@ describe("GOV-14 done-when 4 / SEM-1 — key-overview: the builds on MY key, and
       { libraryId: LIB3, libraryName: "Vendor manuals", models: {} },
       { libraryId: "0b000000-0000-4000-8000-000000000004", libraryName: "Forged", models: null },
     ]);
+  });
+
+  it("the instant listed for a build (startedAt) is the last pass's stamp — every build pass re-stamps it, so it is when the consent was last confirmed, not first recorded (I-20 fix pass 4)", async () => {
+    admin.state.tables.knowledge_libraries = [{ id: LIB, org_id: ORG, name: "Standards", ai_features: {} }];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    await POST(req({}, REQUEST_HEADERS));
+    const first = String(marker()!.at);
+    await new Promise((r) => setTimeout(r, 5));
+    await POST(req({}, REQUEST_HEADERS));
+    const second = String(marker()!.at);
+    expect(second).not.toBe(first);
+    // one row, naming the first stamp; the overview lists the second
+    expect(consentRows()).toHaveLength(1);
+    expect((consentRows()[0].details as Row).stampedAt).toBe(first);
+    const body = await (await POST(overview())).json();
+    expect(body.builds[0]).toMatchObject({ libraryId: LIB, startedAt: second });
   });
 
   it("a libraries read that fails is a 500 that says so — never an empty list ('nothing running')", async () => {
