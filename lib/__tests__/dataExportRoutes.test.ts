@@ -94,7 +94,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({
 import {
   runOrgExport, PRIVATE_NOTES_CARRIED, EXPORT_FILES_PER_AUDIT_ROW, isPrivateNote, exportFileListDigest,
   fileListEntries, fileListRemoved, readDestinationLedger, DESTINATION_FILES_RESOURCE_TYPE,
-  EXPORT_LEDGER_ACTOR, LEDGER_CHAIN_MAX_ROWS, WORKSPACE_FILES_RESOURCE_TYPE, readWorkspaceLedger,
+  EXPORT_LEDGER_ACTOR, LEDGER_CHAIN_MAX_ROWS, WORKSPACE_FILES_RESOURCE_TYPE, readWorkspaceLedger, rebuildExportList,
 } from "@/lib/dataExport";
 import { s3PurgeOlderThan, retentionProblem, destinationCredentialGap, MAX_EXPORT_RUNS_PER_HOUR } from "@/lib/exportRunner";
 import { planRestore } from "@/lib/dataRestore";
@@ -435,7 +435,9 @@ const listOfRecord = (recordId: string, baselineId: string): Set<string> => {
 };
 /** What a recall does: rebuild a night's list from the audit trail alone —
  *  a person's or a baseline's own rows; for a delta, the chain back to its
- *  baseline (each record's `prev`), then its own rows. */
+ *  baseline (each record's `prev`), then its own rows. The lib's recall is
+ *  lib/dataExport.ts rebuildExportList (sixth review fix pass); this reading,
+ *  written apart from it, is the oracle it is checked against. */
 const rebuild = (record: FileRecord): Set<string> => {
   if (record.mode !== "delta") return applyRows(new Set(), record.recordId);
   return applyRows(listOfRecord(String(record.prev), record.baseline!.recordId), record.recordId);
@@ -444,6 +446,26 @@ const rebuild = (record: FileRecord): Set<string> => {
 const ledgerEntries = () => audits("DATA_EXPORT_FILES").reduce((s, r) => s + fileListEntries(r.details).length + fileListRemoved(r.details).length, 0);
 const ledgerBytes = (rows: Row[] = audits("DATA_EXPORT_FILES")) => rows.reduce((s, r) => s + JSON.stringify(r.details).length, 0);
 const handedOut = (env: { files: Array<{ path: string; presignedUrl: string }> }) => env.files.filter((f) => !!f.presignedUrl).map((f) => f.path);
+
+/** The in-memory client, recording each statement's builder calls (its filters, order, limit) in order. */
+const recordingClient = async () => {
+  const mem = await import("./helpers/restoreMemoryDb");
+  const calls: Array<{ m: string; args: unknown[] }[]> = [];
+  const client = {
+    from: (t: string) => {
+      const log: { m: string; args: unknown[] }[] = [];
+      calls.push(log);
+      const inner = mem.from(t) as Record<string, (...a: unknown[]) => unknown>;
+      const proxy: Record<string, unknown> = new Proxy({}, {
+        get: (_o, p: string) => (p === "then"
+          ? (res: (v: unknown) => void, rej: (e: unknown) => void) => (inner.then as unknown as (a: unknown, b: unknown) => void)(res, rej)
+          : (...a: unknown[]) => { log.push({ m: p, args: a }); inner[p](...a); return proxy; }),
+      });
+      return proxy;
+    },
+  };
+  return { client, calls };
+};
 
 describe("BKP-8 Done-when 3 — a destination push names the files that left (DEC-44 (A&O P3) §3)", () => {
   const DEST = "dest-bucket";
@@ -572,24 +594,10 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
     expect(lastRecord()).not.toHaveProperty("baselineProblem");
   });
 
-  it("the reads ask by resource, machine rows only, never later than now, newest first: the head read four small fields, the parts by page up to `parts`, the chain by its baseline", async () => {
+  it("the reads ask by resource, machine rows only, never later than now, newest first: the head read four small fields and its timestamp, the parts by page up to `parts` and the chain by its baseline, both since the baseline", async () => {
     db.rows.document_versions = destVersions(EXPORT_FILES_PER_AUDIT_ROW + 1);
     await push("dest-a");
-    const mem = await import("./helpers/restoreMemoryDb");
-    const calls: Array<{ m: string; args: unknown[] }[]> = [];
-    const recording = {
-      from: (t: string) => {
-        const log: { m: string; args: unknown[] }[] = [];
-        calls.push(log);
-        const inner = mem.from(t) as Record<string, (...a: unknown[]) => unknown>;
-        const proxy: Record<string, unknown> = new Proxy({}, {
-          get: (_o, p: string) => (p === "then"
-            ? (res: (v: unknown) => void, rej: (e: unknown) => void) => (inner.then as unknown as (a: unknown, b: unknown) => void)(res, rej)
-            : (...a: unknown[]) => { log.push({ m: p, args: a }); inner[p](...a); return proxy; }),
-        });
-        return proxy;
-      },
-    };
+    const { client: recording, calls } = await recordingClient();
     const out = await readDestinationLedger(recording as never, ORG, "dest-a");
     expect(out.ledger?.paths.size).toBe(EXPORT_FILES_PER_AUDIT_ROW + 1);
     expect(out.ledger).toMatchObject({ links: 0, entries: 0, rows: 0 });
@@ -606,9 +614,15 @@ describe("BKP-8 Done-when 3 — a destination push names the files that left (DE
       expect(log.some((c) => c.m === "eq" && c.args[0] === "details->>destinationId")).toBe(false);
     }
     const [headRead, partRead, chainRead] = calls;
-    expect(headRead.find((c) => c.m === "select")!.args[0]).toBe("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt");
+    expect(headRead.find((c) => c.m === "select")!.args[0]).toBe("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt, timestamp");
     expect(headRead).toContainEqual({ m: "order", args: ["timestamp", { ascending: false }] });
     expect(headRead).toContainEqual({ m: "limit", args: [1] });
+    // sixth review fix: the parts and the chain are read only since the baseline (its newest row, less the write window)
+    expect(headRead.some((c) => c.m === "gte")).toBe(false);
+    const baselineTs = Date.parse(String(fileRowsOf(out.ledger!.baseline.recordId).at(-1)!.timestamp));
+    for (const read of [partRead, chainRead]) {
+      expect(read).toContainEqual({ m: "gte", args: ["timestamp", new Date(baselineTs - 15 * 60_000).toISOString()] });
+    }
     expect(partRead).toContainEqual({ m: "order", args: ["details->>part", { ascending: true }] });
     expect(partRead).toContainEqual({ m: "range", args: [0, 1] });
     expect(chainRead).toContainEqual({ m: "eq", args: ["details->>kind", "delta"] });
@@ -747,6 +761,142 @@ describe("BKP-8 Done-when 3 — fourth review fix: each delta is against the pre
     await push();
     expect(lastRecord()).toMatchObject({ mode: "delta", added: 0, baseline: { recordId: real.recordId } });
     expect(audits("DATA_EXPORT_FILES")).toHaveLength(before);
+  });
+});
+
+// ─── Sixth review fix: each export reads its ledger only since its baseline ─
+//
+// The parts read and the chain read filtered every historical row of the
+// ledger's resource on its JSON details (the index bounds only resource and
+// timestamp), so each export walked — and detoasted — the ledger's whole
+// history. They now take rows dated since the baseline: its newest row less
+// the write window (one export writes its parts, ten rows to a statement,
+// each statement dated when it ran). A recall rebuilds any record's list
+// through the same reads (rebuildExportList).
+
+describe("BKP-8 Done-when 3 — sixth review fix: an export reads its ledger only since its baseline; a recall rebuilds any record's list from the lib", () => {
+  const DEST = "dest-history";
+  let night = 0;
+  beforeEach(() => {
+    night = 0;
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const push = async (destinationId = DEST) => {
+    vi.setSystemTime(nightOf(night++));
+    return runOrgExport({
+      supabaseUrl: "u", serviceRoleKey: "k", orgId: ORG, exporterUserId: null, exporterEmail: "system:scheduled-export", exporterRole: "system",
+      auditDetails: { channel: "scheduled", destinationId }, fileRecord: { destinationId },
+    });
+  };
+  /** Three baselines over seven nights (each re-based by a change past the chain's cap), each with deltas after it. */
+  const history = async () => {
+    const envs = [];
+    db.rows.document_versions = destVersions(600);
+    envs.push(await push());                                          // night 0: baseline 1
+    db.rows.document_versions.push(...destVersions(2, 600));
+    envs.push(await push());                                          // night 1: delta
+    db.rows.document_versions = destVersions(600, 1000);
+    envs.push(await push());                                          // night 2: baseline 2 (1,204 changes)
+    db.rows.document_versions.push(...destVersions(3, 1600));
+    envs.push(await push());                                          // night 3: delta
+    db.rows.document_versions = destVersions(600, 2000);
+    envs.push(await push());                                          // night 4: baseline 3
+    db.rows.document_versions.push(...destVersions(4, 2600));
+    envs.push(await push());                                          // night 5: delta
+    db.rows.document_versions = db.rows.document_versions.slice(1);
+    envs.push(await push());                                          // night 6: delta (one removed)
+    return envs;
+  };
+  const memClient = async () => ({ from: (await import("./helpers/restoreMemoryDb")).from }) as never;
+
+  it("rows older than the baseline are not read: the parts and chain reads walk the resource's rows since it, never the two baselines and chains before (was: every historical row); the ledger read is the same", async () => {
+    await history();
+    expect(exportRecords().map((r) => r.mode)).toEqual(["baseline", "delta", "baseline", "delta", "baseline", "delta", "delta"]);
+    const current = exportRecords()[4];
+    const { client, calls } = await recordingClient();
+    const out = await readDestinationLedger(client as never, ORG, DEST);
+    expect(out.problem).toBeUndefined();
+    expect(out.ledger).toMatchObject({ baseline: { recordId: current.recordId }, head: { recordId: exportRecords()[6].recordId }, links: 2, entries: 5, rows: 2 });
+    expect(out.ledger!.paths).toEqual(rebuild(exportRecords()[6]));
+    // the rows each read walks through the (resource_type, resource_id, timestamp DESC) index: the resource's, within its timestamp bounds
+    const arg = (log: { m: string; args: unknown[] }[], m: string, col: string) => log.find((c) => c.m === m && c.args[0] === col)?.args[1];
+    const walked = (log: { m: string; args: unknown[] }[]) => rowsOf("audit_logs").filter((r) =>
+      r.resource_type === arg(log, "eq", "resource_type") && r.resource_id === arg(log, "eq", "resource_id")
+      && String(r.timestamp) <= String(arg(log, "lte", "timestamp")) && String(r.timestamp) >= String(arg(log, "gte", "timestamp") ?? ""));
+    const [, partRead, chainRead] = calls;
+    const older = rowsOf("audit_logs").filter((r) => r.resource_id === DEST && String(r.timestamp) < nightOf(4).toISOString());
+    expect(older.length).toBeGreaterThan(0);
+    for (const read of [partRead, chainRead]) {
+      const rows = walked(read);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of older) expect(rows).not.toContain(r);
+    }
+    // the next push's output is the same as ever: a delta against the head
+    db.rows.document_versions.push(...destVersions(1, 2700));
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 1, removed: 0, prev: exportRecords()[6].recordId, baseline: { recordId: current.recordId } });
+    expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env)));
+  });
+
+  it("a baseline written over several statements, each dated when it ran: every part is still read (the window), so the next pushes are deltas, never a re-base", async () => {
+    // each row dated a second after the one before it, as consecutive statements are
+    db.defaults = { audit_logs: () => { vi.setSystemTime(Date.now() + 1000); return { timestamp: new Date().toISOString() }; } };
+    db.rows.document_versions = destVersions(EXPORT_FILES_PER_AUDIT_ROW * 10 + 1);
+    await push();
+    const baseline = lastRecord();
+    const parts = fileRowsOf(baseline.recordId);
+    expect(parts).toHaveLength(11);
+    expect(new Set(parts.map((r) => r.timestamp)).size).toBe(11);
+    db.rows.document_versions.push(...destVersions(2, 9000));
+    const env = await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 2, baseline: { recordId: baseline.recordId } });
+    expect(lastRecord()).not.toHaveProperty("baselineProblem");
+    expect(rebuild(lastRecord())).toEqual(new Set(handedOut(env)));
+    await push();
+    expect(lastRecord()).toMatchObject({ mode: "delta", added: 0, removed: 0 });
+  }, 60_000);
+
+  it("rebuildExportList: every record of the history — the old chains' included, after two re-bases — rebuilds to the list it handed out and hashes to its digest, each file with its document and revision; the machine named as who pushed it", async () => {
+    const envs = await history();
+    const sb = await memClient();
+    const records = exportRecords();
+    for (const [i, record] of records.entries()) {
+      const { list, problem } = await rebuildExportList(sb, ORG, record.recordId);
+      expect(problem, `record ${i}`).toBeUndefined();
+      const paths = list!.files.map((f) => f.path);
+      expect(new Set(paths), `record ${i}`).toEqual(new Set(handedOut(envs[i])));
+      expect(new Set(paths), `record ${i}`).toEqual(rebuild(record));
+      expect(exportFileListDigest(paths)).toBe(record.sha256);
+      expect(list).toMatchObject({ recordId: record.recordId, exporter: { userId: null, email: "system:scheduled-export", role: "system" }, fileRecord: { mode: record.mode, destinationId: DEST } });
+    }
+    const { list } = await rebuildExportList(sb, ORG, records[6].recordId);
+    expect(list!.files).toContainEqual({ path: key("libraries/lib-1/D-2603.pdf"), documentId: `doc-${2603 % 7}`, versionId: "v-2603" });
+  });
+
+  it("rebuildExportList: a quiet record (no row of its own) is its head's list; an unknown record, one named by two export rows, one recorded before this package, and one whose chain lost a part are each a problem, never a wrong list", async () => {
+    db.rows.document_versions = destVersions(12);
+    await push();
+    db.rows.document_versions.push(...destVersions(1, 100));
+    await push();
+    const carrier = lastRecord();
+    const env = await push();
+    const quiet = lastRecord();
+    const sb = await memClient();
+    expect(quiet).toMatchObject({ mode: "delta", added: 0, removed: 0, prev: carrier.recordId });
+    expect(fileRowsOf(quiet.recordId)).toHaveLength(0);
+    const rebuilt = await rebuildExportList(sb, ORG, quiet.recordId);
+    expect(new Set(rebuilt.list!.files.map((f) => f.path))).toEqual(new Set(handedOut(env)));
+    expect(await rebuildExportList(sb, ORG, "no-such-record")).toEqual({ list: null, problem: "no export is recorded under no-such-record" });
+    // a member's row naming a real record (their own uid, as audit_logs_insert lets them write) makes it ambiguous, never theirs
+    db.rows.audit_logs.push({ action: "DATA_EXPORT", org_id: ORG, resource_type: "org", resource_id: ORG, user_id: "u-dc", timestamp: nightOf(9).toISOString(), details: { fileRecord: { ...carrier } } });
+    expect((await rebuildExportList(sb, ORG, carrier.recordId)).problem).toMatch(/more than one export row names the record/);
+    db.rows.audit_logs.push({ action: "DATA_EXPORT", org_id: ORG, resource_type: "org", resource_id: ORG, user_id: "u-admin", timestamp: nightOf(-9).toISOString(), details: { fileRecord: { recordId: "legacy" } } });
+    expect((await rebuildExportList(sb, ORG, "legacy")).problem).toMatch(/names no file list/);
+    // the delta that carried the new file loses its row: the quiet record after it cannot be rebuilt
+    db.rows.audit_logs = rowsOf("audit_logs").filter((r) => !(r.action === "DATA_EXPORT_FILES" && (r.details as Row).recordId === carrier.recordId));
+    const lost = await rebuildExportList(sb, ORG, quiet.recordId);
+    expect(lost).toMatchObject({ list: null, problem: expect.stringMatching(/could not be read back whole/) });
   });
 });
 
@@ -1638,10 +1788,17 @@ describe("BKP-8 Done-when 3 — fifth review fix: a person's export names its fi
     await personExport("u-admin2", "ann@acme.com");
     await personExport("u-admin", "me@acme.com");
     const drawing = key("libraries/lib-1/D-500.pdf");
-    const took = audits("DATA_EXPORT")
-      .filter((r) => rebuild((r.details as { fileRecord: FileRecord }).fileRecord).has(drawing))
-      .map((r) => [r.user_email, r.user_role]);
-    expect(took).toEqual([["ann@acme.com", "Admin"], ["me@acme.com", "Admin"]]);
+    // sixth review fix: the recall is the lib's (rebuildExportList), checked against this file's own reading (rebuild)
+    const sb = { from: (await import("./helpers/restoreMemoryDb")).from } as never;
+    const took: unknown[][] = [];
+    for (const record of exportRecords()) {
+      const { list, problem } = await rebuildExportList(sb, ORG, record.recordId);
+      expect(problem).toBeUndefined();
+      expect(new Set(list!.files.map((f) => f.path))).toEqual(rebuild(record));
+      const hit = list!.files.find((f) => f.path === drawing);
+      if (hit) took.push([list!.exporter.email, list!.exporter.role, hit.documentId, hit.versionId]);
+    }
+    expect(took).toEqual([["ann@acme.com", "Admin", "doc-3", "v-0500"], ["me@acme.com", "Admin", "doc-3", "v-0500"]]);
     // the delta that carried it names it with its document and revision, and who exported
     const second = exportRecords()[1];
     expect(second).toMatchObject({ mode: "delta", ledger: "workspace", added: 1, removed: 0 });

@@ -35,7 +35,9 @@
 // still answered with whole rows, as before), and `defaults` gives a table's
 // inserted rows the values a column DEFAULT would (opt-in per test file:
 // audit_logs.timestamp DEFAULT NOW(), which the destination baseline read
-// orders by).
+// orders by). Its sixth: a JSON path may descend (`col->a->>key`, as
+// PostgREST's arrows do) — the recall's lookup of a DATA_EXPORT row by its
+// record id (`details->fileRecord->>recordId`).
 
 export type Row = Record<string, unknown>;
 
@@ -64,11 +66,13 @@ export const db = {
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
 
-/** A column, or a JSON path `col->>key` read as text (null when absent). */
+/** A column, or a JSON path `col->>key` / `col->a->>key` read as text (null when absent). */
 function pick(r: Row, col: string): unknown {
-  const m = /^(\w+)->>(\w+)$/.exec(col);
+  const m = /^(\w+)((?:->\w+)*)->>(\w+)$/.exec(col);
   if (!m) return r[col];
-  const v = (r[m[1]] as Record<string, unknown> | null | undefined)?.[m[2]];
+  let at: unknown = r[m[1]];
+  for (const k of m[2].split("->").filter(Boolean)) at = (at as Record<string, unknown> | null | undefined)?.[k];
+  const v = (at as Record<string, unknown> | null | undefined)?.[m[3]];
   return v === null || v === undefined ? null : typeof v === "object" ? JSON.stringify(v) : String(v);
 }
 const sameKey = (a: Row, b: Row, cols: string[]) => cols.every((c) => a[c] !== undefined && a[c] !== null && String(a[c]) === String(b[c]));

@@ -546,6 +546,15 @@ const LEDGER_PART_PAGE = 500;
  *  server's clock trailing the database's: a row dated in the future is not
  *  the newest of anything. */
 const LEDGER_CLOCK_ALLOWANCE_MS = 60_000;
+/** A ledger's parts and chain reads take rows dated no earlier than this
+ *  before its baseline's newest row. One export writes a baseline's parts,
+ *  EXPORT_FILE_ROWS_PER_INSERT rows to a statement, each statement dated
+ *  when it ran (audit_logs.timestamp DEFAULT NOW()), all within the export's
+ *  function (maxDuration 300 s), so its earliest part lies within this of
+ *  its newest; every delta on its chain was written after the baseline was
+ *  read back whole, so after its newest part. Both ends are the database's
+ *  own clock. */
+const LEDGER_WRITE_WINDOW_MS = 15 * 60_000;
 
 /** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
  *  and newline-joined — the fingerprint a record carries of the whole list:
@@ -633,11 +642,15 @@ export interface ExportLedger {
  *  read takes only machine rows (`user_id` NULL — EXPORT_LEDGER_ACTOR: no
  *  member can write one) dated no later than now (plus a minute's clock
  *  allowance). The head read selects only the newest baseline's four small
- *  fields; its parts are read LEDGER_PART_PAGE at a time up to `parts`; the
- *  chain read takes that baseline's delta rows, at most
- *  LEDGER_CHAIN_READ_LIMIT. The chain is walked from its newest record back
- *  along `prev` to the baseline, so a record a concurrent push wrote off the
- *  path is passed over. */
+ *  fields and its `timestamp`; its parts are read LEDGER_PART_PAGE at a time
+ *  up to `parts`; the chain read takes that baseline's delta rows, at most
+ *  LEDGER_CHAIN_READ_LIMIT. The parts and chain reads take only rows dated
+ *  since the baseline (LEDGER_WRITE_WINDOW_MS before its newest row), so an
+ *  export walks the index over the rows since its baseline, never the
+ *  ledger's whole history (sixth review fix pass: each read filtered every
+ *  historical row of the resource on its JSON details). The chain is walked
+ *  from its newest record back along `prev` to the baseline, so a record a
+ *  concurrent push wrote off the path is passed over. */
 export async function readExportLedger(
   sb: Pick<SupabaseClient, "from">,
   orgId: string,
@@ -645,7 +658,7 @@ export async function readExportLedger(
 ): Promise<{ ledger: ExportLedger | null; problem?: string }> {
   const ceiling = new Date(Date.now() + LEDGER_CLOCK_ALLOWANCE_MS).toISOString();
   const head = await sb.from("audit_logs")
-    .select("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt")
+    .select("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt, timestamp")
     .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
     .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
     .eq("details->>kind", "baseline")
@@ -661,39 +674,100 @@ export async function readExportLedger(
     return { ledger: null, problem: "the last full list is malformed" };
   }
 
+  const read = await readLedgerChain(
+    { sb, orgId, key, ceiling, since: ledgerFloor(first.timestamp), refs: false },
+    { recordId, parts, sha256 },
+    null,
+  );
+  if ("problem" in read) return { ledger: null, problem: read.problem };
+  const { path, head: headId } = read;
+  return {
+    ledger: {
+      baseline: { recordId, startedAt, sha256 },
+      head: { recordId: headId, sha256: path.length > 0 ? path[path.length - 1].sha256 : sha256 },
+      links: path.length,
+      entries: path.reduce((s, l) => s + l.added.length + l.removed.length, 0),
+      rows: path.reduce((s, l) => s + l.parts, 0),
+      paths: new Set(read.files.keys()),
+    },
+  };
+}
+
+/** One file a ledger names: its path, and its document and revision where it has them. */
+export type LedgerFile = ReturnType<typeof fileListEntries>[number];
+
+/** The rows a ledger read takes: the ledger's own machine rows, dated no
+ *  later than `ceiling` and, once its baseline is known, no earlier than
+ *  `since`. `refs` keeps each file's document and revision (a recall), else
+ *  only its path (an export). */
+interface LedgerScope {
+  sb: Pick<SupabaseClient, "from">;
+  orgId: string;
+  key: ExportLedgerKey;
+  ceiling: string;
+  since: string | null;
+  refs: boolean;
+}
+
+/** One delta record on a chain: what it added and removed since `prev`. */
+interface LedgerLink { prev: string; sha256: string; parts: number; seen: Set<number>; added: LedgerFile[]; removed: string[] }
+
+/** The floor of a ledger's parts and chain reads: LEDGER_WRITE_WINDOW_MS
+ *  before its baseline's newest row. Null (no floor, every row read as
+ *  before) when that row's `timestamp` cannot be read. */
+function ledgerFloor(timestamp: unknown): string | null {
+  const at = typeof timestamp === "string" ? Date.parse(timestamp) : NaN;
+  return Number.isFinite(at) ? new Date(at - LEDGER_WRITE_WINDOW_MS).toISOString() : null;
+}
+
+/** A baseline's list, read back whole, with the chain of deltas from it to
+ *  `headId` applied (the chain's newest record when null), and checked
+ *  against the digests they carry: the baseline's own, and the last
+ *  record's on the path. Shared by readExportLedger (the next export) and
+ *  rebuildExportList (a recall), so both read the same rows the same way. */
+async function readLedgerChain(
+  scope: LedgerScope,
+  baseline: { recordId: string; parts: number; sha256: string },
+  headId: string | null,
+): Promise<{ files: Map<string, LedgerFile | null>; path: LedgerLink[]; head: string } | { problem: string }> {
+  const { sb, orgId, key, ceiling, since } = scope;
+  const { recordId, parts, sha256 } = baseline;
+  const rowsOf = (select: string) => {
+    const q = sb.from("audit_logs").select(select)
+      .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
+      .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling);
+    return since ? q.gte("timestamp", since) : q;
+  };
+  const keep = (f: LedgerFile): LedgerFile | null => (scope.refs ? f : null);
+
   // The baseline's parts, whole.
-  const paths = new Set<string>();
+  const files = new Map<string, LedgerFile | null>();
   const seen = new Set<number>();
   for (let from = 0; from < parts; from += LEDGER_PART_PAGE) {
-    const page = await sb.from("audit_logs").select("details")
-      .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
-      .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
+    const page = await rowsOf("details")
       .eq("details->>recordId", recordId)
       .order("details->>part", { ascending: true })
       .range(from, Math.min(from + LEDGER_PART_PAGE, parts) - 1);
-    if (page.error) return { ledger: null, problem: `the last full list could not be read (${page.error.message})` };
+    if (page.error) return { problem: `the last full list could not be read (${page.error.message})` };
     const rows = (page.data ?? []) as Array<{ details?: Record<string, unknown> | null }>;
     for (const r of rows) {
       const d = r.details ?? {};
       if (d.kind !== "baseline" || seen.has(Number(d.part))) continue;
       seen.add(Number(d.part));
-      for (const f of fileListEntries(d)) paths.add(f.path);
+      for (const f of fileListEntries(d)) files.set(f.path, keep(f));
     }
     if (rows.length < Math.min(LEDGER_PART_PAGE, parts - from)) break;
   }
-  if (seen.size !== parts || exportFileListDigest([...paths]) !== sha256) {
-    return { ledger: null, problem: `the last full list (${recordId}) could not be read back whole: ${seen.size} of ${parts} part(s), or its digest does not match` };
+  if (seen.size !== parts || exportFileListDigest([...files.keys()]) !== sha256) {
+    return { problem: `the last full list (${recordId}) could not be read back whole: ${seen.size} of ${parts} part(s), or its digest does not match` };
   }
 
   // The chain since it.
-  const chain = await sb.from("audit_logs").select("details")
-    .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
-    .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
+  const chain = await rowsOf("details")
     .eq("details->>kind", "delta").eq("details->>baselineId", recordId)
     .order("timestamp", { ascending: false }).limit(LEDGER_CHAIN_READ_LIMIT);
-  if (chain.error) return { ledger: null, problem: `the changes since the last full list could not be read (${chain.error.message})` };
-  type Link = { prev: string; sha256: string; parts: number; seen: Set<number>; added: string[]; removed: string[] };
-  const links = new Map<string, Link>();
+  if (chain.error) return { problem: `the changes since the last full list could not be read (${chain.error.message})` };
+  const links = new Map<string, LedgerLink>();
   let newest: string | null = null;
   for (const r of (chain.data ?? []) as Array<{ details?: Record<string, unknown> | null }>) {
     const d = r.details ?? {};
@@ -707,35 +781,120 @@ export async function readExportLedger(
     }
     if (link.seen.has(Number(d.part))) continue;
     link.seen.add(Number(d.part));
-    for (const f of fileListEntries(d)) link.added.push(f.path);
+    link.added.push(...fileListEntries(d));
     link.removed.push(...fileListRemoved(d));
   }
-  const path: Link[] = [];
-  for (let at = newest; at !== null && at !== recordId;) {
+  const start = headId ?? newest;
+  const path: LedgerLink[] = [];
+  for (let at = start; at !== null && at !== recordId;) {
     const link = links.get(at);
     if (!link || path.length >= links.size || !Number.isInteger(link.parts) || link.seen.size !== link.parts) {
-      return { ledger: null, problem: `the changes since the last full list (${recordId}) could not be read back whole` };
+      return { problem: `the changes since the last full list (${recordId}) could not be read back whole` };
     }
     path.push(link);
     at = link.prev;
   }
   path.reverse();
   for (const link of path) {
-    for (const p of link.removed) paths.delete(p);
-    for (const p of link.added) paths.add(p);
+    for (const p of link.removed) files.delete(p);
+    for (const f of link.added) files.set(f.path, keep(f));
   }
-  const headSha = path.length > 0 ? path[path.length - 1].sha256 : sha256;
-  if (path.length > 0 && exportFileListDigest([...paths]) !== headSha) {
-    return { ledger: null, problem: `the changes since the last full list (${recordId}) do not rebuild the list they record` };
+  if (path.length > 0 && exportFileListDigest([...files.keys()]) !== path[path.length - 1].sha256) {
+    return { problem: `the changes since the last full list (${recordId}) do not rebuild the list they record` };
+  }
+  return { files, path, head: path.length > 0 ? (start as string) : recordId };
+}
+
+/** DEC-44 (A&O P3) §3: one export's file list, rebuilt from the audit
+ *  trail — "who took which drawing". */
+export interface RebuiltExportList {
+  recordId: string;
+  /** Who took the export, from its DATA_EXPORT row: the person (or the
+   *  machine, user_id null), the role the surface admitted them by, when. */
+  exporter: { userId: string | null; email: string | null; role: string | null; at: string | null };
+  /** The record's own fileRecord: its mode, its ledger, its count and digest. */
+  fileRecord: Record<string, unknown>;
+  /** Every file the export handed out, by path, with its document and
+   *  revision where it has them; its paths hash to the record's sha256. */
+  files: LedgerFile[];
+}
+
+/** DEC-44 (A&O P3) §3: rebuild one export's file list from the audit trail
+ *  alone. The export's DATA_EXPORT row (found by its record id) names who
+ *  took it and carries its `fileRecord`; the list is its ledger's baseline
+ *  (a baseline record's own rows) with the chain of deltas from it applied
+ *  up to the record (or, for a record that changed nothing and wrote no row,
+ *  to the record it points at, `prev`) — read by readLedgerChain, the code
+ *  the next export reads its ledger with, from the ledger's machine rows
+ *  only — and checked against the record's `sha256`. A recall asks it of
+ *  each DATA_EXPORT row to learn whether a drawing was in that export. Never
+ *  throws: `list` null with a `problem` when the record is unknown, names
+ *  no list (an export recorded before this package), is named by more than
+ *  one DATA_EXPORT row, or cannot be rebuilt whole and matching its digest. */
+export async function rebuildExportList(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+  recordId: string,
+): Promise<{ list: RebuiltExportList | null; problem?: string }> {
+  const found = await sb.from("audit_logs").select("user_id, user_email, user_role, timestamp, details")
+    .eq("resource_type", "org").eq("resource_id", orgId).eq("action", "DATA_EXPORT").eq("org_id", orgId)
+    .eq("details->fileRecord->>recordId", recordId)
+    .limit(2);
+  if (found.error) return { list: null, problem: `the export's record could not be read (${found.error.message})` };
+  const rows = (found.data ?? []) as Array<Record<string, unknown>>;
+  if (rows.length === 0) return { list: null, problem: `no export is recorded under ${recordId}` };
+  if (rows.length > 1) return { list: null, problem: `more than one export row names the record ${recordId}` };
+  const row = rows[0];
+  const fileRecord = ((row.details as Record<string, unknown> | null)?.fileRecord ?? null) as Record<string, unknown> | null;
+  const mode = fileRecord?.mode;
+  const sha256 = typeof fileRecord?.sha256 === "string" ? fileRecord.sha256 : "";
+  if (!fileRecord || (mode !== "baseline" && mode !== "delta") || !sha256) {
+    return { list: null, problem: `the export ${recordId} names no file list it can be rebuilt from` };
+  }
+  const destinationId = typeof fileRecord.destinationId === "string" && fileRecord.destinationId ? fileRecord.destinationId : null;
+  const key: ExportLedgerKey = destinationId
+    ? { resourceType: DESTINATION_FILES_RESOURCE_TYPE, resourceId: destinationId }
+    : { resourceType: WORKSPACE_FILES_RESOURCE_TYPE, resourceId: orgId };
+  const baselineId = mode === "baseline" ? recordId : String((fileRecord.baseline as { recordId?: unknown } | null)?.recordId ?? "");
+  // A delta that changed nothing wrote no row: its list is the record it points at.
+  const changed = Number(fileRecord.added ?? 0) + Number(fileRecord.removed ?? 0) > 0;
+  const headId = mode === "baseline" ? recordId : changed ? recordId : String(fileRecord.prev ?? "");
+  if (!baselineId || headId === "") return { list: null, problem: `the export ${recordId} names no file list it can be rebuilt from` };
+
+  const ceiling = new Date(Date.now() + LEDGER_CLOCK_ALLOWANCE_MS).toISOString();
+  const base = await sb.from("audit_logs").select("parts:details->>parts, sha256:details->>sha256, timestamp")
+    .eq("resource_type", key.resourceType).eq("resource_id", key.resourceId)
+    .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).is("user_id", null).lte("timestamp", ceiling)
+    .eq("details->>kind", "baseline").eq("details->>recordId", baselineId)
+    .order("timestamp", { ascending: false }).limit(1);
+  if (base.error) return { list: null, problem: `the export's full list could not be read (${base.error.message})` };
+  const b = ((base.data ?? []) as Array<Record<string, unknown> | null>)[0];
+  const parts = Number(b?.parts);
+  const baseSha = typeof b?.sha256 === "string" ? b.sha256 : "";
+  if (!b || !baseSha || !Number.isInteger(parts) || parts < 1) {
+    return { list: null, problem: `the full list (${baselineId}) the export ${recordId} is named against is missing or malformed` };
+  }
+  const read = await readLedgerChain(
+    { sb, orgId, key, ceiling, since: ledgerFloor(b.timestamp), refs: true },
+    { recordId: baselineId, parts, sha256: baseSha },
+    headId,
+  );
+  if ("problem" in read) return { list: null, problem: read.problem };
+  const paths = [...read.files.keys()];
+  if (exportFileListDigest(paths) !== sha256) {
+    return { list: null, problem: `the list rebuilt for the export ${recordId} does not hash to its record` };
   }
   return {
-    ledger: {
-      baseline: { recordId, startedAt, sha256 },
-      head: { recordId: path.length > 0 ? (newest as string) : recordId, sha256: headSha },
-      links: path.length,
-      entries: path.reduce((s, l) => s + l.added.length + l.removed.length, 0),
-      rows: path.reduce((s, l) => s + l.parts, 0),
-      paths,
+    list: {
+      recordId,
+      exporter: {
+        userId: typeof row.user_id === "string" ? row.user_id : null,
+        email: typeof row.user_email === "string" ? row.user_email : null,
+        role: typeof row.user_role === "string" ? row.user_role : null,
+        at: typeof row.timestamp === "string" ? row.timestamp : null,
+      },
+      fileRecord,
+      files: paths.sort().map((p) => read.files.get(p) ?? { path: p }),
     },
   };
 }
