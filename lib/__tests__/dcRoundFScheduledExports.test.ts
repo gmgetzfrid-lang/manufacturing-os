@@ -37,7 +37,9 @@ function makeClient() {
         return { data: [state.destination], error: null };
       case "org_members":
         if (state.memberError) return { data: null, error: { message: state.memberError } };
-        return { data: state.memberActive ? { uid: "u-1" } : null, error: null };
+        // admin-and-org Round G P3: the sweep also asks whether the configurer
+        // still holds the data-export surface's entry role (Admin).
+        return { data: state.memberActive ? { uid: "u-1", role: "Admin", roles: ["Admin"] } : null, error: null };
       case "orgs":
         if (state.orgError) return { data: null, error: { message: state.orgError } };
         return { data: { subscription_status: state.subStatus, trial_ends_at: null, subscribed_plan: state.plan }, error: null };

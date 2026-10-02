@@ -29,7 +29,13 @@
 // the routes read back). No restore path inserts with a select. Its second
 // review fix pass: `eq` and `order` take a JSON path `col->>key` (read as
 // text, as PostgREST's `->>` is) — the bucket push's baseline lookup — and
-// `delete()` removes the matching rows (the destination DELETE route).
+// `delete()` removes the matching rows (the destination DELETE route). Its
+// third: a `select` list naming a JSON path (`alias:col->>key`, `col->>key`)
+// answers only those fields, as PostgREST does (a list with no JSON path is
+// still answered with whole rows, as before), and `defaults` gives a table's
+// inserted rows the values a column DEFAULT would (opt-in per test file:
+// audit_logs.timestamp DEFAULT NOW(), which the destination baseline read
+// orders by).
 
 export type Row = Record<string, unknown>;
 
@@ -52,6 +58,8 @@ export const db = {
   generated: {} as Record<string, string[]>,
   /** The deployment's sign-in accounts; when set, a `users` row for any other id is refused 23503. */
   authUsers: null as Set<string> | null,
+  /** Column DEFAULTs per table: an inserted row gets each value it does not carry. */
+  defaults: {} as Record<string, () => Row>,
 };
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
@@ -122,7 +130,19 @@ function logicTerm(term: string): (r: Row) => boolean {
 
 let generatedIds = 0;
 
-function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null, returning = false) {
+/** A select list naming a JSON path, as PostgREST answers it: each item
+ *  `alias:col->>key`, `col->>key` (named `key`) or a plain column. Null for
+ *  any other list (whole rows, as before). */
+function projectionOf(cols: string | undefined): Array<{ name: string; col: string }> | null {
+  if (!cols || !cols.includes("->")) return null;
+  return cols.split(",").map((raw) => raw.trim()).filter(Boolean).map((item) => {
+    const m = /^(?:(\w+):)?(\w+(?:->>(\w+))?)$/.exec(item);
+    if (!m) throw new Error(`restoreMemoryDb: unsupported select item ${item}`);
+    return { name: m[1] ?? m[3] ?? m[2], col: m[2] };
+  });
+}
+
+function exec(table: string, op: string, payload: unknown, opts: Record<string, unknown> | undefined, filters: Array<(r: Row) => boolean>, single: boolean, range: [number, number] | null, orders: Array<{ col: string; asc: boolean }> = [], limit: number | null = null, returning = false, projection: Array<{ name: string; col: string }> | null = null) {
   const all = (db.rows[table] ??= []);
   if (op === "select") {
     if (db.readError[table]) return { data: null, error: { code: "XX000", message: db.readError[table] } };
@@ -132,11 +152,13 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
       return 0;
     });
     const ranged = range ? sorted.slice(range[0], range[1] + 1) : sorted;
-    const out = (limit !== null ? ranged.slice(0, limit) : ranged).slice(0, db.maxRows);
+    const cut = (limit !== null ? ranged.slice(0, limit) : ranged).slice(0, db.maxRows);
+    const out = projection ? cut.map((r) => Object.fromEntries(projection.map((p) => [p.name, pick(r, p.col) ?? null]))) : cut;
     return { data: single ? (out[0] ?? null) : out, error: null, count: matched.length };
   }
   if (op === "insert" || op === "upsert") {
-    const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
+    const defaults = db.defaults[table];
+    const rows = ((Array.isArray(payload) ? payload : [payload]) as Row[]).map((r) => (defaults ? { ...defaults(), ...r } : r));
     db.attempts.push({ table, op });
     const injected = db.writeError?.(table, op, rows);
     if (injected) return { data: null, error: injected, count: null };
@@ -199,12 +221,13 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
 
 export function from(table: string) {
   let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false; let returning = false;
+  let projection: Array<{ name: string; col: string }> | null = null;
   let range: [number, number] | null = null;
   let limit: number | null = null;
   const orders: Array<{ col: string; asc: boolean }> = [];
   const filters: Array<(r: Row) => boolean> = [];
   const b: Record<string, unknown> = {
-    select: () => { if (op === "insert") returning = true; return b; },
+    select: (cols?: string) => { if (op === "insert") returning = true; else if (op === "select") projection = projectionOf(cols); return b; },
     insert: (rows: unknown, o?: Record<string, unknown>) => { op = "insert"; payload = rows; opts = o; return b; },
     upsert: (rows: unknown, o?: Record<string, unknown>) => { op = "upsert"; payload = rows; opts = o; return b; },
     update: (patch: unknown) => { op = "update"; payload = patch; return b; },
@@ -224,7 +247,7 @@ export function from(table: string) {
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
-      try { res(exec(table, op, payload, opts, filters, single, range, orders, limit, returning)); } catch (e) { rej(e); }
+      try { res(exec(table, op, payload, opts, filters, single, range, orders, limit, returning, projection)); } catch (e) { rej(e); }
     },
   };
   return b;

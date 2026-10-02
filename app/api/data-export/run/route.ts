@@ -25,7 +25,14 @@
 // The rate-limit count and the run row are read and written CHECKED: a run
 // that cannot be counted, or whose run row is refused, is refused (503)
 // before anything is exported — it would otherwise run uncounted, past the
-// cap, with no run history.
+// cap, with no run history. The closing writes (the run row, the
+// destination's last-run summary, the archive catalog entry) are checked
+// too: a refused one is logged and named — `warnings` on a JSON answer, the
+// X-Export-Unrecorded header on a download — never a silent success.
+//
+// The DATA_EXPORT row's user_role is the role the data-export surface
+// admitted the exporter by (an Admin whose headline is Viewer is recorded as
+// Admin); the full collection is in details.exporterRoles.
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -54,6 +61,18 @@ interface RunBody {
 }
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+/** BKP-8: the role the data-export surface admitted the actor by — the first
+ *  of its entry roles the actor holds — never the headline alone. */
+function admittedRole(actor: { role: string; roles: string[]; surface: { entry: string[] | "*" } }): string {
+  const entry = actor.surface.entry;
+  return (entry === "*" ? undefined : entry.find((r) => actor.roles.includes(r))) ?? actor.role;
+}
+
+/** A header-safe line naming what was not recorded. */
+function headerLine(parts: string[]): string {
+  return parts.join("; ").replace(/[^\x20-\x7e]/g, "?").slice(0, 300);
+}
 
 export async function POST(req: NextRequest) {
   // The ZIP's embed loop (and the export's storage checks) stop at this route's own deadline, so the archive is delivered.
@@ -140,7 +159,7 @@ export async function POST(req: NextRequest) {
       orgId,
       exporterUserId: auth.userId,
       exporterEmail: auth.email,
-      exporterRole: auth.role,
+      exporterRole: admittedRole(auth),
       auditDetails: { channel: dest ? `destination:${dest.destination_type}` : "zip", exporterRoles: auth.roles, ...(dest ? { destinationId: dest.id } : {}) },
       includeFiles: dest?.include_files ?? body.includeFiles ?? true,
       delivery: dest
@@ -170,8 +189,11 @@ export async function POST(req: NextRequest) {
 
     const completedAt = new Date().toISOString();
     const duration = Date.parse(completedAt) - Date.parse(startedAt);
-    if (runId) {
-      await auth.admin.from("export_runs").update({
+    // The closing writes are CHECKED: a refused one is logged and named in the
+    // answer. The export itself left and is recorded, so the run succeeded.
+    const unrecorded: string[] = [];
+    {
+      const { error: runUpdErr } = await auth.admin.from("export_runs").update({
         status: "succeeded",
         table_count: result.tableCount,
         total_rows: result.totalRows,
@@ -184,11 +206,12 @@ export async function POST(req: NextRequest) {
         completed_at: completedAt,
         duration_ms: duration,
       }).eq("id", runId);
+      if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
     }
 
     if (dest) {
       // Update destination summary + advance the schedule clock
-      await auth.admin.from("export_destinations").update({
+      const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
         last_run_error: retentionNote ? retentionNote.slice(0, 500) : null,
@@ -201,6 +224,8 @@ export async function POST(req: NextRequest) {
           from: new Date(completedAt),
         }),
       }).eq("id", dest.id);
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
+      for (const u of unrecorded) console.error(`[data-export/run] org ${orgId}, run ${runId}: ${u}`);
 
       return NextResponse.json({
         ok: true,
@@ -208,6 +233,7 @@ export async function POST(req: NextRequest) {
         bytes: result.bytes,
         fileCount: result.fileCount,
         destinationPath: result.destinationPath,
+        ...(unrecorded.length ? { warnings: unrecorded } : {}),
       });
     }
 
@@ -219,8 +245,10 @@ export async function POST(req: NextRequest) {
       at: new Date(startedAt),
       token: (runId || "").replace(/-/g, "").slice(-4) || "0000",
     });
+    // The catalog entry is not a condition of the download, but a refused one
+    // is named, never swallowed.
     try {
-      await auth.admin.from("archives").insert({
+      const { error: catalogErr } = await auth.admin.from("archives").insert({
         org_id: orgId,
         archive_id: archiveId,
         kind: "full",
@@ -229,7 +257,11 @@ export async function POST(req: NextRequest) {
         created_by: auth.userId,
         created_by_email: auth.email,
       });
-    } catch { /* catalog is best-effort; the download still proceeds */ }
+      if (catalogErr) unrecorded.push(`archive catalog entry not recorded: ${catalogErr.message}`);
+    } catch (e) {
+      unrecorded.push(`archive catalog entry not recorded: ${(e as Error).message}`);
+    }
+    for (const u of unrecorded) console.error(`[data-export/run] org ${orgId}, run ${runId}: ${u}`);
     return new NextResponse(zipBytes as unknown as BodyInit, {
       status: 200,
       headers: {
@@ -238,27 +270,34 @@ export async function POST(req: NextRequest) {
         "Cache-Control": "no-store",
         "X-Export-Run-Id": runId || "",
         "X-Archive-Id": archiveId,
+        ...(unrecorded.length ? { "X-Export-Unrecorded": headerLine(unrecorded) } : {}),
       },
     });
   } catch (e) {
     const completedAt = new Date().toISOString();
     const duration = Date.parse(completedAt) - Date.parse(startedAt);
     const msg = (e as Error).message || String(e);
-    if (runId) {
-      await auth.admin.from("export_runs").update({
+    // Checked like the success path: a run row left "running" would stay
+    // stuck on the page and keep counting toward the hourly cap.
+    const unrecorded: string[] = [];
+    {
+      const { error: runUpdErr } = await auth.admin.from("export_runs").update({
         status: "failed",
         error_message: msg.slice(0, 1000),
         completed_at: completedAt,
         duration_ms: duration,
       }).eq("id", runId);
+      if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
     }
     if (dest) {
-      await auth.admin.from("export_destinations").update({
+      const { error: destUpdErr } = await auth.admin.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "failed",
         last_run_error: msg.slice(0, 500),
       }).eq("id", dest.id);
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
     }
-    return NextResponse.json({ error: msg }, { status: 500 });
+    for (const u of unrecorded) console.error(`[data-export/run] org ${orgId}, run ${runId}: ${u}`);
+    return NextResponse.json({ error: msg, ...(unrecorded.length ? { warnings: unrecorded } : {}) }, { status: 500 });
   }
 }

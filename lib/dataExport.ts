@@ -44,6 +44,7 @@ export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES, 
 // orphan sweep reads too — a key column registered there is in every backup
 // and protected from the sweep, both at once.
 import { STORAGE_KEY_SOURCES, STORAGE_KEY_COLUMNS, keysOf, findUnregisteredOrgKeys } from "@/lib/storageKeyRegistry";
+import { orgKeyPrefix } from "@/lib/shedKeyGuard";
 
 /** How many storage HeadObject checks the export runs at once. A file whose
  *  row records no byte size (every ticket attachment records it as text;
@@ -143,11 +144,11 @@ export async function runOrgExport(params: {
   auditDetails?: Record<string, unknown>;
   /** How the handed-out files are recorded (DEC-44 (A&O P3) §3). "list"
    *  (default): DATA_EXPORT_FILES rows naming each one — an export handed to
-   *  a person, and a webhook push. `{ destinationId }`: a push to a bucket
-   *  destination — the files are named against that destination's last
-   *  recorded full list (a baseline): only what was added or removed since
-   *  is written, and a new baseline when that would pass one row
-   *  (recordBucketPush). Every file that left is named either way. */
+   *  a person. `{ destinationId }`: a push to a destination, a bucket or a
+   *  webhook — the files are named against that destination's last recorded
+   *  full list (a baseline): only what was added or removed since is
+   *  written, and a new baseline when that would pass one row
+   *  (recordExport). Every file that left is named either way. */
   fileRecord?: "list" | { destinationId: string };
   presignedUrlSeconds?: number;
   /** Override FILE_CHECK_BUDGET_MS (tests). */
@@ -327,9 +328,9 @@ export async function runOrgExport(params: {
   //    record. An export that cannot be recorded is refused before anything
   //    leaves. BKP-8 Done-when 3: the files the export hands out are named
   //    too (DATA_EXPORT_FILES), so the chain of custody names the drawings,
-  //    not just the event — one by one for an export handed to a person or
-  //    a webhook push, against the destination's last full list for a bucket
-  //    push (`fileRecord`, DEC-44 (A&O P3) §3).
+  //    not just the event — one by one for an export handed to a person,
+  //    against the destination's last full list for a push to a bucket or a
+  //    webhook (`fileRecord`, DEC-44 (A&O P3) §3).
   await recordExport(sb, params, {
     startedAt,
     tableCount: tableCounts.length,
@@ -477,19 +478,73 @@ function countPrivateNotes(tables: Record<string, unknown[]>): number {
 export const EXPORT_FILES_PER_AUDIT_ROW = 500;
 /** Audit rows per insert statement (each row carries up to 500 file entries). */
 const EXPORT_FILE_ROWS_PER_INSERT = 10;
+/** DEC-44 (A&O P3) §3: the `resource_type` of a destination push's
+ *  DATA_EXPORT_FILES rows, whose `resource_id` is the destination's id (the
+ *  destination routes' own audit rows use the same pair). A push finds its
+ *  destination's baseline through the audit_logs resource indexes
+ *  (`audit_logs_resource_id_idx`, and `(resource_type, resource_id,
+ *  timestamp DESC)` from 20260611) instead of filtering every
+ *  DATA_EXPORT_FILES row of the workspace on its JSON details. A person's
+ *  export keeps `resource_type` "org" and the workspace's id. */
+export const DESTINATION_FILES_RESOURCE_TYPE = "export_destination";
 
 /** DEC-44 (A&O P3) §3: the SHA-256 (hex) of the handed-out file paths, sorted
  *  and newline-joined — the fingerprint a record carries of the whole list:
- *  a bucket push's list rebuilt from its baseline and delta rows must hash to
- *  it, and anyone holding the archive can recompute it from its own list. */
+ *  a destination push's list rebuilt from its baseline and delta rows must
+ *  hash to it, and anyone holding the archive can recompute it from its own
+ *  list. */
 export function exportFileListDigest(paths: readonly string[]): string {
   return createHash("sha256").update([...paths].sort().join("\n"), "utf8").digest("hex");
 }
 
-/** DEC-44 (A&O P3) §3: a bucket destination's last recorded full list — the
+/** DEC-44 (A&O P3) §3: the file list one DATA_EXPORT_FILES row carries,
+ *  compact. `paths` are relative to `prefix` — the workspace's storage
+ *  prefix (`orgs/<org id>/`) when every path in the row lies under it, else
+ *  "" — and `refs` runs parallel to them, keyed by revision: `[d, versionId]`
+ *  for a revision's file or native source, where `d` indexes `docs` (each
+ *  document the row names, once; null when the revision names none), and
+ *  null for any other file. A delta row's `removed` paths are relative to the
+ *  same prefix. At real key lengths that is about 150 bytes a file, where an
+ *  object per file (`{ path, documentId, versionId }`, the second review fix
+ *  pass's shape) took about 250. fileListEntries reads it back whole. */
+export interface CompactFileList {
+  prefix: string;
+  paths: string[];
+  docs: string[];
+  refs: Array<[number | null, string | null] | null>;
+  removed?: string[];
+}
+
+/** One DATA_EXPORT_FILES row's files, whole: each path with its prefix put
+ *  back, and its document and revision where it has them — what a recall
+ *  reads, and what the baseline read-back rebuilds from. */
+export function fileListEntries(details: unknown): Array<{ path: string; documentId?: string | null; versionId?: string | null }> {
+  const d = (details ?? {}) as { prefix?: unknown; paths?: unknown; docs?: unknown; refs?: unknown };
+  const prefix = typeof d.prefix === "string" ? d.prefix : "";
+  const docs = Array.isArray(d.docs) ? d.docs : [];
+  const refs = Array.isArray(d.refs) ? d.refs : [];
+  const out: Array<{ path: string; documentId?: string | null; versionId?: string | null }> = [];
+  (Array.isArray(d.paths) ? d.paths : []).forEach((p, i) => {
+    if (typeof p !== "string") return;
+    const ref = refs[i];
+    if (!Array.isArray(ref)) { out.push({ path: prefix + p }); return; }
+    const doc = typeof ref[0] === "number" ? docs[ref[0]] : null;
+    out.push({ path: prefix + p, documentId: typeof doc === "string" ? doc : null, versionId: typeof ref[1] === "string" ? ref[1] : null });
+  });
+  return out;
+}
+
+/** A delta row's removed paths, whole (prefix put back). */
+export function fileListRemoved(details: unknown): string[] {
+  const d = (details ?? {}) as { prefix?: unknown; removed?: unknown };
+  const prefix = typeof d.prefix === "string" ? d.prefix : "";
+  return (Array.isArray(d.removed) ? d.removed : []).filter((p): p is string => typeof p === "string").map((p) => prefix + p);
+}
+
+/** DEC-44 (A&O P3) §3: a destination's last recorded full list — the
  *  DATA_EXPORT_FILES rows of kind "baseline" one push wrote, read back whole
  *  and checked against the digest they carry. */
-export interface BucketPushBaseline {
+export interface DestinationBaseline {
   recordId: string;
   startedAt: string;
   sha256: string;
@@ -500,18 +555,27 @@ export interface BucketPushBaseline {
  *  destination has none yet. With a `problem`: one exists but could not be
  *  read whole or does not hash to its own digest — the caller writes a new
  *  full list (the safe side: every file is named again), never a delta
- *  against a list it cannot vouch for. */
-export async function readBucketPushBaseline(
+ *  against a list it cannot vouch for.
+ *
+ *  Both reads go through the destination's own rows (`resource_type`
+ *  DESTINATION_FILES_RESOURCE_TYPE, `resource_id` the destination), newest
+ *  first by `timestamp`, the order of the resource-timeline index — so the
+ *  database walks this destination's rows from the newest and stops at the
+ *  first baseline row (only the small delta rows in between are opened), and
+ *  the head read selects only that row's four small fields. The part read
+ *  stops at the baseline's `parts`. */
+export async function readDestinationBaseline(
   sb: Pick<SupabaseClient, "from">,
   orgId: string,
   destinationId: string,
-): Promise<{ baseline: BucketPushBaseline | null; problem?: string }> {
-  const head = await sb.from("audit_logs").select("details")
-    .eq("org_id", orgId).eq("action", "DATA_EXPORT_FILES")
-    .eq("details->>destinationId", destinationId).eq("details->>kind", "baseline")
-    .order("details->>startedAt", { ascending: false }).limit(1);
+): Promise<{ baseline: DestinationBaseline | null; problem?: string }> {
+  const head = await sb.from("audit_logs")
+    .select("recordId:details->>recordId, parts:details->>parts, sha256:details->>sha256, startedAt:details->>startedAt")
+    .eq("resource_type", DESTINATION_FILES_RESOURCE_TYPE).eq("resource_id", destinationId)
+    .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).eq("details->>kind", "baseline")
+    .order("timestamp", { ascending: false }).limit(1);
   if (head.error) return { baseline: null, problem: `the last full list could not be read (${head.error.message})` };
-  const first = ((head.data ?? []) as Array<{ details?: Record<string, unknown> | null }>)[0]?.details;
+  const first = ((head.data ?? []) as Array<Record<string, unknown> | null>)[0];
   if (!first) return { baseline: null };
   const recordId = typeof first.recordId === "string" ? first.recordId : "";
   const parts = Number(first.parts);
@@ -521,18 +585,17 @@ export async function readBucketPushBaseline(
     return { baseline: null, problem: "the last full list is malformed" };
   }
   const all = await sb.from("audit_logs").select("details")
-    .eq("org_id", orgId).eq("action", "DATA_EXPORT_FILES").eq("details->>recordId", recordId)
-    .limit(parts + 1);
+    .eq("resource_type", DESTINATION_FILES_RESOURCE_TYPE).eq("resource_id", destinationId)
+    .eq("action", "DATA_EXPORT_FILES").eq("org_id", orgId).eq("details->>recordId", recordId)
+    .order("timestamp", { ascending: false }).limit(parts);
   if (all.error) return { baseline: null, problem: `the last full list could not be read (${all.error.message})` };
   const paths = new Set<string>();
   const seen = new Set<number>();
   for (const r of (all.data ?? []) as Array<{ details?: Record<string, unknown> | null }>) {
     const d = r.details ?? {};
+    if (d.kind !== "baseline") continue;
     seen.add(Number(d.part));
-    for (const f of Array.isArray(d.files) ? d.files : []) {
-      const path = (f as { path?: unknown } | null)?.path;
-      if (typeof path === "string") paths.add(path);
-    }
+    for (const f of fileListEntries(d)) paths.add(f.path);
   }
   if (seen.size !== parts || exportFileListDigest([...paths]) !== sha256) {
     return { baseline: null, problem: `the last full list (${recordId}) could not be read back whole: ${seen.size} of ${parts} part(s), or its digest does not match` };
@@ -543,15 +606,19 @@ export async function readBucketPushBaseline(
 /** The DATA_EXPORT row, then the DATA_EXPORT_FILES rows naming every file the
  *  export hands out (a presigned URL in the envelope; the server ZIP embeds
  *  from those URLs) — with the document and revision for a revision's file,
- *  so a recall can ask "who took which drawing". DEC-44 (A&O P3) §3:
- *  - "list" (a person's export, a webhook push): every file, 500 to a row,
- *    on every run;
- *  - `{ destinationId }` (a bucket push): against the destination's newest
- *    baseline (readBucketPushBaseline), ONE "delta" row naming the files
- *    added since (and the paths removed) — none when nothing changed — or,
- *    when there is no baseline it can vouch for or the change would pass one
- *    row, a new "baseline" naming every file. The night's list is the
- *    baseline plus its delta, and hashes to the DATA_EXPORT row's sha256.
+ *  so a recall can ask "who took which drawing". Each row's list is compact
+ *  (CompactFileList; fileListEntries reads it back). DEC-44 (A&O P3) §3:
+ *  - "list" (an export handed to a person): every file, 500 to a row, on
+ *    every run;
+ *  - `{ destinationId }` (a push to a destination — a bucket or a webhook,
+ *    scheduled or Run Now): against the destination's newest baseline
+ *    (readDestinationBaseline), ONE "delta" row naming the files added since
+ *    (and the paths removed) — none when nothing changed — or, when there is
+ *    no baseline it can vouch for or the change would pass one row, a new
+ *    "baseline" naming every file. The night's list is the baseline plus its
+ *    delta, and hashes to the DATA_EXPORT row's sha256. These rows are the
+ *    destination's (`resource_type` DESTINATION_FILES_RESOURCE_TYPE,
+ *    `resource_id` its id), so the next push finds them by index.
  *  Every insert is CHECKED and throws: the caller refuses the export
  *  (BKP-13). A machine run (no exporter uid) carries user_id NULL and the
  *  machine's label in user_email (DEC-44 (A&O P3)), never a string in the
@@ -574,17 +641,37 @@ async function recordExport(
     user_role: params.exporterRole ?? null,
   };
   const handedOut = info.files.filter((f) => !!f.presignedUrl);
-  const byKey = new Map<string, { documentId: string | null; versionId: string | null }>();
+  const byKey = new Map<string, [string | null, string | null]>();
   for (const v of info.versions) {
-    const ref = { documentId: typeof v.record_id === "string" ? v.record_id : null, versionId: typeof v.id === "string" ? v.id : null };
+    const ref: [string | null, string | null] = [typeof v.record_id === "string" ? v.record_id : null, typeof v.id === "string" ? v.id : null];
     for (const col of ["file_url", "source_file_key"]) {
       const k = v[col];
       if (typeof k === "string" && k && !byKey.has(k)) byKey.set(k, ref);
     }
   }
-  const entryOf = (path: string) => {
-    const ref = byKey.get(path);
-    return ref ? { path, documentId: ref.documentId, versionId: ref.versionId } : { path };
+  const orgPrefix = orgKeyPrefix(params.orgId);
+  /** One row's compact list: its files (with their refs), and for a delta row its removed paths. */
+  const compact = (rowPaths: readonly string[], removed?: readonly string[]): CompactFileList => {
+    const every = [...rowPaths, ...(removed ?? [])];
+    const prefix = every.length > 0 && every.every((p) => p.startsWith(orgPrefix)) ? orgPrefix : "";
+    const docs: string[] = [];
+    const docIndex = new Map<string, number>();
+    const refs = rowPaths.map((p): [number | null, string | null] | null => {
+      const ref = byKey.get(p);
+      if (!ref) return null;
+      const [documentId, versionId] = ref;
+      if (documentId === null) return [null, versionId];
+      let at = docIndex.get(documentId);
+      if (at === undefined) { at = docs.push(documentId) - 1; docIndex.set(documentId, at); }
+      return [at, versionId];
+    });
+    return {
+      prefix,
+      paths: rowPaths.map((p) => p.slice(prefix.length)),
+      docs,
+      refs,
+      ...(removed ? { removed: removed.map((p) => p.slice(prefix.length)) } : {}),
+    };
   };
   const paths = handedOut.map((f) => f.path);
   const sha256 = exportFileListDigest(paths);
@@ -597,15 +684,17 @@ async function recordExport(
       startedAt: info.startedAt,
       part: i + 1,
       parts,
-      files: paths.slice(i * EXPORT_FILES_PER_AUDIT_ROW, (i + 1) * EXPORT_FILES_PER_AUDIT_ROW).map(entryOf),
+      ...compact(paths.slice(i * EXPORT_FILES_PER_AUDIT_ROW, (i + 1) * EXPORT_FILES_PER_AUDIT_ROW)),
     }));
   };
 
   let fileRecord: Record<string, unknown>;
   let fileRows: Array<Record<string, unknown>>;
+  let resource: { resource_id: string; resource_type: string } = { resource_id: params.orgId, resource_type: "org" };
   if (params.fileRecord && typeof params.fileRecord === "object") {
     const { destinationId } = params.fileRecord;
-    const { baseline, problem } = await readBucketPushBaseline(sb, params.orgId, destinationId);
+    resource = { resource_id: destinationId, resource_type: DESTINATION_FILES_RESOURCE_TYPE };
+    const { baseline, problem } = await readDestinationBaseline(sb, params.orgId, destinationId);
     const current = new Set(paths);
     const added = baseline ? paths.filter((p) => !baseline.paths.has(p)) : [];
     const removed = baseline ? [...baseline.paths].filter((p) => !current.has(p)).sort() : [];
@@ -614,7 +703,7 @@ async function recordExport(
       fileRecord = { mode: "delta", destinationId, count: paths.length, sha256, recordId, baseline: base, added: added.length, removed: removed.length };
       fileRows = added.length + removed.length === 0 ? [] : [{
         kind: "delta", destinationId, recordId, startedAt: info.startedAt, baseline: base, sha256, part: 1, parts: 1,
-        files: added.map(entryOf), removed,
+        ...compact(added, removed),
       }];
     } else {
       fileRecord = { mode: "baseline", destinationId, count: paths.length, sha256, recordId, ...(problem ? { baselineProblem: problem } : {}) };
@@ -649,8 +738,7 @@ async function recordExport(
   }
   const rows = fileRows.map((details) => ({
     action: "DATA_EXPORT_FILES",
-    resource_id: params.orgId,
-    resource_type: "org",
+    ...resource,
     ...actor,
     details,
   }));

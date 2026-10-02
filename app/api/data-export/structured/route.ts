@@ -10,7 +10,10 @@
 // controller's bell (lib/exportAlerts.ts), as the manual run does: this is the
 // export page's most-used way out (the JSON download, and the envelope of the
 // browser-built Full ZIP). A refused alert is logged and named in the
-// X-Export-Alert response header; the download proceeds either way.
+// X-Export-Alert response header; the download proceeds either way. The
+// DATA_EXPORT row's user_role is the role the surface admitted the exporter
+// by (an Admin whose headline is Viewer is recorded as Admin), the full
+// collection in details.exporterRoles.
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -21,6 +24,13 @@ import { alertAdminsOfExport } from "@/lib/exportAlerts";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+/** BKP-8: the role the data-export surface admitted the actor by — the first
+ *  of its entry roles the actor holds — never the headline alone. */
+function admittedRole(actor: { role: string; roles: string[]; surface: { entry: string[] | "*" } }): string {
+  const entry = actor.surface.entry;
+  return (entry === "*" ? undefined : entry.find((r) => actor.roles.includes(r))) ?? actor.role;
+}
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -41,7 +51,7 @@ export async function GET(req: NextRequest) {
       orgId,
       exporterUserId: actor.userId,
       exporterEmail: actor.email,
-      exporterRole: actor.role,
+      exporterRole: admittedRole(actor),
       auditDetails: { channel: "json", exporterRoles: actor.roles },
     });
   } catch (e) {

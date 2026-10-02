@@ -25,7 +25,16 @@
 // The run row is opened CHECKED: a run whose row is refused does not export
 // (it would leave no run history). The success path's run-row and
 // destination writes are checked too, and a refused one is logged and named
-// on the sweep result (`warnings`), never swallowed.
+// on the sweep result (`warnings`), never swallowed. So are the failure
+// path's, the claim (a refused claim runs nothing; the destination stays due
+// for the next sweep) and the read of what is due: a sweep that cannot read
+// it answers 500, so the cron run shows as failed instead of "processed: 0".
+//
+// BKP-13 / DEC-44 (A&O P3) §1: the data-export surface is Admin-only, so a
+// destination runs only while the member who last confirmed it holds the
+// surface's entry role (Admin) — a destination a Manager or DocCtrl set up
+// before that is skipped and recorded, never disabled, until an Admin opens
+// it and saves it again (that stamps updated_by).
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -34,6 +43,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { buildAndDeliverExport, computeNextRunAt, exportEmbedDeadline, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import { alertAdminsOfExport } from "@/lib/exportAlerts";
+import { adminSurface } from "@/lib/adminSurfaces";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -87,13 +98,22 @@ async function handler(req: NextRequest) {
   // DEC-18: billing-derived refusals are inert until the flag is on.
   const enforceBilling = process.env.SUBSCRIPTION_ENFORCE === "true";
 
-  const { data: due } = await sb
+  const { data: due, error: dueErr } = await sb
     .from("export_destinations")
     .select("*")
     .eq("enabled", true)
     .not("next_run_at", "is", null)
     .lte("next_run_at", nowIso)
     .limit(50);
+  if (dueErr) {
+    // Read as "nothing due", a failed read would skip every scheduled backup
+    // with no run row and a 200: the silent gap BKP-13 closes.
+    console.error(`[run-scheduled] the destinations due for export could not be read: ${dueErr.message}`);
+    return NextResponse.json(
+      { error: `Could not read the destinations due for export (${dueErr.message}) — nothing was run; they stay due for the next sweep.` },
+      { status: 500 },
+    );
+  }
 
   const list = (due ?? []) as ScheduledDestination[];
   const results: ScheduledRunResult[] = [];
@@ -112,12 +132,20 @@ async function handler(req: NextRequest) {
       schedule_day_of_month: dest.schedule_day_of_month,
       from: new Date(),
     });
-    const { data: claimed } = await sb
+    const { data: claimed, error: claimErr } = await sb
       .from("export_destinations")
       .update({ next_run_at: tentativeNext })
       .eq("id", dest.id)
       .eq("next_run_at", dest.next_run_at ?? nowIso)
       .select("id");
+    if (claimErr) {
+      // Not claimed, so not run: its clock did not move, and the next sweep
+      // picks it up again.
+      const msg = `not run: the destination could not be claimed (${claimErr.message}); it stays due for the next sweep`;
+      console.error(`[run-scheduled] destination ${dest.id}: ${msg}`);
+      results.push({ destinationId: dest.id, ok: false, error: msg });
+      continue;
+    }
     if (!claimed || claimed.length === 0) {
       results.push({ destinationId: dest.id, ok: false, error: "skipped: already claimed by another run" });
       continue;
@@ -132,7 +160,10 @@ async function handler(req: NextRequest) {
     // result, so a night with no run row is never a silent gap.
     const gate = await scheduledRunGate(sb, dest, enforceBilling);
     for (const n of gate.notices) console.warn(`[run-scheduled] destination ${dest.id}: ${n}`);
-    if (!gate.ok) {
+    // The configurer must also still hold the data-export surface's entry
+    // role (DEC-44 (A&O P3) §1); recorded and skipped the same way.
+    const refusal = gate.ok ? await configurerRoleRefusal(sb, dest) : gate.reason;
+    if (refusal) {
       const at = new Date().toISOString();
       // BILL-3 Done-when 3: a lapsed plan DISABLES a bucket destination (the
       // skip alone would re-fire the refusal every night) — never deletes it.
@@ -141,9 +172,9 @@ async function handler(req: NextRequest) {
       // grounds) and the plan, read again, no longer includes buckets. A skip
       // for a departed configurer, or for an unreadable workspace row, never
       // disables, whatever the plan.
-      const planLapsed = enforceBilling && !!dest.bucket && refusedOnBillingLimb(gate.reason)
+      const planLapsed = !gate.ok && enforceBilling && !!dest.bucket && refusedOnBillingLimb(gate.reason)
         && await planNoLongerIncludesBuckets(sb, dest.org_id);
-      const skipMsg = `skipped: ${gate.reason}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
+      const skipMsg = `skipped: ${refusal}${planLapsed ? " — the destination was disabled; an Admin re-enables it once the plan includes cloud backups" : ""}`;
       const unrecorded: string[] = [];
       const { error: runErr } = await sb.from("export_runs").insert({
         org_id: dest.org_id,
@@ -152,7 +183,7 @@ async function handler(req: NextRequest) {
         status: "cancelled",
         error_message: skipMsg.slice(0, 1000),
         destination_type: dest.destination_type,
-        diagnostics: [{ ts: at, step: "gate:skipped", detail: gate.reason }],
+        diagnostics: [{ ts: at, step: "gate:skipped", detail: refusal }],
         started_at: at,
         completed_at: at,
         duration_ms: 0,
@@ -266,15 +297,19 @@ async function handler(req: NextRequest) {
     } catch (e) {
       const completedAt = new Date().toISOString();
       const msg = (e as Error).message || String(e);
-      if (runId) {
-        await sb.from("export_runs").update({
+      // Checked like the success path: a refused write is logged and named on
+      // the result, never swallowed (a run row left "running" stays stuck).
+      const unrecorded: string[] = [];
+      {
+        const { error: runUpdErr } = await sb.from("export_runs").update({
           status: "failed",
           error_message: msg.slice(0, 1000),
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
         }).eq("id", runId);
+        if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
       }
-      await sb.from("export_destinations").update({
+      const { error: destUpdErr } = await sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "failed",
         last_run_error: msg.slice(0, 500),
@@ -288,11 +323,38 @@ async function handler(req: NextRequest) {
           from: new Date(completedAt),
         }),
       }).eq("id", dest.id);
-      results.push({ destinationId: dest.id, ok: false, error: msg });
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
+      for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
+      results.push({ destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; ") });
     }
   }
 
   return NextResponse.json({ processed: results.length, results });
+}
+
+/** DEC-44 (A&O P3) §1: why this destination may not run on its configurer's
+ *  authority, or null. The member who last confirmed it (updated_by, else
+ *  created_by — scheduledRunGate has already checked they are active) must
+ *  hold the data-export surface's entry role, read from lib/adminSurfaces.ts
+ *  by the full collection (memberHoldsAny). Never throws; a lookup that
+ *  errors cannot prove it, so it skips (retried next cycle), as the gate's
+ *  membership limb does. */
+async function configurerRoleRefusal(sb: SupabaseClient, dest: ScheduledDestination): Promise<string | null> {
+  const entry = adminSurface("data-export")?.entry ?? ["Admin"];
+  if (entry === "*") return null;
+  const configurer = dest.updated_by || dest.created_by || null;
+  if (!configurer) {
+    return "this destination has no recorded configurer — an active Admin must open it and save it again to re-confirm";
+  }
+  const { data, error } = await sb
+    .from("org_members").select("role, roles")
+    .eq("org_id", dest.org_id).eq("uid", configurer).eq("status", "active")
+    .maybeSingle();
+  if (error) return `the configurer's role could not be verified (${error.message}); retried next cycle`;
+  if (!memberHoldsAny(data as { role?: unknown; roles?: unknown } | null, entry)) {
+    return `the member who last configured this destination does not hold ${entry.join(" or ")}, which setting up a data export now requires — an Admin must open it and save it again to re-confirm`;
+  }
+  return null;
 }
 
 /** BILL-3: did the scheduled gate refuse on its subscription or plan limb?

@@ -245,12 +245,12 @@ export async function buildAndDeliverExport(params: {
     exporterRole: params.exporterRole,
     auditDetails: params.auditDetails,
     // DEC-44 (A&O P3) §3: every file that leaves is named. A ZIP handed to a
-    // person and a webhook push (an external URL: the archive is on someone
-    // else's server) name each one on every run; a push to a bucket
-    // destination names them against that destination's last full list —
-    // what was added or removed since — so a nightly push does not grow the
-    // audit trail (itself exported) by the whole list every night.
-    fileRecord: params.delivery.kind === "destination" && params.delivery.destination.destination_type !== "webhook"
+    // person names each one on every run; a push to a destination — a bucket
+    // or a webhook, scheduled or Run Now — names them against that
+    // destination's last full list (what was added or removed since), so a
+    // nightly push does not grow the audit trail (itself exported, and read
+    // whole by every later export) by the whole list every night.
+    fileRecord: params.delivery.kind === "destination"
       ? { destinationId: params.delivery.destination.id }
       : "list",
     deadlineAt,
