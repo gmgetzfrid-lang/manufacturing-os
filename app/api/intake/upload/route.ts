@@ -929,7 +929,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const { data: ticket, error: tErr } = UUID_RE.test(ticketId)
       ? await supabaseAdmin
           .from("tickets")
-          .select("id, ticket_id, title, attachments, history, metadata, assigned_drafter_id, requester_id")
+          .select("id, ticket_id, title, attachments, history, metadata, assigned_drafter_id, requester_id, last_modified")
           .eq("id", ticketId).eq("org_id", orgId)
           .eq("metadata->intake_collision->>intakeLinkId", linkId)
           .maybeSingle()
@@ -954,18 +954,59 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       uploadedBy: `${company} (intake)`,
       uploadedAt: nowIso,
     };
-    const { error: updErr } = await supabaseAdmin.from("tickets").update({
-      attachments: [...((ticket.attachments as unknown[] | null) ?? []), attachment],
-      history: [...((ticket.history as unknown[] | null) ?? []), {
-        action: "Redline markups received via intake portal",
-        user: company, date: nowIso,
-        details: changeNote || safeName,
-      }],
-      last_modified: nowIso,
-    }).eq("id", ticketId);
-    if (updErr) {
+    // SM-9 (drafting-flow DF-P1): the redline is an APPEND, never a whole-
+    // array replace — append_ticket_redline (20261166) adds the attachment and
+    // the history entry with `||` in one UPDATE, so a workflow transition that
+    // landed after this route read the row is never overwritten. Before that
+    // migration is pasted (the function is absent) the write falls back to a
+    // compare-and-set on the last_modified it read, as the workflow and
+    // comment routes do: a lost race re-reads and retries once; a second loss
+    // refuses (nothing attached, the stored object removed).
+    const historyEntry = {
+      action: "Redline markups received via intake portal",
+      user: company, date: nowIso,
+      details: changeNote || safeName,
+    };
+    let attached = false;
+    const { data: appended, error: appendErr } = await supabaseAdmin.rpc("append_ticket_redline", {
+      p_ticket_id: ticketId, p_org_id: orgId, p_attachment: attachment, p_history: historyEntry,
+    });
+    const appendAbsent = !!appendErr && (
+      (appendErr as { code?: string }).code === "PGRST202" ||
+      /could not find the function|does not exist in the schema cache/i.test(appendErr.message ?? ""));
+    if (appendErr && !appendAbsent) {
       await deleteObject(ref, key);
-      return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${updErr.message}`);
+      return fail("Couldn't attach the redline — try again shortly.", 500, `ticket append: ${appendErr.message}`);
+    }
+    if (!appendErr) {
+      if (appended !== true) {
+        await deleteObject(ref, key);
+        return fail("No redline request on this link matches that ticket.", 404, "ticket append: the ticket took no append (gone or archived)");
+      }
+      attached = true;
+    }
+    let current = ticket as { attachments?: unknown; history?: unknown; last_modified?: string | null };
+    for (let attempt = 0; attempt < 2 && !attached; attempt++) {
+      let cas = supabaseAdmin.from("tickets").update({
+        attachments: [...((current.attachments as unknown[] | null) ?? []), attachment],
+        history: [...((current.history as unknown[] | null) ?? []), historyEntry],
+        last_modified: nowIso,
+      }).eq("id", ticketId).eq("org_id", orgId);
+      cas = current.last_modified ? cas.eq("last_modified", current.last_modified) : cas.is("last_modified", null);
+      const { data: casRows, error: updErr } = await cas.select("id");
+      if (updErr) {
+        await deleteObject(ref, key);
+        return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${updErr.message}`);
+      }
+      if (((casRows as unknown[] | null) ?? []).length > 0) { attached = true; break; }
+      const { data: fresh, error: reErr } = await supabaseAdmin.from("tickets")
+        .select("attachments, history, last_modified").eq("id", ticketId).eq("org_id", orgId).maybeSingle();
+      if (reErr || !fresh) break;
+      current = fresh as typeof current;
+    }
+    if (!attached) {
+      await deleteObject(ref, key);
+      return fail("The request was being updated at the same moment — send the redline again.", 409, "ticket update: compare-and-set lost twice");
     }
 
     const involved = [...new Set([

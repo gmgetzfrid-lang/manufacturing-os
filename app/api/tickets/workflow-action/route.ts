@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { WorkflowEngine, ticketResource, decisiveGrants } from "@/lib/workflow";
-import { loadCapabilityPolicyEntry, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicyStrict, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
+import { r2, R2_BUCKET } from "@/lib/r2";
+import { isSafeStorageKey } from "@/lib/storageKey";
+import { publicOrigin } from "@/lib/publicOrigin";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import {
   computeTransition,
@@ -49,6 +53,103 @@ interface Body {
    *  opened — release them now, or keep them with a stated reason. Absent
    *  when a close would leave one open, the close is refused (409 holds_open). */
   holdResolution?: { action: "release" | "keep"; reason?: string | null } | null;
+}
+
+/** EVID-12: the actions that approve a submitted draft — their audit row
+ *  names the drafts the approval was given on. */
+const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction"]);
+
+/** SM-12: a member's name as the app shows it — display name, else the
+ *  local part of their email; null when the membership row carries neither. */
+function memberName(m: { display_name?: unknown; email?: unknown } | null | undefined): string | null {
+  const display = typeof m?.display_name === "string" ? m.display_name.trim() : "";
+  if (display) return display;
+  const email = typeof m?.email === "string" ? m.email.trim() : "";
+  return email ? email.split("@")[0] : null;
+}
+
+/** EVID-12: what an audit row records of a file — enough to match the
+ *  approval to the object in storage. `etag` is the storage entity tag the
+ *  route read when it vetted the file (null for one already on the ticket);
+ *  it is the store's tag, not a content hash this route computed. */
+function fileIdentity(a: TicketAttachment, etag: string | null | undefined) {
+  return { id: a.id ?? null, name: a.name ?? null, url: a.url ?? null, size: a.size ?? null, etag: etag ?? null };
+}
+
+function formatBytes(n: number | undefined): string | undefined {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return undefined;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * AUTHZ-11 / SM-13: a file record a client asks this route to append to the
+ * ticket. Refused unless its key lies under the ticket's own prefix
+ * (`orgs/<org>/tickets/<ticket number>/`, what uploadTicketAttachment mints)
+ * and is a plain key, the slot's type rule holds (an issued package is typed
+ * Final; a redline is a Reference; an attached file one of the four types),
+ * and the object is in storage — or already listed on the ticket. Who
+ * uploaded it, when, its size (from storage when it answers) and status are
+ * stamped here; the client's claims about them are not kept.
+ */
+async function vetTicketAttachment(
+  a: TicketAttachment,
+  ctx: {
+    slot: "attachment" | "finalAttachment" | "redlineAttachment";
+    orgId: string;
+    ticketNumber: string;
+    listed: TicketAttachment[];
+    uploadedBy: string;
+  },
+): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null } | { ok: false; status: number; error: string }> {
+  const url = typeof a?.url === "string" ? a.url : "";
+  const name = typeof a?.name === "string" ? a.name.trim().slice(0, 255) : "";
+  const prefix = `orgs/${ctx.orgId}/tickets/${ctx.ticketNumber}/`;
+  if (!url || !name || !ctx.ticketNumber || !isSafeStorageKey(url) || !url.startsWith(prefix) || url.length <= prefix.length) {
+    return { ok: false, status: 400, error: "That file is not stored under this request — upload it to the request and try again" };
+  }
+  const type = String(a.type ?? "");
+  if (ctx.slot === "finalAttachment" && type !== "Final") {
+    return { ok: false, status: 400, error: "Issuing the final IFC package requires a file typed Final" };
+  }
+  if (ctx.slot === "redlineAttachment" && type !== "Reference") {
+    return { ok: false, status: 400, error: "A redline is attached as a Reference file" };
+  }
+  if (!["Source", "Reference", "Draft", "Final"].includes(type)) {
+    return { ok: false, status: 400, error: "Attaching a file requires its name, type and storage URL" };
+  }
+  const alreadyListed = ctx.listed.find((x) => x?.url === url) ?? null;
+  let size: string | undefined = alreadyListed?.size ?? undefined;
+  let etag: string | null = null;
+  if (!alreadyListed) {
+    try {
+      const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: url }));
+      size = formatBytes((head as { ContentLength?: number }).ContentLength) ?? size;
+      etag = typeof (head as { ETag?: unknown }).ETag === "string" ? ((head as { ETag: string }).ETag).replace(/"/g, "") : null;
+    } catch (e) {
+      const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (err?.name === "NotFound" || err?.name === "NoSuchKey" || err?.$metadata?.httpStatusCode === 404) {
+        return { ok: false, status: 400, error: "That file is not in storage — upload it again and retry" };
+      }
+      console.error(`[workflow-action] could not verify ${url} in storage:`, e);
+      return { ok: false, status: 503, error: "The file could not be verified in storage right now — try again in a moment" };
+    }
+  }
+  const status: TicketAttachment["status"] =
+    ctx.slot === "attachment" ? (type === "Source" ? "submitted" : "staged") : "submitted";
+  const attachment = {
+    ...a,
+    id: typeof a.id === "string" && a.id ? a.id : crypto.randomUUID(),
+    name,
+    url,
+    type,
+    status,
+    size: size ?? a.size,
+    uploadedBy: alreadyListed?.uploadedBy ?? ctx.uploadedBy,
+    uploadedAt: alreadyListed?.uploadedAt ?? new Date().toISOString(),
+  } as TicketAttachment;
+  return { ok: true, attachment, etag };
 }
 
 export async function POST(req: NextRequest) {
@@ -136,10 +237,21 @@ export async function POST(req: NextRequest) {
   // caller at the ticket's current status — evaluated with the ORG'S OWN
   // capability policy, so admin-configured authority is enforced here, not
   // just drawn in the UI.
-  // WF-10: the server-side read is short-lived (SERVER_CACHE_TTL_MS) and the
-  // policy route invalidates it on write; the version stamp names, in the
-  // audit row, which policy this decision was made under.
-  const { policy: capPolicy, version: policyVersion } = await loadCapabilityPolicyEntry(ticket.orgId, supabaseAdmin);
+  // WF-10: the version stamp names, in the audit row, which policy this
+  // decision was made under.
+  // AUTHZ-7: the read is STRICT and fresh — a failed read is a refusal, never
+  // the shipped defaults (which are the WIDE end of every capability an org
+  // narrows). "Nothing stored" is still the defaults: that is the org's policy.
+  const loadedPolicy = await loadCapabilityPolicyStrict(ticket.orgId, supabaseAdmin);
+  if (!loadedPolicy.ok) {
+    console.error(`[workflow-action] capability policy unreadable for org ${ticket.orgId}: ${loadedPolicy.error}`);
+    return NextResponse.json(
+      { error: "This workspace's permission policy could not be read, so the action was not applied. Try again in a moment.", code: "policy_unreadable" },
+      { status: 503 },
+    );
+  }
+  const capPolicy = loadedPolicy.policy;
+  const policyVersion = loadedPolicy.version;
   // DEC-16: the requester's CURRENT collection rides beside the snapshot, so
   // a demotion after filing cannot leave the engineer gate bypassed. A
   // requester who is no longer an active member is known to hold nothing.
@@ -223,13 +335,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Attaching a file requires its name, type and storage URL" }, { status: 400 });
     }
   }
+  // AUTHZ-11 / SM-13: every file record this action appends is VETTED, not
+  // trusted — its key lies under this ticket's own prefix (the one
+  // uploadTicketAttachment mints: orgs/<org>/tickets/<ticket number>/), the
+  // object is in storage (or already listed on the ticket), a Final is typed
+  // Final, and who uploaded it, when, its size and status are stamped here.
+  const vetted: { attachment?: TicketAttachment; finalAttachment?: TicketAttachment; redlineAttachment?: TicketAttachment } = {};
+  const vettedEtags: Record<string, string | null> = {};
+  const toVet: Array<["attachment" | "finalAttachment" | "redlineAttachment", TicketAttachment | null | undefined]> = [
+    ["attachment", action.action === "attach_file" ? body.attachment : undefined],
+    ["finalAttachment", action.action === "submit_final" ? body.finalAttachment : undefined],
+    ["redlineAttachment", body.redlineAttachment],
+  ];
+  for (const [slot, a] of toVet) {
+    if (!a) continue;
+    const res = await vetTicketAttachment(a, {
+      slot, orgId: ticket.orgId, ticketNumber: ticket.ticketId, listed: ticket.attachments ?? [],
+      uploadedBy: callerEmail,
+    });
+    if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
+    vetted[slot] = res.attachment;
+    vettedEtags[slot] = res.etag;
+  }
 
   // Referenced people must be active members of the same org — and a picked
   // "engineer" must actually hold an engineer role (headline or additive).
+  // SM-12: the drafter's name on the row is the member's own (display name,
+  // else their email's local part) — read here, never the client's string.
+  let assigneeName: string | null = null;
   for (const ref of [body.engineer?.id, body.assignment?.id].filter(Boolean) as string[]) {
     const { data: refMember } = await supabaseAdmin
       .from("org_members")
-      .select("uid, role, roles")
+      .select("uid, role, roles, display_name, email")
       .eq("org_id", ticket.orgId)
       .eq("uid", ref)
       .eq("status", "active")
@@ -283,11 +420,20 @@ export async function POST(req: NextRequest) {
       if (!mayDraft) {
         return NextResponse.json({ error: "The selected drafter does not hold drafting authority (ticket.draft_work)" }, { status: 400 });
       }
+      assigneeName = memberName(refMember as { display_name?: unknown; email?: unknown });
       // GAP-2/DEC-12: the assigned drafter may not be the requester (3+).
       if (sodActive && ref === ticket.requesterId) {
         return NextResponse.json({ error: "Needs a second person: the requester can't draft their own request (orgs of 3+)." }, { status: 403 });
       }
     }
+  }
+
+  // AUTHZ-14: the gated requester's note to the engineer is what the engineer
+  // signs off against — required here, not only by the picker dialog's
+  // default (the engine action carries no requiresComment flag). Checked
+  // after the engineer pick's own validation, before anything is written.
+  if (action.action === "request_final_engineer_approval" && !body.comment?.trim()) {
+    return NextResponse.json({ error: "Sending for engineer final approval requires a note for the engineer" }, { status: 400 });
   }
 
   const input: TransitionInput = {
@@ -298,14 +444,19 @@ export async function POST(req: NextRequest) {
     preFilledComment: body.preFilledComment ?? undefined,
     category: body.category ?? undefined,
     isReassigning: body.isReassigning,
-    assignment: body.assignment ?? undefined,
+    assignment: body.assignment ? { id: body.assignment.id, name: assigneeName ?? body.assignment.name } : undefined,
     engineer: body.engineer ?? undefined,
-    redlineAttachment: body.redlineAttachment ?? undefined,
-    finalAttachment: body.finalAttachment ?? undefined,
-    attachment: action.action === "attach_file" ? body.attachment ?? undefined : undefined,
+    redlineAttachment: vetted.redlineAttachment,
+    finalAttachment: vetted.finalAttachment,
+    attachment: vetted.attachment,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
+  // SM-12: self-assignment names the caller from their membership too
+  // (computeTransition would derive it from the email's local part).
+  if (action.action === "self_assign" && updates.assigned_drafter_id === caller.id) {
+    updates.assigned_drafter_name = memberName(member as { display_name?: unknown; email?: unknown }) ?? callerEmail.split("@")[0];
+  }
   let recipients = transitionRecipients;
 
   // WF-19: a ticket (RE-)entering the assignment queue tells the queue's
@@ -397,15 +548,34 @@ export async function POST(req: NextRequest) {
   if (newStatus === "CLOSED") {
     try {
       const src = parseSourceDocument(ticket.metadata);
-      if (src?.id && deliverableStateOf(ticket.metadata)?.state !== "published") {
+      // DCW-4 / HAND-3 (DF-P1): a recorded "published" deliverable is believed
+      // only when the register backs it — a version of the source document,
+      // in this org, carrying this ticket as its provenance (the proof
+      // /api/tickets/handback checks before it records one). Anything else —
+      // a hand-written state, a version id no register holds — is closed as
+      // NOT in the register, visibly, never as a green "published".
+      const recorded = deliverableStateOf(ticket.metadata);
+      let unbackedPublish = false;
+      if (src?.id && recorded?.state === "published") {
+        const { data: backing, error: backingErr } = await supabaseAdmin
+          .from("document_versions").select("id")
+          .eq("id", recorded.version_id).eq("org_id", ticket.orgId)
+          .eq("record_id", src.id).eq("related_ticket_id", body.ticketId)
+          .maybeSingle();
+        unbackedPublish = !backing || !!backingErr;
+      }
+      if (src?.id && (recorded?.state !== "published" || unbackedPublish)) {
         const { data: docRow } = await supabaseAdmin
           .from("documents").select("rev, document_number").eq("id", src.id).eq("org_id", ticket.orgId).maybeSingle();
         const registerRev = ((docRow as { rev?: string | null } | null)?.rev ?? null);
         const docLabel = ((docRow as { document_number?: string | null } | null)?.document_number) || src.documentNumber || "the source document";
-        const merged = noteDeliverableNotInRegister(ticket.metadata, { documentId: src.id, registerRev });
+        const base = unbackedPublish ? { ...(ticket.metadata ?? {}), deliverable: undefined } : ticket.metadata;
+        const merged = noteDeliverableNotInRegister(base, { documentId: src.id, registerRev });
         if (merged) {
           updates.metadata = merged;
-          handbackNote = `Closed without a register revision: ${docLabel} remains at Rev ${registerRev ?? "—"}. The deliverable was not published as a revision.`;
+          handbackNote = unbackedPublish
+            ? `Closed without a register revision: the recorded publication could not be matched to a revision of ${docLabel} in the register, which remains at Rev ${registerRev ?? "—"}. The deliverable is treated as not published.`
+            : `Closed without a register revision: ${docLabel} remains at Rev ${registerRev ?? "—"}. The deliverable was not published as a revision.`;
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
@@ -429,9 +599,12 @@ export async function POST(req: NextRequest) {
     .update(updates)
     .eq("id", body.ticketId)
     .eq("status", ticket.status);
+  // EDGE-15: a row with no token compare-and-sets on the null itself — the
+  // first writer stamps it and a concurrent second gets the 409 — instead of
+  // dropping to a status-only check.
   baseQuery = ticket.lastModified
     ? baseQuery.eq("last_modified", String(ticket.lastModified))
-    : baseQuery;
+    : baseQuery.is("last_modified", null);
   let { data: updated, error: updErr } = await baseQuery
     .select("id")
     .maybeSingle();
@@ -449,7 +622,7 @@ export async function POST(req: NextRequest) {
       .eq("status", ticket.status);
     tolerantQuery = ticket.lastModified
       ? tolerantQuery.eq("last_modified", String(ticket.lastModified))
-      : tolerantQuery;
+      : tolerantQuery.is("last_modified", null);
     ({ data: updated, error: updErr } = await tolerantQuery
       .select("id")
       .maybeSingle());
@@ -466,8 +639,11 @@ export async function POST(req: NextRequest) {
   // stores stay in sync — computeTransition only appends to the JSONB thread, and
   // until now workflow comments never reached the table. Best-effort: the JSONB is
   // what the UI renders, so a table hiccup must not fail the transition.
+  // SM-7 done-when 2: best-effort is not silent — a failed mirror is retried
+  // once and then LOGGED with the comment and ticket ids, so the table can be
+  // reconciled from the JSONB thread.
   if (newComment) {
-    await supabaseAdmin.from("ticket_comments").insert({
+    const mirrorRow = {
       id: newComment.id as string,
       org_id: ticket.orgId,
       ticket_id: body.ticketId,
@@ -479,11 +655,32 @@ export async function POST(req: NextRequest) {
       category: (newComment.category as string | null) ?? null,
       mentioned_uids: [],
       created_at: (newComment.date as string) ?? new Date().toISOString(),
-    }).then(() => {}, () => {});
+    };
+    const mirror = async (): Promise<string | null> => {
+      try {
+        const { error } = await supabaseAdmin.from("ticket_comments").insert(mirrorRow);
+        if (!error || (error as { code?: string }).code === "23505") return null; // landed (a retry after a lost reply finds it there)
+        return error.message || "insert refused";
+      } catch (e) {
+        return (e as Error)?.message ?? String(e);
+      }
+    };
+    const mirrorErr = (await mirror()) && (await mirror());
+    if (mirrorErr) {
+      console.error(`[workflow-action] ticket_comments mirror failed for comment ${mirrorRow.id} on ticket ${body.ticketId} — reconcile from tickets.comments: ${mirrorErr}`);
+    }
   }
 
   // Audit — server-written, cannot be skipped by the client.
-  await supabaseAdmin.from("audit_logs").insert({
+  // EVID-12 / SM-7: the write is CHECKED. supabase-js resolves a refused
+  // insert with { error } rather than throwing, so the old bare await reported
+  // success either way. A failure is retried once; if the row still cannot be
+  // written, the ticket's own (append-only) history records that the audit
+  // row for this transition is missing, and the caller is told — a 500, never
+  // "ok" with a missing row. The details name what was decided on: the
+  // deliverable revision, and the identity of every file the action carried
+  // or approved.
+  const auditRow = {
     action: `TICKET_${action.action.toUpperCase()}`,
     resource_id: body.ticketId,
     resource_type: "ticket",
@@ -493,15 +690,53 @@ export async function POST(req: NextRequest) {
     user_role: callerRole,
     details: {
       from: ticket.status, to: newStatus, label: action.label, authority,
+      deliverable_rev: (updates.deliverable_rev as string | null | undefined) ?? ticket.deliverableRev ?? null,
       // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
-      ...(action.action === "attach_file" && body.attachment
-        ? { attachment: { id: body.attachment.id, name: body.attachment.name, type: body.attachment.type } }
+      ...(vetted.attachment
+        ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type } }
+        : {}),
+      ...(vetted.finalAttachment ? { finalAttachment: fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment) } : {}),
+      ...(vetted.redlineAttachment ? { redlineAttachment: fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment) } : {}),
+      ...(APPROVING_ACTIONS.has(action.action)
+        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => fileIdentity(a, null)) }
         : {}),
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),
     },
-  });
+  };
+  const writeAudit = async (): Promise<string | null> => {
+    try {
+      const { error } = await supabaseAdmin.from("audit_logs").insert(auditRow);
+      return error ? (error.message || "insert refused") : null;
+    } catch (e) {
+      return (e as Error)?.message ?? String(e);
+    }
+  };
+  const auditErr = (await writeAudit()) && (await writeAudit());
+  if (auditErr) {
+    console.error(`[workflow-action] AUDIT ROW NOT WRITTEN for ${auditRow.action} on ticket ${body.ticketId} (${ticket.status} → ${newStatus}) by ${caller.id}: ${auditErr}`);
+    const markedAt = new Date().toISOString();
+    const marker = {
+      action: "Audit record not written",
+      user: "system",
+      role: "System",
+      date: markedAt,
+      details: `The audit row for "${action.label}" (${ticket.status} → ${newStatus}, by ${callerEmail}) could not be written: ${auditErr}. This entry stands in its place.`,
+      auditUnrecorded: { action: auditRow.action, from: ticket.status, to: newStatus, actor: caller.id, at: String(updates.last_modified) },
+    };
+    const priorHistory = Array.isArray(updates.history) ? (updates.history as unknown[]) : [...(ticket.history ?? [])];
+    const { data: marked, error: markErr } = await supabaseAdmin
+      .from("tickets")
+      .update({ history: [...priorHistory, marker], last_modified: markedAt })
+      .eq("id", body.ticketId)
+      .eq("last_modified", String(updates.last_modified))
+      .select("id")
+      .maybeSingle();
+    if (markErr || !marked) {
+      console.error(`[workflow-action] could not record the missing audit row on ticket ${body.ticketId}: ${markErr?.message ?? "the ticket changed first"}`);
+    }
+  }
 
   // Ticket ⇄ intent bridge: a ticket entering DRAFTING registers the drafter's
   // EDIT INTENT on the source document — visible on the coordination surfaces
@@ -545,12 +780,18 @@ export async function POST(req: NextRequest) {
       const registersDrafter =
         newStatus === "DRAFTING" || newStatus === "REVISION_REQ" || (isReassign && newStatus === "PENDING_IFC");
       if (registersDrafter) {
-        if (drafterId) {
-          const { data: docRow } = await supabaseAdmin
-            .from("documents")
-            .select("current_version_id, library_id")
-            .eq("id", srcDoc.id)
-            .maybeSingle();
+        // SM-14: the source document is read IN THE TICKET'S ORG (as the
+        // CLOSED hand-back path reads it); a document id from another
+        // workspace registers nothing.
+        const { data: docRow } = drafterId
+          ? await supabaseAdmin
+              .from("documents")
+              .select("current_version_id, library_id")
+              .eq("id", srcDoc.id)
+              .eq("org_id", ticket.orgId)
+              .maybeSingle()
+          : { data: null };
+        if (drafterId && docRow) {
           await supabaseAdmin.from("document_intents").upsert(
             {
               org_id: ticket.orgId,
@@ -585,8 +826,13 @@ export async function POST(req: NextRequest) {
   // Fan-out — also server-side, so it survives the client closing the tab.
   // Failures here never fail the action (the transition is already committed);
   // they're logged for the maintenance cron's visibility.
+  // EDGE-9: links in an EMAIL resolve against the mail client, so they are
+  // absolute — the configured public origin (lib/publicOrigin.ts, with its
+  // server fallback to Vercel's production domain), else the origin this
+  // request arrived on.
+  const emailOrigin = publicOrigin() || new URL(req.url).origin;
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, comment: fanOutComment });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, comment: fanOutComment, emailOrigin });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -608,6 +854,14 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
+  if (auditErr) {
+    return NextResponse.json({
+      error: "The action was applied, but its audit record could not be written. The request's history records that the audit row is missing — tell your administrator.",
+      code: "audit_unrecorded",
+      applied: true,
+      status: newStatus,
+    }, { status: 500 });
+  }
   return NextResponse.json({ ok: true, status: newStatus });
 }
 
@@ -624,12 +878,16 @@ async function fanOut(params: {
    *  supersede, no email, a comment-style bell row without metadata.action
    *  (so the badge hook's stale-alert reconciliation leaves it alone). */
   activity?: boolean;
+  /** EDGE-9: the absolute origin email links are built on. */
+  emailOrigin: string;
 }) {
-  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity } = params;
+  const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
   if (recipients.length === 0) return;
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
+  // In-app rows navigate inside the app (relative); the email link leaves it.
   const link = `/requests/${ticketId}`;
+  const emailLink = `${emailOrigin.replace(/\/+$/, "")}${link}`;
   const actorName = actorEmail.split("@")[0];
 
   if (activity) {
@@ -660,12 +918,25 @@ async function fanOut(params: {
   //    "needs assignment" alert lingers in the recipient's bell long after the
   //    work moved on. Comment/mention rows have no metadata.action and are
   //    intentionally left untouched. Best-effort: never block the transition.
+  //    EVID-13: retiring an alert is MARKED (metadata.superseded_at / _by), and
+  //    read_at is never touched — read_at means the recipient opened it, and
+  //    is the only "did they see it" signal there is. The bell's unread list
+  //    leaves superseded rows out (lib/inAppNotifications.ts).
   try {
-    await supabaseAdmin.from("notifications")
-      .update({ read_at: new Date().toISOString() })
+    const supersededAt = new Date().toISOString();
+    const { data: stale } = await supabaseAdmin.from("notifications")
+      .select("id, metadata")
       .eq("resource_id", ticketId)
+      .eq("org_id", ticket.orgId)
       .is("read_at", null)
-      .not("metadata->>action", "is", null);
+      .not("metadata->>action", "is", null)
+      .is("metadata->>superseded_at", null);
+    for (const row of (stale ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
+      await supabaseAdmin.from("notifications")
+        .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })
+        .eq("id", row.id)
+        .is("read_at", null);
+    }
   } catch (e) {
     console.warn("[workflow-action] superseding stale notifications failed:", e);
   }
@@ -725,12 +996,12 @@ async function fanOut(params: {
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: cls.emailSubject,
-      body_text: `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${comment ? `\nNote: ${comment}\n` : ""}\n${link}`,
+      body_text: `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${comment ? `\nNote: ${comment}\n` : ""}\n${emailLink}`,
       body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${link}">${escapeHtml(ticketLabel)}</a>.</p>
+        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
         <p>Status: <b>${escapeHtml(newStatus)}</b></p>
         ${comment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment)}</blockquote>` : ""}
-        <p><a href="${link}">Open ticket</a></p>`,
+        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: cls.eventType,

@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
 import {
-  listMyNotifications, markRead, markAllRead, markManyRead, type NotificationRow,
+  listMyNotifications, markRead, markAllRead, type NotificationRow,
 } from '@/lib/inAppNotifications';
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
@@ -238,8 +238,14 @@ export function useTicketNotifications() {
         //    until the recipient happens to open the ticket. We detect those —
         //    the ticket's live status no longer matches the alert's recorded
         //    status, or the ticket is no longer live in this workspace — and
-        //    mark them read so the bell, the sidebar badge, and the portal
+        //    leave them out so the bell, the sidebar badge, and the portal
         //    can never disagree.
+        //    drafting-flow EVID-13 (DF-P1): leaving out is a FILTER, never a
+        //    write — read_at is the recipient's own act of opening a row (the
+        //    only "did they see it" signal), so no reconciliation stamps it.
+        //    The workflow route marks a retired alert metadata.superseded_at
+        //    (the unread list already omits those); this catches any it
+        //    missed.
         const workflowRows = n.filter(
           (r) => r.resourceId
             && r.metadata
@@ -259,7 +265,6 @@ export function useTicketNotifications() {
             .map((r) => r.id);
           if (staleIds.length > 0) {
             const staleSet = new Set(staleIds);
-            await markManyRead(staleIds).catch(() => { /* best-effort cleanup */ });
             n = n.filter((r) => !staleSet.has(r.id));
           }
         }

@@ -43,7 +43,9 @@ const acts = (t: Ticket, role: string, uid?: string, policy?: CapabilityPolicy, 
   WorkflowEngine.getActions(t, role as Role, uid, policy, { userRoles: [role] as Role[], ...ctx });
 const names = (t: Ticket, role: string, uid?: string, policy?: CapabilityPolicy, ctx?: WorkflowContext) =>
   acts(t, role, uid, policy, ctx).map((a) => a.action);
-const file: TicketAttachment = { id: "a-1", name: "iso.pdf", url: "org/REQ-1/iso.pdf", type: "Draft", status: "staged" } as TicketAttachment;
+// DF-P1 (AUTHZ-11): a file the route appends must live under the ticket's own
+// prefix, as uploadTicketAttachment mints it — orgs/<org>/tickets/<number>/.
+const file: TicketAttachment = { id: "a-1", name: "iso.pdf", url: "orgs/o1/tickets/REQ-1/iso.pdf", type: "Draft", status: "staged" } as TicketAttachment;
 
 // ── the route harness ────────────────────────────────────────────────────────
 const state = vi.hoisted(() => ({
@@ -90,6 +92,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ from: (t: string) => chain(t) }) }));
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
+// DF-P1 (AUTHZ-11): the route HEADs a new file in storage before appending it.
+vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({ ContentLength: 2048, ETag: '"etag-1"' })) }, R2_BUCKET: "test-bucket" }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { PATCH as commentPatch } from "@/app/api/tickets/comment/route";
 import { POST as watchPost } from "@/app/api/tickets/watch/route";
@@ -270,7 +274,7 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
     // the WF-19 queue pool is already unread for this ticket — an attachment must ADD readers, never wipe them
     state.rows.tickets = [ticketRow({ unread_by: ["sup-1"] })];
-    state.rows.notifications = [{ id: "n-1", user_id: "d-1", resource_id: "t1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } }];
+    state.rows.notifications = [{ id: "n-1", org_id: "o1", user_id: "d-1", resource_id: "t1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } }];
     const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...file, type: "Reference", name: "vendor.pdf" } });
     expect(res.status).toBe(200);
     expect(updateOf("tickets")[0].unread_by).toEqual(["sup-1", "d-1"]);
@@ -288,6 +292,11 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     expect((await post({ ticketId: "t1", actionType: "submit_draft" })).status).toBe(200);
     expect(updateOf("tickets")[0].unread_by).toEqual(["req-1"]);
     expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(1);
+    // DF-P1 (EVID-13): the supersede MARKS the alert and never stamps read_at
+    const superseded = updateOf("notifications")[0];
+    expect(superseded).not.toHaveProperty("read_at");
+    expect(superseded.metadata).toMatchObject({ action: "assign", status: "DRAFTING", superseded_by: "submit_draft" });
+    expect(typeof (superseded.metadata as Record<string, unknown>).superseded_at).toBe("string");
     expect(insertsOf("notifications")[0]).toMatchObject({ kind: "ticket_status", metadata: { action: "submit_draft", status: "PENDING_REVIEW" } });
     expect(insertsOf("email_notifications").map((e) => e.to_user_id)).toEqual(["req-1"]);
   });
@@ -587,6 +596,8 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
   it("route: a reassignment retires the PREVIOUS drafter's ticket-sourced edit intent before registering the new drafter's", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("d-2", "Drafter")];
+    // DF-P1 (SM-14): the source document is read in the ticket's own org
+    state.rows.documents = [{ id: "doc-1", org_id: "o1", current_version_id: null, library_id: null }];
     state.rows.tickets = [ticketRow({ status: "DRAFTING", metadata: { source_document: { id: "doc-1", documentNumber: "P-100" } } })];
     expect((await post({ ticketId: "t1", actionType: "reassign_drafter", comment: "out sick", assignment: { id: "d-2", name: "Sam" } })).status).toBe(200);
     const del = callIndex("document_intents", "delete");
@@ -604,6 +615,7 @@ describe("WF-18 — the Reassign button carries an action the route accepts: rea
   it("route: the previous drafter's intent is retired at EVERY status reassign is offered — PENDING_REVIEW, PENDING_FINAL_APPROVAL, PENDING_IFC — and the new drafter is registered where the ticket is on a drafter's bench (PENDING_IFC)", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter"), member("d-2", "Drafter"), member("e-1", "Engineer-2")];
+    state.rows.documents = [{ id: "doc-1", org_id: "o1", current_version_id: null, library_id: null }]; // DF-P1 (SM-14)
     for (const status of ["PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "PENDING_IFC"] as const) {
       state.calls = [];
       state.rows.tickets = [ticketRow({ status, assigned_engineer_id: status === "PENDING_FINAL_APPROVAL" ? "e-1" : null, metadata: { source_document: { id: "doc-1" } } })];
