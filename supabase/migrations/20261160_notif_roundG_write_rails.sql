@@ -35,6 +35,14 @@
 --     every server producer (the ticket routes, the transmittal route, the
 --     intake door, the cron, notify_personnel, the data-export and AI-cap
 --     notices) writes exactly as before. For a signed-in caller:
+--       0. the caller must be an ACTIVE member of notifications.org_id
+--          (42501) — checked FIRST, before this function reads anything
+--          else of that org with its definer rights. Without it, the
+--          recipient check (5) and the resource check (6) would run for any
+--          org id a caller names, and the outcome (a skipped row, a cap, or
+--          RLS's refusal) would tell them whether a uid is an active member
+--          of another tenant or whether a resource id exists there. The
+--          same predicate as notifications_org_insert, which still runs.
 --       1. actor_user_id := auth.uid() when NULL; a different actor is
 --          refused (42501). A browser row always names its writer, so a row
 --          with actor_user_id NULL is a server row — the mark a member cannot
@@ -43,21 +51,42 @@
 --          (lib/projects.ts autoReleaseExpiredAdHoc), and those now carry the
 --          member whose browser ran the sweep. created_at := now(): a
 --          browser's row is dated when it is written — a back-dated row
---          would slip below every cap's window (rule 6), and a future-dated
+--          would slip below every cap's window (rule 7), and a future-dated
 --          one would sit at the top of a bell for good.
---       2. kind must be one notification_kinds() declares (22023).
+--       2. kind must be one notification_kinds() declares (22023), and
+--          not one only the server writes: transmittal_unstampable (the
+--          transmittal route), storage_alert, storage_platform_r2 and
+--          storage_platform_db (the cron, through notifyAsServiceRole) —
+--          each is a dedupe watermark keyed on the kind (22023).
 --       3. link is NULL, empty, or app-relative: starts with one '/', not
 --          '//' or '/\', no backslash, no control character (22023).
---       4. the recipient must be an ACTIVE member of notifications.org_id;
+--       4. metadata carries none of the server's dedupe watermark keys —
+--          staleSessionId (the cron's stale-checkout escalation),
+--          staleHoldId (lib/holds.ts scanStaleHolds), reviewHealthDay
+--          (lib/intakeRateLimit.ts nudgeReviewHealth), ackEscalation
+--          (lib/distributionAcks.ts scanDistributionAcks) (22023). Each
+--          probe matches kind + metadata alone, with no actor or recipient
+--          filter, so a browser row carrying one — addressed to anyone,
+--          the writer included — would silence that escalation for good.
+--          Only the cron writes them. ackRequest and autoReleasedSessionId
+--          are written by browsers legitimately and stay allowed.
+--       5. the recipient must be an ACTIVE member of notifications.org_id;
 --          otherwise the row is SKIPPED (RETURN NULL), not refused, so one
 --          suspended watcher never sinks a batch insert for everyone else
 --          (lib/projects.ts writes its release notices in one statement).
---       5. resource_id is caller-written text, so the same-notice cap below
+--       6. resource_id is caller-written text, so the same-notice cap below
 --          trusts it only when it names a row of resource_type ('document',
 --          'ticket', 'project', 'library' — the types the app's producers
 --          fan out about) in the row's org. Any other resource_id is no key:
 --          the cap then counts the kind alone.
---       6. rate caps (P0001), counted over the signed-in writer's own rows:
+--       7. rate caps (P0001), counted over the signed-in writer's own rows,
+--          one actor's inserts one after another: a transaction-scoped
+--          advisory lock keyed on the actor is taken before the counts, so
+--          concurrent requests from one member (a Promise.all of notify()
+--          calls) are counted in turn instead of all seeing the same
+--          baseline and overshooting each cap by the pool's width. One key
+--          per transaction, so no lock-order deadlock; a different actor
+--          never waits:
 --            · per actor and recipient, last minute — 60 rows of the same
 --              kind about the same verified resource, or of the same kind
 --              when the resource is not verified (a poke pressed 60 times; a
@@ -71,13 +100,18 @@
 --              role broadcast, an ack roster, the sweep's release notices —
 --              each one row per recipient) never meets it, and no member can
 --              flood the whole org.
---          Only a multi-document operation under a wide ack policy (a bulk
---          upload, a library-wide policy change) can reach the hourly or the
---          per-actor cap; past it the bell copies are refused and logged by
---          notify(), the obligation is not — the acknowledgment roster row,
---          the inbox and the cron's re-nudge stand.
+--          Legitimate paths that can meet a cap: a multi-document
+--          operation under a wide ack policy (a bulk upload, a library-wide
+--          policy change) the hourly or the per-actor one; and more than 60
+--          revisions published in one library within a minute from one
+--          browser the same-notice one, per library follower — each
+--          publish's library_doc_revised row is keyed on the LIBRARY, a
+--          verified resource (lib/postPublish.ts). Past a cap the bell
+--          copies are refused and logged by notify(); an obligation is not
+--          — the acknowledgment roster row, the inbox and the cron's
+--          re-nudge stand.
 --     notifications_org_insert is KEPT unchanged: RLS's WITH CHECK runs after
---     this trigger, so the caller must still be an active member of the org.
+--     this trigger and checks the caller's membership again.
 --   · notifications_actor_recipient_idx (actor_user_id, user_id, created_at)
 --     and notifications_actor_created_idx (actor_user_id, created_at) — each
 --     cap's count is an index range scan.
@@ -105,6 +139,14 @@
 -- migrations in number order; each newer definition must be a superset of
 -- the one before it (the parity test pins the newest to KIND_META, so a
 -- branch that dropped another package's kinds fails CI at merge).
+--
+-- A SERVER DEDUPE ADDED LATER: a server path that decides whether to send
+-- by reading notifications rows must key on a kind or a metadata key rule 2
+-- or rule 4 refuses from a browser, or a member can forge the row that
+-- silences it. lib/__tests__/notificationWriteRails.test.ts pins every such
+-- read in the app to its watermark (a new one fails CI until it is
+-- classified) and checks that no browser path writes a listed key or kind;
+-- adding one is a re-create of this function from its newest definition.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe. Paste BEFORE
 -- 20261161 (its delete policy reads notification_kinds()).
@@ -166,7 +208,13 @@ SELECT 10, 'BEFORE: the most rows one actor wrote to one recipient in one clock 
                                           GROUP BY actor_user_id, user_id, date_trunc('hour', created_at)) b)::text
 UNION ALL
 SELECT 11, 'BEFORE: rows dated in the future (a browser''s row is dated when it is written from now on; existing rows are kept)',
-       (SELECT COUNT(*) FROM notifications WHERE created_at > now() + interval '5 minutes')::text;
+       (SELECT COUNT(*) FROM notifications WHERE created_at > now() + interval '5 minutes')::text
+UNION ALL
+SELECT 12, 'BEFORE: rows carrying a server dedupe watermark (a server-only kind or metadata key) that name an actor — the server''s own name none; a forged one keeps silencing its escalation until it is deleted (kept by this paste)',
+       (SELECT COUNT(*) FROM notifications
+         WHERE actor_user_id IS NOT NULL
+           AND (kind IN ('transmittal_unstampable', 'storage_alert', 'storage_platform_r2', 'storage_platform_db')
+                OR metadata ?| ARRAY['staleSessionId', 'staleHoldId', 'reviewHealthDay', 'ackEscalation']))::text;
 
 BEGIN;
 
@@ -250,6 +298,13 @@ BEGIN
     RETURN NEW;
   END IF;
 
+  -- 0. the writer is an active member of the row's org — before anything
+  --    else of that org is read with this function's rights
+  IF NOT EXISTS (SELECT 1 FROM org_members m
+                  WHERE m.org_id = NEW.org_id AND m.uid = v_uid AND m.status = 'active') THEN
+    RAISE EXCEPTION 'notifications: not a member of this workspace' USING ERRCODE = '42501';
+  END IF;
+
   -- 1. the actor is the signed-in member; the row is dated now
   IF NEW.actor_user_id IS NULL THEN
     NEW.actor_user_id := v_uid;
@@ -258,9 +313,12 @@ BEGIN
   END IF;
   NEW.created_at := now();
 
-  -- 2. a declared kind
+  -- 2. a declared kind, and not one only the server writes
   IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN
     RAISE EXCEPTION 'notifications: unknown kind %', NEW.kind USING ERRCODE = '22023';
+  END IF;
+  IF NEW.kind IN ('transmittal_unstampable', 'storage_alert', 'storage_platform_r2', 'storage_platform_db') THEN
+    RAISE EXCEPTION 'notifications: kind % is written only by the server', NEW.kind USING ERRCODE = '22023';
   END IF;
 
   -- 3. an app-relative link
@@ -269,13 +327,18 @@ BEGIN
     RAISE EXCEPTION 'notifications: a link must be an app-relative path' USING ERRCODE = '22023';
   END IF;
 
-  -- 4. an active member of the org receives it; anyone else is skipped
+  -- 4. no server dedupe watermark in the metadata
+  IF NEW.metadata ?| ARRAY['staleSessionId', 'staleHoldId', 'reviewHealthDay', 'ackEscalation'] THEN
+    RAISE EXCEPTION 'notifications: the metadata carries a dedupe watermark only the server writes' USING ERRCODE = '22023';
+  END IF;
+
+  -- 5. an active member of the org receives it; anyone else is skipped
   IF NOT EXISTS (SELECT 1 FROM org_members m
                   WHERE m.org_id = NEW.org_id AND m.uid = NEW.user_id AND m.status = 'active') THEN
     RETURN NULL;
   END IF;
 
-  -- 5. the resource is a key only when it names a row of its type in this org
+  -- 6. the resource is a key only when it names a row of its type in this org
   IF NEW.resource_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     v_res := NEW.resource_id::uuid;
     v_res_ok := CASE NEW.resource_type
@@ -287,7 +350,10 @@ BEGIN
     END;
   END IF;
 
-  -- 6. rate caps: per (actor, recipient) a minute and an hour, per actor a minute
+  -- 7. rate caps: per (actor, recipient) a minute and an hour, per actor a
+  --    minute — one actor's inserts counted one after another (a concurrent
+  --    insert from the same actor waits here until this one commits)
+  PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));
   SELECT COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute' AND n.kind = NEW.kind
                             AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)),
          COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute'),
@@ -320,7 +386,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_notification_insert() IS
-  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer is stamped as the actor (another actor refused) and the row dated now, the kind must be declared (notification_kinds()), the link app-relative, a recipient who is not an active member of the org is skipped; the caps are 60 same-notice (the resource counts only when it names a row of its type in the org) and 600 any rows per actor and recipient per minute, 1200 per actor and recipient per hour, and 3000 per actor per minute across all recipients. notifications Round G, 20261160.';
+  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer must be an active member of the row''s org (checked before anything else of that org is read), is stamped as the actor (another actor refused) and the row dated now; the kind must be declared (notification_kinds()) and not server-only, the link app-relative, the metadata free of the server''s dedupe watermark keys; a recipient who is not an active member of the org is skipped; the caps, counted one insert at a time per actor (an advisory lock), are 60 same-notice (the resource counts only when it names a row of its type in the org) and 600 any rows per actor and recipient per minute, 1200 per actor and recipient per hour, and 3000 per actor per minute across all recipients. notifications Round G, 20261160.';
 
 REVOKE ALL ON FUNCTION enforce_notification_insert() FROM PUBLIC, anon, authenticated;
 
@@ -339,7 +405,7 @@ CREATE INDEX IF NOT EXISTS notifications_actor_created_idx
 
 COMMIT;
 
--- ── Verification + inventory (ONE result set): expect ok = true × 14 ────────
+-- ── Verification + inventory (ONE result set): expect ok = true × 17 ────────
 SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 51 kinds — 15 of them compliance kinds — each once' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                 WHERE ns.nspname = 'public' AND p.proname = 'notification_kinds'
@@ -377,6 +443,14 @@ SELECT 'enforce_notification_insert: its first statement returns NEW untouched f
                   AND position('IF v_uid IS NULL THEN' IN prosrc) < position('NEW.actor_user_id' IN prosrc)),
        NULL
 UNION ALL
+SELECT 'enforce_notification_insert: the caller must be an active member of the row''s org (42501), checked right after the service role''s return and before the recipient and resource reads — no definer read of another tenant',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
+                  AND prosrc LIKE '%IF v_uid IS NULL THEN%RETURN NEW;%END IF;%m.org_id = NEW.org_id AND m.uid = v_uid AND m.status = ''active'') THEN%not a member of this workspace%42501%'
+                  AND position('m.uid = v_uid' IN prosrc) < position('NEW.actor_user_id' IN prosrc)
+                  AND position('m.uid = v_uid' IN prosrc) < position('m.uid = NEW.user_id' IN prosrc)
+                  AND position('m.uid = v_uid' IN prosrc) < position('FROM documents r' IN prosrc)),
+       NULL
+UNION ALL
 SELECT 'enforce_notification_insert: the actor is stamped when absent and refused when it is someone else',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
                   AND prosrc LIKE '%IF NEW.actor_user_id IS NULL THEN%NEW.actor_user_id := v_uid;%ELSIF NEW.actor_user_id <> v_uid THEN%RAISE EXCEPTION%42501%'),
@@ -391,6 +465,13 @@ SELECT 'enforce_notification_insert: an undeclared kind and a link that is not a
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
                   AND prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN%'
                   AND prosrc LIKE '%left(NEW.link, 1) = ''/''%substr(NEW.link, 2, 1) NOT IN%strpos(NEW.link, %[[:cntrl:]]%'),
+       NULL
+UNION ALL
+SELECT 'enforce_notification_insert: a server-only kind and a server dedupe watermark key in the metadata are refused (22023)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
+                  AND prosrc LIKE '%IF NEW.kind IN (''transmittal_unstampable'', ''storage_alert'', ''storage_platform_r2'', ''storage_platform_db'') THEN%22023%'
+                  AND prosrc LIKE '%IF NEW.metadata ?| ARRAY[''staleSessionId'', ''staleHoldId'', ''reviewHealthDay'', ''ackEscalation''] THEN%22023%'
+                  AND position('NEW.metadata ?|' IN prosrc) < position('RETURN NULL;' IN prosrc)),
        NULL
 UNION ALL
 SELECT 'enforce_notification_insert: a recipient who is not an active member of the org is skipped (RETURN NULL), never refused',
@@ -409,6 +490,11 @@ SELECT 'enforce_notification_insert: the caps are 60 same-notice and 600 any per
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
                   AND prosrc LIKE '%n.actor_user_id = v_uid%n.user_id = NEW.user_id%n.created_at > now() - interval ''1 hour''%'
                   AND prosrc LIKE '%IF v_same >= 60 THEN%IF v_any >= 600 THEN%IF v_hour >= 1200 THEN%LIMIT 3000%IF v_actor >= 3000 THEN%'),
+       NULL
+UNION ALL
+SELECT 'enforce_notification_insert: one actor''s inserts are counted one after another — an advisory lock keyed on the actor is taken before the caps are counted',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
+                  AND prosrc LIKE '%PERFORM pg_advisory_xact_lock(hashtextextended(''notif-cap:'' || v_uid::text, 0));%INTO v_same, v_any, v_hour%'),
        NULL
 UNION ALL
 SELECT 'trg_notifications_enforce_insert is BEFORE INSERT FOR EACH ROW on notifications, enabled',

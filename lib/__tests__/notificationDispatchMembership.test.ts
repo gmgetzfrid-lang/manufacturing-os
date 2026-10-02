@@ -11,7 +11,10 @@
 // NEDGE-6 (egress half): every emit() email's subject was input.title, so a
 // hold's free-text reason ("HOLD placed on PID-4412-R3 — litigation hold …")
 // became the subject line of mail sent to the follower list and the release
-// pool.
+// pool. The subject is now decided per recipient (review fix): the title for
+// someone the producer named, a category subject for anyone reached only
+// through a role pool or the follow list, and a category subject for every
+// recipient of a kind whose title carries a free-text reason.
 //
 // Driven through the REAL lib/notify/dispatch, lib/notify/recipients and
 // lib/inAppNotifications over the in-memory PostgREST stand-in
@@ -20,8 +23,9 @@
 // which subject and body.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import ts from "typescript";
 import { resetState, type MemoryState } from "./helpers/memoryDb";
 
 const h = vi.hoisted(() => ({
@@ -38,7 +42,7 @@ vi.mock("@/lib/notifications", () => ({
   queueEmail: vi.fn(async (input: Record<string, unknown>) => { h.emails.push(input); }),
 }));
 
-import { emit, resolveRecipients, broadcastSubject, type EmitInput, type NotifCategory } from "@/lib/notify/dispatch";
+import { emit, resolveRecipients, broadcastSubject, REASON_IN_TITLE, type EmitInput, type NotifCategory } from "@/lib/notify/dispatch";
 import { resolveRoleRecipients } from "@/lib/notify/recipients";
 
 const ORG = "o-1";
@@ -251,7 +255,7 @@ describe("REGRESSION — with every member active, the same inputs reach the sam
   });
 });
 
-describe("NEDGE-6 (egress) — a broadcast email's subject is derived from its category, never from the title", () => {
+describe("NEDGE-6 (egress) — an email to someone the producer did not name carries a category subject, never the title", () => {
   it("a hold to the follower list: the subject carries no document label and no free-text reason; the title leads the body", async () => {
     await emit(ev({ audience: { followers: true } }));
     expect(h.emails).toHaveLength(1);
@@ -273,6 +277,118 @@ describe("NEDGE-6 (egress) — a broadcast email's subject is derived from its c
   it("an explicit email subject and body are the producer's choice and are sent as given", async () => {
     await emit(ev({ audience: { followers: true }, email: { subject: "A hold was placed", bodyText: "Open the document." } }));
     expect(h.emails[0]).toMatchObject({ subject: "A hold was placed", bodyText: "Open the document." });
+  });
+
+  it("REVIEW: decided per recipient — in a mixed audience the named stakeholder keeps the title as the subject (triage and search by document number), a follower reached only through the follow list gets the category subject", async () => {
+    // lib/postPublish.ts notifySuperseded's shape: the live intent holders named, plus the follow list
+    await emit(ev({
+      category: "watched", kind: "doc_superseded",
+      title: "PID-4412 advanced to Rev C", body: "Dana published Rev C. Refresh before continuing.",
+      audience: { involved: ["admin"], followers: true },
+    }));
+    const byUid = new Map(h.emails.map((m) => [m.toUserId as string, m]));
+    expect([...byUid.keys()].sort()).toEqual(["admin", "w-active"]);
+    expect(byUid.get("admin")).toMatchObject({ subject: "PID-4412 advanced to Rev C", bodyText: "Dana published Rev C. Refresh before continuing." });
+    expect(byUid.get("w-active")).toMatchObject({
+      subject: broadcastSubject("watched", "document"),
+      bodyText: "PID-4412 advanced to Rev C\n\nDana published Rev C. Refresh before continuing.",
+    });
+  });
+
+  it("REVIEW: a role pool beside named people (lib/branches.ts): the named keep the title, the pool gets the category subject", async () => {
+    await emit(ev({
+      kind: "branch_open", title: "Unreconciled branch opened on PID-3301", body: undefined,
+      audience: { involved: ["w-active"], roles: ["DocCtrl"] },
+    }));
+    const byUid = new Map(h.emails.map((m) => [m.toUserId as string, m.subject]));
+    expect(Object.fromEntries(byUid)).toEqual({
+      "w-active": "Unreconciled branch opened on PID-3301",
+      "dc-additive": broadcastSubject("status", "document"),
+    });
+  });
+
+  it("REVIEW: a kind whose title carries a free-text reason gets the category subject for EVERY recipient — a hold's release pool is passed as involved, and the aging nudge names only involved people", async () => {
+    // notifyHoldChange: the pool (resolved from the policy's roles) passed as involved, plus the follow list
+    await emit(ev({ audience: { involved: ["admin", "dc-additive"], followers: true } }));
+    expect(h.emails).toHaveLength(3);
+    for (const m of h.emails) {
+      expect(m.subject).toBe(broadcastSubject("status", "document"));
+      expect(String(m.subject)).not.toMatch(/PID-4412|litigation|Baytown/);
+      expect(m.bodyText).toBe(`${ev().title}\n\n${ev().body}`);
+    }
+    // scanStaleHolds: involved only, category sla
+    seed();
+    await emit(ev({
+      category: "sla", title: "Hold past its expected release — PID-4412 (litigation hold, Baytown incident)",
+      body: "Release it with a reason, or set a new expected date.", actorUserId: undefined,
+      audience: { involved: ["admin"] },
+    }));
+    expect(h.emails).toEqual([expect.objectContaining({ toUserId: "admin", subject: broadcastSubject("sla", "document") })]);
+    // the producer's own subject still wins
+    seed();
+    await emit(ev({ audience: { involved: ["admin"] }, email: { subject: "A hold was placed" } }));
+    expect(h.emails[0].subject).toBe("A hold was placed");
+  });
+
+  it("REASON_IN_TITLE is pinned to the producers: every emit() title that interpolates a reason is of a listed kind, and every listed kind has such a producer", () => {
+    const ROOT = process.cwd();
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const n of readdirSync(d)) {
+        const p = join(d, n);
+        if (statSync(p).isDirectory()) { if (n !== "node_modules" && n !== "__tests__" && !n.startsWith(".")) walk(p); }
+        else if (/\.tsx?$/.test(n) && !n.endsWith(".d.ts")) files.push(p);
+      }
+    };
+    for (const d of ["app", "lib", "components", "hooks"]) walk(join(ROOT, d));
+    const scan = (src: string, file: string) => {
+      const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+      const out: Array<{ kind: string | null; reason: boolean; at: string }> = [];
+      const unwrap = (e: ts.Expression): ts.Expression =>
+        ts.isParenthesizedExpression(e) || ts.isAsExpression(e) ? unwrap(e.expression) : e;
+      // a conditional kind is paired with a conditional title on the same condition, branch by branch
+      const pairs = (k: ts.Expression, t: ts.Expression): Array<[ts.Expression, ts.Expression]> => {
+        k = unwrap(k); t = unwrap(t);
+        if (ts.isConditionalExpression(k) && ts.isConditionalExpression(t) && k.condition.getText(sf) === t.condition.getText(sf)) {
+          return [...pairs(k.whenTrue, t.whenTrue), ...pairs(k.whenFalse, t.whenFalse)];
+        }
+        if (ts.isConditionalExpression(k)) return [...pairs(k.whenTrue, t), ...pairs(k.whenFalse, t)];
+        return [[k, t]];
+      };
+      const mentionsReason = (n: ts.Node): boolean =>
+        (ts.isIdentifier(n) && n.text === "reason") || (ts.forEachChild(n, mentionsReason) ?? false);
+      const visit = (n: ts.Node) => {
+        if (ts.isCallExpression(n) && /(^|\.)emit$/.test(n.expression.getText(sf)) && n.arguments[0] && ts.isObjectLiteralExpression(n.arguments[0])) {
+          const prop = (name: string) => (n.arguments[0] as ts.ObjectLiteralExpression).properties
+            .find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && p.name.getText(sf) === name)?.initializer;
+          const k = prop("kind"), t = prop("title");
+          if (k && t) {
+            for (const [kk, tt] of pairs(k, t)) {
+              out.push({
+                kind: ts.isStringLiteral(kk) || ts.isNoSubstitutionTemplateLiteral(kk) ? kk.text : null,
+                reason: mentionsReason(tt),
+                at: `${relative(ROOT, file)}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`,
+              });
+            }
+          }
+        }
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
+      return out;
+    };
+    const all = files.flatMap((f) => { const src = readFileSync(f, "utf8"); return /\bemit\(/.test(src) ? scan(src, f) : []; });
+    expect(all.length).toBeGreaterThan(15);
+    const withReason = all.filter((x) => x.reason);
+    expect(withReason.filter((x) => x.kind === null || !REASON_IN_TITLE.has(x.kind as never)).map((x) => `${x.at} (${x.kind})`)).toEqual([]);
+    for (const k of REASON_IN_TITLE) expect(withReason.some((x) => x.kind === k), `${k} has a reason-bearing producer`).toBe(true);
+    // the scanner pairs branch by branch and is not vacuous
+    const probe = scan([
+      'emit({ kind: o ? "hold_opened" : "hold_released", title: o ? `HOLD — ${x.reason}` : `released ${label}` });',
+      'emit({ kind: "branch_open", title: `branch on ${label}`, body: `${input.reason}` });',
+      'm.emit({ kind: n.kind, title: `${reason}` });',
+    ].join("\n"), "probe.ts");
+    expect(probe.map((x) => [x.kind, x.reason])).toEqual([["hold_opened", true], ["hold_released", false], ["branch_open", false], [null, true]]);
   });
 
   it("every category has a fixed subject that names the resource kind and nothing else", () => {

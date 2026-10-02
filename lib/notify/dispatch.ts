@@ -34,9 +34,11 @@ export interface EmitInput {
   actorUserId?: string;
   actorName?: string;
   /** Who hears about it. The union of every provided source, minus the
-   *  actor, limited to ACTIVE members of `orgId` (NEDGE-3). A role pool or the
-   *  follow list makes the event a broadcast: its email subject is derived
-   *  from the category, never the title (NEDGE-6 — see broadcastSubject). */
+   *  actor, limited to ACTIVE members of `orgId` (NEDGE-3). Someone the
+   *  producer names in `involved` gets the title as the email subject;
+   *  someone reached only through a role pool or the follow list gets a
+   *  subject derived from the category (NEDGE-6 — see broadcastSubject and
+   *  emailSubjectFor). */
   audience: {
     involved?: string[];   // explicit stakeholders (requester/assignee/mentions)
     followers?: boolean;   // walk resolveFollowers(resource)
@@ -46,10 +48,12 @@ export interface EmitInput {
   /** Defaults to both channels (in-app and email). Pass a subset to
    *  force-limit a noisy event. */
   channels?: NotifChannel[];
-  /** An explicit subject / body is sent as given. Without one, an email to
-   *  named people only takes the title as its subject; a broadcast's subject
-   *  is broadcastSubject(category, resource.type) and the title leads the
-   *  body instead. */
+  /** An explicit subject / body is sent as given, to everyone. Without one,
+   *  the subject is decided per recipient (emailSubjectFor): the title for
+   *  someone the producer named, broadcastSubject(category, resource.type)
+   *  for anyone else in an event that reaches a role pool or the follow
+   *  list, and for everyone when the kind's title carries a free-text
+   *  reason (REASON_IN_TITLE) — the title then leads the body instead. */
   email?: { subject?: string; bodyText?: string; bodyHtml?: string };
   metadata?: Record<string, unknown>;
 }
@@ -89,13 +93,14 @@ const RESOURCE_NOUN: Record<ResourceType, string> = {
   library: "a library",
 };
 
-/** NEDGE-6 (egress): the subject of a BROADCAST email — one whose audience
- *  includes a role pool or the follow list, people the producer did not name.
- *  A title can carry a document number and a free-text reason ("HOLD placed
- *  on PID-4412-R3 — litigation hold …"); a subject line is what a mail
- *  provider, a lock screen and an inbox list show, so a broadcast's subject
- *  names only the category and the kind of resource. The title leads the
- *  email body instead. Exported for the test that pins every subject. */
+/** NEDGE-6 (egress): the subject of an email to someone the producer did
+ *  not name — reached only through a role pool or the follow list — and of
+ *  every email of a kind whose title carries a free-text reason. A title can
+ *  carry a document number and a free-text reason ("HOLD placed on
+ *  PID-4412-R3 — litigation hold …"); a subject line is what a mail
+ *  provider, a lock screen and an inbox list show, so this subject names
+ *  only the category and the kind of resource. The title leads the email
+ *  body instead. Exported for the test that pins every subject. */
 export function broadcastSubject(c: NotifCategory, resourceType: ResourceType): string {
   const noun = RESOURCE_NOUN[resourceType] ?? "an item";
   switch (c) {
@@ -108,6 +113,46 @@ export function broadcastSubject(c: NotifCategory, resourceType: ResourceType): 
     case "safety": return `Safety alert on ${noun}`;
     default: return `Workspace notice about ${noun}`;
   }
+}
+
+/** NEDGE-6: the kinds whose title carries a free-text reason typed by a
+ *  person — a hold's "HOLD placed on PID-4412 — <reason>" (lib/holds.ts
+ *  notifyHoldChange) and the aging nudge's "Hold past its expected release —
+ *  <label> (<reason>)" (scanStaleHolds). Their email subject is
+ *  broadcastSubject for EVERY recipient, the named ones too: a hold's
+ *  release pool is resolved from the policy's roles but passed as
+ *  `involved`, so naming is no proof the reader should see the reason on a
+ *  lock screen. A producer that passes `email.subject` overrides it.
+ *  lib/__tests__/notificationDispatchMembership.test.ts pins every emit()
+ *  title that interpolates a reason to a kind listed here. */
+export const REASON_IN_TITLE: ReadonlySet<NotificationKind> = new Set<NotificationKind>(["hold_opened"]);
+
+/** NEDGE-6: whether `uid`'s email of this event carries the title as its
+ *  subject. Decided per recipient: someone the producer named in
+ *  `involved` keeps the title — the document number they triage and search
+ *  by — unless the kind's title carries a free-text reason; anyone else
+ *  keeps it only when the event reaches no role pool and no follow list (an
+ *  event to named people and project members, as before). */
+export function titleIsSubjectFor(
+  input: EmitInput, uid: string, named: ReadonlySet<string> = new Set(input.audience.involved ?? []),
+): boolean {
+  if (REASON_IN_TITLE.has(input.kind)) return false;
+  const broadcast = !!input.audience.followers || (input.audience.roles?.length ?? 0) > 0;
+  return !broadcast || named.has(uid);
+}
+
+/** NEDGE-6: the subject and plain-text body of `uid`'s email of this event
+ *  (`named` — the producer's `involved`, as a set — is passed by emit() once
+ *  per event). */
+export function emailSubjectFor(
+  input: EmitInput, uid: string, named: ReadonlySet<string> = new Set(input.audience.involved ?? []),
+): { subject: string; bodyText: string } {
+  const plain = titleIsSubjectFor(input, uid, named);
+  return {
+    subject: input.email?.subject ?? (plain ? input.title : broadcastSubject(input.category, input.resource.type)),
+    bodyText: input.email?.bodyText
+      ?? (!plain && input.body ? `${input.title}\n\n${input.body}` : input.body ?? input.title),
+  };
 }
 
 /** Resolve the deduped recipient set for an event: the union of every
@@ -160,16 +205,14 @@ export async function emit(input: EmitInput): Promise<void> {
     const resourceType = EMAILABLE.includes(input.resource.type)
       ? (input.resource.type as "ticket" | "project" | "document")
       : undefined;
-    // NEDGE-6: a broadcast never puts the title in the subject line.
-    const broadcast = !!input.audience.followers || (input.audience.roles?.length ?? 0) > 0;
-    const subject = input.email?.subject
-      ?? (broadcast ? broadcastSubject(input.category, input.resource.type) : input.title);
-    const bodyText = input.email?.bodyText
-      ?? (broadcast && input.body ? `${input.title}\n\n${input.body}` : input.body ?? input.title);
+    const named = new Set(input.audience.involved ?? []);
     await Promise.all(
       recipients.map((uid) => {
         const to = emailByUid.get(uid);
         if (!to) return Promise.resolve();
+        // NEDGE-6: the subject is decided per recipient — never the title for
+        // someone reached only through a role pool or the follow list.
+        const { subject, bodyText } = emailSubjectFor(input, uid, named);
         return queueEmail({
           orgId: input.orgId,
           toUserId: uid,

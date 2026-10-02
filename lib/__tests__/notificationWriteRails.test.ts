@@ -70,32 +70,90 @@ function definitionsOf(name: string, before?: string): Array<[string, string]> {
   return out;
 }
 
-/** Every string a `link:` property of an object literal can take, by its
- *  opening characters (TypeScript AST). A literal / template must start with
- *  one '/'; a conditional or `||` / `??` is judged branch by branch; an
- *  identifier or member access (input.link, n.link …) is a pass-through from
- *  a typed caller and carries no literal. */
-function linkStarts(src: string, file: string): { seen: number; offenders: string[] } {
+/** Every string a `link` property of an object literal can take, by its
+ *  opening characters (TypeScript AST). `link: <expr>` and the shorthand
+ *  `{ link }` are both judged. A literal / template must start with one '/';
+ *  a conditional, `||` / `??` and `+` are judged branch by branch (the left
+ *  side of a `+`); an identifier is resolved to its declaration in scope — a
+ *  `const` / `let` initialiser is judged in turn, a parameter or a
+ *  destructured name is a pass-through from a typed caller; a member access
+ *  ending in `.link` (input.link, n.link, d.link) is a pass-through too.
+ *  Anything else — a call, an unresolved name, another member — is an
+ *  offender: the census cannot see what it yields. */
+function linkStarts(src: string, file: string): { seen: number; shorthand: number; offenders: string[] } {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
-  const out = { seen: 0, offenders: [] as string[] };
-  const starts = (e: ts.Expression, acc: string[]) => {
-    if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e)) return starts(e.expression, acc);
-    if (ts.isConditionalExpression(e)) { starts(e.whenTrue, acc); starts(e.whenFalse, acc); return; }
-    if (ts.isBinaryExpression(e) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(e.operatorToken.kind)) {
-      starts(e.left, acc); starts(e.right, acc); return;
+  const out = { seen: 0, shorthand: 0, offenders: [] as string[] };
+  type Decl = ts.VariableDeclaration | ts.ParameterDeclaration | ts.BindingElement;
+  const bindsName = (b: ts.BindingName, name: string): boolean =>
+    ts.isIdentifier(b) ? b.text === name : b.elements.some((e) => !ts.isOmittedExpression(e) && bindsName(e.name, name));
+  const findBinding = (b: ts.BindingName, name: string): ts.BindingElement | undefined => {
+    if (ts.isIdentifier(b)) return undefined;
+    for (const e of b.elements) {
+      if (ts.isOmittedExpression(e)) continue;
+      if (ts.isIdentifier(e.name) && e.name.text === name) return e;
+      const inner = findBinding(e.name, name);
+      if (inner) return inner;
     }
+    return undefined;
+  };
+  /** The declaration `name` refers to at `at`: the nearest enclosing scope's. */
+  const resolve = (name: string, at: ts.Node): Decl | undefined => {
+    for (let n: ts.Node | undefined = at.parent; n; n = n.parent) {
+      if (ts.isFunctionLike(n)) {
+        for (const p of n.parameters) {
+          if (ts.isIdentifier(p.name) && p.name.text === name) return p;
+          const b = findBinding(p.name, name);
+          if (b) return b;
+        }
+      }
+      const statements = ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n)
+        ? n.statements : undefined;
+      const lists: ts.VariableDeclarationList[] = [];
+      for (const st of statements ?? []) if (ts.isVariableStatement(st) && st.pos < at.pos) lists.push(st.declarationList);
+      if ((ts.isForOfStatement(n) || ts.isForInStatement(n) || ts.isForStatement(n)) && n.initializer && ts.isVariableDeclarationList(n.initializer)) lists.push(n.initializer);
+      for (const list of lists.reverse()) {
+        for (const d of list.declarations) {
+          if (ts.isIdentifier(d.name) && d.name.text === name) return d;
+          if (bindsName(d.name, name)) return findBinding(d.name, name);
+        }
+      }
+    }
+    return undefined;
+  };
+  // each value a link can take: a literal's text, "pass" for a typed pass-through, "?" for unseen
+  const starts = (e: ts.Expression, acc: string[], depth = 0): void => {
+    if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) return starts(e.expression, acc, depth);
+    if (ts.isConditionalExpression(e)) { starts(e.whenTrue, acc, depth); starts(e.whenFalse, acc, depth); return; }
+    if (ts.isBinaryExpression(e) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(e.operatorToken.kind)) {
+      starts(e.left, acc, depth); starts(e.right, acc, depth); return;
+    }
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) return starts(e.left, acc, depth);
     if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) { acc.push(e.text); return; }
     if (ts.isTemplateExpression(e)) { acc.push(e.head.text || "${"); return; }
+    if (e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === "undefined")) return;
+    if (ts.isPropertyAccessExpression(e) && e.name.text === "link") { acc.push("pass"); return; }
+    if (ts.isIdentifier(e) && depth < 5) {
+      const d = resolve(e.text, e);
+      if (d && (ts.isParameter(d) || ts.isBindingElement(d))) { acc.push("pass"); return; }
+      if (d && ts.isVariableDeclaration(d) && d.initializer) return starts(d.initializer, acc, depth + 1);
+    }
+    acc.push("?");
+  };
+  const judge = (initializer: ts.Expression, shown: string) => {
+    const vals: string[] = [];
+    starts(initializer, vals);
+    out.seen += vals.length;
+    for (const l of vals) {
+      if (l === "pass" || l === "") continue;
+      if (l === "?" || !(l[0] === "/" && l[1] !== "/" && l[1] !== "\\")) out.offenders.push(`${shown.slice(0, 80)}${l === "?" ? " (unresolved)" : ""}`);
+    }
   };
   const visit = (n: ts.Node) => {
     if (ts.isPropertyAssignment(n) && n.name.getText(sf) === "link" && ts.isObjectLiteralExpression(n.parent)) {
-      const lits: string[] = [];
-      starts(n.initializer, lits);
-      if (lits.length === 0 && (ts.isIdentifier(n.initializer) || ts.isPropertyAccessExpression(n.initializer))) out.seen++;
-      out.seen += lits.length;
-      for (const l of lits) {
-        if (l !== "" && !(l[0] === "/" && l[1] !== "/" && l[1] !== "\\")) out.offenders.push(`link: ${n.initializer.getText(sf).slice(0, 80)}`);
-      }
+      judge(n.initializer, `link: ${n.initializer.getText(sf)}`);
+    } else if (ts.isShorthandPropertyAssignment(n) && n.name.text === "link") {
+      out.shorthand++;
+      judge(n.name, "{ link } (shorthand)");
     }
     ts.forEachChild(n, visit);
   };
@@ -199,21 +257,51 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(first.startsWith("IF v_uid IS NULL THEN\n    RETURN NEW;\n  END IF;")).toBe(true);
   });
 
-  it("runs its rules in order: actor + date → kind → link → recipient → resource key → caps", () => {
+  it("runs its rules in order: caller's membership → actor + date → kind (declared, not server-only) → link → watermark keys → recipient → resource key → lock → caps", () => {
     const at = (s: string) => { const i = body.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     const order = [
+      at("m.org_id = NEW.org_id AND m.uid = v_uid AND m.status = 'active'"),
       at("IF NEW.actor_user_id IS NULL THEN"),
       at("NEW.created_at := now();"),
       at("IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN"),
+      at("IF NEW.kind IN ("),
       at("IF NEW.link IS NOT NULL AND NEW.link <> ''"),
+      at("IF NEW.metadata ?| ARRAY["),
       at("m.org_id = NEW.org_id AND m.uid = NEW.user_id AND m.status = 'active'"),
       at("v_res_ok := CASE NEW.resource_type"),
+      at("PERFORM pg_advisory_xact_lock("),
       at("IF v_same >= 60 THEN"),
       at("IF v_any >= 600 THEN"),
       at("IF v_hour >= 1200 THEN"),
       at("IF v_actor >= 3000 THEN"),
     ];
     expect([...order].sort((x, y) => x - y)).toEqual(order);
+  });
+
+  it("REVIEW (cross-tenant oracle): the CALLER must be an active member of the row's org (42501) — checked right after the service role's return, before any definer read of the recipient's membership or of a resource", () => {
+    expect(squash(body)).toContain(squash(`IF v_uid IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- 0. the writer is an active member of the row's org — before anything
+  --    else of that org is read with this function's rights
+  IF NOT EXISTS (SELECT 1 FROM org_members m
+                  WHERE m.org_id = NEW.org_id AND m.uid = v_uid AND m.status = 'active') THEN
+    RAISE EXCEPTION 'notifications: not a member of this workspace' USING ERRCODE = '42501';
+  END IF;`));
+    // the first definer read after the service role's return — so the outcome of an insert
+    // naming another org (a skip, a cap, an RLS refusal) can no longer depend on that org's data
+    const code = strip(body);
+    const caller = code.indexOf("m.uid = v_uid AND m.status = 'active'");
+    const reads = [...code.matchAll(/\bFROM (\w+)/g)].map((m) => ({ table: m[1], at: m.index! }));
+    expect(reads[0]).toEqual({ table: "org_members", at: expect.any(Number) });
+    expect(reads[0].at).toBeLessThan(caller);
+    for (const r of reads.slice(1)) expect(r.at, r.table).toBeGreaterThan(caller);
+    expect(code.indexOf("m.uid = NEW.user_id")).toBeGreaterThan(caller);
+    for (const t of ["documents", "tickets", "projects", "libraries"]) expect(code.indexOf(`FROM ${t} r`), t).toBeGreaterThan(caller);
+    // the same predicate as the insert policy that still runs after the trigger
+    const policy = read("20260723_notifications_unify.sql");
+    expect(policy).toMatch(/org_members\.org_id = notifications\.org_id\s+AND org_members\.uid = auth\.uid\(\)\s+AND org_members\.status = 'active'/);
   });
 
   it("DELIV-6 dw1/dw4: the actor is stamped when absent and refused (42501) when it is someone else", () => {
@@ -234,16 +322,20 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
   });
 
   it("every link the app's notification producers write passes that predicate (each string a `link:` can take starts with '/')", () => {
-    let seen = 0;
+    let seen = 0, shorthand = 0;
     const offenders: string[] = [];
     for (const f of sourceFiles()) {
       const src = readFileSync(f, "utf8");
       if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(|from\(["']notifications["']\)/.test(src)) continue;
       const r = linkStarts(src, f);
       seen += r.seen;
+      shorthand += r.shorthand;
       offenders.push(...r.offenders.map((o) => `${relative(ROOT, f)}: ${o}`));
     }
     expect(seen).toBeGreaterThan(20);
+    // the producers that pass `{ link }` by shorthand (acknowledgments, reviewControl, accessRecert,
+    // distributionAcks, activityThread, the orchestrator's tools) are judged through their `const link`
+    expect(shorthand).toBeGreaterThanOrEqual(8);
     expect(offenders).toEqual([]);
     // the scanner is not vacuous: it flags each refused shape and passes the admitted ones
     const probe = linkStarts([
@@ -254,8 +346,33 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       'notify({ link: doc ? `/documents/${doc}?doc=${d}` : "/admin/holds" });',
       'notify({ link: input.link });',
     ].join("\n"), "probe.ts");
-    expect(probe.offenders).toHaveLength(3);
-    expect(probe.seen).toBe(7); // the conditional carries two literals
+    expect(probe.offenders).toEqual([
+      'link: "https://evil.example"',
+      "link: x ? `//evil/${y}` : undefined",
+      'link: a ?? "javascript:alert(1)" (unresolved)',   // `a` names nothing the census can see
+      'link: a ?? "javascript:alert(1)"',
+    ]);
+    expect(probe.seen).toBe(8); // the conditional carries two literals; undefined is no link
+    // REVIEW: the shorthand `{ link }` and a non-literal initialiser are judged too
+    const byShorthand = linkStarts([
+      'function a() { const link = `${publicOrigin()}/documents/x`; notify({ orgId, link, kind }); }',   // off-origin, by shorthand
+      'function b() { const link = `/documents/${lib}?doc=${id}`; notify({ link }); }',                  // app-relative, by shorthand
+      'function c() { const link = d ? `/documents/${d}` : "https://evil.example"; notify({ link }); }', // one bad branch
+      'function d(link: string) { notify({ link }); }',                                                  // a typed parameter
+      'function e({ link }: { link: string }) { notify({ link }); }',                                    // destructured
+      'function f() { notify({ link }); }',                                                              // resolves to nothing
+      'function g() { notify({ link: buildLink(x) }); }',                                                // a call: unseen
+      'function h() { const target = "/requests/1"; notify({ link: target }); }',                        // an identifier, resolved
+      'function i() { const link = "/x"; { const link = "//evil"; notify({ link }); } }',                // the nearest scope wins
+    ].join("\n"), "probe2.ts");
+    expect(byShorthand.offenders).toEqual([
+      "{ link } (shorthand)",
+      "{ link } (shorthand)",
+      "{ link } (shorthand) (unresolved)",
+      "link: buildLink(x) (unresolved)",
+      "{ link } (shorthand)",
+    ]);
+    expect(byShorthand.seen).toBe(10);
   });
 
   it("OS-1 dw3 / DELIV-6 dw2: an undeclared kind is refused (22023)", () => {
@@ -295,6 +412,19 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(A).toMatch(/CREATE INDEX IF NOT EXISTS notifications_actor_created_idx\s+ON notifications \(actor_user_id, created_at DESC\)\s+WHERE actor_user_id IS NOT NULL;/);
   });
 
+  it("REVIEW (concurrency): one actor's inserts are counted one after another — a transaction-scoped advisory lock keyed on the actor, after the skip and before every count", () => {
+    const lock = "PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));";
+    expect(body).toContain(lock);
+    const code = strip(body);
+    // one lock per row, one key per actor: a transaction holds a single key, so two inserts can
+    // never take the same pair of locks in opposite orders; a different actor never waits
+    expect(code.match(/pg_advisory/g)).toHaveLength(1);
+    expect(code).not.toMatch(/pg_advisory_lock\(|pg_try_advisory/);          // transaction-scoped, never left held
+    expect(code.indexOf(lock)).toBeGreaterThan(code.indexOf("RETURN NULL;")); // a skipped row takes no lock
+    expect(code.indexOf(lock)).toBeLessThan(code.indexOf("INTO v_same, v_any, v_hour"));
+    expect(code.indexOf(lock)).toBeLessThan(code.indexOf("SELECT COUNT(*) INTO v_actor"));
+  });
+
   it("OS-1 (review): resource_id is caller-written, so it keys the same-notice cap only when it names a row of resource_type in the row's org", () => {
     expect(squash(body)).toContain(squash(`IF NEW.resource_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
     v_res := NEW.resource_id::uuid;
@@ -331,10 +461,138 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
   });
 });
 
+// ── the server's dedupe watermarks (DELIV-13 dw3; review) ──────────────────
+/** Source text with comments removed (a mention in a comment is not a use). */
+const stripTs = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+/** [start, end) of a top-level function's text: from `function name(` to the next top-level export. */
+function fnRange(src: string, name: string): [number, number] {
+  const start = src.search(new RegExp(`(?:export )?(?:async )?function ${name}\\(`));
+  expect(start, `function ${name} not found`).toBeGreaterThanOrEqual(0);
+  const next = src.indexOf("\nexport ", start + 1);
+  return [start, next < 0 ? src.length : next];
+}
+/** Every server read of notifications that decides whether to send, by file, in
+ *  file order: the text that marks it, and the watermark that keeps a browser
+ *  from forging the row it matches — a metadata key or a kind 20261160 refuses
+ *  from a signed-in writer. `none`: not a dedupe (says why). */
+const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string }>> = {
+  "app/api/cron/maintenance/route.ts": [
+    { marks: '.contains("metadata", { staleSessionId: row.id })', keys: ["staleSessionId"] },
+    { marks: '.in("kind", COMPLIANCE_KINDS)', none: "the compliance digest composes each recipient's list from their compliance rows: a forged row adds a line to someone's digest, never removes one" },
+  ],
+  "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
+  // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
+  // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
+  "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue", "doc_superseded"])', keys: ["ackEscalation"] }],
+  "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
+  "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
+  "lib/storageAlerts.ts": [{ marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] }],
+  "lib/storageUsage.ts": [{ marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] }],
+};
+/** The recipient's own rows, read under RLS — the bell, the inbox count, the dashboard. */
+const BELL_READERS = ["components/dashboard/widgets.tsx", "lib/inAppNotifications.ts", "lib/inbox.ts"];
+/** Who writes each server-only key / kind, and the function it is written in — called only by
+ *  the maintenance cron on the service role (a route file is server-only by itself). */
+const SERVER_WRITERS: Record<string, { file: string; fn?: string }> = {
+  staleSessionId: { file: "app/api/cron/maintenance/route.ts" },
+  staleHoldId: { file: "lib/holds.ts", fn: "scanStaleHolds" },
+  reviewHealthDay: { file: "lib/intakeRateLimit.ts", fn: "nudgeReviewHealth" },
+  ackEscalation: { file: "lib/distributionAcks.ts", fn: "scanDistributionAcks" },
+  transmittal_unstampable: { file: "app/api/transmittal/route.ts" },
+  storage_alert: { file: "lib/storageAlerts.ts", fn: "runStorageAlerts" },
+  storage_platform_r2: { file: "lib/storageUsage.ts", fn: "runPlatformStorageAlerts" },
+  storage_platform_db: { file: "lib/storageUsage.ts", fn: "runPlatformStorageAlerts" },
+};
+
+describe("20261160 — the server's dedupe watermarks: a browser can neither write one nor forge the row that silences an escalation (DELIV-13 dw3, review)", () => {
+  const fn = between(A, "CREATE OR REPLACE FUNCTION enforce_notification_insert()", "$$;");
+  const body = fn.slice(fn.indexOf("BEGIN"));
+  const listed = (re: RegExp) => [...body.match(re)![1].matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  const kindsIn = listed(/IF NEW\.kind IN \(([^)]*)\) THEN/);
+  const keysIn = listed(/IF NEW\.metadata \?\| ARRAY\[([^\]]*)\] THEN/);
+  const reads = new Map<string, string[]>();   // file → the 400 characters after each .from("notifications").select(
+  for (const f of sourceFiles()) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/\.from\((["'])notifications\1\)\s*\.select\(/g)) {
+      const rel = relative(ROOT, f);
+      reads.set(rel, [...(reads.get(rel) ?? []), src.slice(m.index!, m.index! + 400)]);
+    }
+  }
+
+  it("refuses (22023) a server-only kind and a metadata watermark key from a signed-in writer; the service role passes before either", () => {
+    expect(squash(body)).toContain(squash(`IF NEW.kind IN ('transmittal_unstampable', 'storage_alert', 'storage_platform_r2', 'storage_platform_db') THEN
+    RAISE EXCEPTION 'notifications: kind % is written only by the server', NEW.kind USING ERRCODE = '22023';
+  END IF;`));
+    expect(squash(body)).toContain(squash(`IF NEW.metadata ?| ARRAY['staleSessionId', 'staleHoldId', 'reviewHealthDay', 'ackEscalation'] THEN
+    RAISE EXCEPTION 'notifications: the metadata carries a dedupe watermark only the server writes' USING ERRCODE = '22023';
+  END IF;`));
+    expect(body.indexOf("IF NEW.kind IN (")).toBeGreaterThan(body.indexOf("IF v_uid IS NULL THEN"));
+    expect(body.indexOf("IF NEW.metadata ?| ARRAY[")).toBeGreaterThan(body.indexOf("IF v_uid IS NULL THEN"));
+    // ackRequest and autoReleasedSessionId are written by browsers legitimately and stay allowed
+    expect(keysIn).not.toContain("ackRequest");
+    expect(keysIn).not.toContain("autoReleasedSessionId");
+    // the paste's inventory counts existing rows that carry the same lists and name an actor
+    const inv = strip(A).slice(strip(A).indexOf("CREATE TEMP TABLE"), strip(A).indexOf("BEGIN;"));
+    expect(inv).toContain(`kind IN (${kindsIn.map((k) => `'${k}'`).join(", ")})`);
+    expect(inv).toContain(`metadata ?| ARRAY[${keysIn.map((k) => `'${k}'`).join(", ")}]`);
+  });
+
+  it("RATCHET: every app read of notifications is a bell reader or a classified dedupe — a new server dedupe fails here until its watermark is refused from browsers", () => {
+    const expected = [...BELL_READERS, ...Object.keys(DEDUPE_READS)].sort();
+    expect([...reads.keys()].sort()).toEqual(expected);
+    for (const [file, entries] of Object.entries(DEDUPE_READS)) {
+      const found = reads.get(file)!;
+      expect(found.length, `${file}: one entry per read`).toBe(entries.length);
+      entries.forEach((e, i) => expect(found[i], `${file} read #${i + 1}`).toContain(e.marks));
+    }
+  });
+
+  it("each dedupe keys on a watermark 20261160 refuses from browsers, and the SQL lists nothing no dedupe needs", () => {
+    const keys = new Set<string>(), kinds = new Set<string>();
+    for (const [file, entries] of Object.entries(DEDUPE_READS)) {
+      const src = readFileSync(join(ROOT, file), "utf8");
+      for (const e of entries) {
+        if (e.none) { expect(e.keys ?? e.kinds).toBeUndefined(); continue; }
+        expect((e.keys?.length ?? 0) + (e.kinds?.length ?? 0), file).toBeGreaterThan(0);
+        for (const k of e.keys ?? []) { expect(keysIn, `${file}: ${k}`).toContain(k); keys.add(k); }
+        for (const k of e.kinds ?? []) { expect(kindsIn, `${file}: ${k}`).toContain(k); kinds.add(k); expect(src, `${file} writes ${k}`).toContain(`"${k}"`); }
+      }
+    }
+    // the escalation dedupe reads its key from the rows it matched
+    expect(readFileSync(join(ROOT, "lib/distributionAcks.ts"), "utf8")).toContain("if (meta.ackEscalation) recentlyEscalated.add(key);");
+    expect([...keys].sort()).toEqual([...keysIn].sort());
+    expect([...kinds].sort()).toEqual([...kindsIn].sort());
+  });
+
+  it("no browser path writes a listed key or kind: each is written in one server file, inside a function only the maintenance cron calls", () => {
+    expect(Object.keys(SERVER_WRITERS).sort()).toEqual([...keysIn, ...kindsIn].sort());
+    const files = sourceFiles().map((f) => [relative(ROOT, f), stripTs(readFileSync(f, "utf8"))] as const);
+    for (const [token, w] of Object.entries(SERVER_WRITERS)) {
+      const isKind = kindsIn.includes(token);
+      // a key is written as an object property (`staleHoldId: h.id`); a kind as a string literal
+      const pattern = isKind ? `["'\`]${token}["'\`]` : `\\b${token}\\s*:`;
+      const re = new RegExp(pattern, "g");
+      const where = files.filter(([, src]) => new RegExp(pattern).test(src)).map(([f]) => f);
+      // the union type in lib/inAppNotifications.ts names every kind; it writes nothing
+      expect(where.filter((f) => f !== "lib/inAppNotifications.ts"), token).toEqual([w.file]);
+      const src = files.find(([f]) => f === w.file)![1];
+      if (w.file.startsWith("app/api/")) continue;
+      // in a lib file: every occurrence sits inside the named function, and only the cron calls it
+      const [a, b] = fnRange(src, w.fn!);
+      for (const m of src.matchAll(re)) expect(m.index! >= a && m.index! < b, `${token} outside ${w.fn}`).toBe(true);
+      const callers = files.filter(([f, s2]) => f !== w.file && new RegExp(`\\b${w.fn}\\b`).test(s2)).map(([f]) => f);
+      expect(callers, `${w.fn}'s callers`).toEqual(["app/api/cron/maintenance/route.ts"]);
+    }
+  });
+});
+
 // ── the caps, as a model (OS-1; each number and key pinned to the SQL) ──────
 // A row the trigger has let through: who wrote it, to whom, its kind, its
 // resource_id, whether that resource_id named a row of its type in the org,
-// and when (seconds). The service role never reaches the caps.
+// and when (seconds). The service role never reaches the caps. Rows are
+// judged one after another — what the actor-keyed advisory lock makes true
+// of concurrent requests too (on PostgreSQL 16, 90 concurrent single-row
+// inserts of one notice from one actor landed 90 without the lock, 60 with it).
 type Sent = { actor: string; to: string; kind: string; res: string | null; resOk: boolean; t: number };
 const CAP = { same: 60, anyMinute: 600, anyHour: 1200, actorMinute: 3000 };
 function capVerdict(log: Sent[], row: Omit<Sent, "t">, now: number): "ok" | "same" | "any" | "hour" | "actor" {

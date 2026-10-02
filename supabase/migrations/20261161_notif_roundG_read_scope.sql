@@ -47,12 +47,17 @@
 --     insert rail).
 --
 -- REGRESSION: a member still reads, marks read (one row, several, all) and
--- clears their own read FYI notifications; the dedupe watermarks that read
+-- clears their own read FYI notifications. The dedupe watermarks that read
 -- notifications rows (lib/distributionAcks.ts, lib/storageAlerts.ts,
--- lib/storageUsage.ts, lib/holds.ts scanStaleHolds, the cron's stale-checkout
--- escalation and the transmittal notice) can no longer be edited by a
--- recipient, and a deletion can only RE-arm a nag (louder), never suppress
--- one — and never for a compliance kind (DELIV-13 dw3, without moving them).
+-- lib/storageUsage.ts, lib/holds.ts scanStaleHolds, the intake review-health
+-- nudge, the cron's stale-checkout escalation and the transmittal notice) can
+-- no longer be edited by a recipient, and a deletion can only RE-arm a nag
+-- (louder) — and never for a compliance kind. This file closes edit and
+-- delete only: a FORGED INSERT carrying a watermark is 20261160's to refuse
+-- (its rules 2 and 4 — a server-only kind, a server metadata key), which
+-- together make DELIV-13 dw3 hold without moving the watermarks. The nag's
+-- own key (ackRequest) stays browser-writable by design: a manual request
+-- or re-nudge counts as the nag.
 --
 -- Pre-apply inventory (DEC-30, aggregate counts only): the rows whose
 -- recipient is not an active member of the row's org, by the recipient's
