@@ -1,6 +1,6 @@
 # 08 · Edges, egress & load-bearing invariants
 
-**16 findings** — 2 CRITICAL · 8 HIGH · 6 MEDIUM. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), 2026-10-02.
+**17 findings** — 2 CRITICAL · 9 HIGH · 6 MEDIUM. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), `NEDGE-17` by its third review fix, 2026-10-02.
 
 What the seven lenses did not look at — notification content as an egress surface, lifecycle edges, accessibility — plus what is sound and must not break.
 
@@ -696,5 +696,38 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A test drives a restore to completion and asserts one of the two.
 
 **Closer:** unassigned (admin-and-org; the integrator assigns it).
+
+---
+
+<a id="nedge-17"></a>
+
+## NEDGE-17 · The compliance digest reads one 2,000-row window across every org, unordered: a member's browser-legal compliance rows can push other tenants' overdue items out of their digest
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5 DISPATCH-AND-WRITE-HOLES, third review fix), from the package review, which found that `DELIV-13`'s record claimed the opposite. The plan's natural owner is N6 EMAIL-PIPELINE-AND-CRON, which owns `app/api/cron/maintenance/route.ts` and already plans to order and page this scan for `NEDGE-9` done-when 3. The integrator assigns it and mirrors it in N6's `findings` in `audit-reports/fleet-plans/notifications.json`.
+- **Verification:** CONFIRMED. Reproduced on PostgreSQL 16 against `20261160` as it stands on `fleet/N5-dispatch-rails` (below).
+- **Locations:** `app/api/cron/maintenance/route.ts:569-577` (`queueComplianceDigests`: `.from("notifications").select("org_id, user_id, kind, title, link").in("kind", COMPLIANCE_KINDS).gt("created_at", since).limit(2000)`), `:342-352` (the daily scans, which write tonight's obligations), `:382` (the digest, which reads after them), `:556-566` (`COMPLIANCE_KINDS`), `supabase/migrations/20261160_notif_roundG_write_rails.sql` (`enforce_notification_insert()`: which kinds a browser may write, and the caps)
+- **Independently verified:** opened 2026-10-02 by N5's third review fix; not yet challenged by a second party.
+
+**Mechanism.** The digest builds each recipient's email from notification rows of the 15 compliance kinds written in the last 25 hours. Its read has no org filter, no recipient filter and no ORDER BY, and it stops at 2,000 rows. The daily scans write tonight's obligations (`review_due`, `ack_overdue`, `review_overdue` and the rest) as the service role a moment before the digest reads, so on a plain scan they are the last rows reached. Three compliance kinds are still browser-legal after `20261160`: `ack_requested`, `doc_superseded` and `review_requested` are declared and not server-only, because browsers write them for legitimate reasons (a manual acknowledgment request or re-nudge, a supersede notice, a review roster). The caps allow one member 600 rows a minute to each recipient, 1,200 an hour, and 3,000 a minute across all recipients. So in one minute, writing to four colleagues, one member can put 2,000 such rows into the window, and the window then holds little else.
+
+**Failure scenario.** At 14:00 a member of org A writes 2,400 `ack_requested` rows: 600 to each of four colleagues, each row about one of the org's real documents. Every row lands within every cap. At 03:00 the cron runs. The scans write the two overdue items of org B's Document Controller, then the digest reads 2,000 rows, 1,999 of them org A's. Org B's two lines are not in the read. That Document Controller's digest lists only an older item. Had they had nothing earlier in the window, no digest would be queued for them at all. Nothing errors. The digest is the only email that lists overdue compliance obligations (`NEDGE-9`).
+
+**Evidence (PostgreSQL 16, third review fix).** Scratch cluster with `20260723`'s notifications SQL and `20261160` as on the branch:
+- Org B's Document Controller has one `review_due` row from an hour earlier.
+- Org A's member writes 4 × 600 `ack_requested` rows, each about its own document. All 2,400 land in one minute.
+- The scans then write org B's `ack_overdue` and `review_overdue` rows as the service role.
+- The digest's exact read returns 2,000 rows: 1,999 of them org A's, and 1 org B's (the earlier `review_due`). Neither of tonight's two lines is among them.
+- Its plan is a sequential scan with a filter and a limit.
+
+**Chain reaction.** `NEDGE-9` done-when 3 asks for the scan to be ordered and paginated, "or the cap enforced per-user". Ordering alone does not close this finding: an ordered scan with a global cap is displaced by rows written at whichever end of the window it reads first. A writer can also add lines to a colleague's digest, up to the same caps. Until this review, `DELIV-13`'s record said "a forged row adds a line to someone's digest, never removes one". Its residual now points here.
+
+**Done when.**
+
+- [ ] The digest no longer shares one capped read across orgs and recipients. Any of these closes it: each (org, recipient) list is composed from a read scoped to that pair; or the whole window is paged (ORDER BY created_at, id) with no global cap; or, preferably, the digest is composed from the obligation tables (`listMyPendingAcks`, the pending reviews and the due recertifications that `lib/inbox.ts` lists), not from user-writable notification rows.
+- [ ] A test floods the window with one org's browser-legal compliance rows and shows that another org's recipient still gets every one of their lines.
+
+**Closer:** unassigned (the integrator; plan owner N6, `99-fix-sequencing.md` Phase 1 hand-off).
 
 ---

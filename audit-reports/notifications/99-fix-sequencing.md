@@ -116,6 +116,22 @@ getting comment and workflow emails; the bell rows are hidden from them once
 `findings` in `audit-reports/fleet-plans/notifications.json` (N5 does not
 edit the plan).*
 
+*Hand-off (2026-10-02, notifications Round G, N5 third review fix → N6) —
+**`NEDGE-17`** (HIGH): the compliance digest's read
+(`app/api/cron/maintenance/route.ts` `queueComplianceDigests`) is cross-org,
+unordered and cut at `.limit(2000)`. Three compliance kinds stay
+browser-legal after `20261160` (`ack_requested`, `doc_superseded`,
+`review_requested`), so one member, within the caps, can fill the window in
+a minute and push other users' and other tenants' lines out of their digest.
+Reproduced on PostgreSQL 16. `DELIV-13`'s record said the opposite until
+this review. N6, which owns the route and already orders and pages this scan
+for `NEDGE-9` done-when 3: ordering with a global cap is not enough. Scope the
+read per (org, recipient), or page the whole window with no global cap, or —
+better — compose the digest from the obligation tables (`listMyPendingAcks`,
+pending reviews, due recertifications) instead of user-writable notification
+rows. The integrator adds `NEDGE-17` to N6's `findings` in
+`audit-reports/fleet-plans/notifications.json`.*
+
 *Opened by N5's second review fix (2026-10-02), not this area's to sequence
 alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs
 on the unbound shared client and has never delivered (drafting-flow's route);
