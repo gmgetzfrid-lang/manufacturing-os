@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore }
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { normalizeEmail } from '@/lib/identity';
-import { resolveSignInNext, signInDestination, stashSignInNext } from '@/lib/signInNext';
+import { isProviderReturn, resolveSignInNext, signInDestination, stashSignInNext } from '@/lib/signInNext';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 
@@ -33,6 +33,27 @@ const SILENT_FALLBACK_ERRORS = new Set([
   "consent_required",
   "account_selection_required",
 ]);
+
+// PHYS-14: whether THIS document load is the provider's return, read when the
+// module is evaluated. On `/` this page is the first importer of lib/supabase,
+// so this runs in the same synchronous task that constructs the client — and
+// before the client's auto-initialise can strip the response from the
+// address, which it does only after a network round trip (auth-js
+// `_getSessionFromURL` clears `#access_token`, or deletes a PKCE `?code=`,
+// once its request resolves). The load effect reads the address again, but it
+// runs after hydration and, on a slow device, could run after that round
+// trip. Read only on the sign-in path itself — a module first evaluated while
+// the address is still another route's (a client-side visit to `/`) never
+// counts as a return — and taken by the first mount only.
+let providerReturnAtLoad =
+  typeof window !== "undefined" &&
+  window.location.pathname === "/" &&
+  isProviderReturn(window.location.search, window.location.hash);
+function takeProviderReturnAtLoad(): boolean {
+  const v = providerReturnAtLoad;
+  providerReturnAtLoad = false;
+  return v;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -145,13 +166,17 @@ export default function LoginPage() {
     const errorCode = sp.get("error");
     const errorDesc = sp.get("error_description") || sp.get("error");
     const hasOAuthResponse = params.includes("code=") || hash.includes("access_token");
-    // Only the provider's return (a session to finish, or its refusal) may
-    // pick up a `next` carried across the round trip; any other load of this
-    // page discards the carry (lib/signInNext.ts).
-    const providerReturn = hasOAuthResponse || !!errorCode;
     // Once per page load (a re-run of this effect keeps the first answer —
-    // the carried `next` is consumed when read).
-    if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params, undefined, { providerReturn });
+    // the carried `next` is consumed when read). Only the provider's return
+    // (a session to finish, or its refusal) may pick up a `next` carried
+    // across the round trip; any other load of this page discards the carry
+    // (lib/signInNext.ts). The module-load reading is taken here every time,
+    // so a later mount in this document never inherits it.
+    if (nextRef.current === undefined) {
+      const atLoad = takeProviderReturnAtLoad();
+      const providerReturn = atLoad || isProviderReturn(params, hash);
+      nextRef.current = resolveSignInNext(params, undefined, { providerReturn });
+    }
 
     const cleanUrl = () => {
       // Keep a safe `next` in the address so a reload still returns to it.

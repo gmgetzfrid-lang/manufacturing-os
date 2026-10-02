@@ -12,7 +12,9 @@
 //     load comes back at `/` with the provider's response).
 // Each lands on a same-origin relative `next` when one was carried, and on
 // exactly today's destination (/dashboard) when none was — or when the one
-// carried is not a safe same-origin path (no open redirect).
+// carried is not a safe same-origin path (no open redirect). A carry is
+// picked up only by the load that is the provider's return; any other load
+// of the page discards it.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -74,13 +76,13 @@ const flush = async () => {
 };
 
 /** Open the sign-in page at `url` (a fresh page load). */
-async function open(url: string) {
+async function open(url: string, Page: React.ComponentType = LoginPage) {
   if (root) await close();
   window.history.replaceState({}, "", url);
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(React.createElement(LoginPage)); });
+  await act(async () => { root!.render(React.createElement(Page)); });
   await flush();
 }
 
@@ -403,5 +405,63 @@ describe("PHYS-14 (rendered) — a load that is not the provider's return discar
     await signInWithPassword();
     expect(pushed()).toEqual(["/dashboard"]);
     expect(landed()).toEqual(["/dashboard"]);
+  });
+});
+
+describe("PHYS-14 (rendered) — the provider's return is read when the page module loads", () => {
+  // supabase-js (lib/supabase, detectSessionInUrl) starts finishing the
+  // return when the client is constructed — in the task that evaluates the
+  // page module on `/` — and strips `#access_token` (or a PKCE `?code=`) from
+  // the address once its network round trip resolves. The page's load effect
+  // runs after hydration, so it can read the address after that strip.
+  const IMPLICIT = "/#access_token=tok&refresh_token=r&expires_in=3600&token_type=bearer";
+
+  /** A fresh evaluation of app/page.tsx (a new document) at `url`. */
+  async function pageModuleLoadedAt(url: string): Promise<React.ComponentType> {
+    window.history.replaceState({}, "", url);
+    vi.resetModules();
+    return (await import("@/app/page")).default;
+  }
+
+  async function startMicrosoftFrom(url: string) {
+    await open(url);
+    await clickMicrosoft();
+    expect(carried()).not.toBeNull();
+    await close();
+  }
+
+  it.each([
+    ["implicit: the hash cleared", IMPLICIT, "/#"],
+    ["PKCE: `code` deleted", "/?code=abc123", "/"],
+  ])("a return Supabase already stripped from the address (%s) still lands on the tag", async (_label, returnUrl, stripped) => {
+    await startMicrosoftFrom(assetSignInHref("FE-201"));
+    s.session = USER;
+    const Page = await pageModuleLoadedAt(returnUrl);
+    await open(stripped, Page); // the address as the effect finds it
+    expect(landed()).toEqual([TAG_PATH]);
+    expect(carried()).toBeNull();
+  });
+
+  it("taken by the first mount only: a later visit to `/` in the same document discards a carry", async () => {
+    await startMicrosoftFrom(assetSignInHref("FE-201"));
+    s.session = USER;
+    const Page = await pageModuleLoadedAt(IMPLICIT);
+    await open(IMPLICIT, Page); // not stripped: the effect sees the return too
+    expect(landed()).toEqual([TAG_PATH]);
+    // a carry this tab holds again; the same module instance mounts at a bare `/`
+    stashSignInNext("/assets/P-101");
+    s.replace.mockReset();
+    await open("/", Page);
+    expect(landed()).toEqual(["/dashboard"]);
+    expect(carried()).toBeNull();
+  });
+
+  it("evaluated while the address is another route's (a client-side visit to `/`), it is not a return", async () => {
+    await startMicrosoftFrom(assetSignInHref("FE-201"));
+    s.session = USER;
+    const Page = await pageModuleLoadedAt("/verify-ticket?code=abc123");
+    await open("/", Page);
+    expect(landed()).toEqual(["/dashboard"]);
+    expect(carried()).toBeNull();
   });
 });

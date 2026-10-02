@@ -8,7 +8,8 @@
 // tricks, encoded and double-encoded forms, control characters,
 // javascript: — falls back to /dashboard. The carry
 // across the Microsoft round trip (sessionStorage) is honoured once, within
-// its TTL, and re-validated on read. The rendered page is driven in
+// its TTL, only on the provider's return (any other load discards it), and
+// re-validated on read. The rendered page is driven in
 // signInNextRendered.test.ts.
 
 import { describe, it, expect } from "vitest";
@@ -20,6 +21,7 @@ import {
   stashSignInNext,
   takeStashedSignInNext,
   resolveSignInNext,
+  isProviderReturn,
   SIGN_IN_DEFAULT_DESTINATION,
   SIGN_IN_NEXT_STASH_KEY,
   SIGN_IN_NEXT_STASH_TTL_MS,
@@ -300,6 +302,18 @@ describe("PHYS-14 — the carry across the Microsoft round trip", () => {
     expect(resolveSignInNext("", st, { providerReturn: false })).toBeNull();
     expect(st.m.has(SIGN_IN_NEXT_STASH_KEY)).toBe(false);
   });
+
+  it("isProviderReturn: `?code=`, `#access_token` or a non-empty `?error=` — the page's own reading", () => {
+    expect(isProviderReturn("?code=abc123", "")).toBe(true);
+    expect(isProviderReturn("", "#access_token=tok&refresh_token=r")).toBe(true);
+    expect(isProviderReturn("?error=login_required&error_description=Login+required", "")).toBe(true);
+    expect(isProviderReturn("?error=access_denied&error_code=x", "#error=access_denied")).toBe(true);
+    expect(isProviderReturn("", "")).toBe(false);
+    expect(isProviderReturn("?next=%2Fassets%2FP-101", "")).toBe(false);
+    expect(isProviderReturn("?error=", "")).toBe(false);
+    expect(isProviderReturn("", "#")).toBe(false);
+    expect(isProviderReturn("", "#tasks")).toBe(false);
+  });
 });
 
 describe("PHYS-14 — app/page.tsx routes every success path through the decision", () => {
@@ -311,8 +325,9 @@ describe("PHYS-14 — app/page.tsx routes every success path through the decisio
     expect(page).toContain("router.push(signInDestination(nextRef.current));");
     // read once per page load; carried across the Microsoft round trip, and
     // picked up only on the provider's return (`?code=`, `#access_token`, `?error=`)
-    expect(page).toContain("const providerReturn = hasOAuthResponse || !!errorCode;");
-    expect(page).toContain("if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params, undefined, { providerReturn });");
+    // — the address as the module loaded (before supabase-js can strip it) or as the effect reads it
+    expect(page).toMatch(/let providerReturnAtLoad =\s*typeof window !== "undefined" &&\s*window\.location\.pathname === "\/" &&\s*isProviderReturn\(window\.location\.search, window\.location\.hash\);/);
+    expect(page).toMatch(/if \(nextRef\.current === undefined\) \{\s*const atLoad = takeProviderReturnAtLoad\(\);\s*const providerReturn = atLoad \|\| isProviderReturn\(params, hash\);\s*nextRef\.current = resolveSignInNext\(params, undefined, \{ providerReturn \}\);\s*\}/);
     expect(page).toContain("stashSignInNext(nextRef.current);");
   });
   it("the carry is cleared on every way out: a flow that could not start, routeAuthedUser, a password success", () => {

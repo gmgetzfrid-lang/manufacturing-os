@@ -38,9 +38,11 @@
 // of the sign-in page in that tab, validated again on read and honoured only
 // for SIGN_IN_NEXT_STASH_TTL_MS, and only when that load is the provider's
 // return: its address carries `?code=`, `#access_token` or `?error=`
-// (resolveSignInNext's `providerReturn`). Any other load — a bookmark, a
-// typed `/`, a sign-out's `location.replace("/")` — discards the carry
-// unread, and every successful sign-in on the page clears it too
+// (isProviderReturn → resolveSignInNext's `providerReturn`; app/page.tsx
+// reads the address when its module loads, before supabase-js can strip the
+// response, and again in its load effect). Any other load — a bookmark, a
+// typed `/`, a sign-out's `location.replace("/")` — removes the carry without
+// honouring it, and every successful sign-in on the page clears it too
 // (app/page.tsx). So a round trip the provider never finished cannot steer a
 // sign-in that starts from any other load of the page. What it does not
 // cover: an address of that shape opened in the same tab within the TTL (a
@@ -211,6 +213,13 @@ export function takeStashedSignInNext(
   } catch {
     return null;
   }
+}
+
+/** Whether a sign-in page address is the provider's return: a session to
+ *  finish (`?code=`, `#access_token`) or its refusal (a non-empty `?error=`)
+ *  — the same reading app/page.tsx's load effect branches on. */
+export function isProviderReturn(search: string, hash: string): boolean {
+  return search.includes("code=") || hash.includes("access_token") || !!new URLSearchParams(search).get("error");
 }
 
 /**
