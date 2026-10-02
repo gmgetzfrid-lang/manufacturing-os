@@ -33,7 +33,7 @@ Signup, invitation, removal, last-admin protection, and what offboarding orphans
 - **Severity:** CRITICAL
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply/route.ts:30-31`, `app/api/admin/restore/apply/route.ts:75-104`, `lib/dataRestore.ts:135-138`, `lib/dataRestore.ts:210-216`, `lib/dataRestore.ts:352-361`, `lib/dataRestore.ts:86-93`, `app/api/admin/restore/apply-table/route.ts:8-12`, `app/api/admin/restore/apply-table/route.ts:24, 38-40, 54-59`
+- **Locations:** `app/api/admin/restore/apply/route.ts:30-31 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/restore/apply/route.ts:75-104 (deleted by admin-and-org P3, ILIFE-4)`, `lib/dataRestore.ts:135-138`, `lib/dataRestore.ts:210-216`, `lib/dataRestore.ts:352-361`, `lib/dataRestore.ts:86-93`, `app/api/admin/restore/apply-table/route.ts:8-12`, `app/api/admin/restore/apply-table/route.ts:24, 38-40, 54-59`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the contrast with the sibling route is exact: apply-table/route.ts:24,38-40 gates on `IMPORTABLE` (ORG_SCOPED_TABLES + USER_SCOPED_FOR_ORG_TABLES) and :56 forces `if ("org_id" in m) m.org_id = orgId;` — apply/route.ts has neither line. Any Admin of any self-signup trial org can insert rows into arbitrary tables under an arbitrary org_id with RLS bypassed.
 
 **Mechanism.** `apply` authorizes only `authorizeOrgRole(req, orgId, ["Admin"])` — Admin of the TARGET org, which anyone gets for free by self-signing-up a trial workspace. It then trusts the uploaded envelope for two things it must not trust.

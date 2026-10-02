@@ -143,7 +143,7 @@ Tests, all in `lib/__tests__/storageKeyRegistry.test.ts`:
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply/route.ts:79-111`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75`
+- **Locations:** `app/api/admin/restore/apply/route.ts:79-111 (deleted by admin-and-org P3, ILIFE-4)`, `app/api/admin/restore/apply-table/route.ts:52-58`, `lib/dataRestore.ts:200-218`, `app/api/admin/restore/apply/route.ts:75 (deleted by admin-and-org P3, ILIFE-4)`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified by direct comparison of the two routes; the org-forcing line exists in apply-table and has no counterpart in apply. Admin of org A can write forged rows into org B, and into any table name the envelope invents.
 
 **Mechanism.** apply-table (the chunked path the UI uses) remaps then overwrites: `const m = remapRow(r, idRemap); if ("org_id" in m) m.org_id = orgId;` — with the comment "FORCE the org boundary: whatever the backup (or a hostile client) claims, restored rows belong to the authorized workspace". The single-shot apply route omits that step entirely: it only calls `remapRow`, and remapRow rewrites org_id ONLY when the value is a key of idRemap.orgId, which contains exactly one entry — `{ [manifest.orgId]: targetOrgId }`. A row carrying any other org_id falls through `deepRemapValues` unchanged and is written by the service-role client, which bypasses RLS. apply also has no IMPORTABLE allowlist: `plan.counts.tables` is built from whatever keys the uploaded envelope has, minus SKIP_TABLES, so any table name the poster invents is attempted.
@@ -237,7 +237,7 @@ Fix: `lib/exportTables.ts EXPORT_KEYED_BY` names each such table's own key: `org
 - **Severity:** HIGH
 - **Status:** RESOLVED
 - **Verification:** CONFIRMED
-- **Locations:** `app/api/admin/restore/apply-table/route.ts:74-87`, `app/api/admin/restore/apply/route.ts:98-125`, `app/(protected)/admin/restore/page.tsx:190-216`, `app/(protected)/admin/restore/page.tsx:445-453`, `lib/dataRestore.ts:336-348`
+- **Locations:** `app/api/admin/restore/apply-table/route.ts:74-87`, `app/api/admin/restore/apply/route.ts:98-125 (deleted by admin-and-org P3, ILIFE-4)`, `app/(protected)/admin/restore/page.tsx:190-216`, `app/(protected)/admin/restore/page.tsx:445-453`, `lib/dataRestore.ts:336-348`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right as stated — restore is insert-only by construction, so corrupted rows that still hold their original ids are never touched and the run reports success. Note the failure can also read WORSE than described: `inserted += up.count ?? chunk.length` (line 81) falls back to the full chunk size if PostgREST returns no count, reporting thousands of 'imported' records that were all discarded.
 
 **Mechanism.** Every table is written with `upsert(chunk, { onConflict: conflictTargetFor(table), ignoreDuplicates: true })` — ON CONFLICT DO NOTHING against ids taken verbatim from the backup. Ids are never regenerated and never remapped (only org_id and uids are). So any row whose id already exists is skipped, whatever its current contents. The UI sums `body.inserted` but shows a green "Records restored" panel regardless, and — unlike apply/route.ts:115-125, which explicitly STOPS after a table fails because "continuing after a parent failure inserts children referencing rows that never landed" — the chunked client path does `tableFailed = true; break;` on the chunk loop and then continues to the next table in FK order.
@@ -413,7 +413,8 @@ app/api/admin/restore/apply-table/route.ts:77 `const up = await sb.from(table).u
 ## BKP-6 · Retention pruning deletes every object older than N days under the prefix — with no prefix set, that is the customer's entire bucket
 
 - **Severity:** HIGH
-- **Status:** RESOLVED
+- **Status:** OPEN
+- **Assigned:** admin-and-org P7 (done-when 3's remainder: a structured retention count on the run record — `export_runs` columns for a purge's deleted and failed counts, written by `app/api/data-export/run` and `run-scheduled` from `ExportRunResult.retention`; it needs a migration, which P3 does not ship) — proposed by admin-and-org Round G P3 at its sixth review fix pass, 2026-10-02, for the integrator to confirm (P7 ships migrations and write observability; any migration-owning package may take it instead).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/exportRunner.ts:257-265`, `lib/exportRunner.ts:374-405`, `app/(protected)/admin/data-export/page.tsx:664-666`, `app/(protected)/admin/data-export/page.tsx:605`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing constrains the purge to keys this app wrote — not the filename pattern, not a prefix requirement, not a marker object. With Prefix blank, retention deletes unrelated objects in the customer's bucket.
@@ -459,12 +460,19 @@ Fix:
 
   The purge tests fail against base (`{ deleted, scanned }`, the candidate count).
 
-**Done-when.**
+**Done-when.** *(Done-when 3 corrected at the sixth review fix pass; see the Partial block below.)*
 - [x] retention only deletes keys matching the export filename pattern ✓ — `XEDGE-4` (`EXPORT_ARCHIVE_RE`), unchanged.
 - [x] a non-empty prefix is required before retention_days can be set, and the UI states plainly that objects under that prefix will be deleted ✓ — the API since `XEDGE-4`, the page now (field disabled without a prefix, hint names what is deleted).
-- [x] retention failures and deletion counts are surfaced on the run row instead of only in diagnostics ✓ — a failure is the run's `error_message` and the card's `last_run_error`; the real deletion count is shown on every run row.
+- [ ] retention failures and deletion counts are surfaced on the run row instead of only in diagnostics — **PARTIAL.** A failure, with its deleted and failed counts, is the run's `error_message` and the card's `last_run_error`. A clean purge's deletion count is still stored only in the run's `diagnostics`; the page reads it from there and shows it on each run row. *(This line read ✓ until the sixth review fix pass.)*
 
 **Scope / residual.** No migration: `export_runs` has no retention columns. A clean purge's count is read from the run's own `diagnostics` step, shown on its row, and is not a column. A purge refused for a missing prefix (a legacy row that predates `XEDGE-4`'s write-time check) is reported the same way, as "did not finish".
+
+**Partial (2026-10-02, admin-and-org Round G, P3 sixth review fix pass).** The Resolution above marked this finding RESOLVED with Done-when 3 ✓. Read as written, Done-when 3 is not met, so the finding returns to OPEN (`DEC-29` item 3: every Done-when, checked individually).
+- **Done-when 3, as written:** "retention failures and deletion counts are surfaced on the run row instead of only in diagnostics".
+  - *Met for failures.* A purge that did not finish is the run's `error_message`, with its deleted and failed counts, and the destination's `last_run_error` (`retentionProblem`, written by both run routes). The run stays `succeeded`.
+  - *Not met for a clean purge's count.* It is stored only in the run's `diagnostics` (the `s3:retention:done` step). The page reads it from there and shows it on each run row, but the record holds it nowhere else, and `export_runs` has no retention column (`supabase/migrations/20260530_data_export_schedules.sql:67-99`). The fleet plan's wording for P3 asked for "retention deleted/failed counts on export_runs", and P0's assignment for "retention counts and failures reach the run record". A structured count on the run record needs a migration, and P3 ships none.
+- **Remainder, and its owner.** Columns on `export_runs` for a purge's deleted and failed counts (for example `retention_deleted INT`, `retention_failed INT`), written by `app/api/data-export/run` and `run-scheduled` from `ExportRunResult.retention`, which already carries `{ scanned, deleted, failed, error? }`. The page would then read the columns instead of the diagnostics step. Proposed owner: admin-and-org P7 (see Assigned). `DEC-30` applies to the migration. When it lands, Done-when 3 is met and this finding closes; Done-whens 1 and 2 stand as recorded.
+- No code changed for this finding in the sixth pass. The tests named in the Resolution still pin what landed.
 
 ---
 
@@ -519,6 +527,7 @@ lib/clientBackup.ts:124 `zip.file("data.json", JSON.stringify(envelope, null, 2)
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** user decision first (`DEC-44 (A&O P3)` §4) — Done-when 2's private-notes limb waits on it: (a) withhold the notes, with the backup saying it is incomplete; (b) carry them encrypted to their authors; or (c) keep carrying them in the clear to the Admin who exports. Then the package the integrator routes the chosen option to: (a) is the first review fix pass's withholding, ready to restore; (b) is new design work; (c) closes it as it stands. Every other Done-when is met. Recorded by admin-and-org Round G P3 at its sixth review fix pass, 2026-10-02.
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/structured/route.ts:55-57`, `app/api/data-export/run/route.ts:17`, `lib/dataExport.ts:18-20`, `lib/dataExport.ts:143-179`, `supabase/migrations/20260708_acl_rls_enforcement.sql:56-62`, `supabase/migrations/20260708_acl_rls_enforcement.sql:85-91`, `supabase/migrations/20260630_scratchpad_private.sql:59-66`, `lib/downloads.ts:1-9`, `app/data-portability/page.tsx:71-72`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified end to end: role gate admits Manager, the export runs as service role, and neither the ACL restrictive policy nor the private-notes policy nor the stamping/download_audits path applies.
@@ -713,7 +722,30 @@ Fix (the plan's rule: `lib/adminGate.ts authorizeAdminSurface`, no new constant,
   - a member's forged workspace baseline dated 2099 never read.
 - The person-export assertions in existing tests were updated to the workspace ledger: the `DATA_EXPORT_FILES` row's machine actor and resource, `mode: "baseline"`, and the inline ZIP after Run Now. No migration.
 
-**Done-when (status).** 1 ✓, 3 ✓ (as corrected above: every export, a person's or a destination push, names its files against a ledger: a baseline, then a chained delta of each export's change), 4 ✓. 2 is PARTIAL: the ACL limb ✓; the private-notes limb waits on the user's decision (`DEC-44 (A&O P3)` §4).
+*Sixth review fix pass (admin-and-org Round G, P3).* Two minor findings on Done-when 3.
+- **Each ledger read walked the ledger's whole history (minor).**
+  - *What went wrong.* `readExportLedger`'s parts read and chain read (`lib/dataExport.ts`, then `:668-675` and `:689-693`) were bounded by the ledger's resource and "no later than now" only. The `(resource_type, resource_id, timestamp DESC)` index bounds neither on `details`, so each export walked every historical row of its ledger, every old baseline and chain, and detoasted each row's `details` to test its record id.
+  - *The fix.* The head read now also selects the baseline row's `timestamp`. The parts and chain reads take only rows dated from 15 minutes before it (`LEDGER_WRITE_WINDOW_MS`). The window is there because one export writes a large baseline's parts over several statements, ten rows each, and each statement is dated when it ran, so the head read's newest row is the last part. A bound at that row alone would drop the earlier parts and re-base a workspace of more than 5,000 files on every export. Every delta of the baseline was written after the baseline was read back whole, so it falls after the bound. A baseline row whose `timestamp` cannot be read falls back to the unbounded read. The forged and future-dated row rules, forks, the digest checks and the first export are unchanged.
+- **"Who took which drawing" had no reader outside a test (minor).** `DEC-44 (A&O P3)` §3 and this finding said the question is answered by rebuilding a record's list, but only a test helper did it.
+  - *The fix.* The parts-and-chain read is now one function, `readLedgerChain`, shared by the next export and a new reader. `rebuildExportList(sb, orgId, recordId)` (`lib/dataExport.ts`) does four things:
+    - finds the export's `DATA_EXPORT` row, which names who took it and the role the surface admitted them by;
+    - rebuilds its list from its ledger's machine rows: the baseline, then the chain up to the record, or, for a record that changed nothing, up to the record it points at;
+    - gives each file with its document and revision;
+    - checks the list against the record's `sha256`.
+
+    An unknown record, one named by two export rows, one recorded before this package and one whose chain lost a part each come back as a problem, never as a wrong list.
+  - *What uses it.* The "who took which drawing" test now uses the lib's reader. The test file's own reading stays as the oracle the reader is checked against. No screen calls it yet: the audit-log viewers are admin-and-org P7's (`ALOG-11`), and the P7 handoff in `99-fix-sequencing.md` names it.
+- **Tests** (`lib/__tests__/dataExportRoutes.test.ts`):
+  - "BKP-8 Done-when 3 — sixth review fix: an export reads its ledger only since its baseline; a recall rebuilds any record's list from the lib":
+    - three baselines over seven nights: the parts and chain reads walk none of the two earlier baselines' or chains' rows, the ledger read is the same, and the next push is the same delta;
+    - an 11-row baseline written a second a row: every part is still read, so the next pushes are deltas;
+    - every record of that history, the old chains' included, rebuilt by `rebuildExportList` to the list it handed out, hashing to its digest, with document and revision;
+    - the quiet-record, unknown, ambiguous, pre-ledger and broken-chain cases.
+  - The reads test pins the `timestamp` in the head read and the bound on the parts and chain reads.
+  - *Negative controls.* Removing the bound fails the history test and the reads test. A zero window fails the multi-statement test and the reads test. Removing the reader fails its two tests and the "who took which drawing" test.
+- The in-memory client (`lib/__tests__/helpers/restoreMemoryDb.ts`) now reads a nested JSON path (`details->fileRecord->>recordId`), as PostgREST does. No migration.
+
+**Done-when (status).** 1 ✓, 3 ✓ (as corrected above: every export, a person's or a destination push, names its files against a ledger: a baseline, then a chained delta of each export's change; since the sixth review fix pass, `rebuildExportList` rebuilds any record's list), 4 ✓. 2 is PARTIAL: the ACL limb ✓; the private-notes limb waits on the user's decision (`DEC-44 (A&O P3)` §4).
 
 **Scope / residual.** When the user decides: to withhold, ship the first review fix pass's withholding, with its complete:false, README and restore-plan wording; to carry them encrypted to their authors, that is new design work. Either way, this finding then closes. Projects-and-cost `INTK-6`'s role-set limb (Done-when 1) is unaffected.
 
@@ -1160,10 +1192,21 @@ Fix:
   - *The page.* `app/(protected)/admin/data-export/page.tsx refresh` used to keep a list that failed to load silently empty. It now shows "Export destinations could not be loaded: …" or "Export history could not be loaded: …".
   - *Tests.* "fifth review fix — the destination test, the destination list and the run history check their own reads and writes": one case per route, plus a page pin.
 
+*Sixth review fix pass (admin-and-org Round G, P3).* The fifth pass's bucket gate compared the bucket's name alone.
+- **A bucket push could be moved to another store off plan (minor).**
+  - *What went wrong.* PATCH ran `assertCloudBucketEntitlement` only when the bucket's name was added or changed (`app/api/data-export/destinations/[id]/route.ts:122`). A workspace off Growth could keep the name and change an enabled destination's endpoint, region or type (r2 to s3). The next push then ran against a different store. `XEDGE-8` treats pointing a destination at another bucket as the same act as creating one, so that rule was only partly kept.
+  - *The fix.* The gate also runs when `destination_type`, `endpoint` or `region` changes on a row that pushes to a bucket: s3 or r2 with a bucket, after the change. A region the row does not store compares as the region the push uses (`S3_DEFAULT_REGION`, `us-east-1`, now exported from `lib/exportRunner.ts`). The edit form sends that region when none is stored, so its unchanged save still passes, and it still confirms the destination (`DEC-44 (A&O P3)` §1). Enabling is gated as before. Moving the row to a webhook is not plan-gated, though the form still sends the old bucket name.
+- **Tests**, "sixth review fix — moving a bucket push to another store (type, endpoint or region) is the Growth act; the unchanged save still confirms":
+  - off plan: an endpoint-only change is 402 with nothing changed, alone and through the edit form's body; a type change (r2 to s3) and a region change are 402;
+  - off plan with the flag off: the unchanged save is 200 and stamps `updated_by`, both for a stored region and for none stored;
+  - off plan: moving to a webhook is 200;
+  - on plan: endpoint, region and type changes are 200.
+  - *Negative controls.* The fifth pass's route fails the two 402 cases. Comparing regions without the default fails the unchanged-save case. Dropping the bucket-type test fails the webhook case.
+
 **Done-when.**
 - [x] runOrgExport passes a null user_id … for cron runs and CHECKS the insert's `{error}`, failing the run when the audit row cannot be written ✓.
 - [x] alertAdminsOfExport is called from run-scheduled as well as run ✓.
-- [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included. *(Fourth review fix pass: a destination last confirmed by a non-Admin before this branch keeps running, as before it; every Admin's bell that night asks them to confirm it or disable it. The third pass's pause is withdrawn. Fifth: the Admin's unchanged save confirms it on any plan, because the bucket gate now runs only when the bucket is added or changed. The request also stays on a failed push and after a Run Now.)*
+- [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included. *(Fourth review fix pass: a destination last confirmed by a non-Admin before this branch keeps running, as before it; every Admin's bell that night asks them to confirm it or disable it. The third pass's pause is withdrawn. Fifth: the Admin's unchanged save confirms it on any plan, because the bucket gate now runs only when the bucket is added or changed. The request also stays on a failed push and after a Run Now. Sixth: the gate also runs when a bucket push's type, endpoint or region changes; the unchanged save still passes.)*
 
 **Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest of bells would be a notifications decision. (The first review fix pass recorded a destination push by digest only. Since the second, every file is named. Since the third, every destination push, a webhook included, names its files against a baseline; since the fourth, each night's delta names only that night's change, chained back to the baseline (`BKP-8`, `DEC-44 (A&O P3)` §3).) The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-44 (A&O P3)` §2: `user_id` NULL, `system:stripe-webhook`). *(Fourth review fix pass, correcting the third.)* A destination a Manager or DocCtrl configured before this branch keeps running; the nightly bell to every Admin is the request to confirm it, so an Admin who ignores it leaves it running on its old confirmation, which is the pre-branch behaviour. A failed bell is recorded on the run and the sweep result, not re-sent. `scheduledRunGate`'s own skips (no configurer, an inactive one, a billing refusal under the flag) predate this package and still ring no bell. The data-export page does not yet show the `warnings` and `X-Export-Unrecorded` lines the routes now return (pre-existing for alert warnings). *(Fifth review fix pass.)* A failed push of an unconfirmed destination puts the request on its run row, card and sweep result, but rings no bell: an export that did not leave is not announced. Since that pass the page does show the error when the destination list or the run history cannot be loaded.
 

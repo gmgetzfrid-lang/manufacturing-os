@@ -147,7 +147,7 @@ page.tsx:151 `{(["immediate", "hourly", "daily", "never"] as const).map((opt) =>
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Verification:** CONFIRMED
-- **Locations:** `lib/notify/recipients.ts:23-45`, `lib/notify/dispatch.ts:135-147`, `lib/notify/recipients.ts:48-62`, `app/api/admin/restore/begin/route.ts:68`, `app/api/admin/restore/apply/route.ts:64`, `supabase/schema.sql:42`
+- **Locations:** `lib/notify/recipients.ts:23-45`, `lib/notify/dispatch.ts:135-147`, `lib/notify/recipients.ts:48-62`, `app/api/admin/restore/begin/route.ts:68`, `app/api/admin/restore/apply/route.ts:64 (deleted by admin-and-org P3, ILIFE-4)`, `supabase/schema.sql:42`
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. `lib/notify/recipients.ts:23-45` contains no `status` predicate of any kind — a grep for `status`/`active` across that range returns nothing — so a deactivated member stays on the fan-out.
 - **Independently verified:** ✓ **SURVIVES** — independent adversarial pass. Confirmed — the asymmetry is exactly as described, and the same unfiltered org_members email lookup is duplicated in the ticket paths (tickets/comment/route.ts:283, workflow-action/route.ts:353). Non-active members are demonstrably real rows: restore/begin/route.ts:66-68 and restore/apply/route.ts:62-64 both insert members with `status: "inactive"`.
 
