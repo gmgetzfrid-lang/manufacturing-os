@@ -14,7 +14,7 @@ export default function CompaniesError({ error, reset }: { error: Error & { dige
     <div className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-lg rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-sm">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-500/15">
+          <div className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:text-rose-400 dark:bg-rose-500/15">
             <AlertTriangle className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">

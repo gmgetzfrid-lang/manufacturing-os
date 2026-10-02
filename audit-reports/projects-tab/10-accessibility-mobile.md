@@ -574,7 +574,7 @@ this is mostly substitution.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** projects-joint J10b UI REMAINDERS (the residual dark-mode pairs the record lists by file:line; the census test ratchets them) — by the integrator, 2026-10-01 (at the J10 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (`ProjectCoach.tsx:101`'s dark variant, then the ratchet's `RECORDED_RESIDUAL` empties; the light tint slabs the record lists, re-counted at HEAD) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** accessibility
 - **Re-verified:** hardening pass — **SURVIVES**. `text-red-600` on a cancelled banner (`projects/[id]/page.tsx:307`) and `bg-red-50 border-red-200 text-red-700` on the error card (`projects/page.tsx:161`), neither with a `dark:` variant.
@@ -656,12 +656,42 @@ background to the one date input.
 
 Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused delete, in the recipe, with the old pair under 4.5 : 1 on the dark footer and the new one over it in both themes; a ratchet census over this list — per file, no more such sites than listed — mutation-checked).
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS cleared the final review's ratchet down to its one site outside this package. Each change is on its own element; no global stylesheet rule was added.
+- **Text.** Rose and emerald text uses the 700 step with a 300 dark twin, and amber uses 800 / 300.
+  - `TaskDetailPanel.tsx`: the "Delete task" label, whose hover slab is now `hover:bg-rose-500/10` with `dark:hover:text-rose-200`, and the field note.
+  - `ExecutionReportView.tsx`: the ten figures.
+  - `ExecutionView.tsx`.
+  - `ScheduleProgress.tsx`: the SPI figure.
+  - `ScheduleCalendarTileView.tsx`: today's date.
+  - `TransitionInPanel.tsx`.
+  - `CostsTab.tsx`: a line's negative remaining.
+- **Icons** (SC 1.4.11). The 600 step stays on light, and `dark:text-{hue}-400` is added.
+  - `CostsTab.tsx`: the stat-card chips.
+  - `EditProjectModal.tsx`, `ExecutionReportView.tsx`, `ExecutionView.tsx`, `IntakePanel.tsx`, `ProjectWizard.tsx`, `ScheduleImportModal.tsx`, `ScheduleProgress.tsx`, `TabErrorBoundary.tsx`, `app/(protected)/companies/error.tsx` and `app/submit/[token]/page.tsx`.
+  - `StaleCheckoutBanner.tsx`: the dismiss X also gets `dark:hover:text-amber-200 dark:hover:bg-amber-500/15`.
+- **Hover-only.** `dark:hover:text-rose-300` sits beside every `hover:text-rose-600` in `CostsTab.tsx`, `EditProjectModal.tsx`, `IntakePanel.tsx`, `ProjectDocumentsCard.tsx`, `ProjectWizard.tsx`, `QualityTab.tsx`, `cost/ChangeOrdersPanel.tsx`, `cost/QuotesPanel.tsx` and `app/(protected)/companies/[id]/page.tsx`.
+- Tests: `lib/__tests__/a11y13FinalReview.test.ts`.
+  - The ratchet's recorded residual is now `{ "components/projects/ProjectCoach.tsx": 1 }`: 60 of the 61 sites are gone. The census is still mutation-checked.
+  - A new "A11Y-13 (J10b) —" block computes each recipe on the area's light and dark surfaces by the WCAG formula, over Tailwind v3 sRGB steps. Text must reach 4.5 : 1 (3 : 1 for the large figures), icons 3 : 1, and the hover twins their floor.
+  - The block also pins that no global stylesheet rule was added for these hues.
+
+**Done-when.**
+- ✗ Every text / background pair in the Projects area clears 4.5 : 1 in both themes.
+  - Of the 61 uncited `-600` pairs, one is left: `components/projects/ProjectCoach.tsx:101`, an icon in projects-joint J12's file this round.
+  - The light tint slabs listed above remain: the schedule engine's `bg-{hue}-50|100` with no dark variant, 29 at the last count. They were not in this package's brief. This package changed only two hover slabs, on elements it was already editing: the "Delete task" label's (now `hover:bg-rose-500/10`) and the stale-checkout dismiss's (it gained a dark twin).
+- ✓ No error panel renders light-on-dark (unchanged).
+- ✓ All date inputs match the theme (unchanged).
+
+**Scope / residual.** OPEN for two things:
+- `ProjectCoach.tsx:101`: J12 can add `dark:text-{hue}-400` beside the 600 icon. When that lands, the ratchet's `RECORDED_RESIDUAL` drops to `{}`.
+- The light tint slabs.
+
 ---
 
 ## A11Y-14 · Decision controls outside the Quality tab are still under 24 px
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (the decision controls under 24 px outside the Quality tab: intake panel, quotes panel, change-order panel, Costs tab) — by the integrator, 2026-10-01 (at the J10 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CARRIED — the sites `A11Y-8` measured; not re-measured
 - **Blast radius:** accessibility / mobile
@@ -680,6 +710,61 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 **Done when.**
 - No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer.
 - A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS lifted the Quality tab's floor into one shared constant: `components/projects/decisionTarget.ts` `DECISION_TARGET` (`min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3`). `QualityTab.tsx` imports it, and its local copy is removed. The constant is set on the control itself, never through a bare element rule, on every button whose click starts a write in these files:
+- `components/projects/IntakePanel.tsx`: approve, reject, copy link, reissue, revoke, assign documents, unassign, assign pick and create link.
+- `components/projects/cost/QuotesPanel.tsx`: type or correct a total, Award, Decline (in the bid table and, since the `MON-10` fix pass, in the "not read yet" strip), post invoice, void, create, submit, RFQ, quote-link copy, reissue and revoke.
+- `components/projects/cost/ChangeOrdersPanel.tsx`: approve, reject, reverse and propose.
+- `components/projects/CostsTab.tsx`: ledger repair, CO repair, void entry, post, create, link and add.
+- The new closeout Retry (`components/projects/CloseoutGatesPending.tsx`, `QUAL-8`).
+
+Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (8).
+  - One shared constant: the Quality tab and the four surfaces import it, none keeps a local copy, and `app/globals.css` has no bare `button` rule.
+  - Per file, an inverted census. Every `<button>` in the file must carry `${DECISION_TARGET}` unless its whole `onClick` is on an explicit, anchored list of read-only handlers: the disclosure toggles (`setShowLinks`, `setOpen`, `setShowForm`, `setShowNewAccount`, `setShowParties`, `setOpenAccount`), the entry type picker (`setType`), the banner dismiss (`setErr(null)`), the read retry (`refresh`), a form's `onCancel`, the company and party pickers' open and cancel (`setEditing`, `setLinking`), and the bid row's PDF opener. A button with no `onClick` counts as a decision. The deciders are counted against a floor, and named controls must be among them. A new write button under any handler name, added without the floor, therefore fails. So does a write appended to a read-only handler. *Review fix:* the first pass matched writers against a list of known handler names, so a writer named anything else (`archive`, say) went uncounted. The record's earlier sentence, "names writers by their handler, so a new writer added without the floor fails", overstated that census.
+  - The read-only list carries no dead entry: each entry matches a button in the four files.
+  - A synthetic `archive` button with no floor is caught, a write appended to a read-only toggle leaves the list, and a submit button with no `onClick` is a decision.
+  - The clusters' spacing.
+
+  `lib/__tests__/a11yProjects.test.ts`' DECISION_TARGET pin now reads the shared module.
+
+**Review fix (2026-10-02, projects Round G).** The final review found two more Projects files whose buttons start a write with no floor, so the first done-when's tick was not true as written. Both now carry `${DECISION_TARGET}`, with every handler, label and disabled state unchanged:
+- `components/projects/ProjectDocumentsCard.tsx` (the Documents tab): Attach document, which opens the attach search (`:151`); each attach pick (`:185`); and detach, "Remove from the register" (`:232`). The detach was 22 px, `p-1` around a 14 px icon. It is now also `inline-flex items-center justify-center`, so the icon stays centred in the larger box. The detach sits beside the row's Open link with `gap-3` (12 px), which is unchanged.
+- `components/projects/TransitionInPanel.tsx` (inside the Intake tab's `IntakePanel`): Adopt N clean (`:229`), Adopt (`:325`) and Flag to drafting (`:336`). Adopt and Flag to drafting share a `gap-2` cluster. Adopt N clean sits in the `gap-2` destination row.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` (now 10). Both files are added to the census. The read-only list gains one entry, the transition-in sheet's disclosure (`setOpen(expanded ? null : c.docId)`); the Re-scan was already covered by the read-retry entry. The spacing test pins both `gap-2` containers. Negative controls: before the component change, the census failed for both files (3 bare buttons each, and no shared import); with the change in place, removing the floor from the detach alone fails the `ProjectDocumentsCard.tsx` census.
+
+**Done-when.**
+- ✓ No decision control in the Projects area is under 24 px, or under 44 px on a coarse pointer. This covers the four surfaces this finding names here, `ProjectDocumentsCard.tsx` and `TransitionInPanel.tsx` (review fix, 2026-10-02), and the Quality tab (`A11Y-8`).
+- ✓ A census test pins it, as `a11yProjects.test.ts` "A11Y-8 —" does for the Quality tab.
+
+**Scope / residual.** A "decision control" is read as a button that starts a write, as the finding's mechanism describes. Read-only toggles and navigation links keep their sizes. The finding's Locations and Assigned line name these four surfaces outside the Quality tab, and all four are done. The census also covers `ProjectDocumentsCard.tsx` and `TransitionInPanel.tsx` (review fix). Other Projects files are outside this finding's Locations and were not brought under the floor here. Their write buttons still carry no `DECISION_TARGET`: for example the Members tab's save responsibility, make owner and remove (`app/(protected)/projects/[id]/page.tsx:1172`, `:1187`, `:1193`), `StatusControl.tsx:186`, `ProgressControl.tsx:72`, `StaleCheckoutBanner.tsx:153` and `EditProjectModal.tsx:319`. The tick above holds for the surfaces it names, not for these. They are opened as `A11Y-15` (DEC-31; integrator, at the J10b merge).
+
+---
+
+## A11Y-15 · Write buttons outside A11Y-14's surfaces still carry no decision floor
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (bring the listed write buttons under the shared `DECISION_TARGET` and add them to the census) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Verification:** READ — each site was read at the J10b merge; sizes are from the class strings, not measured
+- **Blast radius:** accessibility / mobile
+- **Locations:**
+  - `app/(protected)/projects/[id]/page.tsx:1172` (Members tab, save responsibility; `px-1.5`, 11 px text, no vertical padding), `:1187` (make owner; `px-1.5 py-1`) and `:1193` (remove member)
+  - `components/projects/StatusControl.tsx:186` (confirm a status change with a reason)
+  - `components/projects/ProgressControl.tsx:72` (the quick-percent buttons)
+  - `components/projects/StaleCheckoutBanner.tsx:153` (release a stale checkout)
+  - `components/projects/EditProjectModal.tsx:319` (Save changes; `py-1.5` around 12 px text)
+- **Independently verified:** — (opened by the integrator on 2026-10-02 at the J10b merge, split from `A11Y-14` under `DEC-31`: `A11Y-14`'s Locations named four surfaces, and its Scope / residual names these sites as outside its tick)
+
+**Mechanism.** `A11Y-14` lifted the Quality tab's 24 px / 44 px floor into `components/projects/decisionTarget.ts` and applied it to every write button in the files it named, plus `ProjectDocumentsCard.tsx` and `TransitionInPanel.tsx`. Write buttons elsewhere in the Projects area were outside its Locations and keep their small boxes. They change a member's role or ownership, a project's status or progress, a checkout, or the project's identity. These are the same kind of control.
+
+**Failure scenario.** On a tablet, a mis-tap on the Members tab hits "make owner" instead of the row's other action, or a quick-percent button records the wrong progress.
+
+**Remediation.** Apply `${DECISION_TARGET}` to each listed button, with every handler, label and disabled state unchanged. Space clusters 8 px. Add the files to the inverted census in `lib/__tests__/j10bDecisionTargets.test.ts`, and extend its read-only list only for genuinely read-only handlers (Back, Cancel, Close).
+
+**Done when.**
+- Every button that starts a write in the listed files carries `DECISION_TARGET`.
+- The census in `j10bDecisionTargets.test.ts` (or a successor) covers these files, so a new write button there without the floor fails.
 
 ---
 
@@ -737,4 +822,5 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 | A11Y-11 | MEDIUM | RESOLVED |
 | A11Y-12 | MEDIUM | OPEN |
 | A11Y-13 | MEDIUM | OPEN |
-| A11Y-14 | MEDIUM | OPEN |
+| A11Y-14 | MEDIUM | RESOLVED |
+| A11Y-15 | LOW | OPEN |

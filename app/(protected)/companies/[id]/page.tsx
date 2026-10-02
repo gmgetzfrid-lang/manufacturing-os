@@ -29,7 +29,7 @@ import {
   COMPANY_KIND_LABEL, EVENT_KIND_LABEL,
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
-import { scoreBand, MIN_EVIDENCE_FOR_BAND, type CompanyScorecard } from "@/lib/companyScore";
+import { scoreBand, MIN_EVIDENCE_FOR_BAND } from "@/lib/companyScore";
 import { readExtent } from "@/lib/bidTab";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
@@ -120,7 +120,7 @@ export default function CompanyProfilePage() {
               <h1 className="text-xl font-black text-[var(--color-text)] flex items-center gap-2">
                 <HardHat className="w-5 h-5 text-[var(--color-accent)]" /> {company.name}
               </h1>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind]}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{COMPANY_KIND_LABEL[company.kind] ?? company.kind}</span>
               {company.trade && <span className="text-xs text-[var(--color-text-muted)]">{company.trade}</span>}
               {company.status !== "active" && (
                 <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${company.status === "do_not_use" ? "border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-faint)]"}`}>
@@ -190,7 +190,7 @@ export default function CompanyProfilePage() {
         canManage={canManage} actorId={uid ?? ""} actorName={userEmail?.split("@")[0] ?? null}
         onChanged={() => void refresh()} setErr={setActionError} />
 
-      <HistoryPanels profile={profile} scorecard={sc} />
+      <HistoryPanels profile={profile} />
 
       {showEdit && uid && (
         <EditCompanyModal company={company} actorId={uid}
@@ -322,7 +322,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
-                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                    <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">
@@ -457,7 +457,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
                 : e.kind === "commendation" ? "bg-emerald-500"
                 : "bg-[var(--color-text-faint)]"}`} />
               <div className="min-w-0">
-                <span className="font-bold text-[var(--color-text)]">{EVENT_KIND_LABEL[e.kind]}</span>
+                <span className="font-bold text-[var(--color-text)]">{EVENT_KIND_LABEL[e.kind] ?? e.kind}</span>
                 <span className="text-[var(--color-text-muted)]"> · {new Date(e.eventDate + "T00:00:00").toLocaleDateString()}{e.createdByName ? ` · logged by ${e.createdByName}` : ""}</span>
                 <div className="text-[var(--color-text-muted)]">{e.description}</div>
               </div>
@@ -471,8 +471,9 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
 
 // ── History: jobs, bids, change orders ───────────────────────────────────
 
-function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | null; scorecard: CompanyScorecard | null }) {
-  void scorecard;
+// REL-9: the panels never read the scorecard (the dial above renders it) —
+// the dead prop is gone.
+function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
   if (!profile) return null;
   const { projects, bids, changeOrders } = profile;
   if (projects.length === 0 && bids.length === 0 && changeOrders.length === 0) return null;

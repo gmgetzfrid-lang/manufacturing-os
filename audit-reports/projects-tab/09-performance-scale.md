@@ -158,7 +158,7 @@ memory.
 ## PERF-3 · The coach re-gathers on every Costs and Quality mount, throwing away thirteen queries every time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -217,12 +217,24 @@ Tests (`lib/__tests__/projectSnapshot.test.ts`): "a sharing request joins the ro
 
 **Verification fix (2026-09-30, projects Round G).** The paragraph that stood here said `listAccounts` / `listEntries` still return `[]` on a refused read, so a refused cost read reached the gather as an empty ledger and "Add a budget" could still show. That stopped being true when J3 merged: `REL-2` made them throw, and the gather's `call` (`lib/projectSnapshot.ts:188`) names the read. The code comment saying otherwise is corrected. Test: `projectSnapshot.test.ts` "refused cost accounts: named in readFailures, no 'Add a budget' at the top, Cost and Change control unknown". The failure is injected at the table (the earlier test injected `readFailures` into the snapshot); `readFailures` is `['cost accounts']` and Cost scores null. The same fix made two more changes here. (1) Change orders are read through `listChangeOrders`, the Costs tab's reader (see `MON-5`). That read is `select("*")` plus, when an approved change order has a linked entry, one `cost_entries` read by id. It is no longer one of the column-listed direct queries above, and like the other list functions it takes no abort signal. A `42P01` / `PGRST205` on it is still named in `notMigrated`, because the thrown error now carries its code (`lib/changeOrders.ts:167`). (2) `"RFQ groups"` in `notMigrated` is now acted on. Before 20261013 every quote tabulates alone, so the award suggestion, raised from the unawarded-group count, is left out (`RFQ_GROUPS_NOT_MIGRATED`, `lib/projectHealth.ts:104,320`). That makes the coach's not-migrated line (`ProjectCoach.tsx:104`, "the suggestions that need it are left out") true for every entry the snapshot can name. Tests: `projectSnapshot.test.ts` "before 20261013 every quote tabulates alone… the award item is left out" (fails on `9b4c5f4`) and "after it, one unawarded RFQ group raises the award item".
 
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS removed the tab-mount bump that the 2026-09-29 bound depended on (see `PERF-4`). `components/projects/CostsTab.tsx` and `components/projects/QualityTab.tsx` no longer call `onDataChanged?.()` from `refresh`. A tab's load tells the page nothing, so opening Costs or Quality, or switching to it, never re-keys the coach. Every write goes through one `afterWrite` callback in that order: the tab's re-read lands, then `invalidateProjectSnapshot(orgId, projectId)` drops the recorded round, then `onDataChanged?.()` re-keys the coach, so the coach's re-gather is its own round, issued after the write. A read retry (Costs "Try again", a Quality section's Retry) re-reads and tells nobody. A project opened on Costs or Quality now costs exactly the coach's mount round, and switching to the tab later costs nothing.
+- Tests: `lib/__tests__/j10bTabsDataChanged.test.ts` "PERF-3 — opening Costs or Quality under the coach gathers the snapshot ONCE" covers both tabs. The real `ProjectCoach` is mounted beside the tab as the page mounts it, and `gatherProjectSnapshot` calls are counted. Opening makes 1 call; the base made 2, and the second shared the round only inside the window. After a write the order is gather, invalidate, told, gather. The tests fail on the base code: the code was stashed and the tests run.
+
+**Done-when.**
+- ✓ Opening Costs gathers the snapshot once. The bound recorded on 2026-09-29 is gone: no tab mount re-keys the coach. *Corrected in review (2026-10-01):* this line said there was then no second round for the window to catch, whatever the timing. The page's own first-load `refresh()` still re-keys the mounted coach once, and the first-re-key share and the window absorb that run (see the residual).
+- ✓ The snapshot query selects only the columns it reads (2026-09-29).
+- ✓ An unmounted coach's in-flight requests are aborted (2026-09-29).
+
+**Scope / residual.** `SNAPSHOT_REUSE_MS` (1.5 s) and the coach's first-re-key `share` (`snapshotRekeyMayShare`) are load-bearing. *Corrected in review (2026-10-01):* this paragraph first said they were vestigial and that retiring them would change no behaviour. That was false. `refresh()` in `app/(protected)/projects/[id]/page.tsx` calls `setLoading(false)` as soon as the project row lands (`:197`, `PERF-8`), so on the first load the coach mounts and starts its mount round with key 0. The same `refresh()` then awaits members and checkouts and bumps `coachKey` (`:232`) while the coach is mounted. That bump is the coach's first re-key, and no write precedes it. The share joins it to the mount round while that round is in flight; the window joins it when the round settled less than 1.5 s before. The 2026-09-30 paragraph above ("the page's own `refresh()` never re-keys a mounted coach") stopped being true when `PERF-8` landed. A later `refresh()` shows no spinner either, so its bump re-keys the mounted coach as a later re-key, which follows a write and gathers its own round. The bound: when members and checkouts land more than `SNAPSHOT_REUSE_MS` after the coach's round settled, the first load costs a second round. The Costs and Quality `onDataChanged` re-keys (`page.tsx:660`, `:671`) follow a write whose `afterWrite` has already invalidated the round, so they gather their own round.
+- Test: `lib/__tests__/j10bTabsDataChanged.test.ts` "PERF-3 — the page's first-load refresh() bumps the key of a MOUNTED coach: the first-re-key share absorbs it". The real `gatherProjectSnapshot` runs under the real `ProjectCoach`. The harness mounts the coach when loading ends, lets its round settle, then bumps the key once, as `refresh()` does. Result: two coach runs, one round. Negative controls, each a scratch edit that was restored: `SNAPSHOT_REUSE_MS = 0` gives 2 rounds; `snapshotRekeyMayShare` returning false fails (the bump does not ask to share); a bump landing 1.5 s after the round settled gives 2 rounds.
+- *For J12:* keep the first-re-key share (or drop the bump on the first load), and only then consider setting the window to 0. The share and the window are in `lib/projectSnapshot.ts` and `components/projects/ProjectCoach.tsx`, J12's files this round; the bump is `page.tsx:232`. The comments there that say `refresh()` remounts the coach after every write (`ProjectCoach.tsx` header, `snapshotRekeyMayShare`'s doc) carry the same stale premise. *Review note:* the window is safe today only because every `onDataChanged` caller invalidates first. A future caller that told the page about a write without calling `invalidateProjectSnapshot` would let the coach's first re-key reuse a snapshot gathered before the write, inside the 1.5 s window. Retiring the window would remove that hazard, but only once the first-load bump no longer depends on it.
+
 ---
 
 ## PERF-4 · An unbounded query loop is held back only by an eslint-disable comment
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (latent — does not fire today)
 - **Blast radius:** availability
@@ -256,6 +268,25 @@ the loop the suppression prevents.
 - Removing it cannot produce a loop.
 
 **Partial (2026-09-29, projects Round G).** The half this package owns landed: `gatherProjectSnapshot` records each round per project (`PERF-3`), and the coach's first `coachKey` bump (a tab mounting) opts in to sharing the round in flight, so it costs no queries inside the reuse window. Later bumps gather their own round, because they follow a write (amended 2026-09-30). But the loop this finding describes is in the *tabs'* own effects — `CostsTab.tsx:84` and `QualityTab.tsx:73` (`// eslint-disable-next-line react-hooks/exhaustive-deps` over a `refresh` that calls `onDataChanged` from inside itself) — and those are P3's and P2's files. Removing the suppression there requires moving `onDataChanged?.()` out of `refresh` into the mutation handlers (then the honest dependency list is `[orgId, projectId]` with no warning) and, optionally, `useCallback` on the inline arrow at `page.tsx:494` (J8's). When they do, each mutation handler should also call `invalidateProjectSnapshot(orgId, projectId)` (`lib/projectSnapshot.ts`) before `onDataChanged?.()`, so the coach's re-gather can never be served from a round issued before the write; with the mount-time bump gone, `SNAPSHOT_REUSE_MS` can be set to 0 (only in-flight sharing kept) and `PERF-3`'s first done-when closes with this one. Left OPEN for those packages; listed under this package's `filesOutsidePlan`. Done-when not met here: the suppression is still present at both sites; the loop remains latent (the shipped code is correct today, as the pass noted).
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS took the remediation's first branch. The feedback edge is gone, and the suppression went with it.
+- `components/projects/CostsTab.tsx`: `refresh` (`useCallback`, deps `[orgId, projectId]`) loads and does nothing else. The `// eslint-disable-next-line react-hooks/exhaustive-deps` above it is removed, and its dependency list is the honest one. `afterWrite` (`useCallback`, deps `[refresh, orgId, projectId, onDataChanged]`) re-reads, invalidates the snapshot round (`PERF-3`) and then calls `onDataChanged?.()`. Every writer is handed it: `LedgerHealth` `onChanged` / `onCoRepaired`, `QuotesPanel` `onChanged`, `ChangeOrdersPanel` `onMoneyMoved`, `AccountForm` `onDone`, `AccountDetail` `onChanged` and `PartiesPanel` `onChanged`. "Try again" stays on `refresh`.
+- `components/projects/QualityTab.tsx`: the same split. `refresh` and `loadAuthority` set state only inside promise callbacks, so the React compiler's `set-state-in-effect` rule holds with no suppression. Every section's `onChanged` is `afterWrite`, and every `onRetry` is the read-only retry.
+- `onDataChanged` is now a dependency of `afterWrite` only, never of the load or its effect. The page's fresh inline arrow (`page.tsx`, the Costs and Quality `onDataChanged`, unchanged) therefore changes `afterWrite`'s identity and nothing else, and no effect re-fires on it.
+- Tests: `lib/__tests__/j10bTabsDataChanged.test.ts` renders each tab inside a page harness that passes a fresh inline `onDataChanged` on every render, bumping the page's own state, as `page.tsx` does.
+  - Costs: "mount re-reads once and tells the page nothing; a write re-reads, invalidates the snapshot round, THEN tells the page — once".
+  - Costs: "no loop: the page's fresh inline callback on every render never re-fires the load". Five forced page re-renders come before and after a write; the result is 1 load, then 2, and one tell.
+  - Costs: "a read retry … tells the page nothing".
+  - The Quality twins, with a turnover Assign as the write.
+  - A source pin: "no react-hooks eslint-disable, onDataChanged only inside afterWrite".
+  - A Costs-tab writer census. *Review fix:* the rendered tests drive one Costs writer, because the quotes panel stands in for all of them. The census pins the rest at the source. Each of `<QuotesPanel>` `onChanged`, `<ChangeOrdersPanel>` `onMoneyMoved`, `<LedgerHealth>` `onChanged` and `onCoRepaired`, `<AccountForm>` `onDone`, `<AccountDetail>` `onChanged` and `<PartiesPanel>` `onChanged` is rendered once and handed `afterWrite`. `<EntryForm>`'s `onDone` is `AccountDetail`'s `onChanged`. `refresh()` is called in exactly three places: the mount load, inside `afterWrite`, and the "Try again" read retry. Reverting any writer to a bare `refresh` fails the test. This was checked by reverting `onMoneyMoved` and running it. The Quality tab's equivalent is `qualitySignoff.test.ts`'s `onChanged={afterWrite}` count.
+  - These fail on the base code: the code was stashed and the tests run. `lib/__tests__/qualitySignoff.test.ts`'s loader pins were moved to the new shape.
+
+**Done-when.**
+- ✓ The suppression is gone at both sites. The source pin checks that neither file has a `react-hooks` eslint-disable, and `npx eslint` exits 0 on both files without one.
+- ✓ Removing it cannot produce a loop. The load's dependencies hold no callback from the page, and the rendered no-loop tests drive the page's inline-arrow shape through writes and re-renders.
+
+**Scope / residual.** None for this finding. *Corrected in review (2026-10-01):* this line first said `PERF-3`'s reuse window was now vestigial. It is not. The window and the coach's first-re-key share absorb the page's first-load `coachKey` bump (`page.tsx:232`), which lands while the coach is mounted (see `PERF-3`'s residual).
 
 ---
 
@@ -537,7 +568,7 @@ in `next/dynamic`.
 ## PERF-10 · Money formatting constructs a new formatter on every call
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** performance
@@ -587,6 +618,23 @@ once. Hoist the `toLocaleString` formatters out of the row components.
 3. Partly. ✓ for the Costs tab's entry rows (J3) and the S-curve's per-point labels (here). ✗ for `TimelineFeed.tsx` and `QualityTab.tsx`, which are other packages' files.
 
 **Scope / residual.** OPEN only for the `TimelineFeed` / `QualityTab` per-row formatters.
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS hoisted the two per-row formatters that were left.
+- `components/documents/TimelineFeed.tsx` `formatTime` uses one module-level `Intl.DateTimeFormat` for every row. Its fields are year / month / day / hour / minute / second, numeric, which are `toLocaleString()`'s default fields. It is created on first use. An unreadable timestamp still reads "—".
+- `components/projects/QualityTab.tsx` `fmtDay` uses one lazily created `Intl.DateTimeFormat` (year / month / day, numeric: `toLocaleDateString()`'s defaults). It replaces six per-row `toLocaleDateString()` calls: the signed-off checklist, the machine-verified item, turnover reviewed, turnover history, punch due and punch closed. An invalid date falls back to `toLocaleDateString()`, so it reads as before.
+- Tests: `lib/__tests__/j10bLabelsFormattersLinks.test.ts`:
+  - "200 rows rendered twice construct ONE date-time formatter, and each row reads exactly as toLocaleString() did"
+  - "an unreadable timestamp still reads '—'"
+  - "a signed-off checklist, reviewed turnover, its history and dated / closed punch items render through one day formatter, reading as toLocaleDateString()"
+
+  They count `Intl.DateTimeFormat` constructions and spy on `Date.prototype.toLocaleString` / `toLocaleDateString` to show there is no per-row call. They fail on the base code.
+
+**Done-when.**
+1. ✓ `fmtMoney` reuses formatters (J3, 2026-09-29).
+2. ✓ `buildCostSeries` parses each entry date once (J5, 2026-09-30).
+3. ✓ for the finding's locations. The rows it named no longer construct a formatter per render: the Costs tab's entry rows (J3), the S-curve's points (J5), and now the timeline feed and the Quality tab's rows. The finding's `projects/[id]/page.tsx:1012` site is `formatRelative`, which the independent pass showed is arithmetic. Its `toLocaleDateString()` fallback runs only for a checkout older than seven days, on a short list, and it is not changed. *Review correction:* this ✓ does not cover every list row in the tree. Short lists outside the finding's locations still call the default-locale `toLocaleDateString()` per row, including in files this package edited for other findings: `IntakePanel.tsx:542, :582`, `cost/ChangeOrdersPanel.tsx:264`, `cost/QuotesPanel.tsx:1585` and `companies/[id]/page.tsx:461`. V8 caches the default-locale formatter behind that call, so none of them is the measured hot path this finding is about. They are left unchanged (DEC-31).
+
+**Scope / residual.** None in the finding's locations. The short-list `toLocaleDateString()` calls named in done-when 3 are not part of this finding.
 
 ---
 

@@ -12,6 +12,12 @@
 //     in projects-tab 10-accessibility-mobile.md A11Y-13 by file:line. This
 //     census is a ratchet over that list: a file may lose sites (update the
 //     list and the record when it does), never gain one.
+//   * projects Round G J10b drove the ratchet down to the one site in a file
+//     another package holds this round (ProjectCoach.tsx, J12): every text
+//     pair now wears the area's recipe (rose / emerald 700, amber 800, each
+//     with its 300 dark twin), every icon keeps its 600 step and gains a 400
+//     dark twin (non-text, 3 : 1), and every hover-only rose-600 gains a
+//     dark:hover rose-300 — each change on the element itself, no global CSS.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -130,27 +136,9 @@ function uncited600(file: string, s: string): string[] {
 /** The residual the A11Y-13 record lists (final review, 2026-10-01), per
  *  file: text, icon and hover-only sites together. */
 const RECORDED_RESIDUAL: Record<string, number> = {
-  "components/projects/CostsTab.tsx": 5,
-  "components/projects/EditProjectModal.tsx": 3,
-  "components/projects/ExecutionReportView.tsx": 15,
-  "components/projects/ExecutionView.tsx": 3,
-  "components/projects/IntakePanel.tsx": 2,
+  // J12's file this round (PERF-8): the coach's amber not-migrated icon —
+  // one class token, left for the file's owner.
   "components/projects/ProjectCoach.tsx": 1,
-  "components/projects/ProjectDocumentsCard.tsx": 1,
-  "components/projects/ProjectWizard.tsx": 7,
-  "components/projects/QualityTab.tsx": 2,
-  "components/projects/ScheduleCalendarTileView.tsx": 1,
-  "components/projects/ScheduleImportModal.tsx": 2,
-  "components/projects/ScheduleProgress.tsx": 5,
-  "components/projects/StaleCheckoutBanner.tsx": 2,
-  "components/projects/TabErrorBoundary.tsx": 1,
-  "components/projects/TaskDetailPanel.tsx": 3,
-  "components/projects/TransitionInPanel.tsx": 3,
-  "components/projects/cost/ChangeOrdersPanel.tsx": 1,
-  "components/projects/cost/QuotesPanel.tsx": 1,
-  "app/(protected)/companies/[id]/page.tsx": 1,
-  "app/(protected)/companies/error.tsx": 1,
-  "app/submit/[token]/page.tsx": 1,
 };
 
 describe("A11Y-13 (final review) — the residual list names every uncited -600 pair with no dark variant (a ratchet)", () => {
@@ -168,17 +156,19 @@ describe("A11Y-13 (final review) — the residual list names every uncited -600 
     expect(found.length).toBeGreaterThan(0);   // the finding stays OPEN
   });
 
-  it("the delete error is not among them (fixed); the cited TaskDetailPanel field note and the ExecutionReportView figures are", () => {
+  it("the delete error, the TaskDetailPanel field note and the ExecutionReportView figures are no longer among them — they wear the recipe (J10b)", () => {
     const panel = readFileSync(join(ROOT, "components/projects/TaskDetailPanel.tsx"), "utf8");
     const fixed = '{deleteError && <span role="alert" className="text-[11px] text-rose-700 dark:text-rose-300">{deleteError}</span>}';
     expect(panel).toContain(fixed);
-    const fixedLine = panel.slice(0, panel.indexOf(fixed)).split("\n").length;
-    expect(found.filter((x) => x.startsWith(`components/projects/TaskDetailPanel.tsx:${fixedLine} `))).toEqual([]);
-    expect(found.filter((x) => x.startsWith("components/projects/TaskDetailPanel.tsx")).map((x) => x.split(" ")[1])).toEqual(
-      expect.arrayContaining(["text-rose-600", "text-amber-600"]));
-    const report = found.filter((x) => x.startsWith("components/projects/ExecutionReportView.tsx"));
-    expect(report.some((x) => x.endsWith(" text-rose-600"))).toBe(true);
-    expect(report.some((x) => x.endsWith(" text-emerald-600"))).toBe(true);
+    expect(found.filter((x) => x.startsWith("components/projects/TaskDetailPanel.tsx"))).toEqual([]);
+    expect(panel).toContain('${err ? "text-rose-700 dark:text-rose-300" : "text-amber-800 dark:text-amber-300"}');
+    // the "Delete task" label: the recipe, and its hover slab no longer a light rose-50 in dark
+    expect(panel).toContain("text-rose-700 dark:text-rose-300 hover:text-rose-800 dark:hover:text-rose-200 hover:bg-rose-500/10");
+    expect(panel).not.toContain("hover:bg-rose-50 ");
+    const report = readFileSync(join(ROOT, "components/projects/ExecutionReportView.tsx"), "utf8");
+    expect(found.filter((x) => x.startsWith("components/projects/ExecutionReportView.tsx"))).toEqual([]);
+    expect(report).toContain('${ahead ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}');
+    expect(report).toContain('const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400"');
   });
 
   it("the census is mutation-checked: it catches a bare and a hover pair, and passes one with its dark variant", () => {
@@ -187,5 +177,50 @@ describe("A11Y-13 (final review) — the residual list names every uncited -600 
     expect(uncited600("x.tsx", '<span className={`text-xs ${bad ? "text-amber-600" : "x"}`}>e</span>')).toHaveLength(1);
     expect(uncited600("x.tsx", '<span className="text-rose-600 dark:text-rose-300">e</span>')).toHaveLength(0);
     expect(uncited600("x.tsx", '<span className="hover:text-rose-600 dark:hover:text-rose-300">e</span>')).toHaveLength(0);
+  });
+});
+
+// ── projects Round G J10b: what the 60 sites now wear, in both themes ──
+describe("A11Y-13 (J10b) — every pair the census held now clears its floor in both themes", () => {
+  const WHITE = hex("#ffffff"), SURFACE2 = hex("#f8fafc"), DARK_SURFACE = hex("#111827"), DARK_SURFACE2 = hex("#0f172a");
+  const TEXT_RECIPE: Array<[string, RGB, RGB]> = [   // light step, dark twin
+    ["rose", hex("#be123c"), hex("#fda4af")],
+    ["emerald", hex("#047857"), hex("#6ee7b7")],
+    ["amber", hex("#92400e"), hex("#fcd34d")],
+  ];
+  const ICON: Array<[string, RGB, RGB]> = [          // 600 kept, 400 in dark
+    ["rose", hex("#e11d48"), hex("#fb7185")],
+    ["emerald", hex("#059669"), hex("#34d399")],
+    ["amber", hex("#d97706"), hex("#fbbf24")],
+  ];
+  it("text: the 700 / 800 step clears 4.5 : 1 on the light surfaces and the 300 twin on the dark ones", () => {
+    for (const [hue, light, dark] of TEXT_RECIPE) {
+      for (const bg of [WHITE, SURFACE2]) expect(ratio(light, bg), hue).toBeGreaterThanOrEqual(4.5);
+      for (const bg of [DARK_SURFACE, DARK_SURFACE2]) expect(ratio(dark, bg), hue).toBeGreaterThanOrEqual(4.5);
+    }
+    // the 600 text it replaced failed in dark (rose) or even in light (amber, emerald)
+    expect(ratio(hex("#e11d48"), DARK_SURFACE2)).toBeLessThan(4.5);
+    expect(ratio(hex("#d97706"), WHITE)).toBeLessThan(4.5);
+    expect(ratio(hex("#059669"), WHITE)).toBeLessThan(4.5);
+  });
+  it("icons (SC 1.4.11, 3 : 1): the 600 step on light and the 400 twin on dark", () => {
+    for (const [hue, light, dark] of ICON) {
+      for (const bg of [WHITE, SURFACE2]) expect(ratio(light, bg), hue).toBeGreaterThanOrEqual(3);
+      for (const bg of [DARK_SURFACE, DARK_SURFACE2]) expect(ratio(dark, bg), hue).toBeGreaterThanOrEqual(3);
+    }
+  });
+  it("hover-only: rose-600 on the light card surface and its rose-300 dark twin clear 4.5 : 1 (the icon buttons 3 : 1 on a strip too)", () => {
+    // the hover-only sites are the cards' Void / Reverse labels (on the card
+    // surface) and remove / dismiss icons (non-text)
+    expect(ratio(hex("#e11d48"), WHITE)).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(hex("#e11d48"), SURFACE2)).toBeGreaterThanOrEqual(3);
+    for (const bg of [DARK_SURFACE, DARK_SURFACE2]) expect(ratio(hex("#fda4af"), bg)).toBeGreaterThanOrEqual(4.5);
+    // before: the dark hover was the same rose-600, under 4.5 : 1 on either dark surface
+    for (const bg of [DARK_SURFACE, DARK_SURFACE2]) expect(ratio(hex("#e11d48"), bg)).toBeLessThan(4.5);
+  });
+  it("source: each change sits on its element — no global stylesheet rule was added for these hues", () => {
+    const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
+    expect(css).not.toMatch(/\.dark \.text-(rose|amber|emerald|red)-600/);
+    expect(css).not.toMatch(/\.dark \.hover\\:text-rose-600/);
   });
 });

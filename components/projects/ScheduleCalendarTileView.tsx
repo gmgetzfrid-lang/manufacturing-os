@@ -377,7 +377,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   className={`border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
                 >
                   <div className="flex items-center justify-between px-0.5">
-                    <span className={`text-[11px] font-bold ${isToday ? "text-rose-600" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}>
+                    <span className={`text-[11px] font-bold ${isToday ? "text-rose-700 dark:text-rose-300" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}>
                       {day.getUTCDate()}
                     </span>
                   </div>

@@ -462,7 +462,14 @@ export default function ScheduleImportModal({
               {parseResult.needsDateConvention && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
                   <div className="font-bold">How should dates in this file be read?</div>
-                  <div>Every slash date (e.g. <span className="font-mono">{parseResult.dates?.sample}</span>) could be day/month or month/day. Nothing is imported until you choose; the choice applies to the whole file.</div>
+                  {/* GAP-403: the question names the column the dates are in — each
+                      sample with its own column (a contradicting file's two sides
+                      are usually in different columns). */}
+                  {parseResult.dateSource?.conflict ? (
+                    <div>This file contradicts itself about date order: {parseResult.dateSource.samples.map((side, i) => <React.Fragment key={`${i}-${side.value}`}>{i > 0 ? ", but " : ""}<span className="font-mono">{side.value}</span>{side.column ? <> in <b>&ldquo;{side.column}&rdquo;</b></> : null} can only be {side.reads === "dmy" ? "day/month" : "month/day"}</React.Fragment>)}. Nothing is imported until you choose; the choice applies to the whole file, and a row whose dates cannot be read that way is skipped.</div>
+                  ) : (
+                    <div>Every slash date{parseResult.dateSource?.columns.length ? <> in {parseResult.dateSource.columns.map((c, i, all) => <React.Fragment key={c}>{i > 0 ? (i === all.length - 1 ? " and " : ", ") : ""}<b>&ldquo;{c}&rdquo;</b></React.Fragment>)}</> : null} (e.g. <span className="font-mono">{parseResult.dateSource?.samples[0]?.value ?? parseResult.dates?.sample}</span>{parseResult.dateSource?.samples[0]?.column ? <> in <b>&ldquo;{parseResult.dateSource.samples[0].column}&rdquo;</b></> : null}) could be day/month or month/day. Nothing is imported until you choose; the choice applies to the whole file.</div>
+                  )}
                   <div className="flex items-center gap-4">
                     {(["mdy", "dmy"] as DateConvention[]).map((c) => (
                       <label key={c} className="inline-flex items-center gap-1.5 cursor-pointer">
@@ -821,8 +828,8 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
     }`}>
       <div className="flex items-center gap-2">
         {noHierarchy
-          ? <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-          : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ? <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+          : <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
         }
         <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900" : "text-emerald-900"}`}>
           {noHierarchy

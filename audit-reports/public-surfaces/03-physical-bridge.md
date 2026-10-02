@@ -671,6 +671,19 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 
 **Scope / residual.** Both QR generators this finding is about are fixed, and its verifier's narrowing is met. It stays OPEN only for done-when 3's tree-wide clause, owned by the packages named above.
 
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS removed `window.location.origin` from the projects' outbound links. The Intake tab's and the Costs tab's `/submit` link builders now use `publicOrigin()`: `components/projects/IntakePanel.tsx` and `components/projects/cost/QuotesPanel.tsx` (see document-control `XEDGE-5`). Tests: `lib/__tests__/j10bIntakeLinksOrigin.test.ts` "XEDGE-5 / PHYS-13 —", with rendered copies and a census that no file under `components/projects` reads `window.location.origin`.
+
+**Done-when (this pass).**
+1. ✓ Unchanged.
+2. ✓ Unchanged.
+3. ◐ The projects sites ✓. Left, by grep at this commit:
+   - `app/(protected)/documents/[libraryId]/page.tsx:755, 3159`: the `/d/` copies (IS-P1).
+   - `lib/notifications.ts:274`: `ticketUrl` (notifications N6, `DELIV-5`).
+
+   Two other readers build no outbound share link and are not assessed here: `app/page.tsx:103`, the sign-in `redirectTo`, and `components/viewers/SecureDocViewer.tsx:27`, a same-origin comparison.
+
+**Scope / residual.** OPEN for those two files' owners.
+
 ---
 
 <a id="phys-14"></a>

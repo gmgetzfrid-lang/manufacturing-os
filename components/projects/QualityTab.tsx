@@ -73,11 +73,27 @@ import Link from "next/link";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
 import { StatusMark, StatusLegend, CHECKLIST_STATUS_MARKS, PUNCH_STATUS_MARKS } from "@/components/projects/StatusMark";
 import { TURNOVER_STATUS_MEANING } from "@/lib/projectVocabulary";
+import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
+import { isControllerPrincipal } from "@/lib/permissions";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
-/** A11Y-8: a decision control is never under 24 px, and on a coarse
- *  pointer (a tablet, a gloved hand) it is 44 px — set on the button, never
- *  by a bare element rule in the shared stylesheet. */
-const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";
+/** A11Y-8 / A11Y-14: a decision control is never under 24 px, and on a
+ *  coarse pointer (a tablet, a gloved hand) it is 44 px — set on the button,
+ *  never by a bare element rule in the shared stylesheet. One constant for
+ *  every Projects surface (components/projects/decisionTarget.ts). */
+
+/** PERF-10: ONE date formatter for every row of the tab — a checklist's
+ *  sign-off, an item's machine verification, a turnover review and its
+ *  history, a punch item's due date and closure — created on first use,
+ *  never `toLocaleDateString()` per row per render. The same output: the
+ *  default numeric date in the viewer's locale (an unreadable date still
+ *  reads "Invalid Date", as before — formatting it would throw). */
+let dayFormatter: Intl.DateTimeFormat | null = null;
+function fmtDay(d: Date): string {
+  if (!Number.isFinite(d.getTime())) return d.toLocaleDateString();
+  dayFormatter ??= new Intl.DateTimeFormat(undefined, { year: "numeric", month: "numeric", day: "numeric" });
+  return dayFormatter.format(d);
+}
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -127,21 +143,32 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   orgId: string; projectId: string; canManage: boolean;
   uid: string; userEmail?: string | null;
   jobKind: string | null;
-  /** Fires after each data reload so the page's coach/health re-gathers. */
+  /** Fires after each WRITE on this tab (once its re-read has landed) so the
+   *  page's coach/health re-gathers — never on mount or a read retry
+   *  (PERF-3 / PERF-4). */
   onDataChanged?: () => void;
 }) {
   const actor: Actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
-  const { member } = useRole();
+  const { member, activeRole, roles } = useRole();
+  /** REL-9: voiding a checklist is the controller tier's — held anywhere in
+   *  the role collection, lib/permissions isControllerPrincipal, which
+   *  mirrors is_org_controller: the database's project_checklists_signoff_rail
+   *  (20261136, QUAL-15) refuses anyone else, so nobody else is offered the
+   *  control. */
+  const mayVoidChecklist = isControllerPrincipal({ role: activeRole, roles });
   /** QUAL-4: the database's sign-off decision for this project — read with
    *  the lists on every refresh (mount, Retry, after each change), so a grant,
    *  a revocation or a new eligible signer is seen without a page reload. */
   const [authority, setAuthority] = useState<SignoffAuthority | null>(null);
   /** Only the newest read may land: an older answer never overwrites it. */
   const authoritySeq = useRef(0);
-  const loadAuthority = useCallback(async () => {
+  const loadAuthority = useCallback((): Promise<void> => {
     const seq = ++authoritySeq.current;
-    const a = await loadSignoffAuthority(orgId, projectId, actor);
-    if (seq === authoritySeq.current) setAuthority(a);
+    // Lands in the settled callback, never synchronously in the load effect
+    // that calls this (react-hooks/set-state-in-effect).
+    return loadSignoffAuthority(orgId, projectId, actor).then((a) => {
+      if (seq === authoritySeq.current) setAuthority(a);
+    });
   }, [orgId, projectId, actor]);
   // QUAL-4 done-when 4: the write controls follow the decision the policies
   // apply. Until it answers — or when it cannot be read — they follow the
@@ -195,30 +222,43 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
     return () => { cancelled = true; };
   }, [orgId, projectId, contractorsTry]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<void> => {
     // The sign-off decision is re-read beside the lists (it never throws:
     // a failed read comes back as authority.error and the controls fall back).
     void loadAuthority();
     // allSettled: one failing read never hides the three that answered, and
     // a denied policy or a missing migration is a failure to load — never
     // "No checklists yet" (UX-10).
-    const [cl, to, ev, pu] = await Promise.allSettled([
+    // The lists land in the settled callback — never synchronously in the
+    // load effect that calls this (react-hooks/set-state-in-effect).
+    return Promise.allSettled([
       listChecklists(orgId, projectId),
       listTurnoverItems(orgId, projectId),
       listTurnoverReviewEvents(orgId, projectId),
       listPunchItems(orgId, projectId),
-    ]);
-    const why = (r: PromiseSettledResult<unknown>) => (r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined);
-    setChecklists(cl.status === "fulfilled" ? cl.value : []);
-    setTurnover(to.status === "fulfilled" ? to.value : []);
-    setEvents(ev.status === "fulfilled" ? ev.value : []);
-    setPunch(pu.status === "fulfilled" ? pu.value : []);
-    setLoadErrors({ checklists: why(cl), turnover: why(to), history: why(ev), punch: why(pu) });
-    setLoading(false);
-    onDataChanged?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ]).then(([cl, to, ev, pu]) => {
+      const why = (r: PromiseSettledResult<unknown>) => (r.status === "rejected" ? String((r.reason as Error)?.message ?? r.reason) : undefined);
+      setChecklists(cl.status === "fulfilled" ? cl.value : []);
+      setTurnover(to.status === "fulfilled" ? to.value : []);
+      setEvents(ev.status === "fulfilled" ? ev.value : []);
+      setPunch(pu.status === "fulfilled" ? pu.value : []);
+      setLoadErrors({ checklists: why(cl), turnover: why(to), history: why(ev), punch: why(pu) });
+      setLoading(false);
+    });
   }, [orgId, projectId, loadAuthority]);
   useEffect(() => { void refresh(); }, [refresh]);
+  /** PERF-4 / PERF-3: after a WRITE on this tab — re-read, drop any snapshot
+   *  round issued before the write, then tell the page, so the coach
+   *  re-gathers from a fresh round. The load effect never calls the page:
+   *  the coach gathers its own round when it mounts (a tab mount costs no
+   *  second round), and no callback identity can re-fire the load — the
+   *  loop the old eslint suppression held back cannot form. */
+  const afterWrite = useCallback(() => {
+    void refresh().then(() => {
+      invalidateProjectSnapshot(orgId, projectId);
+      onDataChanged?.();
+    });
+  }, [refresh, orgId, projectId, onDataChanged]);
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
@@ -232,13 +272,13 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
         <Notice notice={failure(`The project's contractors couldn't be loaded — ${asClause(contractorsError)}. Each item keeps its contractor, but it can't be shown or changed until the list loads.`)}
           action={<button type="button" onClick={() => setContractorsTry((n) => n + 1)} className="underline">Retry</button>} />
       )}
-      <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
-        checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={retry} />
+      <ChecklistsSection key={sweepTick} orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff} mayVoid={mayVoidChecklist}
+        checklists={checklists} loadError={loadErrors.checklists} onRetry={retry} onChanged={afterWrite} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor} signoff={signoff}
         items={turnover} events={events} loadError={loadErrors.turnover} historyError={loadErrors.history} onRetry={retry}
-        jobKind={jobKind} onChanged={retry} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} contractorsState={contractorsState} />
+        jobKind={jobKind} onChanged={afterWrite} onEvidenceSwept={() => setSweepTick((t) => t + 1)} contractors={contractors} contractorsState={contractorsState} />
       <PunchSection orgId={orgId} projectId={projectId} canManage={canSignOff} actor={actor}
-        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={retry} contractors={contractors} contractorsState={contractorsState} />
+        items={punch} loadError={loadErrors.punch} onRetry={retry} onChanged={afterWrite} contractors={contractors} contractorsState={contractorsState} />
     </div>
   );
 }
@@ -256,8 +296,10 @@ function LoadFailed({ what, error, onRetry }: { what: string; error: string; onR
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
-function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checklists, loadError, onRetry, onChanged }: {
+function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, mayVoid = false, checklists, loadError, onRetry, onChanged }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor; signoff: SignoffContext;
+  /** REL-9: the viewer may void a checklist (the controller tier). */
+  mayVoid?: boolean;
   checklists: Checklist[]; loadError?: string; onRetry: () => void; onChanged: () => void;
 }) {
   const [showNew, setShowNew] = useState(false);
@@ -305,7 +347,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, signoff, checkl
         <div className="divide-y divide-[var(--color-border)]">
           {checklists.filter((c) => c.status !== "void").map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
-              canManage={canManage} actor={actor} signoff={signoff} onChanged={onChanged} />
+              canManage={canManage} actor={actor} signoff={signoff} mayVoid={mayVoid} onChanged={onChanged} notify={setNotice} />
           ))}
         </div>
       )}
@@ -384,7 +426,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
             {doc ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {doc.label}
-                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
               </span>
             ) : (
               <span className="relative flex-1 min-w-64">
@@ -438,7 +480,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, notify }:
                 {p.section && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
                 <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
-                  className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600"><X className="w-3 h-3" /></button>
+                  className="shrink-0 text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3 h-3" /></button>
               </li>
             ))}
           </ul>
@@ -456,10 +498,14 @@ type ReviewProposal = AssessmentProposal & {
 /** The cited document's current standing, for the evidence chip (SAF-1 / QUAL-1). */
 type DocStanding = { status: string | null; rev: string | null; label: string };
 
-function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, onChanged }: {
+function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff, mayVoid = false, onChanged, notify }: {
   orgId: string; projectId: string; checklist: Checklist;
   canManage: boolean; actor: Actor; signoff: SignoffContext;
+  mayVoid?: boolean;
   onChanged: () => void;
+  /** The section's notice — for what must outlive this card (a voided
+   *  checklist's card leaves the list on the re-read). */
+  notify?: Notify;
 }) {
   const [open, setOpen] = useState(false);
   /** QUAL-4: the signing ceremony is open for "Mark complete". */
@@ -593,6 +639,38 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
     if (!res.ok) { setNotice(failure(res.error ?? "Couldn't complete.")); return; }
     onChanged();
   };
+  /** REL-9: a checklist created by mistake (or one that should not count)
+   *  is voided — the controller's act the database rail admits (QUAL-15,
+   *  20261136): it leaves the project's checklists and every count closeout
+   *  reads; its items, any sign-off signature and the audit row stay. The
+   *  write is checked (lib/checklists setChecklistStatus → checkedWrite): a
+   *  refusal or a row that did not change is said, never a silent success.
+   *  The checklist keeps no voided_by and no reason column, so the void's
+   *  audit row is its only record of who voided it and why: the reason is
+   *  asked (the record's bar, SAF-4) and goes on that row, and the row's
+   *  insert is checked too — a failure is said in the section's notice,
+   *  which outlives this card (it leaves the list on the re-read). */
+  const voidChecklist = async () => {
+    const reason = await appPrompt({
+      title: `Void the checklist “${checklist.title}”?`,
+      message: `${checklist.status === "complete"
+        ? `It was signed off${checklist.completedByName ? ` by ${checklist.completedByName}` : ""}. Voiding withdraws it from`
+        : "Use this for a checklist created by mistake. Voiding takes it out of"} this project's checklists and every closeout count. Its items${checklist.status === "complete" ? " and its signature" : ""} stay on the record, and the void is recorded under your name with the reason you give. Only Admin / Document Control can void a checklist.`,
+      placeholder: "Why is it voided? (at least 10 characters)",
+      required: true, minLength: REASON_MIN_LENGTH,
+      confirmLabel: "Void checklist",
+      tone: "danger",
+    });
+    if (reason == null) return;
+    setBusy("void"); setNotice(null);
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "void", actor, reason: reason.trim() });
+    setBusy(null);
+    if (!res.ok) { setNotice(failure(res.error ?? "Couldn't void the checklist.")); return; }
+    if (res.auditError) {
+      notify?.(failure(`The checklist “${checklist.title}” was voided, but its audit record failed (${asClause(res.auditError)}) — the void is not recorded under your name, so closeout cannot say who voided it or why.`));
+    }
+    onChanged();
+  };
   /** DEC-12: the author signs off only when nobody else on the project can
    *  — and waits while that is not known (`pending`). */
   const separation = signoffSeparation(checklist.createdBy, actor.uid, signoff.otherSigners, "checklist");
@@ -627,7 +705,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <span className="text-xs font-black text-[var(--color-text)]">{checklist.title}</span>
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind] ?? checklist.kind}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"
             title={checklist.completedBasis === "human" ? "Completed on human sign-off — a person stands behind every green and every N/A" : checklist.completedBasis === "auto" ? "Completed while a green or an N/A carried no person's reason, or no green was a person's decision — not citable as proof by another checklist" : "Completed"}>
@@ -637,7 +715,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
         {checklist.status === "complete" && checklist.completedByName && (
           <span className="text-[9px] font-bold text-[var(--color-text-muted)]"
             title={checklist.completedSignatureId ? "Signed off with an e-signature (re-authenticated at signing)" : undefined}>
-            signed off by {checklist.completedByName}{checklist.completedAt ? ` · ${new Date(checklist.completedAt).toLocaleDateString()}` : ""}
+            signed off by {checklist.completedByName}{checklist.completedAt ? ` · ${fmtDay(new Date(checklist.completedAt))}` : ""}
           </span>
         )}
         {checklist.status === "complete" && checklist.completedSingleSigner && (
@@ -703,6 +781,16 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, signoff,
               onCancel={() => { if (busy !== "complete") setSigning(false); }}
               onSign={(_intent, statement, signatureImage, reauth) => void complete({ statement, signatureImage: signatureImage ?? null, reauth: reauth ?? null, signerName: signoff.signerName })}
             />
+          )}
+
+          {mayVoid && checklist.status !== "void" && (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => void voidChecklist()} disabled={busy != null}
+                title="Admin / Document Control: take this checklist out of the project and its closeout counts — its items and any signature stay on the record"
+                className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-500/40 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
+                {busy === "void" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void checklist
+              </button>
+            </div>
           )}
 
           <Notice notice={notice} onClose={() => setNotice(null)} />
@@ -878,7 +966,7 @@ function ChecklistItemRow({ orgId, projectId, item, docs, docsChecked, canManage
           )}
           {machine && (
             <div className="mt-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300" title="Set by the deterministic evidence sweep from a document on file — no person has verified this line.">
-              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${new Date(item.updatedAt).toLocaleDateString()}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
+              Machine-verified ({item.updatedByName}){item.updatedAt ? ` · ${fmtDay(new Date(item.updatedAt))}` : ""} — not a human sign-off{canManage ? " · Verify to sign it off" : ""}
             </div>
           )}
           {unreasonedNa && (
@@ -1273,7 +1361,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                 <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
                   {[
                     it.description,
-                    it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${new Date(it.reviewedAt).toLocaleDateString()}` : ""}` : null,
+                    it.reviewedByName ? `${it.status} by ${it.reviewedByName}${it.reviewedAt ? ` on ${fmtDay(new Date(it.reviewedAt))}` : ""}` : null,
                     (it.status === "accepted" || it.status === "waived") && it.reviewedSignatureId ? "signed" : null,
                     (it.status === "accepted" || it.status === "waived") && it.reviewedSingleSigner ? "single-signer (nobody else could sign it off)" : null,
                     it.reviewNote ? `“${it.reviewNote}”` : null,
@@ -1300,7 +1388,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
                       <li key={e.id}>
                         {e.kind === "nonconformance" ? <span className="font-black uppercase text-rose-600 dark:text-rose-400 mr-1">nonconformance</span>
                           : e.kind === "reopen" ? <span className="font-black uppercase mr-1">reopened</span> : null}
-                        {e.fromStatus ? `${e.fromStatus} → ` : ""}{e.toStatus}{e.reviewerName ? ` by ${e.reviewerName}` : ""}{e.createdAt ? ` on ${new Date(e.createdAt).toLocaleDateString()}` : ""}{e.note ? ` — “${e.note}”` : ""}
+                        {e.fromStatus ? `${e.fromStatus} → ` : ""}{e.toStatus}{e.reviewerName ? ` by ${e.reviewerName}` : ""}{e.createdAt ? ` on ${fmtDay(new Date(e.createdAt))}` : ""}{e.note ? ` — “${e.note}”` : ""}
                       </li>
                     ))}
                   </ul>
@@ -1515,7 +1603,7 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
-      {TURNOVER_STATUS_LABEL[status]}
+      {TURNOVER_STATUS_LABEL[status] ?? status}
     </span>
   );
 }
@@ -1660,13 +1748,13 @@ function PunchSection({ orgId, projectId, canManage, actor, items, loadError, on
                   ) : null}
                   {it.dueDate && it.status === "open" && (
                     <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-                      due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}
+                      due {fmtDay(new Date(it.dueDate + "T00:00:00"))}{overdue ? " — overdue" : ""}
                     </span>
                   )}
                   {it.createdByName && <span className="text-[10px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                   {it.status !== "open" && (
                     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${it.status === "done" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "border-rose-500/40 text-rose-700 dark:text-rose-300"}`}>
-                      {it.status === "done" ? "done" : "voided"}{it.closedByName ? ` by ${it.closedByName}` : ""}{it.closedAt ? ` on ${new Date(it.closedAt).toLocaleDateString()}` : ""}
+                      {it.status === "done" ? "done" : "voided"}{it.closedByName ? ` by ${it.closedByName}` : ""}{it.closedAt ? ` on ${fmtDay(new Date(it.closedAt))}` : ""}
                     </span>
                   )}
                   {canManage && it.status === "open" && busy !== it.id && (

@@ -223,7 +223,10 @@ describe("A11Y-2 — a status is a glyph and a word, not hue alone", () => {
 describe("A11Y-8 — decision targets, Accept's confirmation, the stepper", () => {
   const q = src("components/projects/QualityTab.tsx");
   it("the target floor is 24 px and 44 px on a coarse pointer, set on the control (no bare element rule)", () => {
-    expect(q).toContain('const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";');
+    // projects Round G J10b (A11Y-14): lifted into one shared constant the
+    // Quality tab imports, with the decision controls outside it
+    expect(src("components/projects/decisionTarget.ts")).toContain('export const DECISION_TARGET = "min-h-6 min-w-6 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:px-3";');
+    expect(q).toContain('import { DECISION_TARGET } from "@/components/projects/decisionTarget";');
     expect(src("app/globals.css")).not.toMatch(/@media \(pointer: coarse\)\s*\{\s*button\b/);
   });
   it("every Received / Accept / Reject / Waive / Reopen, item decision and punch Done / Void button carries it, in clusters spaced 8 px", () => {

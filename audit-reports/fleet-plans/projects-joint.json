@@ -1061,6 +1061,36 @@
     "none"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep). An adversarial reviewer re-checks every flip."
+  },
+  {
+   "name": "J14 PROJECTS FOLLOW-UPS \u2014 the decision floor on the remaining write buttons, the intake approve's recorded hold force, the contractor's award / decline notice, the last dark-mode pairs and tint slabs, the report's total lookups, the dead declarations",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "A11Y-15 (opened by the integrator 2026-10-02 at the J10b merge, DEC-31 split from A11Y-14: the write buttons outside A11Y-14's surfaces \u2014 projects/[id]/page.tsx Members tab (:1172, :1187, :1193), StatusControl.tsx:186, ProgressControl.tsx:72, StaleCheckoutBanner.tsx:153, EditProjectModal.tsx:319 \u2014 take the shared DECISION_TARGET and join the j10bDecisionTargets census)",
+     "A11Y-13 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: (1) ProjectCoach.tsx:101 \u2014 dark:text-{hue}-400 beside the 600 icon, then a11y13FinalReview's RECORDED_RESIDUAL drops to {}; (2) the light tint slabs (bg-{hue}-50|100 with no dark variant) the record lists in the schedule-engine files \u2014 re-count at HEAD, convert with the token recipe, extend the census)",
+     "REL-4 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: the two lib/projectReport.ts lookups \u2014 CO_REASON_LABEL[x] ?? x at both sites and a fallback for why[r.reason] (:400 at J10b's base; J12 edits this file, re-locate))",
+     "REL-9 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: done-when 3's remaining dead declarations \u2014 equipmentTags (lib/checklists.ts), trend (lib/projectHealth.ts), setup_state (lib/projectWizardWrites.ts), addEvidence (lib/checklists.ts updateChecklistItem); remove each or record its reader; kind 'po' stays under J3's CHECK decision)",
+     "MON-10 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: done-when 2, the contractor is notified of the outcome of an award or decline \u2014 reuse J12's contractor-notice path (app/api/intake/outcome-notice + lib/intakeOutcomeNotice, DEC-56: the contact the org entered on the link, outcome read from the database, one notice per decision, the audit row is the record) for the quote's award and decline, or record why a quote's contact cannot be reached that way)"
+    ],
+    "projects-and-cost": [
+     "INTK-18 (opened by the integrator 2026-10-02 at the J10b merge, from document-control P14's named follow-up (REV-20): IntakePanel.tsx approve offers a controller the review promote's recorded force (finalizeReviewedRevision forceHold / overrideReason) after a hold refusal, with the HLD-2 acknowledgement, as ReviewGateSection does; the call without a force unchanged)"
+    ]
+   },
+   "files": [
+    "app/(protected)/projects/[id]/page.tsx (Members tab buttons), components/projects/StatusControl.tsx, ProgressControl.tsx, StaleCheckoutBanner.tsx, EditProjectModal.tsx, lib/__tests__/j10bDecisionTargets.test.ts (A11Y-15)",
+    "components/projects/IntakePanel.tsx approve (INTK-18) and, if J12 left it to this file's owner, the Intake tab's call of J12's notifyIntakeOutcome; components/projects/cost/QuotesPanel.tsx award / decline (MON-10, through J12's notice path)",
+    "components/projects/ProjectCoach.tsx :101 and the schedule-engine files the A11Y-13 record lists (tint slabs); lib/__tests__/a11y13FinalReview.test.ts (A11Y-13)",
+    "lib/projectReport.ts (REL-4), lib/checklists.ts, lib/projectHealth.ts, lib/projectWizardWrites.ts (REL-9 dead declarations)"
+   ],
+   "migrationsLikely": 0,
+   "when": "after J12 (it edits ProjectCoach.tsx, lib/projectReport.ts, lib/projectHealth.ts and builds the contractor-notice path MON-10 reuses)",
+   "dependsOn": [
+    "J12 merged",
+    "J10b merged"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the J10b merge: the remainders J10b left in other packages' files (A11Y-13 ProjectCoach / slabs, REL-4 projectReport, REL-9 dead declarations), MON-10's contractor notice (J12 builds the path), and two new LOW findings opened under DEC-31 (A11Y-15, INTK-18). lib/checklists.ts is also notifications N8's (emit() calls) \u2014 expect a merge; the REL-9 limb there is declaration removal only."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
@@ -1069,7 +1099,8 @@
   "then: J5 (after J3), J6b (after J6a)",
   "after DC P4: J1; after DC P6: J8; after DC P2: J9 egress half; after DC P7: J7 QUAL-10 limb, J2b",
   "then: J11 (after J2b); last: J10",
-  "orphan sweep 2026-10-01: J13 any time (records only); J12 after J11; J10b after J10"
+  "orphan sweep 2026-10-01: J13 any time (records only); J12 after J11; J10b after J10",
+  "integrator 2026-10-02 (J10b merge): J14 after J12"
  ],
  "userHeld": {
   "COST-5": "ratify DEC-48 (the silence-vs-plausible-hours gap, the declared / silent weighting, 'cheapest does not automatically win')",

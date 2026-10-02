@@ -22,6 +22,7 @@ import {
 } from "@/lib/changeOrders";
 import { Donut } from "@/components/ui/ChartKit";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr, reloadKey = 0 }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
@@ -176,7 +177,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
                 Approved changes by reason — who owns the growth
               </div>
               <Donut
-                segments={summary.byReason.map((r) => ({ label: CO_REASON_LABEL[r.reason], value: Math.abs(r.amount) }))}
+                segments={summary.byReason.map((r) => ({ label: CO_REASON_LABEL[r.reason] ?? r.reason, value: Math.abs(r.amount) }))}
                 fmt={(n) => fmtMoney(n)} size={84}
                 centerLabel={`${summary.approvedCount} CO${summary.approvedCount === 1 ? "" : "s"}`} />
             </div>
@@ -226,7 +227,7 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
           {co.status}
         </span>
         {isOpen && canManage && (
-          <span className="ml-auto inline-flex items-center gap-1.5">
+          <span className="ml-auto inline-flex items-center gap-2">
             {!co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
                 className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-40"
@@ -237,11 +238,11 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
               title={ownProposal ? "You proposed this change order — a second person decides it when the org has one; an org threshold (change_order_approval_threshold) routes large ones to a controller." : "Approval posts the money to the budget line and notifies the proposer."}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-600 text-white text-[10px] font-black hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+              className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-600 text-white text-[10px] font-black hover:bg-emerald-700 disabled:opacity-50 transition-colors`}>
               {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
               <XIcon className="w-3 h-3" /> Reject
             </button>
           </span>
@@ -249,7 +250,7 @@ function CoRow({ co, canManage, busy, actorId, partyName, accountLabel, accounts
         {co.status === "approved" && canManage && (
           <button onClick={() => void unwind(co)} disabled={busy}
             title={co.postedEntryId ? "Reverse: voids exactly the cost entry this approval posted and marks the change order void (an entry already voided by hand is accepted)." : "No cost entry is linked to this approval — link it or reverse it under 'Ledger needs attention' above."}
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px] font-black hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+            className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] text-[10px] font-black hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50 transition-colors`}>
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Reverse
           </button>
         )}
@@ -347,7 +348,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className={`${DECISION_TARGET} inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Propose
           </button>
         </span>

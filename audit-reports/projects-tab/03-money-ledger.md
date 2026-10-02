@@ -566,7 +566,7 @@ project.
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (done-when 2, the contractor's notice of an award or decline, through the contractor-notice path J12 builds for intake outcomes) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / vendor relations
 - **Locations:**
@@ -604,6 +604,40 @@ group. Send the notification promised at `upload/route.ts:127`.
 2. ✗ NOT DONE HERE — the contractor is external and has no user id; `lib/notify` has no vendor-email kind and the notifications area keeps the taxonomy (PROD-6). The award notice this round (`MON-11`) reaches the project owner and followers; the vendor's signal is the portal status chip P1 renders from the status this sets.
 
 **Scope / residual.** Open on the J4 panel wiring (warning + Decline control) and the contractor notification. `BID-10` (group normalisation) is J4's and would make the grouped rule catch more real competitors.
+
+**Partial (2026-10-01, projects Round G).** Package J10b UI REMAINDERS wired J3's pointer into `components/projects/cost/QuotesPanel.tsx`.
+- **The award's warning is shown.** `awardQuote` returns `{ ok: true, warning }` when rivals could not be marked not selected, or when ungrouped quotes stay open, and names them. The panel captures the warning and sets it on its notice after the re-read, so the refresh does not wipe it.
+- **The award confirm no longer promises a decline it does not make.** A grouped quote's confirm says "… and marks the other open bids in this RFQ group not selected.". An ungrouped one's says "This quote has no RFQ group, so no other bid is marked not selected — decline any that competed for this scope.".
+- **"Decline" on every open quote the award's warning can name** (`mayDecline` in `BidGroup`: `doc.kind === "quote"`, status `parsed` or `draft`, and either no RFQ group or a group that already holds an award). It is gated apart from the award gate (`rowActions`), and the open document's Void goes with it.
+  - In the bid table: an open ungrouped quote, and any open quote in an awarded group. That covers a second quote from the same vendor, since `quoteGroups` keys every ungrouped quote as "Ungrouped — <vendor>" and `mergeQuoteGroups` case-folds the key, so an original and its revision tabulate as one field and awarding one leaves the other open in an awarded group. It also covers a grouped rival whose automatic decline failed, which the warning tells the user to "refresh and decline them by hand".
+  - In the "not read yet" strip: an unread (`draft`) quote on the same rule, so a quote the warning names can be declined without reading it first.
+  - *Second review fix:* the first passes nested Decline and the open Void inside `rowActions` (`!awarded`). In both cases above the warning told the user to decline a quote the table offered no control for, and the record wrongly marked done-when 1 as met.
+  - It opens an `appPrompt` for an optional reason: "It is marked not selected — the contractor's portal shows that — and it can no longer be awarded …".
+  - It then calls `declineQuote({ doc, actor, reason })`.
+  - A cancelled prompt writes nothing. A refusal is said and nothing is re-read.
+  - The button carries the decision floor (`A11Y-14`).
+- **Void on a declined bid.** It goes through `lib/costDocs.voidCostDoc`, which admits `declined`, not through the panel's open-only void. It is offered on every declined row, including one in an RFQ group that has an award — the common case, since a grouped award declines its rivals. The bid table keeps its actions column (header, cells and the note row's `colSpan`) while an awarded group still has a table row with an action, either a declined bid or an open quote (`showActions` in `BidGroup`). Award and "correct total" stay gated on no award (`rowActions`). *Review fix:* the first pass rendered the actions column only in a group with no award, so the Void was reachable only on a hand-declined ungrouped quote alone in its group.
+- **The status chip.** The bid table's status chip reads through `costDocStatusLabel` (`REL-4`).
+- Tests: `lib/__tests__/j10bQuotesAwardDecline.test.ts` "MON-10 —" (11, rendered):
+  - an ungrouped award's confirm, and its warning, which persists;
+  - a grouped award's confirm, and no warning on a clean award;
+  - Decline offered on an open ungrouped quote only, with its reason;
+  - a cancelled Decline and a refused one;
+  - a declined bid's Void through `voidCostDoc`;
+  - an awarded bid and a declined bid in one RFQ group: the declined row offers Void (through `voidCostDoc`), the awarded row offers nothing, and the header and every row have 8 cells;
+  - an awarded group with no declined bid has no actions column (7 cells);
+  - (second review fix) two same-vendor ungrouped quotes, one awarded. The other row offers Decline and Void and never Award or "correct total", every row has 8 cells, and Decline calls `declineQuote` with the reason;
+  - (second review fix) a grouped rival left open in an awarded group offers Decline, and its Void is the open document's guarded write, not `voidCostDoc`;
+  - (second review fix) an unread ungrouped quote is declined from the "not read yet" strip, and an unread grouped one in an unawarded group is not;
+  - (second review fix) an unread quote in an awarded group is declined from the strip, and the group, with no table row needing an action, draws no actions column.
+
+  The four new tests fail against the panel as it was before this fix, which was checked by stashing the panel and running them.
+
+**Done-when.**
+1. ✓ Every losing bid on an awarded scope can reach a terminal status. A grouped rival gets there automatically (J3). Any quote still open after an award gets there through the hand decline, per DEC-50 rule 8. That covers an ungrouped quote, a same-vendor quote in the award's own field, a grouped rival whose automatic decline failed, and an unread quote. The award's warning names the quote and the bid table offers its Decline. The rendered tests above cover each case.
+2. ✗ The contractor is notified of the outcome. Not done, and unchanged since 2026-09-29: the contractor has no user id, and `lib/notify` has no vendor-email kind (the notifications area keeps that taxonomy, PROD-6). The portal status chip renders the status the decline sets.
+
+**Scope / residual.** OPEN for the contractor notification only (notifications area). `BID-10` group normalisation is J4's.
 
 ---
 

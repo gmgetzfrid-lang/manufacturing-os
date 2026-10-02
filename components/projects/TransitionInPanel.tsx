@@ -40,6 +40,7 @@ import { numberIsTheKey } from "@/lib/intakeLinks";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 const UNVERIFIABLE_TEXT: Record<UnverifiableReason, string> = {
   no_number: "no drawing number — it was not checked against the register",
@@ -198,8 +199,8 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
         <span className="text-base font-bold text-[var(--color-text)]">Transition in</span>
         <span className="text-xs text-[var(--color-text-muted)]">
           {candidates.length} sheet{candidates.length === 1 ? "" : "s"} in intake ·{" "}
-          <b className="text-emerald-600">{cleanCount} clean</b>
-          {flaggedCount > 0 && <> · <b className="text-amber-600">{flaggedCount} need review</b></>}
+          <b className="text-emerald-700 dark:text-emerald-300">{cleanCount} clean</b>
+          {flaggedCount > 0 && <> · <b className="text-amber-800 dark:text-amber-300">{flaggedCount} need review</b></>}
           {scanning && <> · scanning…</>}
         </span>
         <button onClick={() => void refresh()} disabled={loading} title="Re-scan" className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
@@ -226,7 +227,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
             {cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => void adoptAllClean()} disabled={busy === "bulk" || cleanCount === 0 || !destLib}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {busy === "bulk" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
             Adopt {cleanCount} clean
           </button>
@@ -260,7 +261,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact && !impact.numberCollision && impact.unverifiable.length > 0 && (
                     <span className="text-[10px] font-bold text-[var(--color-text-muted)]" title={impact.unverifiable.map((r) => UNVERIFIABLE_TEXT[r]).join("; ")}>unverifiable</span>
                   )}
-                  {impact?.clean && !candidateInReview(c) && <span className="text-[10px] font-bold text-emerald-600">clean</span>}
+                  {impact?.clean && !candidateInReview(c) && <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300">clean</span>}
                 </span>
               </button>
 
@@ -327,13 +328,13 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                           : candidateInReview(c) ? (c.pendingRetired ? "Document Control must clear its retired pending revision first" : "Approve or reject the submission first")
                           : blocksOnNumber(impact) && !(renumber.get(c.docId) ?? "").trim() ? "Renumber it to a number that isn't in use first"
                           : undefined}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
+                        className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50`}>
                         {busy === c.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightCircle className="w-3 h-3" />} Adopt
                       </button>
                       </>)}
                       {(impact.numberCollision || impact.overlapDocs.length > 0) && onFlagCollision && (
                         <button onClick={() => onFlagCollision(c, impact)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 dark:text-amber-400 text-[11px] font-black hover:bg-amber-500/10">
+                          className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-amber-500/50 text-amber-700 dark:text-amber-400 text-[11px] font-black hover:bg-amber-500/10`}>
                           <ShieldAlert className="w-3 h-3" /> Flag to drafting
                         </button>
                       )}

@@ -12,6 +12,7 @@
 // states are also caller-owned.
 
 import React from "react";
+import Link from "next/link";
 import {
   FileText, GitBranch, GitCommitVertical, History as HistoryIcon,
   Download as DownloadIcon, Eye, LogIn, LogOut, AlertTriangle,
@@ -154,6 +155,12 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
               <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
                 {event.kind === "version" ? "Rev" : event.kind === "audit" ? "Audit" : event.kind === "hold" ? "Hold" : "Activity"}
               </span>
+              {/* GAP-408: a controls-program milestone links to its record's tab. */}
+              {event.link && (
+                <Link href={event.link.href} className="font-bold text-[var(--color-accent)] underline hover:no-underline">
+                  {event.link.label}
+                </Link>
+              )}
             </div>
             {showScope && event.scope && (event.scope.plantName || event.scope.unitName || event.scope.systemName) && (
               <div className="mt-1.5 flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
@@ -201,10 +208,18 @@ function ScopeChip({ label, tone }: { label: string; tone: "blue" | "purple" | "
   );
 }
 
+/** PERF-10: ONE date-and-time formatter for every row of the feed (up to
+ *  200), created on first use — never `toLocaleString()` per row per
+ *  render. The same output: `toLocaleString()`'s default numeric date and
+ *  time in the viewer's locale. */
+let timeFormatter: Intl.DateTimeFormat | null = null;
 function formatTime(ts: string): string {
   try {
     const d = new Date(ts);
     if (isNaN(d.getTime())) return "—";
-    return d.toLocaleString();
+    timeFormatter ??= new Intl.DateTimeFormat(undefined, {
+      year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    return timeFormatter.format(d);
   } catch { return "—"; }
 }

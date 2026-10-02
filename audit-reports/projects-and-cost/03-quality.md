@@ -457,7 +457,7 @@ lib/turnover.ts:269 `row.closed_by = input.actor.uid;`. lib/turnover.ts:106-119 
 ## QUAL-8 · The checklist completion gate is computed from a read whose error is discarded, so a policy denial or a missing migration lets an entirely unverified checklist be marked complete
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/checklists.ts:102-106`, `lib/checklists.ts:214-231`, `lib/checklists.ts:218-224`, `app/(protected)/projects/[id]/page.tsx:192-200`, `components/projects/QualityTab.tsx:335-341`
@@ -517,6 +517,25 @@ lib/checklists.ts:103 — `const { data } = await supabase...` with no `error` d
 - ✓ Test asserts: item read error ⇒ `setChecklistStatus('complete')` returns `ok: false`.
 
 **Scope / residual.** The `gatherProjectEvidenceState` fail-closed tolerance is untouched (the only fail-open read — the completion gate's — changed). Remaining: the closeout-dialog limb (J8).
+
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS built the closeout-dialog limb. It is in `app/(protected)/projects/[id]/page.tsx`, inside the closeout block only, and in a new `components/projects/CloseoutGatesPending.tsx`.
+- **The gather's rejection is kept, never swallowed.** `.catch((e) => setGatesError(userFacingCaughtError(e, { action: "read", context: "closeout gates" })))` replaces `.catch(() => undefined)`. Each opening, and each Retry (`gatesTry`), clears the previous gates and error first, so a stale panel is never shown.
+- **While the gates are not in hand, the dialog says so** where the panel will be.
+  - Loading: "Checking the closeout gates…" (`role="status"`).
+  - Failure: "The closeout gates could not be loaded — <reason>. Confirm waits until the closeout gates are on screen — they are recorded with the completion." (`role="alert"`). A Retry, with the decision floor, gathers again.
+- **Confirm waits for the gates.** For a completion, Confirm is disabled until the gates are on screen, and its title says why. Once they are on screen the dialog is as before: the recorded gate lines, the override line, and a live Confirm. The gates stay warnings, not walls, and `gateSnapshot` still records what the actor was shown. Other transitions are unaffected. *Review hardening:* `handleTransition` also returns early for a completion with no gates in hand, before the busy flag and the write, so no other caller of the handler can record a completion without them.
+- Tests: `lib/__tests__/j10bCloseoutGates.test.ts`.
+  - Rendered: the loading status.
+  - Rendered: the failure alert with its reason and the Confirm sentence, and a Retry that works.
+  - Source pins on the page: the rejection is kept and Retry gathers again; the pending panel; Confirm's disabled condition and title; the loaded panel and `gateSnapshot`, unchanged; the handler's early return, before `setTransitionBusy(true)` and the write.
+
+**Done-when.**
+- ✓ `listChecklistItems` returns a distinguishable error, and `setChecklistStatus` refuses to complete when the item read failed (2026-09-29).
+- ✓ A checklist with zero items cannot be marked complete (2026-09-29; the database rail 2026-09-30).
+- ✓ The closeout dialog renders an explicit "gates could not be loaded" state and blocks Confirm, instead of omitting the panel (here).
+- ✓ A test asserts that an item read error makes `setChecklistStatus('complete')` return `ok: false` (2026-09-29).
+
+**Scope / residual.** The page is pinned by source, not rendered, because it needs the whole project to render (`projectPageRoundG.test.ts` does the same); the panel is rendered. A gather that never settles keeps Confirm waiting. Cancel still closes the dialog, and reopening it gathers again.
 
 ---
 
@@ -867,5 +886,7 @@ Tests — new `lib/__tests__/qual15CloseoutSignoff.test.ts`: "an OPEN checklist 
 - A voided checklist cannot silently leave the closeout gate — ✓: J2b's rail makes a void a controller's (`20261136`), and the Complete dialog, the closeout audit row and the report now show each voided checklist and who voided it (the branch the record offered; no reason column is added — none exists, as J2b recorded).
 
 **Scope / residual.** A void made outside `setChecklistStatus` (a direct write) has no `CHECKLIST_STATUS` row and is shown as "who voided it is not on record" — honest, not attributed. The project health score's Quality part still scores item colours (not this finding's surfaces). Pending migration for the signature half: `20261136` (J2b's).
+
+*Later (2026-10-01, projects Round G J10b, `REL-9`):* the Quality tab now offers the void, to the controller tier. It asks for a reason (`REASON_MIN_LENGTH`), and the reason goes on the void's `CHECKLIST_STATUS` audit row as `details.reason`, so a void made through the product now records why as well as who. `setChecklistStatus` itself refuses a void without a reason that meets the bar (`reasonProblem`), so the requirement does not rest on the dialog alone. That row's insert is checked for a void (`setChecklistStatus` returns `auditError`). A void whose row failed is said to the voider, and closeout shows it as "who voided it is not on record", the same way it shows a direct write.
 
 ---

@@ -26,8 +26,8 @@ before and after.
 | CRITICAL | 17 |
 | HIGH | 52 |
 | MEDIUM | 67 |
-| LOW | 5 |
-| **Total** | **141** |
+| LOW | 6 |
+| **Total** | **142** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -48,6 +48,8 @@ is the white-label accent) was opened by package J5 on 2026-09-30.
 `SEC-21` (project audit rows written under another resource type, such as a
 milestone anchored to a document, stay readable by every org member) was
 opened by package J11's review on 2026-10-01.
+`A11Y-15` (write buttons outside `A11Y-14`'s surfaces still carry no decision
+floor) was opened by the integrator at the J10b merge on 2026-10-02.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
@@ -63,7 +65,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
-| 01 | [Security & access](./01-security-access.md) | 21 | 4 | 19 / 21 |
+| 01 | [Security & access](./01-security-access.md) | 21 | 4 | 20 / 21 |
 | 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 15 / 17 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 13 | 0 | 9 / 13 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 10 / 12 |
@@ -71,8 +73,8 @@ Work these in order. The numbering reflects priority, not just grouping —
 | 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 18 / 18 |
 | 07 | [Truth in the interface](./07-interface-truth.md) | 16 | 1 | 15 / 16 |
 | 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 9 / 11 |
-| 09 | [Performance & scale](./09-performance-scale.md) | 11 | 0 | 2 / 11 |
-| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 14 | 2 | 12 / 14 |
+| 09 | [Performance & scale](./09-performance-scale.md) | 11 | 0 | 5 / 11 |
+| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 15 | 2 | 13 / 15 |
 | — | [Upload door — recommended controls](./11-upload-door-controls.md) | design note | — | — |
 
 Report `11` is not a findings list. It is the control set requested for the

@@ -96,6 +96,17 @@ export interface ParseResult {
   /** True when the file's slash dates are ambiguous throughout and no
    *  convention was supplied — rows are withheld until the user picks one. */
   needsDateConvention?: boolean;
+  /** GAP-403: the columns the slash dates were read from (a CSV's start /
+   *  finish headers, as the file spells them) and each sample shown with
+   *  the column IT came from — so the question names the right column for
+   *  every value. `conflict`: the file contradicts itself, and the samples
+   *  are its two sides (`reads`: the only order that value can be read in);
+   *  otherwise one sample that reads either way (`reads` null). CSV only. */
+  dateSource?: {
+    columns: string[];
+    samples: Array<{ value: string; column: string | null; reads: DateConvention | null }>;
+    conflict: boolean;
+  };
   /** The column (or derivation) that keys rows for re-import matching. */
   keyColumn?: string;
   /** Every project the file holds (P6 XML / XER), with its row count. */
@@ -334,17 +345,29 @@ function runParser(format: ScheduleFormat, filename: string, text: string, opts?
   // 1-13-100 or a date typed into a note is not evidence, and XML / XER carry
   // ISO dates so they never reach the question. A file that cannot decide it
   // withholds its rows until the user answers; the answer applies to every row.
-  const detected = detectDateConvention(dateEvidence(format, text));
+  const evidence = dateEvidence(format, text);
+  const detected = detectDateConvention(evidence.text);
   let dates: NonNullable<ParseResult["dates"]>;
   if (detected.convention) dates = { convention: detected.convention, decidedBy: "file", sample: detected.sample };
   else if (opts?.dateConvention && detected.ambiguous) dates = { convention: opts.dateConvention, decidedBy: "user", sample: detected.sample };
   else if (detected.ambiguous) {
+    // GAP-403: the question names the column(s) the ambiguous dates are in —
+    // each sample with its OWN column (a contradicting file's two sides are
+    // usually in different columns). detectDateConvention gives a conflict's
+    // sample as "<day-first only> vs <month-first only>".
+    const samples = (detected.sample ?? "").split(" vs ");
+    const sides = samples.map((value, i) => ({
+      value, column: evidence.columnOf(value),
+      reads: detected.conflict ? (i === 0 ? "dmy" as const : "mdy" as const) : null,
+    }));
+    const named = sides.map((side) => (side.column ? `${side.value} in "${side.column}"` : side.value));
     const why = detected.conflict
-      ? `The file contradicts itself about date order (${detected.sample}).`
-      : `Every slash date in the file (e.g. ${detected.sample}) reads as either day/month or month/day.`;
+      ? `The file contradicts itself about date order (${named.join(" vs ")}).`
+      : `Every slash date in ${columnsPhrase(evidence.columns)} (e.g. ${named[0]}) reads as either day/month or month/day.`;
     return {
       format, rows: [], needsDateConvention: true,
       dates: { convention: null, decidedBy: "none", sample: detected.sample },
+      dateSource: { columns: evidence.columns, samples: sides, conflict: detected.conflict },
       warnings: [`${why} Choose how to read dates before importing — the choice applies to every row.`],
     };
   } else dates = { convention: null, decidedBy: "none", sample: null };
@@ -986,18 +1009,35 @@ function findColumn(header: string[], cands: string[]): number {
 }
 
 /** The text detectDateConvention reads: the values of the start and finish
- *  columns for a CSV, nothing for XML / XER (their dates are ISO). */
-function dateEvidence(format: ScheduleFormat, text: string): string {
+ *  columns for a CSV, nothing for XML / XER (their dates are ISO). GAP-403:
+ *  with the columns' headers as the file spells them, and the column a
+ *  given value came from, so a question about the dates names its column. */
+function dateEvidence(format: ScheduleFormat, text: string): { text: string; columns: string[]; columnOf: (value: string) => string | null } {
   const syn = format === "msproject-csv" ? MSP_CSV_SPEC : format === "generic-csv" ? GENERIC_CSV_SPEC : null;
-  if (!syn) return "";
-  const { lines, delim, header } = csvLayout(text);
+  if (!syn) return { text: "", columns: [], columnOf: () => null };
+  const { lines, delim, rawHeader, header } = csvLayout(text);
   const cols = [syn.start ? findColumn(header, syn.start) : -1, findColumn(header, syn.planned)].filter((i) => i >= 0);
   const values: string[] = [];
+  const from: Array<{ value: string; column: string }> = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = csvSplit(lines[i], delim);
-    for (const c of cols) { const v = cells[c]?.trim().replace(/^"|"$/g, ""); if (v) values.push(v); }
+    for (const c of cols) {
+      const v = cells[c]?.trim().replace(/^"|"$/g, "");
+      if (v) { values.push(v); from.push({ value: v, column: rawHeader[c] }); }
+    }
   }
-  return values.join("\n");
+  return {
+    text: values.join("\n"),
+    columns: cols.map((c) => rawHeader[c]),
+    columnOf: (value) => (value ? from.find((f) => f.value.includes(value))?.column ?? null : null),
+  };
+}
+
+/** GAP-403: `the "Finish" column` / `the "Start" and "Finish" columns`. */
+function columnsPhrase(columns: string[]): string {
+  if (columns.length === 0) return "the file";
+  const quoted = columns.map((c) => `"${c}"`);
+  return quoted.length === 1 ? `the ${quoted[0]} column` : `the ${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]} columns`;
 }
 
 interface SynonymSpec {
@@ -1092,6 +1132,8 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
 
   let dropped = 0;
   let unreadableDates = 0;
+  /** GAP-403: per date column (as the file spells it), the rows whose date there could not be read. */
+  const unreadableIn = new Map<string, number>();
   let ignoredText = 0;
   let duplicateKeys = 0;
   const seenRefs = new Set<string>();
@@ -1110,8 +1152,14 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
     const startRaw = cell(iStart);
     const startRead = startRaw ? readDate(startRaw, ctx.conv) : null;
     // An unreadable Start is reported like an unreadable Finish: the row is
-    // skipped and counted, never imported without the start it carried.
-    if (!plannedRead.iso || (startRead && !startRead.iso)) { unreadableDates++; continue; }
+    // skipped and counted, never imported without the start it carried —
+    // and the warning names the column the date was in (GAP-403).
+    if (!plannedRead.iso || (startRead && !startRead.iso)) {
+      unreadableDates++;
+      if (startRead && !startRead.iso) unreadableIn.set(rawHeader[iStart], (unreadableIn.get(rawHeader[iStart]) ?? 0) + 1);
+      if (!plannedRead.iso) unreadableIn.set(rawHeader[iPlanned], (unreadableIn.get(rawHeader[iPlanned]) ?? 0) + 1);
+      continue;
+    }
     const plannedIso = plannedRead.iso;
     const startIso = startRead ? startRead.iso : null;
     if (plannedRead.ignored || startRead?.ignored) ignoredText++;
@@ -1200,7 +1248,10 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
   }
 
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
-  if (unreadableDates > 0) warnings.push(`${unreadableDates} row${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read as ${ctx.conv === "dmy" ? "day/month/year" : "month/day/year"}).`);
+  if (unreadableDates > 0) {
+    const where = [...unreadableIn].map(([col, n]) => `"${col}" (${n} row${n === 1 ? "" : "s"})`).join(", ");
+    warnings.push(`${unreadableDates} row${unreadableDates === 1 ? "" : "s"} skipped (a start or finish date could not be read as ${ctx.conv === "dmy" ? "day/month/year" : "month/day/year"}) — in ${where}.`);
+  }
   if (ignoredText > 0) warnings.push(ignoredTextWarning(ignoredText, "row"));
   if (duplicateKeys > 0) warnings.push(`${duplicateKeys} row${duplicateKeys === 1 ? "" : "s"} share${duplicateKeys === 1 ? "s" : ""} a key with an earlier row and ${duplicateKeys === 1 ? "was" : "were"} given a "#n" suffix so neither overwrites the other.`);
   linkWarnings(census, warnings);

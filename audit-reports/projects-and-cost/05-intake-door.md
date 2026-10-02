@@ -767,7 +767,7 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 
 - **Severity:** LOW
 - **Severity rationale:** The link itself is not left live by mistake. The panel refreshes after a revoke, and a link that was not revoked still shows as live. What is false is the audit trail: an `INTAKE_LINK_REVOKED` row for a revocation that did not happen, or a second one that moves the recorded revocation time. This is the `SAF-3` / `GAP-402` class of defect (projects-tab), on a smaller surface.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (`components/projects/IntakePanel.tsx`: the revoke guarded by `.is("revoked_at", null)` with a row read-back, no audit on zero rows) — by the integrator, 2026-10-01 (at the J13 merge: the record reconcile left this remainder open; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** audit integrity
@@ -788,4 +788,46 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 - A revoke that changed no row writes no `INTAKE_LINK_REVOKED` row and says so. A second click on an already-revoked link does not move its `revoked_at`.
 - A render test drives both cases. The harness is `lib/__tests__/intakePanelLinkAudit.test.ts`; QuotesPanel's twin is pinned in `lib/__tests__/quotesPanelAwardAndQuoteLinks.test.ts` (:216).
 
+**Resolution (2026-10-01, projects Round G).** Package J10b UI REMAINDERS mirrored the Costs tab's twin in `components/projects/IntakePanel.tsx` `revoke`.
+- The update is `.update({ revoked_at }).eq("id", l.id).eq("project_id", projectId).is("revoked_at", null).select("id")`, and `{ error }` is still checked.
+- When no row changes, no `INTAKE_LINK_REVOKED` row is written. The panel says "<Company>'s link was not revoked — it may already be revoked, or you may not have permission. The list now shows its current state." and re-reads the list.
+- When one row changes, it is audited by link id, as before.
+- Tests: `lib/__tests__/j10bIntakeLinksOrigin.test.ts` "INTK-17 —" (3):
+  - Rendered: the update's filters and read-back, and one row writing the audit row by link id.
+  - Rendered: zero rows writing no audit row, showing the sentence and re-reading the list.
+  - A second click on an already-revoked link only ever matches `revoked_at IS NULL`, so its `revoked_at` cannot move.
+
+**Done-when.**
+- ✓ IntakePanel's revoke updates only a still-unrevoked link of this project and reads back the rows it changed.
+- ✓ A revoke that changed no row writes no `INTAKE_LINK_REVOKED` row and says so. A second click on an already-revoked link does not move its `revoked_at`.
+- ✓ A render test drives both cases (`j10bIntakeLinksOrigin.test.ts`). `intakePanelLinkAudit.test.ts` still passes.
+
+**Scope / residual.** None.
+
 ---
+
+## INTK-18 · The Intake tab's approve offers a controller no recorded force when an active hold refuses the review promote
+
+- **Severity:** LOW
+- **Severity rationale:** Nothing is published wrongly and nothing is lost. The approve is refused, nothing is changed, and the panel says so in plain words. The cost is a missing door: on the Intake tab a controller can only release the hold, while the document's review panel offers the same controller a recorded way through.
+- **Status:** OPEN
+- **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (`components/projects/IntakePanel.tsx` `approve`: offer a controller the review promote's recorded force after a hold refusal, as `ReviewGateSection` does) — by the integrator, 2026-10-02 (at the J10b merge: document-control P14 named this as the integrator's follow-up at that merge; fleet plan `audit-reports/fleet-plans/`).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** workflow / controller recovery
+- **Locations:**
+  - `components/projects/IntakePanel.tsx:416-420`: `approve` calls `finalizeReviewedRevision({ orgId, documentId, actorId, actorName, actorEmail, requireRosterComplete })` with no `forceHold`. On `!res.published` it throws `finalizeReasonMessage(res.reason)` (:420), which for a hold refusal reads "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand."
+  - `components/documents/ReviewGateSection.tsx:155-180`: the twin that does offer it. On a controller's hold refusal (`isFinalizeHoldRefusal`) it shows the required "Proceed over the active hold" acknowledgement and an optional reason, then calls `finalizeReviewedRevision` with `forceHold: true` and the trimmed reason.
+  - `lib/reviewControl.ts` `finalizeReviewedRevision` (`forceHold` / `overrideReason`, :1057-1067) and `supabase/migrations/20261151_*.sql` `finalize_reviewed_promote` (`p_force_hold`, `p_override_reason`; honoured only for a controller while a hold is active, with `REV_HOLD_OVERRIDDEN` written in the same transaction).
+- **Related:** document-control `REV-20` (its P14 final-review fix and Scope / residual name this follow-up), `HLD-2`
+- **Independently verified:** — (`author`: opened by the integrator on 2026-10-02 at the projects J10b merge, per `DEC-31`, from document-control P14's named follow-up; not yet challenged)
+
+**Mechanism.** Document-control P14 (`REV-20`, migration `20261151`, not yet pasted) refuses a controller's review promote of a held Draft or In Review document unless the promote carries its recorded force. P14 added that force to `finalize_reviewed_promote` and offered it in the document inspector. `IntakePanel.tsx` belonged to projects J10b at the time, so its approve was left calling the promote without a force.
+
+**Failure scenario.** After `20261151` is pasted, a vendor's revision of a document with an active hold reaches the Intake tab. The controller who clicks Approve is told to release the hold. If the hold must stay (for example, a quality hold that the revision itself answers), there is no recorded way through from this tab. The same controller would get one from the document's review panel.
+
+**Remediation.** Mirror `ReviewGateSection`. When `approve` gets a hold refusal (`isFinalizeHoldRefusal(res.reason)`) and the user is a controller (the role collection), keep the submission open and offer the HLD-2 acknowledgement ("Proceed over the active hold", required), an optional reason, and "Approve over the hold". That button calls `finalizeReviewedRevision` with the same arguments plus `forceHold: true` and the trimmed reason. Anyone else, and any other refusal, is told as now. The call without a force stays exactly as it is.
+
+**Done when.**
+- On a hold refusal, a controller on the Intake tab is offered the recorded force with the required acknowledgement, and the forced call carries `forceHold: true` and the trimmed reason.
+- A non-controller, and any refusal that is not the hold's, gets today's message, and the call without a force is unchanged.
+- A rendered test drives the controller case, the non-controller case and the unchanged call, as `dcRoundFReviewHoldForce.test.ts` does for `ReviewGateSection`.

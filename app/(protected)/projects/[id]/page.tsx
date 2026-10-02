@@ -37,6 +37,7 @@ import EditProjectModal from "@/components/projects/EditProjectModal";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
+import CloseoutGatesPending, { CLOSEOUT_GATES_WAIT } from "@/components/projects/CloseoutGatesPending";
 import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import { CLOSEOUT_GATE_POLICY, type ProjectStateSnapshot } from "@/lib/projectHealth";
@@ -146,6 +147,10 @@ export default function ProjectDetailPage() {
   // Closeout gates: loaded when the Complete confirm opens, so the modal
   // shows exactly what's still outstanding before the project closes.
   const [gates, setGates] = useState<ProjectStateSnapshot | null>(null);
+  // QUAL-8: a gather that failed is said, with a Retry — never a panel that
+  // silently is not drawn while Confirm stays live.
+  const [gatesError, setGatesError] = useState<string | null>(null);
+  const [gatesTry, setGatesTry] = useState(0);
   // Wizard fields the typed Project doesn't carry — fetched tolerantly.
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
@@ -234,14 +239,15 @@ export default function ProjectDetailPage() {
 
   // Closeout gates load when the Complete confirmation opens.
   useEffect(() => {
-    if (pendingStatus !== "completed" || !project?.orgId || !projectId) { setGates(null); return; }
+    if (pendingStatus !== "completed" || !project?.orgId || !projectId) { setGates(null); setGatesError(null); return; }
     let cancelled = false;
+    setGates(null); setGatesError(null);
     void gatherProjectSnapshot(project.orgId, projectId)
       .then((s) => { if (!cancelled) setGates(s); })
-      .catch(() => undefined);
+      .catch((e) => { if (!cancelled) setGatesError(userFacingCaughtError(e, { action: "read", context: "closeout gates" })); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingStatus, projectId]);
+  }, [pendingStatus, projectId, gatesTry]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -353,6 +359,9 @@ export default function ProjectDetailPage() {
 
   const handleTransition = async () => {
     if (!project || !uid || !pendingStatus) return;
+    // QUAL-8: a completion waits for its gates — the disabled Confirm is the
+    // visible half; this keeps any other caller from recording none.
+    if (pendingStatus === "completed" && !gates) return;
     if (pendingStatus === "cancelled" && !statusReason.trim()) {
       setActionError("Cancellation reason is required"); return;
     }
@@ -779,7 +788,12 @@ export default function ProjectDetailPage() {
               onClose={transitionBusy ? undefined : () => void discardTransition()} />
             <div className="overflow-y-auto min-h-0">
             {/* Closeout gates — what a finished job should have closed out.
-                Warnings, not walls: the owner can complete anyway, on the record. */}
+                Warnings, not walls: the owner can complete anyway, on the record.
+                QUAL-8: until they are on screen — loading, or a gather that
+                failed (said, with Retry) — Confirm waits. */}
+            {pendingStatus === "completed" && !gates && (
+              <CloseoutGatesPending error={gatesError} onRetry={() => setGatesTry((n) => n + 1)} />
+            )}
             {pendingStatus === "completed" && gates && (() => {
               // SAF-14: the same lines lib/projects.ts records in the
               // completion's audit row — what the report prints as "open at
@@ -822,7 +836,9 @@ export default function ProjectDetailPage() {
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
               <button onClick={() => void discardTransition()} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-              <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+              <button onClick={handleTransition} disabled={transitionBusy || (pendingStatus === "completed" && !gates)}
+                title={pendingStatus === "completed" && !gates ? CLOSEOUT_GATES_WAIT : undefined}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
               </button>

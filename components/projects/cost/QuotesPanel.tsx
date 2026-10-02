@@ -35,7 +35,7 @@
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
-  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus,
+  CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, ExternalLink, Pencil, RotateCcw, Plus, X as XIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
@@ -46,16 +46,18 @@ import { newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColu
 import { listCompanies, listBarredCompanies, getCompany, type Company } from "@/lib/companies";
 import { fmtMoney, type CostAccount, type Actor } from "@/lib/costs";
 import { getFileUrl } from "@/lib/storage";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
-  type CostDocument, COST_DOC_STATUS_LABEL,
-  uploadCostDoc, awardQuote, postInvoice,
+  type CostDocument, costDocStatusLabel,
+  uploadCostDoc, awardQuote, postInvoice, declineQuote, voidCostDoc,
   parsedQuoteFrom, quoteGroups, normalizeCurrency,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling,
   companyCandidatesByName, barredCompanyFor,
-  quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
+  quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount, reconcileQuoteTotal,
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -458,7 +460,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                   <>
                     <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
                     <button onClick={() => void typeTotal(doc)}
-                      className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>
+                      className={`${DECISION_TARGET} text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>type total</button>
                   </>
                 )}
                 {canManage && doc.status === "parsed" && (
@@ -486,7 +488,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
                 )}
                 {canManage && doc.status === "parsed" && (
                   <button onClick={() => void typeTotal(doc)} title="Correct the amount by hand"
-                    className="inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                    className={`${DECISION_TARGET} inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
                     <Pencil className="w-3 h-3" /> correct total
                   </button>
                 )}
@@ -657,7 +659,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       confirmedTotal = await confirmFromPaper(doc, total, cur, warnings.join(" "), `award "${group}" on "${account?.name ?? "the budget line"}"`);
       if (confirmedTotal == null) return;
     } else if (!(await appConfirm({
-      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      // MON-10: only a GROUPED award declines its rivals (the other open bids
+      // in its RFQ group); an ungrouped quote's award declines nothing, so it
+      // promises nothing of the kind.
+      message: `${warnings.length ? warnings.join(" ") + " " : ""}Award "${group}" to ${doc.vendorName ?? "this bidder"} for ${fmtMoney(total, cur)}? This posts a commitment on "${account?.name ?? "the budget line"}"${doc.rfqGroup?.trim()
+        ? " and marks the other open bids in this RFQ group not selected."
+        : ". This quote has no RFQ group, so no other bid is marked not selected — decline any that competed for this scope."}`,
       tone: warnings.length ? "danger" : undefined,
     }))) return;
 
@@ -684,6 +691,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
 
     setBusy(doc.id);
     let failure: string | null = null;
+    // MON-10: an award that posted can still carry a warning — rivals that
+    // could not be marked not selected, or ungrouped quotes left open.
+    let warning: string | null = null;
     try {
       let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal });
       // The lib found a flag this table did not (an inactive company, or a
@@ -704,10 +714,13 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
+      else warning = res.warning ?? null;
     } catch (err) {
       failure = userFacingCaughtError(err, { context: "QuotesPanel award" });
     } finally { setBusy(null); }
-    if (failure == null) { onChanged(); return; }
+    // The warning is said AFTER onChanged: the tab's re-read clears its
+    // banner first, so the warning is what stays on screen.
+    if (failure == null) { onChanged(); if (warning) setErr(warning); return; }
     if (overridden) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
@@ -719,7 +732,47 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     setErr(failure);
   };
 
-  const colCount = 7 + (canManage && !awarded ? 1 : 0);
+  /** MON-10: the explicit, audited "not selected" for a bid that competed
+   *  with an award and is still open — an ungrouped quote (an ungrouped
+   *  award declines nothing on its own, DEC-50 rule 8, and the award's
+   *  warning names the quotes left open), or any open quote in a group that
+   *  already holds an award (a grouped rival whose automatic decline failed
+   *  — the warning says to decline it by hand — or a second quote that
+   *  tabulates under the same "Ungrouped — <vendor>" heading). The reason is
+   *  optional and recorded. */
+  const decline = async (doc: CostDocument) => {
+    const reason = await appPrompt({
+      title: `Decline ${doc.vendorName ?? doc.fileName ?? "this quote"}?`,
+      message: "It is marked not selected — the contractor's portal shows that — and it can no longer be awarded. A reason (optional) is recorded with it.",
+      placeholder: "Reason (optional) — e.g. awarded to another bidder",
+      confirmLabel: "Decline",
+    });
+    if (reason == null) return;
+    setBusy(doc.id); setErr(null);
+    let failure: string | null = null;
+    try {
+      const res = await declineQuote({ doc, actor, reason: reason.trim() || null });
+      if (!res.ok) failure = res.error ?? "Couldn't decline the quote.";
+    } catch (err) {
+      failure = userFacingCaughtError(err, { context: "QuotesPanel decline" });
+    } finally { setBusy(null); }
+    if (failure) { setErr(failure); return; }
+    onChanged();
+  };
+
+  // MON-10: who is declined by hand — an open UNGROUPED quote (an award
+  // declines only its own RFQ group, DEC-50 rule 8), and ANY open quote once
+  // its group holds an award (a grouped rival whose automatic decline
+  // failed, or a second quote under the same "Ungrouped — <vendor>"
+  // heading). Gated apart from the award (rowActions): the award's warning
+  // is what sends the user here.
+  const mayDecline = (d: CostDocument) =>
+    canManage && d.kind === "quote" && (d.status === "parsed" || d.status === "draft") && (!d.rfqGroup?.trim() || !!awarded);
+  // MON-10: the actions column stays while an awarded group still has a row
+  // with an action — a declined bid keeps its Void, an open quote its
+  // Decline and Void. Award and correct-total stay award-gated (rowActions).
+  const showActions = canManage && (!awarded || entries.some(({ doc: d }) => d.status === "declined" || mayDecline(d)));
+  const colCount = 7 + (showActions ? 1 : 0);
 
   return (
     <div>
@@ -745,7 +798,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                   <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <OpenPdfButton doc={d} setErr={setErr} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className={`${DECISION_TARGET} text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>type total</button>}
+                  {/* MON-10: an unread quote the award's warning names is declined here — no read first. */}
+                  {mayDecline(d) && (
+                    <button onClick={() => void decline(d)} disabled={busy === d.id}
+                      title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
+                      className={`${DECISION_TARGET} inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
+                      <XIcon className="w-3 h-3" /> decline
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -772,7 +833,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     <th className="px-3 py-2 text-right" title={`${manpowerScored
                       ? `Value score = ${Math.round(weights.price * 100)}% price + ${Math.round(weights.manpower * 100)}% manpower (between bids that state plausible hours, at most ${MANPOWER_MAX_COMPOSITE_SWING} points apart on manpower; a bid stating none scores 0 there).`
                       : currency.mixed ? "Not ranked — this field mixes currencies." : `Value score = price alone here — ${notCorroborated}.`} Scope coverage is not scored — exclusions and check prompts are shown for your judgement.`}>Value score</th>
-                    {canManage && !awarded && <th className="px-3 py-2" />}
+                    {showActions && <th className="px-3 py-2" />}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--color-border)]">
@@ -789,6 +850,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
                     const rowActions = doc && canManage && !awarded && (doc.status === "parsed" || doc.status === "draft");
+                    const rowDecline = doc && mayDecline(doc);
+                    const totalNote = quote ? quoteTotalNote(quote) : null;
                     return (
                       <React.Fragment key={e.quoteId}>
                         <tr className={isAwarded ? "bg-emerald-500/[0.05]" : isDeclined ? "opacity-55" : undefined}>
@@ -847,6 +910,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             {bc.note && (
                               <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title="The quote prints no currency — restate it with a currency code (correct total) if the assumption is wrong">{bc.note}</div>
                             )}
+                            {/* PR-2: the lines do not add up to the total — a flag, never a block (the full sentence is under the row). */}
+                            {totalNote && (
+                              <div className="text-[9px] font-bold text-amber-700 dark:text-amber-300" title={totalNote}>lines ≠ total — check the PDF</div>
+                            )}
                             {e.priceOnly && (
                               <div className="text-[9px] font-bold text-[var(--color-text-muted)]" title={manpowerScored
                                 ? "The AI couldn't read line detail from this file — price only: not scored on manpower, so it carries no value score while this field scores manpower (its price still sets every rival's price part)."
@@ -901,7 +968,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                               </span>
                             )}
                           </td>
-                          {canManage && !awarded && (
+                          {showActions && (
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {rowActions && registryGate === "ready" && (
                                 <PostControls accounts={accounts} busy={busy === doc.id}
@@ -914,21 +981,38 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                                 <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="The registry or the company links failed to load — a do-not-use flag could be missing, so Award is withheld. Reload the page.">registry unavailable — reload to award</span>
                               )}
                               {rowActions && (
-                                <>
-                                  <button onClick={() => void typeTotal(doc)} title="Correct the total by hand — the AI's reading stays on the record"
-                                    className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                                    <Pencil className="w-3 h-3" /> correct total
-                                  </button>
-                                  <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
-                                </>
+                                <button onClick={() => void typeTotal(doc)} title="Correct the total by hand — the AI's reading stays on the record"
+                                  className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
+                                  <Pencil className="w-3 h-3" /> correct total
+                                </button>
+                              )}
+                              {/* MON-10: declined by hand — an ungrouped bid (an award declines only its own RFQ group), or any bid still open in an awarded group. */}
+                              {rowDecline && (
+                                <button onClick={() => void decline(doc)} disabled={busy === doc.id}
+                                  title="Mark this bid not selected — for a quote that competed with one awarded elsewhere. Audited; the contractor's portal shows it."
+                                  className={`${DECISION_TARGET} ml-2 inline-flex items-center gap-0.5 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50`}>
+                                  <XIcon className="w-3 h-3" /> Decline
+                                </button>
+                              )}
+                              {(rowActions || rowDecline) && (
+                                <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+                              )}
+                              {/* MON-10 / MON-3: a declined bid moved no money — it can still be voided (junk, or declined in error). */}
+                              {doc && canManage && doc.status === "declined" && (
+                                <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
                               )}
                             </td>
                           )}
                         </tr>
-                        {((quote?.exclusions.length ?? 0) > 0 || e.missingScope.length > 0 || quote?.notes) && (
+                        {((quote?.exclusions.length ?? 0) > 0 || e.missingScope.length > 0 || quote?.notes || totalNote) && (
                           <tr className={isDeclined ? "opacity-55" : undefined}>
                             <td colSpan={colCount} className="px-3 pb-2 pt-0">
                               <div className="flex flex-wrap gap-1">
+                                {totalNote && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/[0.07] text-amber-800 dark:text-amber-300" title="The priced lines read from this quote do not add up to its total — flagged for your check, never corrected or blocked">
+                                    total check: {totalNote}
+                                  </span>
+                                )}
                                 {quote?.notes && (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-sky-500/40 bg-sky-500/[0.07] text-sky-800 dark:text-sky-300" title="Bidder's note printed on the quote">
                                     note: {quote.notes}
@@ -987,7 +1071,7 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
     : "border-amber-500/40 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
   return (
     <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${tone}`}>
-      {COST_DOC_STATUS_LABEL[status]}
+      {costDocStatusLabel(status)}
     </span>
   );
 }
@@ -1059,6 +1143,31 @@ function CompanyPicker({ companies, value, suggestion, onChange }: {
   );
 }
 
+/** PR-2 (DEC-72 item 5): what the reviewer is told when a bid's priced lines
+ *  do not add up to its total — a flag beside the number, never a block.
+ *  The stored check describes the EXTRACTION (the total the AI read against
+ *  the lines it read); once a person restated the total, the number on
+ *  screen is reconciled instead (lib/bidTab reconcileQuoteTotal) — never the
+ *  stored note beside a corrected total. A total restated into ANOTHER
+ *  currency is not compared with the lines at all: they stay in the currency
+ *  the AI read, so any sum would be a false mismatch. Only a relabel (the
+ *  same figure, the currency corrected) keeps the extraction's own check —
+ *  the lines and the total are still the numbers printed together. A
+ *  price-only bid has no lines. */
+export function quoteTotalNote(q: ParsedQuote): string | null {
+  if (q.priceOnly) return null;
+  if (q.totalSource === "human") {
+    const shown = isoCurrency(q.currency);
+    const read = isoCurrency(q.extractedCurrency);
+    if (shown != null && read != null && shown !== read) {
+      return q.total === q.extractedTotal && q.totalCheck?.mismatch ? q.totalCheck.note : null;
+    }
+    const onScreen = reconcileQuoteTotal(q.total, q.lineItems);
+    return onScreen?.mismatch ? onScreen.note : null;
+  }
+  return q.totalCheck?.mismatch ? q.totalCheck.note : null;
+}
+
 /** COST-15: a document whose total was typed before any read — `parsed`
  *  with no extraction. The route reads it and saves the extraction beside
  *  the typed total (never replacing it). */
@@ -1094,7 +1203,7 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   const blocked = !!ai && aiBlocked(ai);
   return (
     <button onClick={onClick} disabled={busy || blocked} aria-describedby={blocked ? "quotes-ai-precondition" : undefined}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}
       title="AI reads the printed pages into numbers — on your own AI key. You review before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
@@ -1114,14 +1223,14 @@ function PostControls({ accounts, busy, onPost, label, currency, costType }: {
   const accountId = picked || (accounts.length === 1 ? accounts[0].id : "");
   if (accounts.length === 0) return <CreateBudgetLineInline label={label} currency={currency} costType={costType} />;
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-2">
       <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
         className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
       </select>
       <button onClick={() => accountId && void onPost(accountId)} disabled={busy || !accountId}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {label}
       </button>
     </span>
@@ -1182,7 +1291,7 @@ function CreateBudgetLineInline({ label, currency, costType = "subcontract" }: {
         {INLINE_COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
       </select>
       <button type="button" onClick={() => void create()} disabled={saving}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">
+        className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Create
       </button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
@@ -1202,17 +1311,21 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
         setBusy(doc.id);
         // Guarded: only a still-open document voids — never one a stale tab
         // shows as open after someone awarded or posted it (BID-9 / MON-3).
-        const res = await guardedCostDocWrite({
-          doc, actor, patch: { status: "void" },
-          audit: { action: "COST_DOC_VOIDED", details: { fileName: doc.fileName, vendor: doc.vendorName } },
-        });
+        // A DECLINED bid (MON-10) moved no money either: lib/costDocs
+        // voidCostDoc admits it through the same compare-and-swap claim.
+        const res: { ok: true; auditError: string | null } | { ok: false; error: string } = doc.status === "declined"
+          ? await voidCostDoc({ doc, actor }).then((r) => (r.ok ? { ok: true as const, auditError: null } : { ok: false as const, error: r.error ?? "Couldn't void." }))
+          : await guardedCostDocWrite({
+            doc, actor, patch: { status: "void" },
+            audit: { action: "COST_DOC_VOIDED", details: { fileName: doc.fileName, vendor: doc.vendorName } },
+          });
         setBusy(null);
         if (!res.ok) { setErr(res.error); return; }
         if (res.auditError) setErr(`Voided, but its audit record failed: ${res.auditError}`);
         onChanged();
       }}
       disabled={busy}
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors">
+      className={`${DECISION_TARGET} ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors`}>
       <Ban className="w-3 h-3" /> Void
     </button>
   );
@@ -1280,7 +1393,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, parties, onD
         </>
       )}
       <button onClick={() => void submit()} disabled={saving || !file}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />} Upload
       </button>
     </div>
@@ -1395,7 +1508,10 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     } finally { setRevoking(null); }
   };
 
-  const portalUrl = (token: string) => `${window.location.origin}${intakePortalPath(token)}`;
+  // XEDGE-5 / PHYS-13: a contractor's quote link (copied, or printed in the
+  // starter RFQ) is built on the app's public origin (lib/publicOrigin),
+  // never the page's own host.
+  const portalUrl = (token: string) => `${publicOrigin()}${intakePortalPath(token)}`;
   /** The address a row can copy or put in an RFQ: minted / re-issued this
    *  session, or a token the database still stores (before 20261141). */
   const knownUrl = (l: QuoteLink): string | null => freshUrls.get(l.id) ?? (l.token ? portalUrl(l.token) : null);
@@ -1483,7 +1599,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
         </label>
         <button onClick={() => void create()} disabled={saving}
-          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+          className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
           {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Create link
         </button>
       </div>
@@ -1500,28 +1616,28 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
                   </span>
                 : <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="Created before expiry was required — revoke it when the bidding closes">no expiry</span>}
               {l.tokenPrefix && <span className="font-mono text-[10px] text-[var(--color-text-faint)]" title="The first characters of this link's address — the full address is shown only when the link is created or re-issued">{l.tokenPrefix}…</span>}
-              <span className="ml-auto flex items-center gap-1">
+              <span className="ml-auto flex items-center gap-2">
                 {linkLive(l) && (knownUrl(l) ? (
                   <>
                     <button onClick={() => void makeRfq(l)}
                       title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors`}>
                       <FileText className="w-3 h-3" /> RFQ (.docx)
                     </button>
                     <button onClick={() => void copy(l)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                      className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors`}>
                       <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
                     </button>
                   </>
                 ) : (
                   <button onClick={() => void reissue(l)} disabled={reissuing === l.id}
                     title="The address is not stored (only its fingerprint is). Re-issue to get a new one for Copy link and the RFQ — the old one stops working."
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50">
+                    className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-50`}>
                     {reissuing === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Re-issue
                   </button>
                 ))}
                 <button onClick={() => void revoke(l)} disabled={revoking === l.id}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50">
+                  className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/40 text-[10px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/10 transition-colors disabled:opacity-50`}>
                   {revoking === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Revoke
                 </button>
               </span>

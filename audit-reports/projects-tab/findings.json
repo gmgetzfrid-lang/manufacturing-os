@@ -14,18 +14,18 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 141,
+    "findings": 142,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 52,
       "MEDIUM": 67,
-      "LOW": 5
+      "LOW": 6
     },
     "by_status": {
-      "RESOLVED": 117,
+      "RESOLVED": 121,
       "REFUTED": 2,
-      "OPEN": 22
+      "OPEN": 19
     }
   },
   "status_vocabulary": [
@@ -2049,7 +2049,13 @@
         "app/submit/[token]/page.tsx:295",
         "components/projects/cost/ChangeOrdersPanel.tsx:252",
         "components/projects/cost/QuotesPanel.tsx:1215",
-        "app/(protected)/companies/[id]/page.tsx:325"
+        "app/(protected)/companies/[id]/page.tsx:325",
+        "app/(protected)/companies/error.tsx",
+        "app/submit/[token]/page.tsx",
+        "components/projects/cost/ChangeOrdersPanel.tsx",
+        "components/projects/cost/QuotesPanel.tsx",
+        "lib/__tests__/a11y13FinalReview.test.ts",
+        "components/projects/ProjectCoach.tsx:101"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial-independent",
@@ -2066,7 +2072,7 @@
       "id": "A11Y-14",
       "title": "Decision controls outside the Quality tab are still under 24 px",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "CARRIED — the sites `A11Y-8` measured; not re-measured",
       "blast_radius": "accessibility / mobile",
@@ -2076,7 +2082,19 @@
         "components/projects/cost/QuotesPanel.tsx:160, 249",
         "components/projects/cost/QuotesPanel.tsx:397, 420, 441",
         "components/projects/cost/ChangeOrdersPanel.tsx:180, 184",
-        "components/projects/CostsTab.tsx:393"
+        "components/projects/CostsTab.tsx:393",
+        "components/projects/decisionTarget.ts",
+        "components/projects/IntakePanel.tsx",
+        "components/projects/cost/QuotesPanel.tsx",
+        "components/projects/cost/ChangeOrdersPanel.tsx",
+        "components/projects/CostsTab.tsx",
+        "components/projects/CloseoutGatesPending.tsx",
+        "lib/__tests__/j10bDecisionTargets.test.ts",
+        "app/globals.css",
+        "lib/__tests__/a11yProjects.test.ts",
+        "components/projects/ProjectDocumentsCard.tsx",
+        "components/projects/TransitionInPanel.tsx",
+        "app/(protected)/projects/[id]/page.tsx:1172"
       ],
       "has_verifier_correction": false,
       "verified_by": "author",
@@ -2570,7 +2588,7 @@
       "id": "PERF-3",
       "title": "The coach re-gathers on every Costs and Quality mount, throwing away thirteen queries every time",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "performance",
@@ -2598,7 +2616,7 @@
       "id": "PERF-4",
       "title": "An unbounded query loop is held back only by an eslint-disable comment",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (latent — does not fire today)",
       "blast_radius": "availability",
@@ -3641,6 +3659,32 @@
       "report": "audit-reports/projects-tab/07-interface-truth.md"
     },
     {
+      "id": "A11Y-15",
+      "title": "Write buttons outside A11Y-14's surfaces still carry no decision floor",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ — each site was read at the J10b merge; sizes are from the class strings, not measured",
+      "blast_radius": "accessibility / mobile",
+      "related": [],
+      "locations": [
+        "app/(protected)/projects/[id]/page.tsx:1172",
+        "components/projects/StatusControl.tsx:186",
+        "components/projects/ProgressControl.tsx:72",
+        "components/projects/StaleCheckoutBanner.tsx:153",
+        "components/projects/EditProjectModal.tsx:319"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "On a tablet, a mis-tap on the Members tab hits \"make owner\" instead of the row's other action, or a quick-percent button records the wrong progress.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
+    },
+    {
       "id": "MON-9",
       "title": "Two simultaneous change-order proposals collide on the generated number",
       "severity": "LOW",
@@ -3697,7 +3741,7 @@
       "id": "PERF-10",
       "title": "Money formatting constructs a new formatter on every call",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "performance",

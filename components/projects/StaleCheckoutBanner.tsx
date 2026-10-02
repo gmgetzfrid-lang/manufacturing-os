@@ -124,7 +124,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             You have {rows.length} stale checkout{rows.length === 1 ? "" : "s"} past the expected release date
           </span>
         </div>
-        <button onClick={dismissForToday} className="p-1 rounded-md text-amber-600 hover:text-amber-900 hover:bg-amber-100 transition-colors" title="Dismiss for today">
+        <button onClick={dismissForToday} className="p-1 rounded-md text-amber-600 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-500/15 transition-colors" title="Dismiss for today">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -134,7 +134,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       <div className="divide-y divide-amber-100">
         {rows.map((r) => (
           <div key={r.id} className="px-4 py-2.5 flex items-center gap-3">
-            <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-amber-900 truncate">
                 <span className="font-mono">{r.docNumber || "—"}</span>

@@ -90,7 +90,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
         <Card>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
+            <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
             <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
@@ -101,7 +101,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
 
         <Card>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${ahead ? "text-emerald-600" : "text-rose-600"}`}>
+          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${ahead ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
             {ahead ? "+" : ""}{r.paceDelta}<span className="text-base text-[var(--color-text-faint)] font-bold">pts</span>
           </div>
@@ -155,7 +155,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
       {(critical.ids.size > 0 || critical.cycle) && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <Zap className="w-4 h-4 text-rose-600" />
+            <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size > 0
               ? `${critical.ids.size} task${critical.ids.size === 1 ? "" : "s"} on the critical path`
@@ -208,12 +208,12 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
         <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{chosen && chosen.id !== "current" ? `Vs. the baseline set ${fmtDate(chosen.setAt)}` : "Vs. approved plan"}</span>
-            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600" : r.baseline.finishDriftDays < 0 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
+            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-700 dark:text-rose-300" : r.baseline.finishDriftDays < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
             <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish)} → now {fmtDate(r.baseline.currentFinish)}</span>
             <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">
-              <b className="text-rose-600">{r.baseline.slipped}</b> slipped · <b className="text-emerald-600">{r.baseline.pulledIn}</b> pulled in
+              <b className="text-rose-700 dark:text-rose-300">{r.baseline.slipped}</b> slipped · <b className="text-emerald-700 dark:text-emerald-300">{r.baseline.pulledIn}</b> pulled in
             </span>
           </div>
           {r.baseline.worstSlips.length > 0 && (
@@ -244,7 +244,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
       {r.blockers.length > 0 && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-200 shadow-sm overflow-hidden">
           <div className="px-4 py-2.5 border-b border-rose-100 bg-rose-50/60 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600" />
+            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="font-bold text-[var(--color-text)] text-sm">Needs attention</span>
             <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
           </div>
@@ -281,9 +281,9 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
                 </div>
                 <div className="w-12 text-right text-[13px] font-black tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
                 <div className="w-28 shrink-0 flex items-center justify-end gap-2 text-[11px]">
-                  {g.blocked > 0 && <span className="text-rose-600 font-bold">{g.blocked} blkd</span>}
-                  {g.onHold > 0 && <span className="text-amber-600 font-bold">{g.onHold} hold</span>}
-                  {g.overdue > 0 && <span className="text-rose-600 font-bold">{g.overdue} late</span>}
+                  {g.blocked > 0 && <span className="text-rose-700 dark:text-rose-300 font-bold">{g.blocked} blkd</span>}
+                  {g.onHold > 0 && <span className="text-amber-800 dark:text-amber-300 font-bold">{g.onHold} hold</span>}
+                  {g.overdue > 0 && <span className="text-rose-700 dark:text-rose-300 font-bold">{g.overdue} late</span>}
                 </div>
               </div>
             ))}
@@ -343,7 +343,7 @@ function Bar({ pct, done }: { pct: number; done?: boolean }) {
   );
 }
 function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "emerald" | "blue" | "amber" | "rose"; label: string; value: number }) {
-  const c = tone === "emerald" ? "text-emerald-600" : tone === "blue" ? "text-blue-600" : tone === "amber" ? "text-amber-600" : "text-rose-600";
+  const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400" : tone === "blue" ? "text-blue-600" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400";
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>

@@ -328,9 +328,46 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
 
   it("reopen / void need no signature (only a completion is a sign-off)", async () => {
     for (const status of ["open", "void"] as const) {
-      expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor: actorOf(OW) })).ok).toBe(true);
+      expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor: actorOf(OW), reason: status === "void" ? "Created against the wrong unit" : undefined })).ok).toBe(true);
     }
     expect(ceremony.calls).toHaveLength(0);
+  });
+
+  // projects Round G J10b (REL-9 review): the void's audit row is the only
+  // record of who voided a checklist (the table keeps no voided_by; closeout
+  // names the voider from it) — so its insert is CHECKED, and the reason the
+  // Quality tab asks for goes on it.
+  it("REL-9: a void's audit row carries the reason, and a failed insert comes back as auditError on the void that landed — never dropped", async () => {
+    const ok = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "  Created against the wrong unit  " });
+    expect(ok).toEqual({ ok: true });   // the row landed: no auditError key
+    expect(audits().at(-1)).toMatchObject({ action: "CHECKLIST_STATUS", details: { checklistId: "cl1", status: "void", title: "PSSR", reason: "Created against the wrong unit" } });
+
+    state.tables.project_checklists[0].status = "open";
+    state.tableWriteError = { audit_logs: { message: 'new row violates row-level security policy for table "audit_logs"', code: "42501" } };
+    const lost = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason: "Duplicate of the Unit 300 PSSR" });
+    expect(lost.ok).toBe(true);
+    expect(lost.auditError).toBe("You don't have permission to do this.");
+    expect(state.tables.project_checklists[0].status).toBe("void");   // the void landed; only its record failed
+
+    // a reopen's audit keeps its old (unchecked) shape — this limb is the void's alone
+    state.tables.project_checklists[0].status = "void";
+    expect(await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "open", actor: actorOf(ADMIN) })).toEqual({ ok: true });
+  });
+
+  // REL-9 review (fix pass): the reason was the dialog's alone — any other
+  // caller of the lib could void with none, and the audit row (the only
+  // record of why) carried nothing. The lib now refuses it BEFORE the write.
+  it("REL-9: a void with no reason — missing, blank, short or canned — is refused before the write; nothing changes, nothing is audited", async () => {
+    for (const reason of [undefined, null, "   ", "duplicate", "not applicable"]) {
+      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(ADMIN), reason });
+      expect(res.ok, String(reason)).toBe(false);
+      expect(res.error, String(reason)).toMatch(/The checklist was not voided\.$/);
+    }
+    expect(state.tables.project_checklists[0].status).toBe("open");
+    expect(state.writes.filter((w) => w.table === "project_checklists")).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+    // a reopen needs no reason (it removes nothing from a count)
+    expect((await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "open", actor: actorOf(ADMIN) })).ok).toBe(true);
   });
 
   // QUAL-15's void half (J2b integration): voiding takes a checklist out of
@@ -338,7 +375,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
   // could void it away — 20261136 keeps every void to controllers.
   it("voiding ANY checklist is a controller's: the database's refusal of the owner comes back as the error, nothing audited", async () => {
     state.writeError = { message: "Voiding a checklist takes it out of the project's closeout with no reason on record — only Admin / Document Control voids one. Nothing was changed. QUAL-15, 20261136", code: "23514" };
-    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(OW) });
+    const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status: "void", actor: actorOf(OW), reason: "Created against the wrong unit" });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/only Admin \/ Document Control voids one/);
     expect(audits()).toHaveLength(0);
@@ -353,7 +390,7 @@ describe("setChecklistStatus('complete') — QUAL-4", () => {
     state.tables.project_checklists[0].status = "complete";
     state.writeError = { message: "A completed checklist is a signed sign-off — only Admin / Document Control reopens or voids it. Nothing was changed. QUAL-4, 20261136", code: "23514" };
     for (const status of ["open", "void"] as const) {
-      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ status: "complete" }), status, actor: actorOf(OW) });
+      const res = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist({ status: "complete" }), status, actor: actorOf(OW), reason: status === "void" ? "Signed off against the wrong unit" : undefined });
       expect(res.ok, status).toBe(false);
       expect(res.error, status).toMatch(/only Admin \/ Document Control reopens or voids it/);
     }
@@ -672,10 +709,14 @@ describe("20261136 — the sign-off helpers and rails", () => {
     for (const line of order) { const i = r.indexOf(line); expect(i, line).toBeGreaterThan(at); at = i; }
     // the service pass (restores, server routes) still passes first
     expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(undo));
-    // no product path reopens or voids a checklist: the tab calls setChecklistStatus for "complete" only
+    // no product path REOPENS a checklist: the tab calls setChecklistStatus
+    // for "complete" and — since projects Round G J10b (REL-9) — "void",
+    // offered only to the controller tier this rail admits
     const tab = src("components/projects/QualityTab.tsx");
-    expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(1);
+    expect((tab.match(/setChecklistStatus\(/g) ?? []).length).toBe(2);
     expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "complete"');
+    expect(tab).toContain('setChecklistStatus({ orgId, projectId, checklist, status: "void", actor, reason: reason.trim() });');
+    expect(tab).not.toMatch(/setChecklistStatus\(\{[^}]*status: "open"/);
     // an org always keeps an active Admin (the last-Admin guard), so a controller exists to undo one
     expect(read("20260831_capability_policy_and_rails.sql")).toContain("CREATE OR REPLACE FUNCTION prevent_last_admin_removal()");
   });
@@ -687,7 +728,7 @@ describe("20261136 — the sign-off helpers and rails", () => {
     expect(r.indexOf(voidRule)).toBeLessThan(r.indexOf("NEW.status_changed_at := CASE WHEN NEW.status IS DISTINCT FROM OLD.status"));
     // the service pass (restores, server routes) still passes first
     expect(r.indexOf("IF v_uid IS NULL THEN RETURN NEW; END IF;")).toBeLessThan(r.indexOf(voidRule));
-    // checklists carry no reason column, so the void asks none (the schema was checked: 20261013's table, 20261091 and 20261136's columns)
+    // checklists carry no reason column (the schema was checked: 20261013's table, 20261091 and 20261136's columns) — the void's reason goes on its audit row (REL-9, J10b)
     const ddl = m13.slice(m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists ("), m13.indexOf(");", m13.indexOf("CREATE TABLE IF NOT EXISTS project_checklists (")));
     expect(ddl).not.toMatch(/reason|note/i);
     const added = numbered.flatMap((f) => [...read(f).matchAll(/ALTER TABLE project_checklists ADD COLUMN IF NOT EXISTS (\w+)/g)].map((m) => m[1]));
@@ -836,7 +877,7 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
   const tab = src("components/projects/QualityTab.tsx");
 
   it("reads the database's decision and passes it — never the page's canManage — to every section", () => {
-    expect(tab).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
+    expect(tab).toContain("return loadSignoffAuthority(orgId, projectId, actor).then((a) => {");
     expect(tab).toContain("const canSignOff = authority && !authority.error ? authority.maySign : canManage;");
     const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
     for (const section of ["ChecklistsSection", "TurnoverSection", "PunchSection"]) {
@@ -851,21 +892,27 @@ describe("QualityTab census — controls from the decision (dw4)", () => {
   });
   // J2b integration: the decision was read once on mount — Retry and every
   // onChanged re-read the lists but never the decision.
+  // projects Round G J10b (PERF-4): the loaders set state in their settled
+  // callbacks (react-hooks/set-state-in-effect, live once the suppression
+  // went), and every section's onChanged is afterWrite — refresh, then the
+  // page is told. Retry stays refresh alone.
   it("refresh() — mount, Retry and every section's onChanged — re-reads the sign-off decision beside the lists; only the newest answer lands", () => {
-    const loader = tab.slice(tab.indexOf("const loadAuthority = useCallback(async () => {"), tab.indexOf("}, [orgId, projectId, actor]);", tab.indexOf("const loadAuthority = useCallback(")));
+    const loader = tab.slice(tab.indexOf("const loadAuthority = useCallback((): Promise<void> => {"), tab.indexOf("}, [orgId, projectId, actor]);", tab.indexOf("const loadAuthority = useCallback(")));
     expect(loader).toContain("const seq = ++authoritySeq.current;");
-    expect(loader).toContain("const a = await loadSignoffAuthority(orgId, projectId, actor);");
+    expect(loader).toContain("return loadSignoffAuthority(orgId, projectId, actor).then((a) => {");
     expect(loader).toContain("if (seq === authoritySeq.current) setAuthority(a);");
-    const refresh = tab.slice(tab.indexOf("const refresh = useCallback(async () => {"), tab.indexOf("useEffect(() => { void refresh(); }, [refresh]);"));
+    const refresh = tab.slice(tab.indexOf("const refresh = useCallback((): Promise<void> => {"), tab.indexOf("useEffect(() => { void refresh(); }, [refresh]);"));
     expect(refresh).toContain("void loadAuthority();");
-    expect(refresh.indexOf("void loadAuthority();")).toBeLessThan(refresh.indexOf("await Promise.allSettled(["));
+    expect(refresh.indexOf("void loadAuthority();")).toBeLessThan(refresh.indexOf("return Promise.allSettled(["));
     expect(refresh).toContain("}, [orgId, projectId, loadAuthority]);");
     // the decision is read in ONE place — no separate mount-only effect remains
     expect((tab.match(/loadSignoffAuthority\(/g) ?? []).length).toBe(1);
-    // Retry and onChanged are refresh
+    // Retry is refresh; every section's onChanged is afterWrite, which is refresh first
     expect(tab).toContain("const retry = () => void refresh();");
+    expect(tab).toContain("void refresh().then(() => {");
     const top = tab.slice(tab.indexOf("export default function QualityTab("), tab.indexOf("\nfunction LoadFailed("));
-    expect((top.match(/onChanged=\{retry\}/g) ?? []).length).toBe(3);
+    expect((top.match(/onChanged=\{afterWrite\}/g) ?? []).length).toBe(3);
+    expect((top.match(/onRetry=\{retry\}/g) ?? []).length).toBe(3);
   });
   it("the fallback notice names everyone the fallback admits: the project owner, Admin and Document Control", () => {
     expect(tab).toContain("<Notice notice={info(`Couldn't read who may sign off on this project (${asClause(authority.error)}) — the controls shown are the ones the project owner, Admin and Document Control always have.`)} />");

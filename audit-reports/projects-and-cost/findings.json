@@ -9,17 +9,17 @@
     "audit-reports/projects-and-cost/05-intake-door.md"
   ],
   "totals": {
-    "findings": 76,
+    "findings": 77,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 22,
       "MEDIUM": 39,
-      "LOW": 13
+      "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 65,
-      "OPEN": 11
+      "RESOLVED": 67,
+      "OPEN": 10
     }
   },
   "status_vocabulary": [
@@ -1887,7 +1887,7 @@
       "id": "INTK-17",
       "title": "The Intake tab's Revoke audits a revocation that changed no row, and re-stamps a link that was already revoked",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "audit integrity",
@@ -1907,6 +1907,33 @@
       ],
       "refuted": false,
       "summary": "Two controllers have the Intake tab open. One revokes Gulf Mechanical's link at 09:00. The other, on a list that still shows the link live, clicks Revoke at 11:30. The update re-stamps revokedat to 11:30, and a second INTAKELINKREVOKED row is written. The register now records the revocation two and a half hours late, which matters when a submission lands between the two times. Separately, if the r",
+      "area": "projects-and-cost",
+      "report": "audit-reports/projects-and-cost/05-intake-door.md"
+    },
+    {
+      "id": "INTK-18",
+      "title": "The Intake tab's approve offers a controller no recorded force when an active hold refuses the review promote",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "workflow / controller recovery",
+      "related": [
+        "REV-20",
+        "HLD-2"
+      ],
+      "locations": [
+        "components/projects/IntakePanel.tsx:416-420",
+        "components/documents/ReviewGateSection.tsx:155-180",
+        "lib/reviewControl.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After 20261151 is pasted, a vendor's revision of a document with an active hold reaches the Intake tab. The controller who clicks Approve is told to release the hold. If the hold must stay (for example, a quality hold that the revision itself answers), there is no recorded way through from this tab. The same controller would get one from the document's review panel.",
       "area": "projects-and-cost",
       "report": "audit-reports/projects-and-cost/05-intake-door.md"
     },
@@ -1993,7 +2020,7 @@
       "id": "QUAL-8",
       "title": "The checklist completion gate is computed from a read whose error is discarded, so a policy denial or a missing migration lets an entirely unverified checklist be marked complete",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

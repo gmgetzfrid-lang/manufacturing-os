@@ -48,7 +48,7 @@ export default class TabErrorBoundary extends React.Component<Props, State> {
     if (!this.state.error) return this.props.children;
     return (
       <div role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-6 text-center">
-        <AlertTriangle className="w-6 h-6 mx-auto text-rose-600 mb-2" aria-hidden="true" />
+        <AlertTriangle className="w-6 h-6 mx-auto text-rose-600 dark:text-rose-400 mb-2" aria-hidden="true" />
         <div className="text-sm font-bold text-[var(--color-text)]">{this.props.label} couldn&apos;t load</div>
         <div className="text-xs text-[var(--color-text-muted)] mt-1 break-words">
           {this.state.error.message || "Something went wrong while drawing it."} The rest of the project page still works.

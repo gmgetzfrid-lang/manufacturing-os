@@ -377,7 +377,7 @@ describe("setChecklistStatus('complete')", () => {
 
     // void / reopen send the status only too (the rail nulls the basis)
     for (const status of ["open", "void"] as const) {
-      const r = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor });
+      const r = await setChecklistStatus({ orgId: "o1", projectId: "p1", checklist: checklist(), status, actor, reason: status === "void" ? "Raised against the wrong unit" : undefined });
       expect(r).toEqual({ ok: true });
       expect(state.tables.project_checklists[0].completed_basis).toBeNull();   // the rail nulls it
     }

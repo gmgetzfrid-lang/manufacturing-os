@@ -40,6 +40,8 @@ import { COMPANY_KINDS, COMPANY_KIND_LABEL } from "@/lib/projectVocabulary";
 import { listCompanies, type Company } from "@/lib/companies";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 /** COST-8: the account form offers a currency instead of hardcoding USD. */
@@ -54,7 +56,9 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
 
 export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
-  /** Fires after each data reload so the page's coach/health re-gathers. */
+  /** Fires after each WRITE on this tab (once its re-read has landed) so the
+   *  page's coach/health re-gathers — never on mount or a read retry
+   *  (PERF-3 / PERF-4). */
   onDataChanged?: () => void;
 }) {
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
@@ -125,10 +129,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     } catch (e) {
       setErr(userFacingCaughtError(e, { action: "read", context: "CostsTab" }));
     } finally { setLoading(false); }
-    onDataChanged?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
+  /** PERF-4 / PERF-3: after a WRITE on this tab — re-read, drop any snapshot
+   *  round issued before the write, then tell the page, so the coach
+   *  re-gathers from a fresh round. The load effect never calls the page:
+   *  the coach gathers its own round when it mounts (a tab mount costs no
+   *  second round), and no callback identity can re-fire the load — the
+   *  loop the old eslint suppression held back cannot form. */
+  const afterWrite = useCallback(() => {
+    void refresh().then(() => {
+      invalidateProjectSnapshot(orgId, projectId);
+      onDataChanged?.();
+    });
+  }, [refresh, orgId, projectId, onDataChanged]);
 
   // Planned average crew input: the awarded quote's stated labor hours.
   const awardedLaborHours = useMemo(() => {
@@ -177,7 +191,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
     <div ref={errRef} tabIndex={-1} role="alert"
       className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40">
       <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
-      <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>
+      <button onClick={() => setErr(null)} className="ml-auto text-rose-400 hover:text-rose-600 dark:hover:text-rose-300"><X className="w-3.5 h-3.5" /></button>
     </div>
   );
 
@@ -208,7 +222,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
              claim-then-post design can produce, with the audited repair. ── */}
       {hasOrphans && (
         <LedgerHealth orphans={orphans} accounts={accounts} entries={entries} cos={cos} canManage={canManage} actor={actor} busy={busy} setBusy={setBusy}
-          onChanged={() => void refresh()} onCoRepaired={() => { setCoReload((n) => n + 1); void refresh(); }} setErr={setErr} />
+          onChanged={afterWrite} onCoRepaired={() => { setCoReload((n) => n + 1); afterWrite(); }} setErr={setErr} />
       )}
 
       {/* ── Stat strip ── */}
@@ -269,11 +283,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
 
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
       <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
+        accounts={accounts} docs={docs} onChanged={afterWrite} setErr={setErr} />
 
       {/* ── Change orders — never a silent budget edit ── */}
       <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} reloadKey={coReload} />
+        accounts={accounts} parties={parties} onMoneyMoved={afterWrite} setErr={setErr} reloadKey={coReload} />
 
       {/* ── Accounts ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -292,7 +306,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <AccountForm
             orgId={orgId} projectId={projectId} actor={actor}
             parties={parties} milestones={milestones}
-            onDone={() => { setShowNewAccount(false); void refresh(); }}
+            onDone={() => { setShowNewAccount(false); afterWrite(); }}
             onCancel={() => setShowNewAccount(false)}
           />
         )}
@@ -344,7 +358,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
                         of {fmtMoney(r.revisedBudget, lineCur)}{r.approvedChanges !== 0 ? ` (revised from ${fmtMoney(r.account.budget, lineCur)})` : ""}
                       </div>
-                      <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-600" : "text-[var(--color-text-muted)]"}`}>
+                      <div className={`text-[10px] tabular-nums font-bold ${r.remaining < 0 ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}`}>
                         {fmtMoney(r.remaining, lineCur)} uncommitted
                       </div>
                     </div>
@@ -355,7 +369,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       orgId={orgId} projectId={projectId} actor={actor}
                       rollup={r} entries={accEntries} parties={parties} milestones={milestones}
                       canManage={canManage} busy={busy} setBusy={setBusy}
-                      onChanged={() => void refresh()} setErr={setErr} sourceLabel={sourceLabel}
+                      onChanged={afterWrite} setErr={setErr} sourceLabel={sourceLabel}
                     />
                   )}
                 </div>
@@ -374,7 +388,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{parties.length}</span>
         </button>
         {showParties && (
-          <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={() => void refresh()} />
+          <PartiesPanel orgId={orgId} projectId={projectId} actor={actor} parties={parties} canManage={canManage} onChanged={afterWrite} />
         )}
       </div>
 
@@ -394,8 +408,8 @@ function StatCard({ icon, label, value, sub, tone }: {
     accent: "text-[var(--color-accent)] bg-[var(--color-accent-soft)]",
     sky: "text-sky-600 bg-sky-500/10",
     violet: "text-violet-600 bg-violet-500/10",
-    emerald: "text-emerald-600 bg-emerald-500/10",
-    rose: "text-rose-600 bg-rose-500/10",
+    emerald: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10",
+    rose: "text-rose-600 dark:text-rose-400 bg-rose-500/10",
   };
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 shadow-sm">
@@ -478,16 +492,16 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
         <div key={d.id} className="flex items-center gap-2 flex-wrap pl-6">
           <span>{d.kind} <b>{d.vendorName ?? d.fileName ?? d.id.slice(0, 8)}</b> is {costDocStatusLabel(d.status).toLowerCase()} but has no cost entry.</span>
           {canManage && (
-            <span className="inline-flex items-center gap-1.5 ml-auto">
+            <span className="inline-flex items-center gap-2 ml-auto">
               <select value={accountPick[d.id] ?? ""} onChange={(e) => setAccountPick((m) => ({ ...m, [d.id]: e.target.value }))}
                 className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-40">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>
               <button onClick={() => void repair(d, "repost")} disabled={busy === d.id}
-                className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Re-post</button>
+                className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Re-post</button>
               <button onClick={() => void repair(d, "revert")} disabled={busy === d.id}
-                className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">{revertLabel(d)}</button>
+                className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50`}>{revertLabel(d)}</button>
             </span>
           )}
         </div>
@@ -498,7 +512,7 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
           <div key={c.id} className="flex items-center gap-2 flex-wrap pl-6">
             <span><b>{c.coNumber}</b> ({c.title}) is approved for {fmtMoney(c.amount)} {coSentence(c)} Until then it does not revise the budget.</span>
             {canManage && (
-              <span className="inline-flex items-center gap-1.5 ml-auto">
+              <span className="inline-flex items-center gap-2 ml-auto">
                 {candidates.length > 0 && (
                   <>
                     <select value={entryPick[c.id] ?? candidates[0].id} onChange={(e) => setEntryPick((m) => ({ ...m, [c.id]: e.target.value }))}
@@ -509,12 +523,12 @@ function LedgerHealth({ orphans, accounts, entries, cos, canManage, actor, busy,
                       ))}
                     </select>
                     <button onClick={() => void repairCo(c, "link")} disabled={busy === c.id}
-                      className="px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                      className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Link</button>
                   </>
                 )}
                 <button onClick={() => void repairCo(c, "reverse")} disabled={busy === c.id}
                   title={candidates.length > 0 ? `A posted commitment carrying ${c.coNumber} is still on the budget line — link it instead, or void it by hand first.` : "Marks the change order void on the record; audited."}
-                  className="px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50">Reverse</button>
+                  className={`${DECISION_TARGET} px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black disabled:opacity-50`}>Reverse</button>
               </span>
             )}
           </div>
@@ -615,7 +629,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                  className={`${DECISION_TARGET} ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 dark:hover:text-rose-300 hover:bg-rose-500/10 transition-colors`}
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -688,7 +702,7 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
         className="h-8 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       <button onClick={() => void submit()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors`}>
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
       </button>
     </div>
@@ -752,7 +766,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
         {error && <span role="alert" className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
-          <button onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void submit()} disabled={saving} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Create
           </button>
         </span>
@@ -871,14 +885,14 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
                     Known company: {companyName.get(p.companyId) ?? "open the record"}
                   </Link>
                 ) : linking === p.id ? (
-                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex flex-wrap items-center gap-2">
                     <select value={linkPick} onChange={(e) => setLinkPick(e.target.value)} aria-label={`Known company for ${p.name}`}
                       className="h-7 max-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
                       <option value="">Pick the company…</option>
                       {companies.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === "do_not_use" ? " — DO NOT USE" : c.status === "inactive" ? " — inactive" : ""}</option>)}
                     </select>
                     <button type="button" onClick={() => void link(p)} disabled={!linkPick || saving}
-                      className="h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50">Link</button>
+                      className={`${DECISION_TARGET} h-7 px-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black disabled:opacity-50`}>Link</button>
                     <button type="button" onClick={() => { setLinking(null); setLinkPick(""); }} className="text-[10px] font-bold text-[var(--color-text-muted)]">Cancel</button>
                   </span>
                 ) : (
@@ -911,7 +925,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           )}
           <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" aria-label="Trade" className="h-8 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" aria-label="Contract value" inputMode="decimal" className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void add()} disabled={saving} className={`${DECISION_TARGET} h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
           </button>
         </div>
