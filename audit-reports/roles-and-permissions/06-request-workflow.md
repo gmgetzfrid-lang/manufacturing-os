@@ -77,7 +77,7 @@ which are currently masked. Read those three before shipping this.
 4. `org_configurations` is covered by `lib/schemaExpectations.ts` so
    `/api/admin/schema-health` catches this class of drift.
 
-*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-1` closes its done-when 1 and 3 on this record. Its done-when 2 asks for more than this record's done-when 2: a failed read must be distinguishable from an unset policy, not only left uncached. `DEC-82` reconciles the two: this record's rule (defaults for that call, never cached) stands for evaluation, and the loader also reports the failure. Owner: admin-and-org P9.*
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-1` closes its done-when 1 and 3 on this record. Its done-when 2 asks for more than this record's done-when 2: a failed read must be distinguishable from an unset policy, not only left uncached. `DEC-82` answers ALOG-1 with a marker on the loader, which the policy editor and the View-as panel show instead of the defaults. It does not decide evaluation. For the workflow-action route, this record's rule (defaults for that call) conflicts with drafting-flow `AUTHZ-7` (HIGH, OPEN, DF-P1), which asks the route to refuse or to use the last good cached policy. The conflict is flagged for the user's ratification. Owner of ALOG-1's remainder: admin-and-org P9, once the plan is amended.*
 
 ---
 

@@ -20,7 +20,12 @@
 // definition that already existed when it ran. A function on its list that a
 // LATER migration re-creates without the clause is unpinned live, and fails
 // here. (Before this rule the exemption ignored the order, and such a
-// re-creation passed.)
+// re-creation passed.) A static `ALTER FUNCTION … SET search_path` pins;
+// `SET search_path TO DEFAULT`, `RESET search_path` and `RESET ALL` unpin.
+//
+// What no replay can see: a file pasted OUT of filename order. The lint
+// knows the files, not the order they reached the live database. The known
+// case is pinned at the foot of this file (20261011, paste guide row 10).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -59,7 +64,23 @@ const arityOf = (args: string) => {
   return count;
 };
 
-type FnState = { file: string; order: number; definer: boolean; pinned: boolean; dropped: boolean };
+type FnState = {
+  file: string;
+  order: number;
+  definer: boolean;
+  /** pinned now: at its final CREATE, or by a later static ALTER */
+  pinned: boolean;
+  /** its final CREATE carried the clause itself */
+  pinnedAtCreate: boolean;
+  /** replay position of the last event that left it unpinned (an unpinned
+   *  CREATE, or an ALTER that reset the setting) */
+  unpinnedAt: number;
+  dropped: boolean;
+};
+
+// A header or ALTER clause that SETS search_path to a value. `TO DEFAULT` /
+// `= DEFAULT` sets nothing: it is the same as RESET.
+const setsSearchPath = /SET\s+search_path\s*(?:(?:=|\bTO\b)\s*(?!\s|DEFAULT\b)|FROM\s+CURRENT\b)/i;
 
 /** `extra` appends synthetic migration text after the real sequence — the
  *  self-checks below use it to prove the rules catch what they claim. */
@@ -72,8 +93,10 @@ function census(extra: Array<{ file: string; sql: string }> = []): Map<string, F
     /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)([\s\S]*?)\$\w*\$/gi;
   const dropRe = /DROP\s+FUNCTION\s+IF\s+EXISTS\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)/gi;
   // A static `ALTER FUNCTION f(...) SET search_path ...` pins whatever
-  // definition is live when it runs (20261020's dynamic list is alterPinned).
-  const alterRe = /ALTER\s+FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s+SET\s+search_path/gi;
+  // definition is live when it runs (20261020's dynamic list is alterPinned);
+  // `SET search_path TO DEFAULT`, `RESET search_path` and `RESET ALL` unpin it.
+  const alterRe =
+    /ALTER\s+FUNCTION\s+(?:public\.)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)\s+(SET\s+search_path\b[^;]*|RESET\s+(?:search_path|ALL)\b)/gi;
   const sources = [...migrationFiles().map((file) => ({ file, sql: readFileSync(file, "utf8") })), ...extra];
   sources.forEach(({ file, sql }, order) => {
     const txt = stripSqlComments(sql);
@@ -83,7 +106,8 @@ function census(extra: Array<{ file: string; sql: string }> = []): Map<string, F
     // pattern leaves f LIVE, and a trailing drop leaves it dropped.
     type Ev =
       | { at: number; kind: "create"; key: string; header: string }
-      | { at: number; kind: "drop" | "alter"; key: string };
+      | { at: number; kind: "alter"; key: string; pin: boolean }
+      | { at: number; kind: "drop"; key: string };
     const events: Ev[] = [];
     for (const m of txt.matchAll(createRe)) {
       events.push({ at: m.index ?? 0, kind: "create", key: `${m[1]}/${arityOf(m[2])}`, header: m[3] });
@@ -92,21 +116,27 @@ function census(extra: Array<{ file: string; sql: string }> = []): Map<string, F
       events.push({ at: d.index ?? 0, kind: "drop", key: `${d[1]}/${arityOf(d[2])}` });
     }
     for (const a of txt.matchAll(alterRe)) {
-      events.push({ at: a.index ?? 0, kind: "alter", key: `${a[1]}/${arityOf(a[2])}` });
+      events.push({ at: a.index ?? 0, kind: "alter", key: `${a[1]}/${arityOf(a[2])}`, pin: setsSearchPath.test(a[3]) });
     }
     events.sort((a, b) => a.at - b.at);
     for (const ev of events) {
       if (ev.kind === "create") {
+        const pinned = setsSearchPath.test(ev.header);
         final.set(ev.key, {
           file,
           order,
           definer: /SECURITY\s+DEFINER/i.test(ev.header),
-          pinned: /search_path/i.test(ev.header),
+          pinned,
+          pinnedAtCreate: pinned,
+          unpinnedAt: order,
           dropped: false,
         });
       } else if (ev.kind === "alter") {
         const prev = final.get(ev.key);
-        if (prev && !prev.dropped) prev.pinned = true;
+        if (prev && !prev.dropped) {
+          prev.pinned = ev.pin;
+          if (!ev.pin) prev.unpinnedAt = order;
+        }
       } else {
         const prev = final.get(ev.key);
         if (prev) prev.dropped = true;
@@ -138,15 +168,16 @@ function alterOrder(): number {
 
 /** Live SECURITY DEFINER functions with no search_path pin: unpinned at their
  *  final CREATE (and by no later static ALTER), and either missing from
- *  20261020's list or (re-)created after 20261020 ran. */
+ *  20261020's list or left unpinned (re-created, or reset) after 20261020
+ *  ran. */
 function unpinnedDefiners(final: Map<string, FnState>): string[] {
   const pinnedByAlter = alterPinned();
   const at = alterOrder();
   const out: string[] = [];
   for (const [key, st] of final) {
     if (st.dropped || !st.definer || st.pinned) continue;
-    if (pinnedByAlter.has(key) && st.order < at) continue;
-    const reset = pinnedByAlter.has(key) ? " — re-created after 20261020, so its ALTER pin was reset" : "";
+    if (pinnedByAlter.has(key) && st.unpinnedAt < at) continue;
+    const reset = pinnedByAlter.has(key) ? " — re-created or reset after 20261020, so its ALTER pin was lost" : "";
     out.push(`${key}  (final definition: ${st.file.replace(root + "/", "")}${reset})`);
   }
   return out;
@@ -217,6 +248,23 @@ $$;`,
     const altered = [...recreate(false), { file: "zz_synthetic_alter.sql", sql: "ALTER FUNCTION is_org_controller(uuid) SET search_path = public;" }];
     expect(unpinnedDefiners(census(altered))).toEqual([]);
   });
+
+  it("SET search_path TO DEFAULT, RESET search_path and RESET ALL unpin, after a pinned re-creation and on a 20261020-pinned definition alike", () => {
+    for (const undo of [
+      "ALTER FUNCTION is_org_controller(uuid) SET search_path TO DEFAULT;",
+      "ALTER FUNCTION is_org_controller(uuid) RESET search_path;",
+      "ALTER FUNCTION is_org_controller(uuid) RESET ALL;",
+    ]) {
+      const undone = { file: "zz_synthetic_reset.sql", sql: undo };
+      // after a re-creation that pinned at creation
+      expect(unpinnedDefiners(census([...recreate(true), undone])).some((v) => v.startsWith("is_org_controller/1 ")), undo).toBe(true);
+      // on HEAD's definition (20260814), which only 20261020's ALTER pins
+      expect(unpinnedDefiners(census([undone])).some((v) => v.startsWith("is_org_controller/1 ")), undo).toBe(true);
+    }
+    // a CREATE whose clause sets the default pins nothing either
+    const toDefault = [{ file: "zz_synthetic_default.sql", sql: recreate(true)[0].sql.replace("SET search_path = public", "SET search_path TO DEFAULT") }];
+    expect(unpinnedDefiners(census(toDefault)).some((v) => v.startsWith("is_org_controller/1 "))).toBe(true);
+  });
 });
 
 describe("ORG-6 done-when 1 — the org-authority helpers it names", () => {
@@ -241,6 +289,16 @@ describe("ORG-6 done-when 1 — the org-authority helpers it names", () => {
     }
   });
 
+  // The tripwire below must not pass vacuously: the helper it inspects is
+  // live at the arity it names. If this fails, the helper was renamed,
+  // re-aritied or dropped; re-point the tripwire before anything else.
+  it("acl_subject_in_bucket(jsonb, text, text, text[]) is live, so the tripwire below inspects a real definition", () => {
+    const st = census().get("acl_subject_in_bucket/4");
+    expect(st).toBeDefined();
+    expect(st!.dropped).toBe(false);
+    expect(st!.definer).toBe(false);
+  });
+
   // NOT holding at HEAD: the twelfth carries no SET search_path. It is a
   // SECURITY INVOKER function over its own jsonb / text[] arguments (no
   // relation to shadow), reached only from node_visible, whose own pin is in
@@ -249,8 +307,31 @@ describe("ORG-6 done-when 1 — the org-authority helpers it names", () => {
   // acl_subject_in_bucket(jsonb, text, text, text[]) SET search_path = public`
   // in its ORG-13 migration). Flip to `it` when it lands.
   it.fails("acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, owner A&O P8)", () => {
-    const st = census().get("acl_subject_in_bucket/4");
-    expect(st?.dropped).toBe(false);
-    expect(st?.pinned).toBe(true);
+    expect(census().get("acl_subject_in_bucket/4")?.pinned).toBe(true);
+  });
+});
+
+describe("what the replay cannot see: a file pasted out of filename order (ORG-6 done-when 2's limit)", () => {
+  // 20261011_collections_guard_and_trash.sql re-creates
+  // enforce_document_move_guard() as SECURITY DEFINER with no SET
+  // search_path. It sorts before 20261020, so the replay counts 20261020's
+  // ALTER as its pin and the lint passes it. The paste guide
+  // (audit-reports/MIGRATION-PASTE-ORDER.md row 10, ASK) says pasting it now
+  // would revert the live pin. This pins the record's statement of that
+  // limit. When it fails because the function is pinned at creation (the
+  // 20261011 re-base) or by a later static ALTER, update ORG-6's record and
+  // retire this test.
+  it("the known out-of-order case is as recorded", () => {
+    const st = census().get("enforce_document_move_guard/0");
+    expect(st).toBeDefined();
+    expect(st!.file.endsWith("20261011_collections_guard_and_trash.sql")).toBe(true);
+    expect(st!.dropped).toBe(false);
+    expect(st!.definer).toBe(true);
+    expect(st!.pinnedAtCreate).toBe(false);
+    expect(st!.pinned).toBe(false);
+    expect(alterPinned().has("enforce_document_move_guard/0")).toBe(true);
+    expect(st!.unpinnedAt).toBeLessThan(alterOrder());
+    // ... so the lint passes it on order alone
+    expect(unpinnedDefiners(census()).some((v) => v.startsWith("enforce_document_move_guard/0 "))).toBe(false);
   });
 });

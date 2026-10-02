@@ -1,6 +1,6 @@
 # 01 · Org lifecycle, membership & teams
 
-**14 findings** — 2 CRITICAL · 1 HIGH · 7 MEDIUM · 4 LOW (`ORG-14` opened at the projects Round G J2b integration, 2026-10-01; the split now counts the four findings the independent pass lowered to LOW, which the line had kept as MEDIUM).
+**15 findings** — 2 CRITICAL · 1 HIGH · 7 MEDIUM · 5 LOW (`ORG-14` opened at the projects Round G J2b integration, 2026-10-01; `ORG-15` opened by admin-and-org Round G P0, 2026-10-02; the split now counts the four findings the independent pass lowered to LOW, which the line had kept as MEDIUM).
 
 Signup, invitation, removal, last-admin protection, and what offboarding orphans.
 
@@ -251,7 +251,7 @@ Migration `20261023_access_requests_scope_and_limit.sql` was applied and verifie
 
 **Scope / residual.** None for this finding. `ORG-8` (OPEN, admin-and-org P5) holds the org-name oracle (404 versus 200) and the limiter's fail-open on a missing table (`route.ts:26`).
 
-Seen in passing and not opened: the pending-requests read does not check `{ error }` (`users/page.tsx:139-145`), so a failed read shows no card at all. That is a quiet-empty display, outside this finding's criteria. It is left for the integrator to triage.
+The pending-requests read does not check `{ error }` (`users/page.tsx:139-145`), so a failed read shows no card at all. That is outside this finding's criteria, and is opened as `ORG-15` (LOW, proposed owner admin-and-org P8).
 
 ---
 
@@ -360,7 +360,7 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
 - [ ] `my_org_ids`, `my_team_ids`, `is_org_admin`, `is_org_controller`, `is_org_admin_or_manager`, `node_visible`, `acl_subject_in_bucket`, `doc_is_visible`, `my_project_ids`, `can_manage_node`, `is_org_assign_drafters` and `next_ticket_number` all carry `SET search_path = public`
 - [ ] A CI or schema-health check fails on any SECURITY DEFINER function without a search_path pin
 
-**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29) with an order-aware census. It takes the final definition of each `(name, arity)` over `schema.sql` and then every numbered migration, and applies static ALTERs and `20261020`'s ALTER list in sequence. The resolving finding is roles-and-permissions `DB-6` (commit `2af2ebe`). Eleven of the twelve helpers are pinned live, and done-when 2 holds as of this package. The twelfth helper is not pinned, so the status stays OPEN.
+**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29) with an order-aware census. It takes the final definition of each `(name, arity)` over `schema.sql` and then every numbered migration, and applies static ALTERs and `20261020`'s ALTER list in sequence. The resolving finding is roles-and-permissions `DB-6` (commit `2af2ebe`). Eleven of the twelve helpers are pinned live. Done-when 2 holds for the numbered replay order as of this package, but the lint cannot see a file pasted out of that order (one known case, below). The twelfth helper is not pinned, so the status stays OPEN.
 
 - **Done-when 1 holds for the eleven SECURITY DEFINER helpers.**
   - Pinned at creation: `my_team_ids()` (`20261042`), `is_org_admin(uuid)` and `can_manage_node(jsonb, uuid)` (`20261046`), `node_visible(text, jsonb, uuid)` and `doc_is_visible(uuid)` (`20261037`), the six-argument `node_visible` (`20261041`), and `next_ticket_number` (`20260724`).
@@ -370,19 +370,24 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
   - It is not SECURITY DEFINER, so neither `20261020` nor the lint ever covered it.
   - It reads only its own arguments, so there is no relation to shadow. Its only callers are `node_visible` (`20261037:83`; `20261041:80`, `:83`), whose own pin is in force while it runs. So this is the letter of the criterion, not an open path.
   - **Owner: admin-and-org P8.** The fix is one line, `ALTER FUNCTION acl_subject_in_bucket(jsonb, text, text, text[]) SET search_path = public;`, in its ORG-13 migration (the same family: ORG-13 changes `node_visible`'s team read). That migration is not written yet, so there is nothing to paste.
-  - Tripwire: `lib/__tests__/searchPathPin.test.ts`, `it.fails` "acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, owner A&O P8)". P8 flips it to `it` when the pin lands.
-- **Done-when 2 holds, as of this package.** `lib/__tests__/searchPathPin.test.ts` replays the sequence and fails on any unpinned live definer.
+  - **Plan amendment needed.** The admin-and-org plan's P8 entry does not list `ORG-6`. Its "new migration A (ORG-13)" is where the line goes. The integrator adds `ORG-6` to P8, or re-owns this remainder.
+  - Tripwire: `lib/__tests__/searchPathPin.test.ts`, `it.fails` "acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, owner A&O P8)". P8 flips it to `it` when the pin lands. A plain test beside it checks that `acl_subject_in_bucket/4` is live and not dropped, so the tripwire cannot pass vacuously if the helper is renamed, re-aritied or dropped.
+- **Done-when 2 holds for the numbered replay order, as of this package.** `lib/__tests__/searchPathPin.test.ts` replays `schema.sql` and then the numbered migrations in filename order, and fails on any definer that replay leaves unpinned.
   - The gap: its exemption for `20261020`'s list ignored order, but `CREATE OR REPLACE` resets `SET search_path`. Re-creating any of the eight functions that `20261020` alone pins, without the clause, passed the lint while the live function lost its pin.
   - Reproduced: a temporary `supabase/migrations/20991231_zz_repro_unpinned.sql` that re-creates `is_org_controller(uuid)` as SECURITY DEFINER with no SET left `searchPathPin.test.ts` green (4 of 4).
-  - The change: the exemption now covers only a final definition that precedes `20261020` (`unpinnedDefiners`), a static `ALTER FUNCTION … SET search_path` counts as a pin, and three self-checks pin the rule with synthetic re-creations.
-  - The same temporary file now fails the lint, naming `is_org_controller/1 … re-created after 20261020, so its ALTER pin was reset`. The file was then deleted.
+  - The change: the exemption now covers only a final definition that precedes `20261020` (`unpinnedDefiners`), a static `ALTER FUNCTION … SET search_path` counts as a pin, and `SET search_path TO DEFAULT`, `RESET search_path` and `RESET ALL` count as unpinning (a reset after `20261020` loses its pin as a re-creation does). Four self-checks pin the rule with synthetic re-creations and resets.
+  - The same temporary file now fails the lint, naming `is_org_controller/1 … re-created or reset after 20261020, so its ALTER pin was lost` (re-run in the fix pass with the current message, together with a temporary `ALTER FUNCTION my_org_ids() RESET search_path`, which fails it the same way). Both files were then deleted.
   - On base `f1ac550` the order-aware census finds no unpinned live definer among 127.
+  - **What the lint cannot see: a paste out of filename order.** It knows the files, not the order they were pasted in. Known case: `20261011_collections_guard_and_trash.sql` (`audit-reports/MIGRATION-PASTE-ORDER.md` row 10, ASK) re-creates `enforce_document_move_guard()` as SECURITY DEFINER with no `SET search_path` (`20261011:38-42`). It sorts before `20261020`, so the replay counts 20261020's ALTER as its pin and the lint passes it. The paste guide says the opposite about live state: pasting 20261011 now would revert that pin, and its move-guard part needs a re-based file rather than a paste.
+    - That hazard is held by the paste guide's row 10 (ASK). Whoever re-bases 20261011 adds `SET search_path = public` to the function. A later `ALTER FUNCTION enforce_document_move_guard() SET search_path = public` (for example, in P8's ORG-13 migration) would restore the pin after an accidental paste, but would not prevent one.
+    - A schema-health probe of live state (a SECURITY DEFINER function in `public` whose `proconfig` has no `search_path`) would catch every out-of-order paste. No package owns one.
+    - Pin: `searchPathPin.test.ts` "the known out-of-order case is as recorded". It fails the day the function is pinned at creation or by a later ALTER; this paragraph is then updated.
 
 **Done-when.**
 1. ✗ for one of twelve: `acl_subject_in_bucket`. It is a SECURITY INVOKER helper with no relation reference, reached only under `node_visible`'s pin (owner P8). The eleven SECURITY DEFINER helpers ✓.
-2. ✓ the lint is order-aware and ALTER-aware, and fails on every unpinned live definer.
+2. ✓ for the numbered replay order: the lint is order-aware and ALTER-aware, and fails on every definer that replay leaves unpinned. It cannot see a file pasted out of filename order; the known case is `20261011` (`enforce_document_move_guard`, paste guide row 10, ASK).
 
-**Scope / residual.** One `ALTER FUNCTION` line (P8). Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`). No migration.
+**Scope / residual.** One `ALTER FUNCTION` line (P8, once the plan is amended). The out-of-order paste of 20261011 stays with the paste guide's row 10. Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`, and this package's fix pass). No migration.
 
 ---
 
@@ -672,5 +677,29 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 - The simulator does not report an Admin, a Document Control member or a project's owner as unable to sign off quality records the database lets them sign off.
 - A member granted `quality.sign_off` on one project is shown as holding it for that project (and not for another).
 - A test compares the simulator's quality sign-off answer against `quality_signer_eligible`'s rule for a controller, an owner, a project-scoped grantee and an ungranted member.
+
+---
+
+<a id="org-15"></a>
+
+## ORG-15 · The /admin/users pending-requests read ignores its error, so a failed read shows no access requests and no sign that anything failed
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate (an upper bound, like every unchallenged grade here). No request is lost or exposed: the rows stay in `access_requests`, and the next successful read shows them. The harm is that an Admin has no signal while the read fails, which is `ORG-3`'s quiet-empty shape narrowed to a failure window.
+- **Status:** OPEN
+- **Assigned:** admin-and-org P8, proposed by admin-and-org Round G P0 (2026-10-02). P8's plan entry already lists `app/(protected)/admin/users/page.tsx`; the integrator adds the finding to that entry.
+- **Verification:** CONFIRMED (by reading)
+- **Locations:** `app/(protected)/admin/users/page.tsx:136-146` (`fetchPendingRequests`: `const { data } = await supabase.from('access_requests')…` at `:139`, then `setPendingRequests((data ?? []) …)` at `:145`), `app/(protected)/admin/users/page.tsx:374` (the card is drawn only when `pendingRequests.length > 0`), `app/(protected)/admin/users/page.tsx:115-130` (`fetchMembers`, the same shape for the roster: `const { data } = …` at `:119`, `setMembers(data || [])` at `:124`)
+- **Related:** `ORG-3`, `EGRESS-5`, `IDENT-6`
+- **Independently verified:** — (`author`: opened 2026-10-02 by admin-and-org Round G P0's fix pass, per `DEC-31`, from the package's review; not yet challenged)
+
+**Mechanism.** `fetchPendingRequests` destructures only `data`. supabase-js does not throw on a failed query; it returns `{ data: null, error }`. So an RLS change, a network error, or a column not yet present (the `org_id` that `20261023` adds) leaves `data` null, the list becomes `[]`, and the card at `:374` is not drawn. Nothing tells the Admin that the read failed. `fetchMembers` has the same shape: a failed roster read draws an empty member list with no error. There the failure is conspicuous, because the Admin's own row is missing too.
+
+**Failure scenario.** During a migration window, or after a policy edit, the pending-requests read starts failing. An Admin opens /admin/users and sees no requests card. Requests pile up unseen, with no signal, until the read succeeds again. For as long as the failure lasts, this is the black hole `ORG-3` closed.
+
+**Done when.**
+- The pending-requests read checks `{ error }` and shows an error state (for example, "Could not load access requests") instead of no card.
+- The members read checks `{ error }` and shows an error state instead of an empty roster.
+- A test pins both: a failed read renders the error state, not an empty list.
 
 ---

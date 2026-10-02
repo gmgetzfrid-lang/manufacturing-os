@@ -73,14 +73,16 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
   In SQL, every definition of the evaluator from `20261025` on reads `SELECT data INTO v_val FROM org_configurations`. That covers the live one (`20261063`, LIVE) and the three pending re-creations (`20261132`, `20261136`, `20261137:111`, all marked PASTE, not yet pasted, in `audit-reports/MIGRATION-PASTE-ORDER.md`).
 
   New pin: `lib/__tests__/aoRoundGP0Records.test.ts` "a save through the route is read back by loadCapabilityPolicyEntry — first an INSERT, then a compare-and-set UPDATE". It drives the route's `save` and then the loader, over a stand-in that honours column projection. A mutation that made the loader select `value` failed it (run in this package, then reverted). Its sibling test shows the stand-in returns nothing for `value`, so the pin is not vacuous.
-- **Done-when 3 holds: the evaluator has run against the real schema.** `20261063` was applied and verified live on 2026-09-17, with every probe true (`roles-and-permissions/README.md`, Round E). Its final SELECT runs `org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)` for every active member (`20261063:223`, `:229`). That call passes the membership check and executes the `org_configurations` read, and the paste returned rows instead of 42703. `20261057:170` (live) also runs the three-argument `org_capability_allows`.
+- **Done-when 3 holds: the evaluator has run against the real schema.** `20261063` was applied and verified live on 2026-09-17, with every probe true (`roles-and-permissions/README.md`, Round E). Its final SELECT runs `org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)` for every active member (`20261063:223`, `:229`). That call passes the membership check and executes the `org_configurations` read, and the paste returned rows instead of 42703. This is the only evidence that the read executed: `20261057:170` (live) calls the three-argument `org_capability_allows` with a nil-uuid caller, which is not a member, so it returns FALSE at the membership check (`IF v_role IS NULL THEN RETURN FALSE`, the same shape as `20261063:69-73`) before the column read runs.
 - **Done-when 4 holds** (P2, above).
 - **Done-when 2 does not hold.** `loadCapabilityPolicyEntry` still answers the shipped defaults on a read error: `lib/capabilityPolicy.ts:506` `if (error) return { policy: {}, version: null };`. That carries the same `version: null` as "nothing stored", and `loadCapabilityPolicy` (`:520-525`) hands the `{}` to its callers.
-  - This is the rule that roles-and-permissions `WF-1` done-when 2 chose: defaults for this call, never cached. It is pinned by `capabilityPolicy.test.ts` "read errors fail closed WITHOUT caching".
+  - This is the rule that roles-and-permissions `WF-1` done-when 2 chose: defaults for this call, never cached. It is pinned by `capabilityPolicy.test.ts` "read errors fail closed WITHOUT caching". drafting-flow `AUTHZ-7` (HIGH, OPEN, owner DF-P1) asks the opposite for the workflow-action route, which reads through this loader (`app/api/tickets/workflow-action/route.ts:142`): refuse the transition, or use the last good cached policy.
   - The gates that must not admit on defaults read through `loadCapabilityPolicyStrict` (`:461-477`, `{ ok: false, error }`): `lib/adminGate.ts:39`, `lib/transmittals.ts:1195` and `app/api/ai/usage/route.ts:145`.
   - The two surfaces that present the policy as the org's own do not. `components/permissions/CapabilityPolicyEditor.tsx:117` and `components/permissions/ViewAsSimulator.tsx:46`, `:96` render a failed read as the shipped defaults, and the editor can then save that grid over a stored narrowing.
 
-  **Owner: admin-and-org P9** (permissions console truth). It owns both components. `DEC-82` records the shape that satisfies this criterion and keeps WF-1's rule.
+  **Owner: admin-and-org P9** (permissions console truth). Its plan entry names both components, each at one line (`CapabilityPolicyEditor.tsx:40`, `ViewAsSimulator.tsx:74`). `DEC-82` records the shape that satisfies this criterion: the loader marks a failed read, and the two surfaces show it and offer no Save. `DEC-82` does not decide how a workflow action is evaluated after a failed read. That belongs to `AUTHZ-7`, whose refuse-or-last-good rule conflicts with `WF-1`'s defaults-for-that-call rule for that route; the conflict is flagged for the user's ratification.
+
+  **Plan amendment needed.** The admin-and-org plan's P9 entry lists neither `ALOG-1` nor `lib/capabilityPolicy.ts`, and the marker lives in `loadCapabilityPolicyEntry` (`lib/capabilityPolicy.ts:483-518`). The error state is in the two components beyond the lines its entry names (`CapabilityPolicyEditor.tsx:117`, `ViewAsSimulator.tsx:46`, `:96`). The integrator adds the finding and those files to P9, or re-owns this remainder.
 
 **Done-when.**
 1. ✓ one column everywhere; the route→loader round trip is pinned.
@@ -449,10 +451,12 @@ lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cach
   - The route's compare-and-set uses the stamp it read in the same request (`:139`, `:223`). It catches only a write that lands between that read and the write.
   - So a second admin's grid change made after this editor mounted is overwritten wholesale. The CAPABILITY_POLICY_CHANGED row records it truthfully (`before` is the other admin's row), but nobody is told, and the impact preview still diffs against the mount-time baseline (`CapabilityPolicyEditor.tsx:187`).
 
-  **Owner: admin-and-org P9.** It owns `CapabilityPolicyEditor.tsx`. Suggested shape:
+  **Owner: admin-and-org P9.** Its plan entry names `CapabilityPolicyEditor.tsx` (at `:40`). Suggested shape:
   - the editor sends the `version` that `loadCapabilityPolicyEntry` already returns (`lib/capabilityPolicy.ts:483-518`);
   - the route refuses (409) a `save` whose version is not the row's `updated_at`, or merges per capability;
   - the editor reloads on a 409.
+
+  **Plan amendment needed.** The admin-and-org plan's P9 entry lists neither `ALOG-12` nor the files this shape needs beyond the editor's `:40`: the editor's load and save (`CapabilityPolicyEditor.tsx:115-126`, `:216`), `app/api/admin/capability-policy/route.ts` (refuse a stale-version save) and `lib/capabilityPolicy.ts` (the `CapabilityPolicyChange` `save` op carries the version). The integrator adds the finding and those files to P9, or re-owns this remainder.
 
 **Done-when.**
 1. ✗ not done: grid-against-grid saves are still last-writer-wins (owner P9).
@@ -505,9 +509,11 @@ app/(protected)/admin/permissions/page.tsx:13-16 — `// The old read/write/admi
   - One read remains: `write_access` seeds the upload picker when a library is edited (`LibraryWizard.tsx:244`). Dropping the column from the payload therefore needs the picker seeded from the ACL's role rules instead.
 - **Done-when 3 does not hold.** No decision is recorded.
 
-**Owner: admin-and-org P8.** It owns `admin/libraries/page.tsx`, and the intelligence plan names it for "admin/libraries wizard, ALOG-13 console copy" (`audit-reports/fleet-plans/intelligence.json`, I-12's notes). P8 coordinates with intelligence I-12, which owns `DACL-10` enforcement and by default retires `read_access` / `visible_to` as enforcement.
+**Owner: admin-and-org P8.** It owns `admin/libraries/page.tsx` (`:183-198` only, in its plan entry), and the intelligence plan names it for "admin/libraries wizard, ALOG-13 console copy" (`audit-reports/fleet-plans/intelligence.json`, I-12's notes). P8 coordinates with intelligence I-12, which owns `DACL-10` enforcement and by default retires `read_access` / `visible_to` as enforcement.
 
-Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: the console's 'GONE' comment does not coexist with a library save that still writes write_access / admin_access". It fails the suite the day either side is fixed, and P8 then flips it to `it`.
+**Plan amendment needed.** The admin-and-org plan's P8 entry does not list `ALOG-13`, and its files do not cover the fix: `app/(protected)/admin/libraries/page.tsx:116-117` (the payload), `app/(protected)/admin/libraries/LibraryWizard.tsx:244` and `:301-302` (the picker seed and the mirror), and `app/(protected)/admin/permissions/page.tsx:13-16` (the comment). The integrator adds the finding and those files to P8, or re-owns this finding.
+
+Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: the console's 'GONE' comment does not coexist with a library save that still writes write_access / admin_access". It fails the suite the day either side is fixed, and P8 then flips it to `it`. A plain test beside it checks that both files exist, so the tripwire cannot pass vacuously if one moves.
 
 **Done-when.**
 1. ✗ the comment still asserts a removal that did not happen (owner P8).

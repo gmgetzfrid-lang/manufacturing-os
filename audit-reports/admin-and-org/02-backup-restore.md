@@ -439,7 +439,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 - Done-when 2 holds at the server but not in the UI.
 - Done-when 3 does not hold.
 
-admin-and-org P3 owns the residual ("BKP-6 residual") and runs in parallel, so its branch may already have changed the page and the run row.
+admin-and-org P3 owns the residual ("BKP-6 residual") and runs in parallel, so its branch may already have changed the page and the run row. This block records base `f1ac550` only. Once P3's resolution of this finding is merged, it supersedes this block, its OPEN status and its ✗ lines.
 
 - **Done-when 1 holds.** `s3PurgeOlderThan` refuses an empty or slashes-only prefix before any bucket call (`lib/exportRunner.ts:501-507`) and lists only under `prefix + "/"` (`:516`). A key becomes a deletion candidate only when it is older than the cutoff AND matches `EXPORT_ARCHIVE_RE = /(^|\/)manufacturing-os-export-[\w.\-]+\.zip$/` (`:489`, `:521-522`). A customer's `vendor-drawings-2019.zip` is never a candidate, whatever its age. Pinned by `lib/__tests__/destructiveDeletes.test.ts` "s3PurgeOlderThan (XEDGE-4)": zero bucket calls on `""` and on `"///"`, and the pattern matches only this app's archives.
 - **Done-when 2 holds only at the server.** Both destination routes refuse `retention_days > 0` with an empty prefix: create at `app/api/data-export/destinations/route.ts:101-109`, and PATCH, checked against the resulting row, at `[id]/route.ts:66-82`.

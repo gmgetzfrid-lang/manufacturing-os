@@ -26,7 +26,7 @@
 // the census it needs, in searchPathPin.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
@@ -257,11 +257,20 @@ describe("ORG-3 — access_requests is org-scoped, service-role-written, and the
 });
 
 describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
+  const CONSOLE = "app/(protected)/admin/permissions/page.tsx";
+  const LIBRARIES = "app/(protected)/admin/libraries/page.tsx";
+
+  // The tripwire below must not pass vacuously: if either file moved, src()
+  // would throw inside it.fails and the suite would stay green. If this
+  // fails, re-point the tripwire before anything else.
+  it("both files the tripwire reads exist", () => {
+    expect(existsSync(join(process.cwd(), CONSOLE)), CONSOLE).toBe(true);
+    expect(existsSync(join(process.cwd(), LIBRARIES)), LIBRARIES).toBe(true);
+  });
+
   it.fails("done-when 1: the console's 'GONE' comment does not coexist with a library save that still writes write_access / admin_access", () => {
-    const consoleSrc = src("app/(protected)/admin/permissions/page.tsx");
-    const libraries = src("app/(protected)/admin/libraries/page.tsx");
-    const claimsGone = /read\/write\/admin role matrix is GONE/.test(consoleSrc);
-    const stillWrites = /\bwrite_access:|\badmin_access:/.test(libraries);
+    const claimsGone = /read\/write\/admin role matrix is GONE/.test(src(CONSOLE));
+    const stillWrites = /\bwrite_access:|\badmin_access:/.test(src(LIBRARIES));
     expect(claimsGone && stillWrites).toBe(false);
   });
 });
