@@ -36,6 +36,10 @@
 // compliance kind dismiss-only. A kind added or re-flagged here needs a
 // migration that re-creates notification_kinds() to match;
 // lib/__tests__/notificationWriteRails.test.ts fails until the two agree.
+// Re-create it from its NEWEST definition plus the new rows, in the same
+// package as the entry here, and paste it BEFORE the deploy that writes the
+// kind: a browser's row of a kind the live function does not list is
+// refused and only logged (99-fix-sequencing.md, the N5 hand-off).
 
 import type { NotificationKind } from "@/lib/inAppNotifications";
 

@@ -10,15 +10,16 @@
 //
 // There is no database in this suite. Three kinds of pin:
 //   1. shape — the migration text, comment-stripped where a comment could
-//      fake a match; each re-created function is found by SCANNING
-//      supabase/migrations for its newest earlier definition and line-diffed
-//      against it (only the named lines may differ);
+//      fake a match; each re-created function and policy is found by
+//      SCANNING supabase/migrations for its newest earlier definition and
+//      diffed against it (only the named lines / terms may differ);
 //   2. parity — notification_kinds()'s VALUES equal lib/notificationKinds.ts
 //      KIND_META, kind for kind, compliance flag for compliance flag;
-//   3. a model of the three policies, each predicate pinned to the SQL text,
-//      run over the removed / suspended / re-added / multi-org cases — and a
-//      census of the app's own notification writes, so the read_at-only rail
-//      cannot break a client path.
+//   3. models — of the insert caps (OS-1: the review's resource_id loop, the
+//      org-wide loop, a sustained hour, and the legitimate fan-outs) and of
+//      the three policies (removed / suspended / re-added / multi-org), each
+//      number and predicate pinned to the SQL text — and a census of the
+//      app's own notification writes, so neither rail breaks a client path.
 // The SQL itself was exercised on a throwaway PostgreSQL 16 (recorded in the
 // NEDGE-7 / OS-1 / DELIV-6 / DELIV-13 resolution blocks).
 
@@ -198,15 +199,19 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(first.startsWith("IF v_uid IS NULL THEN\n    RETURN NEW;\n  END IF;")).toBe(true);
   });
 
-  it("runs its rules in order: actor → kind → link → recipient → caps", () => {
+  it("runs its rules in order: actor + date → kind → link → recipient → resource key → caps", () => {
     const at = (s: string) => { const i = body.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     const order = [
       at("IF NEW.actor_user_id IS NULL THEN"),
+      at("NEW.created_at := now();"),
       at("IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN"),
       at("IF NEW.link IS NOT NULL AND NEW.link <> ''"),
       at("m.org_id = NEW.org_id AND m.uid = NEW.user_id AND m.status = 'active'"),
+      at("v_res_ok := CASE NEW.resource_type"),
       at("IF v_same >= 60 THEN"),
       at("IF v_any >= 600 THEN"),
+      at("IF v_hour >= 1200 THEN"),
+      at("IF v_actor >= 3000 THEN"),
     ];
     expect([...order].sort((x, y) => x - y)).toEqual(order);
   });
@@ -264,20 +269,166 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
   END IF;`));
   });
 
-  it("OS-1 dw4: the caps count the actor's rows to THIS recipient in the last minute — 60 of one notice, 600 of anything", () => {
-    expect(squash(body)).toContain(squash(`SELECT COUNT(*) FILTER (WHERE n.kind = NEW.kind AND n.resource_id IS NOT DISTINCT FROM NEW.resource_id),
+  it("OS-1 dw4: per actor and recipient, the last minute (60 of one notice, 600 of anything) and the last hour (1,200); per actor, the last minute across every recipient (3,000)", () => {
+    expect(squash(body)).toContain(squash(`SELECT COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute' AND n.kind = NEW.kind
+                            AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)),
+         COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute'),
          COUNT(*)
-    INTO v_same, v_any
+    INTO v_same, v_any, v_hour
     FROM notifications n
    WHERE n.actor_user_id = v_uid
      AND n.user_id = NEW.user_id
-     AND n.created_at > now() - interval '1 minute';`));
-    // and the index the count rides
+     AND n.created_at > now() - interval '1 hour';`));
+    expect(squash(body)).toContain(squash(`SELECT COUNT(*) INTO v_actor
+    FROM (SELECT 1 FROM notifications n
+           WHERE n.actor_user_id = v_uid
+             AND n.created_at > now() - interval '1 minute'
+           LIMIT 3000) s;
+  IF v_actor >= 3000 THEN`));
+    // each cap answers with its own sentence
+    for (const m of ["60 of the same notification to one person per minute", "600 notifications to one person per minute",
+      "1200 notifications to one person per hour", "3000 notifications per minute from one member"]) {
+      expect(body).toContain(`RAISE EXCEPTION 'notifications: rate limit — ${m}';`);
+    }
+    // and the indexes the counts ride
     expect(A).toMatch(/CREATE INDEX IF NOT EXISTS notifications_actor_recipient_idx\s+ON notifications \(actor_user_id, user_id, created_at DESC\)\s+WHERE actor_user_id IS NOT NULL;/);
+    expect(A).toMatch(/CREATE INDEX IF NOT EXISTS notifications_actor_created_idx\s+ON notifications \(actor_user_id, created_at DESC\)\s+WHERE actor_user_id IS NOT NULL;/);
+  });
+
+  it("OS-1 (review): resource_id is caller-written, so it keys the same-notice cap only when it names a row of resource_type in the row's org", () => {
+    expect(squash(body)).toContain(squash(`IF NEW.resource_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    v_res := NEW.resource_id::uuid;
+    v_res_ok := CASE NEW.resource_type
+      WHEN 'document' THEN EXISTS (SELECT 1 FROM documents r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'ticket'   THEN EXISTS (SELECT 1 FROM tickets r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'project'  THEN EXISTS (SELECT 1 FROM projects r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'library'  THEN EXISTS (SELECT 1 FROM libraries r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      ELSE false
+    END;
+  END IF;`));
+    // the cast runs only behind the uuid test, and the flag starts false
+    expect(body.indexOf("NEW.resource_id::uuid")).toBeGreaterThan(body.indexOf("IF NEW.resource_id ~*"));
+    expect(fn).toMatch(/v_res_ok boolean := false;/);
+    // the verified types are emit()'s resource types (lib/notify/recipients.ts) — every one but 'asset',
+    // which has no table here and is keyed on the kind alone
+    const union = readFileSync(join(ROOT, "lib", "notify", "recipients.ts"), "utf8").match(/export type ResourceType = ([^;]+);/)![1];
+    const emitTypes = [...union.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
+    const verified = [...body.matchAll(/WHEN '(\w+)'\s+THEN EXISTS/g)].map((m) => m[1]).sort();
+    expect(verified).toEqual(["document", "library", "project", "ticket"]);
+    expect(emitTypes.filter((t) => !verified.includes(t))).toEqual(["asset"]);
+  });
+
+  it("DELIV-6 / OS-1 (review): a browser's row is dated when it is written — a back-dated row would slip every cap's window, a future-dated one would pin itself to a bell", () => {
+    expect(squash(body)).toContain(squash(`RAISE EXCEPTION 'notifications: a notification''s actor must be the signed-in member' USING ERRCODE = '42501';
+  END IF;
+  NEW.created_at := now();`));
+    // after the service role's early return: a restore or a server producer keeps its own date
+    expect(body.indexOf("NEW.created_at := now();")).toBeGreaterThan(body.indexOf("IF v_uid IS NULL THEN"));
   });
 
   it("is bound BEFORE INSERT FOR EACH ROW (idempotently re-created)", () => {
     expect(A).toMatch(/DROP TRIGGER IF EXISTS trg_notifications_enforce_insert ON notifications;\s*CREATE TRIGGER trg_notifications_enforce_insert\s+BEFORE INSERT ON notifications\s+FOR EACH ROW EXECUTE FUNCTION enforce_notification_insert\(\);/);
+  });
+});
+
+// ── the caps, as a model (OS-1; each number and key pinned to the SQL) ──────
+// A row the trigger has let through: who wrote it, to whom, its kind, its
+// resource_id, whether that resource_id named a row of its type in the org,
+// and when (seconds). The service role never reaches the caps.
+type Sent = { actor: string; to: string; kind: string; res: string | null; resOk: boolean; t: number };
+const CAP = { same: 60, anyMinute: 600, anyHour: 1200, actorMinute: 3000 };
+function capVerdict(log: Sent[], row: Omit<Sent, "t">, now: number): "ok" | "same" | "any" | "hour" | "actor" {
+  const mine = log.filter((r) => r.actor === row.actor);
+  const toThemThisHour = mine.filter((r) => r.to === row.to && r.t > now - 3600);
+  const toThemThisMinute = toThemThisHour.filter((r) => r.t > now - 60);
+  const same = toThemThisMinute.filter((r) => r.kind === row.kind && (!row.resOk || r.res === row.res)).length;
+  if (same >= CAP.same) return "same";
+  if (toThemThisMinute.length >= CAP.anyMinute) return "any";
+  if (toThemThisHour.length >= CAP.anyHour) return "hour";
+  if (mine.filter((r) => r.t > now - 60).length >= CAP.actorMinute) return "actor";
+  return "ok";
+}
+/** Try rows in order at time `now`; land the admitted ones. Answers how many landed and the first refusal. */
+function attempt(log: Sent[], rows: Array<Omit<Sent, "t">>, now: number, stopAtFirst = true) {
+  let landed = 0;
+  let refused: string | null = null;
+  for (const row of rows) {
+    const v = capVerdict(log, row, now);
+    if (v === "ok") { log.push({ ...row, t: now }); landed++; }
+    else { refused ??= v; if (stopAtFirst) break; }
+  }
+  return { landed, refused };
+}
+const KINDS = Object.keys(KIND_META);
+const uuid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+
+describe("OS-1 — the caps model: the review's loops are bounded, every legitimate fan-out lands", () => {
+  const fn = between(A, "CREATE OR REPLACE FUNCTION enforce_notification_insert()", "$$;");
+
+  it("the model's numbers, windows and keys are the SQL's", () => {
+    expect(fn).toContain(`IF v_same >= ${CAP.same} THEN`);
+    expect(fn).toContain(`IF v_any >= ${CAP.anyMinute} THEN`);
+    expect(fn).toContain(`IF v_hour >= ${CAP.anyHour} THEN`);
+    expect(fn).toContain(`IF v_actor >= ${CAP.actorMinute} THEN`);
+    expect(fn).toContain(`LIMIT ${CAP.actorMinute}) s;`);
+    expect(fn).toContain("AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)");
+    expect(fn).toContain("AND n.created_at > now() - interval '1 hour';");
+  });
+
+  it("REVIEW: a loop minting a fresh resource_id per row to one victim lands 60 a minute, not 600", () => {
+    const log: Sent[] = [];
+    const rows = Array.from({ length: 700 }, (_, i) => ({ actor: "mallory", to: "victim", kind: "checkout_message", res: uuid(i), resOk: false }));
+    expect(attempt(log, rows, 0)).toEqual({ landed: 60, refused: "same" });
+  });
+
+  it("cycling every declared kind meets the 600-a-minute cap to one person", () => {
+    const log: Sent[] = [];
+    const rows = Array.from({ length: 2000 }, (_, i) => ({ actor: "mallory", to: "victim", kind: KINDS[i % KINDS.length], res: uuid(i), resOk: false }));
+    expect(attempt(log, rows, 0)).toEqual({ landed: 600, refused: "any" });
+  });
+
+  it("REVIEW: a loop sustained for an hour reaches one person 1,200 times, not 36,000", () => {
+    const log: Sent[] = [];
+    let total = 0;
+    for (let minute = 0; minute < 60; minute++) {
+      const rows = Array.from({ length: 700 }, (_, i) => ({ actor: "mallory", to: "victim", kind: KINDS[i % KINDS.length], res: uuid(minute * 1000 + i), resOk: false }));
+      total += attempt(log, rows, minute * 60).landed;
+    }
+    expect(total).toBe(CAP.anyHour);
+    // and the next hour opens a fresh budget, never a burst above the minute cap
+    const next = attempt(log, Array.from({ length: 700 }, (_, i) => ({ actor: "mallory", to: "victim", kind: KINDS[i % KINDS.length], res: uuid(90_000 + i), resOk: false })), 3600 + 120);
+    expect(next.landed).toBeLessThanOrEqual(CAP.anyMinute);
+  });
+
+  it("REVIEW: the same loop run against every member of a 4,000-member org meets the per-actor ceiling", () => {
+    const log: Sent[] = [];
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ actor: "mallory", to: `m${i}`, kind: "checkout_message", res: null, resOk: false }));
+    expect(attempt(log, rows, 0)).toEqual({ landed: 3000, refused: "actor" });
+    // a minute later the window has slid
+    expect(attempt(log, rows.slice(3000), 61)).toEqual({ landed: 1000, refused: null });
+  });
+
+  it("REGRESSION: every legitimate fan-out lands whole", () => {
+    // an ack roster — one request per document to one assignee, 300 real documents
+    let log: Sent[] = [];
+    expect(attempt(log, Array.from({ length: 300 }, (_, i) => ({ actor: "dc", to: "op", kind: "ack_requested", res: uuid(i), resOk: true })), 0))
+      .toEqual({ landed: 300, refused: null });
+    // a role broadcast to 300 members
+    log = [];
+    expect(attempt(log, Array.from({ length: 300 }, (_, i) => ({ actor: "dc", to: `m${i}`, kind: "hold_opened", res: uuid(1), resOk: true })), 0))
+      .toEqual({ landed: 300, refused: null });
+    // the browser's checkout sweep — one statement, one release notice per expired holder
+    log = [];
+    expect(attempt(log, Array.from({ length: 500 }, (_, i) => ({ actor: "sweeper", to: `m${i}`, kind: "checkout_released", res: uuid(i), resOk: true })), 0))
+      .toEqual({ landed: 500, refused: null });
+    // a bulk upload under an ack policy — 100 documents x 25 assignees in one minute
+    log = [];
+    const bulk = Array.from({ length: 100 }, (_, d) => Array.from({ length: 25 }, (_, a) => ({ actor: "dc", to: `op${a}`, kind: "ack_requested", res: uuid(d), resOk: true }))).flat();
+    expect(attempt(log, bulk, 0)).toEqual({ landed: 2500, refused: null });
+    // one real document pressed 61 times is the poke the same-notice cap exists for
+    log = [];
+    expect(attempt(log, Array.from({ length: 61 }, () => ({ actor: "x", to: "y", kind: "checkout_message", res: uuid(7), resOk: true })), 0))
+      .toEqual({ landed: 60, refused: "same" });
   });
 });
 
@@ -330,6 +481,84 @@ describe("20261161 — the read scope (NEDGE-7) and the read_at-only write (DELI
     RAISE EXCEPTION 'notifications: only read_at may change on your own notification' USING ERRCODE = '42501';`));
     expect(B).toMatch(/CREATE TRIGGER trg_notifications_read_at_only\s+BEFORE UPDATE ON notifications\s+FOR EACH ROW EXECUTE FUNCTION enforce_notification_update\(\);/);
     expect(B).toMatch(/REVOKE ALL ON FUNCTION enforce_notification_update\(\) FROM PUBLIC, anon, authenticated;/);
+  });
+});
+
+/** Every `CREATE POLICY name ON notifications` in the numbered sequence below
+ *  `before`, in migration order, as [file, comment-stripped text to its ';']. */
+function policyDefinitionsOf(name: string, before = B_FILE): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const re = new RegExp(`CREATE\\s+POLICY\\s+"?${name}"?\\s+ON\\s+(?:public\\.)?notifications\\b`, "g");
+  for (const f of FILES) {
+    if (f >= before) continue;
+    const s = strip(read(f));
+    for (const m of s.matchAll(re)) out.push([f, s.slice(m.index!, s.indexOf(";", m.index!) + 1)]);
+  }
+  return out;
+}
+/** The text inside the parenthesis that opens right after `marker`. */
+function clause(text: string, marker: string): string | null {
+  const at = text.indexOf(marker);
+  if (at < 0) return null;
+  const open = text.indexOf("(", at + marker.length - 1);
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return text.slice(open + 1, i);
+  }
+  return null;
+}
+/** A predicate's top-level AND terms (an AND inside a parenthesis stays in its term). */
+function andTerms(pred: string): string[] {
+  const out: string[] = [];
+  let depth = 0, start = 0;
+  const p = squash(pred);
+  for (let i = 0; i < p.length; i++) {
+    if (p[i] === "(") depth++;
+    else if (p[i] === ")") depth--;
+    else if (depth === 0 && p.startsWith(" AND ", i)) { out.push(p.slice(start, i).trim()); start = i + 5; i += 4; }
+  }
+  out.push(p.slice(start).trim());
+  return out;
+}
+
+describe("20261161 — the three own-row policies re-created from their NEWEST definitions: the old predicate kept verbatim, only the listed terms added", () => {
+  const COMPLIANCE_SQL = "NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = notifications.kind AND k.compliance)";
+  const cases = [
+    { name: "notifications_own_select", cmd: "SELECT", added: ["org_tombstoned_at IS NULL", ACTIVE_SQL], check: false },
+    { name: "notifications_own_update", cmd: "UPDATE", added: ["org_tombstoned_at IS NULL", ACTIVE_SQL], check: true },
+    { name: "notifications_own_delete", cmd: "DELETE", added: ["org_tombstoned_at IS NULL", "read_at IS NOT NULL", ACTIVE_SQL, COMPLIANCE_SQL], check: false },
+  ] as const;
+
+  it.each(cases)("$name: the newest earlier definition is found by scanning the sequence (today 20260723)", ({ name, cmd }) => {
+    const earlier = policyDefinitionsOf(name);
+    expect(earlier.length, "20260621 and 20260723 both define it").toBeGreaterThanOrEqual(2);
+    const [file, text] = earlier.at(-1)!;
+    expect(file, `a migration below ${B_FILE} re-created ${name}: re-base 20261161's policy on it`).toBe("20260723_notifications_unify.sql");
+    expect(squash(text)).toBe(`CREATE POLICY ${name} ON notifications FOR ${cmd} USING (user_id = auth.uid());`);
+  });
+
+  it.each(cases)("$name: keeps its command, its roles and its old predicate first, verbatim, and adds exactly the listed terms", ({ name, cmd, added, check }) => {
+    const old = squash(clause(policyDefinitionsOf(name).at(-1)![1], "USING (")!);
+    const next = squash(strip(B).slice(strip(B).indexOf(`CREATE POLICY ${name} ON notifications`)));
+    const head = next.slice(0, next.indexOf(" USING ("));
+    expect(head).toBe(`CREATE POLICY ${name} ON notifications FOR ${cmd}`);   // no TO <role>, no AS RESTRICTIVE
+    const using = andTerms(clause(next, "USING (")!);
+    expect(using[0]).toBe(old);
+    expect(using.slice(1)).toEqual(added.map(squash));
+    if (check) {
+      // the old policy had no WITH CHECK, so PostgreSQL checked writes with its USING: the new
+      // WITH CHECK is that same old predicate plus the same terms
+      const withCheck = andTerms(clause(next.slice(next.indexOf(") WITH CHECK (")), "WITH CHECK (")!);
+      expect(withCheck).toEqual([old, ...added.map(squash)]);
+    } else {
+      expect(next.slice(0, next.indexOf(");") + 2)).not.toContain("WITH CHECK");
+    }
+  });
+
+  it("the scan is not vacuous: it answers the newest definition below its cutoff, so a policy re-created below 20261161 would become the one to diff against", () => {
+    expect(policyDefinitionsOf("notifications_own_select", "20260723_notifications_unify.sql").at(-1)![0]).toBe("20260621_in_app_notifications.sql");
+    expect(policyDefinitionsOf("notifications_own_select", "99999999").at(-1)![0]).toBe(B_FILE);
   });
 });
 
@@ -492,6 +721,39 @@ describe("REGRESSION census — every app write to notifications fits the read_a
   it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear)", () => {
     const bad = writes.filter((w) => w.op === "update" && !/^\s*\.update\(\{\s*read_at: new Date\(\)\.toISOString\(\)\s*\}\)/.test(w.text));
     expect(bad.map((w) => `${w.file}: ${w.text.slice(0, 80)}`)).toEqual([]);
+  });
+
+  it("no app insert into notifications sets created_at — 20261160's date stamp changes nothing the app writes", () => {
+    let examined = 0;
+    const offenders: string[] = [];
+    for (const f of sourceFiles()) {
+      const src = readFileSync(f, "utf8");
+      if (!/\.from\((["'])notifications\1\)\s*\.insert\(/.test(src)) continue;
+      const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, f.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+      const decls = new Map<string, ts.Node>();
+      const collect = (n: ts.Node) => {
+        if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) decls.set(n.name.text, n.initializer);
+        ts.forEachChild(n, collect);
+      };
+      collect(sf);
+      const setsCreatedAt = (n: ts.Node): boolean =>
+        (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && n.name.getText(sf).replace(/["']/g, "") === "created_at"
+          ? true : ts.forEachChild(n, setsCreatedAt) ?? false;
+      const visit = (n: ts.Node) => {
+        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "insert"
+            && /\.from\((["'])notifications\1\)$/.test(n.expression.expression.getText(sf))) {
+          const arg = n.arguments[0];
+          const target = arg && ts.isIdentifier(arg) ? decls.get(arg.text) : arg;
+          expect(target, `${relative(ROOT, f)}: insert argument resolved`).toBeTruthy();
+          examined++;
+          if (target && setsCreatedAt(target)) offenders.push(relative(ROOT, f));
+        }
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
+    }
+    expect(examined).toBeGreaterThanOrEqual(10);
+    expect(offenders).toEqual([]);
   });
 
   it("no app path deletes or upserts notification rows (the admin purge is the service role's)", () => {

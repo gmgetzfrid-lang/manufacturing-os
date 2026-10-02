@@ -41,7 +41,10 @@
 --          forge (DELIV-6 dw4). actor_name stays the producer's text: the
 --          browser's checkout sweep writes 'System' rows legitimately
 --          (lib/projects.ts autoReleaseExpiredAdHoc), and those now carry the
---          member whose browser ran the sweep.
+--          member whose browser ran the sweep. created_at := now(): a
+--          browser's row is dated when it is written — a back-dated row
+--          would slip below every cap's window (rule 6), and a future-dated
+--          one would sit at the top of a bell for good.
 --       2. kind must be one notification_kinds() declares (22023).
 --       3. link is NULL, empty, or app-relative: starts with one '/', not
 --          '//' or '/\', no backslash, no control character (22023).
@@ -49,28 +52,59 @@
 --          otherwise the row is SKIPPED (RETURN NULL), not refused, so one
 --          suspended watcher never sinks a batch insert for everyone else
 --          (lib/projects.ts writes its release notices in one statement).
---       5. rate caps, per actor AND recipient, over the last minute: 60 rows
---          of the same kind about the same resource (a poke button pressed
---          60 times), 600 rows of anything (P0001). Keyed by recipient, not
---          by actor alone: one legitimate fan-out writes one row per
---          recipient — an org-wide ack roster, the sweep's release notices —
---          and must never meet a per-actor ceiling.
+--       5. resource_id is caller-written text, so the same-notice cap below
+--          trusts it only when it names a row of resource_type ('document',
+--          'ticket', 'project', 'library' — the types the app's producers
+--          fan out about) in the row's org. Any other resource_id is no key:
+--          the cap then counts the kind alone.
+--       6. rate caps (P0001), counted over the signed-in writer's own rows:
+--            · per actor and recipient, last minute — 60 rows of the same
+--              kind about the same verified resource, or of the same kind
+--              when the resource is not verified (a poke pressed 60 times; a
+--              loop that mints a fresh resource_id per row); 600 rows of
+--              anything;
+--            · per actor and recipient, last hour — 1,200 rows of anything:
+--              twice the minute cap, so a sustained loop reaches one person
+--              1,200 times an hour, not 36,000;
+--            · per actor across every recipient, last minute — 3,000 rows:
+--              ten times an org-wide audience, so one event's fan-out (a
+--              role broadcast, an ack roster, the sweep's release notices —
+--              each one row per recipient) never meets it, and no member can
+--              flood the whole org.
+--          Only a multi-document operation under a wide ack policy (a bulk
+--          upload, a library-wide policy change) can reach the hourly or the
+--          per-actor cap; past it the bell copies are refused and logged by
+--          notify(), the obligation is not — the acknowledgment roster row,
+--          the inbox and the cron's re-nudge stand.
 --     notifications_org_insert is KEPT unchanged: RLS's WITH CHECK runs after
 --     this trigger, so the caller must still be an active member of the org.
 --   · notifications_actor_recipient_idx (actor_user_id, user_id, created_at)
---     — the caps' count is an index range scan.
+--     and notifications_actor_created_idx (actor_user_id, created_at) — each
+--     cap's count is an index range scan.
 --
 -- Pre-apply inventory (DEC-30, aggregate counts only): the rows already
--- written that the new rules would have refused or skipped, and the minute
--- buckets in the last 30 days that would have met a cap (an over-count:
--- server rows, which the caps never apply to, are counted too). No existing
--- row is changed; the undeclared-kind count is reported AFTER the apply
--- (it reads notification_kinds()) and is unchanged by this paste.
+-- written that the new rules would have refused or skipped, the minute and
+-- hour buckets in the last 30 days that would have met a cap, and the
+-- busiest minute and hour one actor actually wrote — the numbers the caps
+-- are sized against (rows that name an actor only: server rows that name
+-- one are counted too, browser rows that named none before this paste are
+-- not). No existing row is changed; the undeclared-kind count is reported
+-- AFTER the apply (it reads notification_kinds()) and is unchanged by this
+-- paste.
 --
 -- DEPLOY ORDER: either order is safe. The app reads nothing this file adds;
 -- before the paste the browser writes as it did. After it, a row a rule
 -- refuses is logged by notify() (lib/inAppNotifications.ts), never thrown
 -- into a user flow.
+--
+-- A KIND ADDED LATER (N8, N9, N12 …): re-create notification_kinds() from
+-- its NEWEST definition plus the new rows, in the same package as the
+-- KIND_META entry, and paste that migration BEFORE the deploy that writes
+-- the kind — once this file is live, a browser's row of a kind the live
+-- function does not list is refused (22023) and only logged. Paste those
+-- migrations in number order; each newer definition must be a superset of
+-- the one before it (the parity test pins the newest to KIND_META, so a
+-- branch that dropped another package's kinds fails CI at merge).
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe. Paste BEFORE
 -- 20261161 (its delete policy reads notification_kinds()).
@@ -107,7 +141,32 @@ SELECT 6, 'BEFORE: minute buckets in the last 30 days with more than 600 rows fr
        (SELECT COUNT(*) FROM (SELECT 1 FROM notifications
                                WHERE created_at >= now() - interval '30 days' AND actor_user_id IS NOT NULL
                                GROUP BY actor_user_id, user_id, date_trunc('minute', created_at)
-                              HAVING COUNT(*) > 600) b)::text;
+                              HAVING COUNT(*) > 600) b)::text
+UNION ALL
+SELECT 7, 'BEFORE: clock hours in the last 30 days with more than 1,200 rows from one actor to one recipient (the hourly cap; a clock hour under-counts a sliding one)',
+       (SELECT COUNT(*) FROM (SELECT 1 FROM notifications
+                               WHERE created_at >= now() - interval '30 days' AND actor_user_id IS NOT NULL
+                               GROUP BY actor_user_id, user_id, date_trunc('hour', created_at)
+                              HAVING COUNT(*) > 1200) b)::text
+UNION ALL
+SELECT 8, 'BEFORE: minute buckets in the last 30 days with more than 3,000 rows from one actor across all recipients (the per-actor cap)',
+       (SELECT COUNT(*) FROM (SELECT 1 FROM notifications
+                               WHERE created_at >= now() - interval '30 days' AND actor_user_id IS NOT NULL
+                               GROUP BY actor_user_id, date_trunc('minute', created_at)
+                              HAVING COUNT(*) > 3000) b)::text
+UNION ALL
+SELECT 9, 'BEFORE: the most rows one actor wrote in one minute in the last 30 days, across all recipients (what the 3,000 cap is sized against)',
+       (SELECT COALESCE(MAX(c), 0) FROM (SELECT COUNT(*) AS c FROM notifications
+                                          WHERE created_at >= now() - interval '30 days' AND actor_user_id IS NOT NULL
+                                          GROUP BY actor_user_id, date_trunc('minute', created_at)) b)::text
+UNION ALL
+SELECT 10, 'BEFORE: the most rows one actor wrote to one recipient in one clock hour in the last 30 days (what the 1,200 cap is sized against)',
+       (SELECT COALESCE(MAX(c), 0) FROM (SELECT COUNT(*) AS c FROM notifications
+                                          WHERE created_at >= now() - interval '30 days' AND actor_user_id IS NOT NULL
+                                          GROUP BY actor_user_id, user_id, date_trunc('hour', created_at)) b)::text
+UNION ALL
+SELECT 11, 'BEFORE: rows dated in the future (a browser''s row is dated when it is written from now on; existing rows are kept)',
+       (SELECT COUNT(*) FROM notifications WHERE created_at > now() + interval '5 minutes')::text;
 
 BEGIN;
 
@@ -180,19 +239,24 @@ CREATE OR REPLACE FUNCTION enforce_notification_insert()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_uid uuid := auth.uid();
+  v_res uuid;
+  v_res_ok boolean := false;
   v_same int;
   v_any int;
+  v_hour int;
+  v_actor int;
 BEGIN
   IF v_uid IS NULL THEN
     RETURN NEW;
   END IF;
 
-  -- 1. the actor is the signed-in member
+  -- 1. the actor is the signed-in member; the row is dated now
   IF NEW.actor_user_id IS NULL THEN
     NEW.actor_user_id := v_uid;
   ELSIF NEW.actor_user_id <> v_uid THEN
     RAISE EXCEPTION 'notifications: a notification''s actor must be the signed-in member' USING ERRCODE = '42501';
   END IF;
+  NEW.created_at := now();
 
   -- 2. a declared kind
   IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN
@@ -211,19 +275,44 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  -- 5. rate caps per (actor, recipient) over the last minute
-  SELECT COUNT(*) FILTER (WHERE n.kind = NEW.kind AND n.resource_id IS NOT DISTINCT FROM NEW.resource_id),
+  -- 5. the resource is a key only when it names a row of its type in this org
+  IF NEW.resource_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    v_res := NEW.resource_id::uuid;
+    v_res_ok := CASE NEW.resource_type
+      WHEN 'document' THEN EXISTS (SELECT 1 FROM documents r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'ticket'   THEN EXISTS (SELECT 1 FROM tickets r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'project'  THEN EXISTS (SELECT 1 FROM projects r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      WHEN 'library'  THEN EXISTS (SELECT 1 FROM libraries r WHERE r.id = v_res AND r.org_id = NEW.org_id)
+      ELSE false
+    END;
+  END IF;
+
+  -- 6. rate caps: per (actor, recipient) a minute and an hour, per actor a minute
+  SELECT COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute' AND n.kind = NEW.kind
+                            AND (NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)),
+         COUNT(*) FILTER (WHERE n.created_at > now() - interval '1 minute'),
          COUNT(*)
-    INTO v_same, v_any
+    INTO v_same, v_any, v_hour
     FROM notifications n
    WHERE n.actor_user_id = v_uid
      AND n.user_id = NEW.user_id
-     AND n.created_at > now() - interval '1 minute';
+     AND n.created_at > now() - interval '1 hour';
   IF v_same >= 60 THEN
     RAISE EXCEPTION 'notifications: rate limit — 60 of the same notification to one person per minute';
   END IF;
   IF v_any >= 600 THEN
     RAISE EXCEPTION 'notifications: rate limit — 600 notifications to one person per minute';
+  END IF;
+  IF v_hour >= 1200 THEN
+    RAISE EXCEPTION 'notifications: rate limit — 1200 notifications to one person per hour';
+  END IF;
+  SELECT COUNT(*) INTO v_actor
+    FROM (SELECT 1 FROM notifications n
+           WHERE n.actor_user_id = v_uid
+             AND n.created_at > now() - interval '1 minute'
+           LIMIT 3000) s;
+  IF v_actor >= 3000 THEN
+    RAISE EXCEPTION 'notifications: rate limit — 3000 notifications per minute from one member';
   END IF;
 
   RETURN NEW;
@@ -231,7 +320,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION enforce_notification_insert() IS
-  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer is stamped as the actor (another actor refused), the kind must be declared (notification_kinds()), the link app-relative, a recipient who is not an active member of the org is skipped, and 60 same-notice / 600 any rows per actor and recipient per minute is the cap. notifications Round G, 20261160.';
+  'BEFORE INSERT on notifications: the service role passes untouched; a signed-in writer is stamped as the actor (another actor refused) and the row dated now, the kind must be declared (notification_kinds()), the link app-relative, a recipient who is not an active member of the org is skipped; the caps are 60 same-notice (the resource counts only when it names a row of its type in the org) and 600 any rows per actor and recipient per minute, 1200 per actor and recipient per hour, and 3000 per actor per minute across all recipients. notifications Round G, 20261160.';
 
 REVOKE ALL ON FUNCTION enforce_notification_insert() FROM PUBLIC, anon, authenticated;
 
@@ -244,9 +333,13 @@ CREATE INDEX IF NOT EXISTS notifications_actor_recipient_idx
   ON notifications (actor_user_id, user_id, created_at DESC)
   WHERE actor_user_id IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS notifications_actor_created_idx
+  ON notifications (actor_user_id, created_at DESC)
+  WHERE actor_user_id IS NOT NULL;
+
 COMMIT;
 
--- ── Verification + inventory (ONE result set): expect ok = true × 12 ────────
+-- ── Verification + inventory (ONE result set): expect ok = true × 14 ────────
 SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 51 kinds — 15 of them compliance kinds — each once' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                 WHERE ns.nspname = 'public' AND p.proname = 'notification_kinds'
@@ -289,6 +382,11 @@ SELECT 'enforce_notification_insert: the actor is stamped when absent and refuse
                   AND prosrc LIKE '%IF NEW.actor_user_id IS NULL THEN%NEW.actor_user_id := v_uid;%ELSIF NEW.actor_user_id <> v_uid THEN%RAISE EXCEPTION%42501%'),
        NULL
 UNION ALL
+SELECT 'enforce_notification_insert: a browser''s row is dated when it is written (no back-dating under the caps, no future-dated row pinned to a bell)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
+                  AND prosrc LIKE '%ELSIF NEW.actor_user_id <> v_uid THEN%END IF;%NEW.created_at := now();%IF NOT EXISTS (SELECT 1 FROM notification_kinds() k%'),
+       NULL
+UNION ALL
 SELECT 'enforce_notification_insert: an undeclared kind and a link that is not app-relative are refused',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
                   AND prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = NEW.kind) THEN%'
@@ -300,10 +398,17 @@ SELECT 'enforce_notification_insert: a recipient who is not an active member of 
                   AND prosrc LIKE '%m.org_id = NEW.org_id AND m.uid = NEW.user_id AND m.status = ''active'') THEN%RETURN NULL;%'),
        NULL
 UNION ALL
-SELECT 'enforce_notification_insert: the caps are 60 same-notice and 600 any rows per actor and recipient per minute',
+SELECT 'enforce_notification_insert: the same-notice cap keys on resource_id only when it names a row of its type in the org — otherwise on the kind alone',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
-                  AND prosrc LIKE '%n.actor_user_id = v_uid%n.user_id = NEW.user_id%n.created_at > now() - interval ''1 minute''%'
-                  AND prosrc LIKE '%IF v_same >= 60 THEN%IF v_any >= 600 THEN%'),
+                  AND prosrc LIKE '%WHEN ''document'' THEN EXISTS (SELECT 1 FROM documents r WHERE r.id = v_res AND r.org_id = NEW.org_id)%'
+                  AND prosrc LIKE '%WHEN ''ticket''%WHEN ''project''%WHEN ''library''%ELSE false%'
+                  AND prosrc LIKE '%(NOT v_res_ok OR n.resource_id IS NOT DISTINCT FROM NEW.resource_id)%'),
+       NULL
+UNION ALL
+SELECT 'enforce_notification_insert: the caps are 60 same-notice and 600 any per actor and recipient per minute, 1200 per actor and recipient per hour, 3000 per actor per minute',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_notification_insert'
+                  AND prosrc LIKE '%n.actor_user_id = v_uid%n.user_id = NEW.user_id%n.created_at > now() - interval ''1 hour''%'
+                  AND prosrc LIKE '%IF v_same >= 60 THEN%IF v_any >= 600 THEN%IF v_hour >= 1200 THEN%LIMIT 3000%IF v_actor >= 3000 THEN%'),
        NULL
 UNION ALL
 SELECT 'trg_notifications_enforce_insert is BEFORE INSERT FOR EACH ROW on notifications, enabled',
@@ -319,9 +424,9 @@ SELECT 'notifications_org_insert is kept: the caller must still be an active mem
                   AND with_check LIKE '%org_members%' AND with_check LIKE '%auth.uid()%' AND with_check LIKE '%''active''%'),
        NULL
 UNION ALL
-SELECT 'notifications_actor_recipient_idx exists',
-       EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'notifications'
-                  AND indexname = 'notifications_actor_recipient_idx'),
+SELECT 'notifications_actor_recipient_idx and notifications_actor_created_idx exist',
+       (SELECT COUNT(*) = 2 FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'notifications'
+           AND indexname IN ('notifications_actor_recipient_idx', 'notifications_actor_created_idx')),
        NULL
 UNION ALL
 SELECT 'the four notifications policies are still there (SELECT / UPDATE / DELETE own, INSERT org) — 20261161 narrows the first three',
