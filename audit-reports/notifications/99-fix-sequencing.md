@@ -163,6 +163,11 @@ either name while the flag is false, and the reverse (`RT-10`).*
   first) and the hook preamble of `ProtectedContent` (one line,
   `useNotificationCenter`). N4 (:239 provider) and N12 (:72) rebase on it.*
 
+*Landed (2026-10-02, notifications Round G, N3 SURFACES, under `DEC-44 (N3)`):*
+- *N1 → N3: `components/providers/NotificationListener.tsx` reads `readToastPreference` before it toasts (mount, tab return, any read older than 5 s) and `TOAST_PREFERENCE_HONOURED` is `true` — the settings page offers "Pop-up toasts" (`RT-10`, Partial only on per-category toggles).*
+- *N7 → N3: the listener passes `` coalesceKey: `${row.kind}:${row.resource_id}` `` (a row about no resource keeps the content key); the center, opened while the dock is raised, opens above the raising modal at `Z.dialog` and declares its panel a rail above the raise (`useOccupyRightRail(ref, open, true)`), and the `!raised` guard on the dock's doorway is gone (N7's test changed with it); NEDGE-5 dw2's dock and toast limb verified. The panel keeps `w-[480px]`, so `NOTIFICATION_CENTER_RAIL_PX` is unchanged. `RT-11` and `OS-4` are RESOLVED.*
+- *Hand-offs out of N3: `TAX-3` done-when 2 → notifications N9 (the "SYSTEM ALERT:" line, `lib/checkoutEpisodes.ts:760`, one wording with "Your checkout was force-released"); `RT-10` per-category toast toggles → the integrator to assign (a category column on `KIND_META` — `lib/notificationKinds.ts`, N5's this round — plus `toast_on_*` columns by migration and the settings rows); a click-through on the burst summary card ("N more notifications") → whoever next holds `components/providers/ToastProvider.tsx` (it has no action slot).*
+
 Then the census holes in severity order: `PROD-2` (access requests notify
 nobody), `PROD-14` (`markup_request` never notifies the person asked), `PROD-9`
 (holds never notify the owner), `PROD-3`, `PROD-5`.

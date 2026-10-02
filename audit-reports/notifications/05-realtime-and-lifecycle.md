@@ -75,7 +75,7 @@ void fetchAll();
 ## RT-2 · NotificationListener toasts every checkout message in the entire workspace to every signed-in member, and fires a second toast for the same event from the notifications channel
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:38-73`, `components/providers/NotificationListener.tsx:80-100`, `lib/activityThread.ts:153-164`, `supabase/migrations/20260727_checkout_activity_fix.sql:26-30`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both counts: any active org member receives (and is toasted for) every checkout message in the workspace, and thread participants/watchers additionally get a second toast from the notifications channel for the same post. One arithmetic correction to the scenario: line 62-63 (`isMe`) suppresses the author's own message, so each of the two draftsmen gets ~12 toasts (6 incoming x 2 channels), not 24; the org's other 38 members get 12 each from the checkout-messages leg.
@@ -103,6 +103,19 @@ void fetchAll();
 - [ ] the `checkout_messages` toast channel is removed entirely, or narrowed to documents the viewer has a live session/intent/subscription on — the org-wide filter is deleted
 - [ ] a single event produces at most one toast: either the raw-table channel or the `notifications` channel owns the toast, never both
 - [ ] a regression test asserts that posting one checkout message produces exactly one toast for a participant and zero for an uninvolved member
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES; the plan's default (`DEC-44 (N3)` item 2): **remove** the channel. **Reproduced first** on `7c27b0c`, driving the base listener with the real `postActivity` against an in-memory realtime bus (`lib/__tests__/notificationListener.test.ts`'s double): one post by Alice in a thread with a participant (Pat) and a watcher (Wes), and an uninvolved member (Una) signed in — Pat got two toasts ("warning | New Message from Alice" and "info | Alice posted to P-1204-03"), Wes two, Una one. The base listener subscribed to `checkout_messages` filtered only `org_id=eq.<org>` (`components/providers/NotificationListener.tsx:38-73`) besides its `notifications` channel (`:80-100`).
+
+What landed (`components/providers/NotificationListener.tsx`): one channel — `notifications` INSERTs filtered `user_id=eq.<uid>` (:214). The `checkout_messages` channel, its first-run seed and its id set are gone. The post's durable row — `notifyCheckoutActivity`'s `checkout_message` (or `checkout_handoff` / `markup_request`) to each participant, session holder and watcher (`lib/activityThread.ts`) — is what toasts, once, to exactly those people. A system line in the thread (the force-release "SYSTEM ALERT:") toasts nobody; the holder's own `checkout_released` row does (TAX-3).
+
+Tests: `lib/__tests__/notificationListener.test.ts` — "TAX-4 dw4: postActivity → exactly one toast for each participant and watcher, zero for the author and for an uninvolved member" (the real `postActivity` → the real `notifyMany`; nothing subscribes to `checkout_messages`), "a system line in the thread (a forced release) toasts nobody…", "the listener's source subscribes to one table, filtered to the member…". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The `checkout_messages` toast channel is removed entirely; the org-wide filter is deleted.
+- ✓ A single event produces at most one toast: the `notifications` channel owns it.
+- ✓ A regression test asserts that one checkout message produces exactly one toast for a participant (and for a watcher) and zero for an uninvolved member.
+
+**Scope / residual.** Who receives the durable row (participants, session holders, watchers) is `notifyCheckoutActivity`'s, unchanged; whether a producer may address a row to someone who lost access is `NEDGE-6`. No migration.
 
 ---
 
@@ -176,7 +189,7 @@ void fetchAll();
 ## RT-5 · NotificationListener drops any checkout message that arrives during its async seed, and its dedupe Set grows without bound for the life of the tab
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:11-12`, `components/providers/NotificationListener.tsx:17-36`, `components/providers/NotificationListener.tsx:48-59`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both mechanics are real, but the impact is much smaller than MEDIUM implies. (a) The seed exists to suppress backfill that Postgres CDC never sends — INSERT events are live-only — so it drops toasts without buying anything. (b) The specific scenario in the summary is self-mitigating: a handoff note also writes a notifications row (activityThread.ts:153-164) which the SECOND channel (line 80-100) toasts with no seed guard, so a participant still gets the toast. (c) The 'unbounded' Set grows by one UUID string per org checkout message — a week of heavy use is kilobytes, not a leak worth MEDIUM.
@@ -198,6 +211,16 @@ const isFirstRun = useRef(true);
 
 - [ ] the seed completes before `.subscribe()` is called (await it), or events arriving during the seed are buffered and replayed against `processedIds` once the seed resolves, rather than dropped
 - [ ] `processedIds` is bounded — a fixed-size LRU or a periodic prune — so a long-lived tab's memory does not grow with workspace traffic
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES. **Reproduced** on `7c27b0c` by reading: `isFirstRun` set true (`components/providers/NotificationListener.tsx:17`), an unawaited `seed()` (`:20-36`) and the handler's `if (isFirstRun.current) return;` (`:49`) — an INSERT inside the seed window was dropped unremembered; `processedIds` (`:12`) only ever grew. Both belonged to the org-wide `checkout_messages` channel, which is **removed** (`RT-2`, `DEC-44 (N3)` item 2): the seed, `isFirstRun` and `processedIds` went with it. The one channel left (the member's own `notifications`, :214) has no seed — Postgres CDC sends no backfill, so there is nothing to suppress — and its duplicate guard is bounded: the newest `SEEN_IDS_MAX` (500) row ids (`createNotificationToaster`, :112).
+
+Tests: `lib/__tests__/notificationListener.test.ts` "the listener's source subscribes to one table … its seed and its id set are gone", "the remembered ids are bounded (RT-5 dw2)", "each row addressed to the member toasts once…; a duplicate delivery of the same row does not toast twice". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ No event is dropped during a seed: there is no seed (the channel it served is gone, and the remaining channel never had one).
+- ✓ The dedupe set is bounded (the newest 500 ids).
+
+**Scope / residual.** None. No migration.
 
 ---
 
@@ -325,7 +348,7 @@ if (staleIds.length > 0) {
 ## RT-9 · The badge number conflates 'work assigned to you' with 'unread notifications', so Mark-all-read cannot clear it and the vocabulary has no fixed point
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:308-324`, `hooks/useTicketNotifications.ts:252-274`, `components/notifications/NotificationBell.tsx:54-57`, `components/notifications/NotificationBell.tsx:85-87`, `components/notifications/NotificationBell.tsx:137-143`, `lib/inAppNotifications.ts:201-205`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — Mark-all-read provably cannot drive the badge to zero while an action-required ticket exists. But the 'vocabulary has no fixed point' half is weaker than stated: every label around the number already says attention, not unread (NotificationBell.tsx:104 `${unread} need${...} attention`, :137 same, :139 'All caught up'), and the Mark-all-read button is gated on `hasNotifRows` (:87) so it disappears once the notification rows are cleared. This is a documented design union (hook header comment :12-26), not a miscount — LOW.
@@ -351,6 +374,23 @@ if (staleIds.length > 0) {
 - [ ] the bell renders two visually distinct counts (or one count plus an 'N need action' sub-line) using the `actionRequiredCount` / `unreadCount` the hook already exports
 - [ ] 'Mark all read' is labelled and scoped so it is obvious it clears notifications and not assigned work, and the residual action-required count is explained in place rather than left as an unclearable number
 - [ ] one written definition of alert vs notification exists and the bell, sidebar, inbox and center all use the same two words for the same two things
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES. **Reproduced first** on `7c27b0c`: the bell rendered one number, `const unread = count` (`components/notifications/NotificationBell.tsx:62`), labelled "N need attention" (`:139`), beside a "Mark all read" (`:147`) that clears notification rows only (`lib/inAppNotifications.ts` `markAllRead`) — an action-required request in the feed left the badge at a number no button there could clear, and nothing said so.
+
+What landed (`components/notifications/NotificationBell.tsx`):
+- **Two counts, two words.** The drawer's header reads "8 need attention · 2 need action" (:151): the total (everything in the feed, the bell's badge) and `actionRequiredCount` (= `counts.action`, tickets and notifications alike — TRAIL-13).
+- **The button says what it clears.** "Mark notifications read" (:167); its title counts the rows it marks and the requests it leaves.
+- **The residue is explained in place** (:185): "1 request in this list clears when the work is done or the request is opened — marking notifications read leaves it." — shown whenever the feed holds requests (`counts.all - counts.notifications`).
+- **The same two words everywhere.** "Action" / "Activity" are the feed's filter chips on the Center, `/inbox` and the dashboard widget (`AttentionFeed`, TAX-7); the Command Deck's stat is "Action"; the sidebar badge is now named "Documents: 3 items need attention, some need action"; the bell says "need attention" / "need action"; the live region says the same. The written definition is the hook's VOCABULARY note (`hooks/useTicketNotifications.ts`, TAX-7 / DEC-81 §6: an action is something you must DO; activity is everything else; DB-unread and ticket-unread are named apart).
+
+Tests: `lib/__tests__/notificationCenterScope.test.ts` "RT-9: 'N need action' beside the total; 'Mark notifications read'; what it leaves behind is said in place" (a feed of seven notification rows and one request an Admin must pick up: "8 need attention", "2 need action", the residue line, no "Mark all read"). Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The bell renders the total plus an "N need action" sub-count from the hook's `actionRequiredCount`.
+- ✓ "Mark all read" is now "Mark notifications read", and what it cannot clear (requests, which clear when the work is done or the request is opened) is said in place.
+- ✓ One written definition (the hook's VOCABULARY note, DEC-81 §6) and the same two words — "action" for what needs doing, "activity" / "attention" for the rest — on the bell, the sidebar badge's name, `/inbox` and the center.
+
+**Scope / residual.** The header bell's badge still shows the total (it is the bell's count of everything in the feed); the red, action-only signal is the rail badge (TRAIL-5) and the "need action" line. No migration.
 
 ---
 
@@ -405,6 +445,21 @@ if (staleIds.length > 0) {
 
 **Scope / residual.** RT-2's org-wide checkout-message toasts, which are the real source of the noise, belong to N3.
 
+**Partial (2026-10-02, notifications Round G).** Package N3 SURFACES — the consumer half N1 handed over. **Reproduced** on `7c27b0c`: `components/providers/NotificationListener.tsx` toasted every row with no preference read (`:80-100`), and `TOAST_PREFERENCE_HONOURED` was `false` (`lib/notificationPrefs.ts:76`), so the settings page withheld the switch.
+
+What landed:
+- **The listener reads the switch before it toasts** (`createNotificationToaster`, `NotificationListener.tsx:112`, wired with `readPreference: () => readToastPreference(uid)` at :201): on mount, whenever the tab comes back (`visibilitychange` / `focus`), and again before any toast once the last read is older than `PREF_FRESH_MS` (5 s) — so a switch flipped on the settings page governs the next toast within seconds, in the same tab. `readToastPreference` fails open (no row, a database before 20261148, any read error → toasts show). Off means no toast of any kind; the bell row, the badge and the Center are untouched (DEC-74 §7).
+- **The flag is flipped** (`lib/notificationPrefs.ts:78`, `TOAST_PREFERENCE_HONOURED = true` — the one line N1 handed to N3), so the settings page offers "Pop-up toasts"; N1's tripwire (`lib/__tests__/notificationPrefs.test.ts` "the toast switch is offered exactly when the listener honours it") passes on its other side.
+
+Tests: `lib/__tests__/notificationListener.test.ts` "toast_enabled off: no toast at all (the bell row is untouched — the row still landed)", "switched back on in settings: the next toast follows once the tab comes back", "a stale read is refreshed before the next toast (PREF_FRESH_MS); an unreadable preference shows toasts", "the settings page offers the switch now that the listener reads it". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- Partial, NOT met as written. ✓ the master `toast_enabled` (N1, 20261148). **Not done: per-category toast toggles mirroring the email set.** A toggle per category needs each kind's category, and the only home for that without a seventh classification (TAX-5, DEC-81 §1) is a column in `lib/notificationKinds.ts` `KIND_META` — notifications N5's file this round, read-only here — plus `toast_on_*` columns (a migration) and the settings rows. Not this package's to add.
+- ✓ `NotificationListener` reads the preference before calling `showToast`, and re-reads it when it may have changed (tab return, and any read older than 5 s).
+- ✓ The settings page renders the in-app column (N1's card, now with its "Pop-up toasts" switch live) beside the email column; "Bell notifications are always on" is true and stated.
+
+**Scope / residual.** Stays OPEN for per-category toast toggles only: a `category` column on `KIND_META` (mirroring `email_on_*`: mention, assignment, status change, watched activity, SLA warning), `toast_on_*` columns by a checked-in migration, the settings rows, and the listener's per-kind read. Owner: unassigned — for the integrator (it needs `lib/notificationKinds.ts`, N5's this round). No migration here.
+
 ---
 
 <a id="rt-11"></a>
@@ -412,7 +467,7 @@ if (staleIds.length > 0) {
 ## RT-11 · Toasts are an unbounded, uncapped stack in a fixed corner with no max-height — a realtime burst pushes cards off the top of the viewport
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N3 SURFACES (done-when 1 — the doorway while the dock is raised; done-when 2 — `coalesceKey` from `NotificationListener.tsx`) — by the integrator, 2026-10-02, at the N7 merge (the hand-off in `99-fix-sequencing.md`; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/ToastProvider.tsx:40-49`, `components/providers/ToastProvider.tsx:57-59`, `components/ui/CornerDock.tsx:22-27`, `lib/postPublish.ts:36-60`
@@ -454,6 +509,23 @@ Tests: `lib/__tests__/cornerDock.test.ts` "toasts: cap, coalesce, timers…" (a 
 - ✓ The auto-dismiss timer does not start until the card is within the visible stack (on a phone, within the four places the folded pill stands for), and a card that stays within it keeps its clock when newer toasts arrive.
 
 **Scope / residual.** Stays OPEN on dw1 until N3 lets the center open above a raising modal, and the dock offers its doorway while raised. Stays OPEN on dw2 until N3 passes `coalesceKey: kind:resource_id` from `components/providers/NotificationListener.tsx` (one line). Both are in the hand-off in `99-fix-sequencing.md`. No migration.
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES closes the two remainders N7 handed over (`99-fix-sequencing.md` Phase 2 hand-off). **Reproduced first** on `7c27b0c`: the doorway rendered only at rest (`components/ui/CornerDock.tsx:805`, `!expanded && !raised && …`), because the center sat at 240 / 241 (`components/notifications/NotificationCenter.tsx:89`, `:98`), under every upload-starting modal (300 / 400 / 510); and `NotificationListener` passed no `coalesceKey` (`components/providers/NotificationListener.tsx:92-97`).
+
+What landed:
+- **The center opens above a raising modal** (done-when 1). `NotificationCenter.tsx` `open()` reads `isDockRaised()` (a read the dock now exports, `CornerDock.tsx:473`) when it opens (:72); opened while the dock is raised, both its backdrop and its panel take `Z.dialog` (700 — a layer `lib/zLayers.ts` already lists and names: above every upload modal, below the raised dock at 750; no new literal), and keep it until the center closes (:189). The panel declares itself a rail **above the raise** (`useOccupyRightRail(panelRef, isOpen && aboveModal, true)`, :120 — the hook's new third argument, `CornerDock.tsx:602`), and the raised dock, which ignores every other rail, moves left of that one (`railSnapshot`, :651) — over the center's backdrop, never onto its rows.
+- **The dock offers its doorway while raised** — the `!raised` guard is gone (`CornerDock.tsx:825`), as the hand-off asked; nothing else in the dock changed (`raisedRails`, `isDockRaised`, the hook's argument, two comments).
+- **`coalesceKey: ${row.kind}:${row.resource_id}`** (done-when 2) — `toastForRow` (`NotificationListener.tsx:87`); a row about no resource keeps N7's content key, so two unrelated messages never merge.
+
+Tests: `lib/__tests__/notificationCenterScope.test.ts` "the doorway is offered raised; the center opens at Z.dialog (above every upload modal), and the raised dock moves left of it" (the dock at `Z.dockRaised`, a click on "Notifications", the panel and backdrop at 700, the dock's right offset 480 px, back to the edge when the center closes) and "opened at rest, the center keeps its resting layer"; `lib/__tests__/cornerDock.test.ts` "raised, the '+N more' offers the 'Notifications' doorway (RT-11, N3)…" (N7's test, changed with it as the hand-off said: the doorway is offered and opens with no argument; the layout's resting rail still does not move the raised dock); `lib/__tests__/notificationListenerToasts.test.ts` "two rows about one event (same kind, same resource), worded differently, are one card with a count"; `lib/__tests__/notificationListener.test.ts` "RT-11 dw2 / OS-4 dw2: the coalesce key is kind:resource_id…". Every other N7 test is unchanged and green. Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `showToast` caps the visible stack at 4 and collapses the remainder into one "+N more" card that opens the notification center — at rest and now raised (the center opens above the raising modal).
+- ✓ Identical (kind + resourceId) toasts within the window coalesce into one card with a count — the listener keys every notification row by `${kind}:${resource_id}`.
+- ✓ The dock has a max-height and overflow-y-auto (N7).
+- ✓ The auto-dismiss timer starts only when the card is within the visible stack (N7).
+
+**Scope / residual.** Observed in jsdom with the real dock, toast provider and center; not re-observed in a browser. Raised, the center covers the raising modal (it is a modal over it); closing it returns to the modal with the upload cards still reporting. No migration.
 
 ---
 

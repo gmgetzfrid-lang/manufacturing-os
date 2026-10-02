@@ -170,7 +170,7 @@ Repo-wide, `grep -rni "requestPermission|Notification.permission|showNotificatio
 ## OS-4 · NotificationListener toasts on every incoming notification row with no batching or cap — a nudge burst becomes a toast burst
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:78-96`, `components/providers/ToastProvider.tsx:39-49`, `components/ui/CornerDock.tsx:22-27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: N inserts within 6s produce N simultaneously-mounted toast cards. The 6-second figure in the claim is exact (duration: 6000 at NotificationListener.tsx:96).
@@ -217,6 +217,15 @@ components/ui/CornerDock.tsx:24 (no max-height / overflow) —
 - ✓ The CornerDock has a max-height and does not grow past the viewport.
 
 **Scope / residual.** Stays OPEN on dw2 until N3's one line lands. The rate of nudges itself (OS-1 / GAP-206) is not this finding's. No migration.
+
+**Resolution (2026-10-02, notifications Round G).** Done-when 2 — the remainder N7 handed to N3 — landed in package N3 SURFACES: `components/providers/NotificationListener.tsx` `toastForRow` passes `` coalesceKey: `${row.kind}:${row.resource_id}` `` for every notification row with a resource (:87), so rows about one event coalesce into N7's one-card-with-a-count even when worded differently; and a burst of rows (any actor, any resource) is capped at two cards plus one "N more notifications" summary per 6 s window (`TAX-9`). Reproduced on `7c27b0c`: no key was passed (`NotificationListener.tsx:92-97`). Tests: `lib/__tests__/notificationListenerToasts.test.ts` "two rows about one event (same kind, same resource), worded differently, are one card with a count"; `lib/__tests__/notificationListener.test.ts` "40 rows in a burst…". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ ToastProvider caps concurrent toasts, collapsing the rest into "+N more" (N7, above).
+- ✓ Bursts from the same resource within a short window coalesce into one toast (the key is kind + resource; a burst across resources becomes one summary card).
+- ✓ The CornerDock has a max-height and does not grow past the viewport (N7, above).
+
+**Scope / residual.** The rate of nudges itself (`OS-1` / GAP-206) is not this finding's. No migration.
 
 ---
 

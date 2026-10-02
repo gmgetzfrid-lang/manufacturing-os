@@ -36,7 +36,7 @@ Every distinct way this app tells a person something, what each is for, and wher
 ## TAX-1 · Clicking a section badge opens the Notification Center UNFILTERED, so the panel that promises "click a 10, see the 10" shows a different number than the badge
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/Sidebar.tsx:532-545`, `components/notifications/NotificationCenter.tsx:76-85`, `components/notifications/NotificationCenter.tsx:112-117`, `components/cockpit/AttentionFeed.tsx:22`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually exact — I found no section-aware open() path anywhere (all five openCenter call sites pass only 'all' or 'action'), and even the 'red' branch maps a per-section actionRequired badge onto an app-wide action count. Severity is one notch high, though: nothing is lost or blocked — every item is present, navigable and additionally narrowable by AttentionFeed's KIND_GROUPS second axis (lines 64-69); the harm is a misleading count, not an unreachable item.
@@ -63,6 +63,23 @@ components/cockpit/AttentionFeed.tsx:22 -- `export type AttnFilter = "all" | "ac
 - [ ] The Center header count equals the badge count that opened it, for every badge in the app
 - [ ] The header copy is only claimed when true, or is scoped ("3 items in Documents")
 
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES. **Reproduced first** on `7c27b0c`: the badge's handler was `openCenter(leaf.badgeTone === 'red' ? 'action' : 'all')` (`components/navigation/Sidebar.tsx:554`) — no section; `open(filter?)` took a filter only (`components/notifications/NotificationCenter.tsx:37`), the panel listed every item (`:77-81`) and its header said `${counts.all} items — every badge in the app counts these.` (`:112`) whichever badge opened it.
+
+What landed:
+- **A scoped open.** `NotificationCenter.tsx` `open(filter?, section?)` (:69); a scope never outlives its opener (an open with no section is unscoped — the bell's "See all", the Command Deck, the dock's "+N more"). The panel lists `items.filter((i) => i.section === section)` and its counts come from the hook's own tally, `sectionCounts[section]` — the number the badge prints (`viewCounts`, :159). A "Show every section (N)" link clears the scope.
+- **The badge passes its section.** `Sidebar.tsx` `SidebarLeaf`: `openCenter('all', BADGE_SECTION_BY_HREF[leaf.href] ?? null)` (:565), the map (:518) naming exactly the three rows that spread `badgeOf(sectionCounts.<section>)` (a test pins the two equal). It opens the section's **every** item (filter "All") rather than pre-filtering a red badge to "Action": the badge counts them all, so the list does too; the action items stay flagged orange and one tap away (`DEC-44 (N3)` item 1).
+- **An honest header.** `centerHeadline` (:95): "3 items in Documents" scoped; "11 items — everything the bell counts." unscoped under "All"; "1 item in Documents needs action" / "4 activity items" under a filter; "Nothing in Projects needs your attention." for an empty scope.
+- **Mark read in a scope** clears only that scope's rows (`markManyRead` of the listed ids, :173; the button says "Mark the notifications in Documents read"); unscoped it is the workspace's `markAllRead`, as before.
+
+Tests: `lib/__tests__/notificationCenterScope.test.ts` (the REAL Sidebar, center and hook): "clicking the Documents badge opens the center scoped to Documents…" (header = the badge's number from the same hook, exactly the three Documents rows, the red one included; "Show every section (7)"), "every badged row opens its own section with its own count", "an empty scope names its section…", "'mark read' in a scope clears only that scope's rows…", "the headline is the opener's number in every case", "the Sidebar's badge passes the section of exactly the rows that spread badgeOf(sectionCounts.<section>)". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `open()` accepts a section and the Center filters `items` by `item.section`.
+- ✓ The Center header count equals the badge count that opened it: a section badge → `sectionCounts[section].total`; the bell's "See all" → `counts.all` (the bell's number); the Command Deck's "Action" → `counts.action` (its number) — the header follows the filter as well as the scope.
+- ✓ The header copy is scoped ("3 items in Documents") and the unscoped claim is now true ("everything the bell counts" — a sidebar badge counts its section, not every item).
+
+**Scope / residual.** None for this finding. The count one level down (library → folder → document) is `TRAIL-1` (N11). No migration.
+
 ---
 
 <a id="tax-2"></a>
@@ -70,7 +87,7 @@ components/cockpit/AttentionFeed.tsx:22 -- `export type AttnFilter = "all" | "ac
 ## TAX-2 · Every PSM/OSHA compliance notification kind falls through `sectionForKind` to section 'other', which no sidebar row renders - the badge trail dies before it starts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N3 SURFACES (done-when 4: opening the badged section shows the badged items, via the section filter `TAX-1` / `TRAIL-3`) — by the integrator, 2026-10-01 (N2 merge; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:100-102`, `components/navigation/Sidebar.tsx:229-235`, `app/api/cron/maintenance/route.ts:361-374`
@@ -118,6 +135,16 @@ app/api/cron/maintenance/route.ts:361-368 -- `const COMPLIANCE_KINDS = [\n  "rev
 
 **Scope / residual.** Stays OPEN for done-when 4 only; record RESOLVED when N3's section filter lands.
 
+**Resolution (2026-10-02, notifications Round G).** Done-when 4 — the remainder N2 left for N3 — is met by the section filter landed for [`TAX-1`](#tax-1) / [`TRAIL-3`](./04-cold-trail.md#trail-3) (package N3 SURFACES): clicking a section's badge opens the Notification Center scoped to that section (`components/navigation/Sidebar.tsx:565` → `components/notifications/NotificationCenter.tsx:69`), listing exactly the items the badge counts, under a header that repeats the badge's number from the same tally (`sectionCounts`). Reproduced on `7c27b0c`: the badge opened the whole feed (`Sidebar.tsx:554`, `NotificationCenter.tsx:77-81`). Test: `lib/__tests__/notificationCenterScope.test.ts` "clicking the Documents badge opens the center scoped to Documents…" — with an `ack_requested` row (a compliance kind N2 moved to Documents) among the three listed. Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Every kind in `COMPLIANCE_KINDS` resolves to a section whose sidebar row renders a badge (N2, above).
+- ✓ `sectionCounts.other` no longer exists (N2, above).
+- ✓ The dead `'scratchpad'` section is removed (N2, above).
+- ✓ Opening the badged section shows the badged items — the count is reproducible one level down from the rail: the badge's "3" opens "3 items in Documents" listing those three.
+
+**Scope / residual.** "One level down" here is the Notification Center opened from the rail. A per-container count inside the Documents tree (library → folder → document) is `TRAIL-1` (N11), as the Partial above recorded. No migration.
+
 ---
 
 <a id="tax-3"></a>
@@ -153,6 +180,25 @@ hooks/useTicketNotifications.ts:279 -- `const actionKinds = new Set(['checkout_c
 - [ ] An action-required toast does not auto-dismiss, or leaves a persistent trace the user can reach after it vanishes
 - [ ] No org-wide toast is emitted for an event that already has targeted recipients
 
+**Partial (2026-10-02, notifications Round G).** Package N3 SURFACES: done-when 1, 3 and 4 are met; done-when 2 (one wording for the event) is the thread line in `lib/checkoutEpisodes.ts` — DC P6's file, merged — and is **notifications N9's** (the plan's split, recorded here). **Reproduced first** on `7c27b0c`: the system thread row toasted the whole workspace as "System Alert" (`components/providers/NotificationListener.tsx:61-70`), and the holder's `checkout_released` row toasted as a blue info card for 6 s, because the tone was `isError = checkout_conflict || hold_opened` (`:90`) while the feed called the same kind action-required.
+
+What landed (`components/providers/NotificationListener.tsx`, `toastForRow` :75):
+- **Tone from the registry.** `KIND_META.actionRequired` decides: an action kind (`checkout_conflict`, `checkout_released`, `overlap_advisory`, `branch_open` — DEC-81 §2) is an amber "warning" toast, never blue; `hold_opened` keeps the amber it always had (it is not an action kind; N2 recorded that N3 keeps it explicitly).
+- **It stays.** An action toast has `duration: 0` — no timer; it leaves only when dismissed (the plan's default, `DEC-44 (N3)` item 3). Its bell row is the durable trace.
+- **No org-wide toast.** The `checkout_messages` channel is gone (`RT-2`): the force-release's "SYSTEM ALERT:" line toasts nobody; the targeted `checkout_released` row toasts the holder.
+
+So the force-release now signals: the thread line (no toast), one amber persistent toast to the holder ("Your checkout was force-released"), the bell row (orange, "Action needed"), the Documents badge (red) and the email — down from five signals under two names with two blue toasts.
+
+Tests: `lib/__tests__/notificationListener.test.ts` "a system line in the thread (a forced release) toasts nobody; the holder's own checkout_released row does — amber, and it stays", "an action-required kind is amber and stays until dismissed…"; `lib/__tests__/notificationKinds.test.ts` "the toast's tone derives from KIND_META: the action kinds and hold_opened warn, nothing else does"; `lib/__tests__/notificationListenerToasts.test.ts` (through the real ToastProvider, the action card is still up after ten minutes and leaves on Dismiss). Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Toast tone is derived from the feed's action classification (KIND_META) — an action-required kind never renders as a blue `info` toast.
+- **Not done (N9):** the "SYSTEM ALERT:" thread line (`lib/checkoutEpisodes.ts:760` on this base — `SYSTEM ALERT: checkout force-released by ${input.actorName}. All sessions ended.`) and the notification title ("Your checkout was force-released", `:776`) still use two wordings. The line is in DC P6 CHECKOUT's file; per the fleet plan, notifications N9 changes that one line. Nothing toasts the line any more, so the two names no longer meet in the corner — but they still meet in the thread and the bell.
+- ✓ An action-required toast does not auto-dismiss (and its bell row is the persistent trace).
+- ✓ No org-wide toast is emitted for an event that already has targeted recipients.
+
+**Scope / residual.** Stays OPEN for done-when 2 only — **owner: notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT** (`lib/checkoutEpisodes.ts`, one line). No migration.
+
 ---
 
 <a id="tax-4"></a>
@@ -160,7 +206,7 @@ hooks/useTicketNotifications.ts:279 -- `const actionKinds = new Set(['checkout_c
 ## TAX-4 · One checkout-thread post fires two toasts with two different wordings, and broadcasts a third to every org member regardless of document access
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:38-73`, `components/providers/NotificationListener.tsx:80-100`, `lib/activityThread.ts:97-99`, `lib/activityThread.ts:153-164`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. I specifically hunted for the guard that would refute the broadcast — a document-level RLS predicate or a client-side access check before showToast — and there is none in either place. Recipients of the durable notification get two cards with different wordings (amber warning + blue info), and every other active org member gets the raw message text regardless of library or document permission, which is the confidentiality angle that keeps this at HIGH.
@@ -187,6 +233,18 @@ components/providers/NotificationListener.tsx:46 -- `filter: `org_id=eq.${active
 - [ ] The `checkout_messages` realtime channel is either removed (the durable `checkout_message` notification already covers recipients) or scoped to documents the viewer can read
 - [ ] No toast is shown for a resource the viewer lacks ACL on
 - [ ] A test drives one `postActivity` and asserts exactly one `showToast` call per recipient
+
+**Resolution (2026-10-02, notifications Round G).** Fixed with [`RT-2`](./05-realtime-and-lifecycle.md#rt-2) (package N3 SURFACES; `DEC-44 (N3)` item 2, the plan's default: remove the channel). **Reproduced first** on `7c27b0c` with the real `postActivity`: a participant and a watcher each got two cards in two wordings ("New Message from Alice", amber; "Alice posted to P-1204-03", blue) and an uninvolved member got the raw text ("New Message from Alice") — the base listener's org-wide `checkout_messages` channel (`components/providers/NotificationListener.tsx:38-73`, filter `org_id=eq.` at `:46`).
+
+Now `NotificationListener.tsx` listens only to the member's own `notifications` INSERTs (:214): one post → one toast, "Alice posted to P-1204-03" with the snippet, to each recipient of the durable row; none to anyone else. Tests: `lib/__tests__/notificationListener.test.ts` "TAX-4 dw4: postActivity → exactly one toast for each participant and watcher, zero for the author and for an uninvolved member". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ A single post produces at most one toast per recipient.
+- ✓ The `checkout_messages` realtime channel is removed — the durable `checkout_message` notification covers recipients.
+- ✓ No toast is shown for a resource the viewer lacks ACL on, as far as the toast surface goes: every toast now echoes a row addressed to the viewer by its producer, so it shows no more than the viewer's own bell does; the org-wide broadcast of raw thread text is gone. Whether a producer addresses a row to someone without access is `NEDGE-6`'s (the notify path), not this surface's.
+- ✓ A test drives one `postActivity` and asserts exactly one `showToast` call per recipient (and none for the author or an uninvolved member).
+
+**Scope / residual.** `NEDGE-6` (ACL on the notify path). No migration.
 
 ---
 
@@ -240,6 +298,12 @@ components/cockpit/AttentionFeed.tsx:44 -- `if (k.includes("rev") || k.includes(
 - **Not done (N3):** a test that the bell icon and the feed icon are the same component — it lands when both derive from `icon`.
 
 **Scope / residual.** Per the fleet plan, record RESOLVED when N6 merges (acceptance 1 needs all seven maps). N5 seeds its `notification_kinds` table from `NOTIFICATION_KINDS` / `KIND_META`; N8 and N9 add their kinds here.
+
+**Partial (2026-10-02, notifications Round G).** Package N3 SURFACES — the N3 limb of done-when 2 and done-when 4. The bell's hand-kept `KIND_ICON` (`components/notifications/NotificationBell.tsx:19-49` on `7c27b0c`), the feed's substring predicates `attentionVisual` and `KIND_GROUPS` (`components/cockpit/AttentionFeed.tsx:37-53`, `:66-77`) and the toast's `isError` (`components/providers/NotificationListener.tsx:90`) are gone; each now reads `KIND_META`: one icon resolver for the bell and the feed (`components/notifications/kindIcon.ts` `iconForKind`, over `KIND_META.icon`), the feed's tone (`KIND_META.tone`; an action item orange) and group chip (`KIND_META.group`) — `AttentionFeed.tsx` `attentionVisual` :46, `groupOf` :78 — and the toast's tone (`KIND_META.actionRequired`, `hold_opened` kept amber; `NotificationListener.tsx` `toastForRow` :75). Tones and groups are at parity (KIND_META = the predicates + N2's named departures). The visible change is the icon: where the feed drew something other than the bell's icon it now draws the bell's (20 kinds, pinned with their old icon — an action item drew `Zap` and now draws its kind's icon, still orange and flagged "Action"; e.g. `ticket_mention` AtSign → MessageSquare); and the bell draws the registry icon for the 26 kinds it drew as a bare `Bell` (OS-7 dw3's ratchet list is empty). Tests: `lib/__tests__/notificationKinds.test.ts` "the bell's icon is KIND_META's, through one resolver…", "OS-7 dw3: the ratchet is empty…", "TAX-5 dw4: the bell icon and the feed icon are the same component for every kind; the feed's tone and group are KIND_META's (N3)", "the toast's tone derives from KIND_META…" (these replace N2's pins of the hand-kept copies); `lib/__tests__/notificationCenterScope.test.ts` "TAX-5: a row draws its registry icon…". Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when (this limb).** done-when 2: ✓ `KIND_ICON`, `attentionVisual`, `KIND_GROUPS`, `isError` read the registry; **not done (N6):** `COMPLIANCE_KINDS` in the cron. done-when 4: ✓ a test asserts the bell icon and the feed icon for every kind are the same component.
+
+**Scope / residual.** Stays OPEN for `COMPLIANCE_KINDS` (N6 EMAIL-PIPELINE), per the fleet plan.
 
 ---
 
@@ -383,7 +447,7 @@ The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "
 ## TAX-9 · In-app notifications have no preference gate, no throttle and no cap - `inapp_enabled` is stored but read by nothing, and a cron burst produces an unbounded toast stack
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:86`, `lib/notify/dispatch.ts:89-103`, `lib/inAppNotifications.ts:79-98`, `components/providers/ToastProvider.tsx:40-49`, `components/ui/CornerDock.tsx:25`, `app/(protected)/settings/notifications/page.tsx:7-9`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg verified: no in-app preference gate, no throttle, no toast cap, and the dock cannot scroll or clip a tall stack. NotificationListener.tsx:80-100 fires one showToast per realtime INSERT with no coalescing, so an N-row cron burst does produce N stacked cards.
@@ -412,6 +476,23 @@ components/ui/CornerDock.tsx:25 -- `className="fixed bottom-4 right-4 z-[300] fl
 - [ ] `ToastProvider` caps the visible stack (e.g. 3-4) and collapses the remainder into a "+N more" that opens the Notification Center
 - [ ] `CornerDock` has a `max-h` with `overflow-y-auto` so the stack can never exceed the viewport
 - [ ] `NotificationListener` does not toast bulk/system-generated kinds one-per-row; batched inserts produce one summary toast
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES; done-when 2 and 3 landed with N7 CORNER and are verified here. **Reproduced first** on `7c27b0c`: `NotificationListener` toasted every inserted row one by one with no preference read (`components/providers/NotificationListener.tsx:80-100`); `TOAST_PREFERENCE_HONOURED` was `false` (`lib/notificationPrefs.ts:76`), so the settings page offered no switch.
+
+What landed:
+- **The preference** (done-when 1, on `DEC-74` §7's reading). DEC-74 (the integrator's decision at the N1 merge) settled what "in-app" means: bell rows are always written — a durable obligation is never suppressible — and the member's in-app switch is `toast_enabled` (pop-up toasts); `inapp_enabled` is deprecated and kept, never read. The listener now honours `toast_enabled`: it reads `readToastPreference` (fails open) before any toast (`createNotificationToaster`, :112; read on mount, on tab return, and again once the last read is older than `PREF_FRESH_MS` = 5 s), and `TOAST_PREFERENCE_HONOURED` is `true` (`lib/notificationPrefs.ts:78`), so the settings page offers "Pop-up toasts".
+- **A burst is one summary** (done-when 4). At most `BURST_SHOWN_MAX` (2) informational toasts per `BURST_WINDOW_MS` (6 s, the toast's own time); the rest of that window's rows become one "N more notifications" card when it closes (`burstSummary`, :92). A window holding one extra row shows it as itself. Action rows are never folded in and never wait. Two rows about one event coalesce into one card through N7's `coalesceKey` (`RT-11`).
+- **Verified, N7's limbs.** The visible stack is capped at 4 with a "+N more" card (`components/ui/CornerDock.tsx` `DOCK_VISIBLE_CAP`, `components/providers/ToastProvider.tsx` `visibleToasts`), which opens the notification center — now raised too (`RT-11`); the dock is height-bounded and scrolls (`maxHeight: calc(100dvh …)`, `overflow-y-auto`).
+
+Tests: `lib/__tests__/notificationListener.test.ts` "40 rows in a burst: the first BURST_SHOWN_MAX toast one by one, the rest become one 'N more notifications' card…", "an action row is never folded into the summary…", "a window that holds one extra row shows it as itself…", "toast_enabled off: no toast at all…", "switched back on in settings: the next toast follows once the tab comes back", "a stale read is refreshed before the next toast…; an unreadable preference shows toasts"; `lib/__tests__/notificationPrefs.test.ts` (N1's tripwire, now on its other side). Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ On `DEC-74` §7's reading, not as written: `emit()`'s in-app branch still writes every bell row (by decision — a bell row is never suppressible) and `inapp_enabled` is neither honoured nor dropped (deprecated and kept, by integrator override, because a dropped column cannot be restored); the in-app preference that exists is `toast_enabled`, and the toast listener honours it, failing open.
+- ✓ The visible stack is capped (4) and the remainder collapses into one "+N more" that opens the Notification Center (N7; raised too since `RT-11`).
+- ✓ The CornerDock has a max-height with overflow-y-auto (N7).
+- ✓ `NotificationListener` does not toast a burst one card per row: batched inserts produce one summary card.
+
+**Scope / residual.** The summary card itself has no click-through to the center: N7's `ToastProvider` has no action slot (not this package's file); the bell and the dock's "+N more" doorway are the routes. Per-category toast toggles are `RT-10`'s remainder. No migration.
 
 ---
 
@@ -625,6 +706,8 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 
 **Scope / residual.** Stays OPEN on dw3 (`TAX-15`) and dw4 (ownership of the layer numbers — notifications N13 LAYERS SWEEP; dw1 is met on the integrator's ratified reading of `DEC-85` item 1, 2026-10-02; N7 third review: it was ticked while saying "not by ownership"; the 2026-10-02 ratification of `DEC-85` item 4 covers `STACK-10`, not this item). No migration.
 
+*2026-10-02 (notifications Round G, N3 SURFACES): done-when 3 is met by [`TAX-15`](#tax-15)'s Resolution — `components/system/UpdatePill.tsx` owns "a newer build exists", fed by the build-id poll and the service worker's waiting worker, in one wording, top-centre, one prompt at a time, through the one `loadLatestBuild` path. The bottom-left now holds `ServiceWorkerManager`'s offline pill alone. This finding stays OPEN on done-when 4 only (notifications N13 LAYERS SWEEP).*
+
 ---
 
 <a id="tax-15"></a>
@@ -632,7 +715,7 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 ## TAX-15 · Two surfaces still announce "a newer build exists", in two different words — the remainder of TAX-14
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** to be worked after public-surfaces PKG-1 merges, because it owns `components/pwa/ServiceWorkerManager.tsx`. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `TAX-14` done-when 3.
 - **Assigned:** notifications N3 SURFACES — by the integrator, 2026-10-02, at the N7 merge (public-surfaces PKG-1, which owned `components/pwa/ServiceWorkerManager.tsx`, has merged).
 - **Verification:** CONFIRMED (read on `b9cdfdc`)
@@ -650,6 +733,23 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 - [ ] A test pins that only one surface renders when both signals are true.
 
 **Closer:** the first notifications package after public-surfaces PKG-1 merges (the plan's "update-available unification").
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES (public-surfaces PKG-1, which owned `components/pwa/ServiceWorkerManager.tsx`, has merged). **Reproduced first** on `7c27b0c`: two detectors, two surfaces, two wordings — `components/system/UpdatePill.tsx:79` "This tab is running an old version — tap to load the update" (top-centre, the `/api/version` poll, reload through `confirmReloadDuringUploads` + `loadLatestBuild`), and `components/pwa/ServiceWorkerManager.tsx:194` "Update available — tap to refresh" (bottom-left, the waiting worker, `:133` / `:137`, reload through `applyServiceWorkerUpdate` with no upload check). Every deploy fires both.
+
+What landed (`DEC-44 (N3)` item 8):
+- **One owner.** `UpdatePill.tsx` is the one component that says it, in one wording — `UPDATE_PROMPT_TEXT` = "A newer version of the app is available — tap to load it" (:32) — in one place (top-centre, as before), fed by **both** detectors: its own build-id poll and the service worker's waiting worker, which `ServiceWorkerManager` now reports through a small store (`subscribeWaitingWorker` / `waitingWorkerSnapshot`, `ServiceWorkerManager.tsx:101-111`) instead of rendering a button.
+- **One path.** Its tap is the existing one: `confirmReloadDuringUploads()` (asks over an upload in flight, STACK-13), then `loadLatestBuild`, which activates the registration's waiting worker (SKIP_WAITING, reload on `controllerchange`, fallback reload after 3 s — PKG-1's OFF-4 handshake, unchanged).
+- **One prompt at a time, on every page.** The protected shell mounts `UpdatePill` (it polls and owns the prompt). On a page without the shell (sign-in, a share link, the transmittal portal) `ServiceWorkerManager` renders UpdatePill's stand-in for the waiting worker only (`UpdatePillForWaitingWorker`, `UpdatePill.tsx:76`, loaded on demand with `React.lazy` so there is no static import cycle, `ServiceWorkerManager.tsx:36`, `:232`); the stand-in renders nothing while a shell instance is mounted (:117).
+- **PKG-1's behaviour kept exactly:** registration on load, the waiting-worker detection (`reg.waiting`, and a new worker reaching `installed` while one controls the page — the same conditions, now calling `reportWaitingWorker()` at :177 / :181), the offline pill and its probe, `applyServiceWorkerUpdate` / `loadLatestBuild` and their tests (`lib/__tests__/sw.test.ts`, unchanged and green).
+
+Tests: `lib/__tests__/updatePrompt.test.ts` — "the version poll alone: the shell's pill shows the one wording", "the waiting worker alone, inside the shell: the shell's pill shows it — the service worker renders no button of its own", "both signals at once: exactly one prompt", "a page without the shell…: the waiting worker still gets the same prompt, from ServiceWorkerManager", "the stand-in renders nothing … without a waiting worker", "the tap is the one reload path: it activates the waiting worker (SKIP_WAITING) through loadLatestBuild", "PKG-1 unchanged: the offline pill still shows…"; `lib/__tests__/cornerJobs.test.ts` and `lib/__tests__/sw.test.ts` (unchanged). Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ One component owns "a newer build exists", fed by the version poll and the waiting-worker signal: one wording, one placement (top-centre), one prompt at a time.
+- ✓ Its reload path is the one `loadLatestBuild` path and asks before reloading over an upload in flight (`confirmReloadDuringUploads`).
+- ✓ A test pins that only one surface renders when both signals are true.
+
+**Scope / residual.** On a page without the shell the prompt keeps PKG-1's trigger (the waiting worker only — those pages never polled the build id). `TAX-14` done-when 3 is this item. No migration.
 
 ---
 
