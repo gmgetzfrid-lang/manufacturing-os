@@ -16,6 +16,11 @@
 // Rendered (jsdom) against the in-memory PostgREST with the REAL
 // BulkEditModal, lib/revisions.ts, lib/audit and lib/holdGate; the clocks'
 // two entry points are spies (as dcRoundFStatusIssueRecord does).
+//
+// P17 review fix: the record and the clocks name the signed-in user (email
+// and role from useRole), and a row written as an issue that
+// changeDocumentStatus did not record as one (its status before the write
+// could not be read) is named after the apply — never a silent success.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -28,6 +33,8 @@ const state = vi.hoisted(() => ({
   /** documentId → the guard's refusal for a write to it */
   refuse: {} as Record<string, string>,
   updatePayloads: [] as Array<{ id: unknown; payload: Record<string, unknown> }>,
+  /** documents whose pre-write read (changeDocumentStatus's select("*")) fails */
+  failRead: new Set<string>(),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -41,6 +48,20 @@ vi.mock("@/lib/supabase", () => ({
         // record every documents UPDATE payload (what was written, in one statement)
         return new Proxy(b, {
           get(target, prop: string) {
+            if (prop === "select") {
+              return (cols: string) => {
+                const q = target.select(cols) as Record<string, (...a: unknown[]) => unknown>;
+                if (cols !== "*") return q;
+                return new Proxy(q, {
+                  get(qt, qp: string) {
+                    if (qp !== "eq") return qt[qp];
+                    return (col: string, val: unknown) => (col === "id" && state.failRead.has(String(val))
+                      ? { maybeSingle: async () => ({ data: null, error: { message: "network error" } }) }
+                      : qt.eq(col, val));
+                  },
+                });
+              };
+            }
             if (prop !== "update") return target[prop];
             return (payload: Record<string, unknown>) => {
               const q = target.update(payload) as Record<string, (...a: unknown[]) => unknown>;
@@ -75,6 +96,8 @@ vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => {}) })
 vi.mock("@/lib/staleCopies", () => ({ recallRetiredDocument: vi.fn(async () => {}) }));
 vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
+// the signed-in user, as the protected layout's RoleProvider gives it
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "ctl1", userEmail: "cara@example.com", activeRole: "DocCtrl" }) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/reviewControl")>();
   return { ...real, effectiveReviewControlForDocument: vi.fn(async () => ({ mode: "none" })) };
@@ -120,6 +143,7 @@ beforeEach(() => {
   state.clockErrors = [];
   state.refuse = {};
   state.updatePayloads = [];
+  state.failRead = new Set();
   // the guard's part these tests need: its refusal, and the retirement stamp cleared on an exit (20261144)
   state.db.beforeUpdate!.documents = (next) => {
     const r = state.refuse[String(next.id)];
@@ -179,6 +203,31 @@ describe("REV-19 (P17) — the bulk editor's issuing rows start the clocks and a
     expect(issuedRecords()[0].details).toMatchObject({ door: "bulk", fromStatus: "Draft", toStatus: "Issued", versionId: "a1-v2", rev: "2", putBack: false, complianceClocksStarted: true });
     expect(issuedRecords()[1].details).toMatchObject({ door: "bulk", fromStatus: "In Review", toStatus: "Issued" });
     expect(host.querySelector('[data-testid="bulk-issue-follow-ups"]')).toBeNull();
+    // P17 review fix: who issued it — the email and role on the record, the name on the clocks
+    for (const r of issuedRecords()) expect(r).toMatchObject({ user_email: "cara@example.com", user_role: "DocCtrl" });
+    expect(onDocumentIssued).toHaveBeenCalledWith(expect.objectContaining({ userId: ME, userName: "cara@example.com" }));
+    expect(onDocumentIssuedAck).toHaveBeenCalledWith(expect.objectContaining({ actorId: ME, actorName: "cara@example.com" }));
+  });
+
+  it("P17 review fix: an issuing row whose status before the change could not be read is written but not recorded as an issue — the modal names it after the apply instead of a plain success", async () => {
+    const a = seedDoc("e1");
+    const b = seedDoc("e2");
+    state.failRead.add("e1");
+    await applyStatus([asRecord(a), asRecord(b)], "Issued");
+    // both writes landed (the guard decides the write; the read only decides the record)
+    expect(docRow("e1").status).toBe("Issued");
+    expect(docRow("e2").status).toBe("Issued");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    // e1 has no record and no clock — and is named; e2 is recorded as before
+    expect(issuedRecords().map((r) => r.resource_id)).toEqual(["e2"]);
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    const box = host.querySelector('[data-testid="bulk-issue-follow-ups"]')!;
+    expect(box).not.toBeNull();
+    expect(box.textContent).toMatch(/1 issued row — follow-up steps did not complete/);
+    const items = Array.from(box.querySelectorAll("li")).map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatch(/^E1 — The status was changed, but it was not recorded as an issue/);
+    expect(items[0]).toContain("no review clock or acknowledgment roster was started and no issue record was written");
   });
 
   it("an unstamped archive restored to Issued in bulk is recorded without resetting the review clock (no evidence of a new issue) — only the roster opens", async () => {

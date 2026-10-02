@@ -35,10 +35,15 @@
 // database admitted it as an issue, the compliance clocks it owes (the
 // review clock and the read-&-understood roster, or only the roster where
 // the retirement stamp gives no evidence of a new issue) and the
-// DOCUMENT_ISSUED record. A refused row is named exactly as before. An issue
-// that landed but whose clocks or record did not follow is named after the
-// apply — the change stands and is not to be repeated. Every other row
-// (a status that issues nothing, a custom field) is written as before.
+// DOCUMENT_ISSUED record, carrying the signed-in user's email and role
+// (useRole) as the creation and un-archive doors' records do. A refused row is
+// named exactly as before. An issue that landed but whose clocks or record did
+// not follow is named after the apply — the change stands and is not to be
+// repeated — and so is a row written as an issue that changeDocumentStatus did
+// not record as one (its status before the write could not be read, or it was
+// issued already): no clock started and no DOCUMENT_ISSUED was written for it.
+// Every other row (a status that issues nothing, a custom field) is written as
+// before.
 
 import React, { useState } from "react";
 import {
@@ -51,6 +56,7 @@ import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_A
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
 import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
+import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
   isOpen: boolean;
@@ -76,6 +82,8 @@ export default function BulkEditModal({
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
+  // REV-19 (P17 review fix): the issue record names who issued it — email and role, not a bare uid.
+  const { userEmail, activeRole } = useRole();
   const [results, setResults] = useState<{
     ok: number;
     failed: Array<{ doc: string; reason: string; issue: boolean }>;
@@ -145,12 +153,17 @@ export default function BulkEditModal({
           const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
           const outcome: StatusIssueOutcome = await changeDocumentStatus({
             orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
-            actorUserId, patch,
+            actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,
           });
-          const problems = [
-            ...outcome.complianceClockErrors,
-            ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
-          ];
+          const problems = outcome.issued
+            ? [
+                ...outcome.complianceClockErrors,
+                ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
+              ]
+            // Written, but not recorded as an issue: changeDocumentStatus could not
+            // read the row's status before the write (or found it issued already),
+            // so it started no clock and wrote no DOCUMENT_ISSUED (P17 review fix).
+            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read (or it was already issued), so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."];
           if (problems.length > 0) followUps.push({ doc: doc.documentNumber || doc.title || doc.id, problems });
           ok += 1;
           continue;
