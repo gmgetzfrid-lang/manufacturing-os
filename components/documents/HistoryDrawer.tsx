@@ -12,6 +12,7 @@ import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirm
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { useRole } from "@/components/providers/RoleContext";
 import { getDocumentTimeline, type TimelineEvent } from "@/lib/timeline";
+import { useOccupyRightRail } from "@/components/ui/CornerDock";
 
 interface HistoryDrawerProps {
   isOpen: boolean;
@@ -46,6 +47,8 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
   const [loading, setLoading] = useState<boolean>(true);
   const [activeSnapshot, setActiveSnapshot] = useState<DocumentVersion | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // STACK-11: while open, the corner dock moves to the drawer's left edge.
+  useOccupyRightRail(panelRef, isOpen);
 
   const headerSubtitle = useMemo(() => {
     const docNum = docRecord?.documentNumber ?? "";

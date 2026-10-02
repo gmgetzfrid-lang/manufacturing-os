@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { useOccupyRightRail } from "@/components/ui/CornerDock";
 
 interface InspectorDrawerProps {
   isOpen: boolean;
@@ -11,6 +12,9 @@ interface InspectorDrawerProps {
 }
 
 export default function InspectorDrawer({ isOpen, onClose, children, title }: InspectorDrawerProps) {
+  // STACK-11: while open, the corner dock moves to the drawer's left edge.
+  const panelRef = useRef<HTMLElement>(null);
+  useOccupyRightRail(panelRef, isOpen);
   // Close on Esc
   useEffect(() => {
     if (!isOpen) return;
@@ -39,6 +43,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
 
       {/* Drawer panel — slides from right with spring easing */}
       <aside
+        ref={panelRef}
         className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-[var(--color-surface)] shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}

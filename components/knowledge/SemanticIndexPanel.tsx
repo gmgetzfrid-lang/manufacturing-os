@@ -67,6 +67,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
   /** The last build's outcome, pinned under the bar — toasts vanish. */
   const [buildNote, setBuildNote] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const stopRef = useRef(false);
+  /** Set when the panel unmounts mid-build (STACK-1). */
+  const leftRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -81,6 +83,17 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
   }, [orgId, libraryId, key]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // STACK-1 (notifications Round G, N7): the build loop is driven from this
+  // page and its only Stop is this panel's button. Leaving the page must not
+  // leave a paid loop running with no visible control: unmounting stops it at
+  // the next batch boundary (every committed batch is kept — a build resumes
+  // exactly where it stopped). The outcome is said in a toast, which outlives
+  // the page.
+  useEffect(() => {
+    leftRef.current = false;
+    return () => { leftRef.current = true; stopRef.current = true; };
+  }, []);
 
   const ready = state.key === key;
   const status = ready ? state.status : null;
@@ -132,6 +145,13 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
           : "Meaning index complete — every passage carries a vector.";
         setBuildNote({ tone: "ok", text });
         showToast({ type: "success", title: "Meaning index complete." });
+      } else if (stopRef.current && leftRef.current) {
+        showToast({
+          type: "info",
+          title: `Meaning-index build stopped when you left the page — ${final.remaining} passage(s) left.`,
+          message: "Every finished batch is kept. Open the library and build again to resume.",
+          duration: 15000,
+        });
       } else if (stopRef.current) {
         setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });
         showToast({ type: "success", title: `Stopped — ${final.remaining} passage(s) left. Resume any time.` });

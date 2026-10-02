@@ -9,8 +9,30 @@
 import React, { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { loadLatestBuild } from "@/components/pwa/ServiceWorkerManager";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { hasUploadsInFlight, releaseUploadUnloadGuard } from "@/lib/uploadActivity";
 
 const POLL_MS = 5 * 60_000;
+
+/** STACK-13: loading the update reloads the tab, which kills an upload on
+ *  the wire with no record. While one is in flight the pill asks first; a
+ *  person who says go is not asked again by the browser's own prompt. */
+export async function confirmReloadDuringUploads(deps: {
+  inFlight: () => boolean;
+  confirm: (o: { title: string; message: string; confirmLabel: string; cancelLabel: string; tone: "danger" }) => Promise<boolean>;
+  release: () => void;
+} = { inFlight: hasUploadsInFlight, confirm: appConfirm, release: releaseUploadUnloadGuard }): Promise<boolean> {
+  if (!deps.inFlight()) return true;
+  const ok = await deps.confirm({
+    title: "An upload is still running",
+    message: "Loading the update reloads this tab, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
+    confirmLabel: "Reload anyway",
+    cancelLabel: "Wait",
+    tone: "danger",
+  });
+  if (ok) deps.release();
+  return ok;
+}
 
 export default function UpdatePill() {
   const [stale, setStale] = useState(false);
@@ -41,7 +63,8 @@ export default function UpdatePill() {
   return (
     <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop">
       <button
-        onClick={() => {
+        onClick={async () => {
+          if (!(await confirmReloadDuringUploads())) return;
           const sw = "serviceWorker" in navigator ? navigator.serviceWorker : null;
           void loadLatestBuild({
             serviceWorker: sw,

@@ -21,6 +21,8 @@ import {
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
+import { Z } from "@/lib/zLayers";
+import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 export interface CustomColumnDef {
   key: string;
@@ -89,6 +91,17 @@ export default function MetadataStagingModal({
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
+  // Once this open has started an upload, the corner dock rises above this
+  // modal while it reports that upload — only the upload cards, kept clear
+  // of this action row, so "Upload All" and "Stop upload" stay reachable
+  // however many cards it holds (STACK-10). It stays raised after a run
+  // that left failures (the modal stays open with them) until their cards
+  // clear. Before Upload All the dock stays under this modal: a backup card
+  // or a toast never sits on the last rows' Remove / Duplicate / Status.
+  const [startedUpload, setStartedUpload] = useState(false);
+  const footerRef = React.useRef<HTMLDivElement>(null);
+  useDockRaise(isOpen && startedUpload);
+  useDockAvoid(footerRef, isOpen);
 
   // Detect when the user has defined library columns that map to the
   // canonical document fields (number / title / rev). When they exist,
@@ -164,6 +177,7 @@ export default function MetadataStagingModal({
     abortRef.current = null;
     setSubmitting(false);
     setStopping(false);
+    setStartedUpload(false);
 
     // SECOND PASS — read the drawings themselves. Page-1 text often carries
     // the real drawing number + revision from the title block. Applied only
@@ -387,6 +401,7 @@ export default function MetadataStagingModal({
     }
     setSubmitting(true);
     setStopping(false);
+    setStartedUpload(true);
     const ctl = new AbortController();
     abortRef.current = ctl;
     try {
@@ -461,7 +476,7 @@ export default function MetadataStagingModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto" style={{ zIndex: Z.metadataStagingModal }}>
       <div className="w-full max-w-6xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-0 sm:my-8 flex flex-col max-h-[95dvh] sm:max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
@@ -759,7 +774,7 @@ export default function MetadataStagingModal({
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
           </div>
         )}
-        <div className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
+        <div ref={footerRef} className="px-4 sm:px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between flex-wrap gap-2 shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {items.length} file{items.length === 1 ? "" : "s"} · {formatBytes(items.reduce((s, i) => s + i.file.size, 0))} total
           </div>

@@ -12,6 +12,8 @@ import { X, Check, Loader2, ImageIcon, Upload } from "lucide-react";
 import { NODE_ICON_KEYS, NodeIcon } from "@/lib/nodeIcons";
 import NodeCover, { type NodeAppearanceLike } from "@/components/documents/NodeCover";
 import { uploadToPath } from "@/lib/storage";
+import { Z } from "@/lib/zLayers";
+import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
@@ -51,6 +53,13 @@ export default function CustomizeNodeModal({
   const [bgUploading, setBgUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
+  // Once an image upload has started here, the corner dock rises above this
+  // modal while it reports that upload — only the upload card, kept clear
+  // of Save (STACK-10). Before that the dock stays under this modal.
+  const [startedUpload, setStartedUpload] = useState(false);
+  const footerRef = useRef<HTMLDivElement>(null);
+  useDockRaise(open && startedUpload);
+  useDockAvoid(footerRef, open);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -59,6 +68,7 @@ export default function CustomizeNodeModal({
 
   const handleUpload = async (file: File) => {
     if (!storagePrefix) return;
+    setStartedUpload(true);
     setUploading(true);
     try {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -75,6 +85,7 @@ export default function CustomizeNodeModal({
 
   const handleBgUpload = async (file: File) => {
     if (!storagePrefix) return;
+    setStartedUpload(true);
     setBgUploading(true);
     try {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -95,7 +106,7 @@ export default function CustomizeNodeModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[400] grid place-items-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 grid place-items-center p-4 bg-black/50 backdrop-blur-sm" style={{ zIndex: Z.customizeNodeModal }} onClick={onClose}>
       <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
           <h2 className="font-black text-[var(--color-text)]">{title}</h2>
@@ -247,7 +258,7 @@ export default function CustomizeNodeModal({
           )}
         </div>
 
-        <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex justify-end gap-2">
+        <div ref={footerRef} className="px-5 py-3.5 border-t border-[var(--color-border)] flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save

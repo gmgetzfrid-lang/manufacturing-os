@@ -4,7 +4,7 @@
 // Auto-detects capture date from filename (e.g., IMG_20240815_*.jpg).
 // Each photo can have an optional caption + manual date override.
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   Upload, X, Camera, Calendar, Loader2, CheckCircle2,
@@ -15,6 +15,8 @@ import {
   type Asset,
 } from "@/lib/assets";
 import { uploadToPath } from "@/lib/storage";
+import { Z } from "@/lib/zLayers";
+import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 interface PendingPhoto {
   id: string;
@@ -41,6 +43,14 @@ export default function AssetPhotoUploader({
   const [isDragOver, setIsDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Once these photos have started uploading (a photo past "pending": the
+  // run is going, or it left failures here), the corner dock rises above
+  // this modal while it reports the upload — only the upload cards, kept
+  // clear of Upload / Cancel (STACK-10). Before Upload, the dock stays under
+  // this modal: no backup card or toast sits on a photo's remove X.
+  const footerRef = useRef<HTMLDivElement>(null);
+  useDockRaise(isOpen && (submitting || pending.some((p) => p.status !== "pending")));
+  useDockAvoid(footerRef, isOpen);
 
   const stagePendingFiles = useCallback((files: FileList | File[] | null) => {
     if (!files) return;
@@ -137,7 +147,8 @@ export default function AssetPhotoUploader({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[510] bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      style={{ zIndex: Z.assetPhotoUploader }}
       onClick={onClose}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -278,7 +289,7 @@ export default function AssetPhotoUploader({
         )}
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div ref={footerRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {pending.length === 0 ? (
               "Drop or click above to start."

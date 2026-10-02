@@ -36,6 +36,7 @@
 import React, { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useDockAvoid } from "@/components/ui/CornerDock";
 
 const SIZES = {
   sm: "max-w-md",
@@ -247,8 +248,14 @@ export function ModalBody({ className = "", children }: { className?: string; ch
 }
 
 export function ModalFooter({ className = "", children }: { className?: string; children: React.ReactNode }) {
+  // While a modal that starts an upload has raised the corner dock above
+  // every modal, the dock keeps clear of this action row, so a toast or an
+  // upload card never sits on a dialog's buttons (STACK-10).
+  const ref = useRef<HTMLDivElement>(null);
+  useDockAvoid(ref, true);
   return (
     <div
+      ref={ref}
       className={`flex items-center justify-end gap-2 px-5 py-3.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl shrink-0 ${className}`}
     >
       {children}

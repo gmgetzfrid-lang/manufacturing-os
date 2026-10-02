@@ -4,10 +4,16 @@
 // fixed corner. Each toast confirms what happened and offers Undo.
 // Intentionally quiet (bottom-center, auto-dismiss) so it informs
 // without nagging.
+//
+// It renders into the bottom-centre dock's toast slot (STACK-4,
+// notifications Round G N7): the "Back to graph" chip lives at the same
+// spot, and the dock stacks this above the chip instead of on top of it.
+// The slot keeps this host's own layer (Z.undoToast, the z-280 it had).
 
 import React from "react";
 import { CheckCircle2, RotateCcw, X as XIcon, AlertTriangle, Info } from "lucide-react";
 import type { UndoableToast } from "./useUndoableActions";
+import { CentrePortal } from "@/components/ui/CornerDock";
 
 export default function UndoToastHost({
   toasts, onUndo, onDismiss,
@@ -19,7 +25,8 @@ export default function UndoToastHost({
   // A11Y-6: the region stays mounted (empty) so a toast that lands in it is
   // announced; a warning is assertive, the rest polite.
   return (
-    <div aria-live="polite" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[280] flex flex-col items-center gap-2 pointer-events-none">
+    <CentrePortal slot="toasts" count={toasts.length}>
+    <div aria-live="polite" className="flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => {
         const Icon = t.tone === "warning" ? AlertTriangle : t.tone === "success" ? CheckCircle2 : Info;
         const accent = t.tone === "warning" ? "text-amber-300" : t.tone === "success" ? "text-emerald-300" : "text-indigo-300";
@@ -43,5 +50,6 @@ export default function UndoToastHost({
       })}
       <style jsx>{`@keyframes toastin { from { transform: translateY(8px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }`}</style>
     </div>
+    </CentrePortal>
   );
 }

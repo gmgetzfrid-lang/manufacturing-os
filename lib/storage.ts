@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
+import { beginTransfer, endTransfer } from "@/lib/uploadActivity";
 
 export type UploadProgress = {
   bytesTransferred: number;
@@ -18,7 +19,9 @@ export type UploadResult = {
 // Every upload in the app funnels through uploadToPath, so broadcasting its
 // lifecycle here lets ONE global indicator show feedback for a file attach
 // ANYWHERE — no per-screen wiring needed.
-export type UploadActivityStatus = "uploading" | "done" | "error";
+// "cancelled" is the user's own Stop (an UploadCancelledError), never a
+// failure: the indicator says "Stopped" in a neutral tone (STACK-2).
+export type UploadActivityStatus = "uploading" | "done" | "error" | "cancelled";
 export interface UploadActivity {
   id: string;
   name: string;
@@ -38,6 +41,12 @@ export function subscribeUploads(cb: UploadListener): () => void {
 }
 function emitUpload(e: UploadActivity) {
   uploadListeners.forEach((l) => { try { l(e); } catch { /* ignore listener errors */ } });
+}
+/** The terminal event for a transfer that threw: the user's Stop reads as
+ *  "cancelled" (no error text), anything else as the failure it is. */
+function emitUploadEnd(id: string, name: string, err: unknown) {
+  if (err instanceof UploadCancelledError) emitUpload({ id, name, percent: 0, status: "cancelled" });
+  else emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
 }
 
 function sanitizeFilename(name: string) {
@@ -571,7 +580,23 @@ export async function uploadToPath(
   const name = file instanceof File && file.name ? file.name : (path.split("/").pop() || "file");
   const id = `up-${Date.now()}-${++uploadSeq}`;
   emitUpload({ id, name, percent: 0, status: "uploading" });
+  // STACK-13: a transfer in flight holds the tab's leave-page warning.
+  beginTransfer();
+  try {
+    return await uploadToPathInner(file, path, contentType, name, id, opts);
+  } finally {
+    endTransfer();
+  }
+}
 
+async function uploadToPathInner(
+  file: Blob,
+  path: string,
+  contentType: string,
+  name: string,
+  id: string,
+  opts?: { onProgress?: (p: UploadProgress) => void; signal?: AbortSignal },
+): Promise<UploadResult> {
   const report = (bytesTransferred: number) => {
     const percent = (bytesTransferred / Math.max(file.size, 1)) * 100;
     emitUpload({ id, name, percent, status: "uploading" });
@@ -585,7 +610,7 @@ export async function uploadToPath(
       emitUpload({ id, name, percent: 100, status: "done" });
       return { path, url: path, size: file.size, contentType };
     } catch (err) {
-      emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+      emitUploadEnd(id, name, err);
       throw err;
     }
   }
@@ -594,7 +619,7 @@ export async function uploadToPath(
   try {
     uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal);
   } catch (err) {
-    emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+    emitUploadEnd(id, name, err);
     throw err;
   }
 
@@ -603,7 +628,7 @@ export async function uploadToPath(
     emitUpload({ id, name, percent: 100, status: "done" });
     return { path, url: path, size: file.size, contentType };
   } catch (err) {
-    emitUpload({ id, name, percent: 0, status: "error", error: (err as Error).message });
+    emitUploadEnd(id, name, err);
     // Cancellation is the user's own doing — keep it recognisable instead of
     // wrapping it into "Upload cancelled" prose that reads like a failure.
     if (err instanceof UploadCancelledError) throw err;

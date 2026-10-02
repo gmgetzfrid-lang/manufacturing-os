@@ -104,6 +104,65 @@ flipped, the settings page does not offer the "Pop-up toasts" switch.
 `lib/__tests__/notificationPrefs.test.ts` fails whenever the listener mentions
 either name while the flag is false, and the reverse (`RT-10`).*
 
+*Hand-off (2026-10-01, notifications Round G, N7 CORNER → N3 / N4 / N12, under
+`DEC-85`):*
+- *`showToast` takes an optional `coalesceKey`. Identical toasts within 10 seconds
+  are already one card with a count, by type, title and message.
+  `components/providers/NotificationListener.tsx` (N3's) should pass
+  `` coalesceKey: `${row.kind}:${row.resource_id}` `` for a notification row, so
+  that differently worded rows about one event coalesce too. `RT-11` and `OS-4`
+  stay OPEN (Partial) on done-when 2 until that line lands; N3 closes them.*
+- *`RT-11` done-when 1 (2026-10-02, N7 final review): while the corner dock is
+  raised over a modal that started an upload, its "+N more" card offers no
+  "Notifications" doorway. The center (`NotificationCenter.tsx`, 240 / 241, N3's)
+  would open under that modal, invisible. N3 lets the center open above an open
+  upload modal when it is opened from the dock; then the `!raised` guard on the
+  doorway in `components/ui/CornerDock.tsx` comes off. `RT-11` stays OPEN on that
+  too; N3 closes it.*
+- *The corner dock rests under every overlay (`Z.dock` = 290, the old dock's
+  place). It rises above every modal (`Z.dockRaised` = 750) only while a modal
+  that has started an upload is open and the dock reports an upload. The modal
+  calls `useDockRaise(open && <an upload was started here>)` from
+  `components/ui/CornerDock.tsx`; a scan test refuses `useDockRaise(open)`. The
+  dock also needs a `raisable` card: `UploadIndicator`'s. Raised, only the upload
+  cards hold places; the backup, indexing and toast cards wait behind "+N more",
+  which offers no "Notifications" doorway; every upload failure that arrives
+  while raised runs its clock from its event (one that was waiting behind the cap
+  at rest still waits until it shows); and the dock ignores right rails (N7
+  fourth review, final review).
+  Such a modal must also declare its action row with `useDockAvoid(ref, open)`;
+  a scan test refuses one that does not. The three upload-starting modals do
+  both. The shared `ModalFooter` declares its row for any dialog opened over
+  them (N7 edited `components/ui/Modal.tsx`'s `ModalFooter`, outside its plan).
+  A package that adds a modal that starts an upload raises the dock that way and
+  declares its row. Other overlays declare nothing, because at rest the dock is
+  under them. While raised, the upload cards still cover the right end of the
+  raising modal's body above its row until the run's cards clear. The integrator
+  ratified `DEC-85` item 4 on 2026-10-02 as meeting `STACK-10` done-when 1.
+  `STACK-14` stays OPEN (Partial) on that, and on its done-when as written, which
+  the ratification does not meet. Its owner is notifications N13 LAYERS SWEEP (new, added
+  by the integrator at the N7 merge, 2026-10-02 — with `TAX-14` done-when 4),
+  which runs last, after every fleet that edits overlay files.*
+- *The corner dock is `role="region"` / `aria-live="polite"` /
+  `aria-relevant="additions"`. The toast list is `role="status"`, an error toast
+  is `role="alert"`, and every toast's X has `aria-label="Dismiss"`. That is
+  NEDGE-5's done-when 2 limb, for N3 to verify and close.*
+- *The notification center is passed to the dock as a right rail by the layout
+  (`occupiedRightPx`, 480 = `NotificationCenter.tsx`'s `w-[480px]`, pinned by a
+  test). If N2 / N3 change the panel's width, update
+  `NOTIFICATION_CENTER_RAIL_PX`, or have the panel call `useOccupyRightRail`
+  itself and drop the prop.*
+- *`lib/intents.ts` (its owner; not N7's file): reset `created_at` when
+  `recordIntent` re-declares an expired edit intent, for example by deleting the
+  expired row before the upsert. Until then an overlap that re-forms before the
+  daily prune keeps its old formed time, and the overlap banner can show a false
+  "Heads-up sent ✓". `TAX-8` stays OPEN (Partial) on done-when 3 until it lands;
+  the pin in `lib/__tests__/cornerJobs.test.ts` "TAX-8 (N7 third review)" then
+  changes with it.*
+- *`app/(protected)/layout.tsx`: N7 changed the `<main>` mount block (the docks
+  first) and the hook preamble of `ProtectedContent` (one line,
+  `useNotificationCenter`). N4 (:239 provider) and N12 (:72) rebase on it.*
+
 Then the census holes in severity order: `PROD-2` (access requests notify
 nobody), `PROD-14` (`markup_request` never notifies the person asked), `PROD-9`
 (holds never notify the owner), `PROD-3`, `PROD-5`.

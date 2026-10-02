@@ -75,7 +75,7 @@
   },
   {
    "name": "N3 SURFACES — an honest doorway, accessible surfaces, one toast per event (GAP-202 step 1 + NEDGE-5)",
-   "findings": ["TAX-1", "TRAIL-3", "NEDGE-5", "RT-2", "TAX-4", "TAX-3", "TAX-9", "RT-5", "RT-9", "RT-10 (remainder re-owned by the integrator 2026-10-01 at the N1 merge: NotificationListener reads readToastPreference (lib/notificationPrefs.ts) on mount and on return, and N3 flips TOAST_PREFERENCE_HONOURED so the settings page offers the Pop-up toasts switch; per-category toast toggles wait for N2's kind registry (GAP-207 / TAX-5) — never a seventh classification)", "TAX-2 (remainder re-owned by the integrator 2026-10-01 at the N2 merge: done-when 4 — opening the badged section shows the badged items; it closes when N3's section filter (TAX-1 / TRAIL-3) lands)"],
+   "findings": ["TAX-1", "TRAIL-3", "NEDGE-5", "RT-2", "TAX-4", "TAX-3", "TAX-9", "RT-5", "RT-9", "RT-10 (remainder re-owned by the integrator 2026-10-01 at the N1 merge: NotificationListener reads readToastPreference (lib/notificationPrefs.ts) on mount and on return, and N3 flips TOAST_PREFERENCE_HONOURED so the settings page offers the Pop-up toasts switch; per-category toast toggles wait for N2's kind registry (GAP-207 / TAX-5) — never a seventh classification)", "TAX-2 (remainder re-owned by the integrator 2026-10-01 at the N2 merge: done-when 4 — opening the badged section shows the badged items; it closes when N3's section filter (TAX-1 / TRAIL-3) lands)", "RT-11 (remainder re-owned by the integrator 2026-10-02 at the N7 merge: done-when 1 — while the dock is raised over a modal that started an upload, '+N more' offers no doorway; let the notification center open above a raising modal and the dock offer its doorway while raised; done-when 2 — components/providers/NotificationListener.tsx passes coalesceKey: `${row.kind}:${row.resource_id}` (one line); hand-off in 99-fix-sequencing.md)", "TAX-15 (opened by N7 CORNER 2026-10-01, owner assigned by the integrator 2026-10-02 at the N7 merge: one component owns 'a newer build exists' — components/system/UpdatePill.tsx and components/pwa/ServiceWorkerManager.tsx (public-surfaces PKG-1, merged) announce it in two different words; one wording, one surface)"],
    "severityMix": "5 HIGH, 3 MEDIUM, 1 LOW",
    "files": [
     "components/notifications/NotificationCenter.tsx (open(filter, section?) :23/:37; CenterPanel filters items by item.section :81-85; header count :116 equals the badge that opened it and names the section; empty state names the section; role=dialog already at :99 — add focus-in on open / focus-restore on close)",
@@ -276,7 +276,7 @@
   },
   {
    "name": "N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — the fixes that live in document-control's files, plus splitting the overloaded kinds (after the DC waves)",
-   "findings": ["PROD-9", "PROD-4", "PROD-12", "NEDGE-11", "NEDGE-8", "TRAIL-4", "PROD-13", "TAX-13", "OS-6", "DELIV-15 (opened by the integrator at the N1 merge 2026-10-01: app/api/transmittal/route.ts queues the issuer's portal-receipt email (event_type watcher_activity) and the unstamped / refused-PDF notice without reading any preference — route the receipt through emailAllowedByPrefs or email_gate as the service role, and state whether the unstamped / refused notice is deliberately exempt)"],
+   "findings": ["PROD-9", "PROD-4", "PROD-12", "NEDGE-11", "NEDGE-8", "TRAIL-4", "PROD-13", "TAX-13", "OS-6", "DELIV-15 (opened by the integrator at the N1 merge 2026-10-01: app/api/transmittal/route.ts queues the issuer's portal-receipt email (event_type watcher_activity) and the unstamped / refused-PDF notice without reading any preference — route the receipt through emailAllowedByPrefs or email_gate as the service role, and state whether the unstamped / refused notice is deliberately exempt)", "TAX-8 (remainder re-owned by the integrator 2026-10-02 at the N7 merge: done-when 3's re-formed overlap — lib/intents.ts recordIntent resets created_at when it re-declares an expired row (e.g. delete the expired row before the insert), so a re-formed overlap between the same people is new before the daily prune and an old 'Heads-up sent' no longer covers it)", "TAX-16 (opened by N7 CORNER 2026-10-01, owner assigned by the integrator 2026-10-02 at the N7 merge: a heads-up's sender sees 'Heads-up sent' on every device — a server read of the rows one sent (components/documents/EditOverlapBanner.tsx), after N5's server-side notification route)"],
    "severityMix": "9 MEDIUM",
    "files": [
     "lib/holds.ts :249-267 (resolve effectiveOwnerForDocument (lib/ownership.ts:35) and add the owner uid; pass audience.projectId when the document is on a project — PROD-9; after DC P5 HOLDS)",
@@ -297,7 +297,8 @@
     "N2, N5, N6 merged (registry, write rails accept new kinds via the reference table, recordTime helper, dispatch link forwarding)",
     "GAP-207 'Do not split overloaded kinds' inside the registry consolidation — this is the separate change with its own migration the spec asks for",
     "DEC-30: paste the backfill SQL; the code half is RESOLVED when the producers write the new kinds; old rows render under the old kind until the migration is confirmed (KIND_META keeps doc_superseded)",
-    "DEC-31: PROD-4's 'every document-scoped emit' means the five sites the finding cites, not a census conversion"
+    "DEC-31: PROD-4's 'every document-scoped emit' means the five sites the finding cites, not a census conversion",
+    "N5 merged (TAX-16: the server-side notification route the sender's read builds on)"
    ],
    "sequencingNotes": "Wave D — waits for the document-control fleets because every file is theirs; TRAIL-4 additionally waits for IS-P1. Order: PROD-9 → PROD-4 → NEDGE-11/PROD-12 → NEDGE-8 → TRAIL-4/PROD-5 call site → OS-6 → the kind split last (largest blast radius; migration inventory first).",
    "decisionsNeeded": [
@@ -400,6 +401,30 @@
     "Animation: default one 600ms spin + a 1-2-3 count-up on increase only; no permanent pulse"
    ],
    "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N13 LAYERS SWEEP — every overlay whose action row reaches the dock's lane declares it, a scan test refuses an undeclared one, and every overlay's z-index reads lib/zLayers.ts",
+   "findings": [
+    "STACK-14 (owner assigned by the integrator 2026-10-02 at the N7 merge: done-when 1 — every overlay from 300 to 700 whose action row reaches the dock's lane declares it (useDockAvoid / ModalFooter), the asset editor drawer and the pages that compose Modal with their own footer among them; done-when 2 — a scan test refuses an undeclared full-screen overlay at z >= 300)",
+    "TAX-14 (done-when 4 owner assigned by the integrator 2026-10-02 at the N7 merge: lib/zLayers.ts owns every overlay layer number — the ~150 call sites that keep their own z literal read the module, and the scan test refuses a literal)"
+   ],
+   "files": [
+    "the overlays across app/, components/ that render fixed inset-0 / right-anchored drawers at z 300-700 (about 28 hand-rolled overlays plus every page composing Modal with its own footer) — declarations only (useDockAvoid / ModalFooter), and their z classes read lib/zLayers.ts",
+    "lib/zLayers.ts (exports only; the values N7 set are kept — DEC-85)",
+    "lib/__tests__/ (a scan test: no undeclared full-screen overlay at z >= 300; no z literal outside lib/zLayers.ts)"
+   ],
+   "migrationsLikely": 0,
+   "when": "LAST in the notifications area and after every other fleet that edits overlay files (identity IS-P1, intelligence I-12 / I-14, drafting-flow DF-P9, admin-and-org P6-P9, projects J14) — a mechanical sweep across many areas' files, so it runs when none of them is in flight",
+   "dependsOn": [
+    "N7 merged (DEC-85; lib/zLayers.ts, useDockAvoid, ModalFooter's declaration, the dock's two bands)",
+    "N3 merged (the notification center's surfaces; NEDGE-5)",
+    "no running package owns an overlay file it touches (check every fleet plan's files list at launch)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the N7 merge (DEC-31: STACK-14 and TAX-14 done-when 4 had no owner in this plan). Declarations and z classes only — no behaviour change at rest (the dock rests under every overlay, DEC-85 item 4); the regression check is a rendered pass over the overlays it touches.",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": [
+    "STACK-10 (RESOLVED at N7 on DEC-85 item 4's ratified reading)"
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

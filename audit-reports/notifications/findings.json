@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 106,
+    "findings": 109,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 15,
-      "MEDIUM": 73,
-      "LOW": 16
+      "MEDIUM": 74,
+      "LOW": 18
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 11,
-      "OPEN": 92
+      "RESOLVED": 23,
+      "OPEN": 83
     }
   },
   "status_vocabulary": [
@@ -1636,7 +1636,7 @@
       "id": "STACK-1",
       "title": "A long AI job (semantic index build) has zero corner presence and no unmount cleanup — navigating away hides it while it keeps running",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1660,7 +1660,7 @@
       "id": "STACK-2",
       "title": "A user-cancelled upload is reported to the corner as a red \"Failed\", contradicting the code's own stated intent",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1686,7 +1686,7 @@
       "id": "STACK-3",
       "title": "AI ingestion failure is swallowed by an empty catch — the user is told \"caught up\", never \"failed\"",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1712,7 +1712,7 @@
       "id": "STACK-7",
       "title": "On a phone the corner stack is near-full-width and lands on top of the library's bottom action tray",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1739,7 +1739,7 @@
       "id": "STACK-8",
       "title": "The backup — the longest-running job in the app — is not in the dock at all, and it covers the offline/update pills",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1765,7 +1765,7 @@
       "id": "STACK-9",
       "title": "The dock has no ordering rule and no cap — stack order is \"whoever last became visible\", and toasts are unbounded",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1791,7 +1791,7 @@
       "id": "STACK-10",
       "title": "The modal that starts a bulk upload paints over the dock that reports it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1819,7 +1819,7 @@
       "id": "STACK-11",
       "title": "Three full-height right-edge drawers own the bottom-right corner; the dock floats on top of all of them with no offset",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1870,7 +1870,7 @@
       "id": "STACK-13",
       "title": "Upload progress lives only in tab memory: a reload kills the transfer, leaves no record, and no beforeunload guards it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1890,6 +1890,35 @@
       ],
       "refuted": false,
       "summary": "A user is 80% through a 300MB multipart DWG upload and hits Cmd-R, or taps UpdatePill's \"This tab is running an old version — tap to load the update\" which calls window.location.reload(). The transfer dies with zero warning and zero trace; the corner is empty on the next paint. They believe the file landed because nothing said otherwise.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/06-stacking-and-progress.md"
+    },
+    {
+      "id": "STACK-14",
+      "title": "An overlay that does not declare its action row can still have a dock card over its bottom-right corner",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (Chromium; the N7 review's harness against the branch at `77ae466` and against `b9cdfdc`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/ui/CornerDock.tsx",
+        "app/(protected)/admin/assets/page.tsx:1971-2268",
+        "components/providers/UploadIndicator.tsx:148",
+        "app/(protected)/companies/page.tsx",
+        "app/(protected)/companies/[id]/page.tsx",
+        "app/(protected)/projects/[id]/page.tsx",
+        "components/projects/ProjectWizard.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "An admin opens the asset editor (admin/assets) and clicks \"Create & add photos\". They start photo uploads, close the uploader and return to the drawer. The running upload card sits exactly on Save at 1280×800, 1440×900 and 1920×1080, and with no Dismiss, Save stays covered until the transfer ends. A realtime notification toast blocks it for 5 seconds on every arrival. A page composing the shared M",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
     },
@@ -2675,7 +2704,7 @@
       "id": "STACK-4",
       "title": "Bottom-center is a second uncoordinated corner: undo toasts and the graph return chip occupy identical coordinates",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2701,7 +2730,7 @@
       "id": "STACK-5",
       "title": "CornerPortal renders its own duplicate fixed corner for the first frame of every appearance",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -2724,7 +2753,7 @@
       "id": "STACK-6",
       "title": "Dismissal of the indexing card is silently undone by the next queued document, and no dismissal survives reload",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2745,6 +2774,55 @@
       "summary": "A user with a 12-document queue closes the \"caught up\" card. Ninety seconds later the driver starts document 2 and setHidden(false) re-opens a 330px card over their work. Repeat eleven times. The user learns Dismiss does not work and stops attending to the corner — which is precisely what makes the occlusion findings dangerous.",
       "area": "notifications",
       "report": "audit-reports/notifications/06-stacking-and-progress.md"
+    },
+    {
+      "id": "TAX-15",
+      "title": "Two surfaces still announce \"a newer build exists\", in two different words — the remainder of TAX-14",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read on `b9cdfdc`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/system/UpdatePill.tsx:64,79",
+        "components/pwa/ServiceWorkerManager.tsx:181-194",
+        "app/(protected)/layout.tsx",
+        "app/layout.tsx:93"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After a deploy a user sees \"This tab is running an old version\" at the top and \"Update available\" at the bottom-left. They are unsure whether these are two updates or one. They tap the bottom-left button during an upload and get the browser's generic \"Leave site?\" prompt instead of the app's explanation.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/03-taxonomy.md"
+    },
+    {
+      "id": "TAX-16",
+      "title": "A heads-up's sender sees \"Heads-up sent\" only in the browser they sent it from",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read on the N7 branch)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/documents/EditOverlapBanner.tsx",
+        "lib/inAppNotifications.ts:106-140",
+        "supabase/migrations/20260723_notifications_unify.sql:37"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A user sends a heads-up from their laptop, then opens the same document on a tablet. The tablet offers \"Send heads-up\" again. Sending it re-notifies the colleagues, who receive a second, identical advisory.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/03-taxonomy.md"
     },
     {
       "id": "TRAIL-6",
