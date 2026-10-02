@@ -32,7 +32,7 @@ Coverage, drift, and what happens to a chunk that never embeds.
 ## SEM-1 · A library embedded under two models silently loses half its corpus, and which half is nondeterministic
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-03 THE ASK ROUTE (the residual: the ask route reads its corpus model from one row — move it onto `resolveCorpusModel`) — by the integrator, 2026-10-01 (at the I-05 merge: the earlier assignment to I-05 was wrong — its branch does not touch the ask route; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 2: the save-time confirm in `AiSettingsModal.tsx` that offers the reset) — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
@@ -86,6 +86,32 @@ The save-time confirm this package first added to `EmbeddingKeyEditor` (`compone
 4. ✓ (2026-09-30) The two-stamp tests.
 
 **Scope / residual.** OPEN on done-when 2 (I-20).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 2: the save-time confirm in AI settings. Reproduced first on the base (`3bf3b75`): saving a different embedding provider or model in `EmbeddingKeyEditor` saved at once, with no warning and no offer (`aiSettingsEmbeddingSwitch.test.ts`: the 4 "SEM-1 done-when 2" reproduction cases fail against the base modal).
+
+What a switch actually does, read from the current code (DEC-29), which the confirm says and no more. A question is embedded with each searched index's own model on the asker's key, as long as the key is for that index's provider (`planQueryEmbedding`, `lib/ai/embeddings.ts`).
+- A **provider** switch stops every index the old provider built from answering this member's meaning search (`provider_mismatch`).
+- A **model** switch within the same provider does NOT stop those indexes answering. But no build with the new model can add to them (`buildModelConflict`), and the background builds on the member's key hold for the model conflict.
+- The record's premise that "existing vectors become unusable" holds for the provider switch. For the model switch the confirm says "keep answering, but stop growing for you".
+
+What landed.
+- `components/knowledge/AiSettingsModal.tsx` `EmbeddingKeyEditor.save` (`:599`) compares the setting in effect with the one being saved. `effectiveEmbeddingSetting` / `savedEmbeddingSetting` in `lib/embedKeyOverview.ts` resolve them as `embeddingConnectionFrom` does, including the OpenAI chat key's default.
+- On a change, it reads the embed route's `key-overview` with `models` (each library's vectors per model through `semantic_coverage_detail`, service role). `embeddingSwitchImpact` then works out the libraries whose index stops answering, those that stop growing, the background builds on this key that stop, and any library whose vectors could not be read.
+- The confirm (`EmbeddingSwitchWarning`, `:409`) names those libraries and says each comes back with a Rebuild of its index with the new model ("Rebuild index, in the library's meaning-index panel", Admin or Doc Control, with the setting of whoever runs it), or by keeping the current setting. Keyword search is unaffected. An overview that cannot be read still warns, in general terms. Declining saves nothing.
+- After the switch, the editor links each library's page, where Rebuild is (`:755`).
+- A switch that touches no index and no build saves without asking.
+
+`SEM-3`'s removal-dialog copy (I-03) is kept as it was (`askRouteUnits.test.ts` pins it).
+
+Tests: `lib/__tests__/aiSettingsEmbeddingSwitch.test.ts`, "SEM-1": the pure impact for a provider switch, a model switch, an unreadable library or overview and an untouched switch. Rendered: the provider confirm names the libraries and saves nothing when declined; confirming saves and links each Rebuild; the model confirm says "keep answering, but stop growing"; the general warning; the untouched switch. REGRESSION: the same provider and model, a new key only, asks nothing and reads nothing first, and so does a first embeddings key. `lib/__tests__/embedConsentAudit.test.ts` ("with models: …"): the route's per-library models, where a read that fails is unknown, never "no vectors".
+
+**Done-when.**
+1. ✓ (2026-09-30) Coverage per model; the panel names a mixed library.
+2. ✓ Saving a different embedding model or provider confirms first. It names the libraries whose vectors stop answering this member (provider switch) or stop growing (model switch), and the builds on the key that stop. It offers the Rebuild and links each library's Rebuild after the switch.
+3. ✓ (2026-09-30) A mixed library refuses semantic search until rebuilt; the ask route resolves the model deterministically too (2026-10-01, I-03).
+4. ✓ (2026-09-30) The two-stamp tests.
+
+**Scope / residual.** None for this finding. The Rebuild itself stays a controller's action on the library's panel (DEC-59 (3) and (5)); the confirm offers it and does not run it.
 
 ---
 

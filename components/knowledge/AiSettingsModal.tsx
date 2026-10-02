@@ -9,8 +9,15 @@
 // 4, so this modal can prove a key exists without ever holding one.
 // Claude and OpenAI are the ONLY providers — nothing that can train on
 // submitted data is offered, and the server refuses it anyway.
+//
+// Intelligence Round G, I-20: saving a different embedding model or provider
+// first says which meaning indexes stop answering (or stop growing) and which
+// background builds on this key stop, names the libraries, and after the
+// switch links each one's Rebuild (SEM-1). Every background build running on
+// this member's key is listed in one place, each with a Stop (GOV-14).
+// Saving the same model and provider asks nothing, exactly as before.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   X, Loader2, Plug, CheckCircle2, AlertTriangle, Trash2, KeyRound, Gauge, Users, Sparkles,
 } from "lucide-react";
@@ -21,9 +28,14 @@ import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
-  getAiUsage, setAiCap,
+  getAiUsage, setAiCap, releaseBackgroundBuild, releaseOutcome,
   type AiConnectionInfo, type AiUsageSummary, type AiCapSetResult,
 } from "@/lib/knowledge";
+import {
+  getEmbedKeyOverview, effectiveEmbeddingSetting, savedEmbeddingSetting, embeddingSwitchImpact,
+  switchImpactIsEmpty, librariesToRebuild,
+  type EmbeddingSwitchImpact, type EmbedKeyOverview, type EmbedKeyBuild,
+} from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
 
@@ -390,6 +402,164 @@ export function KeyEditor({ orgId, current, onChanged }: {
 // the two are unrelated services and nothing stops you holding one key for
 // answers and another for vectors. Anthropic's own guidance points Claude
 // users at Voyage AI, which is why it's first in the list and the default.
+const embeddingProviderLabel = (id: string) => EMBEDDING_PROVIDERS.find((p) => p.id === id)?.label ?? id;
+
+/** SEM-1: the confirm's body when a member switches embedding model or
+ *  provider — what stops, in which libraries, and the way back. */
+export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpact }) {
+  const { before, after } = impact;
+  const names = (libs: Array<{ libraryId: string; libraryName: string }>) => (
+    <ul className="list-disc pl-5">
+      {libs.map((l) => <li key={l.libraryId}>{l.libraryName}</li>)}
+    </ul>
+  );
+  return (
+    <div data-embedding-switch-warning="true" className="space-y-2 text-left">
+      <p>
+        You are switching from {before.model} ({embeddingProviderLabel(before.provider)}) to {after.model}{" "}
+        ({embeddingProviderLabel(after.provider)}). A meaning index lives in one model&apos;s vector space —
+        vectors are never reused across models.
+      </p>
+      {impact.stopAnswering.length > 0 && (
+        <div data-switch-stops-answering="true">
+          <p>
+            <b>These meaning indexes stop answering your questions.</b> They were built with{" "}
+            {embeddingProviderLabel(before.provider)}, and {/^[aeiou]/i.test(embeddingProviderLabel(after.provider)) ? "an" : "a"}{" "}
+            {embeddingProviderLabel(after.provider)} key cannot search them:
+          </p>
+          {names(impact.stopAnswering)}
+        </div>
+      )}
+      {impact.cannotGrow.length > 0 && (
+        <div data-switch-cannot-grow="true">
+          <p>
+            <b>These keep answering, but stop growing for you.</b> They were built with {before.model}; a build
+            with {after.model} cannot add to them:
+          </p>
+          {names(impact.cannotGrow)}
+        </div>
+      )}
+      {impact.buildsStop.length > 0 && (
+        <div data-switch-builds-stop="true">
+          <p><b>The background builds on your key stop</b> (held for a model conflict) in:</p>
+          {names(impact.buildsStop)}
+        </div>
+      )}
+      {impact.unknown.length > 0 && (
+        <div>
+          <p>The meaning index of these libraries could not be read, so they may be affected too:</p>
+          {names(impact.unknown)}
+        </div>
+      )}
+      {impact.unreadable && (
+        <p data-switch-unreadable="true">
+          Which libraries are affected could not be checked ({impact.unreadable}).{" "}
+          {impact.providerChanged
+            ? `Every meaning index built with ${embeddingProviderLabel(before.provider)} stops answering your questions.`
+            : `Every meaning index built with ${before.model} keeps answering, but a build with ${after.model} cannot add to it.`}
+        </p>
+      )}
+      <p>
+        Each one comes back with a <b>Rebuild</b> of that library&apos;s index with {after.model} — Rebuild index,
+        in the library&apos;s meaning-index panel (Admin or Doc Control; it re-embeds every passage with the
+        setting of whoever runs it). Once you switch, the libraries are linked here. Or keep your current
+        setting. Keyword search is unaffected.
+      </p>
+    </div>
+  );
+}
+
+const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : null);
+
+/** GOV-14: every background build running on this member's key, in one
+ *  place, each with a Stop. A list that cannot be read says so — never
+ *  "none running". */
+export function BuildsOnMyKey({ orgId, refreshKey = 0 }: { orgId: string; refreshKey?: number }) {
+  const { showToast } = useToast();
+  const [state, setState] = useState<{ builds: EmbedKeyBuild[] } | { error: string } | null>(null);
+  const [stopping, setStopping] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const out = await getEmbedKeyOverview(orgId);
+      setState({ builds: out.builds });
+    } catch (e) {
+      setState({ error: (e as Error).message });
+    }
+  }, [orgId]);
+  useEffect(() => { void load(); }, [load, refreshKey]);
+
+  const stop = async (b: EmbedKeyBuild) => {
+    setStopping(b.libraryId);
+    try {
+      showToast(releaseOutcome(await releaseBackgroundBuild(orgId, b.libraryId)));
+    } catch (e) {
+      showToast({ type: "error", title: (e as Error).message });
+    } finally {
+      setStopping(null);
+      void load();
+    }
+  };
+
+  return (
+    <div data-builds-on-my-key="true" className="rounded-xl border border-[var(--color-border)] p-4 space-y-2">
+      <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <Sparkles className="w-3.5 h-3.5" /> Background builds on your key
+      </div>
+      {state === null ? (
+        <p className="text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin inline" /> Checking…</p>
+      ) : "error" in state ? (
+        <p role="alert" className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-start gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+          <span>Couldn&apos;t list the background builds on your key: {state.error}</span>
+        </p>
+      ) : state.builds.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          None running. A meaning-index build you start keeps going on your key in the background until it finishes;
+          it is listed here while it runs.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {state.builds.map((b) => {
+            const waiting = b.blockedUntil && new Date(b.blockedUntil).getTime() > Date.now();
+            return (
+              <li key={b.libraryId} data-build-library={b.libraryId}
+                className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a href={`/knowledge/${b.libraryId}`} className="font-black text-[var(--color-text)] hover:underline">{b.libraryName}</a>
+                  <span>— {b.standing ? "kept current as documents arrive" : "finishing a build you started"}</span>
+                  <Button size="sm" variant="secondary" className="ml-auto" disabled={stopping !== null}
+                    onClick={() => void stop(b)}>
+                    {stopping === b.libraryId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Stop
+                  </Button>
+                </div>
+                <div className="mt-0.5">
+                  {fmtWhen(b.startedAt) ? `Consent recorded ${fmtWhen(b.startedAt)}` : "Consent recorded"}
+                  {fmtWhen(b.lastDrainAt) ? `; last ran ${fmtWhen(b.lastDrainAt)}` : "; not run in the background yet"}.
+                </div>
+                {waiting && (
+                  <div className="mt-0.5 font-bold text-amber-800 dark:text-amber-300">
+                    Waiting until {fmtWhen(b.blockedUntil)} —{" "}
+                    {b.blockedReason === "cap" ? "your monthly AI budget is reached"
+                      : b.blockedReason === "model_conflict" ? "your embedding model no longer matches this index"
+                      : b.blockedReason === "agreement" ? "you have not accepted the current AI agreement"
+                      : "the last runs failed"}
+                    {b.lastError ? `: ${b.lastError.slice(0, 200)}` : "."}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[10px] text-[var(--color-text-muted)]">
+        Each runs on your embeddings key and counts against your monthly cap. Stop ends it; what it already
+        embedded stays.
+      </p>
+    </div>
+  );
+}
+
 export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   orgId: string;
   current: AiConnectionInfo | null;
@@ -404,6 +574,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  // SEM-1: after a switch, the libraries whose index needs a Rebuild.
+  const [rebuildOffer, setRebuildOffer] = useState<EmbeddingSwitchImpact | null>(null);
 
   useEffect(() => {
     const p = current?.embeddingProvider ?? "voyage";
@@ -422,6 +594,29 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({ tone: "err", text: "Paste your embeddings key first." });
       return;
     }
+    // SEM-1: switching model or provider says first what stops answering and
+    // which builds stop, naming the libraries. The same setting asks nothing.
+    const before = effectiveEmbeddingSetting(current);
+    const after = savedEmbeddingSetting(provider, model);
+    let impact: EmbeddingSwitchImpact | null = null;
+    if (before && after && (before.provider !== after.provider || before.model !== after.model)) {
+      setBusy("save"); setNotice(null);
+      let overview: EmbedKeyOverview | null = null;
+      let unreadable: string | null = null;
+      try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
+      catch (e) { unreadable = (e as Error).message; }
+      setBusy(null);
+      impact = embeddingSwitchImpact(before, after, overview, unreadable);
+      if (impact && switchImpactIsEmpty(impact)) impact = null;
+      if (impact) {
+        const ok = await appConfirm({
+          title: impact.providerChanged ? "Switch your embeddings provider?" : "Switch your embedding model?",
+          message: <EmbeddingSwitchWarning impact={impact} />,
+          confirmLabel: "Switch",
+        });
+        if (!ok) return;
+      }
+    }
     setBusy("save"); setNotice(null);
     const hadNewKey = !!apiKey.trim();
     const last4 = apiKey.trim().slice(-4);
@@ -439,6 +634,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       });
       showToast({ type: "success", title: hadNewKey ? "Embeddings key verified and saved." : "Settings saved." });
       setApiKey("");
+      setRebuildOffer(impact && librariesToRebuild(impact).length > 0 ? impact : null);
       onChanged();
     } catch (e) {
       setNotice({ tone: "err", text: (e as Error).message });
@@ -555,6 +751,23 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         )}
       </div>
       <Notice notice={notice} />
+      {rebuildOffer && (
+        <div data-rebuild-offer="true"
+          className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 space-y-1">
+          <p>
+            <b>Rebuild to search and grow these with {rebuildOffer.after.model}:</b> open each library and use
+            Rebuild index in its meaning-index panel (Admin or Doc Control — it re-embeds every passage with the
+            setting of whoever runs it).
+          </p>
+          <ul className="list-disc pl-5">
+            {librariesToRebuild(rebuildOffer).map((l) => (
+              <li key={l.libraryId}>
+                <a href={`/knowledge/${l.libraryId}`} className="font-bold underline">{l.libraryName}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <p className="text-[10px] text-[var(--color-text-muted)]">
         <b>Verify &amp; save</b> makes a real embed call with the key first — a key that saves is a key
         that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
@@ -901,6 +1114,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
                 onChanged={() => setReloadTick((t) => t + 1)} />
               <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
+              <BuildsOnMyKey orgId={orgId} refreshKey={reloadTick} />
               <KeyStorageNotice storage={(data as { keyStorage?: KeyStorageInfo }).keyStorage} />
             </>
           )}

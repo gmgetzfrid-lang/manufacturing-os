@@ -1256,7 +1256,7 @@ Tests: `aiUsage.test.ts` ("GOV-13 / ORCH-7 — reserve, then call": $9.99 of $10
 ## GOV-14 · The embed drain spends whichever user id a JSON blob names, and that id is interpolated unescaped into a PostgREST filter
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 3 and 4) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `lib/knowledgeEmbedCore.ts:138-149 (setEmbedBuildMarker)`, `lib/knowledgeEmbedDrain.ts:62-64`, `lib/knowledgeEmbedDrain.ts:73-95`, `lib/ai/usageServer.ts:95`, `supabase/migrations/20260911_knowledge_ai.sql:119-122`
@@ -1321,6 +1321,30 @@ Already landed elsewhere, and verified in current code:
 4. Partly. A member sees and stops a build on each library's page, but there is no one place listing every build running on their key — I-02 / I-02b.
 
 **Scope / residual.** OPEN for done-when 3–4 (I-02's files).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 3 and 4. Reproduced first on the base (`3bf3b75`). A build pass and "keep current" stamped the consent with no audit row. No place listed the builds on a member's key: the embed route refused any request without a library (`embedConsentAudit.test.ts`: 14 of 17 cases fail against the base route; the other 3 are REGRESSION pins).
+
+Done-when 3, `app/api/knowledge/embed/route.ts`. `auditConsent` (`:198`) runs after a consent write.
+- It writes one `EMBED_BUILD_CONSENT_RECORDED` row (`resource_type` `knowledge_library`, `resource_id` the library) when a build pass newly stamps the caller as the payer (`:549`), and when "keep current" turns a consent standing (`:484`).
+- The row's details carry the stamp's own instant (`stampedAt`, the marker's `at`), `standing`, the consent it replaced (another member's plain build), and the request: route, action, request id (`x-vercel-id`, else `x-request-id`, else a generated uuid), address (`x-forwarded-for`'s first hop) and client.
+- A pass that only renews the caller's own consent writes nothing new; the build loop calls the route once per batch. So does "keep current" over a consent that is already standing.
+- Another member's standing consent, which a plain build never replaces, writes nothing.
+- If the row cannot be written, or the stamp cannot be read back to name it, the consent is put back. A new consent is cleared; a plain consent made standing has its flag restored. The drain therefore never spends on a consent no row explains. The build pass says why through the existing `backgroundNote` ("keep this page open"); "keep current" answers 500 ("The standing consent was not kept: …").
+
+Done-when 4.
+- The embed route's `key-overview` action (`:296`, `keyOverview` `:244`; no library) lists every library of the workspace whose consent names the caller and parses as valid, never another member's or a forged one. Each entry has its standing flag, when it was recorded, its last run and any hold. A failed libraries read is a 500, never an empty list. Any member may read their own key's builds. It writes nothing.
+- `lib/embedKeyOverview.ts` `getEmbedKeyOverview` reads it.
+- AI settings (`components/knowledge/AiSettingsModal.tsx`, `BuildsOnMyKey` `:477`, shown under the embeddings key at `:1117`) lists every build on the member's key in one place. Each entry links its library, says what it is doing and why it waits, and has a Stop. Stop is the route's existing `release`; its toast is the route's answer (`releaseOutcome`), and the list is read again. A list that cannot be read says so, never "None running".
+
+Tests: `lib/__tests__/embedConsentAudit.test.ts` (route: the row and its request, renewal writes nothing, the replaced consent, another member's standing consent, keep current, the put-back on a failed row for a build and for keep current; the overview's list, its filters, its failure and its membership; REGRESSION: status, release and reset write no row, and any other library-less request is still 400), `lib/__tests__/aiSettingsEmbeddingSwitch.test.ts` ("GOV-14 done-when 4": rendered list, Stop, a Stop that stopped nothing, an unreadable list).
+
+**Done-when.**
+1. ✓ (2026-10-01, I-02) The drain validates the marker's uuid and an active membership before spending.
+2. ✓ (2026-10-01, I-05) `getCapUsd` binds the user id.
+3. ✓ The stamp is server-written only (`20261121`). It records who and when, and an audit row names the request that stamped it. A consent that row cannot record is withdrawn.
+4. ✓ A member sees every background build on their key in one place, AI settings, and can stop each one (as well as on each library's panel).
+
+**Scope / residual.** None for this finding. The audit row is written by the service role into `audit_logs` like every other route's row. No migration.
 
 ---
 

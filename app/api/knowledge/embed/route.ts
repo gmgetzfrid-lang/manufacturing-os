@@ -9,6 +9,10 @@
 // POST { orgId, libraryId, action:"keep-current", on } → the standing
 //        consent: the background drain keeps this index current on YOUR key
 // POST { orgId, libraryId, action:"release" } → stop the background build
+// POST { orgId, action:"key-overview", models? } → no library: every
+//        background build running on the CALLER's key (GOV-14), and with
+//        `models` each library's vectors per embedding model — what AI
+//        settings reads before a switch of model or provider (SEM-1)
 //
 // RESUMABLE BY DESIGN. Free-tier serverless kills a request at 60 seconds, so
 // this never tries to finish: it embeds what it can inside a budget, commits,
@@ -41,7 +45,16 @@
 // Refused passages are reported to controllers with their document and page;
 // every other reader gets the count only — a mirror's name is its controlled
 // document's number and title, which the reader may not be allowed to see.
+//
+// A CONSENT HAS AN AUDIT ROW (GOV-14). Recording a background consent — a
+// build that stamps the caller as the payer where they were not, or "keep
+// current" switched on — writes EMBED_BUILD_CONSENT_RECORDED naming the
+// request that stamped it (its id, address and client) and the stamp's own
+// instant. A pass that only renews the caller's own consent writes nothing
+// new. A consent whose audit row cannot be written is withdrawn again, so
+// the drain never spends on a consent no row explains.
 
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
@@ -60,6 +73,11 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+/** The audit action a recorded background consent writes (GOV-14). */
+export const EMBED_CONSENT_AUDIT_ACTION = "EMBED_BUILD_CONSENT_RECORDED";
+/** Libraries whose vector models are read at once for a key overview. */
+const OVERVIEW_MODEL_READS_AT_ONCE = 6;
 
 /** Stop well short of the platform's kill so the last batch commits and the
  *  response is a real answer rather than a 504 the client has to guess at. */
@@ -155,13 +173,117 @@ async function detailFields(orgId: string, libraryId: string, userId: string, de
   };
 }
 
+/** The request that stamped a consent, as an audit row names it (GOV-14). */
+function requestFacts(req: NextRequest, action: string) {
+  const h = req.headers;
+  return {
+    route: "/api/knowledge/embed",
+    action,
+    requestId: h.get("x-vercel-id") || h.get("x-request-id") || randomUUID(),
+    ip: (h.get("x-forwarded-for") ?? "").split(",")[0].trim() || null,
+    userAgent: (h.get("user-agent") ?? "").slice(0, 200) || null,
+  };
+}
+
+type ParsedMarker = ReturnType<typeof parseEmbedBuildMarker>;
+
+/** GOV-14: after a consent write, the audit row naming the request that
+ *  stamped it. `before` is the marker read ahead of the write (undefined:
+ *  it could not be read). A pass that renews the caller's own consent
+ *  records nothing new unless `always` (an explicit "keep current"). When
+ *  the row cannot be written — or the stamp cannot be read back to name it —
+ *  the caller's consent is put back as it was before the write (cleared, or
+ *  its standing flag restored), and the reason is returned for the caller
+ *  to say; null when audited or nothing new was recorded. */
+async function auditConsent(req: NextRequest, a: {
+  orgId: string; libraryId: string; userId: string; action: "build" | "keep-current";
+  before: ParsedMarker | undefined; always?: boolean;
+}): Promise<string | null> {
+  const before = a.before;
+  const ownBefore = !!before && before.valid && before.userId === a.userId;
+  // Renewing the caller's own consent records nothing new — nor does "keep
+  // current" on a consent that was already standing.
+  if (ownBefore && (!a.always || before!.standing === true)) return null;
+  const after = await readEmbedBuildMarker(a.libraryId);
+  const mine = !after.error && after.marker && after.marker.userId === a.userId ? after.marker : null;
+  // Another member's standing consent stands (a plain build never replaces
+  // it): nothing of the caller's was recorded.
+  if (!after.error && !mine) return null;
+  let failure: string;
+  if (mine) {
+    const { error } = await supabaseAdmin.from("audit_logs").insert({
+      action: EMBED_CONSENT_AUDIT_ACTION,
+      resource_type: "knowledge_library", resource_id: a.libraryId,
+      org_id: a.orgId, user_id: a.userId,
+      details: {
+        libraryId: a.libraryId,
+        stampedAt: mine.at || null,
+        standing: mine.standing === true,
+        replaced: before && before.userId && before.userId !== a.userId
+          ? { userId: before.userId, standing: before.standing === true } : null,
+        request: requestFacts(req, a.action),
+      },
+    });
+    if (!error) return null;
+    failure = `its audit row could not be written (${error.message})`;
+  } else {
+    failure = `it could not be read back to be audited (${after.error})`;
+  }
+  // No consent without its audit row: put back what the write changed.
+  const expect = { userId: a.userId, at: mine?.at || null };
+  const undo = ownBefore && before
+    ? await patchEmbedBuildMarkerIf(a.libraryId, { standing: before.standing ? true : undefined }, expect)
+    : await clearEmbedBuildMarkerIf(a.libraryId, expect);
+  return undo.error ? `${failure}, and it could not be withdrawn (${undo.error})` : failure;
+}
+
+/** GOV-14 / SEM-1: the libraries of this org with what the caller's key is
+ *  doing to them — the background builds it pays for, and (when asked) the
+ *  vectors each library holds per embedding model. Library names are read
+ *  by every active member under RLS, so naming them here discloses nothing. */
+async function keyOverview(orgId: string, userId: string, withModels: boolean) {
+  const { data, error } = await supabaseAdmin
+    .from("knowledge_libraries").select("id, name, ai_features").eq("org_id", orgId);
+  if (error) {
+    return bad(`Couldn't read this workspace's libraries, so the background builds on your key can't be listed: ${error.message}`, 500);
+  }
+  const libs = (data ?? []) as Array<{ id: string; name: string | null; ai_features: Record<string, unknown> | null }>;
+  const builds = libs.flatMap((l) => {
+    const m = parseEmbedBuildMarker(l.ai_features?.embedBuild);
+    if (!m || !m.valid || m.userId !== userId) return [];
+    return [{
+      libraryId: l.id,
+      libraryName: l.name ?? "Untitled library",
+      standing: m.standing === true,
+      startedAt: m.at || null,
+      lastDrainAt: m.lastDrainAt ?? null,
+      blockedUntil: m.blockedUntil ?? null,
+      blockedReason: m.blockedReason ?? null,
+      lastError: m.lastError ?? null,
+      completedAt: m.completedAt ?? null,
+    }];
+  });
+  if (!withModels) return NextResponse.json({ builds });
+  // Each library's vectors per model, a few at a time; a read that fails is
+  // `models: null` (unknown), never "no vectors".
+  const indexes: Array<{ libraryId: string; libraryName: string; models: Record<string, number> | null }> = [];
+  for (let i = 0; i < libs.length; i += OVERVIEW_MODEL_READS_AT_ONCE) {
+    const batch = libs.slice(i, i + OVERVIEW_MODEL_READS_AT_ONCE);
+    const read = await Promise.all(batch.map((l) => loadEmbedDetail(orgId, l.id)));
+    batch.forEach((l, k) => {
+      indexes.push({ libraryId: l.id, libraryName: l.name ?? "Untitled library", models: read[k] ? read[k]!.models : null });
+    });
+  }
+  return NextResponse.json({ builds, indexes });
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Unauthorized", 401);
   const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (authError || !user) return bad("Unauthorized", 401);
 
-  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number; on?: boolean };
+  let body: { orgId?: string; libraryId?: string; action?: string; batch?: number; on?: boolean; models?: boolean };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   // Free-tier providers cap tokens-per-minute hard (Voyage without a card:
   // 10K TPM) — a full 96-passage batch can never fit. The client shrinks the
@@ -169,6 +291,12 @@ export async function POST(req: NextRequest) {
   const batchSize = Math.max(1, Math.min(Number(body.batch) || EMBED_BATCH, EMBED_BATCH));
   const orgId = String(body.orgId ?? "").trim();
   const libraryId = String(body.libraryId ?? "").trim();
+  // GOV-14 / SEM-1: the caller's own key across every library — no library
+  // named, nothing written, nothing spent.
+  if (body.action === "key-overview" && orgId) {
+    if (!(await loadPrincipal(orgId, user.id))) return bad("Not a member of this workspace", 403);
+    return keyOverview(orgId, user.id, body.models === true);
+  }
   if (!orgId || !libraryId) return bad("orgId and libraryId are required");
 
   const principal = await loadPrincipal(orgId, user.id);
@@ -349,8 +477,15 @@ export async function POST(req: NextRequest) {
       if (!embedding) return bad(NO_EMBEDDING_KEY_MESSAGE, 412);
       const gated = await agreementGate();
       if (gated) return gated;
+      const prior = await readEmbedBuildMarker(libraryId);
       const err = await setEmbedBuildMarker(libraryId, user.id, { standing: true });
       if (err) return bad(`Couldn't record the standing consent: ${err}`, 500);
+      // GOV-14: the consent names the request that recorded it, or is not kept.
+      const unaudited = await auditConsent(req, {
+        orgId, libraryId, userId: user.id, action: "keep-current",
+        before: prior.error ? undefined : prior.marker, always: true,
+      });
+      if (unaudited) return bad(`The standing consent was not kept: ${unaudited}.`, 500, { standing: null });
       return NextResponse.json({ standing: true });
     }
     // As for release: an unreadable marker is never reported withdrawn.
@@ -406,8 +541,16 @@ export async function POST(req: NextRequest) {
 
   // Consent marker for the background drain: starting a build records WHO
   // is paying, and the drain continues THIS build with THIS key until the
-  // library is done — the tab is optional from here on.
-  const markerError = await setEmbedBuildMarker(libraryId, user.id);
+  // library is done — the tab is optional from here on. A consent this pass
+  // newly records is audited, naming the request (GOV-14).
+  const priorMarker = await readEmbedBuildMarker(libraryId);
+  let markerError = await setEmbedBuildMarker(libraryId, user.id);
+  if (!markerError) {
+    markerError = await auditConsent(req, {
+      orgId, libraryId, userId: user.id, action: "build",
+      before: priorMarker.error ? undefined : priorMarker.marker,
+    });
+  }
 
   const slice = await embedLibrarySlice({
     orgId, libraryId,
