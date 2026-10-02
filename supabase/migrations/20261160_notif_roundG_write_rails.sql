@@ -109,10 +109,16 @@
 --          advisory lock keyed on the actor, one after another, each seeing
 --          every row committed before it. One key per transaction, so no
 --          lock-order deadlock. A request waiting on the lock still holds
---          its pooled connection, which is why ordinary traffic never takes
---          it: until the third review fix it was taken for every row, so
---          one member's bulk fan-out ran one insert at a time and could
---          fill the API's pool for every other member. What the margin
+--          its pooled connection, which is why a row far from every cap
+--          never takes it: until the third review fix it was taken for
+--          every row, so one member's bulk fan-out ran one insert at a time
+--          and could fill the API's pool for every other member. Ordinary
+--          traffic still meets it: a browser publish writes doc_superseded
+--          about the document to its followers and again to each member
+--          holding an older copy (lib/postPublish.ts, lib/staleCopies.ts),
+--          so a follower who holds one gets a repeat notice, counted under
+--          the lock, one after another — about 5 ms each on PostgreSQL 16,
+--          the pool's width of connections waiting at most. What the margin
 --          buys: each row judged without the lock was at least 64 below
 --          every cap (the first same notice of the minute, for the 60 cap),
 --          so a count passes its cap only by such rows still uncommitted

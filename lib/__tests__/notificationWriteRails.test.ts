@@ -25,7 +25,7 @@
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, posix, relative } from "node:path";
 import ts from "typescript";
 import { KIND_META } from "@/lib/notificationKinds";
 
@@ -52,19 +52,26 @@ function lineDiff(a: string, b: string) {
   return { onlyInA: A1.filter((l) => !B1.includes(l)), onlyInB: B1.filter((l) => !A1.includes(l)) };
 }
 /** Every `CREATE OR REPLACE FUNCTION name(` body in the numbered sequence, in
- *  migration order, as [file, text-from-CREATE-to-closing-$$;]. */
+ *  migration order, as [file, text-from-CREATE-to-its-closing-dollar-quote;]. */
 function definitionsOf(name: string, before?: string): Array<[string, string]> {
+  return definitionsIn(FILES.filter((f) => !before || f < before).map((f): [string, string] => [f, read(f)]), name);
+}
+/** The same over any [file, text] list, in the order given. The body ends at the dollar quote that
+ *  opened it, whatever its tag (`$$`, `$fn$`), so a re-creation quoted differently is still read whole. */
+function definitionsIn(sources: Array<[string, string]>, name: string): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   const re = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`, "g");
-  for (const f of FILES) {
-    if (before && f >= before) continue;
-    const s = read(f);
+  for (const [f, s] of sources) {
     for (const m of s.matchAll(re)) {
       // skip a CREATE inside a -- comment line
       const lineStart = s.lastIndexOf("\n", m.index!) + 1;
       if (/^\s*--/.test(s.slice(lineStart, m.index!))) continue;
-      const end = s.indexOf("$$;", s.indexOf("$$", m.index!) + 2);
-      out.push([f, s.slice(m.index!, end + 3)]);
+      const open = /\$([A-Za-z_][A-Za-z0-9_]*)?\$/g;
+      open.lastIndex = m.index!;
+      const tag = open.exec(s)!;
+      const end = s.indexOf(tag[0], tag.index + tag[0].length);
+      const stop = end + tag[0].length + (s[end + tag[0].length] === ";" ? 1 : 0);
+      out.push([f, s.slice(m.index!, stop)]);
     }
   }
   return out;
@@ -414,7 +421,7 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     expect(A).toMatch(/CREATE INDEX IF NOT EXISTS notifications_actor_created_idx\s+ON notifications \(actor_user_id, created_at DESC\)\s+WHERE actor_user_id IS NOT NULL;/);
   });
 
-  it("REVIEW (concurrency, fix 3): the counts are taken without a lock; a row near a cap, or a later row of one transaction, is counted again under the actor's lock — an ordinary fan-out never queues on it", () => {
+  it("REVIEW (concurrency, fix 3): the counts are taken without a lock; a row near a cap — the same notice again this minute included — or a later row of one transaction, is counted again under the actor's lock", () => {
     const code = strip(body);
     const lock = "PERFORM pg_advisory_xact_lock(hashtextextended('notif-cap:' || v_uid::text, 0));";
     expect(squash(code)).toContain(squash(`v_lock := coalesce(current_setting('notif_rail.wrote_row', true), '') = 'y';
@@ -793,7 +800,7 @@ describe("OS-1 (third review fix) — the actor's lock: only near a cap or for a
     expect(exit).toBe(`EXIT WHEN v_lock OR (v_same = 0 AND v_any < ${CAP.anyMinute} - ${MARGIN} AND v_hour < ${CAP.anyHour} - ${MARGIN} AND v_actor < ${CAP.actorMinute} - ${MARGIN});`);
   });
 
-  it("REGRESSION (the review's pool starvation): an ordinary fan-out is judged as it stands — none of its requests queues on the lock", () => {
+  it("REGRESSION (the review's pool starvation): a fan-out that sends each person one notice is judged as it stands — none of its requests queues on the lock", () => {
     const passes = (rows: Array<Omit<Sent, "t">>) => {
       const log: Sent[] = [];
       return new Set(rows.map((row) => { const p = lockPass(countsFor(log, row, 0), false); log.push({ ...row, t: 0 }); return p; }));
@@ -805,6 +812,26 @@ describe("OS-1 (third review fix) — the actor's lock: only near a cap or for a
     // a bulk upload under an ack policy: 100 documents x 25 assignees, one request each, in one minute
     const bulk = Array.from({ length: 100 }, (_, d) => Array.from({ length: 25 }, (_, a) => ({ actor: "dc", to: `op${a}`, kind: "ack_requested", res: uuid(d), resOk: true }))).flat();
     expect(passes(bulk)).toEqual(new Set(["unlocked"]));
+  });
+
+  it("fix pass 4: a browser publish takes the lock for each person who gets both supersede notices — notifySuperseded's and nudgeStaleHolders', one kind about one document — and for no one else", () => {
+    // lib/postPublish.ts runPostPublishSideEffects: notifySuperseded emits doc_superseded about the document to its
+    // live intent holders and followers; the recall block then emits doc_superseded about the same document to
+    // every member holding an older downloaded copy (lib/staleCopies.ts nudgeStaleHolders). A follower who holds
+    // an old copy is the same (actor, recipient, kind, resource) twice in the minute: the second is a repeat notice.
+    const doc = uuid(42);
+    const log: Sent[] = [];
+    const followers = Array.from({ length: 300 }, (_, i) => ({ actor: "pub", to: `m${i}`, kind: "doc_superseded", res: doc, resOk: true }));
+    expect(wave(log, followers, 0)).toEqual({ unlocked: 300, locked: 0 });
+    // 60 holders of an older copy: 40 follow the document, 20 do not
+    const holders = [...followers.slice(0, 40), ...Array.from({ length: 20 }, (_, i) => ({ actor: "pub", to: `h${i}`, kind: "doc_superseded", res: doc, resOk: true }))];
+    expect(wave(log, holders, 0)).toEqual({ unlocked: 20, locked: 40 });
+    // the library notice (library_doc_revised, keyed on the library) is another kind: it never makes a repeat
+    expect(lockPass(countsFor(log, { actor: "pub", to: "m0", kind: "library_doc_revised", res: uuid(43), resOk: true }, 0), false)).toBe("unlocked");
+    // PostgreSQL 16, 20 connections (N5 fix pass 4): the 300 first notices — no connection ever waited on the lock;
+    // the 60 holders' notices — up to 19 connections waited on it, median latency 55.7 ms (14.1 ms for the same 60
+    // as first notices), all 60 landed; 300 holders who all follow — up to 20 waited, 1.46 s for the fan-out
+    // (0.30 s as first notices), about 5 ms per locked insert one after another.
   });
 
   it("what takes the lock: a later row of one statement (the sweep), the same notice again this minute, a count within the margin of its cap; a count at its cap is refused without queueing", () => {
@@ -1012,6 +1039,37 @@ describe("20261161 — revoke_member re-created from its NEWEST definition, plus
     expect(at("UPDATE notifications SET org_tombstoned_at")).toBeLessThan(at("DELETE FROM org_members WHERE id = p_member_id;"));
   });
 
+  // A later migration that re-creates revoke_member must start from its NEWEST definition — 20261161's
+  // from N5 on. One started from 20261043 (the body admin-and-org P8's brief named) would drop the
+  // tombstone without a word, and a removed member's archive would stop being sealed (NEDGE-7).
+  const TOMBSTONE = /UPDATE (?:public\.)?notifications SET org_tombstoned_at = (?:now\(\)|current_timestamp) WHERE org_id = v_member\.org_id AND user_id = v_member\.uid AND org_tombstoned_at IS NULL;/i;
+  /** The newest revoke_member among `sources` by file name, and whether its code (comments stripped) keeps the tombstone. */
+  const newestKeepsTombstone = (sources: Array<[string, string]>) => {
+    const [file, text] = definitionsIn([...sources].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)), "revoke_member").at(-1)!;
+    return { file, keeps: TOMBSTONE.test(squash(strip(text))) };
+  };
+  const sequence = (): Array<[string, string]> => FILES.map((f): [string, string] => [f, read(f)]);
+
+  it("TRIPWIRE (fix pass 4): the NEWEST revoke_member in the whole sequence — any migration after 20261161 included — still tombstones the removed member's notifications", () => {
+    const { file, keeps } = newestKeepsTombstone(sequence());
+    expect(file >= B_FILE, `newest revoke_member: ${file}`).toBe(true);
+    expect(keeps, `${file} re-creates revoke_member without 20261161's tombstone (NEDGE-7): re-create it from its NEWEST definition, never from 20261043`).toBe(true);
+  });
+
+  it("the tripwire is not vacuous: a later re-creation from 20261043's body (under any quote tag), or with the statement only in a comment, fails it; one that keeps the statement passes", () => {
+    const all = sequence();
+    const later = "99999999_a_later_re_creation.sql";   // after every file the sequence will ever hold
+    expect(newestKeepsTombstone([...all, [later, live]])).toEqual({ file: later, keeps: false });
+    expect(newestKeepsTombstone([...all, [later, live.replace("AS $$", "AS $fn$").replace(/\$\$;$/, "$fn$;")]])).toEqual({ file: later, keeps: false });
+    const commented = next.replace(/^(\s*)(UPDATE notifications SET org_tombstoned_at[^\n]*\n)(\s*)(WHERE org_id = v_member\.org_id[^\n]*)/m, "$1-- $2$3-- $4");
+    expect(commented).not.toBe(next);
+    expect(newestKeepsTombstone([...all, [later, commented]])).toEqual({ file: later, keeps: false });
+    const kept = next.replace("DELETE FROM org_members WHERE id = p_member_id;", "-- ACL rules naming the member are pruned here (ORG-7)\n  DELETE FROM org_members WHERE id = p_member_id;");
+    expect(newestKeepsTombstone([...all, [later, kept.replace("AS $$", "AS $body$").replace(/\$\$;$/, "$body$;")]])).toEqual({ file: later, keeps: true });
+    // below 20261161 the newest is 20261043's, which never carried it
+    expect(newestKeepsTombstone(all.filter(([f]) => f < B_FILE))).toEqual({ file: liveFile, keeps: false });
+  });
+
   it("keeps SECURITY DEFINER + the pinned search_path, refuses a NULL uid, and restates EXECUTE (DRLS-16)", () => {
     expect(next).toMatch(/RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
     expect(next).toMatch(/IF v_actor IS NULL THEN\s*RAISE EXCEPTION/);
@@ -1126,9 +1184,16 @@ function sourceFiles(): string[] {
 // 20261160 refuses (42501) a signed-in writer's row whose actor_user_id names
 // anyone but the caller. Each notify / notifyMany / notifyChecked / emit call
 // with an object literal is judged by where its actorUserId comes from:
-// absent (the trigger stamps the caller), the signed-in member by name, or a
+// absent (the trigger stamps the caller), the signed-in member, or a
 // parameter of the enclosing NAMED function — a pass-through, pinned in
-// ACTOR_PASS_THROUGHS. A stored uid (a document's owner, a ticket's requester,
+// ACTOR_PASS_THROUGHS. The signed-in member is judged by its declaration,
+// never its spelling (fix pass 4): RoleContext's uid (`const { uid } =
+// useRole()`, the hook imported from RoleContext, which sets it only from the
+// auth session), or a parameter / prop spelled uid, currentUserId or
+// currentUser.uid whose every caller — a call or a JSX element — supplies
+// that member in turn. A shadowing or differently-sourced `uid` (a callback's
+// parameter, a row's field, a name the census cannot resolve) is judged like
+// any other value. A stored uid (a document's owner, a ticket's requester,
 // a hold's opener), a callback's parameter, a spread row or anything the
 // census cannot see is an offender. Then one hop up: every call of a pinned
 // pass-through is judged the same way, and the callers that forward their own
@@ -1138,7 +1203,6 @@ function sourceFiles(): string[] {
 // orchestrator's tools write on the service role, which the rule never
 // reaches.
 const ACTOR_SERVER_FILES = ["lib/orchestrator/tools.ts"];
-const SESSION_ACTOR = /^(?:uid|currentUserId|currentUser\??\.uid)$/;
 /** Every function that forwards a parameter as a browser row's actor (`file#fn(param.path)`). Its
  *  callers pass the signed-in member today (read at this commit); a caller that passed a stored uid
  *  instead would have every row from that path refused once 20261160 is pasted — the obligation
@@ -1176,9 +1240,61 @@ const ACTOR_PASS_THROUGHS = [
   "lib/transitionIn.ts#flagCollisionToDrafting(input.actorId)",
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];
-/** Judges where an actor value comes from, in one source file. */
-function actorAnalyzer(src: string, file: string) {
+/** A parameter spelled as the signed-in member: `uid`, `currentUserId`, or `currentUser` read at `.uid`.
+ *  The spelling is never the proof (fix pass 4): such a parameter is followed to its callers. */
+const SESSION_SPELLING = /^(?:uid|currentUserId|currentUser\.uid)$/;
+/** Where the signed-in member comes from: RoleContext's `uid`, which it sets only from the auth session
+ *  (pinned below). Read as `const { uid } = useRole()` or `useRole().uid`, `useRole` imported from here. */
+const ROLE_CONTEXT = "components/providers/RoleContext";
+type ActorSite = { rel: string; node: ts.CallExpression | ts.JsxOpeningLikeElement };
+type ActorCensus = {
+  analyzer: (rel: string) => ReturnType<typeof actorAnalyzer>;
+  /** Every call or JSX element naming `name` in the defining file, or in a file that binds `name` from it. */
+  sitesOf: (name: string, definedIn: string) => ActorSite[];
+  following: Set<string>;
+};
+/** The census over a set of source files: one analyzer per file, and the sites that call each function. */
+function actorCensus(files: string[], read: (rel: string) => string): ActorCensus {
+  const texts = new Map<string, string>();
+  const text = (rel: string) => texts.get(rel) ?? texts.set(rel, read(rel)).get(rel)!;
+  const analyzers = new Map<string, ReturnType<typeof actorAnalyzer>>();
+  const sites = new Map<string, ActorSite[]>();
+  const census: ActorCensus = {
+    analyzer: (rel) => analyzers.get(rel) ?? analyzers.set(rel, actorAnalyzer(text(rel), rel, census)).get(rel)!,
+    sitesOf: (name, definedIn) => {
+      let all = sites.get(name);
+      if (!all) {
+        all = [];
+        const mentions = new RegExp(`\\b${name}\\b`);
+        for (const rel of files) {
+          if (!mentions.test(text(rel))) continue;
+          const { sf } = census.analyzer(rel);
+          const visit = (n: ts.Node) => {
+            const callee = ts.isCallExpression(n) && ts.isIdentifier(n.expression) ? n.expression.text
+              : ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n) ? n.tagName.getText(sf) : undefined;
+            if (callee === name) all!.push({ rel, node: n as ActorSite["node"] });
+            ts.forEachChild(n, visit);
+          };
+          visit(sf);
+        }
+        sites.set(name, all);
+      }
+      return all.filter((s) => s.rel === definedIn || census.analyzer(s.rel).bindsFrom(name, definedIn));
+    },
+    following: new Set(),
+  };
+  return census;
+}
+/** Does `spec`, written in `fromRel`, name the module `targetRel` (`@/…`, or relative; extension and /index optional)? */
+function specifierNames(spec: string, fromRel: string, targetRel: string): boolean {
+  const base = spec.startsWith("@/") ? spec.slice(2) : spec.startsWith(".") ? posix.join(posix.dirname(fromRel), spec) : null;
+  const stem = targetRel.replace(/\.tsx?$/, "");
+  return base !== null && (base === stem || `${base}/index` === stem);
+}
+/** Judges where an actor value comes from, in one source file of a census. */
+function actorAnalyzer(src: string, file: string, census?: ActorCensus) {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const line = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const unwrap = (e: ts.Expression): ts.Expression => {
     for (;;) {
       if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) { e = e.expression; continue; }
@@ -1200,21 +1316,46 @@ function actorAnalyzer(src: string, file: string) {
     }
     return undefined;
   };
+  /** The keys a caller supplies to reach `name` inside a destructured parameter (`{ currentUser }` → [currentUser]). */
+  const bindingPath = (b: ts.BindingName, name: string): string[] | undefined => {
+    if (ts.isIdentifier(b)) return b.text === name ? [] : undefined;
+    for (const [i, e] of b.elements.entries()) {
+      if (ts.isOmittedExpression(e)) continue;
+      const inner = bindingPath(e.name, name);
+      if (inner) return [ts.isObjectBindingPattern(b) ? (e.propertyName ?? e.name).getText(sf) : String(i), ...inner];
+    }
+    return undefined;
+  };
   /** A named function's name; null for a callback, whose parameters are data, never the session. */
   const fnName = (f: ts.SignatureDeclaration): string | null => {
     if ((ts.isFunctionDeclaration(f) || ts.isMethodDeclaration(f)) && f.name) return f.name.getText(sf);
     if ((ts.isArrowFunction(f) || ts.isFunctionExpression(f)) && ts.isVariableDeclaration(f.parent) && ts.isIdentifier(f.parent.name)) return f.parent.name.text;
     return null;
   };
-  type Decl = { fn: ts.SignatureDeclaration; param: string } | { init: ts.Expression; via: string[] };
+  /** Does this file bind `name` from the module `targetRel` — an import, or a `dynamic(() => import(…))` const? */
+  const bindsFrom = (name: string, targetRel: string): boolean => sf.statements.some((st) => {
+    if (ts.isImportDeclaration(st) && ts.isStringLiteral(st.moduleSpecifier) && specifierNames(st.moduleSpecifier.text, file, targetRel)) {
+      const c = st.importClause;
+      return c?.name?.text === name || (!!c?.namedBindings && ts.isNamedImports(c.namedBindings) && c.namedBindings.elements.some((s) => s.name.text === name));
+    }
+    if (ts.isVariableStatement(st)) {
+      return st.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name && !!d.initializer
+        && [...d.initializer.getText(sf).matchAll(/import\(\s*["']([^"']+)["']\s*\)/g)].some((m) => specifierNames(m[1], file, targetRel)));
+    }
+    return false;
+  });
+  const roleHook = bindsFrom("useRole", `${ROLE_CONTEXT}.tsx`);
+  type Decl = { fn: ts.SignatureDeclaration; param: string; index: number; keys: string[] } | { init: ts.Expression; via: string[] };
   /** What `name` refers to at `at`, nearest scope first: a parameter, or a variable's initialiser. */
   const resolve = (name: string, at: ts.Node): Decl | undefined => {
     for (let n: ts.Node | undefined = at.parent; n; n = n.parent) {
       if (ts.isFunctionLike(n)) {
-        for (const p of n.parameters) {
-          if (ts.isIdentifier(p.name) && p.name.text === name) return { fn: n, param: name };
+        for (const [index, p] of n.parameters.entries()) {
+          if (ts.isIdentifier(p.name) && p.name.text === name) return { fn: n, param: name, index, keys: [] };
           const b = findBinding(p.name, name);
-          if (b) return { fn: n, param: `{ ${(b.propertyName ?? b.name).getText(sf)} }` };
+          if (b) {
+            return { fn: n, param: `{ ${(b.propertyName ?? b.name).getText(sf)} }`, index, keys: bindingPath(p.name, name)! };
+          }
         }
       }
       const statements = ts.isBlock(n) || ts.isSourceFile(n) || ts.isModuleBlock(n) || ts.isCaseClause(n) || ts.isDefaultClause(n) ? n.statements : undefined;
@@ -1236,28 +1377,72 @@ function actorAnalyzer(src: string, file: string) {
     const e = unwrap(e0);
     const shown = `${e.getText(sf)}${extra.length ? `.${extra.join(".")}` : ""}`;
     if (!extra.length && (e.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(e) && e.text === "undefined"))) return "absent";
-    if (!extra.length && SESSION_ACTOR.test(e.getText(sf))) return "session";
     let root: ts.Expression = e;
     const path: string[] = [];
     while (ts.isPropertyAccessExpression(root)) { path.unshift(root.name.text); root = root.expression; }
-    if (ts.isIdentifier(root) && depth < 5) {
+    const chain = [...path, ...extra];
+    // the source: RoleContext's uid (`const { uid } = useRole()`, `useRole().uid`)
+    if (roleHook && ts.isCallExpression(root) && ts.isIdentifier(root.expression) && root.expression.text === "useRole"
+        && root.arguments.length === 0 && chain.join(".") === "uid") return "session";
+    // an object literal read at a key (`currentUser={{ uid, email }}` read as currentUser.uid)
+    if (ts.isObjectLiteralExpression(root) && chain.length) return supplied(root, chain[0], chain.slice(1), depth + 1);
+    if (ts.isIdentifier(root) && depth < 8) {
       const d = resolve(root.text, root);
       if (d && "fn" in d) {
         const name = fnName(d.fn);
-        if (name) return `pass:${name}(${[d.param, ...path, ...extra].join(".")})`;
-      } else if (d) return judge(d.init, [...d.via, ...path, ...extra], depth + 1);
+        // the keys a caller supplies: a destructured parameter's, or a component's props object read at a key
+        // (`props.currentUserId`); a lib function's whole parameter keeps its own name (`uid`, `actor.uid`)
+        const supplies = d.keys.length || (d.index === 0 && /^[A-Z]/.test(name ?? "")) ? [...d.keys, ...chain] : [d.param, ...chain];
+        if (name && SESSION_SPELLING.test(supplies.join("."))) return follow(d, name, chain, shown, depth);
+        if (name) return `pass:${name}(${[d.param, ...chain].join(".")})`;
+      } else if (d) return judge(d.init, [...d.via, ...chain], depth + 1);
     }
     return `offender:${shown}`;
   };
+  /** A parameter spelled as the signed-in member is that member only if every caller — a call, or a JSX
+   *  element, of the function — supplies the member (or nothing) in turn; with no caller found it is unseen. */
+  const follow = (d: Extract<Decl, { fn: unknown }>, name: string, chain: string[], shown: string, depth: number): string => {
+    if (!census) return `offender:${shown} (a parameter of ${name}: no census to follow its callers)`;
+    const key = `${file}#${name}#${d.index}`;
+    if (census.following.has(key)) return "session";   // a cycle adds no source of its own; the other callers decide
+    const sites = census.sitesOf(name, file);
+    if (!sites.length) return `offender:${shown} (a parameter of ${name}, which nothing calls)`;
+    census.following.add(key);
+    try {
+      for (const s of sites) {
+        const a = census.analyzer(s.rel);
+        const v = a.suppliedAt(s.node, d.index, [...d.keys, ...chain], depth + 1);
+        if (v !== "session" && v !== "absent") return `offender:${shown} ← ${s.rel}:${a.line(s.node)} ${v.replace(/^(offender|pass):/, "")}`;
+      }
+    } finally { census.following.delete(key); }
+    return "session";
+  };
+  /** What a call or JSX element supplies for parameter `index` read at `keys`. */
+  const suppliedAt = (node: ActorSite["node"], index: number, keys: string[], depth = 0): string => {
+    if (ts.isCallExpression(node)) {
+      const arg = node.arguments[index];
+      if (!arg) return "absent";
+      return keys.length && ts.isObjectLiteralExpression(unwrap(arg)) ? supplied(unwrap(arg) as ts.ObjectLiteralExpression, keys[0], keys.slice(1), depth) : judge(arg, keys, depth);
+    }
+    if (index !== 0 || !keys.length) return `offender:${node.tagName.getText(sf)} (props read whole)`;
+    const props = node.attributes.properties;
+    const own = props.find((p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText(sf) === keys[0]);
+    if (own) {
+      const init = own.initializer;
+      return init && ts.isJsxExpression(init) && init.expression ? judge(init.expression, keys.slice(1), depth) : `offender:${own.getText(sf)}`;
+    }
+    const spread = [...props].reverse().find((p): p is ts.JsxSpreadAttribute => ts.isJsxSpreadAttribute(p));
+    return spread ? judge(spread.expression, keys, depth) : "absent";
+  };
   /** The actor an object-literal argument supplies under `key`: its own property, else what its last
    *  spread carries under that key (`{ ...input }` forwards input.key), else none. */
-  const supplied = (obj: ts.ObjectLiteralExpression, key: string, extra: string[] = []): string => {
+  const supplied = (obj: ts.ObjectLiteralExpression, key: string, extra: string[] = [], depth = 0): string => {
     const own = obj.properties.find((q) => (ts.isPropertyAssignment(q) || ts.isShorthandPropertyAssignment(q)) && q.name.getText(sf).replace(/["']/g, "") === key);
-    if (own) return judge(ts.isShorthandPropertyAssignment(own) ? own.name : (own as ts.PropertyAssignment).initializer, extra);
+    if (own) return judge(ts.isShorthandPropertyAssignment(own) ? own.name : (own as ts.PropertyAssignment).initializer, extra, depth);
     const spread = [...obj.properties].reverse().find((q): q is ts.SpreadAssignment => ts.isSpreadAssignment(q));
-    return spread ? judge(spread.expression, [key, ...extra]) : "absent";
+    return spread ? judge(spread.expression, [key, ...extra], depth) : "absent";
   };
-  return { sf, judge, supplied };
+  return { sf, line, judge, supplied, suppliedAt, bindsFrom };
 }
 /** One hop up: the callers of those functions that forward THEIR caller's value in turn (a lib
  *  function's input, a component's prop). Pinned the same way, so a caller that starts handing a
@@ -1288,9 +1473,9 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/revisions.ts#submitForReview(input.actorUserId)",
   "lib/revisions.ts#supersedeDocument(input.actorUserId)",
 ];
-function actorSources(src: string, file: string): { calls: number; passThroughs: string[]; offenders: string[] } {
-  const { sf, supplied } = actorAnalyzer(src, file);
-  const out = { calls: 0, passThroughs: [] as string[], offenders: [] as string[] };
+function actorSources(file: string, census: ActorCensus): { calls: number; sessions: number; passThroughs: string[]; offenders: string[] } {
+  const { sf, line, supplied } = census.analyzer(file);
+  const out = { calls: 0, sessions: 0, passThroughs: [] as string[], offenders: [] as string[] };
   const visit = (n: ts.Node) => {
     if (ts.isCallExpression(n)) {
       const callee = ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : "";
@@ -1298,9 +1483,9 @@ function actorSources(src: string, file: string): { calls: number; passThroughs:
       if (["notify", "notifyMany", "notifyChecked", "emit"].includes(callee) && arg && ts.isObjectLiteralExpression(arg)) {
         out.calls++;
         const v = supplied(arg, "actorUserId");
-        const line = sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
-        if (v.startsWith("pass:")) out.passThroughs.push(`${file}#${v.slice(5)}`);
-        else if (v.startsWith("offender:")) out.offenders.push(`${file}:${line} actorUserId: ${v.slice(9)}`);
+        if (v === "session") out.sessions++;
+        else if (v.startsWith("pass:")) out.passThroughs.push(`${file}#${v.slice(5)}`);
+        else if (v.startsWith("offender:")) out.offenders.push(`${file}:${line(n)} actorUserId: ${v.slice(9)}`);
       }
     }
     ts.forEachChild(n, visit);
@@ -1308,33 +1493,43 @@ function actorSources(src: string, file: string): { calls: number; passThroughs:
   visit(sf);
   return out;
 }
+/** The browser's source files (the route files and the orchestrator's tools write on the service role). */
+const browserFiles = () => sourceFiles().map((f) => relative(ROOT, f)).filter((rel) => !rel.startsWith("app/api/") && !ACTOR_SERVER_FILES.includes(rel));
+let BROWSER_CENSUS: ActorCensus | undefined;
+const browserCensus = (): ActorCensus => {
+  if (!BROWSER_CENSUS) BROWSER_CENSUS = actorCensus(browserFiles(), (rel) => readFileSync(join(ROOT, rel), "utf8"));
+  return BROWSER_CENSUS;
+};
+/** A census over fixture sources (file name → text). */
+const fixtureCensus = (files: Record<string, string>) => actorCensus(Object.keys(files), (rel) => files[rel]);
+const ROLE_IMPORT = 'import { useRole } from "@/components/providers/RoleContext";';
 
 describe("rule 1's obligation on the producers — a browser row names the signed-in member as its actor, or no actor (third review fix)", () => {
-  it("every browser producer passes no actor, the signed-in member, or a pinned pass-through — never a stored uid", () => {
-    let calls = 0;
+  it("every browser producer passes no actor, the signed-in member (traced to its declaration), or a pinned pass-through — never a stored uid", () => {
+    const census = browserCensus();
+    let calls = 0, sessions = 0;
     const pass = new Set<string>();
     const offenders: string[] = [];
-    for (const f of sourceFiles()) {
-      const rel = relative(ROOT, f);
-      if (rel.startsWith("app/api/") || ACTOR_SERVER_FILES.includes(rel) || rel === "lib/notify/dispatch.ts" || rel === "lib/inAppNotifications.ts") continue;
-      const src = readFileSync(f, "utf8");
-      if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(/.test(src)) continue;
-      const r = actorSources(src, rel);
+    for (const rel of browserFiles()) {
+      if (rel === "lib/notify/dispatch.ts" || rel === "lib/inAppNotifications.ts") continue;
+      if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(/.test(readFileSync(join(ROOT, rel), "utf8"))) continue;
+      const r = actorSources(rel, census);
       calls += r.calls;
+      sessions += r.sessions;
       r.passThroughs.forEach((x) => pass.add(x));
       offenders.push(...r.offenders);
     }
     expect(calls).toBeGreaterThan(50);
     expect(offenders).toEqual([]);
+    // each traced to RoleContext's uid: directly, or through a prop / parameter every caller fills with it
+    expect(sessions).toBeGreaterThanOrEqual(9);
     expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
   });
 
   it("one hop up: every call of a pinned pass-through supplies no actor, the signed-in member, or a pinned forward of its own caller's value — never a stored uid", () => {
-    const files = sourceFiles().map((f) => relative(ROOT, f))
-      .filter((rel) => !rel.startsWith("app/api/") && !ACTOR_SERVER_FILES.includes(rel));
-    const analyzers = new Map<string, ReturnType<typeof actorAnalyzer>>();
-    const analyzer = (rel: string) => analyzers.get(rel) ?? analyzers.set(rel, actorAnalyzer(readFileSync(join(ROOT, rel), "utf8"), rel)).get(rel)!;
-    let judged = 0;
+    const census = browserCensus();
+    const files = browserFiles();
+    let judged = 0, sessions = 0;
     const offenders: string[] = [];
     const forwarded = new Set<string>();
     for (const key of ACTOR_PASS_THROUGHS) {
@@ -1342,7 +1537,7 @@ describe("rule 1's obligation on the producers — a browser row names the signe
       const [, file, fn, chain] = m;
       const [param, ...path] = chain.split(".");
       // the parameter's position in the function's own declaration
-      const decl = analyzer(file).sf;
+      const decl = census.analyzer(file).sf;
       let index = -1;
       const findDecl = (n: ts.Node) => {
         const f = ts.isFunctionDeclaration(n) && n.name?.text === fn ? n
@@ -1355,7 +1550,7 @@ describe("rule 1's obligation on the producers — a browser row names the signe
       for (const rel of files) {
         const src = readFileSync(join(ROOT, rel), "utf8");
         if (!new RegExp(`\\b${fn}\\(`).test(src)) continue;
-        const { sf, judge, supplied } = analyzer(rel);
+        const { sf, line, judge, supplied } = census.analyzer(rel);
         const visit = (n: ts.Node) => {
           if (ts.isCallExpression(n) && (ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : "") === fn) {
             const arg = n.arguments[index];
@@ -1364,8 +1559,9 @@ describe("rule 1's obligation on the producers — a browser row names the signe
             else if (ts.isObjectLiteralExpression(arg)) v = supplied(arg, path[0], path.slice(1));
             else v = judge(arg, path);   // the caller forwards its whole argument
             judged++;
+            if (v === "session") sessions++;
             if (v.startsWith("pass:")) forwarded.add(`${rel}#${v.slice(5)}`);
-            if (v.startsWith("offender:")) offenders.push(`${rel}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} ${fn}(… ${path.join(".") || param}: ${v.slice(9)})`);
+            if (v.startsWith("offender:")) offenders.push(`${rel}:${line(n)} ${fn}(… ${path.join(".") || param}: ${v.slice(9)})`);
           }
           ts.forEachChild(n, visit);
         };
@@ -1374,38 +1570,119 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     }
     expect(judged).toBeGreaterThan(40);
     expect(offenders).toEqual([]);
+    expect(sessions).toBeGreaterThanOrEqual(17);   // each traced to RoleContext's uid
     expect([...forwarded].sort()).toEqual([...ACTOR_CALLER_PASS_THROUGHS].sort());
   });
 
+  it("the anchor (fix pass 4): RoleContext's uid is the auth session's user — it is set from session.user or cleared, nothing else, and useRole() returns it", () => {
+    const { sf } = browserCensus().analyzer(`${ROLE_CONTEXT}.tsx`);
+    const sets: string[] = [];
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "setUid") {
+        const arg = n.arguments[0]?.getText(sf);
+        // `u.id` is read with the nearest earlier `const u` in an enclosing block
+        let u: string | undefined;
+        for (let p: ts.Node | undefined = n.parent; p && u === undefined; p = p.parent) {
+          if (!ts.isBlock(p)) continue;
+          for (const st of p.statements) {
+            if (st.pos >= n.pos || !ts.isVariableStatement(st)) continue;
+            for (const d of st.declarationList.declarations) if (d.name.getText(sf) === "u") u = d.initializer?.getText(sf);
+          }
+        }
+        sets.push(arg === "null" ? "null" : `${arg} where u = ${u}`);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(sets.length).toBeGreaterThanOrEqual(4);
+    expect([...new Set(sets)].sort()).toEqual(["null", "u.id where u = session.user"]);
+    const text = squash(sf.getText());
+    expect(text).toContain("const [uid, setUid] = useState<string | null>(null);");
+    expect(text).toMatch(/const value = useMemo<RoleContextValue>\( \(\) => \(\{[^}]* userEmail, uid, activeOrgId,/);
+    expect(text).toContain("export function useRole() { const ctx = useContext(RoleContext); if (!ctx) throw new Error(\"useRole must be used within RoleProvider\"); return ctx; }");
+  });
+
   it("the census is not vacuous: a stored uid, a callback's parameter, a spread row and a call are offenders; the session, a named function's parameter (by name or by spread) and no actor are not", () => {
-    const probe = actorSources([
+    const census = fixtureCensus({ "probe.ts": [
+      ROLE_IMPORT,
       'function a() { const doc = docs[0]; notify({ orgId, userId, kind, title, actorUserId: doc.owner_user_id }); }', // a stored uid
       'function b() { rows.forEach((r) => notifyMany({ userIds, actorUserId: r.requested_by })); }',            // a callback's parameter
       'function c() { emit({ orgId, ...row }); }',                                                              // a stored row, spread
       'function d() { notify({ actorUserId: pickActor() }); }',                                                 // a call
       'function e() { const who = hold.opened_by; notify({ actorUserId: who }); }',                             // a stored uid, by name
-      'function f() { notify({ actorUserId: uid ?? undefined }); emit({ actorUserId: currentUser.uid }); }',    // the session
+      'function f() { const { uid } = useRole(); notify({ actorUserId: uid ?? undefined }); emit({ actorUserId: useRole().uid }); }', // the session
       'function g(input: { requesterId: string }) { notify({ actorUserId: input.requesterId }); }',             // a pass-through
       'const h = async ({ actor }: { actor: string }) => { const { id } = { id: actor }; notifyMany({ actorUserId: actor }); };',
       'function k() { notify({ kind, title }); notify({ actorUserId: null }); }',                               // no actor: stamped
-      'function m(input: I) { void emit({ ...input, kind }); notify({ actorUserId: uid ?? "unknown" }); }',     // forwarded by spread; a literal fallback
+      'function m(input: I) { const { uid } = useRole(); void emit({ ...input, kind }); notify({ actorUserId: uid ?? "unknown" }); }', // forwarded by spread; a literal fallback
       'function n(doc: D) { notify({ actorUserId: doc.owner_user_id }); }',                                     // a NEW pass-through: the ratchet lists it for review
-    ].join("\n"), "probe.ts");
+    ].join("\n") });
+    const probe = actorSources("probe.ts", census);
     expect(probe.calls).toBe(14);
+    expect(probe.sessions).toBe(3);
     expect(probe.offenders).toEqual([
-      "probe.ts:1 actorUserId: docs[0].owner_user_id",
-      "probe.ts:2 actorUserId: r.requested_by",
-      "probe.ts:3 actorUserId: row.actorUserId",
-      "probe.ts:4 actorUserId: pickActor()",
-      "probe.ts:5 actorUserId: hold.opened_by",
+      "probe.ts:2 actorUserId: docs[0].owner_user_id",
+      "probe.ts:3 actorUserId: r.requested_by",
+      "probe.ts:4 actorUserId: row.actorUserId",
+      "probe.ts:5 actorUserId: pickActor()",
+      "probe.ts:6 actorUserId: hold.opened_by",
     ]);
     expect(probe.passThroughs).toEqual(["probe.ts#g(input.requesterId)", "probe.ts#h({ actor })", "probe.ts#m(input.actorUserId)", "probe.ts#n(doc.owner_user_id)"]);
     // and one hop up, a caller that hands a pass-through a stored uid is judged an offender
-    const caller = actorAnalyzer('async function p() { const doc = await load(); requestDeletion({ documentId, requesterId: doc.owner_user_id }); requestDeletion({ documentId, requesterId: uid }); }', "caller.ts");
+    const caller = fixtureCensus({ "caller.ts": `${ROLE_IMPORT}\nasync function p() { const { uid } = useRole(); const doc = await load(); requestDeletion({ documentId, requesterId: doc.owner_user_id }); requestDeletion({ documentId, requesterId: uid }); }` }).analyzer("caller.ts");
     const calls: ts.CallExpression[] = [];
     const collect = (n: ts.Node) => { if (ts.isCallExpression(n) && n.expression.getText(caller.sf) === "requestDeletion") calls.push(n); ts.forEachChild(n, collect); };
     collect(caller.sf);
     expect(calls.map((c) => caller.supplied(c.arguments[0] as ts.ObjectLiteralExpression, "requesterId"))).toEqual(["offender:await load().owner_user_id", "session"]);
+  });
+
+  it("fix pass 4: a uid is the signed-in member by its declaration, never its spelling — a shadowed, stored, callback, unresolved or mis-fed uid is an offender; useRole()'s, and a prop every caller fills with it, are not", () => {
+    const census = fixtureCensus({ "probe.tsx": [
+      ROLE_IMPORT,
+      'function a() { const { uid } = useRole(); docs.forEach((d) => { const uid = d.owner_user_id; notify({ actorUserId: uid }); }); }', // shadowed by a row's field
+      'function b() { rows.forEach((uid) => notify({ actorUserId: uid })); }',                     // a callback's parameter named uid
+      'function c() { const { uid } = ticket; emit({ actorUserId: uid }); }',                       // destructured from a row
+      'function d() { notify({ actorUserId: uid }); emit({ actorUserId: currentUser.uid }); notify({ actorUserId: currentUserId }); }', // spelled right, declared nowhere
+      'function e() { const { uid } = useOtherHook(); notify({ actorUserId: uid }); }',             // another source's uid
+      'function Panel({ currentUserId }: P) { notify({ actorUserId: currentUserId }); }',            // a prop: its callers decide ...
+      'function Page() { const doc = useDoc(); return <Panel currentUserId={doc.owner_user_id} />; }', // ... and one fills it with a stored uid
+      'function Card({ currentUser }: C) { emit({ actorUserId: currentUser.uid }); }',
+      'function Board() { const { uid } = useRole(); return <><Card currentUser={{ uid, email }} /><Card currentUser={{ uid: ticket.requester_id }} /></>; }',
+      'function Orphan({ uid }: O) { notify({ actorUserId: uid }); }',                               // a prop nothing renders
+      'function notifyAs(uid: string) { notify({ actorUserId: uid }); }',                            // a positional parameter named uid ...
+      'function later() { notifyAs(row.created_by); }',                                             // ... called with a stored uid
+      // the signed-in member, by declaration
+      'function s1() { const { uid } = useRole(); notify({ actorUserId: uid }); }',
+      'function Good({ uid }: G) { notify({ actorUserId: uid }); }',
+      'function Host() { const { uid } = useRole(); return <><Good uid={uid || null} /><Good /></>; }', // filled with RoleContext's uid, or not passed (no actor: stamped)
+    ].join("\n") });
+    const r = actorSources("probe.tsx", census);
+    expect(r.calls).toBe(13);
+    expect(r.offenders).toEqual([
+      "probe.tsx:2 actorUserId: d.owner_user_id",
+      "probe.tsx:3 actorUserId: uid",
+      "probe.tsx:4 actorUserId: ticket.uid",
+      "probe.tsx:5 actorUserId: uid",
+      "probe.tsx:5 actorUserId: currentUser.uid",
+      "probe.tsx:5 actorUserId: currentUserId",
+      "probe.tsx:6 actorUserId: useOtherHook().uid",
+      "probe.tsx:7 actorUserId: currentUserId ← probe.tsx:8 useDoc().owner_user_id",
+      "probe.tsx:9 actorUserId: currentUser.uid ← probe.tsx:10 ticket.requester_id",
+      "probe.tsx:11 actorUserId: uid (a parameter of Orphan, which nothing calls)",
+      "probe.tsx:12 actorUserId: uid ← probe.tsx:13 row.created_by",
+    ]);
+    expect(r.sessions).toBe(2);
+    expect(r.passThroughs).toEqual([]);
+    // useRole() is the anchor only when it is RoleContext's hook
+    const local = fixtureCensus({ "local.ts": 'const useRole = () => ({ uid: stored.owner_user_id });\nfunction f() { const { uid } = useRole(); notify({ actorUserId: uid }); }' });
+    expect(actorSources("local.ts", local).offenders).toEqual(["local.ts:2 actorUserId: useRole().uid"]);
+    // a component rendered from another file counts only where that file imports it from the defining module
+    const across = fixtureCensus({
+      "components/Panel.tsx": 'export default function Panel({ currentUserId }: P) { notify({ actorUserId: currentUserId }); }',
+      "app/page.tsx": `${ROLE_IMPORT}\nimport Panel from "@/components/Panel";\nexport default function Page() { const { uid } = useRole(); return <Panel currentUserId={uid} />; }`,
+      "app/other.tsx": 'import Panel from "@/components/SomeOtherPanel";\nfunction Other() { return <Panel currentUserId={doc.owner_user_id} />; }',
+    });
+    expect(actorSources("components/Panel.tsx", across)).toEqual({ calls: 1, sessions: 1, passThroughs: [], offenders: [] });
   });
 });
 
