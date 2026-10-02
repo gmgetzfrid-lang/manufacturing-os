@@ -78,3 +78,22 @@ narrowed too.
 ⚠ **Coordinate with [`../projects-tab/`](../projects-tab/README.md).** That area
 audited the same program's UI and carries `GAP-401`–`GAP-410`. Several findings
 here are the server half of a defect recorded there. Check before opening a fix.
+
+---
+
+## Handoffs recorded by fix passes
+
+- **projects-joint J14 PROJECTS FOLLOW-UPS — the award's gate names one company**
+  (J12 fix pass 9; projects-tab `MON-12` Scope / residual, `COST-3` residual 3).
+  `20261157` §1 `cost_doc_company_barred` (still unpasted) and `lib/costDocs.ts`
+  `companyBehind` answer a flagged contractor — an `inactive` one included —
+  before the do-not-use registry name the stored vendor name normalises to, so
+  `award_quote`'s override row names the contractor and never that look-alike.
+  The bid tab acknowledges the look-alike (`COST_DOC_AWARD_LETTERHEAD_ACK`,
+  written in the browser); the server keeps no record of it. J14 decides
+  between answering an `inactive` contractor only after the look-alike (its
+  inactive flag then needs its own question) and returning every flagged
+  company the award answers for, each with its own override. J12 did not
+  reorder it: one returned company means the reorder trades one unasked
+  company for another, and the lib, the panel's fallback and the shape tests
+  move with it.
