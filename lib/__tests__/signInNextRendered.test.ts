@@ -374,3 +374,34 @@ describe("PHYS-14 (rendered) — Microsoft: `next` survives the OAuth round trip
     expect(pushed()).toEqual(["/dashboard"]);
   });
 });
+
+describe("PHYS-14 (rendered) — a load that is not the provider's return discards the carry", () => {
+  // The Microsoft button is clicked (the carry is written and the browser
+  // leaves), the provider never sends this tab back, and within the 10-minute
+  // TTL the same tab loads the bare sign-in page: a bookmark, a typed address,
+  // RoleContext's sign-out `location.replace("/")`. No `?code=`,
+  // `#access_token` or `?error=` — not a return, so the carry is dropped.
+  async function abandonMicrosoftRoundTrip() {
+    await open(assetSignInHref("P-101"));
+    await clickMicrosoft();
+    expect(carried()).not.toBeNull();
+    await close();
+  }
+
+  it("REGRESSION: an already-signed-in visitor at the bare `/` → /dashboard, the carry removed", async () => {
+    await abandonMicrosoftRoundTrip();
+    s.session = USER;
+    await open("/");
+    expect(landed()).toEqual(["/dashboard"]);
+    expect(carried()).toBeNull();
+  });
+
+  it("REGRESSION: the next person signs in with a password at the bare `/` → /dashboard, the carry removed", async () => {
+    await abandonMicrosoftRoundTrip();
+    await open("/");
+    expect(carried()).toBeNull();
+    await signInWithPassword();
+    expect(pushed()).toEqual(["/dashboard"]);
+    expect(landed()).toEqual(["/dashboard"]);
+  });
+});

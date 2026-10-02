@@ -36,9 +36,16 @@
 // trip in sessionStorage — per tab, same origin — written just before the
 // page navigates away, consumed (read once, always removed) by the next load
 // of the sign-in page in that tab, validated again on read and honoured only
-// for SIGN_IN_NEXT_STASH_TTL_MS; and every successful sign-in on the page
-// clears it (app/page.tsx), so an abandoned round trip cannot steer a later,
-// unrelated sign-in.
+// for SIGN_IN_NEXT_STASH_TTL_MS, and only when that load is the provider's
+// return: its address carries `?code=`, `#access_token` or `?error=`
+// (resolveSignInNext's `providerReturn`). Any other load — a bookmark, a
+// typed `/`, a sign-out's `location.replace("/")` — discards the carry
+// unread, and every successful sign-in on the page clears it too
+// (app/page.tsx). So a round trip the provider never finished cannot steer a
+// sign-in that starts from any other load of the page. What it does not
+// cover: an address of that shape opened in the same tab within the TTL (a
+// hand-made `/?error=x`) is read as a return, and lands on the path that
+// tab's own carry holds — still a validated same-origin path.
 
 /** Where a successful sign-in lands when no safe `next` was carried —
  *  the page's destination before PHYS-14. */
@@ -209,15 +216,20 @@ export function takeStashedSignInNext(
 /**
  * The `next` the sign-in page was opened with, read once on load: the query
  * string's `next` when the URL carries one (safe, or null — a hostile value
- * never falls through to a stash), else the one carried across a Microsoft
- * round trip. The stash is consumed either way.
+ * never falls through to a stash); else, ONLY when this load is the
+ * provider's return (`providerReturn`: the address carries its `?code=`,
+ * `#access_token` or `?error=`), the one carried across the Microsoft round
+ * trip; else null. The stash is consumed either way — any other load of the
+ * page (a bookmark, a typed `/`, a sign-out's `location.replace("/")`)
+ * discards a carry an abandoned round trip left behind.
  */
 export function resolveSignInNext(
   search: string,
   store: StashStore | null = tabStore(),
-  now: number = Date.now(),
+  opts: { providerReturn: boolean; now?: number },
 ): string | null {
-  const stashed = takeStashedSignInNext(store, now);
+  const stashed = takeStashedSignInNext(store, opts.now ?? Date.now());
   const sp = new URLSearchParams(search);
-  return sp.has("next") ? safeNextPath(sp.get("next")) : stashed;
+  if (sp.has("next")) return safeNextPath(sp.get("next"));
+  return opts.providerReturn ? stashed : null;
 }

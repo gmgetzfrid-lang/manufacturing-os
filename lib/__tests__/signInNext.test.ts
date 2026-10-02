@@ -271,20 +271,34 @@ describe("PHYS-14 — the carry across the Microsoft round trip", () => {
     expect(takeStashedSignInNext()).toBeNull();
   });
 
-  it("resolveSignInNext: the URL's `next` wins (safe or refused); else the carried one; the stash is consumed either way", () => {
+  it("resolveSignInNext: the URL's `next` wins (safe or refused); else, on the provider's return, the carried one; the stash is consumed either way", () => {
     const st = memoryStore();
     stashSignInNext("/assets/FE-201", st, T0);
-    expect(resolveSignInNext("?next=%2Fassets%2FP-101", st, T0)).toBe("/assets/P-101");
+    expect(resolveSignInNext("?next=%2Fassets%2FP-101", st, { providerReturn: false, now: T0 })).toBe("/assets/P-101");
     expect(st.m.has(SIGN_IN_NEXT_STASH_KEY)).toBe(false);
 
     stashSignInNext("/assets/FE-201", st, T0);
-    expect(resolveSignInNext(`?next=${encodeURIComponent("//evil.example")}`, st, T0)).toBeNull(); // never falls through to the stash
+    expect(resolveSignInNext(`?next=${encodeURIComponent("//evil.example")}`, st, { providerReturn: true, now: T0 })).toBeNull(); // never falls through to the stash
     expect(st.m.has(SIGN_IN_NEXT_STASH_KEY)).toBe(false);
 
     stashSignInNext("/assets/FE-201", st, T0);
-    expect(resolveSignInNext("?code=abc", st, T0 + 2_000)).toBe("/assets/FE-201");
-    expect(resolveSignInNext("", st, T0 + 3_000)).toBeNull();
-    expect(resolveSignInNext("?error=login_required", memoryStore(), T0)).toBeNull();
+    expect(resolveSignInNext("?code=abc", st, { providerReturn: true, now: T0 + 2_000 })).toBe("/assets/FE-201");
+    expect(resolveSignInNext("", st, { providerReturn: true, now: T0 + 3_000 })).toBeNull();
+    expect(resolveSignInNext("?error=login_required", memoryStore(), { providerReturn: true, now: T0 })).toBeNull();
+  });
+
+  it("resolveSignInNext: a load that is not the provider's return discards the carry — null, and the stash removed", () => {
+    const st = memoryStore();
+    stashSignInNext("/assets/P-101", st, T0);
+    expect(resolveSignInNext("", st, { providerReturn: false, now: T0 + 2_000 })).toBeNull();
+    expect(st.m.has(SIGN_IN_NEXT_STASH_KEY)).toBe(false);
+    // the same carry, read on the provider's return, is honoured
+    stashSignInNext("/assets/P-101", st, T0);
+    expect(resolveSignInNext("", st, { providerReturn: true, now: T0 + 2_000 })).toBe("/assets/P-101");
+    // with the default clock (Date.now), as the page calls it
+    stashSignInNext("/assets/P-101", st);
+    expect(resolveSignInNext("", st, { providerReturn: false })).toBeNull();
+    expect(st.m.has(SIGN_IN_NEXT_STASH_KEY)).toBe(false);
   });
 });
 
@@ -295,8 +309,10 @@ describe("PHYS-14 — app/page.tsx routes every success path through the decisio
     // a session found on load / SIGNED_IN (routeAuthedUser), and the password sign-in
     expect(page).toContain("router.replace(signInDestination(nextRef.current));");
     expect(page).toContain("router.push(signInDestination(nextRef.current));");
-    // read once per page load; carried across the Microsoft round trip
-    expect(page).toContain("if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params);");
+    // read once per page load; carried across the Microsoft round trip, and
+    // picked up only on the provider's return (`?code=`, `#access_token`, `?error=`)
+    expect(page).toContain("const providerReturn = hasOAuthResponse || !!errorCode;");
+    expect(page).toContain("if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params, undefined, { providerReturn });");
     expect(page).toContain("stashSignInNext(nextRef.current);");
   });
   it("the carry is cleared on every way out: a flow that could not start, routeAuthedUser, a password success", () => {

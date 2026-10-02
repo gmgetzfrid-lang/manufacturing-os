@@ -57,8 +57,9 @@ export default function LoginPage() {
   const autoMicrosoft = autoMicrosoftStored && !autoMicrosoftDisabled;
   // Where a successful sign-in lands (PHYS-14): the `next` this page was
   // opened with — a scanned equipment label sends `/?next=/assets/<tag>` —
-  // or the one carried across a Microsoft round trip, honoured only as a
-  // same-origin relative path; otherwise /dashboard, as before
+  // or, on the provider's return, the one carried across the Microsoft round
+  // trip, honoured only as a same-origin relative path; otherwise /dashboard,
+  // as before
   // (lib/signInNext.ts). Read once, on load (the effect below); undefined
   // until then.
   const nextRef = useRef<string | null | undefined>(undefined);
@@ -144,9 +145,13 @@ export default function LoginPage() {
     const errorCode = sp.get("error");
     const errorDesc = sp.get("error_description") || sp.get("error");
     const hasOAuthResponse = params.includes("code=") || hash.includes("access_token");
+    // Only the provider's return (a session to finish, or its refusal) may
+    // pick up a `next` carried across the round trip; any other load of this
+    // page discards the carry (lib/signInNext.ts).
+    const providerReturn = hasOAuthResponse || !!errorCode;
     // Once per page load (a re-run of this effect keeps the first answer —
     // the carried `next` is consumed when read).
-    if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params);
+    if (nextRef.current === undefined) nextRef.current = resolveSignInNext(params, undefined, { providerReturn });
 
     const cleanUrl = () => {
       // Keep a safe `next` in the address so a reload still returns to it.
