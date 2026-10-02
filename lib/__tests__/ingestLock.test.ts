@@ -74,6 +74,7 @@ import {
   IngestBatchError, refuseNonPdf,
 } from "@/lib/knowledgeIngest";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { indexDocumentMentions, withoutCarriedSentence } from "@/lib/mentionIndexer";
 
 const DOC = "kd-1";
 const baseDoc = (over: Row = {}): Row => ({
@@ -1601,6 +1602,42 @@ describe("ING-4 / ING-7 — chunker 2 through the engine", () => {
     library(1);
     await ingestKnowledgeDocBatch(asArg(doc));
     expect(contents().some((c) => c.includes(WHOLE))).toBe(false);
+  });
+
+  it("ING-7's mention handoff (I-06b): a tag named in the sentence carried onto the next page is counted on the page it is written on, not again on the next", async () => {
+    // Page 1 ends mid-sentence naming E-101; chunker 2 carries it onto
+    // page 2, which names P-205 itself.
+    const A: PageSpec = [
+      "Welding of low alloy piping shall follow the qualified procedure for the joint.",
+      "Preheat for exchanger E-101 shall be maintained at not less than 175F for P-No. 5 materials over",
+    ];
+    const B: PageSpec = [
+      "1/2 in. nominal thickness, except where the procedure qualification permits a lower value.",
+      "Pump P-205 is excluded from this requirement in every service listed here.",
+    ];
+    const doc = await seed([A, B]);
+    library(2);
+    await ingestKnowledgeDocBatch(asArg(doc));
+    const page2 = rowsOf("knowledge_chunks").filter((c) => c.page === 2).map((c) => String(c.content)).join(" ");
+    expect(page2.startsWith("[cont. from p. 1] Preheat for exchanger E-101")).toBe(true);
+    const dict = [
+      { assetId: "a-e101", alias: "E-101", origin: "tag" as const },
+      { assetId: "a-p205", alias: "P-205", origin: "tag" as const },
+    ];
+    await indexDocumentMentions("o1", DOC, dict);
+    const pagesOf = (asset: string) => rowsOf("entity_mentions").filter((m) => m.asset_id === asset).map((m) => m.page).sort();
+    expect(pagesOf("a-e101")).toEqual([1]);
+    expect(pagesOf("a-p205")).toEqual([2]);
+  });
+
+  it("the carried sentence is cut exactly — page N's own words, read back as the ingest does — or only the marker when they cannot be matched", () => {
+    const pageN = "Bolting is per the table. Torque for flange (B-7, 3/4 in.) studs at 175F shall be";
+    const carriedChunk = "[cont. from p. 3] Torque for flange (B-7, 3/4 in.) studs at 175F shall be checked twice. Gasket G-2 is new.";
+    expect(withoutCarriedSentence(carriedChunk, (n) => (n === 3 ? pageN : undefined)).trim()).toBe("checked twice. Gasket G-2 is new.");
+    // Page N's chunk not at hand: the marker goes, the words stay (as before).
+    expect(withoutCarriedSentence(carriedChunk, () => undefined)).toBe(carriedChunk.slice("[cont. from p. 3] ".length));
+    // A chunk with no carry is untouched.
+    expect(withoutCarriedSentence("Gasket G-2 is new.", () => pageN)).toBe("Gasket G-2 is new.");
   });
 
   it("the carried sentence crosses a batch boundary too (read back from the stored last chunk of page 50)", async () => {
