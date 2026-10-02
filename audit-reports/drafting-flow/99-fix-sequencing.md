@@ -310,6 +310,26 @@ reproduces is `INVALID`, and that is a real outcome** (`DEC-28`).
 
 ---
 
+## Verified sound — the EDGE-11 diff-check (every package)
+
+`EDGE-11` (`13-edges-and-invariants.md`) is this area's do-not-break list, and it
+is the `DEC-29` item-5 diff-check **every** drafting-flow package cites by name.
+Re-verified on `f1ac550` (drafting-flow Round G, DF-P0), each with a test:
+
+| Invariant | Where it lives | Pinned by |
+|---|---|---|
+| Server-side action validation against `WorkflowEngine.getActions` under the org's own policy; archived stubs refused; referenced members active and qualified | `app/api/tickets/workflow-action/route.ts` | `lib/__tests__/sweepRoundE_A.test.ts`, `lib/__tests__/dfRoundG_P0.test.ts` |
+| `(status, last_modified)` compare-and-set; `computeTransition` always stamps `last_modified` | the same route; `lib/ticketTransitions.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (two concurrent `save_progress` → one 409) |
+| `post_ticket_comment` falls back only on PGRST202 / "could not find the function" | `app/api/tickets/comment/route.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (an in-function error is a 500, nothing written) |
+| Recipient preferences read under the service role in both ticket routes | both routes' fan-out | (source; the comment and workflow routes' `notification_preferences` reads) |
+| One attention rule — `isActionRequired`, derived from the engine | `lib/ticketAttention.ts` | `lib/__tests__/ticketAttention.test.ts`, `lib/__tests__/dfRoundG_P0.test.ts` |
+| Ticket numbers from `next_ticket_number` (definer, pinned, row lock) | `supabase/migrations/20260724_ticket_numbering.sql` | `lib/__tests__/dfRoundG_P0.test.ts` (source pin) |
+| All-or-nothing ticket-shed capture; commit re-verifies before deleting | `app/api/admin/ticket-shed/route.ts`, `commit/route.ts` | `lib/__tests__/dfRoundG_P0.test.ts` (source pin) |
+
+A fix that needs one of these changed is a design error in the fix (`DEC-27`
+halt condition 2). Extend them — the server create route (DF-P2) reuses the
+numbering RPC and the service-role preference read; it does not replace them.
+
 ## Verification you cannot skip
 
 **No live database and no browser.** The state machine, capability defaults and

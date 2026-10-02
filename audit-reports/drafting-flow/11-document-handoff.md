@@ -143,6 +143,15 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 - [ ] The ticket deliverable stamp/QR either names the controlled document revision it produced, or explicitly states "not a controlled revision".
 - [ ] A ticket whose source document has advanced since the request is flagged (compare against a captured base version id) rather than silently drafted against a stale rev.
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The write path exists since roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) / `GAP-6` / `DEC-22` (Round C2, `a84f712`; migration `20261049` **applied & verified live 2026-09-02** — MIGRATION-PASTE-ORDER row 51): a ticket carrying `metadata.source_document.id` and a Final attachment offers "Publish as revision of …" to publish authority on the document's library (`app/(protected)/requests/[id]/page.tsx:2165-2175`), which pre-seeds `RevUpModal` and runs `revUpDocument` unchanged (hold gate, review gate, `runPostPublishSideEffects`); `/api/tickets/handback` records the resulting version on the ticket (`metadata.deliverable`, shown as "Published as Rev …", `:2155-2159`); closing without one writes `metadata.deliverable.state = "not_in_register"` plus a history line (`app/api/tickets/workflow-action/route.ts:397-414`), shown as an amber chip (`page.tsx:2160-2164`). `20261049` writes `related_ticket_id` for provenance only (DEC-23 deleted the waiver — `PROJ-11`).
+
+**Done-when.**
+- ✓ (in `DEC-22`'s shape) A ticket with a source document opens a real `document_versions` row through `revUpDocument`, by an explicit, library-authority-gated action, and records the resulting version — never auto-published on close, which `DEC-22` forbids; the close leaves the visible, queryable "not in the register" state instead of being blocked.
+- ✗ The stamp neither names the controlled revision nor says "not a controlled revision": the print path watermarks `"UNCONTROLLED COPY"` (`page.tsx:589`) but the download path watermarks a ticket Final `"CONTROLLED COPY"` (`page.tsx:661`, recorded at `:694`), and both footers say only `${ticketId} deliverable Rev ${deliverableRev} at time of … — scan the QR to confirm it is still the latest.` (`:591-593`, `:663-665`).
+- ✗ (in part) Drift is flagged — "Rev advanced — register now at Rev N" (`page.tsx:2134-2140`, `LIFE-13`) — but by comparing rev *labels* (`revDrift(sourceRef.rev, sourceDoc.doc?.rev)`), not a captured base version id; the canonical `source_document` shape carries rev text, no version id.
+
+**Scope / residual.** The ticket-deliverable stamp says "UNCONTROLLED COPY" until it is a register revision → **DF-P10** (`PHYS-9`, the FileViewerModal region; DF-P10 also passes `controlState` to PS-STAMP's stamper). The captured base version id on `source_document` → **DF-P2** (`HAND-7`, "the shape carries rev text, no version id"). The fleet plan named DF-P4 for this cluster's residual; on HEAD that residual is `DCW-4`'s (tickets with no source document) — HAND-3's own done-whens are scoped to tickets *with* one.
+
 ---
 
 <a id="hand-4"></a>
@@ -196,7 +205,7 @@ CREATE POLICY doc_review_signoff_insert ON document_review_signoffs FOR INSERT W
 ## HAND-5 · Trusted intake links publish controlled revisions through the service role, skipping the publish guard and the entire post-publish pipeline
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:302`, `app/api/intake/upload/route.ts:322`, `supabase/migrations/20260822_review_completion_guard.sql:32`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. The service-role write bypasses the hold check entirely, and a grep for runPostPublishSideEffects shows callers only in lib/revisions.ts:711,1304 and lib/reviewControl.ts:499 — never the intake route, so the ack-roster recompute, retention recompute, and supersede/watcher notifications never run for an auto-superseded intake revision. The route substitutes only its own controllers/owner notification and audit row.
@@ -229,6 +238,17 @@ supabase/migrations/20260822_review_completion_guard.sql:32-34 —
 - [ ] The intake auto-supersede branch re-checks active holds and the effective review policy in the route before promoting, since the DB trigger cannot see it.
 - [ ] The intake promote calls the same `runPostPublishSideEffects` pipeline as every other current-revision change.
 - [ ] A document with an active hold cannot be advanced by any intake link regardless of trust level.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`OWN-4`](../roles-and-permissions/05-ownership-publish.md) (Phase 3, 2026-08-24), as rebuilt by projects Round G `J1` (`ee68448`, the intake door as a boundary) and re-verified against `f1ac550`. The trusted auto-publish no longer writes `documents` directly: it runs `publish_revision` acting as the link's creator (`publishThroughContract`, `app/api/intake/upload/route.ts:380-425`), after the route has re-checked, in order (`:1147-1210`): legal hold and active holds through HLD-1's shared fail-closed gate — `const holdDecision = decideHoldGate(await readActiveHolds(docId, supabaseAdmin));` (`:1154`); a live checkout; the creator's current publish authority on the library; and the effective review policy — `supabaseAdmin.rpc("review_control_mode_for", …)`, `mode === "require"` or an unreadable policy demotes (`:1194-1202`). Any refusal — including the contract's own `case "on_hold":` (`:414-415`) — DEMOTES the upload to review rather than publishing. A successful promote runs the shared pipeline: `await runPostPublishSideEffects({ … settle: true, serviceClient: supabaseAdmin })` under the service role (`:1386-1403`).
+- Tests: `lib/__tests__/intakeUploadRoute.test.ts:613` (publish through the contract as the creator, provenance stamp, the pipeline bound to the service role) and `:634-659` (an active hold, an unreadable hold state, a legal hold, a checkout, a creator without authority, a require-sign-off library, an unreadable review policy, and the contract's hold / lock / MOC refusals each DEMOTE, with no pipeline run).
+- Pending migration that this close depends on, said plainly: `review_control_mode_for` is created by `supabase/migrations/20261070_dc_roundF_review_gate_slots.sql`, which is **not yet pasted** (MIGRATION-PASTE-ORDER §4 row 65, PASTE; §3B "paste with the deploy"). Until it is, `modeErr` is set and every trusted auto-publish demotes to review — the review half of done-when 1 holds as a refusal, never as a bypass.
+
+**Done-when.**
+- ✓ The auto-supersede branch re-checks active holds and the effective review policy in the route before promoting (`:1147-1202`).
+- ✓ The intake promote calls the same `runPostPublishSideEffects` pipeline (`:1390-1403`).
+- ✓ A document with an active hold cannot be advanced by any intake link: the route's hold gate demotes, `publish_revision` refuses `on_hold`, and the review path's finalize runs the publish guard under a real `auth.uid()`.
+
+**Scope / residual.** `OWN-4` done-when 3 (consulting the library owner before a project names their library as an intake target) is an intake-creation flow, tracked with the projects-tab intake findings — not this finding's contract.
 
 ---
 
@@ -367,6 +387,15 @@ app/(protected)/inbox/page.tsx:139-147 — resolveMarkupRequest({ markupRequestI
 - [ ] Markup state is persisted per document+user (autosaved) so a failed bake, a refresh, or a closed tab cannot destroy field redlines.
 - [ ] A failed bake surfaces a blocking error instead of silently substituting the clean original.
 - [ ] Marking a request "shared" either uploads and stores an actual `shared_markup_url` or the UI stops claiming markups are available.
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. Markup is persisted (roles-and-permissions [`LIFE-3`](../roles-and-permissions/07-document-lifecycle.md) / `GAP-7` / `DEC-24`, `f7d9fd5`; migration `20261051` **applied & verified live 2026-09-02**; drafting-flow `LEAK-5` RESOLVED on the same record) and the "shared" claim was made honest (`LIFE-8`, `6f0c522`). The pdf-lib failure branch the fleet plan asked to check still falls back silently.
+
+**Done-when.**
+- ✓ Markup state is persisted per (document, version, user) and autosaved on page switch and close (`document_markups`, `lib/markups.ts`; LIFE-3's record).
+- ✗ A failed bake in **Send to Drafting** still substitutes the clean original without telling the user: `components/viewers/FullScreenViewer.tsx:950-958` — `try { const baked = await bakeMarkupIntoPdf(bytes, states); … draftKey = await stashDraft(…); } catch (e) { console.error("bake markup for drafting failed; falling back to clean original", e); }` — then, with `draftKey` empty, attaches `sourceFileUrl` (`:978-980`) and drops the "(marked-up sheet attached …)" line from the description (`:963`). (The book viewer's equivalent does surface it — `components/viewers/MultiDocViewer.tsx:959-962` alerts — and `downloadWithMarkup` surfaces its own failures.) The redlines are no longer *lost* (they are in `document_markups`), but the request is filed against the clean sheet with no warning.
+- ✓ Marking a request "shared" no longer claims an artifact that does not exist: the inbox toast reads "Noted on the document's activity thread — hand the marked-up sheet over there or on the ticket." (`app/(protected)/inbox/page.tsx:146-150`), and the share posts a `markup_ref` row on the document's thread (`lib/markupRequests.ts:137-150`).
+
+**Scope / residual.** The silent fallback at `FullScreenViewer.tsx:950-958` → per the fleet plan, "the residual is PS-STAMP's downloadWithMarkup region, not this fleet's" — public-surfaces PS-STAMP owns `FullScreenViewer`'s markup-export region, and PS-STAMP has merged, so the integrator must re-own this limb (one `appAlert` and an abort-or-confirm before routing to `/requests/new`). No DF package edits `FullScreenViewer`.
 
 ---
 

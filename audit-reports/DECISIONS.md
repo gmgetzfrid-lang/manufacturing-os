@@ -614,6 +614,7 @@ cheaper to reintroduce than to keep half-alive.
 **Risk:** medium.
 
 *Landed 2026-09-17 (roles-and-permissions Round E): `cancel_request` from `PENDING_ASSIGNMENT` and `DRAFTING` for the requester identity and `ticket.manage`, comment required, audited, terminal — and terminal everywhere: the `LIFE-6` / `DEC-25` hold gate, the intent bridge and every live-work filter treat `CANCELED` exactly as `CLOSED` (fix pass); `NEW` and `PENDING_ENG_INITIAL` removed from every code path; migration `20261053` inventories (temp table, aggregate counts) and moves existing rows to `PENDING_ASSIGNMENT` with a history line, and sets the column default. See `WF-17`.*
+*Landed 2026-10-02 (drafting-flow Round G): drafting-flow `SM-8` closes on this decision. Its two illustrative done-whens that conflict with it — "offer `reopen_ticket` from `CANCELED` on `CLOSED`'s terms" and "every status offers someone an action" — are superseded: `CANCELED` is terminal, because a withdrawn request issued no deliverable to recover (the reopen exists for `CLOSED`, to recover or re-run an issued package) and is refiled rather than resurrected. Pinned by `lib/__tests__/dfRoundG_P0.test.ts` (every `TicketStatus` reachable from the initial status; every status but `CANCELED` offers someone an action; `CANCELED` offers nobody anything). Drafting-flow `SM-10` is recorded `INVALID` on this decision.*
 
 <a id="dec-15"></a>
 ## DEC-15 · Does a reopen start a new revision cycle?
@@ -1077,6 +1078,8 @@ its own. All five, every time:**
    `npx vitest run` → full `next build`. A finding is not resolved if the build is
    red.
 5. **Nothing in "Verified sound" changed.** Diff-check it.
+
+*Landed 2026-10-02 (drafting-flow Round G): for the drafting request flow, item 5's "Verified sound" list is drafting-flow `EDGE-11` (`13-edges-and-invariants.md`) — server-side action validation against the engine and the org's own policy; the `(status, last_modified)` compare-and-set with `last_modified` always stamped; the PGRST202-only comment-RPC fallback; service-role preference reads; `isActionRequired` as the one attention rule (now engine-derived); RPC ticket numbering under a row lock; all-or-nothing ticket-shed capture. Each carries a regression test or a source pin (`lib/__tests__/dfRoundG_P0.test.ts`, EDGE-11 block). Every drafting-flow package names `EDGE-11` in its item-5 diff-check (`drafting-flow/99-fix-sequencing.md`, "Verified sound — the EDGE-11 diff-check").*
 
 <a id="dec-30"></a>
 ## DEC-30 · Migrations and unobservable database state

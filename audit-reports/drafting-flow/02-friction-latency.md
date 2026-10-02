@@ -308,7 +308,7 @@ That is again the **work class** (`TIER-2`) deciding, not a global rule.
 ## FRIC-7 · The attention badge tells people to act on tickets that offer them nothing
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / adoption
 - **Locations:**
@@ -347,6 +347,13 @@ Doc Control belongs in the flow at issue and release. **They were right** — se
 
 **Done when.** The attention badge and the ticket page agree for every
 role/status combination, ideally because attention is derived from the engine.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-24`](../roles-and-permissions/06-request-workflow.md) / `CHAIN-3` (Round E, `e5a203b`, 2026-09-17), re-verified against `f1ac550`; no code changed here. The badge no longer holds a role × status table — it is the engine: `lib/ticketAttention.ts:79-91`, `isActionRequired` calls `WorkflowEngine.getActions(ticket, headline, uid, ctx.policy ?? undefined, { userRoles, activeMemberCount, engineeringFirstTypes, closeWithoutReviewTypes })` and returns `actions.some((a) => !a.optional && !a.disabledReason)`. The rule this finding quotes (`if (roles.includes("DocCtrl")) { if (status === "FINAL_DRAFT" || status === "PENDING_IFC") return true; }`) exists nowhere in `lib/`, `hooks/`, `app/` or `components/` (grep). The management tier is defined once (`lib/managementRoles.ts:25`, `MANAGEMENT_ROLES = ["Admin", "Manager", "Supervisor"]`); the badge hook and the portal pass the org's policy, type flags and active-member count, so the engine sees the page's inputs.
+- Tests: `lib/__tests__/ticketAttention.test.ts:78` (nine roles × ten statuses × six identities × five page contexts: badge = page's live actions); `lib/__tests__/dfRoundG_P0.test.ts:309` (new — every role in `ALL_ROLES` × every `TicketStatus` × four identities; DocCtrl unflagged at `FINAL_DRAFT` / `PENDING_IFC`); `lib/__tests__/sweepRoundE_A.test.ts:779` ("WF-24 / CHAIN-3").
+
+**Done-when.** ✓ The attention badge and the ticket page agree for every role/status combination, because attention is derived from the engine (`lib/ticketAttention.ts:84-90`).
+
+**Scope / residual.** WF-24's recorded edge stands: the badge does not fetch each requester's current collection, so a deactivated requester's ticket is surfaced on the page and the route but not counted in the badge — an under-count, never an unclearable badge. The finding's "deeper reading" (Document Control belongs at issue and release) is `DCW-2` / `GAP-104`, OPEN under DF-P6: removing the false DocCtrl badge did not build that slot.
 
 ---
 

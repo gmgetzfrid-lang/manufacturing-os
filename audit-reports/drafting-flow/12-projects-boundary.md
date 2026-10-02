@@ -45,6 +45,15 @@ Searches proving absence: `grep -rn "from('documents')|from(\"documents\")|docum
 - [ ] the promotion upserts a `project_documents` row when the request carries a project
 - [ ] the promoted document's version records which request produced it
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. For a request raised against a controlled document, the approved Final can now be promoted through the existing publish path — roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) / `GAP-6` (`a84f712`; migration `20261049` **applied & verified live 2026-09-02**): "Publish as revision of …" (`app/(protected)/requests/[id]/page.tsx:2165-2175`) pre-seeds `RevUpModal` with the Final file and runs `revUpDocument` — a real `document_versions` row, the review gate (`effectiveModeForRevUp`, no ticket waiver), supersession of the prior revision and the post-publish pipeline — and `publish_revision` writes `related_ticket_id` (`20261049`). For a request with no source document there is still no path, and requests carry no project.
+
+**Done-when.**
+- ✗ (in part) An approved Final *of a request with a source document* can be promoted through the publish contract (✓; not literally the intake route, but the same `publish_revision` contract and review gate). A request with no source document still ends at an attachment (✗).
+- ✗ The promotion cannot upsert a `project_documents` row: `Ticket` has no `projectId` (`types/schema.ts` `Ticket`), so there is no project to reference.
+- ✓ The promoted version records the request that produced it (`document_versions.related_ticket_id`, written by `20261049`'s `publish_revision`, verified by `/api/tickets/handback`).
+
+**Scope / residual.** Promotion of a source-less deliverable ("publish as a new document in library X") → **DF-P4** (`GAP-105`, the ticket gets a library). The project reference on promotion → **DF-P8** (`GAP-114`; `DEC-40`: reference, never copy). The fleet plan named only DF-P4; the project half is DF-P8's by its own brief.
+
 ---
 
 <a id="proj-2"></a>
@@ -354,7 +363,7 @@ Searches: `grep -rn "linked_ticket_id" lib/ app/ components/` (7 hits, all mappi
 ## PROJ-11 · document_versions.related_ticket_id is never written but IS honoured as a review-gate bypass — wiring the ticket<->document link naively will silently disable required review
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:55`, `lib/reviewControl.ts:60`, `supabase/schema.sql:334`, `lib/revisions.ts:958`, `components/documents/RevUpModal.tsx:210`, `lib/documentLifecycle/setRevUp.ts:83`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dead column and the bypass branch both exist, so the design smell is real. But the stated mechanism is overstated: because both call sites omit relatedTicketId, stamping the column on a version would change nothing — a second, separate change (threading the version's relatedTicketId into effectiveModeForRevUp) would be required before any review gate could be skipped. Latent hazard, not a live or one-commit-away bypass — LOW.
@@ -382,6 +391,12 @@ lib/__tests__/reviewControl.test.ts:42 asserts the bypass: `expect(effectiveMode
 - [ ] The bypass keys on evidence of completed review (e.g. the ticket's engineerApprovedAt) rather than the bare presence of a ticket id, or the branch is removed
 - [ ] if the branch is kept, the `related_ticket_id` write path lands in the same change as the gate condition so the two are never out of step
 - [ ] the test asserts the stricter condition
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`LIFE-2`](../roles-and-permissions/07-document-lifecycle.md) / `DEC-23` (`2af2ebe`, Phase 0, 2026-08-24), re-verified against `f1ac550` after document-control P13 added the first-issue rule to the same function. The waiver branch is deleted and the parameter is gone: `export function effectiveModeForRevUp(input: { control: ReviewControl; changeType?: string | null; firstIssueMustReview?: boolean; asBranch?: boolean; }): ReviewControlMode` (`lib/reviewControl.ts:98-111`) — the docblock states "Ticket origin NEVER waives review (DEC-23)" (`:77-80`). `related_ticket_id` is now written for provenance (`20261049`, `lib/revisions.ts:1245`, `:1534`) and read by nothing that gates. Test: `lib/__tests__/reviewControl.test.ts:41-46` feeds the exact pre-DEC-23 input `{ control: require, changeType: "Major", relatedTicketId: "t1" }` and pins `"require"`.
+
+**Done-when.** ✓ The branch is removed (the finding's second option); ✓ "if the branch is kept, the write path lands with it" — moot, the branch is gone, and the write path that later landed (`20261049`) cannot reach the gate (no parameter); ✓ the test asserts the surviving rule.
+
+**Scope / residual.** None. Intelligence `WIRE-9` is recorded `INVALID` on the same decision.
 
 ---
 

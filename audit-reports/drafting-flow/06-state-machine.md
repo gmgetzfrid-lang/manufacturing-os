@@ -17,7 +17,7 @@ Whether the flow's own rules can be enforced at all: reachable transitions, conc
 ## SM-1 · "Approve with Minor Correction" is a complete bypass of the engineer sign-off gate — the very requester the gate blocks can issue for construction with it
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:198-234`, `lib/workflow.ts:222-228`, `lib/ticketTransitions.ts:221-235`, `lib/__tests__/workflow.test.ts:163-175`, `app/api/tickets/workflow-action/route.ts:96-103`
 - **Same root cause as** `AUTHZ-1` — Also owned as `TIER-7` in [`01-review-tiering.md`](./01-review-tiering.md), which frames the fix. `GAP-111` requires it inside the delivery gate. Fix once; close the rest citing this one.
@@ -66,6 +66,15 @@ expect(actionsOf(t, "Viewer", "u-1")).toContain("approve_minor_correction");
 - [ ] lib/__tests__/workflow.test.ts asserts that a Viewer requester on a Viewer-raised ticket at PENDING_REVIEW gets NO action whose computeTransition result is `status === 'PENDING_IFC'`
 - [ ] a computeTransition test asserts that no transition can set status to PENDING_IFC unless the acting role satisfies the engineer requirement for that ticket's requesterRole
 
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-3`](../roles-and-permissions/06-request-workflow.md) (`087a39c`, 2026-09-01), with the evidence recorded on [`AUTHZ-1`](./09-authority-surfaces.md#authz-1) — same root, re-verified against `f1ac550`, no application code changed. The test this finding names as frozen vulnerability is flipped: `lib/__tests__/workflow.test.ts:203` reads `expect(actionsOf(t, "Viewer", "u-1")).not.toContain("approve_minor_correction");` and `:204` `…toContain("request_final_engineer_approval")`. `lib/workflow.ts:376-389` gives the gated requester only `request_final_engineer_approval`; `approve_minor_correction` is pushed only beside `approve_draft_ifc` (`:390-410`). Mutation-checked (see AUTHZ-1).
+
+**Done-when.**
+- ✓ `approve_minor_correction` is gated by the same `needsEngineerApproval && !isEng` test as `approve_draft_ifc` (`lib/workflow.ts:376`); when an engineer is required the Viewer-tier requester's path is `request_final_engineer_approval`, which lands on `PENDING_FINAL_APPROVAL` carrying the note as `engineer_review_reason` (`lib/ticketTransitions.ts:301-311`; asserted at `lib/__tests__/dfRoundG_P0.test.ts:145`).
+- ✓ A Viewer requester on a Viewer-raised ticket at `PENDING_REVIEW` gets no action whose `computeTransition` result is `PENDING_IFC` — asserted for Viewer and every other gated role at `lib/__tests__/dfRoundG_P0.test.ts:145`. The assertion lives in the new `lib/__tests__/dfRoundG_P0.test.ts` rather than in `lib/__tests__/workflow.test.ts` (which keeps the action-level pin) so this records package does not edit a test file the DF-P1 → DF-P8 chain rewrites.
+- ✓ No transition reaches `PENDING_IFC` unless the actor satisfies the engineer requirement: `computeTransition` is role-blind by design (the engine is the gate), so the guarantee is proved on the pair — `lib/__tests__/dfRoundG_P0.test.ts:166` walks every role × identity (requester, assigned drafter, assigned engineer, stranger) × collection (headline, headline + Engineer-2) at `PENDING_REVIEW` and `PENDING_FINAL_APPROVAL` on tickets raised under every gated role, and every `PENDING_IFC` outcome belongs to a gate-exempt collection or to the assigned engineer (whose pick the route requires to hold an Engineer role, `app/api/tickets/workflow-action/route.ts:241-246`, and to be independent at 3+ members, `:265-275`).
+
+**Scope / residual.** None here. `/api/verify-ticket` still derives "current" from the label, not from `engineer_approved_at` — that verdict is DF-P10's (`EDGE-2`); with the bypass closed, an issued label implies an approval the gate admitted.
+
 ---
 
 <a id="sm-2"></a>
@@ -105,6 +114,17 @@ Contrast the route's own stated contract, app/api/tickets/workflow-action/route.
 - [ ] The `tickets_org_access` policy is split: SELECT stays org-wide; INSERT is constrained to the creating user; UPDATE is either revoked from `authenticated` entirely (all writes through service-role routes) or restricted so that `status`, `deliverable_rev`, `revision_count`, `assigned_*`, `engineer_approved_at`, `archived_at` and `archive_id` cannot be changed by a client (e.g. a BEFORE UPDATE trigger that raises unless `current_setting('role') = 'service_role'`)
 - [ ] Every remaining client-side `supabase.from('tickets').update(...)` call site is moved behind an API route or is provably limited to columns the DB permits
 - [ ] A test (or a SQL assertion in the migration) proves a plain `authenticated` role cannot change `tickets.status`
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. Half closed by roles-and-permissions [`WF-2`](../roles-and-permissions/06-request-workflow.md) / migration `20261038` (landed `087a39c`; **applied & verified live 2026-09-01** — MIGRATION-PASTE-ORDER row 40 LIVE, with the `20261039` column repair, row 41 LIVE); stays OPEN on the residual the fleet plan hands to **DF-P1** (under `SM-9`).
+- Holds: `trg_ticket_update_guard` (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:176-225`) raises on any client (`auth.uid() IS NOT NULL`) change to 22 workflow-owned columns, including every one this finding names — `status` (`:186`), `assigned_drafter_id`/`_name` and the engineer trio (`:191-195`), `engineer_approved_at` (`:197`), `deliverable_rev` (`:199`), `revision_count` (`:201`), `archived_at` (`:203`), `archive_id` (`:204`) — and refuses a shrinking `history` (`:213-216`); `ticket_insert_integrity` (`:110-168`) forces `requester_id := auth.uid()` and `status := 'PENDING_ASSIGNMENT'` on client inserts; `tickets_delete_controllers` (`:228-231`) is RESTRICTIVE.
+- Does not: `tickets_org_access` is still `CREATE POLICY "tickets_org_access" ON tickets FOR ALL USING (org_id IN (SELECT my_org_ids()));` (`supabase/schema.sql:1118-1119`; no migration replaces it). A member can still rewrite existing `history` entries in place at equal-or-greater length, and write `attachments`, `comments`, `metadata`, `watchers`, `unread_by` and `request_type` directly — outside the route's compare-and-set and audit row for exactly those columns.
+
+**Done-when.**
+- ✓ (in part) SELECT stays org-wide; INSERT is constrained to the creating user (by trigger); a client UPDATE of `status`, `deliverable_rev`, `revision_count`, `assigned_*`, `engineer_approved_at`, `archived_at`, `archive_id` raises (by trigger). The policy itself is not split — that is `PERS-1` done-when 3, residual below.
+- ✓ Every remaining client `tickets.update(...)` touches only unguarded columns: `app/(protected)/requests/page.tsx:655` and `:674` (`priority`, `last_modified`), `app/(protected)/requests/[id]/page.tsx:977` (`unread_by`), and `lib/projects.ts:1599` (`history` append inside `convertTicketToProject`, which has no caller in `app/` or `components/`).
+- ✓ (shape, not live) `lib/__tests__/rpPhase4Migration.test.ts:153` pins the guarded column list (with `status`), `:160` the shrink block, `:174` that `priority`/`comments`/`attachments`/`watchers`/`unread_by`/`last_modified`/`metadata` are *not* guarded; the migration's own probe proved the trigger installed live. There is no database in CI, so no live refusal test — recorded as the evidence form, as WF-2 did.
+
+**Scope / residual.** Handed on, binding (fleet plan): existing `history` entries are rewritable in place and `attachments` / `comments` / `metadata` stay client-writable → **DF-P1** (`ticket_update_guard` re-created from its newest body with append-only history and service-role-only arrays, lineDiff-pinned). Found on HEAD and not named in the plan: `request_type` is also unguarded on UPDATE, which keeps `LEAK-3` open (recorded there, same owner). No migration was needed or written here.
 
 ---
 
@@ -256,6 +276,20 @@ app/api/verify-ticket/route.ts:82-83 (verdict from deliverable_rev alone) —
 - [ ] /api/verify-ticket distinguishes re-issues (e.g. by matching the printed rev against the issued attachment's identity, not just the label string)
 - [ ] A test walks issue Rev 1 → close → reopen → approve and asserts the second issue is Rev 2, not Rev 1
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. `DEC-15` landed with roles-and-permissions [`WF-21`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`) and closes the shape this finding narrates for every reopen performed since; two of its four done-whens ask for more than that.
+- `lib/ticketTransitions.ts:354-363` — `case "reopen_ticket": updates.status = "PENDING_REVIEW"; updates.revision_count = (ticket.revisionCount || 0) + 1; updates.draft_iteration = 0; updates.deliverable_rev = null;`.
+- `app/api/verify-ticket/route.ts:117-147` — reopen-aware: with no label on the row, a live status and an `issued Rev N` history line (`:59-69`), a print of the last issue reads `revision_in_progress`, an older one `superseded`, never `current`. PS-VERIFY (public-surfaces, merged) changed the headers, scan log and rate limit and left this ladder as WF-21 wrote it.
+- Tests: `lib/__tests__/sweepRoundE_A.test.ts:713` (issue 2 → reopen → 3A → 3) and the verify-route cases after it.
+
+**Done-when.**
+- ✓ `reopen_ticket` bumps `revision_count` and resets `draft_iteration` (and nulls the label).
+- ✗ No transition checks the label it writes against the history. Distinct labels hold by construction for post-Round-E reopens — every path from an issued state back to an issuing action increments `revision_count` (`lib/ticketTransitions.ts:320-324`, `:340-345`, `:354-363`) and the column is workflow-owned (`20261038:201`) — but a ticket reopened **before** Round E (2026-09-17) under the old three-line `reopen_ticket` kept its `revision_count` and its issued `deliverable_rev`; its next approval re-issues the same label, and it verifies `current` while back under review. The explicit history check is what would catch it. The population is unobservable from here (`DEC-30`); read-only inventory:
+  `SELECT 'tickets under review still carrying an issued label (reopened before Round E)' AS check, COUNT(*)::text AS n FROM tickets WHERE status IN ('PENDING_REVIEW', 'PENDING_FINAL_APPROVAL') AND deliverable_rev ~ '^[0-9]+$';` — since Round E an issued (digits-only) label can sit on a row in those two statuses only through a pre-Round-E reopen (`submit_draft` writes a letter rev; `reopen_ticket` nulls it).
+- ✗ (in part) `/api/verify-ticket` distinguishes re-issues only by label — sufficient once labels are distinct, not for the legacy rows above; matching the printed rev to the issued attachment's identity is not built (`TicketAttachment` carries no rev — `PHYS-2`).
+- ✓ A test walks issue → close → reopen → approve and asserts the second issue is a new number (`lib/__tests__/sweepRoundE_A.test.ts:713`).
+
+**Scope / residual.** → **DF-P10** (owns the issue cases of `lib/ticketTransitions.ts` and the verify-ticket verdict): an explicit refusal (or re-cycle) when an issuing action would write a label already in the ticket's history, and the attachment-identity verdict (`PHYS-2`'s per-attachment rev). Not in the handed-on list — found on re-verification. `LEAK-7` closes on WF-21's contract; the legacy population is recorded there too.
+
 ---
 
 <a id="sm-6"></a>
@@ -368,7 +402,7 @@ if (newComment) {
 ## SM-8 · CANCELED is documented to users as a workflow state, is treated as terminal by the archiver, and is reachable by no code path — while a ticket that somehow reaches it has no legal action for anyone but an admin
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/requests/WorkflowDiagramModal.tsx:36`, `types/schema.ts:1032`, `lib/ticketShed.ts:11`, `lib/ticketTransitions.ts:311`, `lib/workflow.ts:80-342`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves confirmed: nothing writes CANCELED, and workflow.ts has no case for it (only the global `ticket.force_close` override at :345 would offer anything). Severity overstated — because the state is genuinely unreachable, no ticket is ever actually stranded in it; the live defect is a workflow-diagram modal advertising an exit the product does not implement, which is a docs/feature gap, not a MEDIUM data or integrity risk.
@@ -401,6 +435,16 @@ lib/workflow.ts:80-342 — the switch handles NEW, PENDING_ENG_INITIAL, PENDING_
 - [ ] Either a `cancel_ticket` action exists (available to the requester and to `ticket.force_close` holders across the open statuses, mapping to status CANCELED in computeTransition), or CANCELED is removed from the TicketStatus union, the workflow diagram, the shed's terminal set and the TERMINAL array
 - [ ] If CANCELED stays, `getActions` has a `case 'CANCELED'` offering `reopen_ticket` on the same terms as CLOSED
 - [ ] A test enumerates every value of TicketStatus and asserts each is both reachable by some transition and offers at least one action to someone
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`WF-17`](../roles-and-permissions/06-request-workflow.md) / `DEC-14` (Round E, `e5a203b`; migration `20261053`, `a93f7ff`, **applied & verified live 2026-09-17** — MIGRATION-PASTE-ORDER row 55), re-verified against `f1ac550`. `CANCELED` is now produced: `cancel_request` (`lib/workflow.ts:252-263`, requester identity or the `ticket.manage` tier, comment required, offered at `PENDING_ASSIGNMENT` `:333` and `DRAFTING` `:339`) → `case "cancel_request": … updates.status = "CANCELED";` (`lib/ticketTransitions.ts:224-227`), `closed_at` stamped by the terminal rule (`:384-389`), audited `TICKET_CANCEL_REQUEST` by the route; the hold gate keys on the terminal status, so a cancel over an open originating hold is a 409 like a close. It is terminal: `case 'CANCELED': break;` (`lib/workflow.ts:554-555`) and `isTerminal` (`:246`) withholds force close, reassignment and attaching. The diagram now tells the truth: `components/requests/WorkflowDiagramModal.tsx:36` — "Withdrawn by the requester (or management) with a reason … it is not reopened; file a new request instead."
+- Tests: `lib/__tests__/sweepRoundE_A.test.ts:338` ("WF-17 / DEC-14": cancel matrix, transition, route, hold gate, intent bridge, terminal census); `lib/__tests__/dfRoundG_P0.test.ts:279` (new — breadth-first walk of the engine from `getInitialStatus()` reaches every value of the `TicketStatus` union, parsed from `types/schema.ts`); `lib/__tests__/dfRoundG_P0.test.ts:292` (new — every status but `CANCELED` offers someone an action, `CLOSED` offers `reopen_ticket`, `CANCELED` offers nobody anything). Mutation-checked: removing the `cancel_request` transition fails the walk.
+
+**Done-when.**
+- ✓ A cancel action exists and maps to `CANCELED` — in `DEC-14`'s shape (requester identity + `ticket.manage`, from `PENDING_ASSIGNMENT` and `DRAFTING`), which binds over this finding's illustrative "requester and force_close holders across the open statuses"; `ticket.force_close` holders still close from any open status (`lib/workflow.ts:559-564`).
+- Superseded by `DEC-14` as landed, deliberately not done: `case 'CANCELED'` offers nothing, not `reopen_ticket` on `CLOSED`'s terms. A canceled request issued no deliverable to recover; the decision (Round E, recorded in `WF-17`) is that a withdrawn request is refiled, not resurrected. Recorded under `DEC-14` in this round so it is not re-litigated.
+- ✓ (with the same exception) A test enumerates every `TicketStatus` and asserts each is reachable (`lib/__tests__/dfRoundG_P0.test.ts:279`) and offers at least one action to someone — all except `CANCELED`, which the test asserts offers nobody anything (`lib/__tests__/dfRoundG_P0.test.ts:292`).
+
+**Scope / residual.** What a scanned print of a canceled ticket's deliverable should say (`withdrawn`, never `current`) is `EDGE-2`'s remainder, DF-P10. The admin storage copy "Only CLOSED/CANCELED tickets are eligible" is now true.
 
 ---
 
@@ -466,7 +510,7 @@ casQuery = auth.readLastModified ? casQuery.eq("last_modified", auth.readLastMod
 ## SM-10 · The ticket page rewrites `approve_initial` into `assign` before sending, which the server refuses — every ticket at NEW or PENDING_ENG_INITIAL is a hard dead end for its only forward action
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** INVALID
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:1065-1075`, `lib/workflow.ts:82-109`, `lib/workflow.ts:137-155`, `app/api/tickets/workflow-action/route.ts:96-103`, `supabase/schema.sql:405`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The rewrite→403 is real, but two facts cut the severity hard. (1) The states are unreachable: every ticket-insert site hardcodes the status — requests/new/page.tsx:255 `const initialStatus: TicketStatus = 'PENDING_ASSIGNMENT'`, CheckInPanel.tsx and lib/transitionIn.ts:304 both insert `status: "PENDING_ASSIGNMENT"` — and workflow.ts:47-52 getInitialStatus always returns PENDING_ASSIGNMENT; nothing in the codebase ever writes NEW or PENDING_ENG_INITIAL. (2) Even at NEW it is not a dead end: `request_eng_review` (requiresEngineerPick) and `reject` (requiresComment) take earlier branches at :1051-1064, are not rewritten, and are accepted — request_eng_review routes NEW→PENDING_ENG_TEAM→approve_team→PENDING_ASSIGNMENT, a working forward path.
@@ -512,6 +556,16 @@ if (!action) {
 - [ ] `tickets.status` has no permissive default (or defaults to 'PENDING_ASSIGNMENT'), so a row cannot arrive at NEW by omission
 - [ ] lib/__tests__/workflow.test.ts covers NEW and PENDING_ENG_INITIAL, and an API test asserts each action the engine offers at each status is accepted by the route
 
+**Resolution (2026-10-02, drafting-flow Round G) — INVALID against current code (`DEC-28`).** The mechanism no longer exists on `f1ac550`; it was removed by roles-and-permissions [`WF-17`](../roles-and-permissions/06-request-workflow.md) / `DEC-14` (Round E, `e5a203b` + migration `20261053`, `a93f7ff`, **applied & verified live 2026-09-17**). Contradicting code:
+- No rewrite: `app/(protected)/requests/[id]/page.tsx:1274-1276` — `// Assignment opens the drafter picker. (The former approve_initial → assign rewrite is gone with the NEW stage — DEC-14 / WF-17.)` followed by `else if (action.action === 'assign') {`. The only remaining `approve_initial` strings in `app/`, `components/`, `lib/` are comments (`lib/workflow.ts:266`, `lib/ticketTransitions.ts:20`, `:199`).
+- No such statuses: the union is `PENDING_ENG_TEAM | PENDING_ASSIGNMENT | DRAFTING | REVISION_REQ | PENDING_REVIEW | PENDING_IFC | FINAL_DRAFT | PENDING_FINAL_APPROVAL | CLOSED | CANCELED` (`types/schema.ts:1086-1096`); the engine's initial-review case is deleted (`lib/workflow.ts:265-267`); `approve_initial`'s transition branch is deleted (`lib/ticketTransitions.ts:199-200`).
+- No permissive default: `ALTER TABLE tickets ALTER COLUMN status SET DEFAULT 'PENDING_ASSIGNMENT';` (`supabase/migrations/20261053_rp_roundE_dead_statuses.sql:53`, live), which also moved any rows in the two statuses (its inventory rode the paste).
+- Pinned: `lib/__tests__/dfRoundG_P0.test.ts:270` (the union excludes `NEW` / `PENDING_ENG_INITIAL`; `getInitialStatus()` is `PENDING_ASSIGNMENT`; the default flip is in `20261053`).
+
+**Done-when.** (1) ✓ the client sends the engine's action name — no rewrite exists. (2) ✓ the live default is `PENDING_ASSIGNMENT`. (3) Moot: there is no `NEW` / `PENDING_ENG_INITIAL` left for `workflow.test.ts` to cover; the route validates every posted action against the engine at the ticket's current status (`app/api/tickets/workflow-action/route.ts:160-170`, `EDGE-11` invariant 1).
+
+**Scope / residual.** `supabase/schema.sql:443` still reads `status TEXT NOT NULL DEFAULT 'NEW'` as the pre-migration baseline of record (WF-17 explains why it is not edited); a restore of a pre-Round-E backup could re-insert such a row through the service role, and re-running `20261053`'s idempotent `UPDATE` moves it.
+
 ---
 
 <a id="sm-11"></a>
@@ -519,7 +573,7 @@ if (!action) {
 ## SM-11 · The ticket⇄document intent bridge is dead code: `rowToTicket` never maps `metadata`, so `ticket.metadata` is always undefined in the workflow route
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:51-82`, `app/api/tickets/workflow-action/route.ts:230-274`, `lib/intents.ts:58`, `lib/intents.ts:68`
 - **Same root cause as** `PERS-5` — `ticket.metadata` is always `undefined` server-side. This is why `GAP-110`'s declaration cannot live in `metadata`, and why the intent bridge is dead. Fix once; close the rest citing this one.
@@ -560,6 +614,16 @@ try {
 - [ ] `rowToTicket` maps `metadata: (row.metadata as Record<string, unknown> | null) ?? undefined`
 - [ ] lib/__tests__/ticketTransitions.test.ts's rowToTicket case asserts `metadata` round-trips
 - [ ] An integration test (or a route test with a stubbed client) asserts that a transition into DRAFTING on a ticket carrying `metadata.source_document` upserts a `document_intents` row with `source: 'ticket'`, and that closing it deletes that row
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) (Round C2, `a84f712`, "found and fixed on the way"), re-verified against `f1ac550`. `rowToTicket` maps the bag: `metadata: (row.metadata as Record<string, unknown> | null) ?? undefined,` (`lib/ticketTransitions.ts:86`), so the route's bridge — `const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)?.source_document …` (`app/api/tickets/workflow-action/route.ts:513-514`) — now runs: entering `DRAFTING` / `REVISION_REQ` upserts the drafter's `source: "ticket"` edit intent, and `CLOSED` / `CANCELED` / `FINAL_DRAFT` (`const clearsAll = …`, `:522`) delete it.
+- Tests: `lib/__tests__/dfRoundG_P0.test.ts:372` (new — `rowToTicket` round-trips the metadata object; null and absent stay `undefined`); `lib/__tests__/dfRoundG_P0.test.ts:379` (new — through the route, `assign` on a ticket with `metadata.source_document` upserts `{ document_id, user_id, kind: "edit", source: "ticket", ticket_id }` after the CAS write, and `close_ticket` from `FINAL_DRAFT` deletes on `document_id`, `ticket_id`, `source = 'ticket'` with no upsert); `lib/__tests__/sweepRoundE_A.test.ts:421` (cancel clears it) and `:587-631` (reassignment). Mutation-checked: removing the metadata mapping fails both new tests.
+
+**Done-when.**
+- ✓ `rowToTicket` maps `metadata`.
+- ✓ A `rowToTicket` test asserts `metadata` round-trips — in `lib/__tests__/dfRoundG_P0.test.ts:372` rather than `lib/__tests__/ticketTransitions.test.ts` (kept out of a test file the DF-P3/DF-P4 chain edits); `lib/__tests__/sweepRoundC2.test.ts:184` also pins the mapping line.
+- ✓ A route test asserts the DRAFTING upsert with `source: 'ticket'` and the delete on close (`lib/__tests__/dfRoundG_P0.test.ts:379`).
+
+**Scope / residual.** None for this finding. Its sibling [`PERS-5`](./07-persistence-and-rls.md) asks for more (remove the `as Ticket` cast) and stays OPEN.
 
 ---
 
@@ -608,6 +672,17 @@ case "assign":
 - [ ] The route validates that `body.assignment.id` holds a drafting role (Drafter / DraftingSupervisor, or an explicit `ticket.draft_work` grant) using the same headline-or-additive `roles` check applied to engineers
 - [ ] `assigned_drafter_name` is read from `org_members.display_name` server-side rather than derived from an email string
 - [ ] An API-route test asserts assigning a Viewer as drafter returns 400
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The role check landed with roles-and-permissions [`WF-14`](../roles-and-permissions/06-request-workflow.md) done-when 3 (`087a39c`); the name half did not.
+- `app/api/tickets/workflow-action/route.ts:228-237` — every referenced member must be active in the ticket's org; `:278-285` — the assignee must hold drafting authority under the org's policy, headline or additive, grants honoured: `const mayDraft = policyAllows(capPolicy, "ticket.draft_work", (held[0] ?? "Viewer") as Role, held as Role[], ref, resource);` → 400 `"The selected drafter does not hold drafting authority (ticket.draft_work)"`; `:287-289` — at 3+ members the requester cannot be assigned their own request.
+- Test (new): `lib/__tests__/dfRoundG_P0.test.ts:331` — assigning a Viewer is a 400 with no tickets write and no audit row; a Drafter, and a Viewer holding Drafter additively, are accepted. Mutation-checked: forcing `mayDraft` true fails it.
+
+**Done-when.**
+- ✓ The route validates that the assignee holds drafting authority, with the same headline-or-additive collection the engineer pick uses (the token list is `ticket.draft_work` — `Drafter` by default, org-configurable).
+- ✗ `assigned_drafter_name` is not read from `org_members.display_name`: `assign` and `reassign_drafter` store the client-supplied `input.assignment.name` (`lib/ticketTransitions.ts:249`, `:266`; the page sends `drafter.email.split('@')[0]`, `app/(protected)/requests/[id]/page.tsx:314`), and `self_assign` still derives it from the email local part — `updates.assigned_drafter_name = input.actor.email.split("@")[0];` (`lib/ticketTransitions.ts:257`).
+- ✓ An API-route test asserts assigning a Viewer as drafter returns 400 (`lib/__tests__/dfRoundG_P0.test.ts:331`).
+
+**Scope / residual.** Server-stamped `assigned_drafter_name` (and the self-assign name) from `org_members.display_name` → **DF-P1**, the first package on the workflow-action route's input rails. Not in the fleet plan's handed-on list — found on re-verification. `EDGE-11`'s denormalised-name invariant is kept: the name stays on the row; only its source changes.
 
 ---
 
@@ -660,6 +735,17 @@ if (action.requiresFile) {
 - [ ] The route enforces `action.requiresFile`, and enforces it against the right thing: `submit_final` requires a `finalAttachment` of type 'Final' in the request (or an existing Final attachment on the row), `submit_draft` requires a Draft attachment
 - [ ] The client-side check tests for the specific attachment TYPE the action needs, not `attachments.length > 0`
 - [ ] An API-route test posts `submit_final` with `finalAttachment: null` and asserts 400, with the ticket still at PENDING_IFC
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The server half landed with roles-and-permissions [`WF-6`](../roles-and-permissions/06-request-workflow.md) (`087a39c`) and now has the route test this finding asks for; the type-specific checks did not land.
+- `app/api/tickets/workflow-action/route.ts:203-205` — `if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) { return … { error: "Issuing the final IFC package requires the deliverable file" }, { status: 400 } … }`, before `computeTransition`. `submit_draft` stays gated by state: `if (ticket.attachments?.some(a => a.type === 'Draft')) {` (`lib/workflow.ts:348`).
+- Test (new): `lib/__tests__/dfRoundG_P0.test.ts:351` — `submit_final` with no `finalAttachment`, with `null`, and with a URL-less record: each 400, no tickets write, no audit row, the ticket still `PENDING_IFC`; with the Final file → 200 `FINAL_DRAFT`. Mutation-checked.
+
+**Done-when.**
+- ✗ (in part) The route enforces the file precondition for `submit_final` but tests a URL's presence, not `type === 'Final'` — a `finalAttachment` typed `Reference` passes; `submit_draft`'s Draft requirement holds structurally (✓).
+- ✗ The client check still tests any attachment: `const hasFiles = ticket.attachments && ticket.attachments.length > 0;` (`app/(protected)/requests/[id]/page.tsx:1245-1247`). (The real `submit_final` path goes through the IFC upload modal, which always builds `type: 'Final'` — `:1290-1295` — so the weak check matters for a crafted call and for `submit_draft`.)
+- ✓ An API-route test posts `submit_final` with `finalAttachment: null` and asserts 400 with the ticket still at `PENDING_IFC` (`lib/__tests__/dfRoundG_P0.test.ts:351`).
+
+**Scope / residual.** The route's `Final`-type check → **DF-P1** (the same hunk as `AUTHZ-11`'s attachment-shape and storage-key validation). The type-specific client check at `app/(protected)/requests/[id]/page.tsx:1245` → **DF-P9** (owns the page outside the viewer region). Not in the handed-on list — found on re-verification. `LEAK-8` (whose contract is WF-6's) closes on the server half.
 
 ---
 

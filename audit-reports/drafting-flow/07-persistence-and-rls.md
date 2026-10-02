@@ -50,6 +50,16 @@ CREATE POLICY documents_delete_controllers ON documents
 - [ ] The FOR ALL policy is split into explicit SELECT / INSERT / UPDATE / DELETE policies with an explicit WITH CHECK on the write halves, so the INSERT contract is written down rather than inherited from USING
 - [ ] An INSERT constraint (policy or trigger) requiring requester_id = auth.uid() and status ∈ the set the intake flow is allowed to open with
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; same cluster and same evidence as [`SM-2`](./06-state-machine.md#sm-2) — roles-and-permissions [`WF-2`](../roles-and-permissions/06-request-workflow.md), migration `20261038` (**applied & verified live 2026-09-01**). Stays OPEN with the residual handed to **DF-P1**.
+
+**Done-when.**
+- ✓ The status / approval / assignment / `deliverable_rev` columns change only through the service role — by BEFORE UPDATE trigger rather than a RESTRICTIVE policy (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:176-225`; the trigger names the offending column), and the client no longer writes them (census on `SM-2`).
+- ✓ A RESTRICTIVE DELETE policy mirroring `documents_delete_controllers`: `CREATE POLICY tickets_delete_controllers ON tickets AS RESTRICTIVE FOR DELETE USING (is_org_controller(org_id));` (`20261038:228-231`).
+- ✗ The FOR ALL policy is not split into explicit SELECT / INSERT / UPDATE / DELETE policies with a written WITH CHECK — `supabase/schema.sql:1118-1119` is unchanged; the INSERT and UPDATE contracts are carried by the two triggers instead.
+- ✓ INSERT requires `requester_id = auth.uid()` and the intake status: `NEW.requester_id := auth.uid();` (`20261038:130`), `NEW.status := 'PENDING_ASSIGNMENT';` (`:140`), non-members refused (`:125-127`).
+
+**Scope / residual.** → **DF-P1**: the policy split with written WITH CHECKs, plus the history-in-place / client-writable arrays residual (binding, fleet plan). The `request_type` UPDATE gap is recorded on `LEAK-3` (same owner).
+
 ---
 
 <a id="pers-2"></a>
@@ -227,6 +237,15 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 - [ ] The `as Ticket` cast is removed so the compiler flags any future field that is added to the Ticket type but not mapped
 - [ ] A test asserts that a row with metadata.source_document.id round-trips through rowToTicket and that computeTransition to DRAFTING produces a document_intents upsert
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`; the dead bridge is live since roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md) (`a84f712`) — evidence and tests on [`SM-11`](./06-state-machine.md#sm-11): `lib/ticketTransitions.ts:86` maps `metadata`, and `lib/__tests__/dfRoundG_P0.test.ts:379` drives the route's intent upsert on entering `DRAFTING` and its delete on close. Round D3 (`DRAFT-2`) also mapped `engineer_review_requested_at`, `engineer_approved_at`, `engineer_review_reason` (`lib/ticketTransitions.ts:77-79`). The cast that hid the omission is still there.
+
+**Done-when.**
+- ✓ (in part) `rowToTicket` maps `metadata`; of the other columns this finding lists, the engineering stamps are mapped, while `closed_at`, `archived_at`, `archive_id`, `target_completion_at`, `sla_breach_warned_at` / `sla_breached_at` and `updated_at` are still not (server readers that need them read the raw row today — e.g. the archived gate, `app/api/tickets/workflow-action/route.ts:81-87`).
+- ✗ The `as Ticket` cast is not removed: `} as Ticket;` (`lib/ticketTransitions.ts:94`), so a field added to `Ticket` but not mapped is still not flagged by the compiler.
+- ✓ A test asserts `metadata.source_document.id` round-trips through `rowToTicket` and that the transition to `DRAFTING` produces a `document_intents` upsert (`lib/__tests__/dfRoundG_P0.test.ts:372`, `lib/__tests__/dfRoundG_P0.test.ts:379`).
+
+**Scope / residual.** Remove the cast (map the remaining columns the server path reads, or narrow the return type so omissions are compile errors) → **DF-P4**, the next package whose brief edits `rowToTicket` (it maps `library_id`). Not in the handed-on list — found on re-verification.
+
 ---
 
 <a id="pers-6"></a>
@@ -329,7 +348,7 @@ app/(protected)/requests/[id]/page.tsx:981 —
 ## PERS-8 · my_org_ids() is SECURITY DEFINER with no SET search_path, and it is the sole gate on every ticket RLS decision
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/schema.sql:1030-1034`, `supabase/schema.sql:1080-1081`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The missing SET search_path is real and worth fixing (Supabase's own linter flags it). Corrected to LOW because the described exploit is not reachable from the app's threat surface: PostgREST executes no DDL and cannot issue SET, so an app user can neither create a shadowing schema/table nor alter the session search_path — and a name in `public` cannot shadow `public.org_members` anyway; it needs CREATE-schema privilege that anon/authenticated do not hold. This is hardening, not an exploitable gate bypass.
@@ -364,5 +383,14 @@ SET search_path = public
 
 - [ ] `my_org_ids()` is redefined with `SET search_path = public, pg_temp` (a migration, so live databases pick it up — editing schema.sql alone changes nothing deployed)
 - [ ] A CI check asserts every SECURITY DEFINER function in supabase/ carries an explicit SET search_path
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`DB-6`](../roles-and-permissions/11-database-authority.md) (`2af2ebe`, 2026-08-24; document-control `DRLS-11` closed on the same record). `my_org_ids()` — still `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$ SELECT org_id FROM org_members WHERE uid = auth.uid() AND status = 'active'; $$;` (`supabase/schema.sql:1069-1072`, no redefinition in `supabase/migrations/`) — is pinned by migration: `'my_org_ids()',` in the signature list of `supabase/migrations/20261020_pin_search_path.sql:32`, applied by `EXECUTE format('ALTER FUNCTION %s SET search_path = public', sig);` (`:64`) — **applied & verified live 2026-08-24** (zero unpinned `SECURITY DEFINER` functions in `public`; MIGRATION-PASTE-ORDER row 22 LIVE). ALTER, not re-CREATE, so the deployed body is untouched.
+- Tests: `lib/__tests__/searchPathPin.test.ts:114` (every live definer function is pinned at creation or by `20261020`; the census fails the suite on a new unpinned one); `lib/__tests__/dfRoundG_P0.test.ts:454` (new — the `my_org_ids()` entry and the `ALTER … SET search_path = public` statement, against the `SECURITY DEFINER` body in `schema.sql`).
+
+**Done-when.**
+- ✓ with a recorded divergence: `my_org_ids()` is pinned by a migration, so live databases carry it — but to `search_path = public` (the corpus's house style for every definer function, and the value `searchPathPin.test.ts` and `DB-6` / `DRLS-11` verify), not the finding's `public, pg_temp`. The shadowing vector this finding names — a relation in a schema ahead of `public` — is closed by the pin; the residual `pg_temp`-first lookup needs the caller to create a temporary relation, which the PostgREST surface cannot do (the verifier's correction). Moving the corpus to `public, pg_temp` would be a change to every definer function (`DEC-31`), not to this one.
+- ✓ A CI check asserts every `SECURITY DEFINER` function carries an explicit `search_path` (`lib/__tests__/searchPathPin.test.ts:114`).
+
+**Scope / residual.** None for this finding.
 
 ---

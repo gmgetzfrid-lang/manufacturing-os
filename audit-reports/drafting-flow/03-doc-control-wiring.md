@@ -194,6 +194,14 @@ work here.
 **Done when.** See `LIFE-1` / `GAP-6`. Additionally: the register knows about
 every issued deliverable, or visibly knows it does not.
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. `LIFE-1` / `GAP-6` landed (roles-and-permissions [`LIFE-1`](../roles-and-permissions/07-document-lifecycle.md), `a84f712`, migration `20261049` **applied & verified live 2026-09-02**), and `DEC-23` landed first (`lib/reviewControl.ts:98-111` takes no ticket id — `PROJ-11`). For a ticket with a source document the register either receives the deliverable ("Publish as revision of …", `app/(protected)/requests/[id]/page.tsx:2165-2175`, recorded by `/api/tickets/handback`) or visibly does not (`metadata.deliverable.state = "not_in_register"` on close, `app/api/tickets/workflow-action/route.ts:397-414`; amber chip at `page.tsx:2160-2164`).
+
+**Done-when.**
+- ✓ See `LIFE-1` / `GAP-6` — closing leaves a queryable not-in-register state; a ticket-originated publish goes through `assertCanPublishRevision` and fires `runPostPublishSideEffects` (it is a `revUpDocument` call).
+- ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not" holds only for tickets with a source document: the not-in-register note runs only `if (src?.id && …)` (`route.ts:400-401`). A new drawing requested with no source document still ends at an attachment with no register-side trace.
+
+**Scope / residual.** Handed on, binding (fleet plan): a ticket with no source document still ends at an attachment → **DF-P4** (`GAP-105` — the ticket gets a library, so "publish as a new document in library X" has a target).
+
 ---
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see

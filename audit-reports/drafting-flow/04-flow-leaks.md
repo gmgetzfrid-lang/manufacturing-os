@@ -64,7 +64,7 @@ in, it covers two live states of twelve.
 ## LEAK-2 · Routing matches the headline role, so a multi-role supervisor is never notified
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -102,6 +102,12 @@ own request notifies nobody at all.
 
 **Done when.** A member holding `DraftingSupervisor` as any of their roles
 receives the queue notifications for it.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Record-only close by pointer to roles-and-permissions [`ADD-1`](../roles-and-permissions/04-additive-roles.md) (Round C1b, `bcb959d`, 2026-09-03; pinned again by `WF-19`, Round E), re-verified against `f1ac550`. Routing reads the held collection: `listActiveMembers` selects `"uid, role, roles, display_name, email"` and maps `roles: heldRoles(m)` (`lib/ticketRouting.ts:50-59`); `const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));` (`:99`). A `['Manager','DraftingSupervisor']` member is in the supervisor pool, so `supervisorTargeted()` (`:106-110`) no longer falls back to Admins while a supervisor exists. Test: `lib/__tests__/ticketRouting.test.ts:96` ("WF-19 done-when 2: the supervisor pool matches the FULL role collection, not the headline").
+
+**Done-when.** ✓ A member holding `DraftingSupervisor` as any of their roles receives the queue notifications for it (creation-time routing, and since WF-19 every re-entry into `PENDING_ASSIGNMENT` — `app/api/tickets/workflow-action/route.ts:318-331`).
+
+**Scope / residual.** The second-order effect the finding notes — a sole supervisor filing their own request is filtered out as the actor (`lib/ticketRouting.ts:122-129`) and nobody else is told — is unchanged; it is a pool-size question for the creation route (DF-P2's single server-side creator, `ROUTE-11`/`ROUTE-4`), not a headline-role defect.
 
 ---
 
@@ -148,6 +154,17 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
    type, not a hardcoded comparison to the literal `'RFI'`.
 3. It is not available to every drafter on every ticket (`WF-8`).
 
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The insert path and the engine half are closed by roles-and-permissions [`WF-15`](../roles-and-permissions/06-request-workflow.md) and [`WF-8`](../roles-and-permissions/06-request-workflow.md) (`087a39c`; migration `20261038` **applied & verified live 2026-09-01**), but the one-click close still reproduces through the UPDATE path, which the fleet plan did not anticipate — so this stays OPEN with an owner (`DEC-31`).
+- Closed: `ticket_insert_integrity` refuses a client-created ticket whose `request_type` is outside the org's configured list ∪ {Revision, ASBUILT, RFI} (`supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql:152-164`). Close-without-review is a property of the configured type: `const closeTypes = ctx?.closeWithoutReviewTypes ?? ['RFI']; if (closeTypes.includes(ticket.requestType)) { … action: 'close_rfi' … }` (`lib/workflow.ts:360-368`), the route reading the per-type flag from the org's drafting configuration (`app/api/tickets/workflow-action/route.ts:118-133`). `close_rfi` sits inside `if (canActAsDrafter) {` (`lib/workflow.ts:340`), which since WF-8 is the assigned drafter by identity, or the pool only while unassigned (`:210-211`).
+- Reproduces: `request_type` is not among the columns `ticket_update_guard` refuses (`20261038:184-205` has no `request_type` line), and `tickets_org_access` is `FOR ALL USING (org_id IN (SELECT my_org_ids()))` (`supabase/schema.sql:1118-1119`). So the assigned drafter can `PATCH /rest/v1/tickets?id=eq.<their ticket>` with `{"request_type":"RFI"}` (or any configured close-without-review type), then post `close_rfi` with a comment: `DRAFTING → CLOSED`, no review, no issued revision. The route still writes `TICKET_CLOSE_RFI`, but the type change itself leaves no history line and no audit row. No app path writes `request_type` after insert (grep: only the three creators' inserts), so guarding it breaks nothing.
+
+**Done-when.**
+- ✗ (in part) A ticket cannot be **created** with a type outside the configured list (✓, trigger); it can still be **updated** to one, or into a close-without-review type (✗).
+- ✓ Close-without-review is a declared property of a configured type, not the literal `'RFI'` (the `['RFI']` default applies only when the org configured none).
+- ✓ It is not available to every drafter on every ticket (WF-8).
+
+**Scope / residual.** Make `request_type` workflow-owned in `ticket_update_guard` (or validate an UPDATE against the configured list and refuse a change into a close-without-review type outside the route) → **DF-P1**, which re-creates the guard from its newest body (fleet plan, DF-P1 (a)); same root as the `SM-2` residual. No code changed here.
+
 ---
 
 ## LEAK-4 · Attachments and history are written straight to the table, outside the workflow route
@@ -183,6 +200,13 @@ which is the part that matters for a PSM audit trail.
 
 **Done when.** Attachment and history writes go through the same
 compare-and-set and audit path as every other ticket mutation.
+
+**Partial (2026-10-02, drafting-flow Round G).** Re-verified against `f1ac550`. The attachment and category / watcher writes are behind server routes with compare-and-set since roles-and-permissions [`WF-9`](../roles-and-permissions/06-request-workflow.md) (Round E, `e5a203b`): `attach_file` is an engine action (`lib/workflow.ts:604-612`) applied by the workflow route on the `(status, last_modified)` compare-and-set with a `TICKET_ATTACH_FILE` audit row (`app/api/tickets/workflow-action/route.ts:219-225`, `:427-462`); the page no longer writes `attachments`, `comments` or `watchers` (pinned by `lib/__tests__/sweepRoundE_A.test.ts:323`); a concurrent upload and approval cannot both land (`:187`, 409). Two client writers remain off the route.
+
+**Done-when.**
+- ✗ (in part) Attachment writes go through the route's CAS and audit path (✓). History writes do not, everywhere: `lib/projects.ts:1588-1599` still pushes a "Converted to Project" entry with a browser read-modify-write of the whole `history` array (dormant — `convertTicketToProject` has no caller in `app/` or `components/` — but present). And the queue's two priority writes still bump the CAS token from the browser without the route: `supabase.from('tickets').update({ priority: 1, last_modified: now })` (`app/(protected)/requests/page.tsx:655`, `:674`), as does the page's `unread_by` clear (`app/(protected)/requests/[id]/page.tsx:977`, unchecked).
+
+**Scope / residual.** Handed on, binding (fleet plan): the `requests/page.tsx` priority writes and the page's `unread_by` write → **DF-P9** (under `PERS-3`: a `set_priority` action, or `{error}` + CAS). Found on HEAD and not named in the plan: the `lib/projects.ts` history push → **DF-P8** (the project link becomes a server action, `GAP-114`). The in-place history rewrite risk itself is `SM-2`'s residual (DF-P1).
 
 ---
 
@@ -226,7 +250,7 @@ it asks the human to launder it through their filesystem.
 ## LEAK-6 · A check-in interrupted mid-commit orphans the ticket it already created
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
 - **Re-verified:** hardening pass — **SURVIVES**. `doneRef` is a `useRef` (`CheckInPanel.tsx:155`) — in-memory, per-mount. An interruption between creating the ticket and completing the commit loses the only record that the ticket exists.
@@ -247,12 +271,18 @@ evidence that a discrepancy was reported through that session at all.
 
 **Done when.** See `LIFE-14`.
 
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`LIFE-14`](../roles-and-permissions/07-document-lifecycle.md) (Round A2, `6f0c522`, 2026-09-03), whose done-when this finding adopts; re-verified against `f1ac550` after document-control P6 reworked the checkout sweep. The check-in ticket carries a durable key and the panel resumes it on remount: `components/documents/CheckInPanel.tsx:157-175` — "LIFE-14: a check-in interrupted AFTER its ticket was created … must resume that ticket, never create a second one" — looking up `.eq("metadata->checkin->>episodeId", episode.id)` over non-terminal tickets (`:168-170`) before any creation; the 24 h sweep writes `auto_released` only over an empty verdict — `.update({ ...basePayload, outcome: "auto_released" }) … .eq("status", "active") .is("outcome", null);` (`lib/projects.ts:1990-1997`, kept by DC P6 `DCK-7`). Test: `lib/__tests__/lifeSweep2.test.ts:99-108` ("LIFE-14 — resume, never re-create; the sweep never clobbers a verdict").
+
+**Done-when.** ✓ See `LIFE-14`: (1) a check-in interrupted after ticket creation and resumed in a new component instance links to the existing ticket; (2) the sweep can no longer overwrite a human verdict, and the one remaining NULL-outcome path (a session close that never completes) shows as an open session until the sweep records `auto_released` — never a false verdict.
+
+**Scope / residual.** `CheckInPanel` creates its ticket in the browser; DF-P2 moves it behind the server create route (its one deferred hunk) — the `episodeId` resume key must survive that move.
+
 ---
 
 ## LEAK-7 · A reopened ticket re-issues the same revision number, and the public QR says it is current
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / field-truth
 - **Re-verified:** hardening pass — **SURVIVES**. `deliverable_rev = issuedRevLabel(ticket.revisionCount)` at three transition sites (`ticketTransitions.ts:223, 232, 250`), so a reopen that does not advance `revisionCount` re-issues the same label — and `EDGE-2` shows the public verify endpoint computes its verdict from `deliverable_rev` with no status term.
@@ -270,12 +300,18 @@ back under review, `/api/verify-ticket` still reports the field copy as
 
 **Done when.** See `WF-21` / `DEC-15`.
 
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`WF-21`](../roles-and-permissions/06-request-workflow.md) / `DEC-15` (Round E, `e5a203b`), whose contract this finding's done-when adopts. Re-verified against `f1ac550`: `reopen_ticket` starts a new cycle — `updates.revision_count = (ticket.revisionCount || 0) + 1; updates.draft_iteration = 0; updates.deliverable_rev = null;` (`lib/ticketTransitions.ts:354-363`) — so after an issue at Rev 2 the next submission is `3A` and the next approval `3`; and the public endpoint is reopen-aware — `const reopened = !currentRev && !!issuedBefore && !!t.status && !TERMINAL.has(t.status);` (`app/api/verify-ticket/route.ts:120`), the last issue read from the `issued Rev N` history line (`:59-69`), a reopened ticket's last-issue print reading `revision_in_progress` (`:139-140`), never `current`. PS-VERIFY (merged) kept this verdict ladder. Tests: `lib/__tests__/sweepRoundE_A.test.ts:710` ("WF-21 / DEC-15": lifecycle, minor-correction stamp, the verify route end to end).
+
+**Done-when.** ✓ (WF-21 / DEC-15) Two approvals of the same ticket cannot produce the same issued label for any reopen performed since Round E; ✓ a ticket back under review does not verify as current.
+
+**Scope / residual.** One population predates the fix: a ticket reopened **before** Round E (2026-09-17) and still un-approved kept its old `revision_count` and issued label, so its next approval repeats the label and it verifies `current` while in review. Catching it needs the explicit history check that is [`SM-5`](./06-state-machine.md#sm-5)'s done-when 2 — OPEN under **DF-P10**, with the read-only inventory query recorded there. The `FINAL_DRAFT → reject_final` window (WF-21's recorded residual) and the canceled / archived verdicts are `EDGE-2` (DF-P10).
+
 ---
 
 ## LEAK-8 · `submit_final` is not required to carry a deliverable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / compliance
 - **Re-verified:** hardening pass — **SURVIVES**, by absence. The route validates exactly two preconditions — `requiresComment` and `requiresEngineerPick` (`workflow-action/route.ts:104-109`). `finalAttachment` is an optional body field passed straight through as `body.finalAttachment ?? undefined` (`:38, :145`). Nothing requires `submit_final` to carry anything.
@@ -293,6 +329,12 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
 `ticket-shed` archives the empty state permanently.
 
 **Done when.** See `WF-6`.
+
+**Resolution (2026-10-02, drafting-flow Round G).** Closed by pointer to roles-and-permissions [`WF-6`](../roles-and-permissions/06-request-workflow.md) (`087a39c`, 2026-09-01), re-verified against `f1ac550`. The route now reads `action.requiresFile`: `app/api/tickets/workflow-action/route.ts:203-205` — `if (action.requiresFile && action.action === "submit_final" && !body.finalAttachment?.url) {` → 400 "Issuing the final IFC package requires the deliverable file", before `computeTransition`, so a direct POST can no longer mint a "Final package issued" ticket with no deliverable. WF-6 proved it with a source pin (`lib/__tests__/rpPhase4Migration.test.ts:200`); this round adds the route-harness test the done-when asks for: `lib/__tests__/dfRoundG_P0.test.ts:351` drives the real handler with no `finalAttachment`, with `null`, and with a URL-less record — each 400, no tickets write, no audit row, the ticket still `PENDING_IFC`; the Final file → 200 `FINAL_DRAFT`. Mutation-checked: disabling the guard fails it.
+
+**Done-when.** ✓ `submit_final` is refused server-side when no deliverable attachment exists; ✓ a test covers the direct-POST case (`lib/__tests__/dfRoundG_P0.test.ts:351`).
+
+**Scope / residual.** The stricter contract — the attachment must be typed `Final`, and the client check must test the type — is [`SM-13`](./06-state-machine.md#sm-13)'s, OPEN under DF-P1 / DF-P9. Storage-key validation of `finalAttachment` is `AUTHZ-11` (DF-P1).
 
 ---
 

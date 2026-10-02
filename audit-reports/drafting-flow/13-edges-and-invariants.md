@@ -590,7 +590,7 @@ lib/clientBackup.ts:184-187 (finalize runs regardless; phase is set after)
 ## EDGE-11 · SOUND — the load-bearing invariants of this flow that a fix must not disturb
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:66-131`, `app/api/tickets/workflow-action/route.ts:155-166`, `lib/ticketTransitions.ts:145`, `app/api/tickets/comment/route.ts:103-121`, `app/api/tickets/comment/route.ts:275-292`, `lib/ticketAttention.ts:66-110`, `supabase/migrations/20260724_ticket_numbering.sql:33-56`, `app/api/admin/ticket-shed/route.ts:180-200`, `app/api/admin/ticket-shed/commit/route.ts:145-190`, `supabase/schema.sql:408`, `supabase/schema.sql:776`
 - **Re-verified:** Re-read in the hardening pass. **This entry documents what is SOUND rather than a defect**, so there is nothing to refute — its value is as a do-not-break list. The invariant it names is real: `workflow-action/route.ts:66-77` loads the ticket server-side and refuses an archived one before any transition.
@@ -644,6 +644,22 @@ app/api/admin/ticket-shed/route.ts:186-189
 
 - [ ] Any change to the ticket flow preserves: server-side action validation against WorkflowEngine + capability policy, the (status, last_modified) CAS with last_modified always stamped, the narrow PGRST202-only RPC fallback, service-role preference reads, isActionRequired as the sole attention rule, RPC-based number allocation, and all-or-nothing archive capture
 - [ ] Regression tests exist for the CAS (two concurrent save_progress actions → one 409) and for the RPC fallback narrowness (a non-PGRST202 error must not fall back)
+
+**Resolution (2026-10-02, drafting-flow Round G).** Not a defect: this entry is the area's **Verified sound — do not break** list, recorded as such. Each invariant re-verified on `f1ac550` (all hold, several strengthened since the audit), the two regression tests the done-when asks for written, and the list made the standing DEC-29 item-5 diff-check for every later drafting-flow package (`99-fix-sequencing.md`, "Verified sound — the EDGE-11 diff-check", and a note under `DEC-29`).
+1. **Server-enforced transitions** — `app/api/tickets/workflow-action/route.ts:74-88` loads the ticket with the service role and refuses an archived stub (`"This ticket is archived; restore it from its archive before acting on it."`); `:90-99` active membership; `:160-170` the action must be one `WorkflowEngine.getActions` offers under the org's own policy (`loadCapabilityPolicyEntry`, `:142`), now with the caller's full collection (`:105-107`, WF-7) and the requester's current one (`:146-152`, DEC-16); `:226-290` referenced engineer / drafter must be active and qualified.
+2. **Compare-and-set** — `.update(updates).eq("id", body.ticketId).eq("status", ticket.status)` + `.eq("last_modified", String(ticket.lastModified))` (`:427-434`), 409 on no row (`:457-462`); `computeTransition` always stamps `last_modified: now` (`lib/ticketTransitions.ts:164`).
+3. **Narrow RPC fallback** — `const missing = (rpcErr as { code?: string }).code === "PGRST202" || /could not find the function|does not exist in the schema cache/i.test(…); if (!missing) return … 500` (`app/api/tickets/comment/route.ts:109-116`).
+4. **Service-role preference reads** — `supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients)` in both routes (`app/api/tickets/comment/route.ts:326`, `app/api/tickets/workflow-action/route.ts:693`).
+5. **One attention rule** — `isActionRequired` (`lib/ticketAttention.ts:79-91`), now derived from the engine itself (WF-24), consumed by the badge hook, bell, `/inbox` and the portal.
+6. **Atomic numbering** — `next_ticket_number` is `SECURITY DEFINER SET search_path = public`, active-member guarded, `ON CONFLICT (org_id, year) DO UPDATE SET next_seq = ticket_number_counters.next_seq + 1 RETURNING` (`supabase/migrations/20260724_ticket_numbering.sql:33-56`).
+7. **All-or-nothing archive capture** — produce reads every binary before committing a ticket to the zip (`app/api/admin/ticket-shed/route.ts:188-190`); commit stamps `.is("archived_at", null)` and re-verifies before deleting (`app/api/admin/ticket-shed/commit/route.ts:171-194`). Supporting: denormalised `requester_name` / `assigned_drafter_name` on the row, and `audit_logs.org_id` without a foreign key.
+- Tests: `lib/__tests__/dfRoundG_P0.test.ts:402` (new — a `save_progress` applies on `(id, status, last_modified)` and stamps a fresh `last_modified`; the second of two concurrent saves is a 409 with no audit row), `lib/__tests__/dfRoundG_P0.test.ts:422` (new — an error raised inside `post_ticket_comment` is a 500 with nothing written; a genuinely absent function falls back to the legacy write), `lib/__tests__/dfRoundG_P0.test.ts:441` (new — source pins for numbering, archive capture, the archived gate); `lib/__tests__/sweepRoundE_A.test.ts:187` (the CAS under `attach_file`). Mutation-checked: dropping the `last_modified` leg fails `lib/__tests__/dfRoundG_P0.test.ts:402`; widening the fallback fails `lib/__tests__/dfRoundG_P0.test.ts:422`.
+
+**Done-when.**
+- ✓ On HEAD every listed invariant holds (above). As a standing rule it cannot be "done" once; it is now the named diff-check every later package cites (99-fix-sequencing).
+- ✓ Regression tests exist for the CAS (two concurrent `save_progress` → one 409, `lib/__tests__/dfRoundG_P0.test.ts:402`) and for the fallback's narrowness (a non-PGRST202 error does not fall back, `lib/__tests__/dfRoundG_P0.test.ts:422`).
+
+**Scope / residual.** None. Packages that touch these surfaces next: DF-P1 (route audit write, comment RPC identity), DF-P2 (the create route reuses `next_ticket_number` server-side), DF-P11 (ticket-shed commit) — each diff-checks against this list.
 
 ---
 
