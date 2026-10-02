@@ -6,59 +6,49 @@
 // cockpit (via useTicketNotifications), so the count and the items always match
 // across all three surfaces. The feed merges action-required tickets, unread
 // ticket activity, and unread in-app notification rows.
+//
+// Accessible (NEDGE-5, notifications Round G N3): the trigger is named
+// "Notifications, N need attention" (the count span is decorative), says it
+// opens a dialog and whether it is open; a polite live region announces the
+// count when it changes; the drawer is a labelled dialog that takes focus
+// when it opens and hands it back to the bell when it closes (Escape, as
+// before, closes it). Two counts, two words (RT-9): "need attention" is
+// everything in the feed; "need action" is the part only doing the work
+// clears — "Mark notifications read" clears notification rows, never that.
+// The icon per kind is the registry's (components/notifications/kindIcon.ts).
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  Bell, Check, CheckCheck, Loader2, MessageSquare, AlertOctagon, GitBranch,
-  Briefcase, FileSignature, Lock, UserPlus, FileText, MailPlus, ClipboardList, HardDrive, Database,
-} from "lucide-react";
+import { Bell, CheckCheck, Loader2 } from "lucide-react";
 import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
-
-const KIND_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
-  ticket: ClipboardList,
-  ticket_comment: MessageSquare,
-  ticket_mention: MessageSquare,
-  ticket_status: FileText,
-  ticket_assigned: UserPlus,
-  checkout_conflict: AlertOctagon,
-  checkout_handoff: Lock,
-  checkout_message: MessageSquare,
-  revision_published_over_checkout: GitBranch,
-  project_member: Briefcase,
-  project_status: Briefcase,
-  project_comment: Briefcase,
-  hold_opened: AlertOctagon,
-  hold_released: Check,
-  markup_request: FileSignature,
-  doc_superseded: GitBranch,
-  checkout_released: Lock,
-  overlap_advisory: AlertOctagon,
-  branch_open: GitBranch,
-  branch_resolved: Check,
-  provenance_flag: FileText,
-  request_pending_approval: MailPlus,
-  orchestrator_message: MessageSquare,
-  // notifications Round G, N2: the storage watchdogs' kinds (KIND_META icon
-  // keys); the dead task_overdue_digest entry is gone with its kind. N3
-  // derives this whole map from lib/notificationKinds.ts KIND_META.
-  storage_alert: HardDrive,
-  storage_platform_r2: HardDrive,
-  storage_platform_db: Database,
-};
+import { iconForKind } from "@/components/notifications/kindIcon";
 
 interface NotificationBellProps {
-  collapsed?: boolean;
-  variant?: "sidebar" | "header";
+  /** The header bell is the only bell (TopBar). The prop is kept so the
+   *  mount reads as it always did; the never-mounted sidebar variant is gone. */
+  variant?: "header";
 }
 
-export default function NotificationBell({ collapsed, variant = "sidebar" }: NotificationBellProps) {
+/** The trigger's accessible name — the number lives here, not in the badge. */
+export function bellLabel(attention: number): string {
+  return attention > 0 ? `Notifications, ${attention} need${attention === 1 ? "s" : ""} attention` : "Notifications";
+}
+
+/** What the live region says: the count, as the bell shows it. */
+export function bellAnnouncement(attention: number, action: number): string {
+  if (attention <= 0) return "No notifications need attention";
+  return `${attention} notification${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention${action > 0 ? `, ${action} need${action === 1 ? "s" : ""} action` : ""}`;
+}
+
+export default function NotificationBell(_props: NotificationBellProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { items, count, loading, markRead, markAllRead } = useTicketNotifications();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogId = useId();
+  const { items, count, counts, actionRequiredCount, loading, markRead, markAllRead } = useTicketNotifications();
   const { open: openCenter } = useNotificationCenter();
-  const isHeader = variant === "header";
   const unread = count;
 
   // Let other surfaces (e.g. the Inbox) pop the drawer open via a global event.
@@ -87,9 +77,26 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
     };
   }, [open]);
 
+  // Focus (NEDGE-5 dw3): opening moves focus into the dialog; closing hands
+  // it back to the bell — only when focus has nowhere better to be (it was in
+  // the dialog that just went away, or nowhere). A click elsewhere keeps the
+  // focus it gave.
+  useEffect(() => {
+    if (!open) return;
+    dialogRef.current?.focus({ preventScroll: true });
+    const trigger = triggerRef.current;
+    return () => {
+      const active = document.activeElement;
+      if (!active || active === document.body) trigger?.focus({ preventScroll: true });
+    };
+  }, [open]);
+
   // Only notification ROWS can be "marked read"; ticket items are live and clear
   // themselves when the underlying work is done.
   const hasNotifRows = useMemo(() => items.some((i) => i.source === "notification"), [items]);
+  // What "Mark notifications read" leaves behind (RT-9): the requests in the
+  // feed, which clear when the work is done or the request is opened.
+  const remaining = counts.all - counts.notifications;
 
   const onItemClick = async (item: AttentionItem) => {
     if (item.notificationId) {
@@ -100,51 +107,64 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
 
   return (
     <div className="relative" ref={containerRef}>
-      {isHeader ? (
-        <button
-          onClick={() => setOpen((v) => !v)}
-          title={unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}
-          className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
-            open ? "bg-slate-900 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
-          }`}
-        >
-          <Bell className="w-4 h-4" />
-          {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black ring-2 ring-white">
-              {unread > 99 ? "99+" : unread}
-            </span>
-          )}
-        </button>
-      ) : (
-        <button
-          onClick={() => setOpen((v) => !v)}
-          title={unread > 0 ? `${unread} need attention` : "Notifications"}
-          className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-all group ${open ? "bg-slate-800 text-white" : "hover:bg-slate-800 hover:text-white"}`}
-        >
-          <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-slate-300 group-hover:text-white`} />
-          {!collapsed && <span className="text-sm font-medium">Notifications</span>}
-          {unread > 0 && (
-            <span className={`${collapsed ? "absolute top-1 right-1" : "ml-auto"} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black`}>
-              {unread > 99 ? "99+" : unread}
-            </span>
-          )}
-        </button>
-      )}
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={bellLabel(unread)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? dialogId : undefined}
+        title={unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}
+        className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
+          open ? "bg-slate-900 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
+        }`}
+      >
+        <Bell className="w-4 h-4" aria-hidden />
+        {unread > 0 && (
+          <span aria-hidden className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black ring-2 ring-white">
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+      </button>
+      {/* The one polite live region for the count (NEDGE-5 dw2): a new
+          notification changes it and is said once. Silent while loading. */}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true" data-bell-live>
+        {loading ? "" : bellAnnouncement(unread, actionRequiredCount)}
+      </span>
 
       {open && (
-        <div className={`${isHeader ? "absolute right-0 top-full mt-2 origin-top-right" : "absolute left-full ml-2 bottom-0"} w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
+        <div
+          ref={dialogRef}
+          id={dialogId}
+          role="dialog"
+          aria-label="Notifications"
+          tabIndex={-1}
+          className="absolute right-0 top-full mt-2 origin-top-right w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none"
+        >
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>
                 <div className="text-sm font-black text-[var(--color-text)]">Notifications</div>
-                <div className="text-[10px] text-[var(--color-text-muted)]">{unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}</div>
+                <div className="text-[10px] text-[var(--color-text-muted)]">
+                  {unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "All caught up"}
+                  {actionRequiredCount > 0 && (
+                    <span className="ml-1.5 font-black text-orange-600" data-bell-action>
+                      · {actionRequiredCount} need{actionRequiredCount === 1 ? "s" : ""} action
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 {hasNotifRows && (
                   <button
+                    type="button"
                     onClick={async () => { await markAllRead(); }}
+                    title={remaining > 0
+                      ? `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read. ${remaining} request${remaining === 1 ? "" : "s"} stay until the work is done or the request is opened.`
+                      : `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read.`}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   >
-                    <CheckCheck className="w-3.5 h-3.5" /> Mark all read
+                    <CheckCheck className="w-3.5 h-3.5" aria-hidden /> Mark notifications read
                   </button>
                 )}
                 <button
@@ -160,15 +180,21 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 </Link>
               </div>
             </div>
+            {/* RT-9: what "Mark notifications read" cannot clear, said in place. */}
+            {remaining > 0 && (
+              <div className="px-4 py-1.5 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]" data-bell-remaining>
+                {remaining} request{remaining === 1 ? "" : "s"} in this list {remaining === 1 ? "clears" : "clear"} when the work is done or the request is opened — marking notifications read leaves {remaining === 1 ? "it" : "them"}.
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto">
               {loading ? (
-                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
+                <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" aria-label="Loading" /></div>
               ) : items.length === 0 ? (
                 <div className="py-10 text-center text-xs italic text-[var(--color-text-faint)]">You&rsquo;re all caught up.</div>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)]">
                   {items.map((item) => {
-                    const Icon = KIND_ICON[item.kind] ?? Bell;
+                    const Icon = iconForKind(String(item.kind));
                     const tone = item.actionRequired ? "bg-orange-50 text-orange-700 border-orange-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]";
                     return (
                       <li key={item.key}>

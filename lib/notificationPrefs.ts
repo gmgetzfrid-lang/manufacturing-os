@@ -72,8 +72,10 @@ export const PREF_DEFAULTS: Readonly<NotificationPrefs> = Object.freeze({
  *  settings page does not offer a switch that would save and do nothing. A
  *  test flips with the listener: it fails when the listener mentions
  *  readToastPreference or toast_enabled and this is still false, and the
- *  reverse — whoever wires the listener flips this in the same change. */
-export const TOAST_PREFERENCE_HONOURED = false;
+ *  reverse — whoever wires the listener flips this in the same change.
+ *  Flipped by notifications Round G N3 (2026-10-02): the listener reads
+ *  readToastPreference before it toasts (RT-10). */
+export const TOAST_PREFERENCE_HONOURED = true;
 
 /** A stored digest_frequency read into the CHECK vocabulary. 'immediate' was
  *  the page's old spelling (the CHECK refused it, so no row holds it — mapped

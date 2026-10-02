@@ -46,7 +46,7 @@ import {
   Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
   HardHat,
 } from 'lucide-react';
-import { useTicketNotifications } from '@/hooks/useTicketNotifications';
+import { useTicketNotifications, type AttentionSection } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
@@ -512,6 +512,15 @@ function SectionDivider({ tone, active }: { tone: Tone; active: boolean }) {
 
 // ─── Leaf row ────────────────────────────────────────────────
 
+/** The section each badged row counts — the rows that spread
+ *  `badgeOf(sectionCounts.<section>)` above, by their href (a test pins the
+ *  two equal). Its badge opens the Notification Center scoped to it. */
+const BADGE_SECTION_BY_HREF: Record<string, AttentionSection> = {
+  '/documents': 'documents',
+  '/projects': 'projects',
+  '/requests': 'requests',
+};
+
 function SidebarLeaf({
   leaf, active, collapsed,
 }: {
@@ -546,13 +555,16 @@ function SidebarLeaf({
       )}
       {leaf.badge && leaf.badge > 0 && (
         // The count is a DOORWAY, not a scoreboard: clicking it opens the
-        // Notification Center showing exactly the items it counts (a red
-        // badge opens pre-filtered to action-required). The row itself
-        // still navigates to its tool.
+        // Notification Center scoped to this row's section, showing exactly
+        // the items it counts — the header says the same number (TAX-1 /
+        // TRAIL-3). Every item, not only the red ones: the badge counts
+        // them all; the action items are flagged and one tap away under
+        // "Action". The row itself still navigates to its tool.
         <button
           type="button"
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter(leaf.badgeTone === 'red' ? 'action' : 'all'); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter('all', BADGE_SECTION_BY_HREF[leaf.href] ?? null); }}
           title="See these notifications"
+          aria-label={`${leaf.label}: ${leaf.badge} item${leaf.badge === 1 ? '' : 's'} need${leaf.badge === 1 ? 's' : ''} attention${leaf.badgeTone === 'red' ? ', some need action' : ''} — show them`}
           className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
         >
           {leaf.badge > 99 ? '99+' : leaf.badge}

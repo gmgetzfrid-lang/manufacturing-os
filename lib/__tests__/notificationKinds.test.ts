@@ -153,13 +153,6 @@ const TODAY_COMPLIANCE = [
   "access_recert_due", "effective_now", "review_requested", "review_overdue", "review_complete",
   "review_alternate_activated", "deletion_requested", "doc_superseded", "review_invalidated",
 ];
-/** The bell's KIND_ICON, parsed from the component. */
-const bellIconMap = (): Record<string, string> => {
-  const s = src("components/notifications/NotificationBell.tsx");
-  const m = s.match(/const KIND_ICON[^{]*\{([\s\S]*?)\n\};/);
-  if (!m) throw new Error("KIND_ICON not found");
-  return Object.fromEntries([...m[1].matchAll(/^\s+(\w+):\s*(\w+),/gm)].map((x) => [x[1], x[2]]));
-};
 /** The cron's COMPLIANCE_KINDS, parsed from the route. */
 const cronComplianceKinds = (): string[] => {
   const s = src("app/api/cron/maintenance/route.ts").replace(/\/\/[^\n]*/g, "");
@@ -591,69 +584,90 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
     }
   });
 
-  it("the bell's icon map: the dead task_overdue_digest entry gone, the storage kinds added, and every entry agrees with KIND_META", () => {
+  // notifications Round G, N3 SURFACES: the bell's KIND_ICON, the feed's
+  // attentionVisual / KIND_GROUPS and the toast's isError now DERIVE from
+  // KIND_META (TAX-5's N3 limb). The tests below replace the N2 pins of the
+  // hand-kept copies; what each derived surface shows is checked against the
+  // predecessor it replaced, with every departure named.
+
+  it("the bell's icon is KIND_META's, through one resolver — every kind that had a bell icon keeps it, and the hand-kept map is gone (N3)", async () => {
+    const { iconForKind, KIND_ICON_COMPONENTS } = await import("@/components/notifications/kindIcon");
+    const lucide = await import("lucide-react");
+    const bellSrc = src("components/notifications/NotificationBell.tsx");
+    expect(bellSrc).not.toMatch(/const KIND_ICON\b/);
+    expect(bellSrc).toContain("const Icon = iconForKind(String(item.kind));");
+    // TODAY's entries (minus the retired task_overdue_digest) plus the N2
+    // storage departures: each still draws the same component.
     const want: Record<string, string> = { ...TODAY_BELL_ICON };
     delete want.task_overdue_digest;
     for (const k of ["storage_alert", "storage_platform_r2", "storage_platform_db"]) want[k] = ICON_DEPARTURES[k].icon;
-    const bell = bellIconMap();
-    expect(bell).toEqual(want);
-    for (const [k, icon] of Object.entries(bell)) {
-      if (k === "ticket") continue; // the ticket pseudo-kind is not a notification kind
-      expect(isNotificationKind(k), k).toBe(true);
-      expect(KIND_META[k as keyof typeof KIND_META].icon, k).toBe(icon);
+    for (const [k, icon] of Object.entries(want)) {
+      expect(iconForKind(k), k).toBe((lucide as unknown as Record<string, unknown>)[icon]);
     }
+    for (const k of NOTIFICATION_KINDS) expect(iconForKind(k), k).toBe(KIND_ICON_COMPONENTS[KIND_META[k].icon]);
+    // a legacy kind no union declares draws the plain bell, as before
+    expect(iconForKind("task_nudge")).toBe(lucide.Bell);
   });
 
-  it("OS-7 dw3 as a ratchet: a kind outside the named gap list draws its KIND_META icon in the bell, never the fallback", () => {
-    // The kinds the bell has no entry for today (they draw the fallback Bell
-    // there; their feed icon is KIND_META's). N3 derives KIND_ICON from
-    // KIND_META and empties this list; until then a NEW kind — the nudge's
-    // (N12) included — must get a bell entry, or be added here on purpose.
-    const BELL_ICON_GAPS = [
-      "library_doc_added", "library_doc_revised", "review_due", "owner_assigned", "owner_behind", "deletion_requested",
-      "ack_requested", "ack_complete", "ack_overdue", "ack_unsatisfiable", "review_requested", "review_signed",
-      "review_invalidated", "review_complete", "review_overdue", "review_alternate_activated", "effective_now",
-      "retention_eligible", "legal_hold_placed", "legal_hold_released", "access_recert_due", "security_export",
-      "member_revoked", "library_unowned", "ai_cap_changed", "transmittal_unstampable",
-    ];
-    const bell = bellIconMap();
-    const missing: string[] = [];
-    for (const k of NOTIFICATION_KINDS) {
-      if (BELL_ICON_GAPS.includes(k)) continue;
-      if (bell[k] !== KIND_META[k].icon) missing.push(`${k}: bell ${bell[k] ?? "(fallback Bell)"} vs KIND_META ${KIND_META[k].icon}`);
-    }
+  it("OS-7 dw3: the ratchet is empty — every kind draws its KIND_META icon in the bell, never the fallback (N3)", async () => {
+    const { iconForKind, KIND_ICON_COMPONENTS } = await import("@/components/notifications/kindIcon");
+    const BELL_ICON_GAPS: string[] = [];
+    const missing = NOTIFICATION_KINDS.filter((k) => !BELL_ICON_GAPS.includes(k) && iconForKind(k) !== KIND_ICON_COMPONENTS[KIND_META[k].icon]);
     expect(missing).toEqual([]);
-    for (const k of BELL_ICON_GAPS) expect(isNotificationKind(k), k).toBe(true);
   });
 
-  it("the feed's predicates are still the verbatim copies (N3 derives them from KIND_META next)", () => {
+  it("TAX-5 dw4: the bell icon and the feed icon are the same component for every kind; the feed's tone and group are KIND_META's (N3)", async () => {
+    const { iconForKind } = await import("@/components/notifications/kindIcon");
+    const { attentionVisual, groupOf } = await import("@/components/cockpit/AttentionFeed");
     const feed = src("components/cockpit/AttentionFeed.tsx");
-    for (const line of [
-      'if (k.includes("reminder")) return { Icon: Bell, tone: "amber" };',
-      'if (k.includes("mention")) return { Icon: AtSign, tone: "violet" };',
-      'if (k.includes("comment") || k.includes("message")) return { Icon: MessageSquare, tone: "blue" };',
-      'if (k.includes("conflict")) return { Icon: AlertTriangle, tone: "amber" };',
-      'if (k.includes("checkout") || k.includes("lock")) return { Icon: Lock, tone: "indigo" };',
-      'if (k.includes("markup")) return { Icon: FileSignature, tone: "violet" };',
-      'if (k.includes("hold")) return { Icon: AlertOctagon, tone: "rose" };',
-      'if (k.includes("milestone")) return { Icon: Flag, tone: "emerald" };',
-      'if (k.includes("rev") || k.includes("revision") || k.includes("version")) return { Icon: GitBranch, tone: "blue" };',
-      'if (k.includes("transmittal")) return { Icon: Send, tone: "blue" };',
-      'if (k.includes("approval") || k.includes("request") || k.includes("assign")) return { Icon: Briefcase, tone: "orange" };',
-      'if (k.includes("equipment") || k.includes("asset")) return { Icon: Layers, tone: "amber" };',
-      'return { Icon: Bell, tone: "slate" };',
-      '{ key: "mentions", label: "Mentions & comments", match: (k) => k.includes("mention") || k.includes("comment") || k.includes("message") },',
-      '{ key: "documents", label: "Documents & revisions", match: (k) => k.includes("rev") || k.includes("version") || k.includes("doc") || k.includes("review") || k.includes("ack") || k.includes("effective") || k.includes("retention") || k.includes("transmittal") },',
-      '{ key: "requests", label: "Requests", match: (k) => k.includes("ticket") || k.includes("assign") || k.includes("approval") || k.includes("engineer") || k.includes("markup") },',
-      '{ key: "locks", label: "Checkouts & holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },',
-    ]) expect(feed, line).toContain(line);
-    expect(TODAY_FEED("member_revoked")).toEqual({ icon: "GitBranch", tone: "blue" });
-    expect(TODAY_GROUP("checkout_message")).toBe("mentions");
+    expect(feed).not.toMatch(/k\.includes\(/); // no substring predicate is left
+    for (const k of [...NOTIFICATION_KINDS, "ticket", "task_nudge"]) {
+      const meta = isNotificationKind(k) ? KIND_META[k] : null;
+      for (const actionRequired of [false, true]) {
+        const v = attentionVisual({ kind: k as never, actionRequired });
+        expect(v.Icon, k).toBe(iconForKind(k));
+        expect(v.tone, k).toBe(actionRequired ? "orange" : meta?.tone ?? "slate");
+      }
+      expect(groupOf(k), k).toBe(k === "ticket" ? "requests" : meta?.group ?? "other");
+    }
+    // Parity: tone and group are what the substring predicates produced
+    // (KIND_META = TODAY + the N2 departures, pinned above); the ticket row
+    // keeps its "Requests" chip.
+    expect(groupOf("ticket")).toBe(TODAY_GROUP("ticket"));
+    for (const k of NOTIFICATION_KINDS) {
+      expect(attentionVisual({ kind: k as never, actionRequired: false }).tone, k).toBe(TONE_DEPARTURES[k] ?? TODAY_FEED(k).tone);
+      expect(groupOf(k), k).toBe(GROUP_DEPARTURES[k] ?? TODAY_GROUP(k));
+    }
+    // The feed icon departures: where the feed drew something other than the
+    // bell's icon, it now draws the bell's (an action item drew Zap; it now
+    // draws its kind's icon, still orange and still flagged "Action").
+    const FEED_ICON_DEPARTURES: Record<string, string> = {
+      ticket_mention: "AtSign", ticket_status: "Bell", ticket_assigned: "Briefcase", request_pending_approval: "Briefcase",
+      checkout_conflict: "Zap", checkout_released: "Zap", overlap_advisory: "Zap", branch_open: "Zap",
+      branch_resolved: "Bell", doc_superseded: "Bell", provenance_flag: "Bell", hold_released: "AlertOctagon",
+      revision_published_over_checkout: "Lock", project_member: "Bell", project_status: "Bell", project_comment: "MessageSquare",
+      member_revoked: "GitBranch", storage_alert: "Bell", storage_platform_r2: "Bell", storage_platform_db: "Bell",
+    };
+    const moved: Record<string, string> = {};
+    for (const k of NOTIFICATION_KINDS) {
+      const before = KIND_META[k].actionRequired ? "Zap" : TODAY_FEED(k).icon;
+      if (before !== KIND_META[k].icon) moved[k] = before;
+    }
+    expect(moved).toEqual(FEED_ICON_DEPARTURES);
   });
 
-  it("the toast still warns for exactly checkout_conflict and hold_opened (N3 derives it)", () => {
-    expect(src("components/providers/NotificationListener.tsx"))
-      .toContain('const isError = row.kind === "checkout_conflict" || row.kind === "hold_opened";');
+  it("the toast's tone derives from KIND_META: the action kinds and hold_opened warn, nothing else does (N3, TAX-3 dw1)", async () => {
+    const { toastForRow } = await import("@/components/providers/NotificationListener");
+    const listener = src("components/providers/NotificationListener.tsx");
+    expect(listener).not.toMatch(/const isError =/);
+    const warns = NOTIFICATION_KINDS.filter((k) => toastForRow({ id: k, kind: k, title: "t", body: null }).type === "warning");
+    // b9cdfdc warned for checkout_conflict and hold_opened; the other three
+    // action kinds were blue info toasts (TAX-3) and now warn too.
+    expect(warns.sort()).toEqual([...TODAY_ACTION, "hold_opened"].sort());
+    for (const k of NOTIFICATION_KINDS) {
+      const t = toastForRow({ id: k, kind: k, title: "t", body: null });
+      expect(t.duration === 0, k).toBe(KIND_META[k].actionRequired);
+    }
   });
 });
 

@@ -941,11 +941,17 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     expect(jobsSlot().textContent).not.toContain("Backup");
   });
 
-  it("raised, the '+N more' offers no 'Notifications' doorway, and an open center's rail does not move the dock onto the modal; at rest both come back (N7 fourth review)", async () => {
+  it("raised, the '+N more' offers the 'Notifications' doorway (RT-11, N3), and the layout's rail for a center under the modal does not move the dock onto it; at rest the rail is back (N7 fourth review)", async () => {
     // Chromium, the fourth review's probe: the raised dock's doorway opened
     // the z-241 center under the z-300 staging modal (invisible), and its
     // 480px rail moved the cards from x 976-1264 to x 496-784 at 1280x800,
     // over the middle of the staging grid, until the hidden center closed.
+    // notifications Round G N3 (RT-11 dw1): the center now opens ABOVE a
+    // raising modal when the dock is raised (NotificationCenter reads
+    // isDockRaised() — lib/__tests__/notificationCenterScope.test.ts drives
+    // that end), so the doorway is offered raised too. The rail the layout
+    // passes (a center at rest, under the modal) still does not move the
+    // raised dock; a center open above the raise declares its own rail.
     viewport(1280, 800);
     const tree = (raising: boolean) => React.createElement(ToastProvider, null,
       React.createElement(CornerDock, { onOpenCenter: openCenter, occupiedRightPx: NOTIFICATION_CENTER_RAIL_PX }),
@@ -960,18 +966,19 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     await flush();
     expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
     const button = (re: RegExp) => [...dock()!.querySelectorAll("button")].find((b) => re.test(b.textContent ?? ""));
-    // Six toasts wait behind "+N more" — yet no doorway to a center the
-    // modal would hide.
+    // Six toasts wait behind "+N more" — and the doorway to the center is
+    // there, raised.
     expect(button(/more/)!.textContent).toContain("+8 more");
-    expect(button(/Notifications/)).toBeUndefined();
-    // The center is open under the modal: the raised dock stays at the edge.
+    await act(async () => { button(/Notifications/)!.click(); });
+    expect(openCenter).toHaveBeenCalledWith();
+    // The layout's rail (a center under the modal): the raised dock stays at the edge.
     expect(dock()!.style.right).toBe("calc(0px - 1.5rem)");
-    // At rest (the modal gone), the doorway and the rail are back.
+    // At rest (the modal gone), the doorway and the rail are both there.
     await mount(tree(false));
     expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
     expect(dock()!.style.right).toBe("calc(480px - 1.5rem)");
     await act(async () => { button(/Notifications/)!.click(); });
-    expect(openCenter).toHaveBeenCalledWith();
+    expect(openCenter).toHaveBeenCalledTimes(2);
   });
 
   it("an overlay that raises the dock must declare its action row: every useDockRaise caller also calls useDockAvoid", () => {
