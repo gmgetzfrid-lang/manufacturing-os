@@ -575,15 +575,36 @@ Fix (the plan's rule: `lib/adminGate.ts authorizeAdminSurface`, no new constant,
 - Also: `lib/__tests__/roundE_D_rolesAdmin.test.ts` "every data-export route calls the gate itself" (`SURF-19`'s data-export rows), and the `sweepRoundC1b` census, which accepts the gate.
 - Regression first: `exportContractRoundTrip.test.ts` and `restoreArchiveRoundTrip.test.ts` pass. Their only edit gives the fixture's evidence note a project, so it is no longer a private scratchpad note.
 
+*Review fix pass (admin-and-org Round G, P3).* Two claims above were overstated, and both are fixed.
+- **Item 2: the manifest no longer says complete.** Withholding the notes left `manifest.complete: true` and the note "This document is a complete export of every record this organization owns". A disaster-recovery restore of that backup permanently loses every member's standalone notes, and nothing warned.
+  - A backup that withholds rows is now `complete: false`. Its first note reads "⚠ INCOMPLETE BACKUP — complete except N private note(s) withheld (manifest.withheld): a restore of this backup does not bring them back." (`lib/dataExport.ts`).
+  - The server ZIP's README gains a "Withheld rows — this backup is not complete" section (`lib/exportRunner.ts buildReadme`).
+  - The restore plan says so as its own warning, not as "some tables were not exported" (`lib/dataRestore.ts planRestore`; the envelope type now reads `manifest.tables` and `manifest.withheld`).
+  - The fixture edit above hid the case. `exportContractRoundTrip.test.ts` now carries a standalone note through export, the server ZIP and restore, and asserts the withheld count, the manifest wording, the README, the restore plan's warning and that the note is not restored.
+  - The trade-off is an **open decision for the user**, recorded under `DEC-44 (A&O P3)` §4: keep withholding (privacy; the backup is honestly incomplete) or carry the notes encrypted to their authors (complete, at a cost in design).
+- **Item 3: the per-file record no longer grows every backup.** `DATA_EXPORT_FILES` wrote one row per 500 handed-out files on every export, scheduled pushes included. `audit_logs` is itself exported, so a daily destination grew it, and every later backup, without bound.
+  - A push to the workspace's own destination (scheduled, or "Run Now" to a destination) now records ONE `DATA_EXPORT` row with `details.fileRecord = { mode: "digest", count, sha256 }`: the SHA-256 of the sorted, newline-joined paths (`exportFileListDigest`). It writes no per-file rows. The archive carries the list itself, and its own list recomputes the digest.
+  - An export handed to a person (the JSON download, the browser Full ZIP's envelope, the manual ZIP) keeps the per-file list.
+  - The choice is `runOrgExport`'s `fileRecord` option, which `buildAndDeliverExport` sets from the delivery. It is recorded under `DEC-44 (A&O P3)` §3.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`:
+  - the private-note case now asserts `complete: false` and the wording;
+  - "the restore plan says the backup leaves the private notes out — as itself";
+  - "a push to the workspace's own destination records ONE row …";
+  - "thirty nightly pushes add thirty audit rows";
+  - the delivery pin.
+
+  All fail against the first P3 commit.
+
 **Done-when.**
 - [x] full-org export is Admin-only, matching /admin/restore ✓ — the data-export surface carries the restore surface's set, enforced on every route by the one gate.
-- [x] private standalone notes are excluded …, and ACL-restricted documents are … refused for a role that cannot read them all ✓ — notes withheld and counted; only the controller-tier Admin can export.
-- [x] every export writes … an equivalent bulk-distribution record ✓ — `DATA_EXPORT_FILES`, naming each file (and its document and revision) the export hands out.
+- [x] private standalone notes are excluded …, and ACL-restricted documents are … refused for a role that cannot read them all ✓ — notes withheld and counted, and the backup says it is incomplete for that reason (manifest, README, restore plan). Only the controller-tier Admin can export. Keeping the notes in a disaster-recovery backup is the user's open decision (`DEC-44 (A&O P3)` §4).
+- [x] every export writes … an equivalent bulk-distribution record ✓ — `DATA_EXPORT_FILES` names each file (and its document and revision) an export hands to a person. A push to the workspace's own destination records the count and the digest of the list (`DEC-44 (A&O P3)` §3).
 - [x] the role list stops being hardcoded in three route files and comes from the shared policy ✓ — the admin-surface registry through `authorizeAdminSurface`, by the plan's rule (no capability token).
 
 **Scope / residual.**
 - `/admin/storage`'s two export buttons (`app/(protected)/admin/storage/page.tsx:744-775`, admin-and-org P6's file) are still shown to Manager and DocCtrl, the storage surface's entry. They now answer 403 with the gate's denial; hiding them for a non-Admin is P6's.
-- `DATA_EXPORT_FILES` names every file listed with a link. For a server ZIP that includes files later left out at the cap or the deadline: it over-reports, the safe side for a recall.
+- `DATA_EXPORT_FILES` names every file listed with a link. For a server ZIP that includes files later left out at the cap or the deadline: it over-reports, the safe side for a recall. A destination push's digest covers the same list.
+- A restore of a backup taken since this package loses every standalone note. The manifest, the README and the restore plan say so; whether to keep them (encrypted to their authors) is the user's decision (`DEC-44 (A&O P3)` §4).
 - A `DATA_EXPORT` row written for an export whose file list was then refused stays. The export itself is refused and the run row says why.
 - Other own-only tables (bell notifications, per-user markups) stay in the org backup as before. This closes the scratchpad finding only.
 - Intelligence `ILIFE-7`, `DACL-7` and `IEDGE-10` (the cross-note above) can be re-verified for closure by pointer:
@@ -835,12 +856,26 @@ Fix (`PATCH`):
 
   All but the regression case fail against base.
 
+*Review fix pass (admin-and-org Round G, P3).* The rule above held on one door only, so Done-when 3 was claimed too early.
+- **"Run Now" is held to it too.** `POST /api/data-export/run` with a `destinationId` ran a restored, credential-less webhook, and posted the workspace unsigned to the backup owner's URL.
+  - It now reads the destination checked, before any run row is opened. A read error is 500, and a missing row 404 (that path used to leave a "running" row behind).
+  - It then refuses 409, with nothing sent and no run row, when the destination lacks its credentials: a bucket row without both keys, or a DISABLED webhook without its signing secret.
+  - An enabled webhook an Admin created here may still run unsigned: the secret is optional at create, and the scheduler pushes it nightly.
+- **So is re-pointing an enabled destination.** PATCH checked only the transition to enabled. An enabled s3 row PATCHed to `{ destination_type: "webhook", webhook_url }` with no secret would then push nightly, unsigned. PATCH now applies the check whenever the result is enabled and either the request enables it or a target field (type, endpoint, bucket, prefix, webhook URL) changes. The same URL re-sent is not a change.
+- **One rule, one helper.** `lib/exportRunner.ts destinationCredentialGap` holds the rule and the sentence for both doors.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts` (the BKP-11 block), all failing against the first P3 commit:
+  - Run Now of a restored webhook, and of a key-less bucket row, is 409;
+  - no regression for an enabled secret-less webhook, or a disabled one with its secret;
+  - re-pointing s3 → webhook without a secret is 409, and 200 with one;
+  - a new URL for a secret-less webhook is 409, while the same URL re-sent saves;
+  - the shared helper.
+
 **Done-when.**
 1. ✓ — `supabase/migrations/20261154_ao_roundG_export_destinations_select.sql` (P2). **Pending migration: not applied** (`DEC-30`); the user pastes it.
 2. ✓ — the export nulls the credential columns (document-control `XEDGE-10`, pinned by value by P2).
-3. ✓ — restored destinations land disabled with `next_run_at` NULL and no credentials (P1). Enabling one now requires its credentials to be entered again, and for a webhook, its URL looked at (P3).
+3. ✓ — restored destinations land disabled with `next_run_at` NULL and no credentials (P1). Before one can fire, an Admin must re-enter its credentials, and for a webhook look at its URL: enabling it, re-pointing it and running it by hand all ask (P3, with the review fix pass).
 
-**Scope / residual.** "Run Now" (`POST /api/data-export/run` with a `destinationId`) runs a disabled destination as before. A restored webhook with no secret, run by hand, posts unsigned to the URL its card shows. That is an explicit Admin act on a destination the Admin can see, and it is recorded and announced (`BKP-13`); it is not a firing the scheduler makes. Pending migration `20261154`.
+**Scope / residual.** Creating a destination (`POST`) still allows an enabled webhook with no signing secret, as before: the secret is optional at create, an Admin typed the URL here, and every other controller is told (`BKP-13`). A webhook that stays enabled and unsigned keeps running, by schedule or by hand. Pending migration `20261154`.
 
 ---
 
@@ -940,12 +975,24 @@ Fix:
 
   `lib/__tests__/sweepRoundC1b.test.ts` now finds the alert's `roleFilter` pool in `lib/exportAlerts.ts`.
 
+*Review fix pass (admin-and-org Round G, P3).* "Every export rings the controllers" was overstated.
+- **The JSON export now alerts too.** `GET /api/data-export/structured` is the JSON download and the first step of the browser Full ZIP, the page's most-used way out, and it alerted no one. It now calls `alertAdminsOfExport` once the export is recorded, telling every other controller. A refused alert is logged and named in the `X-Export-Alert` response header; the download proceeds. An export that could not be recorded rings nothing.
+- **A DocCtrl's bell is one they can act on.** The data-export page is Admin-only (`BKP-8`), but every bell linked there and said "disable it under Admin → Data export". `alertControllers` now reads each recipient's roles (`memberHoldsAny`):
+  - an Admin's bell links `/admin/data-export` and keeps the action;
+  - a DocCtrl-only recipient's says to ask an Admin and links `/admin/audit`, which DocCtrl can read (`ALERT_LINKS`).
+- **The header now says what calls what.** `lib/exportAlerts.ts` claimed every export route and destination write alerted. It now names them: structured, run and run-scheduled for exports; create, enable and re-point for destinations. Delete closes a channel and test sends a probe, so neither alerts.
+- Tests in `lib/__tests__/dataExportRoutes.test.ts`, all failing against the first P3 commit:
+  - "the JSON export … tells every OTHER controller too";
+  - a refused alert named in `X-Export-Alert`;
+  - an unrecorded export rings nothing;
+  - the DocCtrl / Admin split for a scheduled push, a person's export and a destination change.
+
 **Done-when.**
 - [x] runOrgExport passes a null user_id … for cron runs and CHECKS the insert's `{error}`, failing the run when the audit row cannot be written ✓.
 - [x] alertAdminsOfExport is called from run-scheduled as well as run ✓.
 - [x] creating or enabling ANY destination (webhook included) notifies every other Admin/DocCtrl, and destination create/edit is Admin-only ✓, re-pointing an enabled destination included.
 
-**Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest would be a notifications decision. The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-44 (A&O P3)` §2: `user_id` NULL, `system:stripe-webhook`).
+**Scope / residual.** A daily scheduled destination rings every controller on every run, as this finding asks. A digest of bells would be a notifications decision. (The audit trail's per-file record of a destination push is a digest now: `BKP-8`'s review fix pass, `DEC-44 (A&O P3)` §3.) The alert is a raw, now checked, insert into `notifications`, as the manual route's was (the notifications raw-insert census, `NEDGE-13`, asked for exactly that check). Admin-and-org P4 writes the Stripe webhook's machine rows under the same convention (`DEC-44 (A&O P3)` §2: `user_id` NULL, `system:stripe-webhook`).
 
 ---
 

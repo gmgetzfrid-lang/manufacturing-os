@@ -446,7 +446,7 @@ Negative control: with `lib/dataExport.ts` as at `45f0c1b`, four of the five fai
 
 Fix: just before each `DeleteObjects` batch, `deleteOrphans` calls `recheckStillNamed`:
 - **Plain columns.** `keysReferencedOutside` over every plain key column, one `.in()` statement per column and 200 keys. Each column's answer is one snapshot, and a read a row cap cut short refuses (P2's guard).
-- **JSON-embedded columns.** One containment read per key per `JSON_KEY_PROBES` entry: ticket attachments `[{url}]`, the branding logo `{logoPath}`, template examples `[{key}]` and `[{url}]`, and library and folder backgrounds `{background:{imagePath}}`. They run 16 at a time.
+- **JSON-embedded columns.** The `JSON_KEY_PROBES` shapes: ticket attachments `[{url}]`, the branding logo `{logoPath}`, template examples `[{key}]` and `[{url}]`, and library and folder backgrounds `{background:{imagePath}}`. Each is sent as a JSON literal (`probeLiteral`). *As corrected at the review fix pass (below)*, they go as ONE statement per column per chunk of keys, OR-ed `cs` terms, re-asked key by key only when that statement matches.
 - **The outcome.** A key named at re-check time is kept and counted (`kept`). A read error stops the purge before that batch, nothing in it deleted, and the error says so. Batches already deleted stay deleted.
 - Files: `lib/storageOrphans.ts` (`JSON_KEY_PROBES`, `recheckStillNamed`, `deleteOrphans`).
 - Tests: `lib/__tests__/storageOrphansRecheck.test.ts`. The stand-in hides a row from the scan's pages and counts (the balanced write) and shows it to every other read:
@@ -460,12 +460,25 @@ Fix: just before each `DeleteObjects` batch, `deleteOrphans` calls `recheckStill
 
   All 15 fail against base. `lib/__tests__/dcRoundFShed.test.ts`'s orphan block passes unchanged.
 
+*Review fix pass (admin-and-org Round G, P3).* Criterion 3 was claimed ✓, but in production the re-check refused every purge.
+- **The defect.** postgrest-js writes an ARRAY handed to `.contains()` as a Postgres array literal. The `[{url}]` and `[{key}]` probes therefore reached PostgREST as `attachments=cs.{[object Object]}`, which a jsonb column refuses (22P02). Every true orphan reaches the JSON probes, so the first one threw and `deleteOrphans` stopped before batch 1: "Reclaimed 0 B". The test stand-in stored the raw JS value and never serialised it, so it could not see this.
+- **The fix: the literal.** Every probe goes as a JSON string (`probeLiteral`), the form `app/api/storage/resolve/route.ts` and `lib/transmittals.ts` already send.
+- **The fix: batching.** Each JSON column is asked in ONE statement per chunk of keys. The `cs` terms are OR-ed, each value double-quoted with `\` and `"` escaped (`orTermValue`, the codebase's logic-tree quoting), and the chunks are sized to keep the URL under 6,000 encoded characters. The statement asks only whether any row matches (`limit(1)`). A chunk nothing matches, every true orphan's, is cleared in that one read. A chunk with a match is re-asked key by key with the exact `.contains(col, JSON literal)` read, so an answer never rests on the batched form alone. The cost per 500-key batch falls from about 3,000 single-key scans to about a dozen statements.
+- **The fix: a deadline.** `deleteOrphans` takes one (default `ORPHAN_PURGE_BUDGET_MS`, 240 s from the call, inside the route's 300 s). It does not start a batch the slowest batch so far says would overrun, and the re-check starts no statement past it. It then returns what it deleted, with "Stopped at the time limit: N orphaned file(s) were not checked or deleted this time. Run the purge again to continue." The function is no longer killed with nothing reported.
+- **Tests.** `lib/__tests__/storageOrphansRecheck.test.ts`:
+  - the stand-in now serialises `.contains()` as postgrest-js does, reads it back as jsonb (22P02 otherwise), and parses `.or()`;
+  - a new block drives the real supabase-js client through a stub fetch that answers like PostgREST. It pins the exact URL of every probe: the batched `or=(attachments.cs."[{\"url\":\"orgs/<org>/x.bin\"}]")`, and the per-key `attachments=cs.[{"url":"orgs/<org>/x.bin"}]` and `example_files=cs.[{"key":"…"}]`. It shows a key with a comma, a parenthesis and a quote survives, and re-runs the "keys nothing names are deleted" case against that real builder;
+  - a negative control shows the old array form is the refused `{[object Object]}`;
+  - the deadline cases.
+
+  27 tests; 22 fail against the first P3 commit.
+
 **Done-when.**
 1. ✓ — every paginated dump has a stable, unique sort key (document-control `XEDGE-13`, A&O P2).
 2. ✓ — the export's count reconciliation (A&O P2).
-3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column in single statements just before it is deleted (P3). A missed reference now costs a kept orphan, never a deleted live file.
+3. ✓ — the collector pages by keyset (A&O P2), and every candidate is re-checked against every registered key column just before it is deleted, in statements PostgREST accepts (P3, with the review fix pass). A missed reference now costs a kept orphan, never a deleted live file, and a true orphan is still freed.
 
-**Scope / residual.** The re-check costs about six containment reads per candidate on top of 11 plain reads per 200 candidates, inside the orphans route's `maxDuration = 300`. A very large purge stops at the route's limit with what it deleted so far, rather than deleting unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left; it is milliseconds long, and an upload's object is never a candidate before it is seven days old.
+**Scope / residual.** The re-check costs 11 plain reads per 200 candidates, plus about one JSON statement per column per 20–40 candidates. A purge too large for one request stops at a batch boundary before the route's limit, says how many were left, and is run again; it never deletes unchecked. A reference that lands after the re-check's own statement and before `DeleteObjects` is the window left. It is milliseconds long, and an upload's object is never a candidate before it is seven days old. The JSON probes are bucket-wide sequential scans (no GIN index on those columns), as the plain reads' columns are.
 
 ---
 
@@ -792,7 +805,7 @@ Fix: `ILIFE-5`'s "second call site" hunk, as recorded. After the hold / retentio
   - a vendor quote's row naming the key is 409;
   - an unreadable column is 503;
   - a clear revision's file and source still delete;
-  - the costDocs path still deletes;
+  - the costDocs path still deletes (*corrected at the review fix pass:* `lib/costDocs.ts uploadCostDoc` calls the route only to clean up an upload whose `cost_documents` row insert failed, so no row ever named that key. The first wording said it deleted the row first. The route comment is corrected too);
   - a hold still answers 423 first;
   - the call's exclusions and its position are pinned.
 
