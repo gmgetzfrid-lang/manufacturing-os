@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 52 |
-| MEDIUM | 67 |
+| MEDIUM | 68 |
 | LOW | 5 |
-| **Total** | **141** |
+| **Total** | **142** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -48,6 +48,9 @@ is the white-label accent) was opened by package J5 on 2026-09-30.
 `SEC-21` (project audit rows written under another resource type, such as a
 milestone anchored to a document, stay readable by every org member) was
 opened by package J11's review on 2026-10-01.
+`SAF-18` (outside the quality and money paths, update / delete sites still
+discard a zero-row result) was opened by package J12 on 2026-10-01, as
+`GAP-402`'s remainder.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see
