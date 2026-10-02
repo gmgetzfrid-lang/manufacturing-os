@@ -286,11 +286,12 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
   it("the real logAuditAction reads the insert's {error} instead of assuming: refused → { error }, landed → { error: null }", async () => {
     const real = await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
     const entry = { action: "FORCE_RELEASE", resourceId: "d1", resourceType: "document", userId: "ctl" };
-    await expect(real.logAuditAction(entry)).resolves.toEqual({ error: null });
+    // drafting-flow EVID-6 / PERS-7 (DF-P1): `ok` rides beside `error` (same fact, as a boolean)
+    await expect(real.logAuditAction(entry)).resolves.toEqual({ error: null, ok: true });
     state.errors["audit_logs.insert"] = { message: "new row violates row-level security policy" };
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      await expect(real.logAuditAction(entry)).resolves.toEqual({ error: "new row violates row-level security policy" });
+      await expect(real.logAuditAction(entry)).resolves.toEqual({ error: "new row violates row-level security policy", ok: false });
       expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/Failed to write audit log \(FORCE_RELEASE\)/), "new row violates row-level security policy");
     } finally { errSpy.mockRestore(); }
   });
