@@ -62,7 +62,7 @@ vi.mock("@/lib/ai/usageServer", () => ({
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => "") }));
+vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => ""), loadAnswerSkills: vi.fn(async () => ({ block: "", skills: [] })) }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => {}), logRevisionEvent: vi.fn(async () => {}), logHoldEvent: vi.fn(async () => {}) }));
 
 import { POST as runPOST } from "@/app/api/orchestrator/route";

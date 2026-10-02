@@ -67,7 +67,7 @@ vi.mock("@/lib/ai/usageServer", () => ({
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
-vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => "") }));
+vi.mock("@/lib/answerSkillsServer", () => ({ loadAnswerSkillsBlock: vi.fn(async () => ""), loadAnswerSkills: vi.fn(async () => ({ block: "", skills: [] })) }));
 // The shared client (lib/supabase) as /api/orchestrator/execute really has
 // it: no browser session, so it is the ANON client — auth.uid() is NULL, RLS
 // refuses its writes (notifications_org_insert needs an active member) and

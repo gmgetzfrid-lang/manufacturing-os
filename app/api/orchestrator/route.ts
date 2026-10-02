@@ -1,7 +1,7 @@
 // /api/orchestrator — the document controller you can talk to.
 //
 // POST { orgId, question } →
-//   { answer, steps, pending, provider, model, budget }
+//   { answer, steps, pending, provider, model, budget, skills? }
 //
 // Everything the knowledge ask route enforces, this enforces too, because it
 // spends the same money on the same key: per-user BYO key, the acceptable-use
@@ -15,13 +15,17 @@
 // before the tool acts and AI_ACTION_EXECUTED / AI_ACTION_FAILED after it.
 // There is no in-run approval: an `approved` field in the body is ignored,
 // and the tools run with an empty approval set.
+//
+// IRLS-13: the Reasoning Skills that rode the run's prompt come back as
+// `skills` (id, name, builtinKey — the ask route's shape), so the answer
+// can say which packs shaped it. No pack, no field.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
-import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
+import { loadAnswerSkills } from "@/lib/answerSkillsServer";
 import { atlasForPrompt } from "@/lib/featureAtlas";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
@@ -115,10 +119,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const playbook =
-    (await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge")) +
-    (await loadAnswerSkillsBlock(supabaseAdmin, orgId, user.id)) +
-    atlasForPrompt();
+  const instructionsBlock = await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge");
+  const answerSkills = await loadAnswerSkills(supabaseAdmin, orgId, user.id);
+  const playbook = instructionsBlock + answerSkills.block + atlasForPrompt();
 
   const call: ModelCall = async (system, userTurn) => {
     const out = await callAiModel({
@@ -237,5 +240,6 @@ export async function POST(req: NextRequest) {
       spentUsd: Math.round((monthSoFar.spentUsd + estimateCostUsd(model, run.usage)) * 100) / 100,
       capUsd,
     },
+    ...(answerSkills.skills.length > 0 ? { skills: answerSkills.skills } : {}),
   });
 }
