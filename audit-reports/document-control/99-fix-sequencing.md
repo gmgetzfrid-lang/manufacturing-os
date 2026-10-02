@@ -384,15 +384,28 @@ one-paste migration:
   re-paste `20261151`, `20261144`, `20261139`, `20261105` or any earlier
   guard migration after it** — each drops the REV-22 and RG-14 rules (and an
   earlier one the REV-20 rules). Independent of `20261131`, `20261143`,
-  `20261149`, `20261150` and `20261152`. No app change is needed for the
-  paste: the app carrying P14 already offers a controller the review
-  promote's recorded force when the hold refuses it, and `openReviewRoster`
-  already writes the owner's slot. After the paste a controller moves the
-  pointer of a held, already-issued document only through a recorded force
-  (`publish_revision`'s, or the inspector's review-promote force); the
-  intake approve's controller releases the hold first (no force there — the
-  integrator's J10b follow-up). A roster opened under an owner-must-approve
-  policy completes only with the owner's own signature (`DEC-44 (P17)`);
+  `20261149`, `20261150` and `20261152`. **Paste precondition (P17 review
+  fix):** `20261159` is not pasted until the app deployed offers the intake
+  approve's recorded force — `components/projects/IntakePanel.tsx` calling
+  `finalizeReviewedRevision` with `forceHold` (and a reason) for Document
+  Control on the hold refusal, as the inspector's `ReviewGateSection` does —
+  the integrator's J10b follow-up; **or** until the user has ratified the
+  interim loss recorded on DEC-63's P17 Landed line (awaiting ratification).
+  Before either, the paste takes away a flow that works today: a controller's
+  intake approve of a submission revising a held, already-issued document is
+  refused, and the only way through is to release the stop-work hold,
+  approve, and re-place the hold by hand (`REV-22`; P14's `20261151` already
+  took the same flow away for a held Draft, the same J10b follow-up). The
+  rest of the app needs nothing: the app carrying P14 already offers a
+  controller the review promote's recorded force in the inspector when the
+  hold refuses it, and `openReviewRoster` already writes the owner's slot.
+  After the paste a controller moves the pointer of a held, already-issued
+  document only through a recorded force (`publish_revision`'s, or the
+  inspector's review-promote force). A roster opened under an
+  owner-must-approve policy completes only with the owner's own signature
+  (`DEC-44 (P17)`), the owner counting as the revision's author (DEC-21)
+  only when they open the roster themselves on a version that names no other
+  author (P17 review fix: `created_by` is writable by a library publisher);
   rosters open at the paste are never retrofitted. The legacy reversal's
   bare un-supersede of an unstamped Superseded source stays open to a
   controller over a carried hold — `REV-22` limb 2, open. **P16 (`REV-21`)
